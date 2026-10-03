@@ -54,5 +54,12 @@
       "promptMarkdown": "# Per-branch gate slots\n\nSource of truth: \u0060docs/merge-gate-economics/index.html\u0060 (AGT-2997). Use the Dossier\u0027s recommended option for each open decision unless a recorded operator decision selects another, and record which option you implemented. Section 04, rule R5; Risks (CPU contention); Open decision Q6. AGT-W59 D2 keeps host scale-out measured. This card changes slot granularity on one host only.\n\n## Deliver\n\n1. \u0060MergeIntoDevelopRunner\u0060: replace \u0060_mergeGate\u0060 (\u0060SemaphoreSlim(1,1)\u0060) with a keyed lock per (project, integration branch) that covers merge, gate and rollback. Keep \u0060IsMergeGateBusy\u0060 semantics per key and one aggregate for the stable deploy drain. Push serialisation stays per branch.\n2. \u0060BuildTestGateRunner\u0060: replace the process semaphore and the exclusive machine file lock with a counting semaphore sized by \u0060Gates:HostCapacity\u0060 (default 2, allowed 1 to 4), implemented as numbered slot lock files so it holds across processes. Keep the queue-wait measurement.\n3. \u0060GateResultCache\u0060 project locks and the per-project dependency preparation must stay correct under two concurrent gates of different projects. Add a test proving no shared temp or cache path is written by both.\n4. Setting surfaced in Project or Workspace settings, read-only in the first iteration, and in the card 1 panel.\n\n## Acceptance criteria\n\n- An integration test runs two projects\u0027 gates concurrently while two merges of the same project stay serialised.\n- A rollback of one project\u0027s red gate does not touch the other branch.\n- With capacity 1, behaviour is identical to today.\n- A reversion rule is documented: return to 1 when p90 gate minutes rise by more than 25% against the card 1 baseline.\n- Target: cross-project queue wait p90 at most 5 minutes."
     }
   ],
-  "key": "AGT-W69"
+  "key": "AGT-W69",
+  "tags": [
+    "gates-and-review",
+    "performance",
+    "testing",
+    "quality"
+  ],
+  "taggingStatus": "tagged"
 }

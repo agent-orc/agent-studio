@@ -34,9 +34,11 @@ public sealed partial class TaskServerStore
     // rollback, and terminal supersession state.
     // 23 adds bounded opaque operation permits, always checked against live leases.
     // 24 adds versioned project placement and admission receipts.
+    // 25 adds the host-owned, metadata-only credential registry and typed
+    // provider capability observation fields.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 24;
+    public const int CurrentSchemaVersion = 25;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -247,7 +249,7 @@ public sealed partial class TaskServerStore
                 version,
                 _serverId,
                 ["studio", "runner", "review-runner", TaskServerProtocol.EngineClientKind, "management"],
-                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane"],
+                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2"],
                 [TaskServerHubProtocol.StudioRange()]),
             _startedAt,
             _outboxBacklog,
@@ -3415,6 +3417,15 @@ public sealed partial class TaskServerStore
                 credential_expires_at TEXT,
                 limited_until TEXT,
                 credential_modified_at TEXT,
+                credential_generation TEXT,
+                credential_observed_at TEXT,
+                last_real_success_at TEXT,
+                expiry_provenance TEXT,
+                access_token_expires_at TEXT,
+                effective_source TEXT,
+                native_file_shadowed INTEGER,
+                evidence_refs_json TEXT,
+                advertised_instance_id TEXT,
                 evidence_id TEXT,
                 evidence_excerpt TEXT,
                 supported_models_json TEXT,
@@ -3429,6 +3440,26 @@ public sealed partial class TaskServerStore
                 recovery_history_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(runner_id, capability_key)
+            );
+            CREATE TABLE IF NOT EXISTS credential_registry(
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                generation TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(installation_id, host_id, credential_id)
+            );
+            CREATE TABLE IF NOT EXISTS credential_registry_retired_sources(
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                source_instance_id TEXT NOT NULL,
+                retired_generation TEXT NOT NULL,
+                retired_at TEXT NOT NULL,
+                PRIMARY KEY(installation_id, host_id, credential_id, source_instance_id)
             );
             CREATE TABLE IF NOT EXISTS capability_failure_deliveries(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
@@ -3888,6 +3919,15 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_expires_at", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "limited_until", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "credential_modified_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "credential_generation", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "credential_observed_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "last_real_success_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "expiry_provenance", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "access_token_expires_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "effective_source", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "native_file_shadowed", "INTEGER", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "evidence_refs_json", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "advertised_instance_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);

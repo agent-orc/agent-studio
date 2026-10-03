@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "installationId": "replace-with-installation-id",
+  "revision": 1,
+  "mode": "wireguard-direct",
+  "package": "control-plane-compose",
+  "serverOrigin": "https://task-server.wg.internal",
+  "browserOrigin": "http://127.0.0.1:4011",
+  "caBundleFile": "/etc/agent-runner/private-ca.pem",
+  "linkOwner": "none",
+  "enabledListeners": ["standalone-task-server", "private-edge"],
+  "runners": [
+    { "runnerId": "agent-runner-01", "route": "private-https" }
+  ]
+}
