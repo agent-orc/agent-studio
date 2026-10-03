@@ -24,24 +24,34 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         RequireWritable();
-        if (request.SchemaVersion != CapabilityProtocol.CurrentSchemaVersion)
+        if (request.SchemaVersion is not (CapabilityProtocol.LegacySchemaVersion or CapabilityProtocol.CurrentSchemaVersion))
             throw new ArgumentException(
-                $"Capability schema {request.SchemaVersion} is unsupported; expected {CapabilityProtocol.CurrentSchemaVersion}.");
+                $"Capability schema {request.SchemaVersion} is unsupported; expected 1 or {CapabilityProtocol.CurrentSchemaVersion}.");
         if (request.FreshForSeconds is < 30 or > 900)
             throw new ArgumentException("Capability freshness must be between 30 and 900 seconds.");
         if (request.Generation <= 0 || request.Capabilities.Count == 0)
             throw new ArgumentException("Capability generation and at least one capability are required.");
+        if (request.CredentialHealthVersion is not null and not 1 ||
+            request.SchemaVersion == CapabilityProtocol.LegacySchemaVersion && request.CredentialHealthVersion is not null)
+            throw new ArgumentException("Credential health version requires capability schema 2.");
 
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var runner = await ReadCapabilityRunnerAsync(
                 connection, transaction, request.RunnerId, request.InstanceId, ct);
+            // Generation and observation time order one instance's own
+            // advertisements. Other instances are fenced by instance ownership
+            // above, so a restart is not held back by the previous instance's
+            // clock. Rows without a recorded instance keep fencing everyone.
+            const string SameInstance =
+                "runner_id = $runner AND (advertised_instance_id IS NULL OR advertised_instance_id = $instance)";
             var generationValue = await ScalarAsync(
                     connection,
-                    "SELECT MAX(generation) FROM runner_capabilities WHERE runner_id = $runner;",
+                    $"SELECT MAX(generation) FROM runner_capabilities WHERE {SameInstance};",
                     ct,
                     transaction,
-                    ("$runner", request.RunnerId));
+                    ("$runner", request.RunnerId),
+                    ("$instance", request.InstanceId));
             var currentGeneration = generationValue is null or DBNull
                 ? 0L
                 : Convert.ToInt64(generationValue, CultureInfo.InvariantCulture);
@@ -49,16 +59,37 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "stale-capability-advertisement",
                     $"Capability generation {request.Generation} is older than {currentGeneration}.");
+            // Observation time fences independently of the generation: a
+            // delayed advertisement must not advance the generation over newer
+            // metadata.
             var advertisedAt = request.AdvertisedAt.ToUniversalTime();
+            var latestAt = await ScalarAsync(connection,
+                $"SELECT MAX(advertised_at) FROM runner_capabilities WHERE {SameInstance};",
+                ct, transaction, ("$runner", request.RunnerId), ("$instance", request.InstanceId));
+            if (latestAt is string prior && advertisedAt < Parse(prior))
+                throw new TaskServerConflictException("stale-capability-advertisement",
+                    "A newer capability observation already exists for this runner.");
             if (advertisedAt > UtcNow.AddMinutes(2))
                 throw new ArgumentException("Capability advertisement time is too far in the future.");
             var freshUntil = advertisedAt.AddSeconds(request.FreshForSeconds);
+            var carriesCredentialObservation = request.SchemaVersion != CapabilityProtocol.LegacySchemaVersion;
             var now = Iso(UtcNow);
             foreach (var capability in request.Capabilities)
             {
+                ValidateCredentialCapability(request, capability);
                 var key = NormalizeCapability(capability.Key);
                 if (key.Length == 0 || string.IsNullOrWhiteSpace(capability.Category))
                     throw new ArgumentException("Capability key and category are required.");
+                if (capability.CredentialObservedAt is { } credentialObserved &&
+                    await ScalarAsync(connection, $"""
+                        SELECT credential_observed_at FROM runner_capabilities
+                         WHERE {SameInstance} AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId),
+                        ("$instance", request.InstanceId), ("$key", key))
+                        is string priorObserved &&
+                    credentialObserved.ToUniversalTime() < Parse(priorObserved))
+                    throw new TaskServerConflictException("stale-capability-advertisement",
+                        $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
                 var positiveRecovery = tracksProbeHistory
@@ -97,12 +128,18 @@ public sealed partial class TaskServerStore
                         runner_id, capability_key, category, schema_version,
                         advertised_status, health_state, reason, version,
                         identity_value, detail, signal, credential_expires_at,
-                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json, advertised_at, fresh_until,
+                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
+                        credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
+                        access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
+                        advertised_instance_id, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
                         $runner, $key, $category, $schema, $status, 'healthy',
                         NULL, $version, $identity, $detail, $signal, $expires,
-                        $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models, $advertised,
+                        $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
+                        $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
+                        $access_expires, $effective_source, $native_shadowed, $evidence_refs,
+                        $instance, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
                         category = excluded.category,
@@ -125,6 +162,15 @@ public sealed partial class TaskServerStore
                         evidence_id = excluded.evidence_id,
                         evidence_excerpt = excluded.evidence_excerpt,
                         supported_models_json = excluded.supported_models_json,
+                        credential_generation = excluded.credential_generation,
+                        credential_observed_at = excluded.credential_observed_at,
+                        last_real_success_at = excluded.last_real_success_at,
+                        expiry_provenance = excluded.expiry_provenance,
+                        access_token_expires_at = excluded.access_token_expires_at,
+                        effective_source = excluded.effective_source,
+                        native_file_shadowed = excluded.native_file_shadowed,
+                        evidence_refs_json = excluded.evidence_refs_json,
+                        advertised_instance_id = excluded.advertised_instance_id,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
                         generation = excluded.generation,
@@ -149,6 +195,15 @@ public sealed partial class TaskServerStore
                     ("$evidence_id", capability.EvidenceId),
                     ("$evidence_excerpt", capability.EvidenceExcerpt),
                     ("$supported_models", capability.SupportedModels is null ? null : JsonSerializer.Serialize(capability.SupportedModels)),
+                    ("$credential_generation", carriesCredentialObservation ? capability.CredentialGeneration : null),
+                    ("$credential_observed", carriesCredentialObservation && capability.CredentialObservedAt is { } observed ? Iso(observed.ToUniversalTime()) : null),
+                    ("$last_real_success", carriesCredentialObservation && capability.LastRealSuccessAt is { } success ? Iso(success.ToUniversalTime()) : null),
+                    ("$expiry_provenance", carriesCredentialObservation ? capability.ExpiryProvenance : null),
+                    ("$access_expires", carriesCredentialObservation && capability.AccessTokenExpiresAt is { } access ? Iso(access.ToUniversalTime()) : null),
+                    ("$effective_source", carriesCredentialObservation ? capability.EffectiveSource : null),
+                    ("$native_shadowed", carriesCredentialObservation && capability.NativeFileShadowed is { } shadowed ? shadowed ? 1 : 0 : null),
+                    ("$evidence_refs", carriesCredentialObservation && capability.EvidenceRefs is not null ? JsonSerializer.Serialize(capability.EvidenceRefs) : null),
+                    ("$instance", request.InstanceId),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
                     ("$generation", request.Generation),
@@ -207,6 +262,31 @@ public sealed partial class TaskServerStore
         await EvaluateHostCliPolicyAsync(request.RunnerId, actorId, ct);
         return (await ListRunnerCapabilitySnapshotsAsync(ct))
             .Single(item => string.Equals(item.RunnerId, request.RunnerId, StringComparison.Ordinal));
+    }
+
+    private static void ValidateCredentialCapability(
+        CapabilityAdvertisementRequest request,
+        AdvertisedCapabilityDto capability)
+    {
+        if (request.SchemaVersion == CapabilityProtocol.LegacySchemaVersion) return;
+        if (capability.CredentialGeneration is { } generation &&
+            (generation.Length > 128 || !generation.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or ':' or '.') ||
+             generation.Length == 64 && generation.All(char.IsAsciiHexDigit)))
+            throw new ArgumentException("Credential generation must be an opaque identifier, not a token hash.");
+        if (capability.ExpiryProvenance is not null and not
+            ("unknown" or "issuer" or "operator" or "none" or "access-token-unverified"))
+            throw new ArgumentException("Credential expiry provenance is unsupported.");
+        if (capability.EffectiveSource is not null and not
+            ("environment-file" or "native-cli-store" or "credential-helper" or "docker-secret" or
+             "service-secret" or "ssh-private-key" or "network-key" or "external-vault" or "absent" or "unknown"))
+            throw new ArgumentException("Effective credential source is unsupported.");
+        if (capability.CredentialObservedAt is { } observed && observed > request.AdvertisedAt.AddMinutes(2))
+            throw new ArgumentException("Credential observation cannot be newer than its advertisement.");
+        if (capability.EvidenceRefs is { } refs &&
+            (refs.Count > 16 || refs.Any(reference => reference.Length > 128 ||
+                !reference.StartsWith("evidence:", StringComparison.Ordinal) ||
+                reference.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not (':' or '-' or '_' or '.')))))
+            throw new ArgumentException("Credential evidence references must be bounded opaque identifiers.");
     }
 
     public async Task<CapabilityFailureResponse> ReportCapabilityFailureAsync(
@@ -422,7 +502,9 @@ public sealed partial class TaskServerStore
                        last_failure_at, cooldown_until, canary_claim_id,
                        consecutive_failures, version, identity_value, detail,
                        recovery_history_json, signal, credential_expires_at,
-                       limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json
+                       limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
+                       credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
+                       access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -458,7 +540,15 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(19) ? null : Parse(reader.GetString(19)),
                         reader.IsDBNull(20) ? null : reader.GetString(20),
                         reader.IsDBNull(21) ? null : reader.GetString(21),
-                        reader.IsDBNull(22) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(22))));
+                        reader.IsDBNull(22) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(22)),
+                        reader.IsDBNull(23) ? null : reader.GetString(23),
+                        reader.IsDBNull(24) ? null : Parse(reader.GetString(24)),
+                        reader.IsDBNull(25) ? null : Parse(reader.GetString(25)),
+                        reader.IsDBNull(26) ? null : reader.GetString(26),
+                        reader.IsDBNull(27) ? null : Parse(reader.GetString(27)),
+                        reader.IsDBNull(28) ? null : reader.GetString(28),
+                        reader.IsDBNull(29) ? null : reader.GetInt32(29) != 0,
+                        reader.IsDBNull(30) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(30))));
                 }
             }
             HostTelemetrySnapshotDto? telemetry = null;

@@ -392,7 +392,17 @@ internal static class RunnerCapabilityProbe
                 auth.LimitedUntil,
                 auth.CredentialModifiedAt,
                 auth.EvidenceId,
-                auth.EvidenceExcerpt));
+                auth.EvidenceExcerpt,
+                credentialGeneration: auth.CredentialGeneration,
+                credentialObservedAt: auth.ObservedAt,
+                lastRealSuccessAt: auth.LastRealSuccessAt,
+                expiryProvenance: auth.ExpiryProvenance,
+                accessTokenExpiresAt: auth.AccessTokenExpiresAt,
+                effectiveSource: auth.EffectiveSource,
+                nativeFileShadowed: auth.NativeFileShadowed,
+                evidenceRefs: auth.EvidenceId is { } reference &&
+                    reference.StartsWith("evidence:", StringComparison.Ordinal)
+                        ? [reference] : []));
         }
     }
 
@@ -430,7 +440,15 @@ internal static class RunnerCapabilityProbe
         DateTimeOffset? credentialModifiedAt = null,
         string? evidenceId = null,
         string? evidenceExcerpt = null,
-        IReadOnlyList<string>? supportedModels = null)
+        IReadOnlyList<string>? supportedModels = null,
+        string? credentialGeneration = null,
+        DateTimeOffset? credentialObservedAt = null,
+        DateTimeOffset? lastRealSuccessAt = null,
+        string? expiryProvenance = null,
+        DateTimeOffset? accessTokenExpiresAt = null,
+        string? effectiveSource = null,
+        bool? nativeFileShadowed = null,
+        IReadOnlyList<string>? evidenceRefs = null)
         => new(
             key,
             category,
@@ -444,7 +462,15 @@ internal static class RunnerCapabilityProbe
             credentialModifiedAt?.UtcDateTime,
             evidenceId,
             evidenceExcerpt,
-            supportedModels);
+            supportedModels,
+            credentialGeneration,
+            credentialObservedAt?.UtcDateTime,
+            lastRealSuccessAt?.UtcDateTime,
+            expiryProvenance,
+            accessTokenExpiresAt?.UtcDateTime,
+            effectiveSource,
+            nativeFileShadowed,
+            evidenceRefs);
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
@@ -615,7 +641,13 @@ public sealed record ProviderAuthStatus(
     DateTimeOffset? LimitedUntil = null,
     DateTimeOffset? CredentialModifiedAt = null,
     string? EvidenceId = null,
-    string? EvidenceExcerpt = null)
+    string? EvidenceExcerpt = null,
+    string? CredentialGeneration = null,
+    DateTimeOffset? LastRealSuccessAt = null,
+    string ExpiryProvenance = "unknown",
+    DateTimeOffset? AccessTokenExpiresAt = null,
+    string EffectiveSource = "unknown",
+    bool NativeFileShadowed = false)
 {
     public bool IsReady => Status == ProviderAuthProbe.Ready;
 }
@@ -903,7 +935,11 @@ public sealed class ProviderAuthProbe
         if (observation.Kind != ProviderAuthObservationKind.Authenticated) return observation;
 
         var freshness = _credentialFreshness(cliBinary);
-        var expiresAt = freshness.ExpiresAt;
+        // Only a verified login expiry drives the warning; a native
+        // access-token hint is refreshed by the CLI and is not login expiry.
+        var expiresAt = freshness.ExpiryProvenance is "issuer" or "operator"
+            ? freshness.ExpiresAt
+            : null;
         var expiring = expiresAt is not null
                        && expiresAt <= _clock().Add(ProviderCredentialMonitor.ExpiryWarningWindow);
         var freshnessDetail = freshness.ModifiedAt is null
@@ -917,6 +953,11 @@ public sealed class ProviderAuthProbe
             Signal = expiring ? SignalExpiring : SignalOk,
             ExpiresAt = expiresAt,
             CredentialModifiedAt = freshness.ModifiedAt,
+            AccessTokenExpiresAt = freshness.AccessTokenExpiresAt,
+            ExpiryProvenance = freshness.ExpiryProvenance,
+            EffectiveSource = freshness.EffectiveSource,
+            NativeFileShadowed = freshness.NativeFileShadowed,
+            CredentialGeneration = freshness.CredentialGeneration,
         };
     }
 
@@ -980,7 +1021,17 @@ public sealed class ProviderAuthProbe
         // A run that exited 0 reached the provider. Its output is agent content
         // (files and docs it read, rate_limit_event warnings), which can contain
         // "rate-limited" or "usage limit" without any limit being hit.
-        if (result.ExitCode == 0 || operatorStopped || signal is not null || hostShutdown)
+        if (result.ExitCode == 0)
+        {
+            lock (_sync)
+            {
+                if (_observed.TryGetValue(cliBinary, out var last))
+                    _observed[cliBinary] = last with { Status = last.Status with { LastRealSuccessAt = _clock() } };
+            }
+            // Current() still owns expired-limit and TTL re-probes.
+            return Current(cliBinary);
+        }
+        if (operatorStopped || signal is not null || hostShutdown)
             return Current(cliBinary);
 
         var evidence = ProviderAccessClassifier.Classify(
@@ -999,7 +1050,7 @@ public sealed class ProviderAuthProbe
                 $"'{RunnerCapabilityProbe.Provider(cliBinary)}' is rate-limited until {evidence.LimitedUntil:o}: {Excerpt(evidence.Detail)}",
                 SignalLimited,
                 LimitedUntil: evidence.LimitedUntil,
-                EvidenceId: Excerpt(evidenceId, 120),
+                EvidenceId: SafeEvidenceId(evidenceId),
                 EvidenceExcerpt: Excerpt(evidence.Detail)),
             ProviderAccessEvidenceKind.TransientFailure => new ProviderAuthObservation(
                 ProviderAuthObservationKind.Transient,
@@ -1090,7 +1141,14 @@ public sealed class ProviderAuthProbe
                     observedAt,
                     Signal: observation.Signal,
                     ExpiresAt: observation.ExpiresAt,
-                    CredentialModifiedAt: observation.CredentialModifiedAt),
+                    CredentialModifiedAt: observation.CredentialModifiedAt,
+                    AccessTokenExpiresAt: observation.AccessTokenExpiresAt,
+                    ExpiryProvenance: observation.ExpiryProvenance,
+                    EffectiveSource: observation.EffectiveSource,
+                    NativeFileShadowed: observation.NativeFileShadowed,
+                    CredentialGeneration: observation.CredentialGeneration,
+                    LastRealSuccessAt: previous?.Status.EffectiveSource == observation.EffectiveSource
+                        ? previous.Status.LastRealSuccessAt : null),
                 0);
         }
         if (observation.Kind == ProviderAuthObservationKind.BinaryMissing)
@@ -1250,6 +1308,11 @@ public sealed class ProviderAuthProbe
         return redacted.Length <= maxChars ? redacted : redacted[..maxChars] + "...";
     }
 
+    private static string? SafeEvidenceId(string? id)
+        => id is { Length: > 0 and <= 120 } &&
+           id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or ':' or '.')
+            ? id : null;
+
     /// <summary>PATH lookup that also accepts a configured absolute binary path.</summary>
     public static bool ExecutableExists(string cliBinary)
     {
@@ -1284,7 +1347,12 @@ internal sealed record ProviderAuthObservation(
     DateTimeOffset? LimitedUntil = null,
     DateTimeOffset? CredentialModifiedAt = null,
     string? EvidenceId = null,
-    string? EvidenceExcerpt = null);
+    string? EvidenceExcerpt = null,
+    DateTimeOffset? AccessTokenExpiresAt = null,
+    string ExpiryProvenance = "unknown",
+    string EffectiveSource = "unknown",
+    bool NativeFileShadowed = false,
+    string? CredentialGeneration = null);
 
 internal sealed record ProviderAuthCacheEntry(
     ProviderAuthStatus Status,

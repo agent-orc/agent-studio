@@ -86,6 +86,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
+| Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
+| Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
 | Build/test gate recovery: targeted flaky re-runs, budget environment retries, contention thresholds, and slow-test evidence (AGT-2853, AGT-2872) | [operations/testing/build-test-gate-flaky-rerun.md](../operations/testing/build-test-gate-flaky-rerun.md) |
 | ADR archive | [architecture/decisions/adr-archive.md](../system/architecture/decisions/adr-archive.md) |
 | Architecture model | [architecture/model.md](../system/architecture/model.md) |
@@ -197,6 +199,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
 | Private Hetzner Task Server with local Angular Studio (Phase A architecture, migration, security, and rollback) | [operations/remote-task-server-local-studio.md](../operations/remote-task-server-local-studio.md) |
 | Control plane on Docker (task-server-01): install, update, rollback, backup restore, firewall, WireGuard | [operations/setup/control-plane-docker.md](../operations/setup/control-plane-docker.md) |
+| Installation upgrade and rollback contract: installation manifest, one updater per placement, drain/backup/canary/resume and schema-safe rollback (I06) | [operations/setup/installation-upgrade-contract.md](../operations/setup/installation-upgrade-contract.md) |
 | Single-host Task Server rehearsal handoff: daily health, backup verification, update, rollback, and maintenance-window checklist | [operations/setup/single-host-task-server.md](../operations/setup/single-host-task-server.md) |
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
