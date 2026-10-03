@@ -1,5 +1,12 @@
 namespace AgentStudio.Shared;
 
+public static class CauseBreakerSettingsDefaults
+{
+    public const int AttemptThreshold = 3;
+    public const int CardThreshold = 2;
+    public const int WindowHours = 24;
+}
+
 public record ProjectSettings
 {
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
@@ -428,13 +435,13 @@ public record ProjectSettings
     public bool CauseBreakerEnabled { get; init; } = true;
 
     /// <summary>Fleet-wide attempts with one cause fingerprint that open the breaker. Default 3.</summary>
-    public int CauseBreakerAttemptThreshold { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultAttemptThreshold;
+    public int CauseBreakerAttemptThreshold { get; init; } = CauseBreakerSettingsDefaults.AttemptThreshold;
 
     /// <summary>Distinct cards failing with one cause fingerprint that open the breaker. Default 2.</summary>
-    public int CauseBreakerCardThreshold { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultCardThreshold;
+    public int CauseBreakerCardThreshold { get; init; } = CauseBreakerSettingsDefaults.CardThreshold;
 
     /// <summary>Hours a failure observation counts toward the threshold. Default 24.</summary>
-    public int CauseBreakerWindowHours { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultWindowHours;
+    public int CauseBreakerWindowHours { get; init; } = CauseBreakerSettingsDefaults.WindowHours;
 
     /// <summary>When true (default), unaffected semantic aspects may carry over after a review-driven fix.</summary>
     public bool ScopedReviewAfterFinding { get; init; } = true;

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import type { TaskInfo } from '../../../../models/task.model';
+import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSelectionService } from '../../../task-detail/runtime';
@@ -15,8 +15,11 @@ import { buildCauseWaitBadge } from '../task-card/task-card-view-model';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class TaskCardCauseWaitComponent {
-  readonly wait = input<TaskInfo['causeWait']>(null);
-  readonly badge = computed(() => buildCauseWaitBadge(this.wait()));
+  readonly task = input<TaskInfo | null>(null);
+  readonly badge = computed(() => {
+    const task = this.task();
+    return buildCauseWaitBadge(task?.state === TaskState.AutoReview ? task.causeWait : null);
+  });
   private readonly tasks = inject(TaskService);
   private readonly selection = inject(TaskSelectionService);
   private readonly notifications = inject(NotificationService);

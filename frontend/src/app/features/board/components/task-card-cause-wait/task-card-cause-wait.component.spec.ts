@@ -5,6 +5,7 @@ import { NotificationService } from '../../../../services/notification.service';
 import { TaskService } from '../../../../services/task.service';
 import { TaskSelectionService } from '../../../task-detail/runtime';
 import { TaskCardCauseWaitComponent } from './task-card-cause-wait.component';
+import { TaskState, type TaskInfo } from '../../../../models/task.model';
 
 describe('TaskCardCauseWaitComponent', () => {
   it('names the cause card the card waits for', async () => {
@@ -18,13 +19,16 @@ describe('TaskCardCauseWaitComponent', () => {
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(TaskCardCauseWaitComponent);
-    fixture.componentRef.setInput('wait', {
-      causeKey: 'AGT-2801',
-      fingerprint: '3f1c0a9e5b7d2c44',
-      failureClass: 'ReviewInfra/ToolUnavailable',
-      since: '2026-09-09T18:06:00.000Z',
-      reason: 'waiting for AGT-2801: ReviewInfra/ToolUnavailable on agent:codex:gpt-5.4-mini',
-    });
+    fixture.componentRef.setInput('task', {
+      state: TaskState.AutoReview,
+      causeWait: {
+        causeKey: 'AGT-2801',
+        fingerprint: '3f1c0a9e5b7d2c44',
+        failureClass: 'ReviewInfra/ToolUnavailable',
+        since: '2026-09-09T18:06:00.000Z',
+        reason: 'waiting for AGT-2801: ReviewInfra/ToolUnavailable on agent:codex:gpt-5.4-mini',
+      },
+    } as TaskInfo);
     fixture.detectChanges();
 
     const pill = fixture.nativeElement.querySelector('[data-testid="task-card-cause-wait"]') as HTMLElement;

@@ -53,6 +53,7 @@ interface JobInfoStub {
   phase: string | null;
   phaseEnteredAt?: string | null;
   postProcessingChecks?: { name: string; status: string; startedAt?: string | null }[];
+  causeWait?: { causeKey: string; fingerprint: string; failureClass: string; since: string; reason: string };
   steerPendingSince?: string | null;
   tags: string[];
   taskType: string;
@@ -333,6 +334,36 @@ async function dismissRuntimeErrorOverlay(page: Page): Promise<void> {
 
 test.describe('Post Processing lane identity', () => {
   test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('names the cause card while review waits in both themes', async ({ page }) => {
+    const job = jobInfo({
+      id: 'cause-wait-card',
+      title: 'Review waiting on a shared cause',
+      tokenSummary: null,
+      causeWait: {
+        causeKey: 'AGT-2801',
+        fingerprint: '3f1c0a9e5b7d2c44',
+        failureClass: 'ReviewInfra/ToolUnavailable',
+        since: '2026-09-09T18:06:00.000Z',
+        reason: 'waiting for AGT-2801: review model unavailable',
+      },
+    });
+    await seedBoardTab(page);
+    await installRoutes(page, [job]);
+    await page.goto('/');
+
+    const card = page.getByTestId('task-card').filter({ hasText: job.title });
+    const wait = card.getByTestId('task-card-cause-wait');
+    await expect(wait).toHaveText(/Waiting for AGT-2801/);
+    await expect(card).not.toContainText('Escalated');
+    await dismissRuntimeErrorOverlay(page);
+    mkdirSync(SHOTS, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(wait).toBeVisible();
+      await card.screenshot({ path: `${SHOTS}/cause-wait-${theme}--mocked.png` });
+    }
+  });
 
   test('shows Codex as the coding agent and Claude as supporting post-processing evidence', async ({ page }) => {
     const job = jobInfo();
