@@ -357,7 +357,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 |------|---------|
 | `menu-no-icons.spec.ts` | Menu surfaces are text-only |
 
-### `mockups/` - 7 specs
+### `mockups/` - 8 specs
 
 | Spec | Summary |
 |------|---------|
@@ -367,6 +367,7 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `project-overview-dashboard-mockup.spec.ts` | Project Overview interactive mockup |
 | `remote-run-testsuite-report.spec.ts` | @mockup remote-run testsuite report |
 | `result-view-mockup.spec.ts` | @mockup result-view (real component) |
+| `usage-alarms.spec.ts` | @mockup usage alarms (real components), HUC-S5 alarm transitions |
 | `usage-chips.spec.ts` | @mockup usage chips (real components), HUC-S2 header usage cockpit |
 
 ### `orchestrator/` - 19 specs

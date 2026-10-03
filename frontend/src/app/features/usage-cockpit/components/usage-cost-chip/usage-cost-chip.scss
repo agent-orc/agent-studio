@@ -35,3 +35,11 @@
 .usage-cost-chip__mark {
   @include chip.mark;
 }
+
+.usage-cost-chip--warning {
+  @include chip.alarm-warning;
+
+  .usage-cost-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-warn));
+  }
+}
