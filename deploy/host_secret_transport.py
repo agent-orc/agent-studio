@@ -17,12 +17,16 @@ import json
 import os
 import re
 import secrets
+import shlex
+import ssl
 import subprocess
 import stat
 import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from dataclasses import asdict
 from pathlib import Path
@@ -54,6 +58,62 @@ class HostAuthoritySource(Protocol):
     def current(self, host_id: str, credential_kind: str) -> tuple[str, str, bool] | None: ...
 
 
+class HttpsHostAuthoritySource:
+    """Read the installation issuer's current state over authenticated HTTPS.
+
+    This endpoint is owned by the installation authority, outside any host
+    backup. An unreachable issuer fails closed. The token never enters argv or
+    a durable operation receipt.
+    """
+
+    def __init__(self, endpoint: str, token_file: Path,
+                 ca_bundle: Path | None = None, open_url=urlopen):
+        parsed = urlsplit(endpoint)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+                or parsed.password or parsed.query or parsed.fragment):
+            raise SecretPolicyError("An HTTPS authority endpoint is required")
+        self.endpoint = endpoint
+        self.token_file = Path(token_file)
+        self.ca_bundle = Path(ca_bundle) if ca_bundle is not None else None
+        self.open_url = open_url
+
+    def current(self, host_id: str, credential_kind: str) -> tuple[str, str, bool] | None:
+        try:
+            _check_directory(self.token_file.parent, os.getuid(), os.getgid(), 0o700)
+            _check_file(self.token_file, os.getuid(), os.getgid(), 0o600)
+            token = self.token_file.read_text(encoding="ascii").strip()
+            if not token or any(char.isspace() for char in token):
+                return None
+            separator = "&" if "?" in self.endpoint else "?"
+            url = self.endpoint + separator + urlencode(
+                {"hostId": host_id, "credentialKind": credential_kind})
+            request = Request(url, headers={"Authorization": "Bearer " + token,
+                                            "Cache-Control": "no-store"})
+            options = {"timeout": 5}
+            if self.ca_bundle is not None:
+                options["context"] = ssl.create_default_context(cafile=str(self.ca_bundle))
+            with self.open_url(request, **options) as response:
+                if response.status != 200:
+                    return None
+                body = response.read(4097)
+            if len(body) > 4096:
+                return None
+            record = json.loads(body)
+            if not isinstance(record, dict):
+                return None
+            if (record.get("hostId") != host_id or
+                    record.get("credentialKind") != credential_kind or
+                    not isinstance(record.get("instanceId"), str) or
+                    not record["instanceId"] or
+                    not isinstance(record.get("generation"), str) or
+                    not record["generation"] or
+                    type(record.get("revoked")) is not bool):
+                return None
+            return record["instanceId"], record["generation"], record["revoked"]
+        except (OSError, ValueError, TypeError, KeyError):
+            return None
+
+
 def require_current_host_authority(source: HostAuthoritySource, host_id: str,
                                    credential_kind: str, instance_id: str,
                                    generation: str) -> None:
@@ -67,6 +127,30 @@ def require_current_host_authority(source: HostAuthoritySource, host_id: str,
     if (current is None or current[2] or current[0] != instance_id
             or current[1] != generation):
         raise SecretPolicyError("Restored host lacks current credential authority")
+
+
+@dataclass(frozen=True)
+class HostAuthorityBinding:
+    source: HostAuthoritySource
+    host_id: str
+    credential_kind: str
+    instance_id: str
+    generation: str
+
+    def verify(self) -> None:
+        if not all((self.host_id, self.credential_kind,
+                    self.instance_id, self.generation)):
+            raise SecretPolicyError("Host authority binding is incomplete")
+        require_current_host_authority(self.source, self.host_id,
+                                       self.credential_kind, self.instance_id,
+                                       self.generation)
+
+    def install(self, adapter: FileSecretAdapter, value: bytes,
+                operation_ref: str, generation: str) -> SecretReceipt:
+        if generation != self.generation:
+            raise SecretPolicyError("Operation generation differs from live host authority")
+        self.verify()
+        return adapter.install(value, operation_ref, generation)
 
 
 def _check_file(path: Path, uid: int, gid: int, mode: int) -> None:
@@ -361,13 +445,18 @@ def generate_wireguard_keypair(private_path: Path, uid: int, gid: int,
 
 class WireGuardRotation:
     def __init__(self, gateway: WireGuardGateway, peer: WireGuardPeer,
+                 authority: HostAuthorityBinding,
                  clock: Callable[[], float] = time.time):
         self.gateway = gateway
         self.peer = peer
+        self.authority = authority
         self.clock = clock
 
     def rotate(self, operation_ref: str, old: str, candidate: str,
                routes: list[str]) -> RotationReceipt:
+        if self.authority.credential_kind != "wireguard_peer":
+            raise SecretPolicyError("WireGuard rotation requires peer authority")
+        self.authority.verify()
         if not operation_ref or not old or not candidate or old == candidate or not routes:
             raise SecretPolicyError("A distinct candidate peer is required")
         existing = self.gateway.peers()
@@ -602,11 +691,16 @@ class SshAdministration(Protocol):
 
 
 class SshKeyRotation:
-    def __init__(self, administration: SshAdministration):
+    def __init__(self, administration: SshAdministration,
+                 authority: HostAuthorityBinding):
         self.administration = administration
+        self.authority = authority
 
     def rotate(self, operation_ref: str, old_fingerprint: str,
                new_fingerprint: str, new_public_key: str, owner: str) -> RotationReceipt:
+        if self.authority.credential_kind != "administration_ssh_key":
+            raise SecretPolicyError("SSH rotation requires administration authority")
+        self.authority.verify()
         inventory = self.administration.inventory()
         if (not operation_ref or old_fingerprint == new_fingerprint or
                 inventory.get(old_fingerprint) != owner or
@@ -676,7 +770,7 @@ class PinnedSshAdministration:
                    "-o", "UpdateHostKeys=no",
                    "-o", f"UserKnownHostsFile={self.known_hosts}",
                    "-i", str(identity), f"{self.user}@{self.host}",
-                   "sh", "-c", script]
+                   "sh", "-c", shlex.quote(script)]
         return self.run(command, input=input_text, text=True, capture_output=True,
                         timeout=20, check=False)
 
@@ -767,10 +861,15 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--gid", type=int, required=True)
         command.add_argument("--operation-ref", required=True)
         command.add_argument("--generation", required=True)
+        command.add_argument("--host-id", required=True)
+        command.add_argument("--instance-id", required=True)
+        command.add_argument("--credential-kind", required=True)
+        command.add_argument("--authority-url", required=True)
+        command.add_argument("--authority-token-file", type=Path, required=True)
+        command.add_argument("--authority-ca-file", type=Path)
         if name == "consume-envelope":
             command.add_argument("--directory", type=Path, required=True)
             command.add_argument("--envelope-ref", required=True)
-            command.add_argument("--host-id", required=True)
             command.add_argument("--host-private-key-file", type=Path, required=True)
     issue = commands.add_parser("issue-envelope")
     issue.add_argument("--directory", type=Path, required=True)
@@ -789,6 +888,11 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"operationRef": args.operation_ref,
                               "envelopeRef": reference}, sort_keys=True))
             return 0
+        authority = HostAuthorityBinding(
+            HttpsHostAuthoritySource(args.authority_url, args.authority_token_file,
+                                     args.authority_ca_file),
+            args.host_id, args.credential_kind, args.instance_id, args.generation)
+        authority.verify()
         if args.command == "install":
             value = sys.stdin.buffer.read()
         else:
@@ -800,7 +904,8 @@ def main(argv: list[str] | None = None) -> int:
             value = DeliveryEnvelopeStore(args.directory).consume(
                 args.envelope_ref, args.host_id, args.operation_ref,
                 args.generation, private_key)
-        receipt = _adapter_for(args.profile, args.target, args.uid, args.gid).install(
+        receipt = authority.install(
+            _adapter_for(args.profile, args.target, args.uid, args.gid),
             value, args.operation_ref, args.generation)
         print(json.dumps(asdict(receipt), sort_keys=True))
         return 0

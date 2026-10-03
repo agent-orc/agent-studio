@@ -83,12 +83,26 @@ replaces the target, fsyncs the directory, and rechecks ownership and mode.
 secret store. Operation receipts contain references and generation only.
 From a checkout, `python3 -m deploy.host_secret_transport install` reads the
 new value from stdin and takes a profile, target, owner IDs, operation
-reference and generation as nonsecret arguments. The distributed installer
+reference and generation as nonsecret arguments. Install and envelope
+consumption also require `--host-id`, `--instance-id`, `--credential-kind`,
+`--authority-url` and `--authority-token-file`. For a private CA, pass
+`--authority-ca-file` so the issuer certificate is verified against that CA.
+The URL is the live installation
+issuer's HTTPS current-authority endpoint, outside the restored host backup.
+It accepts `hostId` and `credentialKind` query parameters and returns HTTP 200
+with `hostId`, `credentialKind`, `instanceId`, `generation` and a boolean
+`revoked`. A missing, mismatched, revoked or unreachable response stops the
+operation before any replacement or envelope claim. The caller's issuer
+credential file must be owner-only `0700`/`0600`; the issuer must authorize
+that caller to read only its host authority. The distributed installer
 copies the same tool to `/opt/agent-orchestrator/compose/host_secret_transport.py`
 for direct invocation. `issue-envelope` also reads the value from stdin;
 `consume-envelope` uses the enrolled host private-key file and installs through
 the same adapter. Install the optional envelope dependency from the adjacent
 `host-secret-requirements.txt`. Never pass a secret as a shell argument.
+The issuer response is current authority, not the metadata-only credential
+registry or a copy of its backed-up records. The installation owner must make
+this endpoint available before restoring a host's secret mounts or routes.
 
 A Docker file-backed secret keeps its old bound inode when the host file is
 atomically replaced. Within the principal overlap and after the consumer

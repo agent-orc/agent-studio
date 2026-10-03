@@ -156,10 +156,15 @@ after selection restores and verifies the old provisioner identity. A changed se
 verification; never use automatic trust. Keep a tested console recovery path.
 
 On a lost-host restore, read the current host instance, credential generation,
-and revocation state from the live issuer, not the backup. Call
-`require_current_host_authority` before mounting restored key material or
-enabling a route. A replaced instance, revoked generation, or unavailable
-issuer refuses authority and requires re-enrolment. Recreate provider OAuth
+and revocation state from the live issuer, not the backup. The host secret CLI
+checks that issuer before installing a file or claiming an envelope, and both
+`WireGuardRotation` and `SshKeyRotation` require an authority binding before
+they inventory or change a route or key. The issuer must live outside the
+restored host backup and answer the HTTPS current-authority contract in the
+control-plane Docker guide. A replaced instance, revoked generation, or
+unavailable issuer refuses authority and requires re-enrolment. Do not start
+restored runner containers with copied native-login volumes or key mounts
+before that check. Recreate provider OAuth
 on the host instead of copying a refresh session. The central command and
 installation records retain operation references and public fingerprints,
 not private keys or bearer values.

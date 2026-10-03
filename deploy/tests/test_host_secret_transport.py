@@ -7,8 +7,11 @@ import hashlib
 import json
 import subprocess
 import sys
+import io
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from deploy.host_secret_transport import (
     FileSecretAdapter,
@@ -25,7 +28,19 @@ from deploy.host_secret_transport import (
     generate_wireguard_keypair,
     AuthenticatedTaskServerProbe,
     require_current_host_authority,
+    HostAuthorityBinding,
+    HttpsHostAuthoritySource,
+    main,
 )
+
+
+def current_authority(kind):
+    class Source:
+        def current(self, host_id, credential_kind):
+            return ("instance-a", "generation-a", False)
+
+    return HostAuthorityBinding(Source(), "host-a", kind,
+                                "instance-a", "generation-a")
 
 
 class HostSecretTransportTests(unittest.TestCase):
@@ -141,15 +156,133 @@ class HostSecretTransportTests(unittest.TestCase):
             reference = json.loads(issued.stdout)["envelopeRef"]
             self.assertNotIn(b"redacted", issued.stdout)
             self.assertNotIn(b"redacted", (envelope / (reference + ".json")).read_bytes())
-            consumed = subprocess.run(
-                [sys.executable, "-m", "deploy.host_secret_transport", "consume-envelope",
-                 *common, "--envelope-ref", reference,
-                 "--host-private-key-file", str(private), "--profile", "native",
-                 "--target", str(target), "--uid", str(os.getuid()),
-                 "--gid", str(os.getgid())], capture_output=True, check=True)
+            class Source:
+                def current(self, host_id, credential_kind):
+                    return ("instance-a", "generation-2", False)
+
+            out = io.StringIO()
+            with patch("deploy.host_secret_transport.HttpsHostAuthoritySource",
+                       return_value=Source()), redirect_stdout(out):
+                code = main(["consume-envelope", *common, "--envelope-ref", reference,
+                             "--host-private-key-file", str(private), "--profile", "native",
+                             "--target", str(target), "--uid", str(os.getuid()),
+                             "--gid", str(os.getgid()), "--instance-id", "instance-a",
+                             "--credential-kind", "provider_api_key",
+                             "--authority-url", "https://issuer.example/authority",
+                             "--authority-token-file", str(private)])
+            self.assertEqual(code, 0)
             self.assertEqual(target.read_bytes(), fixture)
-            self.assertNotIn(b"redacted", consumed.stdout)
+            self.assertNotIn("redacted", out.getvalue())
             self.assertFalse((envelope / (reference + ".json")).exists())
+
+    def test_restored_host_install_checks_live_issuer_before_replacing_file(self):
+        class Source:
+            record = ("instance-current", "generation-current", False)
+            calls = []
+
+            def current(self, host_id, credential_kind):
+                self.calls.append((host_id, credential_kind))
+                return self.record
+
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "native"
+            parent.mkdir(mode=0o700)
+            target = parent / "auth.json"
+            source = Source()
+            binding = HostAuthorityBinding(source, "host-a", "provider_api_key",
+                                           "instance-restored", "generation-old")
+            with self.assertRaisesRegex(SecretPolicyError, "current credential authority"):
+                binding.install(NativeCliStoreAdapter(target, os.getuid(), os.getgid()),
+                                b'{"fixture":"redacted"}', "op-1", "generation-old")
+            self.assertFalse(target.exists())
+            self.assertEqual(source.calls, [("host-a", "provider_api_key")])
+            source.record = ("instance-restored", "generation-old", True)
+            with self.assertRaises(SecretPolicyError):
+                binding.install(NativeCliStoreAdapter(target, os.getuid(), os.getgid()),
+                                b'{"fixture":"redacted"}', "op-1", "generation-old")
+            self.assertFalse(target.exists())
+
+    def test_restored_host_route_rejects_revoked_generation_before_staging(self):
+        class Source:
+            def current(self, host_id, credential_kind):
+                return ("instance-a", "generation-a", True)
+
+        class Gateway:
+            def peers(self):
+                raise AssertionError("route inventory must not run")
+
+        class Peer:
+            def stage(self, peer):
+                raise AssertionError("candidate must not be staged")
+
+        authority = HostAuthorityBinding(Source(), "host-a", "wireguard_peer",
+                                         "instance-a", "generation-a")
+        with self.assertRaises(SecretPolicyError):
+            WireGuardRotation(Gateway(), Peer(), authority=authority).rotate(
+                "op-1", "old", "candidate", ["10.60.0.3/32"])
+
+    def test_https_authority_reads_current_issuer_and_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "issuer"
+            parent.mkdir(mode=0o700)
+            token_file = parent / "token"
+            token_file.write_text("fixture-issuer-token\n")
+            token_file.chmod(0o600)
+            calls = []
+
+            class Response(io.BytesIO):
+                status = 200
+
+            def open_url(request, timeout):
+                calls.append((request.full_url, request.get_header("Authorization"), timeout))
+                return Response(json.dumps({"hostId": "host-a", "credentialKind": "wireguard_peer",
+                                            "instanceId": "instance-a", "generation": "g2",
+                                            "revoked": False}).encode())
+
+            source = HttpsHostAuthoritySource(
+                "https://issuer.example/current", token_file, open_url=open_url)
+            self.assertEqual(source.current("host-a", "wireguard_peer"),
+                             ("instance-a", "g2", False))
+            self.assertIn("hostId=host-a", calls[0][0])
+            self.assertEqual(calls[0][1], "Bearer fixture-issuer-token")
+            self.assertEqual(calls[0][2], 5)
+            source.open_url = lambda request, timeout: (_ for _ in ()).throw(OSError("offline"))
+            with self.assertRaises(SecretPolicyError):
+                require_current_host_authority(source, "host-a", "wireguard_peer",
+                                               "instance-a", "g2")
+
+    def test_cli_refuses_revoked_host_before_consuming_envelope(self):
+        class Source:
+            def current(self, host_id, credential_kind):
+                return ("instance-a", "g2", True)
+
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "native"
+            parent.mkdir(mode=0o700)
+            envelope_dir = Path(root) / "envelopes"
+            envelope_dir.mkdir(mode=0o700)
+            envelope = envelope_dir / "env_fixture123.json"
+            envelope.write_text('{"fixture":"ciphertext"}')
+            private = parent / "host.key"
+            private.write_bytes(b"x" * 32)
+            private.chmod(0o600)
+            target = parent / "auth.json"
+            error = io.StringIO()
+            with patch("deploy.host_secret_transport.HttpsHostAuthoritySource",
+                       return_value=Source()), redirect_stderr(error):
+                code = main(["consume-envelope", "--profile", "native",
+                             "--target", str(target), "--uid", str(os.getuid()),
+                             "--gid", str(os.getgid()), "--operation-ref", "op-1",
+                             "--generation", "g2", "--host-id", "host-a",
+                             "--instance-id", "instance-a", "--credential-kind", "provider_api_key",
+                             "--authority-url", "https://issuer.example/current",
+                             "--authority-token-file", str(private), "--directory", str(envelope_dir),
+                             "--envelope-ref", "env_fixture123",
+                             "--host-private-key-file", str(private)])
+            self.assertEqual(code, 1)
+            self.assertFalse(target.exists())
+            self.assertTrue(envelope.exists())
+            self.assertNotIn("ciphertext", error.getvalue())
 
 
 class RotationTests(unittest.TestCase):
@@ -295,7 +428,7 @@ class RotationTests(unittest.TestCase):
             def activate(self, peer):
                 events.append(("activate", peer))
 
-        receipt = WireGuardRotation(Gateway(), Peer(), clock=lambda: 100).rotate(
+        receipt = WireGuardRotation(Gateway(), Peer(), current_authority("wireguard_peer"), clock=lambda: 100).rotate(
             "op-1", "old", "candidate", ["10.60.0.3/32"])
         self.assertEqual(receipt.outcome, "retired")
         self.assertLess(events.index(("activate", "candidate")), events.index(("remove", "old")))
@@ -313,7 +446,7 @@ class RotationTests(unittest.TestCase):
                 raise AssertionError("same interface must fail before staging")
 
         with self.assertRaisesRegex(SecretPolicyError, "separate interface"):
-            WireGuardRotation(Gateway(), Peer()).rotate(
+            WireGuardRotation(Gateway(), Peer(), current_authority("wireguard_peer")).rotate(
                 "op-1", "old", "candidate", ["10.60.0.3/32"])
 
     def test_wireguard_conflict_and_failed_proof_keep_old_peer(self):
@@ -348,7 +481,7 @@ class RotationTests(unittest.TestCase):
             def activate(self, peer):
                 raise AssertionError("must not switch")
 
-        rotator = WireGuardRotation(Gateway(), Peer(), clock=lambda: 100)
+        rotator = WireGuardRotation(Gateway(), Peer(), current_authority("wireguard_peer"), clock=lambda: 100)
         with self.assertRaises(SecretPolicyError):
             rotator.rotate("op-1", "old", "candidate", ["10.60.0.2/32"])
         receipt = rotator.rotate("op-2", "old", "candidate", ["10.60.0.3/32"])
@@ -387,7 +520,7 @@ class RotationTests(unittest.TestCase):
             def activate(self, peer):
                 raise AssertionError("stale tunnel must not become active")
 
-        receipt = WireGuardRotation(Gateway(), Peer(), clock=lambda: 100).rotate(
+        receipt = WireGuardRotation(Gateway(), Peer(), current_authority("wireguard_peer"), clock=lambda: 100).rotate(
             "op-1", "old", "candidate", ["10.60.0.3/32"])
         self.assertEqual(receipt.outcome, "old-route-retained")
         self.assertEqual(removed, ["candidate"])
@@ -427,7 +560,7 @@ class RotationTests(unittest.TestCase):
             def activate(self, peer):
                 active[0] = peer
 
-        receipt = WireGuardRotation(Gateway(), Peer(), clock=lambda: 100).rotate(
+        receipt = WireGuardRotation(Gateway(), Peer(), current_authority("wireguard_peer"), clock=lambda: 100).rotate(
             "op-1", "old", "candidate", ["10.60.0.3/32"])
         self.assertEqual(receipt.outcome, "old-route-retained")
         self.assertEqual(active[0], "old")
@@ -453,7 +586,7 @@ class RotationTests(unittest.TestCase):
             def remove_public_key(self, fingerprint):
                 events.append("remove")
 
-        receipt = SshKeyRotation(Ssh()).rotate(
+        receipt = SshKeyRotation(Ssh(), current_authority("administration_ssh_key")).rotate(
             "op-1", "old-fingerprint", "new-fingerprint", "ssh-ed25519 fixture", "owner-a")
         self.assertEqual(receipt.outcome, "old-access-retained")
         self.assertEqual(events, ["add", "prove"])
@@ -480,7 +613,7 @@ class RotationTests(unittest.TestCase):
                 events.append("remove")
                 authorized.pop(fingerprint)
 
-        receipt = SshKeyRotation(Ssh()).rotate(
+        receipt = SshKeyRotation(Ssh(), current_authority("administration_ssh_key")).rotate(
             "op-1", "old", "new", "ssh-ed25519 fixture", "owner-a")
         self.assertEqual(receipt.outcome, "retired")
         self.assertEqual(events, ["add", "prove", "select", "prove", "remove", "prove"])
@@ -502,7 +635,7 @@ class RotationTests(unittest.TestCase):
             def remove_public_key(self, fingerprint):
                 pass
 
-        receipt = SshKeyRotation(Ssh()).rotate(
+        receipt = SshKeyRotation(Ssh(), current_authority("administration_ssh_key")).rotate(
             "op-1", "old", "new", "ssh-ed25519 fixture", "owner-a")
         self.assertEqual(receipt.outcome, "retirement-unverified")
 
@@ -531,7 +664,7 @@ class RotationTests(unittest.TestCase):
             def remove_public_key(self, fingerprint):
                 raise AssertionError("old access must stay authorized")
 
-        receipt = SshKeyRotation(Ssh()).rotate(
+        receipt = SshKeyRotation(Ssh(), current_authority("administration_ssh_key")).rotate(
             "op-1", "old", "new", "ssh-ed25519 fixture", "owner-a")
         self.assertEqual(receipt.outcome, "old-access-retained")
         self.assertEqual(selected, ["new", "old"])
@@ -572,6 +705,70 @@ class RotationTests(unittest.TestCase):
             self.assertIn(str(new), ssh_calls[2][0])
             self.assertNotIn(str(old), ssh_calls[2][0])
             self.assertEqual(calls[1][1], public + "\n")
+
+    def test_ssh_remote_script_fails_closed_when_key_input_is_missing(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "ssh"
+            parent.mkdir(mode=0o700)
+            old, new, known = (parent / name for name in ("old", "new", "known_hosts"))
+            for path in (old, new, known):
+                path.write_text("fixture")
+                path.chmod(0o600)
+            home = parent / "home"
+            home.mkdir(mode=0o700)
+            authorized = home / ".ssh" / "authorized_keys"
+            blob = b"public-fixture"
+            public = "ssh-ed25519 " + base64.b64encode(blob).decode() + " fixture"
+            fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+
+            def remote(args, **kwargs):
+                command = " ".join(args[args.index("admin@host") + 1:])
+                # SSH sends one command string to the remote login shell. Simulate
+                # a dropped stdin stream; read must fail before any key mutation.
+                return subprocess.run(["sh", "-c", command], input="", text=True,
+                                      capture_output=True, env={**os.environ, "HOME": str(home)})
+
+            adapter = PinnedSshAdministration(
+                "host", "admin", known, old, new, parent / "provisioner.conf",
+                {fingerprint: (public, "owner-a")}, run=remote)
+            with self.assertRaises(SecretPolicyError):
+                adapter.add_public_key(public)
+            self.assertEqual(authorized.read_text(), "")
+            authorized.write_text(public + "\n")
+            with self.assertRaises(SecretPolicyError):
+                adapter.remove_public_key(fingerprint)
+            self.assertEqual(authorized.read_text(), public + "\n")
+
+    def test_ssh_remote_shell_adds_and_retires_exact_public_key(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "ssh"
+            parent.mkdir(mode=0o700)
+            old, new, known = (parent / name for name in ("old", "new", "known_hosts"))
+            for path in (old, new, known):
+                path.write_text("fixture")
+                path.chmod(0o600)
+            home = parent / "home"
+            home.mkdir(mode=0o700)
+            blob = b"public-fixture"
+            public = "ssh-ed25519 " + base64.b64encode(blob).decode() + " fixture"
+            fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+
+            def remote(args, **kwargs):
+                command = " ".join(args[args.index("admin@host") + 1:])
+                return subprocess.run(["sh", "-c", command], input=kwargs["input"],
+                                      text=True, capture_output=True,
+                                      env={**os.environ, "HOME": str(home)})
+
+            adapter = PinnedSshAdministration(
+                "host", "admin", known, old, new, parent / "provisioner.conf",
+                {fingerprint: (public, "owner-a")}, run=remote)
+            adapter.add_public_key(public)
+            authorized = home / ".ssh" / "authorized_keys"
+            self.assertEqual(authorized.read_text(), public + "\n")
+            adapter.add_public_key(public)
+            self.assertEqual(authorized.read_text(), public + "\n")
+            adapter.remove_public_key(fingerprint)
+            self.assertEqual(authorized.read_text(), "")
 
     def test_ssh_candidate_identity_must_match_inventoried_fingerprint(self):
         with tempfile.TemporaryDirectory() as root:
