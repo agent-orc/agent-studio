@@ -94,9 +94,16 @@ public static class StudioV1LegacyRouteAlias
         }
         if (rest.Length == 1 && Is(rest[0], "board") && get)
             return new LegacyTarget("/api/tasks/grouped", null);
-        if (rest.Length >= 3 && Is(rest[0], "orchestrator") && Is(rest[1], "context")
-            && (get || post && Is(rest[^1], "refresh")))
-            return new LegacyTarget("/api/orchestrator/context" + Tail(rest, 2), null);
+        if (rest.Length >= 3 && Is(rest[0], "orchestrator") && Is(rest[1], "context"))
+        {
+            var singleScope = Is(rest[2], "global") || HasPrefix(rest[2], "project:");
+            var taskScope = HasPrefix(rest[2], "task:");
+            var read = get && (rest.Length == 3 && singleScope || rest.Length == 4 && taskScope);
+            var refresh = post && Is(rest[^1], "refresh")
+                && (rest.Length == 4 && singleScope || rest.Length == 5 && taskScope);
+            if (read || refresh)
+                return new LegacyTarget("/api/orchestrator/context" + Tail(rest, 2), null);
+        }
         if (rest.Length == 2 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions") && get)
             return new LegacyTarget("/api/orchestrator/sessions", null);
         if (rest.Length == 5 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions")
@@ -116,4 +123,7 @@ public static class StudioV1LegacyRouteAlias
 
     private static bool Is(string value, string expected)
         => string.Equals(value, expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasPrefix(string value, string prefix)
+        => value.Length > prefix.Length && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 }
