@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -43,15 +45,18 @@ public sealed class PreDevelopBuildGate
     /// True when the project's build profile yields build commands, or when the
     /// exact merge diff touches code that has a convention-derived work package
     /// (Angular specs for <c>frontend/</c>, impacted test projects for managed
-    /// sources). A project whose merge touches neither stays ungated rather than
-    /// receiving an invented command.
+    /// sources), or when it can change the Compose stack of a repository that
+    /// carries the render scripts (AGT-2981). A project whose merge touches
+    /// none of these stays ungated rather than receiving an invented command.
     /// </summary>
     public static bool AppliesTo(
         BuildProfile? profile,
-        IReadOnlyList<string>? changedFiles = null)
+        IReadOnlyList<string>? changedFiles = null,
+        string? repositoryPath = null)
         => VerifyCommandPlanner.HasProfileBuildCommands(profile)
             || FrontendWorkPackagePlanner.TouchesFrontend(changedFiles)
-            || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles);
+            || DotNetWorkPackagePlanner.TouchesDotNet(changedFiles)
+            || ComposeRenderGatePolicy.Commands(repositoryPath, changedFiles).Count > 0;
 
     /// <summary>
     /// The level matrix for the exact merge diff. Pure, so the four cases are

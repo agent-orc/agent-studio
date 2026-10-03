@@ -633,6 +633,8 @@ public static class V1ReviewPlaneEndpoints
                     .Where(command => Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind))
                     .Select(command => command.Aspect)
                 ?? []);
+            request = Contract.ReviewReportDiagnosisPolicy.Normalize(
+                request, currentReview.Subject.Plan);
             if (!string.Equals(request.Environment.ExecutorId, authoritativeLease.ExecutorId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.InstanceId, authoritativeLease.ClientId, StringComparison.Ordinal)
                 || !string.Equals(request.Environment.HostId, authoritativeLease.HostId, StringComparison.Ordinal)
@@ -1732,6 +1734,9 @@ public static class V1ReviewPlaneEndpoints
                 MergeBaseSha = request.Workspace.MergeBaseSha,
                 IntegrationTipSha = request.Workspace.IntegrationTipSha,
                 TestedTreeSha = request.Workspace.TreeHash,
+                VerifiedRequirements = review.Subject.Plan is { } plan
+                    ? Contract.ReviewLibraryStepPolicy.RequiredCapabilities(plan)
+                    : [],
                 BuildTestGate = buildTestGate switch
                 {
                     RemoteBuildTestGateClass.Passed => ReviewBuildTestGateClasses.Passed,
@@ -1978,7 +1983,8 @@ public static class V1ReviewPlaneEndpoints
     internal static Contract.ReviewPlanDto FallbackPlan(
         string? repositoryPath,
         BuildProfile? profile,
-        string? integrationRef)
+        string? integrationRef,
+        IReadOnlyList<string>? changedFiles = null)
     {
         var verify = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var preparation = GatePreparationPlanner.Plan(
@@ -2026,6 +2032,23 @@ public static class V1ReviewPlaneEndpoints
                     WorkingSubdir: command.WorkingSubdir);
             })
             .ToList();
+        // AGT-2981: a delivery that can change the Compose stack renders it.
+        // The command text carries the compose-render host requirement, so
+        // claim admission routes the attempt to an executor that can run
+        // `docker compose config`. Compared on exit status: a render that is
+        // already red on the merge base is not charged to this delivery. A
+        // declared script the delivery removed fails its step (exit 1), so the
+        // plan never loses a render step to a missing script.
+        commands.AddRange(Contract.ComposeRenderGatePolicy
+            .OwedScripts([repositoryPath], changedFiles)
+            .Select((script, index) => new Contract.ReviewCommandDto(
+                $"compose-render-{index + 1}",
+                "build-tests",
+                "sh",
+                ["-lc", Contract.ComposeRenderGatePolicy.GuardedCommand(script)],
+                TimeoutSeconds: 1800,
+                CompareToBaseline: true,
+                BaselineMode: Contract.ReviewBaselineModes.ExitStatus)));
         if (commands.Count == 0)
         {
             commands.Add(new Contract.ReviewCommandDto(
@@ -2793,9 +2816,11 @@ public sealed class V1ReviewExecutorRegistry
         string runnerId,
         Contract.CapabilityAdvertisementRequest request)
     {
-        if (request.SchemaVersion != Contract.CapabilityProtocol.CurrentSchemaVersion)
+        if (request.SchemaVersion is not (
+            Contract.CapabilityProtocol.LegacySchemaVersion or
+            Contract.CapabilityProtocol.CurrentSchemaVersion))
             throw new ArgumentException(
-                $"Capability schema {request.SchemaVersion} is unsupported; expected " +
+                $"Capability schema {request.SchemaVersion} is unsupported; expected 1 or " +
                 $"{Contract.CapabilityProtocol.CurrentSchemaVersion}.");
         if (request.FreshForSeconds is < 30 or > 900)
             throw new ArgumentException("Capability freshness must be between 30 and 900 seconds.");

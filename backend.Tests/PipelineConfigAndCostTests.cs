@@ -145,6 +145,7 @@ public class PipelineConfigAndCostTests
     {
         var record = new PipelineExecutionRecord
         {
+            StartedAt = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
             Steps =
             {
                 new PipelineStepExecution
@@ -712,7 +713,7 @@ public class PipelineConfigAndCostTests
                 new PipelineStepExecution
                 {
                     StepId = "core-agent-run", Kind = StepKind.Core,
-                    Model = "gpt-5-codex", InputTokens = 500_000, OutputTokens = 100_000,
+                    Model = "gpt-6-sol", InputTokens = 500_000, OutputTokens = 100_000,
                 },
             },
             PreviousAttempts = { priced },
@@ -724,7 +725,7 @@ public class PipelineConfigAndCostTests
         Assert.True(summary.AnyModelUnknown);
         Assert.Equal(1, summary.UnpricedRuns);
         var gap = Assert.Single(summary.PricingGaps);
-        Assert.Equal("gpt-5-codex", gap.ModelId);
+        Assert.Equal(ModelIds.Gpt6Sol, gap.ModelId);
         Assert.Equal("NoPriceForDate", gap.Reason);
         Assert.Equal(1, gap.AffectedRuns);
         Assert.True(summary.Runs[1].AnyModelUnknown);
@@ -954,7 +955,7 @@ public class PipelineConfigAndCostTests
                 new PipelineStepExecution
                 {
                     StepId = "core-agent-run", Kind = StepKind.Core,
-                    Model = "gpt-5-codex", InputTokens = 500_000, OutputTokens = 100_000,
+                    Model = "gpt-6-sol", InputTokens = 500_000, OutputTokens = 100_000,
                 }),
         };
 
@@ -963,7 +964,7 @@ public class PipelineConfigAndCostTests
         Assert.Equal(2.00m, timeline.TotalCostUsd);
         Assert.Equal(1, timeline.UnpricedRuns);
         var gap = Assert.Single(timeline.PricingGaps);
-        Assert.Equal("gpt-5-codex", gap.ModelId);
+        Assert.Equal(ModelIds.Gpt6Sol, gap.ModelId);
         Assert.Equal("NoPriceForDate", gap.Reason);
         Assert.Equal(1, gap.AffectedRuns);
 

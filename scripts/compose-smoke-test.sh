@@ -19,17 +19,18 @@ test "$mode" = dev || test "$mode" = images || { echo "invalid COMPOSE_SMOKE_MOD
 project="${COMPOSE_SMOKE_PROJECT:-agent-studio-smoke-$$}"
 export STUDIO_UI_PORT="${COMPOSE_SMOKE_UI_PORT:-14011}"
 export STUDIO_TASKSERVER_PORT="${COMPOSE_SMOKE_TASKSERVER_PORT:-15071}"
+export STUDIO_ALLOWED_ORIGINS="http://127.0.0.1:${STUDIO_UI_PORT}"
 fixture="$(mktemp -d)"
 override="$fixture/override.yaml"
 compose=(docker compose --project-name "$project" -f "$repo_root/docker-compose.yml" -f "$override")
 if [ "$mode" = dev ]; then
     suffix=-dev
-    services=(task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev)
+    services=(task-server-dev orchestrator-engine-dev studio-bff-dev orchestrator-api-dev web-dev agent-host-distributed-dev agent-host-review-distributed-dev)
     profiles=(--profile dev)
     build=(--build)
 else
     suffix=""
-    services=(task-server orchestrator-engine studio-bff orchestrator-api web agent-host-distributed)
+    services=(task-server orchestrator-engine studio-bff orchestrator-api web agent-host-distributed agent-host-review-distributed)
     profiles=()
     build=()
 fi
@@ -67,6 +68,7 @@ call() {
     shift 2
     curl --fail --silent --show-error -X "$method" \
         -H "Authorization: Bearer $studio_token" \
+        -H "Origin: http://127.0.0.1:${STUDIO_UI_PORT}" \
         -H 'X-Task-Protocol-Version: 2' \
         -H 'Content-Type: application/json' \
         "http://127.0.0.1:${STUDIO_UI_PORT}${path}" "$@"
@@ -119,19 +121,50 @@ OVERRIDE
 "${compose[@]}" "${profiles[@]}" up "${build[@]}" --wait "${services[@]}"
 wait_for_http "http://127.0.0.1:${STUDIO_UI_PORT}/healthz"
 grep -q '<app-root' < <(curl --fail --silent "http://127.0.0.1:${STUDIO_UI_PORT}/")
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/not-owned")" = 404
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api")" = 404
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Origin: https://foreign.invalid' -H 'Content-Type: application/json' \
+    -d '{"name":"rejected"}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/workspaces")" = 403
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{"name":"rejected"}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/workspaces")" = 403
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' -d '{}' \
+    "http://127.0.0.1:${STUDIO_UI_PORT}/api/projects")" = 404
 curl --fail --silent --show-error --dump-header - --output /dev/null "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/protocol" \
     | grep -qi '^X-Studio-Backend: studio-bff'
 studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio_token)"
+review_registration_deadline=$((SECONDS + 30))
+until curl --fail --silent --show-error \
+    -H "Authorization: Bearer $studio_token" -H 'X-Task-Protocol-Version: 2' \
+    "http://127.0.0.1:${STUDIO_TASKSERVER_PORT}/api/v1/management/remote-hosts" \
+    | jq -e 'any(.[]; .runnerId == "distributed-review-runner")' >/dev/null; do
+    [ "$SECONDS" -lt "$review_registration_deadline" ] || {
+        echo 'review host did not register with Task Server' >&2
+        exit 1
+    }
+    sleep 1
+done
 secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
 # Rotate while the Runner is idle, then prove its new credential can claim and
 # finish a task. No bearer value is copied through the host shell or logs.
 if [ "$mode" = dev ]; then rotate_mode=(--dev); else rotate_mode=(); fi
 old_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
+old_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" runner "${rotate_mode[@]}"
 new_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
 test "$old_runner_sha" != "$new_runner_sha"
 test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/runner_token)" = 600
+COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
+    "$repo_root/scripts/compose-rotate.sh" review-runner "${rotate_mode[@]}"
+new_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
+test "$old_review_sha" != "$new_review_sha"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/review_runner_token)" = 600
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" studio "${rotate_mode[@]}"
 new_studio_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"

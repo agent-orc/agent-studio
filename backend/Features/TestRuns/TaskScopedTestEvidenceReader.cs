@@ -91,9 +91,12 @@ internal static class TaskScopedTestEvidenceReader
 
     private static RemoteReviewAttemptFacts? ParseAttempt(string path)
     {
-        string text;
-        try { text = File.ReadAllText(path); }
+        // Read per card for task detail and the board index; an oversized
+        // results/ file is treated like an unreadable one (AGT-2991).
+        string? text;
+        try { text = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (text is null) return null;
 
         var frontmatter = ReadFrontmatter(text);
         if (!string.Equals(frontmatter.GetValueOrDefault("type"), "remote-review-grade", StringComparison.OrdinalIgnoreCase))
@@ -219,9 +222,12 @@ internal static class TaskScopedTestEvidenceReader
 
     private static TaskTestEvidenceSource? ReadGate(string path, string kind, string label)
     {
-        string text;
-        try { text = File.ReadAllText(path); }
+        // Read per card for task detail and the board index; an oversized
+        // results/ file is treated like an unreadable one (AGT-2991).
+        string? text;
+        try { text = BoundedFileRead.ReadAllTextOrNull(path, BoundedFileRead.EvidenceTextBytes); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (text is null) return null;
 
         var verdict = ReadToken(text, "verdict");
         var reason = ReadLineValue(text, "reason");

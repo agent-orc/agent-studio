@@ -31,8 +31,8 @@ deeper release gate.
 | 2 | Register runner | smoke | A real runner binary registers against the Task Server. |
 | 3 | Create task | smoke | The seeded workspace/project/task exist in `2-ready`. |
 | 4 | Claim task | smoke | The runner claims the task under a fenced lease. |
-| 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review` with an immutable result handoff. In Compose, Studio BFF is stopped before the run is released. |
-| 6 | Auto-review | smoke | The same run's review subject is claimed, reported, and cleaned up; the task reaches `5-human-review`. In Compose, the real Engine executes all five decision stages while Studio BFF stays stopped, then Studio BFF is restarted. |
+| 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review`. |
+| 6 | Auto-review | smoke | The real review executor checks out the coding run's exact SHA, executes its checks, reports, and cleans up; a supervised fixture publisher verifies that SHA at canonical `main`; the queued orchestration run is settled; the task reaches `5-human-review`. |
 | 7 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
 | 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
 | 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
@@ -73,8 +73,8 @@ even when a scenario step failed, so both reports reach the bundle.
 ```bash
 scripts/scenario.sh --target inproc --level smoke   # < 3 minutes, no Docker, Windows or Linux
 scripts/scenario.sh --target inproc --level full
-scripts/scenario.sh --target compose --level smoke  # folded default-profile health check
-scripts/scenario.sh --target compose --level full   # distributed stack + fake-CLI runner
+scripts/scenario.sh --target compose --level smoke  # one-box edge and authority check
+scripts/scenario.sh --target compose --level full   # Task Server + fake-CLI runner
 scripts/scenario.sh --target remote --level smoke --remote-url https://... --remote-token ...
 ```
 
@@ -85,17 +85,15 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   solution first (or let `scripts/scenario.sh` do it); no Docker, no network
   beyond `127.0.0.1`.
 - **`compose`** at `--level smoke` delegates to the folded
-  `scripts/compose-smoke-test.sh` check for the default `orchestrator-api` and
-  `frontend` stack. At `--level full`, it builds the `task-server`,
-  `studio-bff`, `orchestrator-engine`, and `agent-host-distributed` services from the development
-  checkout with the `distributed` and `runner` profiles, applies
+  `scripts/compose-smoke-test.sh` check for the one-box Task Server, engine,
+  BFF, frontend and runner roles. At `--level full`, it builds the `task-server`,
+  `studio-bff`, and `agent-host-distributed` services from the development
+  checkout, applies
   `testsupport/scenario/docker-compose.scenario.yml`, and runs the same nine
-  typed steps as `inproc`. The product stack lets its one-shot `bootstrap`
-  container generate the principal tokens inside the `secrets` volume; the
-  override instead injects the harness's own tokens as Compose secrets from
-  `DISTRIBUTED_*_TOKEN` and points every service's token file at
-  `/run/secrets`, while the bootstrap still runs from the scenario Task
-  Server image so volume ownership matches the product. The override uses
+  typed steps as `inproc`. Its bootstrap runs from the same source-built Task
+  Server image and generates the principal credentials in the product's
+  persistent `secrets` volume. The harness reads those credentials through
+  `docker compose exec`; it does not inject a second token set. The override uses
   `testsupport/scenario/runner.Dockerfile`, which contains the fixed
   `scenario-coding-agent` instead of relying on an installed provider CLI.
   The run uses its own Compose project, bind-mounted fixture repository, ports,
@@ -168,6 +166,14 @@ scripts/scenario.sh --target compose --level full \
   --report-dir "$JOB_RESULTS_DIR/compose-full"
 ```
 
+A card whose diff can change the Compose stack also renders it in its own
+gate. The gate runs `scripts/scenario.test.sh` and
+`scripts/compose-smoke-version.test.sh` on a host that advertises
+`toolchain:compose-render`, which needs the Docker CLI with the compose plugin
+but no daemon. A gate host without it fails with a routing verdict instead of
+passing. The trigger paths are listed in the
+[Compose-render gate step](../../system/domains/pipeline.md#compose-render-gate-step-agt-2981).
+
 The card build profile invokes the smoke test from
 `scripts/release/promotion-full-gate.sh`. The tag-triggered Release workflow
 keeps `Test release topology`, then runs `inproc full` and the blocking
@@ -192,6 +198,45 @@ The scenario is the regression suite from now on; it grows only here.
    `scripts/scenario.sh --target compose --level full` locally. Require two
    consecutive green CI runs before merging the scenario change.
 
+## Bounded one-box publication canary
+
+The full scenario uses one coding run, its immutable result ref and SHA, and
+one real review daemon with a detached `RemoteReviewExecutor` worker. The daemon
+runs natively on the same Linux host against the Compose Task Server. Both
+executors see the same fixture repository URL through a bind mount. Required
+checks read the coding results log and execute the known passing and failing
+checks. A synthetic passing review report is no longer used.
+The harness reserves one review slot and overrides only its test daemon's
+load threshold so other jobs on a shared CI host cannot prevent this bounded
+fixture from starting. Product admission defaults remain unchanged.
+
+For a provider-authenticated semantic review, run the same bounded scenario
+with an existing Codex host login (credentials stay outside reports):
+
+```sh
+SCENARIO_PROVIDER_REVIEW=1 scripts/scenario.sh --target compose --level full \
+  --report-dir artifacts/provider-canary
+```
+
+This adds a read-only `gpt-5.6-sol` / `medium` review of the tiny fixture diff,
+using the demanding-analysis tier from the model routing policy. It fails if
+the provider cannot authenticate or the aspect cannot produce a passing
+verdict; it never substitutes a fixture verdict. Routine CI leaves the flag
+unset and runs actual deterministic review commands without a provider call.
+
+After Task Server records Pass and cleanup, the supervised test publisher
+fetches that exact immutable ref, checks the reviewed SHA, requires a fast
+forward and pushes with an expected-old-SHA lease to the disposable origin's
+canonical `refs/heads/main`. It independently reads the remote ref back.
+`canary-publication.json` joins coding run, review subject, review attempt,
+reviewed SHA and published SHA. The Compose BFF remains stopped through review
+and publication. No product repository or production branch is published.
+
+This is a bounded supervised installation canary, not an implementation of the
+autonomous publication authority. I08 still owns detached automatic publication
+and recovery acceptance across the full deployment ladder. Source-build,
+published-image, N-1 and supported desktop/VM results remain separate evidence.
+
 ## Known gaps
 
 Found while building this scenario; each is a real, current limitation of the
@@ -212,11 +257,6 @@ by the scenario itself.
   driving a real run needs a runner already attached to that specific
   deployment, which a scenario script visiting from outside cannot provision
   without becoming a deployment tool itself.
-- **The Engine post-processing stage is still a decision loop.** It does not
-  execute `post-build-test-gate`; that checkout-bound step still belongs to
-  the local backend pipeline. The Compose scenario proves Runner completion
-  and review without Studio BFF, but cannot prove that gate or physical
-  Windows sleep until the planned host-capable gate migration lands.
 
 ## See also
 

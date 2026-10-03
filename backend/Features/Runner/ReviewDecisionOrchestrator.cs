@@ -4311,6 +4311,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             AttemptChainId = subject.AttemptChainId,
             SubjectRef = subject.SubjectRef,
+            IntegrationRef = _git?.ResolveIntegrationBranch(
+                repoPath, _projectSettings?.Get(entry.Name)?.IntegrationBranch),
             Project = entry.Name,
             WatchPath = entry.Path,
             JobId = current.Id,
@@ -4388,7 +4390,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             };
 
             WriteBuildTestGateLog(current.FolderPath, result, changedFiles);
+            // A routing verdict (AGT-2981) names a requirement this host lacks;
+            // repeating the gate here cannot change it.
             if (!result.IsInfrastructureFailure
+                || result.UnmetRequirements.Count > 0
                 || infrastructureRetry >= PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries)
                 break;
 
@@ -5972,7 +5977,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         BuildTestGateResult result)
     {
         _pipelineLog?.Complete(current.FolderPath);
-        var reason = BuildTestGateInfrastructureReasonPrefix
+        var reason = result.UnmetRequirements.Count > 0
+            ? BuildTestGateInfrastructureReasonPrefix
+              + $"{result.Reason} Exact subject {result.ExpectedSha ?? "missing"} in attempt chain "
+              + $"{result.AttemptChainId ?? "missing"} (fingerprint {result.FailureFingerprint ?? "missing"}); "
+              + "coding reissue budget was not consumed."
+            : BuildTestGateInfrastructureReasonPrefix
             + $"{result.FailureKind} persisted for exact subject {result.ExpectedSha ?? "missing"} "
             + $"in attempt chain {result.AttemptChainId ?? "missing"} after "
             + $"{PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries} retries "

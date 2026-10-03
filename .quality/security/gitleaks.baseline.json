@@ -1,0 +1,18 @@
+[
+  {
+    "Fingerprint": "backend.Tests/GitServiceWorktreeRunCommitTests.cs:github-pat:181",
+    "Note": "AGT-2991: synthetic ghp_ token (alternating A1b2C3... sequence) that proves the built-in commit gate blocks a high-confidence token without echoing it. Not a credential. The same file holds a literal private-key header fixture, so the platform commit gate blocks any edit to it; an inline gitleaks:allow marker is therefore not an option. Accepted narrowly by exact file:rule:line fingerprint."
+  },
+  {
+    "Fingerprint": "frontend/e2e/project/project-execution-definition.spec.ts:generic-api-key:36",
+    "Note": "AGT-2991: synthetic preparation cache key 'abcdef1234567890' in a mocked execution-definition response. A cache block key, not a credential. Accepted narrowly by exact file:rule:line fingerprint."
+  },
+  {
+    "Fingerprint": "frontend/src/app/features/project-detail/components/project-execution-definition/project-execution-definition.spec.ts:generic-api-key:40",
+    "Note": "AGT-2991: synthetic preparation cache key 'abcdef1234567890' in a component spec fixture. A cache block key, not a credential. Accepted narrowly by exact file:rule:line fingerprint."
+  },
+  {
+    "Fingerprint": "setup.Tests/SetupContractTests.cs:generic-api-key:15",
+    "Note": "AGT-2991: synthetic runner credential 'ats_0011223344556677.' followed by 64 repeated 'r' characters, used to prove the host join flow forwards the minted credential. Not a credential. Accepted narrowly by exact file:rule:line fingerprint."
+  }
+]

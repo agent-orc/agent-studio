@@ -31,6 +31,8 @@ Environment:
   PROMOTION_TAGGER_NAME             Annotated tagger name (default: Agent Studio Promotion).
   PROMOTION_TAGGER_EMAIL            Annotated tagger email (default: promotion@agent-studio.invalid).
   ATP_API                           Backend base URL for --project (default: http://127.0.0.1:5031).
+  RELEASE_GATE_*                    Gate capacity window and hot-host check around the full gate;
+                                     see release-gate-window.sh --help (AGT-2982).
 
 The execute path has no gate bypass. A non-fast-forward candidate, a red or
 incomplete gate, a tag collision, or a non-atomic push leaves main unchanged.
@@ -109,6 +111,11 @@ gate_script="$script_dir/promotion-full-gate.sh"
   printf 'Mandatory full gate is missing or not executable: %s\n' "$gate_script" >&2
   exit 2
 }
+window_helper="$script_dir/release-gate-window.sh"
+[[ -x "$window_helper" ]] || {
+  printf 'Gate capacity window helper is missing or not executable: %s\n' "$window_helper" >&2
+  exit 2
+}
 git -C "$repo" remote get-url "$remote" >/dev/null 2>&1 || {
   printf 'Git remote does not exist: %s\n' "$remote" >&2
   exit 2
@@ -172,6 +179,48 @@ json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'
 }
 
+gate_window_record="$evidence_dir/gate-window.env"
+rm -f -- "$gate_window_record"
+
+# Reads one key from the window helper's record; later lines win.
+gate_window_value() {
+  [[ -f "$gate_window_record" ]] || return 0
+  awk -v key="$1" 'index($0, key "=") == 1 { value = substr($0, length(key) + 2) } END { print value }' \
+    "$gate_window_record"
+}
+
+json_number_or_null() {
+  if [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]; then printf '%s' "$1"; else printf 'null'; fi
+}
+
+# Load, duration, and applied-quota evidence so a slow or failed gate can be
+# attributed to host load (AGT-2982). Every field is null before the gate ran.
+gate_window_json() {
+  local unit recorded applied quotas= separator=
+  for unit in agent-runner.service agent-runner-review.service; do
+    recorded=$(gate_window_value "recorded:$unit")
+    [[ -n "$recorded" ]] || continue
+    applied=$(gate_window_value "applied:$unit")
+    quotas+=$(printf '%s"%s":{"recorded":"%s","applied":%s}' "$separator" "$unit" \
+      "$(json_escape "$recorded")" \
+      "$([[ -n "$applied" ]] && printf '"%s"' "$(json_escape "$applied")" || printf null)")
+    separator=,
+  done
+  printf ',"hostLoadAtGateStart":%s,"hostLoadAtGateEnd":%s,"gateDurationSeconds":%s,"appliedQuotas":{%s},"gateWindow":{"mode":"%s","cpuCount":%s,"reservedCores":%s,"loadThreshold":%s,"loadBeforeWait":%s,"loadWaitSeconds":%s,"quotasRestored":"%s","gateExit":"%s"}' \
+    "$(json_number_or_null "$(gate_window_value load-at-gate-start)")" \
+    "$(json_number_or_null "$(gate_window_value load-at-gate-end)")" \
+    "$(json_number_or_null "$(gate_window_value gate-duration-seconds)")" \
+    "$quotas" \
+    "$(json_escape "$(gate_window_value window-mode)")" \
+    "$(json_number_or_null "$(gate_window_value cpu-count)")" \
+    "$(json_number_or_null "$(gate_window_value reserved-cores)")" \
+    "$(json_number_or_null "$(gate_window_value load-threshold)")" \
+    "$(json_number_or_null "$(gate_window_value load-before-window-wait)")" \
+    "$(json_number_or_null "$(gate_window_value load-wait-seconds)")" \
+    "$(json_escape "$(gate_window_value quotas-restored)")" \
+    "$(json_escape "$(gate_window_value gate-exit)")"
+}
+
 write_record() {
   local status=$1
   local candidate_sha=${2:-}
@@ -181,7 +230,7 @@ write_record() {
   local error=${6:-}
   local gate_blob
   gate_blob=$(git -C "$repo" hash-object "$gate_script")
-  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"error":"%s","createdAtUtc":"%s"}\n' \
+  printf '{"schemaVersion":1,"status":"%s","mode":"%s","remote":"%s","developSha":"%s","previousMainSha":"%s","candidateSha":"%s","releaseTag":"%s","requiredAncestor":"%s","conflictPolicy":"%s","conflicts":"%s","gate":"%s","gateScriptBlob":"%s","atomicPush":%s,"error":"%s"%s,"createdAtUtc":"%s"}\n' \
     "$(json_escape "$status")" \
     "$(json_escape "$mode")" \
     "$(json_escape "$remote")" \
@@ -196,6 +245,7 @@ write_record() {
     "$(json_escape "$gate_blob")" \
     "$pushed" \
     "$(json_escape "$error")" \
+    "$(gate_window_json)" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "$evidence_dir/promotion-record.json"
 }
@@ -278,10 +328,20 @@ if [[ "$mode" == dry-run ]]; then
 fi
 
 set +e
-"$gate_script" --repo "$candidate_checkout" 2>&1 \
+"$window_helper" --record "$gate_window_record" -- \
+  "$gate_script" --repo "$candidate_checkout" 2>&1 \
   | tee "$evidence_dir/full-gate.log"
 gate_rc=${PIPESTATUS[0]}
 set -e
+log "gate window=$(gate_window_value window-mode) load start=$(gate_window_value load-at-gate-start) end=$(gate_window_value load-at-gate-end) duration=$(gate_window_value gate-duration-seconds)s"
+if [[ "$(gate_window_value quotas-restored)" == failed ]]; then
+  log 'WARNING: runner unit CPUQuota restore failed after the gate; see full-gate.log and restore the recorded values by hand'
+fi
+if [[ "$(gate_window_value window-mode)" == failed ]]; then
+  log 'reserved gate capacity could not be applied (RELEASE_GATE_WINDOW=required); the gate did not run and main remains unchanged'
+  write_record blocked-gate-window "$candidate_sha" not-run "$conflict_text" false
+  exit 4
+fi
 if ((gate_rc != 0)); then
   log "mandatory full gate failed with exit code $gate_rc; main remains unchanged"
   write_record blocked-gate "$candidate_sha" failed "$conflict_text" false

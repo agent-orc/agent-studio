@@ -8,7 +8,7 @@ for data_dir in /var/lib/agent-orchestrator/store /var/lib/agent-orchestrator/ba
     mkdir -p "$data_dir"
     chown 10001:10001 "$data_dir"
 done
-for principal in studio engine runner; do
+for principal in studio engine runner review_runner; do
     target="$secret_dir/${principal}_token"
     if [ ! -e "$target" ]; then
         temporary="$(mktemp "$secret_dir/.${principal}.XXXXXXXX")"

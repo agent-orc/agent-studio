@@ -18,6 +18,10 @@
  *   - A temporary task repository and watched project point back to the
  *     selected checkout for repository provenance, so an isolated checkout
  *     without appsettings.Local.json can still drive real-source UI coverage.
+ *   - `test.use({ recoveryRepository: true })` gives that watched project a
+ *     disposable dirty Git repository before boot. Crash recovery tests can
+ *     then observe a real pending decision without touching the operator's
+ *     repositories. The option is scoped to the tests that set it.
  *   - Else: ask the dev backend's `/api/watch-paths` endpoint after start
  *     (Agent Software Studio entry) for the workspace path.
  *   - Else: fall back to the script's own default (sibling folder).
@@ -29,7 +33,7 @@
  */
 import { test as base, expect } from '@playwright/test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
@@ -42,11 +46,29 @@ export interface DevBackend {
 const DEV_PORT = Number(process.env.DEV_PORT ?? 5030);
 const DEV_BASE_URL = `http://127.0.0.1:${DEV_PORT}`;
 let isolatedWorkspace: string | undefined;
+let isolatedRecoveryRepository: string | undefined;
 
-function ensureIsolatedWorkspace(): { taskRepository: string; watchPath: string } {
+function ensureIsolatedWorkspace(recoveryRepository: boolean): { taskRepository: string; watchPath: string } {
   isolatedWorkspace ??= mkdtempSync(path.join(tmpdir(), 'agent-studio-dev-backend-'));
   const watchPath = path.join(isolatedWorkspace, 'projects', 'agent-studio-worktree');
   mkdirSync(watchPath, { recursive: true });
+  if (recoveryRepository && !isolatedRecoveryRepository) {
+    isolatedRecoveryRepository = path.join(isolatedWorkspace, 'recovery-repository');
+    mkdirSync(isolatedRecoveryRepository, { recursive: true });
+    for (const args of [
+      ['init'], ['config', 'user.name', 'Playwright Recovery'],
+      ['config', 'user.email', 'playwright-recovery@example.invalid'],
+    ]) {
+      const result = spawnSync('git', args, { cwd: isolatedRecoveryRepository });
+      if (result.status !== 0) throw new Error(`Could not prepare isolated recovery Git repository: git ${args.join(' ')}`);
+    }
+    writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'before restart\n');
+    for (const args of [['add', '.'], ['commit', '-m', 'test: recovery baseline']]) {
+      const result = spawnSync('git', args, { cwd: isolatedRecoveryRepository });
+      if (result.status !== 0) throw new Error(`Could not seed isolated recovery Git repository: git ${args.join(' ')}`);
+    }
+    writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'pending operator decision\n');
+  }
   return { taskRepository: isolatedWorkspace, watchPath };
 }
 
@@ -71,10 +93,13 @@ function resolveScriptPath(): string {
   return path.join(resolveRepoRoot(), 'scripts', 'supervisor', 'dev-lifecycle.sh');
 }
 
-function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: string; stderr: string } {
+function runScript(
+  cmd: 'start' | 'stop' | 'status',
+  recoveryRepository = false,
+): { code: number; stdout: string; stderr: string } {
   const scriptPath = resolveScriptPath();
   const devCheckout = resolveDevCheckout();
-  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace() : undefined;
+  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace(recoveryRepository) : undefined;
   if (!existsSync(scriptPath)) {
     throw new Error(`dev-lifecycle.sh not found at ${scriptPath}`);
   }
@@ -89,8 +114,8 @@ function runScript(cmd: 'start' | 'stop' | 'status'): { code: number; stdout: st
         Runner__Role: 'test-subject',
         WatchPaths__0__Name: 'Agent Studio Worktree',
         WatchPaths__0__Path: isolated.watchPath,
-        WatchPaths__0__RootPath: devCheckout,
-        WatchPaths__0__RepositoryPath: devCheckout,
+        WatchPaths__0__RootPath: isolatedRecoveryRepository ?? devCheckout,
+        WatchPaths__0__RepositoryPath: isolatedRecoveryRepository ?? devCheckout,
       } : {}),
     },
     encoding: 'utf8',
@@ -142,10 +167,9 @@ async function discoverWorkspace(): Promise<string> {
   return path.resolve(resolveRepoRoot(), '..', 'agent-taskboard-dev');
 }
 
-export const test = base.extend<{ devBackend: DevBackend }>({
-  // Playwright 1.59 requires object destructuring even when the fixture has no dependencies.
-  // eslint-disable-next-line no-empty-pattern
-  devBackend: async ({}, use, testInfo) => {
+export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: boolean }>({
+  recoveryRepository: [false, { option: true }],
+  devBackend: async ({ recoveryRepository }, use, testInfo) => {
     const startedHealthy = await isHealthy();
     let weStartedIt = false;
 
@@ -163,12 +187,13 @@ export const test = base.extend<{ devBackend: DevBackend }>({
     }
 
     if (!startedHealthy || !await isHealthy()) {
-      const r = runScript('start');
+      const r = runScript('start', recoveryRepository);
       if (r.code !== 0) {
         runScript('stop');
         if (isolatedWorkspace) {
           rmSync(isolatedWorkspace, { recursive: true, force: true });
           isolatedWorkspace = undefined;
+          isolatedRecoveryRepository = undefined;
         }
         throw new Error(
           `dev-lifecycle.sh start failed (exit ${r.code}).\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`
@@ -197,6 +222,7 @@ export const test = base.extend<{ devBackend: DevBackend }>({
     if (isolatedWorkspace) {
       rmSync(isolatedWorkspace, { recursive: true, force: true });
       isolatedWorkspace = undefined;
+      isolatedRecoveryRepository = undefined;
     }
   },
 });
