@@ -3,6 +3,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTheme } from '../helpers/theme';
 
+// The production service worker can bypass Playwright's mocked API routes.
+test.use({ serviceWorkers: 'block' });
+
 /**
  * AGT-3001 · Quota forecast in CLI Management (mocked).
  *
