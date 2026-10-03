@@ -16,7 +16,7 @@ using Xunit;
 
 namespace TaskServer.Tests;
 
-public sealed class RemoteReviewAuthorityTests
+public sealed partial class RemoteReviewAuthorityTests
 {
     private const string ResultSha = "589c462f589c462f589c462f589c462f589c462f";
     private const string TreeSha = "0123456789abcdef0123456789abcdef01234567";
