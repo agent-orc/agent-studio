@@ -16,8 +16,8 @@ public class CliUsageParserTests
     private static readonly CliModelRegistry Registry = new();
 
     [Theory]
-    [InlineData("claude-opus-5-5", "claude-opus-5")]
-    [InlineData("claude-opus-5-5", "claude-opus-5-20260925")]
+    [InlineData("claude-opus-5.5", "claude-opus-5-5")]
+    [InlineData("claude-opus-5-5", "claude-opus-5-5-20260925")]
     [InlineData("claude-opus-4.8", "claude-opus-4-8")]
     [InlineData("claude-haiku-4.5", "claude-haiku-4-5-20251001")]
     public void Usage_attribution_shares_registry_alias_identity_with_outcome(
@@ -28,6 +28,13 @@ public class CliUsageParserTests
         Assert.Equal(
             ModelMetadataRegistry.Find(pinned)?.Id,
             ExecutionModelIdentity.Normalize(observed));
+    }
+
+    [Fact]
+    public void Opus_5_5_pin_answered_by_Opus_5_is_a_mismatch()
+    {
+        Assert.True(ModelAttribution.IsMismatch(ModelIds.ClaudeOpus55, ModelIds.ClaudeOpus5));
+        Assert.Equal(ModelIds.ClaudeOpus55, ModelMetadataRegistry.Find("claude-opus-5.5")?.Id);
     }
 
     [Fact]
