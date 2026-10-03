@@ -92,8 +92,7 @@
          [class.pwiki__body--resizing]="resizingPanel() === 'nav'"
          [style.--pwiki-nav-width]="navWidthStyle()">
       @if (!navCollapsed()) {
-      <nav class="pwiki__tree" id="project-wiki-tree" data-testid="project-wiki-tree" aria-label="Knowledge categories">
-        <app-wiki-tag-controls [projectName]="projectName()" (openGlossaries)="openGlossaries()" />
+      <nav class="pwiki__tree" id="project-wiki-tree" data-testid="project-wiki-tree" aria-label="Knowledge categories"><app-wiki-tag-controls [projectName]="projectName()" (openGlossaries)="openGlossaries()" />
         <label class="pwiki__filter-wrap">
           <app-studio-icon name="search" [size]="13"></app-studio-icon>
           <input class="pwiki__filter"
@@ -219,9 +218,7 @@
                     <app-studio-icon [name]="pageIcon(row.node)" [size]="13"></app-studio-icon>
                   </span>
                   <span class="pwiki__label-copy">
-                    <span class="pwiki__label-text">{{ row.node.title }}</span>
-                    <app-tag-chips [ids]="row.node.tags ?? []" [projectName]="projectName()" />
-                    <app-tag-proposals [projectName]="projectName()" subjectKind="wiki" [subjectId]="row.node.relPath ?? ''" [taggingStatus]="row.node.taggingStatus ?? null" />
+                    <span class="pwiki__label-text">{{ row.node.title }}</span><app-tag-chips [ids]="row.node.tags ?? []" [projectName]="projectName()" /><app-tag-proposals [projectName]="projectName()" subjectKind="wiki" [subjectId]="row.node.relPath ?? ''" [taggingStatus]="row.node.taggingStatus ?? null" />
                     <span class="pwiki__metric-strip"
                           [attr.data-testid]="'project-wiki-ratings-' + row.node.relPath">
                       @for (chip of documentMetricChips(row.node); track chip.key) {
@@ -285,10 +282,7 @@
       </div>
       }
       <div class="pwiki__viewer">
-        @if (glossaryOpen()) {
-          <app-area-glossary [projectName]="projectName()" [roots]="roots()"
-            (openPage)="openGlossaryPage($event)" (openDossier)="openWorkbench.emit($event)" />
-        } @else if (searchActive()) {
+        @if (glossaryOpen()) { <app-area-glossary [projectName]="projectName()" [roots]="roots()" (openPage)="openGlossaryPage($event)" (openDossier)="openWorkbench.emit($event)" /> } @else if (searchActive()) {
           <app-wiki-search-results
               [projectName]="projectName()"
               [query]="searchQuery()"
@@ -647,9 +641,11 @@
                       (navigate)="openLinkedElement($event)" />
                   }
               </app-wiki-meta-section>
+
               @if (openedNode()?.metadata?.agentReads; as reads) {
                 <app-wiki-agent-reads [reads]="reads" />
               }
+
               <app-wiki-meta-section class="pwiki__panel pwiki__panel--history"
                   data-testid="project-wiki-history-panel" sectionId="history" title="History"
                   toggleTestId="project-wiki-section-toggle-history"
@@ -663,6 +659,7 @@
                                         [loading]="loadingHistory()"
                                         (viewRevision)="onViewRevision($event)" />
               </app-wiki-meta-section>
+
               <app-wiki-meta-section class="pwiki__panel" data-testid="project-wiki-drift-meta-panel"
                   sectionId="driftMetadata" title="Drift metadata"
                   toggleTestId="project-wiki-section-toggle-drift-metadata"
@@ -806,6 +803,7 @@
                       </div>
                     </dl>
                 </app-wiki-meta-section>
+
                 <app-wiki-meta-section class="pwiki__panel" data-testid="project-wiki-drift-default-panel"
                     sectionId="driftControl" title="Drift control"
                     toggleTestId="project-wiki-section-toggle-drift-control"
@@ -829,6 +827,7 @@
       </div>
     </div>
   }
+
   @if (driftModalOpen()) {
     <app-wiki-drift-modal
       [projectName]="projectName()"
@@ -840,6 +839,7 @@
       (latestReportChange)="latestDriftReport.set($event)"
       (closeRequest)="closeDriftModal()" />
   }
+
   <app-menu
     [items]="menuItems()"
     [open]="menuOpen()"

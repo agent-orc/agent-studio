@@ -14,8 +14,6 @@ import {
 } from '@angular/core';
 import { forkJoin } from 'rxjs';
 import { FormsModule } from '@angular/forms';
-import { TagFiltersComponent } from './components/tag-filters/tag-filters.component';
-import { TagChipsComponent } from './components/tag-chips/tag-chips.component';
 import {
   BoardFiltersService, ActiveBoardFiltersComponent,
   CreateTaskDialogComponent,
@@ -24,7 +22,7 @@ import {
   type EpicOverviewScope,
   FiltersDropdownComponent,
   TaskColumnComponent,
-  KanbanFilterSidesheetComponent,
+  KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
   LaneCollapseService,
   ProjectTabsComponent,
   TypeFilterOption,
@@ -205,9 +203,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     UpdateBlockModalComponent,
     VerboseDebugOverlayComponent,
     FiltersDropdownComponent,
-    TagFiltersComponent,
-    TagChipsComponent,
-    KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent,
+    KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
     MenuComponent,
     EpicOverviewScreenComponent,

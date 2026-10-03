@@ -133,8 +133,7 @@
               @if (boardLoading() && jobService.jobs().length === 0) {
                 <app-loading-surface kind="board" label="Loading board…" />
               } @else {
-              <app-active-board-filters [resultCount]="filteredTaskCount()" />
-              <app-tag-filters [projectName]="boardProjectScope()" />
+              <app-active-board-filters [resultCount]="filteredTaskCount()" /><app-tag-filters [projectName]="boardProjectScope()" />
               @if (groupByEpic()) {
                 <main class="dashboard dashboard--studio dashboard--epic-board"
                       data-testid="studio-board">
@@ -505,8 +504,7 @@
             [tags]="tagRegistry()"
             [activeTagIds]="activeTagFilter()"
             (setType)="onSetType($event)"
-            (toggleTag)="toggleTagFilter($event)" />
-          <app-tag-filters [projectName]="boardProjectScope()" />
+            (toggleTag)="toggleTagFilter($event)" /><app-tag-filters [projectName]="boardProjectScope()" />
           <button class="btn btn--create" [disabled]="updateClient.mutationsBlocked()" (click)="openCreate()">
             ＋ Add Task
           </button>
@@ -569,8 +567,8 @@
                   <h2 class="task-nav__title">Focused view</h2>
                 </div>
               </div>
-              <app-tag-filters />
-              <div class="task-nav__groups">
+
+              <app-tag-filters /><div class="task-nav__groups">
                 @for (group of focusGroups(); track group.state) {
                   <section class="task-nav__group" [class.task-nav__group--collapsed]="isGroupCollapsed(group.state)">
                     <div class="task-nav__group-header"
@@ -584,6 +582,7 @@
                       </span>
                       <span class="task-nav__count">{{ group.jobs.length }}</span>
                     </div>
+
                     @if (group.jobs.length > 0 && !isGroupCollapsed(group.state)) {
                       <div class="task-nav__items">
                         @for (job of group.jobs; track job.taskKey) {
@@ -592,8 +591,7 @@
                                   [style.--project-color]="identityFor(job.projectName).color"
                                   [style.--project-on]="identityFor(job.projectName).onColor"
                                   (click)="openDetail(job)">
-                            <span class="task-nav__item-title">{{ job.title || job.id }}</span>
-                            <app-tag-chips [ids]="job.tags ?? []" [projectName]="job.projectName" />
+                            <span class="task-nav__item-title">{{ job.title || job.id }}</span><app-tag-chips [ids]="job.tags ?? []" [projectName]="job.projectName" />
                             <span class="task-nav__item-meta">
                               <span class="task-nav__item-project">
                                 <span class="task-nav__item-disk" aria-hidden="true">{{ identityFor(job.projectName).initial }}</span>
@@ -738,10 +736,12 @@
         (uxuiActionQueued)="onUxuiActionQueued($event)"
         (openTask)="onOpenTaskFromReel($event)" />
 
+
       <app-workspace-overlays [watchPaths]="watchPaths()"
                               (openTask)="onOpenTaskFromReel($event)"
                               (openProjectSettings)="onOpenProjectSettingsFromUsage($event)"
                               (openJobDetail)="onOpenTaskFromSession($event)" />
+
 
       @if (showCreate()) {
         <app-create-job-dialog
