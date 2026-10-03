@@ -34,6 +34,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   const coreFor = (task: TaskInfo, projectId = 'PROJ-001') => ({
     state: 'ready', projectId, projectName: task.projectName, id: task.id,
     taskKey: task.taskKey, key: task.key, title: task.title,
+    watchPath: task.watchPath, folderPath: task.folderPath ?? `${task.watchPath}\\${task.state}\\${task.id}`,
     kind: 'task', taskType: 'chore', lane: task.state, archiveState: null,
     enteredLaneAt: '2026-09-28T00:00:00Z', order: task.order, mode: 'coding',
     released: false, pendingIntent: false, coreVersion: '1',
@@ -84,12 +85,12 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
   /** Land both documents after the core paint, then usage (and history) after the rich paint. */
   const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'));
     const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
     expect(documents).toHaveLength(2);
     for (const request of documents)
       request.flush(documentReply(task, request.request.params.get('name')!, opts.coreVersion));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'));
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
     if (opts.history) {
@@ -152,6 +153,22 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
       .flush(coreFor(info));
     expect(selection.selectedCore()?.taskKey).toBe(info.taskKey);
+  });
+
+  it('keeps the core task paths when a cold public URL opens the rich pane', async () => {
+    registry({ id: 'Agent Studio', shortCode: 'AGT', storageLocation: info.watchPath });
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+
+    selection.restoreFromUrl();
+    const folderPath = `${info.watchPath}\\5-human-review\\human-readable-slug`;
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), folderPath });
+    expect(selection.detailPreview()?.watchPath).toBe(info.watchPath);
+    expect(selection.detailPreview()?.folderPath).toBe(folderPath);
+
+    await paintRich(info);
+    expect(selection.selected()?.info.watchPath).toBe(info.watchPath);
+    expect(selection.selected()?.info.folderPath).toBe(folderPath);
   });
 
   it('uses pushState for user navigation and clears selection on browser Back', () => {

@@ -7,7 +7,7 @@ import { createJob } from '../helpers/jobs';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 // Include the fixture's cold backend startup in this test's timeout.
-test.describe.configure({ timeout: 600_000 });
+test.describe.configure({ timeout: 900_000 });
 
 /**
  * Local end-to-end evidence for the progressive task switch (AGT-2955).
@@ -74,7 +74,9 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       if (url.pathname.startsWith('/api/tasks/') && response.status() >= 400)
         refusedTaskReads.push(`${response.status()} ${url.pathname}${url.search}`);
     });
-    await page.goto('/');
+    // The real backend may keep unrelated startup reads open. The task board
+    // assertions below establish readiness without waiting for every load.
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await dismissDevErrorDialog(page);
     for (const id of ids)
       await expect(page.getByTestId('task-card').filter({ hasText: id }).first()).toBeVisible({ timeout: 30_000 });
@@ -168,15 +170,15 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       if (resultsDir) await page.screenshot({ path: path.join(resultsDir, name), fullPage: false });
     };
     await setTheme(page, 'light');
-    await shot('task-core-local-core-light.png');
+    await shot('task-core-local-core-light--real.png');
     await setTheme(page, 'dark');
-    await shot('task-core-local-core-dark.png');
+    await shot('task-core-local-core-dark--real.png');
     releaseDocuments!();
     await expect(page.getByTestId('task-core')).toHaveCount(0, { timeout: 15_000 });
     await expect(page.getByTestId('studio-task')).toBeVisible();
-    await shot('task-core-local-rich-dark.png');
+    await shot('task-core-local-rich-dark--real.png');
     await setTheme(page, 'light');
-    await shot('task-core-local-rich-light.png');
+    await shot('task-core-local-rich-light--real.png');
 
     const cachedSwitch = summary(switches);
     const coreRead = summary(reads.core);

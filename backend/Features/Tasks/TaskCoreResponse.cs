@@ -10,6 +10,8 @@ public sealed record TaskCoreResponse
     public string ProjectName { get; init; } = "";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    public string WatchPath { get; init; } = "";
+    public string FolderPath { get; init; } = "";
     public string? Key { get; init; }
     public string Title { get; init; } = "";
     public string Kind { get; init; } = "task";

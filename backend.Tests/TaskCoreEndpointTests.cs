@@ -45,6 +45,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var body = JsonDocument.Parse(bytes);
         Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
         Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
+        Assert.Equal(Jobs, body.RootElement.GetProperty("watchPath").GetString());
+        Assert.Equal(Path.Combine(Jobs, TaskStates.Ready, "AGT-core"),
+            body.RootElement.GetProperty("folderPath").GetString());
         Assert.Equal("ready", body.RootElement.GetProperty("prompt").GetProperty("state").GetString());
         var timeline = body.RootElement.GetProperty("timeline");
         Assert.Equal(5, timeline.GetProperty("events").GetArrayLength());

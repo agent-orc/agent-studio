@@ -1276,6 +1276,9 @@ last five timeline events at 2 KiB total. The whole JSON body is capped at
 link, and the timeline exposes a sequence cursor for older events. No model
 summarizes these fields. The route reads runtime and lease facts from memory,
 and its ETag combines per-task core and runtime versions without Git state.
+The explicit core DTO also carries the indexed `watchPath` and `folderPath`.
+Cold public URLs use them to give the rich task view its action and file
+identity after the core paints, without reading the legacy detail handler.
 API field writes and lane moves publish the changed core after the durable
 write. Dependency-affecting writes also rebuild the core reference graph from
 resident task facts and republish dependent blocker fields and core versions

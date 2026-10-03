@@ -21,6 +21,8 @@ export interface TaskCore {
   projectName: string;
   id: string;
   taskKey: string;
+  watchPath: string;
+  folderPath: string;
   key: string | null;
   title: string;
   kind: string;

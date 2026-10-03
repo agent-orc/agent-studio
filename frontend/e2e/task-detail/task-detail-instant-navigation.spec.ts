@@ -51,6 +51,7 @@ function core() {
   return {
     state: 'ready', projectId: 'fixture', projectName: 'fixture',
     id: TASK_ID, taskKey: TASK_KEY, key: 'AGT-2577',
+    watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/${TASK_ID}`,
     title: 'Heavy task with many runs and artifacts', kind: 'task',
     taskType: 'chore', lane: '5-human-review', archiveState: null,
     enteredLaneAt: '2026-08-11T10:00:00Z', order: 1, mode: 'coding',
@@ -274,9 +275,11 @@ test('keeps keyboard pager and browser history identity while documents and Git 
   await page.route('**/api/tasks/AGT-2577/core**', route => json(route, core()));
   await page.route(`**/api/tasks/${PEER_ID}/core**`, route => json(route, {
     ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+    folderPath: `${WATCH_PATH}/${PEER_ID}`,
   }));
   await page.route('**/api/tasks/AGT-2578/core**', route => json(route, {
     ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+    folderPath: `${WATCH_PATH}/${PEER_ID}`,
   }));
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -374,6 +377,7 @@ test('measures thirty cached-core browser switches without waiting for documents
   await page.route(`**/api/tasks/${TASK_ID}/core**`, route => json(route, core()));
   await page.route(`**/api/tasks/${PEER_ID}/core**`, route => json(route, {
     ...core(), id: PEER_ID, taskKey: PEER_KEY, key: 'AGT-2578', title: 'Peer task', order: 2,
+    folderPath: `${WATCH_PATH}/${PEER_ID}`,
   }));
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });

@@ -54,6 +54,7 @@ public static class TaskCoreEndpoints
                 State = lookup.Warming ? "stale" : "ready",
                 ProjectId = projectRecord.Id, ProjectName = core.ProjectName,
                 Id = core.Id, TaskKey = core.TaskKey, Key = core.Key,
+                WatchPath = core.WatchPath, FolderPath = core.FolderPath,
                 Title = core.Title, Kind = core.Kind, TaskType = core.TaskType,
                 Lane = core.State, ArchiveState = core.ArchiveState,
                 EnteredLaneAt = core.EnteredLaneAt, Phase = core.Phase,

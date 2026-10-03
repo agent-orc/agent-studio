@@ -402,7 +402,7 @@ export class TaskSelectionService {
 
   private coreInfo(core: TaskCore, board: TaskInfo | null): TaskInfo {
     const base = board ?? {
-      id: core.id, taskKey: core.taskKey, watchPath: '', folderPath: '',
+      id: core.id, taskKey: core.taskKey,
       projectName: core.projectName, title: core.title, state: core.lane,
       order: core.order, agent: '', createdAt: '', lastActivity: '',
       sessionName: null, useOwnSession: null, lastUsage: null, execution: null,
@@ -410,6 +410,7 @@ export class TaskSelectionService {
     } as TaskInfo;
     return {
       ...base, id: core.id, taskKey: core.taskKey, key: core.key,
+      watchPath: core.watchPath, folderPath: core.folderPath,
       title: core.title, projectName: core.projectName, state: core.lane,
       archiveState: core.archiveState, enteredLaneAt: core.enteredLaneAt,
       order: core.order, mode: core.mode as TaskInfo['mode'],
