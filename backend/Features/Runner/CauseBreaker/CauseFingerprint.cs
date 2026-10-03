@@ -73,7 +73,8 @@ public static partial class CauseFingerprintPolicy
         string text,
         int? exitCode)
     {
-        var cleaned = TaskKey().Replace(TempPath().Replace(text, "<tmp>"), "<task>");
+        var cleaned = Contract.FailureOutputNormalizer.StripVolatile(
+            TaskKey().Replace(TempPath().Replace(text, "<tmp>"), "<task>"));
         // The intervention policy already canonicalises the provider message of
         // a withdrawn model (it cuts the wrapper prefix each aspect adds). Use it
         // only when it agrees on the class; "command not found" in a
@@ -118,6 +119,8 @@ public static partial class CauseFingerprintPolicy
     [GeneratedRegex(@"(?:/tmp|/var/folders|[A-Za-z]:\\[^\s]*\\Temp)[/\\][^\s""']*", RegexOptions.IgnoreCase)]
     private static partial Regex TempPath();
 
-    [GeneratedRegex(@"\b[A-Z]{2,8}-\d{1,8}\b", RegexOptions.IgnoreCase)]
+    // Stable card keys are uppercase. Case-insensitive matching also erased
+    // preparation step IDs such as prepare-3 and merged different failures.
+    [GeneratedRegex(@"\b[A-Z]{2,8}-\d{1,8}\b")]
     private static partial Regex TaskKey();
 }

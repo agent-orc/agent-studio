@@ -20,7 +20,8 @@ public sealed record CauseBreakerObservation(
 
 /// <summary>One card parked behind the cause card.</summary>
 public sealed record CauseBreakerWaitingCard(
-    string TaskKey, DateTime Since, string? FolderPath = null, string? WatchPath = null);
+    string TaskKey, DateTime Since, string? FolderPath = null, string? WatchPath = null,
+    string? Project = null);
 
 /// <summary>The fleet-wide breaker of one cause fingerprint.</summary>
 public sealed record CauseBreakerRecord
@@ -40,6 +41,7 @@ public sealed record CauseBreakerRecord
     public string? CauseTaskId { get; init; }
     public string? CauseWatchPath { get; init; }
     public string? ProbeTaskKey { get; init; }
+    public string? ProbeAttemptId { get; init; }
     public List<CauseBreakerObservation> Observations { get; init; } = [];
     public List<CauseBreakerWaitingCard> Waiting { get; init; } = [];
     /// <summary>
@@ -65,7 +67,7 @@ public sealed record CauseBreakerOutcome(
 /// <summary>Mints a freshly planned review attempt for a released card.</summary>
 public interface ICauseWaitRelease
 {
-    bool Release(TaskInfo task, string deliveryKey);
+    string? Release(TaskInfo task, string deliveryKey);
 }
 
 /// <summary>
@@ -207,6 +209,7 @@ public sealed class CauseBreakerService
                     CauseTaskId = intervention.Intervention.FollowUpTaskId,
                     CauseWatchPath = task.WatchPath,
                     ProbeTaskKey = null,
+                    ProbeAttemptId = null,
                     Waiting = [],
                 };
                 record = Park(record, task, taskKey, decision, now);
@@ -243,14 +246,18 @@ public sealed class CauseBreakerService
             {
                 intervention = _interventions.RaiseCause(
                     task, evidence, Classification(fingerprint, decision), record.CauseWatchPath);
-                if (Same(record.ProbeTaskKey, taskKey))
+                var isProbeCard = Same(record.ProbeTaskKey, taskKey);
+                if (isProbeCard && Same(record.ProbeAttemptId, attemptId))
                 {
                     _logger.LogWarning(
                         "cause-breaker-probe-red fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey} attempt={AttemptId}",
                         record.Fingerprint, record.CauseKey, taskKey, attemptId);
-                    record = record with { ProbeTaskKey = null };
+                    record = record with { ProbeTaskKey = null, ProbeAttemptId = null };
                 }
-                record = Park(record, task, taskKey, decision, now);
+                // An older report from the probe card must not revoke the
+                // explicitly released successor or overwrite its probe marker.
+                if (!isProbeCard || record.ProbeTaskKey is null)
+                    record = Park(record, task, taskKey, decision, now);
             }
 
             Upsert(records, record);
@@ -361,9 +368,8 @@ public sealed class CauseBreakerService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// A review of <paramref name="taskKey"/> finished without an
-    /// infrastructure failure. If that card was parked behind an open breaker
-    /// (as its probe or otherwise), the cause is gone: close and release.
+    /// Only the successor attempt explicitly released as a probe can prove
+    /// recovery. An older in-flight review of the same waiting card cannot.
     /// </summary>
     public CauseBreakerRecord? ObserveGreen(string taskKey, string attemptId)
     {
@@ -371,7 +377,8 @@ public sealed class CauseBreakerService
         {
             var records = Records();
             var record = records.FirstOrDefault(item => item.IsOpen
-                && (Same(item.ProbeTaskKey, taskKey) || item.Waiting.Any(card => Same(card.TaskKey, taskKey))));
+                && Same(item.ProbeTaskKey, taskKey)
+                && Same(item.ProbeAttemptId, attemptId));
             if (record is null) return null;
             if (CauseBreakerPolicy.Close(null, probeGreen: true) != CauseBreakerCloseReason.ProbeGreen) return null;
             _logger.LogInformation(
@@ -427,19 +434,20 @@ public sealed class CauseBreakerService
             if (record is null || record.ProbeTaskKey is not null) return record;
             foreach (var waiting in record.Waiting.OrderBy(item => item.Since))
             {
-                var task = V1ReviewPlaneEndpoints.FindTask(_scanner, waiting.TaskKey);
+                var task = ResolveWaitingTask(record, waiting);
                 if (task is null) continue;
                 var marker = CauseWaitMarker.TryRead(task.FolderPath, _logger);
                 if (marker is not null) CauseWaitMarker.Write(task.FolderPath, marker with { Probe = true }, _logger);
-                if (!_release.Release(task, $"cause-breaker-probe:{record.Fingerprint}:{record.Opens}"))
+                var probeAttemptId = _release.Release(task, $"cause-breaker-probe:{record.Fingerprint}:{record.Opens}");
+                if (string.IsNullOrWhiteSpace(probeAttemptId))
                 {
                     if (marker is not null) CauseWaitMarker.Write(task.FolderPath, marker, _logger);
                     continue;
                 }
-                record = record with { ProbeTaskKey = waiting.TaskKey };
+                record = record with { ProbeTaskKey = waiting.TaskKey, ProbeAttemptId = probeAttemptId };
                 _logger.LogInformation(
-                    "cause-breaker-probe fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey}",
-                    record.Fingerprint, record.CauseKey, waiting.TaskKey);
+                    "cause-breaker-probe fingerprint={Fingerprint} cause={CauseKey} probe={TaskKey} attempt={AttemptId}",
+                    record.Fingerprint, record.CauseKey, waiting.TaskKey, probeAttemptId);
                 break;
             }
             Upsert(records, record);
@@ -480,7 +488,8 @@ public sealed class CauseBreakerService
             return record.Waiting.Any(item => Same(item.TaskKey, taskKey))
                 ? record
                 : record with { Waiting = [.. record.Waiting,
-                    new CauseBreakerWaitingCard(taskKey, marker!.Since, task.FolderPath, task.WatchPath)] };
+                    new CauseBreakerWaitingCard(taskKey, marker!.Since, task.FolderPath, task.WatchPath,
+                        task.ProjectName)] };
 
         _timeline.Append(task.FolderPath, TimelineEventKinds.CauseBreakerWaiting, TimelineActors.System,
             $"Waiting for {record.CauseKey}: the cause breaker for {record.FailureClass} is open ({decision.Reason})",
@@ -498,7 +507,8 @@ public sealed class CauseBreakerService
 
         if (record.Waiting.Any(item => Same(item.TaskKey, taskKey))) return record;
         return record with { Waiting = [.. record.Waiting,
-            new CauseBreakerWaitingCard(taskKey, now, task.FolderPath, task.WatchPath)] };
+            new CauseBreakerWaitingCard(taskKey, now, task.FolderPath, task.WatchPath,
+                task.ProjectName)] };
     }
 
     private CauseBreakerRecord CloseLocked(
@@ -512,8 +522,7 @@ public sealed class CauseBreakerService
         var closeReason = reason == CauseBreakerCloseReason.CauseIntegrated ? "cause-integrated" : "probe-green";
         foreach (var waiting in record.Waiting)
         {
-            var task = V1ReviewPlaneEndpoints.FindTask(_scanner, waiting.TaskKey)
-                ?? _scanner.FindJob(waiting.TaskKey, waiting.WatchPath);
+            var task = ResolveWaitingTask(record, waiting);
             var folderPath = task?.FolderPath ?? waiting.FolderPath;
             if (folderPath is null || !Directory.Exists(folderPath)) continue;
             CauseWaitMarker.Clear(folderPath, _logger);
@@ -522,7 +531,7 @@ public sealed class CauseBreakerService
             // gets one fresh attempt planned from current settings.
             var released = !Same(waiting.TaskKey, exceptTaskKey)
                 && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
-                && _release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}");
+                && !string.IsNullOrWhiteSpace(_release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}"));
             _timeline.Append(folderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
                 $"{record.CauseKey} resolved the cause ({closeReason}); "
                 + (released ? "a fresh review attempt was planned." : "no new review attempt was needed."),
@@ -540,6 +549,7 @@ public sealed class CauseBreakerService
             ClosedAt = now,
             CloseReason = closeReason,
             ProbeTaskKey = null,
+            ProbeAttemptId = null,
             Observations = [],
             Waiting = [],
         };
@@ -549,6 +559,24 @@ public sealed class CauseBreakerService
             string.Join(",", record.Waiting.Select(item => item.TaskKey)));
         Upsert(records, closed);
         return closed;
+    }
+
+    private TaskInfo? ResolveWaitingTask(CauseBreakerRecord record, CauseBreakerWaitingCard waiting)
+    {
+        var task = V1ReviewPlaneEndpoints.FindTask(_scanner, waiting.TaskKey)
+            ?? _scanner.FindJob(waiting.TaskKey, waiting.WatchPath);
+        if (task is not null) return task;
+        if (waiting.FolderPath is null || waiting.WatchPath is null
+            || !Directory.Exists(waiting.FolderPath)) return null;
+
+        // The stored folder is the durable wait identity. A recent intervention
+        // can invalidate the board index before its refreshed snapshot is
+        // published, so resolve that known folder directly for probe/release.
+        var project = waiting.Project
+            ?? record.Observations.LastOrDefault(item => Same(item.TaskKey, waiting.TaskKey))?.Project;
+        return _scanner.ScanJobFolder(waiting.FolderPath,
+            new WatchPathEntry { Name = project ?? string.Empty, Path = waiting.WatchPath },
+            TaskStates.AutoReview);
     }
 
     private void LogObservation(
@@ -581,7 +609,8 @@ public sealed class CauseBreakerService
 
     private static string Variant(string? rawText)
     {
-        var normalized = FailureInterventionPolicy.NormalizeSignature(rawText ?? string.Empty);
+        var normalized = FailureInterventionPolicy.NormalizeSignature(
+            AgentStudio.TaskServer.Contracts.FailureOutputNormalizer.StripVolatile(rawText ?? string.Empty));
         return normalized.Length <= VariantLength ? normalized : normalized[..VariantLength];
     }
 
@@ -639,19 +668,25 @@ public sealed class SchedulerCauseWaitRelease : ICauseWaitRelease
         _logger = logger;
     }
 
-    public bool Release(TaskInfo task, string deliveryKey)
+    public string? Release(TaskInfo task, string deliveryKey)
     {
-        var taskKey = string.IsNullOrWhiteSpace(task.TaskKey) ? task.Key ?? task.Id : task.TaskKey;
-        var review = _authority.GetTaskProjection(taskKey).CurrentReviewAttempt;
+        // Review authority may be keyed by the stable public key or by the
+        // path-qualified scanner identity, depending on when the attempt was
+        // minted. Resolve the current terminal review before planning anew.
+        var review = new[] { task.Key, task.TaskKey, task.Id }
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(key => _authority.GetTaskProjection(key!).CurrentReviewAttempt)
+            .FirstOrDefault(candidate => candidate is { Outcome: ReviewTerminalOutcome.InfrastructureFailure });
         if (review is not { Outcome: ReviewTerminalOutcome.InfrastructureFailure })
-            return false;
+            return null;
         var created = _scheduler.CreateFreshSuccessor(review, task, deliveryKey);
         if (!created.Accepted)
         {
             _logger.LogWarning(
                 "cause-breaker-release-refused task={TaskKey} attempt={AttemptId} status={Status} message={Message}",
-                taskKey, review.AttemptId, created.Status, created.Message);
+                review.TaskKey, review.AttemptId, created.Status, created.Message);
         }
-        return created.Accepted;
+        return created.Accepted ? created.ReviewAttempt?.AttemptId : null;
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.TaskServer.Contracts;
@@ -75,31 +76,59 @@ public sealed class CauseBreakerPolicyTests
         Assert.Equal("tool:pnpm", CauseFingerprintPolicy.Toolchain(null, "C:\\tools\\pnpm.cmd"));
     }
 
-    // Replays the E1 window counts with the configured policy. One opening
-    // owns the cause card and subsequent observations wait instead of running.
-    [Theory]
-    [InlineData(59, "ToolUnavailable", "agent:codex:withdrawn-model")]
-    [InlineData(411, "PreparationFailed", "tool:npm")]
-    public void E1_windows_stop_after_three_attempts_and_open_one_cause_card(
-        int historicalAttempts, string failureClass, string toolchain)
+    [Fact]
+    public void Preparation_step_identity_is_not_erased_as_a_card_key()
     {
-        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass,
-            $"CAC-18: {failureClass} on /tmp/run-1", 127, toolchain);
+        var first = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            "Dependency preparation 'prepare-2' failed: npm ci exit=127", 127, "tool:npm");
+        var second = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            "Dependency preparation 'prepare-3' failed: npm ci exit=127", 127, "tool:npm");
+        Assert.NotEqual(first.Value, second.Value);
+    }
+
+    // Replay retained Attempt Authority observations, including their real
+    // attempt IDs, timestamps, terminal reasons and toolchain routes.
+    [Theory]
+    [InlineData("withdrawn-review-model", 59, 12)]
+    [InlineData("repeated-preparation-failure", 411, 411)]
+    public void E1_windows_stop_after_three_attempts_and_open_one_cause_card(
+        string windowName, int historicalAttempts, int extractedAttempts)
+    {
+        using var replay = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Fixtures", "cause-breaker", "e1-attempts.json")));
+        var window = replay.RootElement.GetProperty("windows").EnumerateArray()
+            .Single(item => item.GetProperty("name").GetString() == windowName);
+        Assert.Equal(historicalAttempts, window.GetProperty("historicalAttemptCount").GetInt32());
+        var observations = window.GetProperty("observations").EnumerateArray().ToArray();
+        Assert.Equal(extractedAttempts, observations.Length);
+        if (windowName == "repeated-preparation-failure")
+        {
+            Assert.Equal(408, observations.Count(item => item.GetProperty("failureClassification").GetString() == "PreparationFailed"));
+            Assert.Equal(2, observations.Count(item => item.GetProperty("outcome").GetString() == "pass"));
+            Assert.Single(observations, item => item.GetProperty("outcome").GetString() == "superseded");
+        }
         var seen = new List<CauseBreakerCount>();
         var runningAttempts = 0;
         var causeCards = 0;
         var open = false;
-        for (var index = 0; index < historicalAttempts; index++)
+        string? firstFingerprint = null;
+        foreach (var item in observations)
         {
             if (open) break;
-            var observed = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass,
-                $"CAC-18: {failureClass} on /tmp/run-{index + 1}", 127, toolchain);
-            Assert.Equal(fingerprint.NormalizedText, observed.NormalizedText);
-            Assert.Equal(fingerprint.Value, observed.Value);
+            if (item.GetProperty("outcome").GetString() != "infrastructureFailure") continue;
+            var observed = CauseFingerprintPolicy.Compute("ReviewInfra",
+                item.GetProperty("failureClassification").GetString(),
+                item.GetProperty("terminalReason").GetString(),
+                item.GetProperty("exitCode").GetInt32(),
+                item.GetProperty("toolchain").GetString());
+            firstFingerprint ??= observed.Value;
+            Assert.Equal(firstFingerprint, observed.Value);
+            var at = DateTime.Parse(item.GetProperty("createdAt").GetString()!, null,
+                System.Globalization.DateTimeStyles.AdjustToUniversal);
             runningAttempts++;
-            seen.Add(new CauseBreakerCount("CAC-18", Now.AddMinutes(index)));
+            seen.Add(new CauseBreakerCount(item.GetProperty("taskKey").GetString()!, at));
             var decision = CauseBreakerPolicy.Decide(open, seen,
-                CauseBreakerPolicy.Clamp(3, 2, 24), Now.AddMinutes(index));
+                CauseBreakerPolicy.Clamp(3, 2, 24), at);
             if (decision.Action != CauseBreakerAction.Open) continue;
             open = true;
             causeCards++;

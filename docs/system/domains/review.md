@@ -313,8 +313,9 @@ retry, and is skipped by the review claim. A pending review whose plan calls
 an open breaker's model route (any project), or whose project already saw an
 open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
-of a parked card passes (probe green; `POST /api/cause-breakers/{fingerprint}/probe`
-releases one card as a probe), and each waiting card then gets one freshly
+of the exact successor attempt released by
+`POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
+older review on the same waiting card does not close it. Each waiting card then gets one freshly
 planned attempt. With the breaker disabled for a project, the opt-in
 `post-failure-intervention` step keeps its previous first-failure behaviour.
 

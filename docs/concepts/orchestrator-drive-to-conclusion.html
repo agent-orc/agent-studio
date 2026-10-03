@@ -2777,7 +2777,7 @@
             it opens one cause card through the failure-intervention ledger. Affected cards stay in Auto Review, show
             "Waiting for &lt;key&gt;", and are skipped by the review claim; a pending review whose plan calls the broken model
             route is held before it runs. Every review retry is planned from current project settings. The breaker closes
-            when the cause card reaches <span class="lane">6-completed</span> or a probe review passes, and releases each
+            when the cause card reaches <span class="lane">6-completed</span> or the exact attempt released as a probe passes, and releases each
             waiting card with one freshly planned attempt. Replay of both incidents: at most three attempts and one cause card.
             New terminal: waiting on the cause card, not escalated.
           </td>

@@ -5908,8 +5908,16 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
         var lifecycle = factory.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>();
         var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var firstClaim = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var firstReview = Assert.IsType<ReviewAttemptDto>(firstClaim.ReviewAttempt);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(firstReview.AttemptId, firstReview.LastFence,
+                firstReview.AuthorityEpoch, "seed-infrastructure-failure"),
+            firstReview.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "PreparationFailed", "npm ci: command not found")).Status);
         var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
             StderrTail: "npm ci: command not found", EvidencePointers: ["logs/review-1.json"]);
         var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
@@ -5944,7 +5952,26 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Contains(TaskKey, held);
         Assert.Equal(AttemptWriteStatus.NotFound,
             lifecycle.ClaimNextReview("executor", "host", "host:1", 120, heldTaskKeys: held).Status);
-        Assert.NotNull(breaker.ObserveGreen(TaskKey, "rva-probe"));
+        Assert.Null(breaker.ObserveGreen(TaskKey, firstReview.AttemptId));
+        Assert.True(Assert.Single(breaker.List()).IsOpen);
+        Assert.True(Directory.Exists(task.FolderPath));
+        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure,
+            authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.Outcome);
+        var waiting = Assert.Single(Assert.Single(breaker.List(openOnly: true)).Waiting);
+        var rescanned = scanner.ScanJobFolder(waiting.FolderPath!,
+            new WatchPathEntry { Name = task.ProjectName, Path = waiting.WatchPath! },
+            TaskStates.AutoReview);
+        Assert.NotNull(rescanned);
+        Assert.Equal(TaskStates.AutoReview, rescanned.State);
+
+        var probe = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.Equal(TaskKey, probe.ProbeTaskKey);
+        Assert.False(string.IsNullOrWhiteSpace(probe.ProbeAttemptId));
+        Assert.NotEqual(firstReview.AttemptId, probe.ProbeAttemptId);
+        Assert.Null(breaker.ObserveGreen(TaskKey, "unrelated-passing-attempt"));
+        Assert.True(Assert.Single(breaker.List()).IsOpen);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.NotNull(breaker.ObserveGreen(TaskKey, probe.ProbeAttemptId!));
         Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
         Assert.False(Assert.Single(breaker.List()).IsOpen);
     }
@@ -5981,25 +6008,38 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Theory]
-    [InlineData(59, "ToolUnavailable", "agent:codex:withdrawn-model")]
-    [InlineData(411, "PreparationFailed", "tool:npm")]
+    [InlineData("withdrawn-review-model", 59, 12)]
+    [InlineData("repeated-preparation-failure", 411, 411)]
     public void Cause_breaker_E1_window_replay_creates_one_real_cause_card(
-        int historicalAttempts, string failureClass, string toolchain)
+        string windowName, int historicalAttempts, int extractedAttempts)
     {
         SeedTask(TaskStates.AutoReview, TaskKey, "Repeated review infrastructure failure", "Build and verify.");
         using var factory = BuildFactory();
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
         var task = scanner.FindJob(TaskKey, _watchPath)!;
+        using var replay = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Fixtures", "cause-breaker", "e1-attempts.json")));
+        var window = replay.RootElement.GetProperty("windows").EnumerateArray()
+            .Single(item => item.GetProperty("name").GetString() == windowName);
+        Assert.Equal(historicalAttempts, window.GetProperty("historicalAttemptCount").GetInt32());
+        var observations = window.GetProperty("observations").EnumerateArray().ToArray();
+        Assert.Equal(extractedAttempts, observations.Length);
         var attempts = 0;
 
-        for (var index = 0; index < historicalAttempts; index++)
+        foreach (var observation in observations)
         {
-            var text = $"CAC-18: {failureClass} on /tmp/run-{index + 1}";
-            var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass, text, 127, toolchain);
-            var evidence = new FailureCommandEvidence(failureClass, "ReviewInfra", 127,
-                StderrTail: text, EvidencePointers: [$"logs/review-{index + 1}.json"]);
-            var outcome = breaker.Observe(task, TaskKey, $"replay-{index + 1}", fingerprint, evidence, text);
+            if (observation.GetProperty("outcome").GetString() != "infrastructureFailure") continue;
+            var failureClass = observation.GetProperty("failureClassification").GetString()!;
+            var text = observation.GetProperty("terminalReason").GetString()!;
+            var exitCode = observation.GetProperty("exitCode").GetInt32();
+            var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass, text, exitCode,
+                observation.GetProperty("toolchain").GetString());
+            var evidencePath = observation.GetProperty("evidencePath").GetString()!;
+            var evidence = new FailureCommandEvidence(failureClass, "ReviewInfra", exitCode,
+                StderrTail: text, EvidencePointers: [evidencePath]);
+            var outcome = breaker.Observe(task, TaskKey,
+                observation.GetProperty("attemptId").GetString()!, fingerprint, evidence, text);
             attempts++;
             if (outcome.Decision.Action == CauseBreakerAction.Open) break;
         }

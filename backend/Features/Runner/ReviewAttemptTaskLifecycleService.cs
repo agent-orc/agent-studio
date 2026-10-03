@@ -123,6 +123,11 @@ public sealed class ReviewAttemptTaskLifecycleService
         lock (_gate)
         {
             var current = _scanner.FindJob(task.Id, task.WatchPath);
+            if (current is null || !string.Equals(current.State, TaskStates.AutoReview,
+                    StringComparison.OrdinalIgnoreCase))
+                current = _scanner.ScanJobFolder(task.FolderPath,
+                    new WatchPathEntry { Name = task.ProjectName, Path = task.WatchPath },
+                    task.State);
             if (current is null
                 || !string.Equals(current.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
