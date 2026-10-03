@@ -1,0 +1,56 @@
+@let g = geometry();
+<figure class="quota-curve" data-testid="quota-curve" [attr.data-window]="window().label">
+  <svg class="quota-curve__svg"
+       [attr.viewBox]="'0 0 ' + g.width + ' ' + g.height"
+       role="img"
+       [attr.aria-label]="summary()"
+       (pointermove)="onPointerMove($event)"
+       (pointerleave)="clearHover()">
+    @for (grid of g.gridY; track grid.pct) {
+      <line class="quota-curve__grid" [attr.x1]="g.plotLeft" [attr.x2]="g.plotRight" [attr.y1]="grid.y" [attr.y2]="grid.y" />
+      <text class="quota-curve__axis" [attr.x]="g.plotLeft - 6" [attr.y]="grid.y + 3" text-anchor="end">{{ grid.pct }}%</text>
+    }
+    @for (tick of g.ticksX; track tick.x) {
+      <text class="quota-curve__axis" [attr.x]="tick.x" [attr.y]="g.height - 6" text-anchor="middle">{{ tick.label }}</text>
+    }
+    <line class="quota-curve__now" data-testid="quota-curve-now"
+          [attr.x1]="g.nowX" [attr.x2]="g.nowX" [attr.y1]="g.plotTop" [attr.y2]="g.plotBottom" />
+    @if (g.resetX !== null) {
+      <line class="quota-curve__reset" data-testid="quota-curve-reset"
+            [attr.x1]="g.resetX" [attr.x2]="g.resetX" [attr.y1]="g.plotTop" [attr.y2]="g.plotBottom" />
+      <text class="quota-curve__marker-label" [attr.x]="g.resetX - 4" [attr.y]="g.plotTop + 10" text-anchor="end">reset</text>
+    }
+    @if (g.forecast; as f) {
+      <line class="quota-curve__forecast" data-testid="quota-curve-forecast"
+            [attr.x1]="f.x1" [attr.y1]="f.y1" [attr.x2]="f.x2" [attr.y2]="f.y2" />
+    }
+    <path class="quota-curve__line" data-testid="quota-curve-line" [attr.d]="g.path" />
+    @for (lone of g.isolated; track lone.at) {
+      <circle class="quota-curve__dot quota-curve__dot--lone" [attr.cx]="lone.x" [attr.cy]="lone.y" r="3" />
+    }
+    @if (g.points.length > 0) {
+      @let last = g.points[g.points.length - 1];
+      <circle class="quota-curve__dot" [attr.cx]="last.x" [attr.cy]="last.y" r="4" />
+    }
+    @if (hovered(); as h) {
+      <line class="quota-curve__crosshair" [attr.x1]="h.x" [attr.x2]="h.x" [attr.y1]="g.plotTop" [attr.y2]="g.plotBottom" />
+      <circle class="quota-curve__dot" [attr.cx]="h.x" [attr.cy]="h.y" r="4" />
+    }
+  </svg>
+  @if (hovered(); as h) {
+    <div class="quota-curve__tooltip" data-testid="quota-curve-tooltip" [style.left.%]="tooltipLeftPct(h.x)">
+      <span class="quota-curve__tooltip-key" aria-hidden="true"></span>
+      <strong>{{ h.usedPct }}%</strong>
+      <span>{{ formatTime(h.at) }}</span>
+    </div>
+  }
+  <table class="quota-curve__table">
+    <caption>{{ window().label }} readings</caption>
+    <thead><tr><th scope="col">Time</th><th scope="col">Used</th></tr></thead>
+    <tbody>
+      @for (point of window().points; track point.at) {
+        <tr><td>{{ formatTime(point.at) }}</td><td>{{ point.usedPct }}%</td></tr>
+      }
+    </tbody>
+  </table>
+</figure>
