@@ -4,7 +4,9 @@ import {
   OnDestroy,
   OnInit,
   computed,
+  effect,
   inject,
+  input,
   signal,
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
@@ -12,7 +14,9 @@ import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from 
 import type { TokenTimeline, TokenTimelineCell } from '../../../../features/tokens';
 import { TokensApiService } from '../../../../features/tokens';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
+import { colorForProject } from './workspace-token-timeline-color.util';
 import { BetterCandidateUsageReportComponent } from '../better-candidate-usage-report/better-candidate-usage-report.component';
+import type { UsageLedgerScope } from '../../../usage-cockpit';
 
 const STORAGE_DISABLED_KEY = 'workspaceTokens.disabledProjects';
 const STORAGE_WINDOW_KEY = 'workspaceTokens.windowHours';
@@ -64,6 +68,7 @@ interface BucketSegment {
 export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   private readonly tokensApi = inject(TokensApiService);
   private readonly jobService = inject(TaskService);
+  readonly scope = input<UsageLedgerScope | null>(null);
 
   // Hard-coded SVG canvas. CSS scales the rendered box; the viewBox keeps
   // the math simple and lets the chart resize without a ResizeObserver.
@@ -96,8 +101,15 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
 
   private pollTimer: VisibleIntervalHandle | null = null;
 
+  constructor() {
+    effect(() => {
+      this.scope();
+      this.windowHours();
+      this.refresh();
+    });
+  }
+
   ngOnInit(): void {
-    this.refresh();
     this.pollTimer = setVisibleInterval(() => this.refresh(), 10_000);
   }
 
@@ -110,12 +122,11 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
     if (this.windowHours() === h) return;
     this.windowHours.set(h);
     try { localStorage.setItem(STORAGE_WINDOW_KEY, String(h)); } catch { /* ignore */ }
-    this.refresh();
   }
 
   refresh(): void {
     this.loading.set(true);
-    this.tokensApi.getWorkspaceTokensTimeline(this.windowHours(), this.bucketMinutes())
+    this.tokensApi.getWorkspaceTokensTimeline(this.windowHours(), this.bucketMinutes(), this.scope())
       .subscribe({
         next: (t) => { this.timeline.set(t); this.loading.set(false); },
         error: () => { this.loading.set(false); /* keep last value */ },
@@ -125,10 +136,11 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   // ---- Project filter ----
 
   isProjectDisabled(project: string): boolean {
-    return this.disabledProjects().has(project);
+    return this.scope() ? false : this.disabledProjects().has(project);
   }
 
   toggleProject(project: string): void {
+    if (this.scope()) return;
     const next = new Set(this.disabledProjects());
     if (next.has(project)) next.delete(project); else next.add(project);
     this.disabledProjects.set(next);
@@ -156,12 +168,14 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
     return 24;
   }
 
+  readonly effectiveDisabled = computed(() => this.scope() ? new Set<string>() : this.disabledProjects());
+
   // ---- Derived chart data ----
 
   readonly hasAnyData = computed(() => {
     const t = this.timeline();
     if (!t) return false;
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     return t.cells.some(c => !off.has(c.project) && c.total > 0);
   });
 
@@ -175,7 +189,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
     const widthPct = (bucketMs / span) * 100;
 
     // Bucket key (ISO start) -> bar accumulator. Filter disabled projects.
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     const byBucket = new Map<string, { startMs: number; endIso: string; cells: TokenTimelineCell[] }>();
     for (const c of t.cells) {
       if (off.has(c.project)) continue;
@@ -237,7 +251,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   readonly gridLines = computed<{ pct: number; label: string }[]>(() => {
     const t = this.timeline();
     if (!t) return [];
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     const byBucket = new Map<string, number>();
     for (const c of t.cells) {
       if (off.has(c.project)) continue;
@@ -279,7 +293,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   readonly totalCalls = computed(() => {
     const t = this.timeline();
     if (!t) return 0;
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     let s = 0;
     for (const p of t.projects) if (!off.has(p.project)) s += p.calls;
     return s;
@@ -288,7 +302,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   readonly grandTotalTokens = computed(() => {
     const t = this.timeline();
     if (!t) return 0;
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     let s = 0;
     for (const p of t.projects) if (!off.has(p.project)) s += p.total;
     return s;
@@ -306,7 +320,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   // Workspace-wide category split across the enabled projects.
   readonly categoryTotals = computed<{ agent: number; supporting: number; orchestrator: number }>(() => {
     const t = this.timeline();
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     let agent = 0, supporting = 0, orchestrator = 0;
     if (t) {
       for (const p of t.projects) {
@@ -324,7 +338,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
   // total and the sum of the category chips.
   readonly tableTotals = computed(() => {
     const t = this.timeline();
-    const off = this.disabledProjects();
+    const off = this.effectiveDisabled();
     let total = 0, agent = 0, supporting = 0, orchestrator = 0, calls = 0, dollars = 0;
     let anyDollars = false, allPriced = true, anyActive = false;
     if (t) {
@@ -367,19 +381,7 @@ export class WorkspaceTokenTimelineComponent implements OnInit, OnDestroy {
     return Math.max(0, (pct / 100) * usable);
   }
 
-  // ---- Colour palette: stable per project name ----
-
-  colorFor(project: string): string {
-    // Hash the name to a hue; saturation/lightness fixed so the dark
-    // theme stays coherent. Same algorithm runs on every load so a
-    // project always gets the same band colour.
-    let h = 0;
-    for (let i = 0; i < project.length; i++) {
-      h = (h * 31 + project.charCodeAt(i)) >>> 0;
-    }
-    const hue = h % 360;
-    return `hsl(${hue}, 65%, 55%)`;
-  }
+  readonly colorFor = colorForProject;
 
   /** Share of the enabled grand total, for the composition bar widths. */
   pct(n: number): number {
