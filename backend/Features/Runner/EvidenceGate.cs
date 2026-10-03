@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -322,19 +323,19 @@ public static class EvidenceGate
     public static string BuildFollowUp(Decision decision)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Auto-review will not accept this task on a bare success claim: the evidence gate found unverified or failing work.");
-        sb.AppendLine("Resolve every item below, then prove the result before ending with [[TASK_DONE]]:");
-        sb.AppendLine();
+        sb.AppendLf("Auto-review will not accept this task on a bare success claim: the evidence gate found unverified or failing work.");
+        sb.AppendLf("Resolve every item below, then prove the result before ending with [[TASK_DONE]]:");
+        sb.AppendLf();
         foreach (var finding in decision.Findings.Take(MaxFindings))
         {
-            sb.AppendLine($"- [ ] {finding}");
+            sb.AppendLf($"- [ ] {finding}");
         }
-        sb.AppendLine();
+        sb.AppendLf();
         if (decision.MissingVisualEvidence)
         {
-            sb.AppendLine("Prove the fix with visual evidence: capture a screenshot or run the relevant Playwright e2e and save the artifact under this task's results/ folder (a PNG/JPG image, or results/playwright/<spec>/...). Reference it in your status before claiming done.");
+            sb.AppendLf("Prove the fix with visual evidence: capture a screenshot or run the relevant Playwright e2e and save the artifact under this task's results/ folder (a PNG/JPG image, or results/playwright/<spec>/...). Reference it in your status before claiming done.");
         }
-        sb.AppendLine("Re-run the build and the tests and confirm both are green. If any item cannot be completed or verified, stop and end with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason, instead of claiming done.");
+        sb.AppendLf("Re-run the build and the tests and confirm both are green. If any item cannot be completed or verified, stop and end with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason, instead of claiming done.");
         return sb.ToString();
     }
 }

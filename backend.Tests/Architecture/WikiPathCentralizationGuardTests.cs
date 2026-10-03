@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using AgentStudio.Docs;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -20,15 +21,7 @@ namespace AgentStudio.Tests;
 public class WikiPathCentralizationGuardTests
 {
     private static string RepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        while (current != null)
-        {
-            if (File.Exists(Path.Combine(current, "agent-taskboard.sln"))) return current;
-            current = Path.GetDirectoryName(current);
-        }
-        throw new InvalidOperationException("agent-taskboard.sln not found above test base directory.");
-    }
+        => RepositoryRoot.Find();
 
     // A whole-string docs/ path literal: starts with docs/, path characters only
     // (letters, digits, . _ - / and {} $ for interpolation holes), no spaces - so

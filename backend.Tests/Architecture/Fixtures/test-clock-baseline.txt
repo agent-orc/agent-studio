@@ -1,0 +1,538 @@
+# Test-clock baseline for TestClockGuardTests (AGT-3003).
+#
+# Test files that predated the guard. This list only shrinks:
+#   wall-clock <file> <n>  the file reads the wall clock (DateTime.UtcNow, DateTime.Now,
+#                          DateTimeOffset.UtcNow/Now, DateTime.Today, TimeProvider.System)
+#                          exactly n times; a new use fails, a removed use must lower n.
+#   fixed-date <file>      the file has literal dates but no controlled clock; remove the
+#                          entry once the file injects a clock or explains itself with
+#                          '// clock-independent: <reason>'.
+#
+# On 2026-09-29 the whole suite ran with the clock shifted to 2031-06, culture de-DE and
+# time zone Pacific/Chatham; the entries below are the files that stayed green under it.
+# New test files never go here: inject a clock instead.
+
+wall-clock backend.Tests/AcceptanceIntegrationRoundTripTests.cs 13
+wall-clock backend.Tests/AcceptanceRailHostedServiceTests.cs 4
+wall-clock backend.Tests/AcceptanceRailPolicyTests.cs 1
+wall-clock backend.Tests/AccessSecurityTests.cs 11
+wall-clock backend.Tests/AdHocUsageBusParityTests.cs 2
+wall-clock backend.Tests/AdHocUsageTests.cs 1
+wall-clock backend.Tests/AdrCodeDriftAnalysisServiceTests.cs 2
+wall-clock backend.Tests/AgentDocsReadAnalyticsTests.cs 2
+wall-clock backend.Tests/AgentEnvironmentDetectorTests.cs 1
+wall-clock backend.Tests/AgentMessageBusBridgeTests.cs 3
+wall-clock backend.Tests/AgentMessageBusStoreTests.cs 1
+wall-clock backend.Tests/AgentOutcomeAnalyzerTests.cs 9
+wall-clock backend.Tests/AntigravityCliServiceTests.cs 9
+wall-clock backend.Tests/Architecture/TempRootHygieneGuardTests.cs 1
+wall-clock backend.Tests/ArchivedResultRefPrunerTests.cs 3
+wall-clock backend.Tests/AspectConcernReaderTests.cs 1
+wall-clock backend.Tests/AspectRunnerTests.cs 6
+wall-clock backend.Tests/AtomicJsonFileWriterTests.cs 2
+wall-clock backend.Tests/AutoPushStrategyTests.cs 7
+wall-clock backend.Tests/AutoReviewPostProcessingRecoveryServiceTests.cs 4
+wall-clock backend.Tests/AutoReviewPostProcessingWorkerTests.cs 3
+wall-clock backend.Tests/AutoReviewQueueStagnationWatchdogAttemptAuthorityTests.cs 1
+wall-clock backend.Tests/AutoReviewRestartDrillTests.cs 12
+wall-clock backend.Tests/BackendCarExecutionParityTests.cs 3
+wall-clock backend.Tests/BackendCarProjectPipelineAcceptanceTests.cs 3
+wall-clock backend.Tests/BackendCrashSurfaceTests.cs 3
+wall-clock backend.Tests/BackendLocalExecutionEngineParityTests.cs 2
+wall-clock backend.Tests/BatchMoveJobTests.cs 2
+wall-clock backend.Tests/BoardConditionalReadTests.cs 6
+wall-clock backend.Tests/BoardMergeStatusServiceTests.cs 1
+wall-clock backend.Tests/BranchRetentionEvidenceWriterTests.cs 5
+wall-clock backend.Tests/BranchSweepPolicyTests.cs 1
+wall-clock backend.Tests/BusAggregationCacheTests.cs 1
+wall-clock backend.Tests/CentralOrchestratorChatPersistenceStub.cs 2
+wall-clock backend.Tests/ClaudeCliServiceTests.cs 2
+wall-clock backend.Tests/CliContextModesTests.cs 1
+wall-clock backend.Tests/CliExecutionStaleOrphanReaperTests.cs 2
+wall-clock backend.Tests/CliKestrelHostingRepoTests.cs 4
+wall-clock backend.Tests/CliModelRoutesEndpointTests.cs 2
+wall-clock backend.Tests/CliOutputLogStoreTests.cs 1
+wall-clock backend.Tests/CliResumeContractTests.cs 4
+wall-clock backend.Tests/CliSpawnIntegrationTests.cs 17
+wall-clock backend.Tests/CliWatchdogIntegrationTests.cs 17
+wall-clock backend.Tests/ClientDefaultsStoreTests.cs 1
+wall-clock backend.Tests/ClientDeletionPolicyTests.cs 1
+wall-clock backend.Tests/ClientIdentityTests.cs 4
+wall-clock backend.Tests/CodexCliServiceTests.cs 2
+wall-clock backend.Tests/CodexModelDiscoveryTests.cs 6
+wall-clock backend.Tests/CodexOneShotTests.cs 2
+wall-clock backend.Tests/CodexOutputRendererTests.cs 3
+wall-clock backend.Tests/CommitCandidateWithholdingTests.cs 1
+wall-clock backend.Tests/CompletedLaneAuditServiceTests.cs 2
+wall-clock backend.Tests/ConceptPipelineTests.cs 2
+wall-clock backend.Tests/ConnectorNegativeMatrixTests.cs 2
+wall-clock backend.Tests/ConnectorProfileTests.cs 5
+wall-clock backend.Tests/ContinueModeGuardServiceTests.cs 2
+wall-clock backend.Tests/CrashForensicsTests.cs 1
+wall-clock backend.Tests/CrashRecoveryServiceTests.cs 9
+wall-clock backend.Tests/CrossSlugInfraCircuitBreakerTests.cs 13
+wall-clock backend.Tests/CycleTimeBackfillTests.cs 2
+wall-clock backend.Tests/DecisionCardPolicyTests.cs 1
+wall-clock backend.Tests/DeliveryRefResolverTests.cs 2
+wall-clock backend.Tests/LeasePlacementEndpointsTests.cs 3
+wall-clock backend.Tests/DemoReplayScopeCompromiseTests.cs 1
+wall-clock backend.Tests/DescribeContextSourcesTests.cs 1
+wall-clock backend.Tests/DocsMarketingDriftAnalysisServiceTests.cs 3
+wall-clock backend.Tests/DriftPostStepRunnerTests.cs 4
+wall-clock backend.Tests/DriftReportArchitectureModelTests.cs 1
+wall-clock backend.Tests/DurableLocalCliRestartTests.cs 2
+wall-clock backend.Tests/ExternalCompletionEndpointsTests.cs 2
+wall-clock backend.Tests/Fixtures/UpdateService/FakeBackendHarness.cs 2
+wall-clock backend.Tests/Fixtures/UpdateService/FakeStableCheckout.cs 2
+wall-clock backend.Tests/FollowUpAdmissionServiceTests.cs 2
+wall-clock backend.Tests/GateEnvironmentRetryServiceTests.cs 3
+wall-clock backend.Tests/GateResultCachePolicyTests.cs 1
+wall-clock backend.Tests/GateResultCacheTests.cs 1
+wall-clock backend.Tests/GitNetworkProcessRunnerTests.cs 4
+wall-clock backend.Tests/GitServiceFileContentTests.cs 1
+wall-clock backend.Tests/GitServiceRunLocationTests.cs 1
+wall-clock backend.Tests/GitStateIndexServiceTests.cs 11
+wall-clock backend.Tests/GlobalSearchDossierTests.cs 1
+wall-clock backend.Tests/GlobalSearchEndpointAccessTests.cs 6
+wall-clock backend.Tests/HostTelemetryStoreTests.cs 6
+wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 11
+wall-clock backend.Tests/InMemoryStoreTests.cs 2
+wall-clock backend.Tests/IntegrationGateReusePolicyTests.cs 1
+wall-clock backend.Tests/IntegrationWorktreeProviderTests.cs 2
+wall-clock backend.Tests/InterruptedIntegrationGateRecoveryTests.cs 2
+wall-clock backend.Tests/JobCommitsAggregationTests.cs 10
+wall-clock backend.Tests/LaneChangeCauseLedgerTests.cs 2
+wall-clock backend.Tests/LintScssPostStepTests.cs 1
+wall-clock backend.Tests/LoadAwareCliOneShotTests.cs 1
+wall-clock backend.Tests/LoadThrottlePolicyTests.cs 1
+wall-clock backend.Tests/LogIngestionRotationTests.cs 3
+wall-clock backend.Tests/ManagementApiTests.cs 9
+wall-clock backend.Tests/MergeEndpointsIntegrationTests.cs 3
+wall-clock backend.Tests/MergeIntoDevelopRunnerTests.cs 10
+wall-clock backend.Tests/MergeServiceTests.cs 2
+wall-clock backend.Tests/MetaCycleResumeVerificationTests.cs 1
+wall-clock backend.Tests/MetaCycleRulesTests.cs 16
+wall-clock backend.Tests/ModelQualificationTests.cs 1
+wall-clock backend.Tests/ModelRoutingPolicyGuardTests.cs 2
+wall-clock backend.Tests/NeedsInputArtifactTests.cs 1
+wall-clock backend.Tests/OrchestratorChatErrorTranslatorTests.cs 4
+wall-clock backend.Tests/OrchestratorChatRejectionRecoveryTests.cs 2
+wall-clock backend.Tests/OrchestratorContextChatEndpointsTests.cs 1
+wall-clock backend.Tests/OrchestratorContextEnvelopeTests.cs 13
+wall-clock backend.Tests/OrchestratorRunnerTests.cs 1
+wall-clock backend.Tests/OrchestratorSessionRegistryTests.cs 2
+wall-clock backend.Tests/ParkedCardEndpointsTests.cs 2
+wall-clock backend.Tests/PendingDecisionScannerTests.cs 1
+wall-clock backend.Tests/PerfBaseline/PerfStats.cs 1
+wall-clock backend.Tests/PickupLockFileTests.cs 14
+wall-clock backend.Tests/PickupLoopStrictIterationTests.cs 5
+wall-clock backend.Tests/PipelineExecutionParallelTests.cs 2
+wall-clock backend.Tests/PipelineExecutionRestartTests.cs 6
+wall-clock backend.Tests/PlanningSpawnContractTests.cs 1
+wall-clock backend.Tests/ProjectChatTests.cs 2
+wall-clock backend.Tests/ProjectCycleTimeServiceTests.cs 1
+wall-clock backend.Tests/ProjectObservationServiceTests.cs 4
+wall-clock backend.Tests/ProjectProposalManagementTests.cs 1
+wall-clock backend.Tests/ProjectRunnerModeTests.cs 6
+wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 29
+wall-clock backend.Tests/ProjectSettingsServiceTests.cs 2
+wall-clock backend.Tests/ProjectTokenUsageBusParityTests.cs 2
+wall-clock backend.Tests/ProjectTokenUsageEndpointPerfTests.cs 1
+wall-clock backend.Tests/ProjectUrlDiagnosticsTests.cs 2
+wall-clock backend.Tests/Projection/ConversationProjectionTests.cs 4
+wall-clock backend.Tests/ProviderLimitRegistryTests.cs 1
+wall-clock backend.Tests/PublicDemoReadOnlyEdgeTests.cs 1
+wall-clock backend.Tests/PublishTargetServiceTests.cs 1
+wall-clock backend.Tests/QuotaFallbackCrossPathTests.cs 5
+wall-clock backend.Tests/QuotaServiceGracefulDegradationTests.cs 1
+wall-clock backend.Tests/QuotaServiceSuspiciousSnapshotTests.cs 1
+wall-clock backend.Tests/RealTlsTransportTests.cs 5
+wall-clock backend.Tests/RecurringOutputPatternServiceTests.cs 6
+wall-clock backend.Tests/RegressionRadarServiceTests.cs 5
+wall-clock backend.Tests/ReissueLoopBreakerTests.cs 2
+wall-clock backend.Tests/RemoteChatWorkBrokerTests.cs 2
+wall-clock backend.Tests/RemoteResultFinalizationServiceTests.cs 4
+wall-clock backend.Tests/RemoteReviewReportEvidenceTests.cs 3
+wall-clock backend.Tests/RemoteRunnerEndToEndTests.cs 44
+wall-clock backend.Tests/RestoreFromFailedPickupTests.cs 1
+wall-clock backend.Tests/ReviewAttemptReplanServiceTests.cs 3
+wall-clock backend.Tests/ReviewDecisionLogIndexTests.cs 1
+wall-clock backend.Tests/ReviewDecisionOrchestratorCompletionGateTests.cs 2
+wall-clock backend.Tests/ReviewDecisionOrchestratorGradeStepTests.cs 1
+wall-clock backend.Tests/ReviewDecisionOrchestratorTests.cs 24
+wall-clock backend.Tests/ReviewEvidenceLogTests.cs 1
+wall-clock backend.Tests/ReviewFailureAttributionPolicyTests.cs 2
+wall-clock backend.Tests/RoadmapAlignmentReviewServiceTests.cs 1
+wall-clock backend.Tests/RunCommitsLinkageTests.cs 8
+wall-clock backend.Tests/RunLivenessMonitorTests.cs 4
+wall-clock backend.Tests/RunLogStoreTests.cs 2
+wall-clock backend.Tests/RunPipelineCommitAdvancedRegressionTests.cs 2
+wall-clock backend.Tests/RunbookRehearsalTests.cs 4
+wall-clock backend.Tests/SessionContinuationLedgerStoreTests.cs 2
+wall-clock backend.Tests/SessionEventsTests.cs 9
+wall-clock backend.Tests/SoftwareArchitectureDriftAnalysisServiceTests.cs 2
+wall-clock backend.Tests/SpecTaskDriftAnalysisServiceTests.cs 1
+wall-clock backend.Tests/StaleProgressArchiverTests.cs 5
+wall-clock backend.Tests/SteerTimeoutMonitorTests.cs 3
+wall-clock backend.Tests/SteeringDocsSummaryDriftServiceTests.cs 2
+wall-clock backend.Tests/StepPromptLogTests.cs 9
+wall-clock backend.Tests/SummaryGenerationFinalizationTests.cs 1
+wall-clock backend.Tests/SummaryGenerationValidationTests.cs 1
+wall-clock backend.Tests/SupersededCommitSweepTests.cs 1
+wall-clock backend.Tests/SupervisorContractTests.cs 1
+wall-clock backend.Tests/SupervisorInterventionTests.cs 1
+wall-clock backend.Tests/TaskAccessServiceTests.cs 1
+wall-clock backend.Tests/TaskCommitBindingTests.cs 1
+wall-clock backend.Tests/TaskCommitsAggregatorTests.cs 17
+wall-clock backend.Tests/TaskCommitsEndpointIntegrationTests.cs 12
+wall-clock backend.Tests/TaskCoreCacheTests.cs 1
+wall-clock backend.Tests/TaskCoreEndpointTests.cs 6
+wall-clock backend.Tests/TaskFailureContinuationSelectionTests.cs 3
+wall-clock backend.Tests/TaskFileHistoryEndpointsTests.cs 4
+wall-clock backend.Tests/TaskIndexCacheTests.cs 1
+wall-clock backend.Tests/TaskIndexInvalidationGuardTests.cs 3
+wall-clock backend.Tests/TaskIntegrationStatusServiceTests.cs 2
+wall-clock backend.Tests/TaskLanePipelineBusinessStateMachineTests.cs 2
+wall-clock backend.Tests/TaskListGitProjectionCacheTests.cs 4
+wall-clock backend.Tests/TaskPipelineEndpointTests.cs 1
+wall-clock backend.Tests/TaskProcessReaperTests.cs 4
+wall-clock backend.Tests/TaskProvenanceServiceTests.cs 7
+wall-clock backend.Tests/TaskReadModelLedgerMeshTests.cs 1
+wall-clock backend.Tests/TaskRunnerPlanTests.cs 2
+wall-clock backend.Tests/TaskSpawnerPostStepTests.cs 4
+wall-clock backend.Tests/TaskStateMachineOutcomeTests.cs 1
+wall-clock backend.Tests/TaskTransitionAutoCommitAttributionTests.cs 6
+wall-clock backend.Tests/TaskWatcherServiceTests.cs 7
+wall-clock backend.Tests/TasksEndpointPerfTests.cs 1
+wall-clock backend.Tests/TestRunServiceTests.cs 1
+wall-clock backend.Tests/TokenSummaryBusParityTests.cs 2
+wall-clock backend.Tests/UpdateServiceIntegrationTests.cs 10
+wall-clock backend.Tests/UpdateServicePreflightPreconditionTests.cs 2
+wall-clock backend.Tests/UpdateServiceRestartIdentityDrillTests.cs 2
+wall-clock backend.Tests/UpdateVerifierTests.cs 6
+wall-clock backend.Tests/UsageCockpitEndpointTests.cs 1
+wall-clock backend.Tests/V1ReviewExecutorAvailabilityTests.cs 3
+wall-clock backend.Tests/V1ReviewPlaneDiagnosticsEndpointTests.cs 13
+wall-clock backend.Tests/WatcherContingentTests.cs 5
+wall-clock backend.Tests/WatcherEndpointsTests.cs 2
+wall-clock backend.Tests/WatcherSuppressionStoreTests.cs 3
+wall-clock backend.Tests/WikiFolderViewTests.cs 3
+wall-clock backend.Tests/WikiGradingServiceTests.cs 2
+wall-clock backend.Tests/WikiSearchServiceTests.cs 1
+wall-clock backend.Tests/WorkspaceArtifactCommitServiceTests.cs 3
+wall-clock backend.Tests/WorkspaceRegistryTests.cs 3
+wall-clock backend.Tests/WorkspaceTokensTimelineBusParityTests.cs 2
+wall-clock backend.Tests/WorkspaceTokensTimelineCategoryTests.cs 2
+wall-clock backend.Tests/WorktreeOrphanDirectorySweeperTests.cs 4
+wall-clock operations-server.Tests/BoundaryPolicyTests.cs 1
+wall-clock orchestrator-engine.Tests/EngineContractTests.cs 3
+wall-clock orchestrator-engine.Tests/StageHandlerTests.cs 2
+wall-clock retention.Tests/FileTreeFullBackupServiceTests.cs 4
+wall-clock retention.Tests/FileTreeRetentionStoreTests.cs 5
+wall-clock retention.Tests/RetentionCliTests.cs 6
+wall-clock retention.Tests/RetentionRuntimeCommitTests.cs 4
+wall-clock runner.Tests/CarWorkerExecutionTests.cs 1
+wall-clock runner.Tests/CliProcessReaperTests.cs 1
+wall-clock runner.Tests/CliProtocolNoveltyTests.cs 1
+wall-clock runner.Tests/CodingDaemonRestartTests.cs 5
+wall-clock runner.Tests/CodingFinalizationRetryTests.cs 6
+wall-clock runner.Tests/CommandProgressWatchdogTests.cs 2
+wall-clock runner.Tests/DaemonRecoveryTests.cs 3
+wall-clock runner.Tests/DurableAgentProcessTests.cs 3
+wall-clock runner.Tests/DurableHandoffRecoveryTests.cs 10
+wall-clock runner.Tests/DurableLeaseAuthorityTests.cs 1
+wall-clock runner.Tests/DurableRunOutboxTests.cs 2
+wall-clock runner.Tests/DurableSentinelIncidentTests.cs 3
+wall-clock runner.Tests/GitWorkspaceTests.cs 4
+wall-clock runner.Tests/HostAdmissionPolicyTests.cs 1
+wall-clock runner.Tests/HostOrchestratorClientTests.cs 6
+wall-clock runner.Tests/HostOrchestratorJournalTests.cs 1
+wall-clock runner.Tests/InteractiveChatAdmissionTests.cs 5
+wall-clock runner.Tests/LeaseLossProcessKillTests.cs 2
+wall-clock runner.Tests/LogShipperCapTests.cs 6
+wall-clock runner.Tests/LostWorkerSalvageTests.cs 3
+wall-clock runner.Tests/MechanicalSessionContinuationTests.cs 6
+wall-clock runner.Tests/ProcessSignalGuardTests.cs 3
+wall-clock runner.Tests/ProviderAuthProbeTests.cs 2
+wall-clock runner.Tests/RemoteCompletionProtocolTests.cs 1
+wall-clock runner.Tests/RemoteGateDaemonTests.cs 8
+wall-clock runner.Tests/RemoteOperatorStopTests.cs 5
+wall-clock runner.Tests/RemoteProjectChatRunnerTests.cs 2
+wall-clock runner.Tests/RemoteReviewExecutorTests.cs 10
+wall-clock runner.Tests/RemoteReviewWorkspaceTests.cs 7
+wall-clock runner.Tests/RemoteRunnerDaemonWorkerLossTests.cs 2
+wall-clock runner.Tests/RemoteTaskRunnerClaimGuardTests.cs 6
+wall-clock runner.Tests/RemoteTaskRunnerProviderAuthTests.cs 2
+wall-clock runner.Tests/RemoteTaskRunnerRestartTests.cs 2
+wall-clock runner.Tests/RemoteWorkerEngineParityTests.cs 2
+wall-clock runner.Tests/ReviewConcurrentWorkspaceIsolationTests.cs 5
+wall-clock runner.Tests/ReviewDaemonDrainTests.cs 3
+wall-clock runner.Tests/ReviewHandoffAdoptionTests.cs 3
+wall-clock runner.Tests/ReviewLibraryStepPolicyTests.cs 2
+wall-clock runner.Tests/ReviewPlaneBudgetProbeTests.cs 1
+wall-clock runner.Tests/ReviewSlotAdmissionPolicyTests.cs 1
+wall-clock runner.Tests/ReviewSlotReconcilerTests.cs 5
+wall-clock runner.Tests/ReviewWorkerReleaseProvenanceTests.cs 6
+wall-clock runner.Tests/RunSpecInvocationTests.cs 2
+wall-clock runner.Tests/RunnerActiveAttemptReporterTests.cs 3
+wall-clock runner.Tests/SessionContinuationEvidenceTests.cs 2
+wall-clock runner.Tests/TaskServerClientHealthTests.cs 9
+wall-clock setup.Tests/SetupContractTests.cs 4
+wall-clock task-server.Tests/FullBackupServiceTests.cs 1
+wall-clock task-server.Tests/GateAuthorityTests.cs 2
+wall-clock task-server.Tests/HostOrchestratorStoreTests.cs 4
+wall-clock task-server.Tests/HostProjectPolicyTests.cs 1
+wall-clock task-server.Tests/OperationPermitTests.cs 3
+wall-clock task-server.Tests/OrchestratorContextStoreTests.cs 11
+wall-clock task-server.Tests/PrincipalAuthenticationTests.cs 1
+wall-clock task-server.Tests/RemoteReviewAuthorityTests.cs 9
+wall-clock task-server.Tests/RepeatedReviewBlockStoreTests.cs 1
+wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
+wall-clock task-server.Tests/RetentionStoreTests.cs 3
+wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1
+wall-clock task-server.Tests/RuntimeCapacitySettingsTests.cs 2
+wall-clock task-server.Tests/ScenarioContext.cs 3
+wall-clock task-server.Tests/StudioEndpointsTests.cs 3
+wall-clock task-server.Tests/StudioHostsTests.cs 2
+wall-clock task-server.Tests/StudioP2ComplianceEndpointsTests.cs 1
+wall-clock task-server.Tests/StudioP2InsightEndpointsTests.cs 1
+wall-clock task-server.Tests/StudioP2SupervisorEndpointsTests.cs 3
+wall-clock task-server.Tests/StudioProjectMetaTests.cs 1
+wall-clock task-server.Tests/StudioRunnerOrchestratorTests.cs 4
+wall-clock task-server.Tests/StudioTaskHistoryTests.cs 2
+wall-clock task-server.Tests/StudioTaskLifecycleExtrasTests.cs 2
+wall-clock task-server.Tests/StudioWorkspaceTestSupport.cs 1
+wall-clock task-server.Tests/StudioWorkspaceTests.cs 7
+wall-clock task-server.Tests/TaskServerStoreTests.cs 7
+wall-clock task-server.Tests/TopologyTests.cs 8
+wall-clock testsupport/ProcessWaiters.cs 10
+wall-clock testsupport/TestTempRoot.cs 1
+
+fixed-date backend.Tests/AcceptanceRailPolicyTests.cs
+fixed-date backend.Tests/AcceptedIntegrationBackstopPolicyTests.cs
+fixed-date backend.Tests/AdHocUsageBusParityTests.cs
+fixed-date backend.Tests/AdHocUsageTests.cs
+fixed-date backend.Tests/AgentMessageBusBridgeTests.cs
+fixed-date backend.Tests/AgentMessageBusStoreTests.cs
+fixed-date backend.Tests/AgentOutcomeAnalyzerTests.cs
+fixed-date backend.Tests/AgentWorkSummaryReaderTests.cs
+fixed-date backend.Tests/AgentsWikiSyncPostStepRunnerTests.cs
+fixed-date backend.Tests/AnalysisReportStoreTests.cs
+fixed-date backend.Tests/AppendIntegrationCommitEndpointTests.cs
+fixed-date backend.Tests/Architecture/CleanContextRetentionBreakerTest.cs
+fixed-date backend.Tests/Architecture/LocalCliRepairBreakerTest.cs
+fixed-date backend.Tests/AspectRunnerTests.cs
+fixed-date backend.Tests/AutoInterventionMappingTests.cs
+fixed-date backend.Tests/AutoReviewPostProcessingRecoveryServiceTests.cs
+fixed-date backend.Tests/AutoReviewPostProcessingWorkerTests.cs
+fixed-date backend.Tests/AutoTaggingOrchestrationTests.cs
+fixed-date backend.Tests/BetterCandidateUsageReportServiceTests.cs
+fixed-date backend.Tests/BranchReclaimTriggerWiringTests.cs
+fixed-date backend.Tests/BranchSweepPolicyTests.cs
+fixed-date backend.Tests/BuildIdentityTests.cs
+fixed-date backend.Tests/BusAggregationCacheTests.cs
+fixed-date backend.Tests/BusBackedProjectTokenUsageReaderCacheTests.cs
+fixed-date backend.Tests/ClaudeOutcomeClassifierFixtureTests.cs
+fixed-date backend.Tests/ClaudeRateLimitEventParserTests.cs
+fixed-date backend.Tests/ClaudeSessionUsageAggregateTests.cs
+fixed-date backend.Tests/ClaudeTurnUsageBusEmitTests.cs
+fixed-date backend.Tests/CleanContextSessionStabilityTests.cs
+fixed-date backend.Tests/CliOutputLogParserTests.cs
+fixed-date backend.Tests/CliUsageParserTests.cs
+fixed-date backend.Tests/ClientDefaultsStoreTests.cs
+fixed-date backend.Tests/ClientIdentityTests.cs
+fixed-date backend.Tests/CodexCliServiceTests.cs
+fixed-date backend.Tests/CodexOutputRendererTests.cs
+fixed-date backend.Tests/CodexTurnUsageBusEmitTests.cs
+fixed-date backend.Tests/CommitAttributionServiceTests.cs
+fixed-date backend.Tests/CompletedLaneAuditServiceTests.cs
+fixed-date backend.Tests/CompletionClaimPersistenceTests.cs
+fixed-date backend.Tests/CrashRecoveryServiceTests.cs
+fixed-date backend.Tests/CycleTimeBackfillTests.cs
+fixed-date backend.Tests/DecisionCardPolicyTests.cs
+fixed-date backend.Tests/DemoReplayScopeCompromiseTests.cs
+fixed-date backend.Tests/DesignEvidenceParserTests.cs
+fixed-date backend.Tests/DossierImplementationContractTests.cs
+fixed-date backend.Tests/DossierMaintenanceServiceTests.cs
+fixed-date backend.Tests/DriftReportValidatorTests.cs
+fixed-date backend.Tests/DuplicateTaskKeyTests.cs
+fixed-date backend.Tests/EpicAssignmentTests.cs
+fixed-date backend.Tests/ExternalCompletionEndpointsTests.cs
+fixed-date backend.Tests/FailureInterventionTests.cs
+fixed-date backend.Tests/FileGenerationIndexTests.cs
+fixed-date backend.Tests/FixtureFilterTests.cs
+fixed-date backend.Tests/Fixtures/UpdateService/FakeBackendHarness.cs
+fixed-date backend.Tests/FollowUpAdmissionPolicyTests.cs
+fixed-date backend.Tests/GateEnvironmentRetryServiceTests.cs
+fixed-date backend.Tests/GateEnvironmentReviewLookupTests.cs
+fixed-date backend.Tests/GateResultCachePolicyTests.cs
+fixed-date backend.Tests/GeminiEventAdapterTests.cs
+fixed-date backend.Tests/GitBranchRetentionTests.cs
+fixed-date backend.Tests/GitHygieneTests.cs
+fixed-date backend.Tests/GitServiceShaRangeCacheTests.cs
+fixed-date backend.Tests/GlobalSearchDossierTests.cs
+fixed-date backend.Tests/GlobalSearchIndexTests.cs
+fixed-date backend.Tests/HardHealthChecksTests.cs
+fixed-date backend.Tests/HostReleaseDriftPolicyTests.cs
+fixed-date backend.Tests/HumanReviewEscalationTests.cs
+fixed-date backend.Tests/InMemoryStoreTests.cs
+fixed-date backend.Tests/IntegrationBranchGateHealthPolicyTests.cs
+fixed-date backend.Tests/JobsHubTests.cs
+fixed-date backend.Tests/LaneChangeCauseLedgerTests.cs
+fixed-date backend.Tests/LaneSortStrategyTests.cs
+fixed-date backend.Tests/LoadThrottlePolicyTests.cs
+fixed-date backend.Tests/LocalCliRepairServiceTests.cs
+fixed-date backend.Tests/LogIngestionRotationTests.cs
+fixed-date backend.Tests/MergeEndpointsIntegrationTests.cs
+fixed-date backend.Tests/MetaCycleReportRoundTripTests.cs
+fixed-date backend.Tests/ModelMigratedTimelineEventTests.cs
+fixed-date backend.Tests/ModelQualificationTests.cs
+fixed-date backend.Tests/ObservationParsingTests.cs
+fixed-date backend.Tests/OrchestratorChatNavigationContextTests.cs
+fixed-date backend.Tests/OrchestratorContextDigestServiceTests.cs
+fixed-date backend.Tests/OrchestratorContextEndpointsTests.cs
+fixed-date backend.Tests/OrchestratorContextEnvelopeTests.cs
+fixed-date backend.Tests/OrchestratorSessionRegistryTests.cs
+fixed-date backend.Tests/OrchestratorTaskPromptContextComposerTests.cs
+fixed-date backend.Tests/OrchestratorWorkbenchPromptContextComposerTests.cs
+fixed-date backend.Tests/PickupHoldEndpointsTests.cs
+fixed-date backend.Tests/PickupHoldPolicyTests.cs
+fixed-date backend.Tests/PickupLoopStrictIterationTests.cs
+fixed-date backend.Tests/PipelineHealthNightReplayTests.cs
+fixed-date backend.Tests/PlanReaderTests.cs
+fixed-date backend.Tests/ProjectChatTests.cs
+fixed-date backend.Tests/ProjectGraphDiscoveryTests.cs
+fixed-date backend.Tests/ProjectIntegrationViewServiceTests.cs
+fixed-date backend.Tests/ProjectObservationServiceTests.cs
+fixed-date backend.Tests/ProjectOperatorDashboardServiceTests.cs
+fixed-date backend.Tests/ProjectProposalEvidencePerfTests.cs
+fixed-date backend.Tests/ProjectProposalManagementTests.cs
+fixed-date backend.Tests/ProjectRunnerModeTests.cs
+fixed-date backend.Tests/ProjectTokenReceiptReaderTests.cs
+fixed-date backend.Tests/ProjectTokenUsageBusParityTests.cs
+fixed-date backend.Tests/ProjectVisualEvidenceServiceTests.cs
+fixed-date backend.Tests/ProjectWikiEnhancementsTests.cs
+fixed-date backend.Tests/Projection/ConversationProjectionTests.cs
+fixed-date backend.Tests/Projection/RunnerEventSourceTests.cs
+fixed-date backend.Tests/ProviderLimitRegistryTests.cs
+fixed-date backend.Tests/ProviderRejectionFleetServiceTests.cs
+fixed-date backend.Tests/QuotaAdmissionEventEmissionTests.cs
+fixed-date backend.Tests/QuotaFallbackMarkerTests.cs
+fixed-date backend.Tests/QuotaWindowProjectionTests.cs
+fixed-date backend.Tests/RecoveryChatLineTests.cs
+fixed-date backend.Tests/RecurringOutputPatternServiceTests.cs
+fixed-date backend.Tests/ReissueOpenItemsPreCheckTests.cs
+fixed-date backend.Tests/RemoteCommitAttributionGuardTests.cs
+fixed-date backend.Tests/RemoteDeliveryIntegrationTests.cs
+fixed-date backend.Tests/RemoteDeliverySettlementStoreTests.cs
+fixed-date backend.Tests/RemoteDispatchRejectionStoreTests.cs
+fixed-date backend.Tests/RemotePipelineExecutionProjectionTests.cs
+fixed-date backend.Tests/RemoteProjectRepositoryResolverTests.cs
+fixed-date backend.Tests/RemoteQueueStarvationPolicyTests.cs
+fixed-date backend.Tests/RemoteResultFinalizationServiceTests.cs
+fixed-date backend.Tests/RemoteReviewReportEvidenceTests.cs
+fixed-date backend.Tests/RemoteReviewWorkerReleaseProjectionTests.cs
+fixed-date backend.Tests/RestoreFromFailedPickupTests.cs
+fixed-date backend.Tests/ResultVersionStoreTests.cs
+fixed-date backend.Tests/ReviewAttemptChainSummaryTests.cs
+fixed-date backend.Tests/ReviewDecisionChainBudgetTests.cs
+fixed-date backend.Tests/ReviewDecisionOrchestratorTests.cs
+fixed-date backend.Tests/ReviewEvidenceLogTests.cs
+fixed-date backend.Tests/ReviewProjectionTests.cs
+fixed-date backend.Tests/RunLivenessMonitorTests.cs
+fixed-date backend.Tests/RunLogStoreTests.cs
+fixed-date backend.Tests/RunOutcomeContractTests.cs
+fixed-date backend.Tests/RunPipelineCommitAdvancedRegressionTests.cs
+fixed-date backend.Tests/RunnerBadgeProjectionTests.cs
+fixed-date backend.Tests/RuntimeEventCaptureTests.cs
+fixed-date backend.Tests/SchemaRoundTripTests.cs
+fixed-date backend.Tests/SecurityReviewParserTests.cs
+fixed-date backend.Tests/SessionEventsTests.cs
+fixed-date backend.Tests/SleepDetectorTests.cs
+fixed-date backend.Tests/StableReleaseContractTests.cs
+fixed-date backend.Tests/StepPromptLogTests.cs
+fixed-date backend.Tests/SupersededCommitSweepTests.cs
+fixed-date backend.Tests/SupervisorContractTests.cs
+fixed-date backend.Tests/SupervisorInterventionTests.cs
+fixed-date backend.Tests/TaskAccessServiceTests.cs
+fixed-date backend.Tests/TaskAccessSkeletonTests.cs
+fixed-date backend.Tests/TaskArchiveEndpointTests.cs
+fixed-date backend.Tests/TaskCleanContextStoreTests.cs
+fixed-date backend.Tests/TaskCommitBindingTests.cs
+fixed-date backend.Tests/TaskCommitsEndpointIntegrationTests.cs
+fixed-date backend.Tests/TaskDetailHygieneScopeTests.cs
+fixed-date backend.Tests/TaskFileHistoryEndpointsTests.cs
+fixed-date backend.Tests/TaskIndexCacheTests.cs
+fixed-date backend.Tests/TaskIndexInvalidationGuardTests.cs
+fixed-date backend.Tests/TaskIntegrationRecordEndpointTests.cs
+fixed-date backend.Tests/TaskJsonSchemaTests.cs
+fixed-date backend.Tests/TaskKeyStabilityTests.cs
+fixed-date backend.Tests/TaskLaneChangeLedgerTests.cs
+fixed-date backend.Tests/TaskListGitProjectionCacheTests.cs
+fixed-date backend.Tests/TaskReadModelLedgerMeshTests.cs
+fixed-date backend.Tests/TaskScannerArtifactsTests.cs
+fixed-date backend.Tests/TaskScannerLiveFolderMemoTests.cs
+fixed-date backend.Tests/TaskScannerOutcomeIssueTests.cs
+fixed-date backend.Tests/TaskTransitionAutoCommitAttributionTests.cs
+fixed-date backend.Tests/TasksEndpointPerfTests.cs
+fixed-date backend.Tests/TestRunServiceTests.cs
+fixed-date backend.Tests/TokenPricingTests.cs
+fixed-date backend.Tests/TokenSummaryAggregateTests.cs
+fixed-date backend.Tests/TokenSummaryBusParityTests.cs
+fixed-date backend.Tests/TokenSummaryTests.cs
+fixed-date backend.Tests/UpdateServicePreflightPreconditionTests.cs
+fixed-date backend.Tests/UpdateServiceRestartIdentityDrillTests.cs
+fixed-date backend.Tests/UpdateVersionTruthTests.cs
+fixed-date backend.Tests/UsageCockpitContractTests.cs
+fixed-date backend.Tests/WaitsOnEndpointsTests.cs
+fixed-date backend.Tests/WatcherFixtureReplayTests.cs
+fixed-date backend.Tests/WikiAgentReadServiceTests.cs
+fixed-date backend.Tests/WikiFolderViewTests.cs
+fixed-date backend.Tests/WikiGradingServiceTests.cs
+fixed-date backend.Tests/WikiLearningsPostStepRunnerTests.cs
+fixed-date backend.Tests/WikiMaintenancePostStepRunnerTests.cs
+fixed-date backend.Tests/WikiPerformanceCacheTests.cs
+fixed-date backend.Tests/WikiPublicationPolicyTests.cs
+fixed-date backend.Tests/WikiPulseTests.cs
+fixed-date backend.Tests/WikiTaskCrossReferenceServiceTests.cs
+fixed-date backend.Tests/WithheldCommitCandidatePolicyTests.cs
+fixed-date backend.Tests/WorkbenchCatalogueTests.cs
+fixed-date backend.Tests/WorkbenchDecisionServiceTests.cs
+fixed-date backend.Tests/WorkbenchLifecycleServiceTests.cs
+fixed-date backend.Tests/WorkbenchOverviewPolicyTests.cs
+fixed-date backend.Tests/WorkbenchReviewPolicyTests.cs
+fixed-date backend.Tests/WorkbenchReviewServiceTests.cs
+fixed-date backend.Tests/WorkbenchTagServiceTests.cs
+fixed-date backend.Tests/WorkspaceSummaryDecisionsTests.cs
+fixed-date backend.Tests/WorkspaceTokensTimelineTests.cs
+fixed-date backend.Tests/WorktreeIsolationTests.cs
+fixed-date backend.Tests/WorktreeTaskLifecycleTests.cs
+fixed-date demo-replay-runner.Tests/ReplayTraceTests.cs
+fixed-date operations-server.Tests/BoundaryPolicyTests.cs
+fixed-date retention.Tests/ArtifactClassifierTests.cs
+fixed-date retention.Tests/RetentionExcerptWriterTests.cs
+fixed-date retention.Tests/RetentionPlannerTests.cs
+fixed-date retention.Tests/RetentionRuntimeCommitTests.cs
+fixed-date runner.Tests/CarWorkerExecutionTests.cs
+fixed-date runner.Tests/CliProtocolNoveltyTests.cs
+fixed-date runner.Tests/DetachedReviewWorkerOptionsTests.cs
+fixed-date runner.Tests/ExecutionOutcomeAdapterTests.cs
+fixed-date runner.Tests/ProcessSignalGuardTests.cs
+fixed-date runner.Tests/RemoteReviewExecutorTests.cs
+fixed-date runner.Tests/RemoteReviewWorkspaceTests.cs
+fixed-date runner.Tests/RemoteTaskRunnerProviderAuthTests.cs
+fixed-date runner.Tests/RemoteTaskRunnerRestartTests.cs
+fixed-date runner.Tests/ReviewDrainGuardTests.cs
+fixed-date runner.Tests/ReviewHandoffAdoptionTests.cs
+fixed-date runner.Tests/ReviewPlaneBudgetProbeTests.cs
+fixed-date runner.Tests/RunnerCapabilityProbeTests.cs
+fixed-date runner.Tests/RunnerReleaseIdentityTests.cs
+fixed-date runner.Tests/TaskServerConnectivityMonitorTests.cs
+fixed-date runner.Tests/WorkstationProfileTests.cs
+fixed-date setup.Tests/SetupContractTests.cs
+fixed-date task-server.Tests/ProtocolTests.cs
+fixed-date task-server.Tests/RunnerReleaseIdentityStoreTests.cs
+fixed-date task-server.Tests/StudioP2SupervisorEndpointsTests.cs
+fixed-date task-server.Tests/StudioRunnerOrchestratorTests.cs
+fixed-date task-server.Tests/StudioWorkspaceTests.cs
+fixed-date task-server.Tests/TopologyTests.cs
