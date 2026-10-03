@@ -390,6 +390,37 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   describe('expanded tab resources', () => {
+    it('keeps a pending review projection retryable without clearing the task', async () => {
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info);
+
+      selection.loadResourcesForTab('evidence');
+      const pending = http.expectOne(req => req.url.endsWith('/details/review'));
+      expect(pending.request.params.get('evidence')).toBe('true');
+      pending.flush({
+        id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+        coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+        state: 'warming', reason: 'review-projection-pending',
+        data: { reviewProjection: null, evidence: null },
+      });
+      expect(selection.selectedCore()?.id).toBe(info.id);
+      expect(selection.resourceStates().review).toEqual({
+        phase: 'warming', reason: 'review-projection-pending',
+      });
+
+      selection.retryResource('review');
+      const retry = http.expectOne(req => req.url.endsWith('/details/review'));
+      expect(retry.request.params.get('evidence')).toBe('true');
+      retry.flush({
+        id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+        coreVersion: '1', resource: 'review', version: 'r2', computedAt: null,
+        state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+      });
+      expect(selection.resourceStates().review.phase).toBe('ready');
+    });
+
     it('waits for the rich paint when the tab is expanded before the documents land', async () => {
       selection.openDetail(info);
       http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
@@ -626,6 +657,69 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
     expect(selection.selected()?.promptMarkdown ?? null).toBeNull();
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+    await afterPaint();
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('refreshes core after a resource 409 before requesting the new generation', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await afterPaint();
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+
+    expect(selection.resourceStates().usage).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    const refresh = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(refresh.request.params.get('project')).toBe('Agent Studio');
+    refresh.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'New generation' });
+
+    expect(selection.selectedCore()?.coreVersion).toBe('2');
+    expect(selection.selected()?.info.title).toBe('New generation');
+    expect(selection.detailPreview()).toBeNull();
+    await afterPaint();
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('revalidates core when retrying a generation conflict', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await afterPaint();
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    await afterPaint();
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ error: 'temporarily offline' }, { status: 503, statusText: 'Unavailable' });
+
+    selection.retryResource('usage');
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+    await afterPaint();
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
     await afterPaint();
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });

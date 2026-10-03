@@ -220,6 +220,7 @@ export class TaskSelectionService {
   readonly selectedCore = signal<TaskCore | null>(null);
   readonly resourceStates = signal<ResourceStates>(idleResources());
   private activeRequests: Subscription[] = [];
+  private coreRefreshInFlight = false;
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
   private expandedTab: string | null = null;
@@ -370,6 +371,7 @@ export class TaskSelectionService {
   private cancelRequests(): void {
     for (const request of this.activeRequests) request.unsubscribe();
     this.activeRequests = [];
+    this.coreRefreshInFlight = false;
     if (this.registryWait) clearTimeout(this.registryWait.timer);
     this.registryWait = null;
   }
@@ -446,35 +448,7 @@ export class TaskSelectionService {
       if (token !== this.openDetailToken || core.state === 'warming') return;
       if (core.id !== info.id && core.key !== info.id) return;
       if (info.taskKey && core.taskKey !== info.taskKey) return;
-      this.prefetch.storeCore(core, project);
-      const previous = this.selectedCore();
-      const generationChanged = !previous || previous.coreVersion !== core.coreVersion
-        || previous.runtime.attemptId !== core.runtime.attemptId;
-      // A revalidated generation invalidates every enrichment reply still in
-      // flight for the painted one; the core request itself is finishing.
-      if (previous && generationChanged) this.cancelRequests();
-      this.activeProject = core.projectId;
-      this.activeAttempt = core.runtime.attemptId;
-      this.selectedCore.set(core);
-      this.detailLoading.set(false);
-      this.clearDetailLoadFailure();
-      const rich = this.selected();
-      // Revalidating a task whose rich pane already painted refreshes its
-      // facts in place instead of flipping the view back to the core.
-      if (rich) this.selected.set({ ...rich, info: this.coreInfo(core, rich.info) });
-      else this.detailPreview.set(this.coreInfo(core, this.detailPreview() ?? info));
-      if (!previous) {
-        if (opts.replaceTab) this.pendingTaskTabReplacement = core.taskKey;
-        opts.onAccepted?.(core);
-        this.markNextTaskRendered();
-        perfMark('job-select-rendered');
-        perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
-      }
-      if (!generationChanged) return;
-      this.resourceStates.set(idleResources());
-      // The bounded text and five timeline events must have a paint
-      // opportunity before any document or usage request begins.
-      afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
+      this.acceptCore(core, info, project, token, opts);
     };
     const cached = this.prefetch.takeCore(info.id, project);
     if (cached) accept(cached);
@@ -507,6 +481,65 @@ export class TaskSelectionService {
     this.activeRequests.push(request);
   }
 
+  private acceptCore(core: TaskCore, info: TaskInfo, project: string, token: number,
+    opts: CoreOpenOptions = {}): void {
+    this.prefetch.storeCore(core, project);
+    const previous = this.selectedCore();
+    const generationChanged = !previous || previous.coreVersion !== core.coreVersion
+      || previous.runtime.attemptId !== core.runtime.attemptId;
+    // A new generation invalidates every enrichment reply still in flight.
+    if (previous && generationChanged) this.cancelRequests();
+    this.activeProject = core.projectId;
+    this.activeAttempt = core.runtime.attemptId;
+    this.selectedCore.set(core);
+    this.detailLoading.set(false);
+    this.clearDetailLoadFailure();
+    const rich = this.selected();
+    if (rich) this.selected.set({ ...rich, info: this.coreInfo(core, rich.info) });
+    else this.detailPreview.set(this.coreInfo(core, this.detailPreview() ?? info));
+    if (!previous) {
+      if (opts.replaceTab) this.pendingTaskTabReplacement = core.taskKey;
+      opts.onAccepted?.(core);
+      this.markNextTaskRendered();
+      perfMark('job-select-rendered');
+      perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
+    }
+    if (!generationChanged) return;
+    this.resourceStates.set(idleResources());
+    // Give the bounded core a paint opportunity before requesting documents.
+    afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
+  }
+
+  /** A 409 rejects the resource generation; fetch core before any resource retry. */
+  private refreshCoreAfterConflict(token: number, core: TaskCore): void {
+    if (!this.isCurrent(token, core) || this.coreRefreshInFlight) return;
+    const project = this.activeProject;
+    const info = this.selected()?.info ?? this.detailPreview();
+    if (!project || !info) return;
+    this.coreRefreshInFlight = true;
+    const request = this.jobService.getCore(core.id, project).pipe(
+      timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
+    ).subscribe({
+      next: fresh => {
+        this.coreRefreshInFlight = false;
+        if (!this.isCurrent(token, core)) return;
+        if (fresh.state === 'warming') {
+          setTimeout(() => this.refreshCoreAfterConflict(token, core),
+            TaskSelectionService.WARMING_RETRY_MS);
+          return;
+        }
+        if (fresh.id !== core.id || fresh.taskKey !== core.taskKey
+          || fresh.projectId !== project) return;
+        this.acceptCore(fresh, info, project, token);
+      },
+      error: error => {
+        this.coreRefreshInFlight = false;
+        if (this.isCurrent(token, core)) this.revokeSelection(error, core.id);
+      },
+    });
+    this.activeRequests.push(request);
+  }
+
   private resourceMatches<T>(reply: TaskResource<T>, core: TaskCore): boolean {
     return reply.id === core.id && reply.taskKey === core.taskKey
       && reply.projectId === this.activeProject
@@ -532,6 +565,8 @@ export class TaskSelectionService {
         this.retryWhenWarm(token, core, 'documents', () => this.loadInitialDocuments(token));
         return;
       }
+      if (this.resourceStates().documents.phase === 'stale'
+        && this.resourceStates().documents.reason === 'core-generation-changed') return;
       const previous = this.selected();
       const info = this.detailPreview() ?? previous?.info;
       if (!info) return;
@@ -559,16 +594,22 @@ export class TaskSelectionService {
         next: reply => {
           if (this.isCurrent(token, core)) {
             if (indexWarming(reply)) this.setResourceState('documents', 'warming', reply.reason);
-            else if (!this.resourceMatches(reply, core))
+            else if (!this.resourceMatches(reply, core)) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
+              this.refreshCoreAfterConflict(token, core);
+            }
             else if (reply.state === 'ready') docs[name] = reply.data;
             else this.setResourceState('documents', reply.state === 'stale' ? 'stale' : 'unavailable', reply.reason);
           }
           finish();
         },
         error: error => {
-          if (this.isCurrent(token, core) && !this.revokeSelection(error, core.id))
-            this.setResourceState('documents', 'error', 'Document request failed');
+          if (this.isCurrent(token, core) && !this.revokeSelection(error, core.id)) {
+            if (httpStatus(error) === 409) {
+              this.setResourceState('documents', 'stale', 'core-generation-changed');
+              this.refreshCoreAfterConflict(token, core);
+            } else this.setResourceState('documents', 'error', 'Document request failed');
+          }
           finish();
         },
       });
@@ -600,6 +641,7 @@ export class TaskSelectionService {
         }
         if (!this.resourceMatches(reply, core)) {
           this.setResourceState(name, 'stale', 'core-generation-changed');
+          this.refreshCoreAfterConflict(token, core);
           return;
         }
         this.setResourceState(name, reply.state === 'ready' ? 'ready' : reply.state,
@@ -640,6 +682,7 @@ export class TaskSelectionService {
         const stale = httpStatus(error) === 409;
         this.setResourceState(name, stale ? 'stale' : 'error',
           stale ? 'core-generation-changed' : `${name} request failed`);
+        if (stale) this.refreshCoreAfterConflict(token, core);
       },
     });
     this.activeRequests.push(request);
@@ -673,6 +716,14 @@ export class TaskSelectionService {
 
   retryDocuments(): void {
     if (this.selectedCore()) this.loadInitialDocuments(this.openDetailToken);
+  }
+
+  retryResource(name: ResourceName): void {
+    if (this.resourceStates()[name].reason === 'core-generation-changed') {
+      const core = this.selectedCore();
+      if (core) this.refreshCoreAfterConflict(this.openDetailToken, core);
+    } else if (name === 'documents') this.retryDocuments();
+    else this.loadResource(name, name === 'review' && this.expandedTab === 'evidence');
   }
 
   /**

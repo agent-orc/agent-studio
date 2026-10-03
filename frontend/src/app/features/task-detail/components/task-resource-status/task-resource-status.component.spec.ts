@@ -52,8 +52,7 @@ describe('TaskResourceStatusComponent', () => {
   });
 
   it('announces each unavailable resource with its reason and its own retry', () => {
-    const load = vi.spyOn(selection, 'loadResource').mockImplementation(() => undefined);
-    const retryDocuments = vi.spyOn(selection, 'retryDocuments').mockImplementation(() => undefined);
+    const retry = vi.spyOn(selection, 'retryResource').mockImplementation(() => undefined);
     layout.panesVisible.set({ prompt: true, protocol: true, git: false });
     selection.resourceStates.set({ ...idleResources(),
       git: { phase: 'unavailable', reason: 'git-snapshot-pending' },
@@ -67,7 +66,21 @@ describe('TaskResourceStatusComponent', () => {
     expect(root.querySelectorAll('[data-testid^="task-resource-retry-"]')).toHaveLength(2);
     root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-git"]')!.click();
     root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-documents"]')!.click();
-    expect(load).toHaveBeenCalledWith('git');
-    expect(retryDocuments).toHaveBeenCalledOnce();
+    expect(retry).toHaveBeenCalledWith('git');
+    expect(retry).toHaveBeenCalledWith('documents');
+  });
+
+  it('announces a warming review projection and lets the operator retry it', () => {
+    const retry = vi.spyOn(selection, 'retryResource').mockImplementation(() => undefined);
+    layout.panesVisible.set({ prompt: true, protocol: true, git: false });
+    selection.resourceStates.set({ ...idleResources(),
+      review: { phase: 'warming', reason: 'review-projection-pending' } });
+    const fixture = TestBed.createComponent(TaskResourceStatusComponent);
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+
+    expect(root.textContent).toContain('Review information pending: The review projection is still warming.');
+    root.querySelector<HTMLButtonElement>('[data-testid="task-resource-retry-review"]')!.click();
+    expect(retry).toHaveBeenCalledWith('review');
   });
 });

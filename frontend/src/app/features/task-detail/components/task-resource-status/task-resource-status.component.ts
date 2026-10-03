@@ -33,8 +33,10 @@ export class TaskResourceStatusComponent {
 
   readonly problems = computed(() => {
     const states = this.selection.resourceStates();
-    return ORDER.filter(name => ['unavailable', 'error', 'stale'].includes(states[name].phase))
-      .map(name => ({ name, ...LABELS[name], reason: resourceReasonLabel(states[name].reason) }));
+    return ORDER.filter(name => ['warming', 'unavailable', 'error', 'stale'].includes(states[name].phase))
+      .map(name => ({ name, ...LABELS[name],
+        title: states[name].phase === 'warming' ? `${LABELS[name].title.replace(' unavailable', '')} pending` : LABELS[name].title,
+        reason: resourceReasonLabel(states[name].reason) }));
   });
 
   constructor() {
@@ -46,7 +48,6 @@ export class TaskResourceStatusComponent {
   }
 
   retry(name: ResourceName): void {
-    if (name === 'documents') this.selection.retryDocuments();
-    else this.selection.loadResource(name);
+    this.selection.retryResource(name);
   }
 }
