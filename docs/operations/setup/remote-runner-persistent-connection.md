@@ -17,6 +17,42 @@ stops `ssh`, judges health by runner capability heartbeats, recovers failed
 routes, and exposes the state to Studio. A Windows Scheduled Task is no longer
 part of normal operation.
 
+## Migration record and soak gate
+
+The operator enabled `RunnerLinks` for `agent-runner-01` in Stable on
+**2026-09-25 at 08:06** (operator-reported local time). The operator disabled,
+but did not delete, `AgentRunner-TunnelKeeper` on **2026-09-25**. Its remaining
+SSH process held the remote listener and was stopped so `LinkSupervisor` could
+bind it. This switch used a fresh supervisor child; it did not demonstrate
+flap-free adoption of the keeper's running forward. Do not re-enable the task
+merely to repeat migration while the production link is in use.
+
+For AGT-2764, use the first recorded `link_up` after the switch,
+2026-09-25 08:23:51 UTC, as the candidate soak start. Its seven-day endpoint
+is 2026-10-02 08:23:51 UTC. The operator feed for this window records 161
+`link_up` and 241 `link_down` transitions, eight `link_reconnect_failed`
+events, one `link_remote_listener_held` alarm, and one
+`link_down_notification`. Every recorded Down interval ended in an Up event;
+the longest was 7 minutes 13 seconds on 2026-09-29. The 2026-10-03 resource
+snapshot was `up` with a current capability heartbeat and an owned `childPid`.
+The event history and resource snapshot are in AGT-2764's delivery results.
+
+The elapsed seven days and automatic recovery are recorded, but the soak is
+**not yet accepted**: the available feed does not establish a workstation
+sleep and resume within this window, and the workstation's
+`<TaskRepository>/.audit/runner-links.jsonl` has not been checked for manual
+reconnect, pause, or resume actions. Attach a timestamped Windows sleep/resume
+record, its corresponding link-resource and `link_down`/`link_up` evidence,
+and the audit excerpt before marking S3 done. If those records show a manual
+intervention or another link owner during the window, start a new seven-day
+window at the first subsequent `link_up`.
+
+Keep the keeper task registered and disabled through the remote Task Server
+cutover and rollback rehearsal. It may be unregistered only after the
+operator has verified a rollback that no longer needs the registration. Keep
+`deploy/windows/agent-runner-tunnel/` as the documented manual emergency path
+under decision D3.
+
 ## Configure the product-owned link
 
 `RunnerLinks` is empty in `backend/appsettings.json`, so a checkout does not dial
@@ -89,8 +125,9 @@ and `paused`.
   resume hook or external watchdog.
 
 At Task Server startup, a successful bounded functional route probe adopts one
-already-running matching route. This prevents a flap during migration from the
-Scheduled Task. The next failed probe moves ownership to a supervisor child.
+already-running matching route. The next failed probe moves ownership to a
+supervisor child. The September 25 migration required stopping a foreign
+listener and therefore does not count as a successful live adoption test.
 
 Runner onboarding installs `/etc/ssh/sshd_config.d/05-agent-runner-client-alive.conf`
 with `ClientAliveInterval 30` and `ClientAliveCountMax 3`, verifies the effective
@@ -144,11 +181,11 @@ as a provider sign-in failure.
 ## Emergency path only
 
 The assets under `deploy/windows/agent-runner-tunnel/` are retained for an
-explicit rollback while the migration soaks. They are not installed or invoked
-by the application. If the Task Server cannot own the link, an operator may
-temporarily register `AgentRunner-TunnelKeeper` and its watchdog by following
-the scripts' own parameters, then disable the product `RunnerLinks` entry to
-avoid two owners. This path requires PowerShell and Task Scheduler and can show
+explicit rollback. They are not invoked by the application. If the Task Server
+cannot own the link, disable the product `RunnerLinks` entry and stop its SSH
+child first. An operator may then temporarily start the disabled
+`AgentRunner-TunnelKeeper` task or register it and its watchdog by following
+the scripts' own parameters. This path requires PowerShell and Task Scheduler and can show
 desktop-window behavior when configured incorrectly, which is why it is an
 emergency path rather than the product implementation.
 
@@ -168,9 +205,8 @@ transport rather than adding a second production route.
 Once the Docker control plane's WireGuard origin is live
 ([control-plane-docker.md](./control-plane-docker.md)), `agent-runner-01`
 switches `RUNNER_SERVER_URL` to the WireGuard-only origin and stops relying on
-this tunnel for normal operation. Disable the scheduled task or systemd unit
-rather than deleting it: it stays installed, tested, and documented as the
-fallback path for the migration and rollback runbook in
+this tunnel for normal operation. Keep the scheduled task disabled until the
+rollback rehearsal has passed; it remains documented as the fallback path in
 [remote-task-server-local-studio.md](../remote-task-server-local-studio.md#rollback-in-less-than-15-minutes).
 
 When a tunnel remains necessary, supervision belongs on the side that can

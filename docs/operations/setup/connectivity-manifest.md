@@ -86,10 +86,11 @@ evidence.
    backend/Host. `LinkSupervisor` adopts the healthy existing forward
    (`lastProbe.kind = adoption`). Disable the TunnelKeeper scheduled task in
    the same window. The probe fails with `duplicated-listener` if both run.
-3. Soak for the period agreed in AGT-2764. Only after it passes, remove the
-   TunnelKeeper registration. The scripts under
-   `deploy/windows/agent-runner-tunnel/` remain as the documented emergency
-   rollback until then.
+3. Soak for the period agreed in AGT-2764. Keep the TunnelKeeper registration
+   disabled through the remote Task Server cutover and rollback rehearsal. It
+   may be removed after the operator verifies a rollback that no longer needs
+   the registration. The scripts under `deploy/windows/agent-runner-tunnel/`
+   remain the documented manual emergency path under decision D3.
 4. Direct WireGuard (AGT-2737): switch the record to `wireguard-direct`,
    set each runner's server URL to `serverOrigin`, reconcile active attempts,
    then remove its reverse route. `linkOwner` becomes `none`. No unmonitored
