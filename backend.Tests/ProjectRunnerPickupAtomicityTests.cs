@@ -404,7 +404,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         var router = new CliRouter(cli);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
         var quotaCacheStore = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
         var quotaService = new QuotaService(

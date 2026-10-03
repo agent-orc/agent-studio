@@ -464,12 +464,12 @@ public static class ProjectSettingsEndpoints
             if (!PipelineTypes.IsValid(req.PipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{req.PipelineType}'" });
             var pipelineType = PipelineTypes.Normalize(req.PipelineType);
+            var stepId = ResolveKnownPipelineStepId(req.StepId, pipelineType);
 
             // Reject step ids the catalogue does not know so a typo fails loud
             // instead of writing dead config that never reaches a real step. The
             // abort-review step lives off the linear AllSteps list but is a valid
             // configurable target, so accept it explicitly.
-            var stepId = ResolveKnownPipelineStepId(req.StepId, pipelineType);
             if (stepId is null)
                 return Results.BadRequest(new { error = $"Unknown pipeline step '{req.StepId}'" });
             if (PipelineStepConfigResolver.IsRepositoryOwnedAnalysisStep(stepId))
@@ -483,7 +483,6 @@ public static class ProjectSettingsEndpoints
 
             if (req.MaxIterations is < UiIterationGate.MinimumIterations or > UiIterationGate.MaximumIterations)
                 return Results.BadRequest(new { error = $"maxIterations must be between {UiIterationGate.MinimumIterations} and {UiIterationGate.MaximumIterations}" });
-
             if (req.EnrichmentBlockIds is { Count: > 16 }
                 || req.EnrichmentBlockIds?.Any(id => string.IsNullOrWhiteSpace(id)
                     || id.Length > 100 || !IntakeRunner.IsBuiltInConstraintId(id.Trim())) == true
@@ -1251,6 +1250,7 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
+
     }
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)
@@ -1268,7 +1268,7 @@ public static class ProjectSettingsEndpoints
         if (full is not null) return full.Id;
 
         // A bare suffix is accepted only when it names exactly one step in
-        // this pipeline type. Persist the catalogue id for runtime lookups.
+        // this pipeline type. Persist the catalogue id so runtime lookups work.
         var matches = known.Where(step =>
         {
             var separator = step.Id.IndexOf('-');
