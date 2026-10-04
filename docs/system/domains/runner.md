@@ -85,9 +85,14 @@ rollout decision.
   result evidence transport. Git result or salvage publication completes first,
   then the runner transfers the bounded artifact set and its partial-transfer
   receipt while the RunAttempt is still leased, and only then settles the run.
-  A bounded artifact failure never blocks code delivery: it is emitted as a
+  A bounded artifact failure never blocks code delivery. The runner reports a
   typed `ArtifactTransferFailed` / `artifacts: partial` operator fact with its
-  retry count before settlement. The server advertises its base64-safe request
+  retry count before settlement when the route is available. If an upload or
+  partial-outcome report fails,
+  the runner keeps `artifact-replay` in the durable outbox and persists any
+  unsent report. Recovery retries both under the original exact fence after
+  completion; a newer fence denies the old attempt. Artifact idempotency keys
+  prevent duplicate storage. The server advertises its base64-safe request
   budget plus project file and total caps (8 MiB per file by default). On the
   v1 plane, each artifact, event, and result-finalization write carries the
   exact runner, instance, lease id, and fence. A completed lease needs no later

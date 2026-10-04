@@ -43,19 +43,43 @@ public sealed class DurableHandoffRecovery
                     outbox.Snapshot.FinalHandoffState,
                     "completed",
                     StringComparison.Ordinal)
-                && outbox.Pending.Count == 0)
+                && outbox.Pending.Count == 0
+                && outbox.PendingArtifactReport is null)
                 continue;
 
             var reconciled = false;
             try
             {
-                var lease = await _client.ReconcileOutboxAuthorityAsync(
-                    outbox.Authority,
-                    Math.Max(30, _options.TtlSeconds),
-                    ct);
-                _log(
-                    $"outbox authority reconciled run={outbox.Authority.RunId} " +
-                    $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
+                var completion = outbox.Items.LastOrDefault(item => item.Kind == "completion");
+                if (completion is not null
+                    && completion.Sequence <= outbox.LastAcknowledgedSequence)
+                {
+                    _client.RestoreCompletedOutboxAuthority(outbox.Authority);
+                    _log($"completed artifact authority restored run={outbox.Authority.RunId} fence={outbox.Authority.Fence}");
+                }
+                else
+                {
+                    try
+                    {
+                        var lease = await _client.ReconcileOutboxAuthorityAsync(
+                            outbox.Authority,
+                            Math.Max(30, _options.TtlSeconds),
+                            ct);
+                        _log(
+                            $"outbox authority reconciled run={outbox.Authority.RunId} " +
+                            $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
+                    }
+                    catch (TaskServerException ex) when (
+                        ex.StatusCode == 409
+                        && completion is not null
+                        && outbox.Snapshot.FinalHandoffState == "artifact-replay")
+                    {
+                        // Completion may have reached the server just before
+                        // the local acknowledgement was persisted. The exact
+                        // fenced authority still permits idempotent replay.
+                        _client.RestoreCompletedOutboxAuthority(outbox.Authority);
+                    }
+                }
                 reconciled = true;
                 await RecoverAsync(outbox, ct);
             }
@@ -63,7 +87,8 @@ public sealed class DurableHandoffRecovery
             {
                 if (reconciled)
                 {
-                    outbox.RecordHandoffState("transfer-recovery");
+                    if (outbox.Snapshot.FinalHandoffState != "artifact-replay")
+                        outbox.RecordHandoffState("transfer-recovery");
                     await ReportSafeAsync(outbox, CancellationToken.None);
                 }
                 _log($"outbox recovery deferred run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} error={ex.Message}");
@@ -193,18 +218,17 @@ public sealed class DurableHandoffRecovery
         var artifactPartial = false;
         try
         {
+            await ReplayPendingArtifactReportAsync(outbox, ct);
             artifactPartial = await TransferArtifactsBeforeSettlementAsync(outbox, manifest, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Result delivery is never contingent on an artifact report. The
-            // failed transfer remains visible in host logs and a successful
-            // report has already carried the typed per-file outcome.
             artifactPartial = true;
             _log(
                 $"artifact-transfer recovery remained non-fatal run={outbox.Authority.RunId} "
                 + $"artifacts=partial error={ex.Message}");
         }
+        outbox.RecordHandoffState(artifactPartial ? "artifact-replay" : "transferring", envelopeDigest);
 
         var completion = outbox.Items.LastOrDefault(item => item.Kind == "completion")
                          ?? outbox.Enqueue(
@@ -220,11 +244,19 @@ public sealed class DurableHandoffRecovery
             await _client.SendOutboxItemAsync(outbox.Authority, completion, ct);
             outbox.Acknowledge(completion.Sequence);
         }
-        outbox.RecordHandoffState("completed", envelopeDigest);
+        outbox.RecordHandoffState(artifactPartial ? "artifact-replay" : "completed", envelopeDigest);
         await ReportSafeAsync(outbox, ct);
         _log(
             $"outbox recovery completed run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} "
             + $"resultSha={envelope.ResultSha} artifacts={(artifactPartial ? "partial" : "complete")}");
+    }
+
+    private async Task ReplayPendingArtifactReportAsync(DurableRunOutbox outbox, CancellationToken ct)
+    {
+        var report = outbox.PendingArtifactReport;
+        if (report is null) return;
+        await _client.ReportArtifactTransferAsync(report, ct);
+        outbox.ClearPendingArtifactReport();
     }
 
     private async Task<DurableArtifactManifest> JournalArtifactsAsync(
@@ -393,14 +425,17 @@ public sealed class DurableHandoffRecovery
             _log($"artifact finalization recovery was non-fatal run={outbox.Authority.RunId}: {ex.Message}");
         }
         if (issues.Count == 0) return false;
-        await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
+        var report = new ArtifactTransferReportRequest(
             outbox.Authority.TaskKey,
             "partial",
             issues,
             outbox.Authority.RunnerId,
             outbox.Authority.LeaseId,
             outbox.Authority.Fence,
-            outbox.Authority.RunId), ct);
+            outbox.Authority.RunId);
+        outbox.RecordPendingArtifactReport(report);
+        await _client.ReportArtifactTransferAsync(report, ct);
+        outbox.ClearPendingArtifactReport();
         _log(
             $"artifact-transfer recovery run={outbox.Authority.RunId} artifacts=partial "
             + $"notTransferred={issues.Count}");

@@ -1733,9 +1733,12 @@ a later attempt cannot clear them.
 `results/deliverables.md` lists them for the reviewer. A partial artifact
 transfer is a typed card fact with retry details and does not block code
 delivery. Transient file uploads are retried three times. If the host crashes
-before settlement, durable recovery replays from the attempt evidence copy
-under the same artifact idempotency keys, without rerunning the worker or
-duplicating stored artifacts.
+before settlement, durable recovery replays from the attempt evidence copy.
+If an upload or its partial-transfer report still fails, the outbox retains
+`artifact-replay` after completion. Later recovery sends any persisted report
+and retries the bounded files with the original exact runner, lease, and fence.
+The same artifact idempotency keys prevent duplicate storage, and a newer
+fence denies stale replay. The worker is not rerun.
 
 While completion is being retried, the runner reports its persisted terminal
 attempt in the active task set even though the coding process has exited. This

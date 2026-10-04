@@ -718,7 +718,11 @@ public sealed class RemoteTaskRunner
                     completion,
                     stopRun.Token);
                 outbox.Acknowledge(completion.Sequence);
-                outbox.RecordHandoffState("completed", envelopeDigest);
+                outbox.RecordHandoffState(
+                    outbox.Snapshot.FinalHandoffState == "artifact-replay"
+                        ? "artifact-replay"
+                        : "completed",
+                    envelopeDigest);
                 await ReportOutboxSafeAsync(outbox, stopRun.Token);
             }
             else
@@ -1932,17 +1936,20 @@ public sealed class RemoteTaskRunner
         var reportFailed = false;
         if (issues.Count > 0)
         {
+            var report = new ArtifactTransferReportRequest(
+                taskKey,
+                "partial",
+                issues,
+                lease.RunnerId,
+                lease.LeaseId,
+                lease.FencingToken,
+                lease.AttemptId);
+            outbox?.RecordPendingArtifactReport(report);
             try
             {
                 await shipper.FlushAsync(CancellationToken.None);
-                await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
-                    taskKey,
-                    "partial",
-                    issues,
-                    lease.RunnerId,
-                    lease.LeaseId,
-                    lease.FencingToken,
-                    lease.AttemptId), CancellationToken.None);
+                await _client.ReportArtifactTransferAsync(report, CancellationToken.None);
+                outbox?.ClearPendingArtifactReport();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1951,7 +1958,14 @@ public sealed class RemoteTaskRunner
             }
         }
         if (reportFailed || issues.Any(issue => issue.Outcome == ArtifactTransferOutcomes.TransferFailed))
+        {
+            outbox?.RecordHandoffState("artifact-replay");
             _log($"artifact transfer remains partial task={taskKey} attempt={lease.AttemptId}");
+        }
+        else if (outbox?.Snapshot.FinalHandoffState == "artifact-replay")
+        {
+            outbox.RecordHandoffState("transferring");
+        }
         _log($"artifact-transfer task={taskKey} artifacts={(issues.Count == 0 ? "complete" : "partial")} uploaded={uploaded} notTransferred={issues.Count}");
     }
 
