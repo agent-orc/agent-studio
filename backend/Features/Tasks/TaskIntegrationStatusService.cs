@@ -132,11 +132,16 @@ public sealed class TaskIntegrationStatusService
 
         using var _t = GitProcessTelemetry.BeginRequest("board/integration-status", _logger);
 
+        // Share effective Git origin configuration within this projection only.
+        // The next lookup re-reads it, including external includes and worktree
+        // overrides that are not represented by the repository ref fingerprint.
+        var origins = new Dictionary<string, string?>(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
-            var groups = BuildRepositoryGroups(job);
+            var groups = BuildRepositoryGroups(job, origins);
             // AGT-2856: a card without an attributed commit is answered from its
             // project's primary repository, so that repository must be resolved
             // here too. Deriving the key only from the groups made the verdict
@@ -520,7 +525,8 @@ public sealed class TaskIntegrationStatusService
             (commit.DeliveryGeneration ?? 0) < latestGeneration) ? null : subject;
     }
 
-    private List<RepositoryCommitGroup> BuildRepositoryGroups(TaskInfo job)
+    private List<RepositoryCommitGroup> BuildRepositoryGroups(
+        TaskInfo job, Dictionary<string, string?> origins)
     {
         var commits = AttributedCommitRecords(job, includeSuperseded: true);
         var subject = CurrentReviewSubject(job);
@@ -535,9 +541,13 @@ public sealed class TaskIntegrationStatusService
         if (commits.Count == 0) return [];
 
         var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
-        var primaryOrigin = string.IsNullOrWhiteSpace(primaryRoot)
-            ? null
-            : _git.ReadOriginUrlAt(primaryRoot);
+        string? primaryOrigin = null;
+        if (!string.IsNullOrWhiteSpace(primaryRoot)
+            && !origins.TryGetValue(primaryRoot, out primaryOrigin))
+        {
+            primaryOrigin = _git.ReadOriginUrlAt(primaryRoot);
+            origins[primaryRoot] = primaryOrigin;
+        }
         IReadOnlyList<ProjectRecord> registeredProjects = [];
         try
         {
