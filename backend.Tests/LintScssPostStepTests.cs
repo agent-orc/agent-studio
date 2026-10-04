@@ -282,6 +282,38 @@ public class LintScssPostStepTests : IDisposable
         Assert.Contains("lint-scss failed twice", records[^1].Reason);
     }
 
+    [Theory]
+    [InlineData("warn")]
+    [InlineData("fail")]
+    public async Task RemoteRequiredLint_DefersWithoutAcceptingOrReissuing(string lintMode)
+    {
+        const string slug = "remote-lint-wait";
+        SeedReviewJobWithDone(slug);
+        Directory.CreateDirectory(Path.Combine(_watchPath, "frontend"));
+        File.WriteAllText(Path.Combine(_watchPath, "frontend", "angular.json"), "{}");
+        var orchestrator = BuildOrchestratorWithLint(new RemoteRequiredLintScssRunner(), lintMode);
+
+        var result = await orchestrator.ProcessCardAsync(_workspace, Project, slug, _watchPath, CancellationToken.None);
+
+        Assert.Equal(PostProcessingCardStatus.Deferred, result.Status);
+        Assert.Equal(RemoteExecutionRequirement.Code, result.Reason);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.AutoReview, slug)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, slug)));
+        Assert.Empty(ReviewDecisionLog.ReadAll(_workspace, Project));
+        var pipelineJson = File.ReadAllText(Path.Combine(_watchPath, TaskStates.AutoReview, slug, PipelineExecutionLog.FileName));
+        Assert.Contains(RemoteExecutionRequirement.Code, pipelineJson);
+    }
+
+    [Fact]
+    public async Task RemoteRequiredLint_DisabledStepStillSkips()
+    {
+        var result = await new RemoteRequiredLintScssRunner().RunAsync(
+            _watchPath, PostStepMode.Off, TimeSpan.FromSeconds(1), CancellationToken.None);
+        Assert.Equal(LintScssVerdict.Skipped, result.Verdict);
+        Assert.Null(result.InfrastructureFailureCode);
+    }
+
     private void SeedReviewJobWithDone(string slug)
     {
         var dir = Path.Combine(_watchPath, TaskStates.AutoReview, slug);

@@ -1169,6 +1169,13 @@ strong `ETag` plus `Cache-Control: no-cache`, and both answer a matching
 was measured at roughly 1.9 MB, polled every two seconds; on an unchanged board
 every byte of it is a byte the client already holds.
 
+- **Concurrent board builds are bounded.** Both routes share one
+  `BoardReadConcurrencyGate`, held from the first scanner read through the
+  completion of JSON serialization. Waiting requests do not build snapshots;
+  `RequestAborted` removes disconnected clients from the queue before they
+  start work. This prevents overlapping full-board projections from multiplying
+  the heap under load. Responses are still built from current authorized inputs
+  when their turn starts; the gate does not retain or share response bodies.
 - **The 304 skips the work, not just the transfer.** The validator is computed
   from cache reads over the already scanned task set. Enrichment (token,
   verdict, dependency, Git and live-status lookups), the per-lane sort, and

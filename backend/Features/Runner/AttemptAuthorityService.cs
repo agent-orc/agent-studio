@@ -2142,7 +2142,7 @@ public sealed class AttemptAuthorityService
         try
         {
             CompactTerminalAttemptsLocked(forceCompaction);
-            _writer.Write(_path, JsonSerializer.Serialize(_state, JsonOptions));
+            _writer.WriteJson(_path, _state, JsonOptions);
         }
         catch
         {

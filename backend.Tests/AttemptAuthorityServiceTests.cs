@@ -1684,6 +1684,40 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         });
     }
 
+    [Fact]
+    public void AuthorityMutations_UseStructuredAtomicWrites_AndRemainDurable()
+    {
+        var writer = new StructuredOnlyWriter();
+        var service = NewService(writer: writer);
+        var run = service.AcquireRun("AGT-stream", "PROJ-1", null, "runner-a", "host-a", 120, "claim-stream");
+
+        Assert.Equal(AttemptWriteStatus.Accepted, run.Status);
+        Assert.Equal(AttemptWriteStatus.Accepted, service.RenewRun(
+            new AttemptWriteReference(run.RunAttempt!.AttemptId, run.RunAttempt.LastFence,
+                run.RunAttempt.AuthorityEpoch, "renew-stream"), "runner-a", 120).Status);
+        var restarted = NewService(writer: writer);
+        Assert.True(writer.StructuredWrites >= 2);
+        Assert.Equal(run.RunAttempt!.AttemptId,
+            restarted.GetTaskProjection("AGT-stream").CurrentRunAttempt!.AttemptId);
+        Assert.Equal(AttemptWriteStatus.Duplicate,
+            restarted.AcquireRun("AGT-stream", "PROJ-1", null, "runner-a", "host-a", 120, "claim-stream").Status);
+    }
+
+    private sealed class StructuredOnlyWriter : IAtomicJsonFileWriter
+    {
+        public int StructuredWrites { get; private set; }
+
+        public void Write(string path, string content)
+            => throw new InvalidOperationException("Authority persistence must not materialize the complete JSON string.");
+
+        public void WriteJson<T>(string path, T value, JsonSerializerOptions? options = null)
+        {
+            StructuredWrites++;
+            IAtomicJsonFileWriter writer = new AtomicJsonFileWriter();
+            writer.WriteJson(path, value, options);
+        }
+    }
+
     private AttemptAuthorityService NewService(
         Func<DateTime>? now = null,
         IAtomicJsonFileWriter? writer = null,
