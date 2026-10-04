@@ -87,6 +87,40 @@ internal static class ComposeScenarioDiskAdmission
             if (!Wrappers.Contains(wrapper))
                 break;
             index++;
+            if (wrapper == "env")
+            {
+                while (index < argv.Count)
+                {
+                    var option = argv[index];
+                    if (option == "--")
+                    {
+                        index++;
+                        break;
+                    }
+                    if (option is "-u" or "--unset" or "-C" or "--chdir")
+                    {
+                        index += 2;
+                        continue;
+                    }
+                    if (option is "-S" or "--split-string")
+                    {
+                        index++;
+                        return index < argv.Count
+                            && ExecutesEnvSplitString(argv[index], argv.Skip(index + 1), depth);
+                    }
+                    if (option.StartsWith("--split-string=", StringComparison.Ordinal))
+                        return ExecutesEnvSplitString(option["--split-string=".Length..], argv.Skip(index + 1), depth);
+                    if (option.StartsWith("-S", StringComparison.Ordinal) && option.Length > 2)
+                        return ExecutesEnvSplitString(option[2..], argv.Skip(index + 1), depth);
+                    if (option.StartsWith('-'))
+                    {
+                        index++;
+                        continue;
+                    }
+                    break;
+                }
+                continue;
+            }
             while (index < argv.Count && argv[index].StartsWith('-'))
             {
                 // timeout -s SIGNAL / -k DURATION take a value.
@@ -108,6 +142,13 @@ internal static class ComposeScenarioDiskAdmission
         if (Shells.Contains(program))
             return ShellRunsComposeScenario(arguments, depth);
         return false;
+    }
+
+    private static bool ExecutesEnvSplitString(string splitString, IEnumerable<string> remaining, int depth)
+    {
+        var commands = ShellWords.SimpleCommands(splitString);
+        return commands.Count == 1
+            && ExecutesComposeScenario(["env", .. commands[0], .. remaining], depth + 1);
     }
 
     /// <summary>

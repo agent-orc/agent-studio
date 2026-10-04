@@ -1563,6 +1563,27 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task An_env_unset_wrapped_compose_scenario_is_refused_before_it_starts()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-env-unset");
+        var command = await FakeComposeScenarioCommandAsync(marker, viaEnvUnset: true);
+        var (workspace, _) = Workspace(
+            "attempt-scenario-env-unset",
+            sha,
+            [command],
+            27006,
+            composeScenarioMinFreePercent: 100);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.False(File.Exists(marker));
+    }
+
+    [Fact]
     public async Task A_compose_scenario_above_the_floor_runs_and_logs_the_free_disk()
     {
         var sha = await SeedOriginAsync();
@@ -1629,7 +1650,8 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     /// </summary>
     private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(
         string marker,
-        bool viaCommandSubstitution = false)
+        bool viaCommandSubstitution = false,
+        bool viaEnvUnset = false)
     {
         var script = Path.Combine(_root, "fake-scenario", "scripts", "scenario.sh");
         Directory.CreateDirectory(Path.GetDirectoryName(script)!);
@@ -1640,7 +1662,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             PosixShell.RequirePath(),
             ["-lc", viaCommandSubstitution
                 ? $"out=$(SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full) && echo \"$out\""
-                : $"SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
+                : $"SCENARIO_PROVIDER_REVIEW=1 {(viaEnvUnset ? "env -u FOO " : "")}sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
     }
 
     /// <summary>
