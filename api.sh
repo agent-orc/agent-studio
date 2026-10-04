@@ -702,6 +702,87 @@ listener_is_ours() {
   return 1
 }
 
+# Select a runtime launch without ever falling back to a build when a remote
+# artifact was requested. The output lives under backend/bin so the existing
+# process ownership checks recognize the DLL just as they recognize apphosts.
+prepare_launch_command() {
+  API_LAUNCH_COMMAND=()
+  API_LAUNCH_DIRECTORY="${SCRIPT_DIR}"
+  if [[ -z "${API_PREBUILT_DIR:-}" ]]; then
+    if [[ "${API_REQUIRE_PREBUILT:-0}" == "1" ]]; then
+      echo "ERROR: api-prebuilt-required: API_REQUIRE_PREBUILT=1 requires API_PREBUILT_DIR; no local build is allowed." >&2
+      return 1
+    fi
+    API_LAUNCH_COMMAND=(dotnet run --project "${PROJECT_FILE}" --urls "${BASE_URL}")
+    return 0
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: api-prebuilt-invalid: Node.js is required to validate the prebuilt artifact." >&2
+    return 1
+  fi
+  local checkout_sha artifact_dir
+  checkout_sha="$(git -C "${SCRIPT_DIR}" rev-parse HEAD 2>/dev/null)" || {
+    echo "ERROR: api-prebuilt-invalid: the checkout HEAD cannot be resolved." >&2
+    return 1
+  }
+  artifact_dir="$(node - "${SCRIPT_DIR}" "${API_PREBUILT_DIR}" "${checkout_sha}" \
+    "${Release__BuildManifestPath:-${ATP_BUILD_MANIFEST:-}}" <<'NODE'
+const fs = require('node:fs');
+const path = require('node:path');
+const [checkoutInput, requested, expectedCommit, overrideManifest] = process.argv.slice(2);
+function refuse(kind, message) {
+  console.error('ERROR: ' + kind + ': ' + message);
+  process.exit(1);
+}
+try {
+  const checkout = fs.realpathSync(checkoutInput);
+  const artifact = fs.realpathSync(path.resolve(checkout, requested));
+  const inside = path.relative(path.join(checkout, 'backend', 'bin'), artifact);
+  if (inside === '..' || inside.startsWith('..' + path.sep) || path.isAbsolute(inside))
+    refuse('api-prebuilt-invalid', 'API_PREBUILT_DIR must remain under this checkout/backend/bin.');
+  if (!fs.statSync(artifact).isDirectory())
+    refuse('api-prebuilt-invalid', 'API_PREBUILT_DIR is not a directory.');
+  for (const name of ['OrchestratorApi.dll', 'OrchestratorApi.deps.json', 'OrchestratorApi.runtimeconfig.json']) {
+    const file = path.join(artifact, name);
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size === 0)
+      refuse('api-prebuilt-invalid', 'Missing or empty required runtime file: ' + name);
+    const relative = path.relative(artifact, fs.realpathSync(file));
+    if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative))
+      refuse('api-prebuilt-invalid', 'Runtime file escapes the artifact directory: ' + name);
+  }
+  const sourceCommit = fs.readFileSync(path.join(artifact, 'RELEASE-SHA'), 'utf8').trim();
+  if (!/^[a-f0-9]{40}([a-f0-9]{24})?$/i.test(sourceCommit))
+    refuse('api-prebuilt-invalid', 'RELEASE-SHA must contain the full source commit.');
+  if (sourceCommit.toLowerCase() !== expectedCommit.toLowerCase())
+    refuse('api-prebuilt-sha-mismatch', 'RELEASE-SHA does not match checkout HEAD.');
+  const manifests = [path.join(artifact, 'build-manifest.json')];
+  if (overrideManifest) {
+    // The prebuilt process starts in backend/, matching dotnet run's content
+    // and working directory. Resolve relative identity overrides there too.
+    const overridePath = path.resolve(checkout, 'backend', overrideManifest);
+    if (!fs.existsSync(overridePath))
+      refuse('api-prebuilt-invalid', 'The explicitly configured build manifest is missing.');
+    manifests.push(overridePath);
+  }
+  for (const file of new Set(manifests)) {
+    if (!fs.existsSync(file)) continue;
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    if (typeof manifest.commit !== 'string' || manifest.commit.toLowerCase() !== expectedCommit.toLowerCase())
+      refuse('api-prebuilt-sha-mismatch', 'The build manifest commit does not match checkout HEAD.');
+  }
+  process.stdout.write(artifact.split(path.sep).join('/'));
+} catch (error) {
+  refuse('api-prebuilt-invalid', error.message);
+}
+NODE
+)" || return 1
+  API_LAUNCH_DIRECTORY="${SCRIPT_DIR}/backend"
+  API_LAUNCH_COMMAND=(dotnet "${artifact_dir}/OrchestratorApi.dll" \
+    --contentRoot "${SCRIPT_DIR}/backend" --urls "${BASE_URL}")
+}
+
 cmd_start() {
   # ADR-0044: dev backend boot policy gate. The dev checkout is the regression-
   # test target, not a second pickup driver on the shared workspace. The
@@ -758,6 +839,7 @@ cmd_start() {
       ;;
   esac
 
+  prepare_launch_command || return 1
   require_port_inspection || exit 1
 
   # Nothing may be launched on top of a port somebody else owns. Reporting
@@ -823,8 +905,10 @@ cmd_start() {
   # `env -i`, no allowlist): that would put the runtime identity check back
   # into the state where no upgrade could ever verify itself. See
   # docs/operations/stable-release-contract.md, "Identity handoff at restart".
-  nohup dotnet run --project "${PROJECT_FILE}" --urls "${BASE_URL}" \
-    > "${LOG_OUT}" 2> "${LOG_ERR}" &
+  (
+    cd "${API_LAUNCH_DIRECTORY}" || exit 1
+    exec nohup "${API_LAUNCH_COMMAND[@]}"
+  ) > "${LOG_OUT}" 2> "${LOG_ERR}" &
   local launched_pid=$!
   disown 2>/dev/null || true
 
@@ -922,6 +1006,8 @@ cmd_start() {
 # ---------------------------------------------------------------------------
 
 cmd_restart() {
+  # Refuse an invalid prebuilt replacement before stopping the current API.
+  prepare_launch_command || return 1
   require_port_inspection || return 1
 
   local before after survivor overlap=""
@@ -976,16 +1062,21 @@ print_usage() {
     API_PORT_OVERRIDE=1     accept a PORT that disagrees with that default
     API_STOP_TIMEOUT_SECS   graceful shutdown budget before a forced kill (default 20)
     API_START_TIMEOUT_SECS  health-check poll budget before start gives up (default 180)
+    API_PREBUILT_DIR        validated published backend under checkout/backend/bin; never builds
+    API_REQUIRE_PREBUILT=1  refuse startup without API_PREBUILT_DIR, never fall back to a build
 
 EOF
 }
 
-CMD="${1:-}"
-case "${CMD}" in
-  start)   cmd_start ;;
-  stop)    cmd_stop ;;
-  restart) cmd_restart ;;
-  status)  cmd_status ;;
-  ""|-h|--help|help) print_usage; exit 0 ;;
-  *) echo "Unknown command: '${CMD}'"; print_usage; exit 2 ;;
-esac
+# Sourcing exposes the command functions to the hermetic shell contract tests.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  CMD="${1:-}"
+  case "${CMD}" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    restart) cmd_restart ;;
+    status)  cmd_status ;;
+    ""|-h|--help|help) print_usage; exit 0 ;;
+    *) echo "Unknown command: '${CMD}'"; print_usage; exit 2 ;;
+  esac
+fi

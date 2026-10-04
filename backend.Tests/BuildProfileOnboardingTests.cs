@@ -136,6 +136,22 @@ public sealed class BuildProfileValidationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoteRequiredRunner_FailsClosedWithoutExecutingBuildCommand()
+    {
+        var settings = BuildSettings();
+        settings.SetBuildProfile("remote-required", new BuildProfile { BuildCmds = ["touch should-not-run"] });
+        var svc = BuildValidator(settings, new RemoteRequiredBuildCommandRunner());
+
+        var result = await svc.ValidateAsync("remote-required", _workspace, CancellationToken.None);
+
+        Assert.False(result.Green);
+        Assert.Equal(RemoteExecutionRequirement.Code, result.FailureCode);
+        Assert.Equal(BuildProfileStatuses.ValidationFailed, settings.Get("remote-required").BuildProfile!.Status);
+        Assert.False(File.Exists(Path.Combine(_workspace, "should-not-run")));
+        Assert.False(BuildProfileGate.AllowsAutoPickup(settings.Get("remote-required").BuildProfile));
+    }
+
+    [Fact]
     public async Task GreenRun_FlipsProfileToPipelineReady()
     {
         var settings = BuildSettings();
