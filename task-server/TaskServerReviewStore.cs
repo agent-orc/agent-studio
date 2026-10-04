@@ -11,6 +11,13 @@ public sealed partial class TaskServerStore
 {
     private static readonly JsonSerializerOptions ReviewJson = new(JsonSerializerDefaults.Web);
 
+    /// <summary>Rows read per page when selecting a review claim candidate.</summary>
+    private const int ClaimCandidatePageSize = 32;
+
+    /// <summary>AGT-2987: last time each unclaimable attempt was logged; one line per attempt per hour.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _unclaimableReviewLoggedAt =
+        new(StringComparer.Ordinal);
+
     /// <summary>
     /// Wire token for the distinct terminal of a review whose only failing gate
     /// was already red on the integration branch (AGT-2819).
@@ -228,6 +235,8 @@ public sealed partial class TaskServerStore
     {
         RequireAdmission();
         ReviewClaimResponse? response = null;
+        // Every unclaimable attempt, not only the ones the response names.
+        IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
             var executor = await ReadReviewExecutorAsync(
@@ -248,12 +257,16 @@ public sealed partial class TaskServerStore
                 ct);
             if (!capabilityAdmission.Eligible)
             {
-                response = new ReviewClaimResponse("empty", Message: capabilityAdmission.Message);
+                response = ReviewClaimEmptyResponses.Empty(
+                    ReviewClaimEmptyReasons.CapabilityAdmission,
+                    capabilityAdmission.Message ?? "Review executor capability admission is closed.");
                 return;
             }
             if (request.AvailableSlots <= 0)
             {
-                response = new ReviewClaimResponse("empty", Message: "Review executor has no available slot.");
+                response = ReviewClaimEmptyResponses.Empty(
+                    ReviewClaimEmptyReasons.NoAvailableSlot,
+                    "Review executor has no available slot.");
                 return;
             }
 
@@ -261,69 +274,98 @@ public sealed partial class TaskServerStore
             ReviewSubjectDto? subject = null;
             string? capabilityBlock = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
-            await using (var command = Command(connection, """
-                SELECT a.id, a.subject_id, a.task_id, a.attempt_number, a.status,
-                       a.executor_id, a.host_id, a.fence, a.created_at, a.reported_at,
-                       a.cleaned_at, a.outcome, a.failure_classification,
-                       s.source_run_id, s.repository_id, s.repository_url,
-                       s.expected_result_sha, s.result_ref, s.source_bundle_artifact_id,
-                       s.source_bundle_sha256, s.coding_host_id, s.review_policy_hash,
-                       s.plan_json, s.created_at
-                  FROM review_attempts a
-                  JOIN review_subjects s ON s.id = a.subject_id
-                  JOIN tasks t ON t.id = a.task_id
-                 WHERE (
-                         a.status = 'queued'
-                         OR a.status = 'process-unknown'
-                         OR (a.status = 'leased' AND a.expires_at <= $now)
-                       )
-                   AND t.state = '4-auto-review'
-                   AND NOT (
-                         json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
-                         AND s.coding_host_id = $host
-                       )
-                 ORDER BY a.created_at, a.attempt_number
-                 LIMIT 32;
-                """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId)))
-            await using (var reader = await command.ExecuteReaderAsync(ct))
+            var unclaimable = new List<ReviewUnclaimableAttemptDto>();
+            // Read one page at a time so a claimable attempt cannot be hidden
+            // behind a page of plans this executor cannot run.
+            async Task<int> ScanCandidatesAsync(int offset)
             {
+                var rows = 0;
+                await using var command = Command(connection, """
+                    SELECT a.id, a.subject_id, a.task_id, a.attempt_number, a.status,
+                           a.executor_id, a.host_id, a.fence, a.created_at, a.reported_at,
+                           a.cleaned_at, a.outcome, a.failure_classification,
+                           s.source_run_id, s.repository_id, s.repository_url,
+                           s.expected_result_sha, s.result_ref, s.source_bundle_artifact_id,
+                           s.source_bundle_sha256, s.coding_host_id, s.review_policy_hash,
+                           s.plan_json, s.created_at
+                      FROM review_attempts a
+                      JOIN review_subjects s ON s.id = a.subject_id
+                      JOIN tasks t ON t.id = a.task_id
+                     WHERE (
+                             a.status = 'queued'
+                             OR a.status = 'process-unknown'
+                             OR (a.status = 'leased' AND a.expires_at <= $now)
+                           )
+                       AND t.state = '4-auto-review'
+                       AND NOT (
+                             json_extract(s.plan_json, '$.requireDifferentHostFailureDomain') = 1
+                             AND s.coding_host_id = $host
+                           )
+                     ORDER BY a.created_at, a.attempt_number, a.id
+                     LIMIT $limit OFFSET $offset;
+                    """, transaction, ("$now", Iso(UtcNow)), ("$host", executor.HostId),
+                    ("$limit", ClaimCandidatePageSize), ("$offset", offset));
+                await using var reader = await command.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
+                    rows++;
                     var candidateAttempt = ReadReviewAttempt(reader);
                     var candidateSubject = ReadReviewSubjectFromClaim(reader);
-                    if (SupportsSubject(executor, candidateSubject))
+                    var missing = MissingSubjectCapabilities(executor, candidateSubject);
+                    if (missing.Count == 0)
                         candidates.Add((candidateAttempt, candidateSubject));
+                    else
+                        unclaimable.Add(new ReviewUnclaimableAttemptDto(
+                            candidateAttempt.AttemptId,
+                            candidateAttempt.TaskId,
+                            candidateAttempt.CreatedAt,
+                            missing));
                 }
+                return rows;
             }
-            foreach (var candidate in candidates)
+            var offset = 0;
+            while (true)
             {
-                var candidateRequirements = RequiredReviewCapabilities(
-                    request.RequiredCapabilities,
-                    candidate.Subject);
-                var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
-                    connection,
-                    transaction,
-                    request.ExecutorId,
-                    executor.HostId,
-                    candidateRequirements,
-                    ct);
-                if (!candidateAdmission.Eligible)
+                candidates.Clear();
+                var scannedRows = await ScanCandidatesAsync(offset);
+                foreach (var candidate in candidates)
                 {
-                    capabilityBlock = candidateAdmission.Message;
-                    continue;
+                    var candidateRequirements = RequiredReviewCapabilities(
+                        request.RequiredCapabilities,
+                        candidate.Subject);
+                    var candidateAdmission = await EvaluateCapabilityAdmissionAsync(
+                        connection,
+                        transaction,
+                        request.ExecutorId,
+                        executor.HostId,
+                        candidateRequirements,
+                        ct);
+                    if (!candidateAdmission.Eligible)
+                    {
+                        capabilityBlock = candidateAdmission.Message;
+                        continue;
+                    }
+                    attempt = candidate.Attempt;
+                    subject = candidate.Subject;
+                    capabilityAdmission = candidateAdmission;
+                    break;
                 }
-                attempt = candidate.Attempt;
-                subject = candidate.Subject;
-                capabilityAdmission = candidateAdmission;
-                break;
+                if (attempt is not null || scannedRows < ClaimCandidatePageSize)
+                    break;
+                offset += scannedRows;
             }
 
             if (attempt is null || subject is null)
             {
-                response = new ReviewClaimResponse(
-                    "empty",
-                    Message: capabilityBlock
-                             ?? "No eligible immutable review subject is queued for this host failure domain.");
+                // AGT-2987: a subject the registered capabilities cannot serve
+                // used to be skipped without a word. Name it instead.
+                if (capabilityBlock is null) unclaimableToLog = unclaimable;
+                response = capabilityBlock is not null
+                    ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
+                    : ReviewClaimEmptyResponses.ForQueue(
+                        unclaimable,
+                        ReviewClaimEmptyReasons.QueueEmpty,
+                        "No eligible immutable review subject is queued for this host failure domain.");
                 return;
             }
 
@@ -399,7 +441,48 @@ public sealed partial class TaskServerStore
                 RequiredCapabilities: capabilityAdmission.Required,
                 CanaryCapabilities: capabilityAdmission.Canaries);
         }, ct);
+        LogUnclaimableReviews(request.ExecutorId, unclaimableToLog);
         return response!;
+    }
+
+    /// <summary>
+    /// Logs every unclaimable attempt once per hour. Takes the full list the
+    /// claim scan found: the response names at most
+    /// <see cref="ReviewClaimEmptyResponses.MaxNamedAttempts"/> attempts, and
+    /// logging only those would leave the rest of a large backlog silent.
+    /// </summary>
+    private void LogUnclaimableReviews(string executorId, IReadOnlyList<ReviewUnclaimableAttemptDto> attempts)
+    {
+        if (attempts.Count == 0) return;
+        var now = UtcNow;
+        foreach (var attempt in attempts)
+        {
+            if (!TryReserveUnclaimableReviewLog(attempt.AttemptId, now))
+                continue;
+            _logger?.LogWarning(
+                "review-claim-unclaimable reason={Reason} attempt={AttemptId} task={TaskKey} "
+                + "executor={ExecutorId} missing={MissingCapabilities} pendingSince={PendingSince:O}",
+                ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                attempt.AttemptId,
+                attempt.TaskKey,
+                executorId,
+                string.Join(",", attempt.MissingCapabilities),
+                attempt.CreatedAt);
+        }
+    }
+
+    private bool TryReserveUnclaimableReviewLog(string attemptId, DateTime now)
+    {
+        while (true)
+        {
+            if (!_unclaimableReviewLoggedAt.TryGetValue(attemptId, out var last))
+            {
+                if (_unclaimableReviewLoggedAt.TryAdd(attemptId, now)) return true;
+                continue;
+            }
+            if (now - last < TimeSpan.FromHours(1)) return false;
+            if (_unclaimableReviewLoggedAt.TryUpdate(attemptId, now, last)) return true;
+        }
     }
 
     private async Task<int> SupersedeUnclaimableReviewAttemptsAsync(
@@ -1776,40 +1859,35 @@ public sealed partial class TaskServerStore
             .Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray())
            + "-f" + fence.ToString(CultureInfo.InvariantCulture);
 
-    private static bool SupportsSubject(ReviewExecutorRow executor, ReviewSubjectDto subject)
+    /// <summary>
+    /// Registered capabilities <paramref name="subject"/> needs and
+    /// <paramref name="executor"/> lacks; empty when the executor can serve it.
+    /// </summary>
+    private static IReadOnlyList<string> MissingSubjectCapabilities(ReviewExecutorRow executor, ReviewSubjectDto subject)
     {
-        if (!ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
-            return false;
-        if (!string.IsNullOrWhiteSpace(subject.RepositoryUrl)
-            && !executor.Capabilities.Contains(ReviewCapabilities.GitMaterialization))
-            return false;
-        if (!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId)
-            && !executor.Capabilities.Contains(ReviewCapabilities.SourceBundleMaterialization))
-            return false;
-        if (subject.Plan.RequiresVisualReview
-            && !executor.Capabilities.Contains(ReviewCapabilities.VisionReview))
-            return false;
-        if (subject.Plan.Commands.Any(command => command.CompareToBaseline)
-            && !executor.Capabilities.Contains(ReviewCapabilities.BaselineComparison))
-            return false;
-        if (subject.Plan.Preparation is { Count: > 0 }
-            && !executor.Capabilities.Contains(ReviewCapabilities.DependencyPreparation))
-            return false;
-        if (subject.Plan.RequiredAspects.Any(aspect =>
-                aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
-            && !executor.Capabilities.Contains(ReviewCapabilities.SemanticReview))
-            return false;
+        var missing = new List<string>(ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities));
+        void Require(bool needed, string key)
+        {
+            if (needed && !executor.Capabilities.Contains(key) && !missing.Contains(key)) missing.Add(key);
+        }
+        Require(!string.IsNullOrWhiteSpace(subject.RepositoryUrl), ReviewCapabilities.GitMaterialization);
+        Require(!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId),
+            ReviewCapabilities.SourceBundleMaterialization);
+        Require(subject.Plan.RequiresVisualReview, ReviewCapabilities.VisionReview);
+        Require(subject.Plan.Commands.Any(command => command.CompareToBaseline), ReviewCapabilities.BaselineComparison);
+        Require(subject.Plan.Preparation is { Count: > 0 }, ReviewCapabilities.DependencyPreparation);
+        Require(subject.Plan.RequiredAspects.Any(aspect =>
+                aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence"),
+            ReviewCapabilities.SemanticReview);
         foreach (var command in subject.Plan.Commands.Where(command =>
                      ReviewCommandKinds.IsAgent(command.ExecutionKind)))
         {
-            if (!executor.Capabilities.Contains(ReviewCapabilities.SemanticReview))
-                return false;
-            if (!string.IsNullOrWhiteSpace(command.CliType)
-                && (!executor.Capabilities.Contains(CapabilityProtocol.CliExecution(command.CliType))
-                    || !executor.Capabilities.Contains(CapabilityProtocol.ProviderAuthentication(command.CliType))))
-                return false;
+            Require(true, ReviewCapabilities.SemanticReview);
+            if (string.IsNullOrWhiteSpace(command.CliType)) continue;
+            Require(true, CapabilityProtocol.CliExecution(command.CliType));
+            Require(true, CapabilityProtocol.ProviderAuthentication(command.CliType));
         }
-        return true;
+        return missing.Order(StringComparer.Ordinal).ToArray();
     }
 
     private sealed record ReviewExecutorRow(string HostId, IReadOnlySet<string> Capabilities);
