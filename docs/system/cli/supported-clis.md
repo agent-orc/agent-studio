@@ -319,7 +319,7 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 - The public CLI type is still `gemini`; changing the persisted value is a separate compatibility migration.
 - CAR 0.7.0 registers `agentapi` as its `antigravity` descriptor and keeps `gemini` for the deprecated Gemini CLI. [`BackendCarExecution.CarCliTypeFor`](../../../backend/Features/Cli/Execution/BackendCarExecution.cs) maps the persisted `gemini` type to `antigravity` and passes the configured `agentapi` path, so a card run never reaches CAR's Gemini descriptor. The descriptor builds the same argv, adds no permission flags, and decodes stdout with the same `GeminiEventAdapter` as the removed Studio adapter. [`AntigravityCarLaunchTests`](../../../backend.Tests/AntigravityCarLaunchTests.cs) pins the executable, argv, and model tiers. See ADR-0077.
 - `agentapi` exposes no documented config-home override, so Studio reports shared context honestly.
-- A future CAR migration requires recorded protocol fixtures for conversation creation, continuation, permission behavior, output framing, session capture, stop, and quota reporting.
+- `AntigravityCarLaunchTests` covers new and resumed argv, model tiers, and the absence of Gemini CLI permission flags; `GeminiEventAdapterTests` covers event mapping. Quota reporting remains a Studio host probe because `agentapi` has no local numeric quota surface.
 
 ---
 
@@ -327,16 +327,16 @@ The old Studio-local `WindowsHandleScrubSpawner` no longer exists. CAR owns npm-
 
 Use this as a PR template. Tick each box; missing items must be justified in section 3.
 
-- [ ] Add the CLI type and descriptor to CodingAgentRunner first, or document why its protocol must remain an explicit Studio legacy adapter. Do not create another unstructured default launch path.
+- [ ] Add the CLI type and descriptor to CodingAgentRunner first. Keep a provider unavailable for card runs until its CAR protocol is supported.
 - [ ] Add the literal to the frontend type union in [`task.model.ts`](../../../frontend/src/app/models/task.model.ts).
 - [ ] Add a [`CliBehavior`](../../../backend/Features/Cli/Execution/CliBehavior.cs) for Studio-owned rendering, session capture, context observation, and model discovery. CLI argv belongs in CAR for a CAR-backed integration.
 - [ ] Register one keyed [`GenericCliExecutionService`](../../../backend/Host/Program.cs) and include it in [`CliRouter`](../../../backend/Features/Cli/Execution/CliRouter.cs).
-- [ ] Update the CAR support decision in [`BackendCarExecution`](../../../backend/Features/Cli/Execution/BackendCarExecution.cs). An unsupported CAR protocol must fall back explicitly and visibly.
+- [ ] Map the persisted CLI type to its CAR descriptor in [`BackendCarExecution`](../../../backend/Features/Cli/Execution/BackendCarExecution.cs).
 - [ ] Add session-store discovery to [`SessionRegistry`](../../../backend/Features/Cli/Execution/SessionRegistry.cs), or return no sessions if the CLI has no on-disk store.
 - [ ] Add path conventions to [`CliContextConventions`](../../../backend/Features/Cli/Execution/CliContextConventions.cs).
 - [ ] Default to shared-only context unless the CLI has a real config-home override and a credential-safe seed policy.
 - [ ] Add a quota probe under [`backend/Features/Cli/Quota`](../../../backend/Features/Cli/Quota) and register it in `backend/Host/Program.cs`.
-- [ ] Add backend contract tests for the Studio-to-CAR request, event ordering, output rendering, session capture, stop, and any deliberate legacy fallback.
+- [ ] Add backend contract tests for the Studio-to-CAR request, event ordering, output rendering, session capture, and stop.
 - [ ] Add a `@billable` E2E spec `frontend/e2e/<cli>-hello-world.spec.ts`.
 - [ ] Update **section 3** of this document with the real, observed behaviour and quirks.
 - [ ] Update [README.md](../../../README.md) and [AGENTS.md](../../../AGENTS.md) if the new CLI changes user-visible product scope.

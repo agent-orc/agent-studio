@@ -45,8 +45,8 @@ public sealed record OrchestratorDecisionResult(
 /// The orchestrator's decision calls are short, one-shot, and need exact
 /// token-usage capture from the JSON envelope. Mixing those concerns into the
 /// streaming engine would force every existing streaming run through the JSON
-/// parser path. Cleaner to keep the orchestrator runtime as its own thin
-/// shell that only borrows the engine's resolved CLI path.
+/// parser path. The orchestrator runtime dispatches these calls through the
+/// one-shot registry and keeps their usage accounting separate.
 /// </para>
 /// </summary>
 public class OrchestratorRunner
@@ -59,13 +59,11 @@ public class OrchestratorRunner
     private readonly CliOneShotRegistry? _oneShotRegistry;
 
     public OrchestratorRunner(
-        GenericCliExecutionService claude,
         ILogger<OrchestratorRunner> logger,
         CliUsageParserRegistry? parsers = null,
         ICliModelRegistry? modelRegistry = null,
         CliOneShotRegistry? oneShotRegistry = null)
     {
-        _ = claude; // Retained in the constructor for source compatibility with test hosts.
         _logger = logger;
         _claudeUsageParser = parsers?.Get("claude");
         _modelRegistry = modelRegistry;
