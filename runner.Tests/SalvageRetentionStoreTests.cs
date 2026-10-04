@@ -5,8 +5,10 @@ using Xunit;
 namespace AgentRunner.Tests;
 
 /// <summary>Tarball naming and inventory, card-state lookup, and ref helpers (AGT-2999).</summary>
+// clock-independent: these dates are inventory metadata and card facts; no test compares them with now.
 public sealed class SalvageRetentionStoreTests : IDisposable
 {
+    private static readonly DateTime FixtureTime = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
     private readonly string _root = Path.Combine(Path.GetTempPath(), "salvage-store-" + Guid.NewGuid().ToString("N"));
 
     public SalvageRetentionStoreTests() => Directory.CreateDirectory(_root);
@@ -83,7 +85,7 @@ public sealed class SalvageRetentionStoreTests : IDisposable
         try
         {
             var escape = new SalvageEntry(
-                SalvageEntryKind.Tarball, "../" + Path.GetFileName(outside), null, "AGT-1", DateTime.UtcNow, 4);
+                SalvageEntryKind.Tarball, "../" + Path.GetFileName(outside), null, "AGT-1", FixtureTime, 4);
 
             Assert.False(SalvageTarballStore.TryDelete(_root, escape, out var error));
             Assert.NotNull(error);
@@ -101,7 +103,7 @@ public sealed class SalvageRetentionStoreTests : IDisposable
         var target = Path.Combine(_root, "target.bin");
         File.WriteAllText(target, "keep");
         File.CreateSymbolicLink(Path.Combine(_root, "AGT-1-0200.tgz"), target);
-        Write("AGT-1-0100.tgz", 10, DateTime.UtcNow);
+        Write("AGT-1-0100.tgz", 10, FixtureTime);
 
         Assert.False(SalvageTarballStore.TryDelete(_root, Entry("AGT-1-0200.tgz"), out _));
         Assert.True(File.Exists(target));
@@ -217,10 +219,10 @@ public sealed class SalvageRetentionStoreTests : IDisposable
     }
 
     private static SalvageEntry Entry(string name)
-        => new(SalvageEntryKind.Tarball, name, null, "AGT-1", DateTime.UtcNow, 10);
+        => new(SalvageEntryKind.Tarball, name, null, "AGT-1", FixtureTime, 10);
 
     private static ProjectDto Project(string id, string prefix)
-        => new(id, "ws", id, prefix, 1, DateTime.UtcNow, DateTime.UtcNow);
+        => new(id, "ws", id, prefix, 1, FixtureTime, FixtureTime);
 
     private static TaskDto Card(
         string key,
@@ -235,8 +237,8 @@ public sealed class SalvageRetentionStoreTests : IDisposable
             "title",
             state,
             1,
-            DateTime.UtcNow.AddDays(-60),
-            updated ?? DateTime.UtcNow.AddDays(-30),
+            FixtureTime.AddDays(-60),
+            updated ?? FixtureTime.AddDays(-30),
             ArchiveState: archiveState,
             ArchivedAt: archivedAt);
 }
