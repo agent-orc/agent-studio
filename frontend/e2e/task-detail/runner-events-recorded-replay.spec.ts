@@ -105,12 +105,12 @@ async function installRoutes(page: Page): Promise<void> {
     contentType: 'application/json',
     body: '[]',
   }));
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true }),
   }));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -124,7 +124,7 @@ async function installRoutes(page: Page): Promise<void> {
     contentType: 'application/json',
     body: JSON.stringify([{ name: 'fixture', path: watchPath, rootPath: watchPath }]),
   }));
-  await page.route('**/api/runner/status**', route => route.fulfill({
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ projects: { fixture: { projectName: 'fixture', mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } }),
@@ -157,7 +157,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route(`**/api/tasks/${esc}/claude-session?**`, route => route.fulfill({
     status: 200, contentType: 'application/json', body: 'null',
   }));
-  await page.route(`**/api/tasks/${esc}?**`, route => route.fulfill({
+  await page.route(`**/api/v1/projects/*/tasks/${esc}?**`, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify(detail()),
   }));
 }

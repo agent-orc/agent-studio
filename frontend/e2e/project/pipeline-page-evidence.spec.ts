@@ -101,18 +101,18 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   projectSlug = slugFor(projectName);
 
   await page.route('**/api/**', r => r.fulfill(json({})));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
   await page.route('**/api/clients**', r => r.fulfill(json([])));
   await page.route('**/api/v1/management/remote-hosts', r => r.fulfill(json([])));
   await page.route('**/api/tags', r => r.fulfill(json([])));
-  await page.route('**/api/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
+  await page.route('**/api/v1/studio/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
   await page.route('**/api/cli/*/models*', r => r.fulfill(json({ models: [], source: 'stubbed' })));
   await page.route('**/api/watch-paths', r => r.fulfill(json([preferred])));
-  await page.route('**/api/projects', r => r.fulfill(json([])));
-  await page.route('**/api/workspaces', r => r.fulfill(json([{
+  await page.route('**/api/v1/projects', r => r.fulfill(json([])));
+  await page.route('**/api/v1/workspaces', r => r.fulfill(json([{
     id: 'WS-1', displayName: 'Workspace', sortOrder: 0, isDefault: true, color: null,
     createdAt: '2026-07-22T00:00:00Z',
     projects: [{
@@ -130,13 +130,13 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await page.route('**/api/cli/usage**', r => r.fulfill(json({
     at: '2026-07-23T01:00:00Z', sessions: [],
   })));
-  await page.route('**/api/tasks/grouped', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/board', r => r.fulfill(json({
     archive: [], autoReview: [], backlog: [], codeNotComplete: [], completed: [],
     failedPickup: [], humanReview: [], orchestratorPrep: [], preparation: [],
     progress: [], ready: [], review: [],
   })));
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0 })));
-  await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(CATALOGUE)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));
@@ -274,18 +274,18 @@ test('pipeline page: pure dotnet project keeps Angular stylelint visible but ina
       : step),
   };
   await page.route('**/api/**', r => r.fulfill(json({})));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
   await page.route('**/api/clients**', r => r.fulfill(json([])));
   await page.route('**/api/v1/management/remote-hosts', r => r.fulfill(json([])));
   await page.route('**/api/tags', r => r.fulfill(json([])));
-  await page.route('**/api/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
+  await page.route('**/api/v1/studio/orchestrator/sessions', r => r.fulfill(json({ sessions: [] })));
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
   await page.route('**/api/cli/*/models*', r => r.fulfill(json({ models: [], source: 'stubbed' })));
   await page.route('**/api/watch-paths', r => r.fulfill(json([preferred])));
-  await page.route('**/api/projects', r => r.fulfill(json([])));
-  await page.route('**/api/workspaces', r => r.fulfill(json([{
+  await page.route('**/api/v1/projects', r => r.fulfill(json([])));
+  await page.route('**/api/v1/workspaces', r => r.fulfill(json([{
     id: 'WS-1', displayName: 'Workspace', sortOrder: 0, isDefault: true, color: null,
     createdAt: '2026-07-22T00:00:00Z',
     projects: [{
@@ -303,13 +303,13 @@ test('pipeline page: pure dotnet project keeps Angular stylelint visible but ina
   await page.route('**/api/cli/usage**', r => r.fulfill(json({
     at: '2026-07-23T01:00:00Z', sessions: [],
   })));
-  await page.route('**/api/tasks/grouped', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/board', r => r.fulfill(json({
     archive: [], autoReview: [], backlog: [], codeNotComplete: [], completed: [],
     failedPickup: [], humanReview: [], orchestratorPrep: [], preparation: [],
     progress: [], ready: [], review: [],
   })));
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0 })));
-  await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/bus/*/messages**', r => r.fulfill(json([])));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json(dotnetCatalogue)));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [projectName]: SETTINGS_PROJECTION })));

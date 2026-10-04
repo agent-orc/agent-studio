@@ -218,7 +218,7 @@ async function mockDashboard(page: Page): Promise<{
   let evidenceReviewed = false;
   let validCompilePending = false;
   let releaseValidCompile: (() => void) | null = null;
-  await page.route('**/api/auth/status', route => fulfillJson(route, {
+  await page.route('**/api/v1/studio/auth/status', route => fulfillJson(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('http://127.0.0.1:4310/**', route => route.fulfill({ status: 200, body: 'ok' }));
@@ -236,11 +236,11 @@ async function mockDashboard(page: Page): Promise<{
     name: PROJECT_NAME, path: '/mock/tasks/operator-demo', rootPath: '/mock/repos/operator-demo',
     repositoryPath: '/mock/repos/operator-demo',
   }]));
-  await page.route('**/api/workspaces', route => fulfillJson(route, workspaces));
-  await page.route('**/api/projects', route => fulfillJson(route, [project]));
+  await page.route('**/api/v1/workspaces', route => fulfillJson(route, workspaces));
+  await page.route('**/api/v1/projects', route => fulfillJson(route, [project]));
   await page.route('**/api/tasks', route => fulfillJson(route, [planningTask]));
-  await page.route('**/api/tasks/grouped', route => fulfillJson(route, grouped()));
-  await page.route(/\/api\/tasks\/plan-deployment-history(?:\?|$)/, () => {
+  await page.route('**/api/v1/studio/board', route => fulfillJson(route, grouped()));
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/plan-deployment-history(?:\?|$)/, () => {
     planningTaskRequested = true;
     // Navigation writes the task deep link before detail loading. Leave the
     // heavy task pane pending so this dashboard spec verifies the handoff

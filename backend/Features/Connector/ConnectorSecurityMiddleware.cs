@@ -3,10 +3,15 @@ namespace AgentStudio.Connector;
 public sealed class ConnectorSecurityMiddleware(
     RequestDelegate next,
     ConnectorOptions options,
-    ConnectorSessionStore sessions)
+    ConnectorSessionStore sessions,
+    ConnectorRouteInventory inventory)
 {
     private const string SessionPath = "/connector/session";
-    private const string HubNegotiatePath = "/hubs/jobs/negotiate";
+
+    // The Studio negotiates on the inventory's hub path (/hubs/v1/studio since
+    // AGT-2983), so the CSRF-free negotiate follows that path, not a literal.
+    private readonly PathString _hubNegotiatePath = inventory.TaskServerOperations
+        .Single(operation => operation.Method == "WS").Path.TrimEnd('/') + "/negotiate";
 
     private static readonly HashSet<string> SafeMethods = new(
         [HttpMethods.Get, HttpMethods.Head, HttpMethods.Options],
@@ -32,7 +37,7 @@ public sealed class ConnectorSecurityMiddleware(
             UnsafeMethod: unsafeRequest,
             WebSocketUpgrade: context.WebSockets.IsWebSocketRequest,
             HubNegotiate: HttpMethods.IsPost(request.Method)
-                && request.Path.Equals(HubNegotiatePath, StringComparison.OrdinalIgnoreCase),
+                && request.Path.Equals(_hubNegotiatePath, StringComparison.OrdinalIgnoreCase),
             SessionValid: sessionValid,
             CsrfValid: sessionValid && unsafeRequest && sessions.ValidateCsrf(request, session));
 
