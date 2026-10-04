@@ -789,8 +789,8 @@ with an atomic replacement. Use a pinned protected SSH session or run it locally
 do not put the response in task results. Supply `--server`, `--operation-id`,
 `--consumer-id` and `--token-file`. Before replacing the file, it checks the operation
 receipt with the new bearer and rejects a stale or recovered generation. It
-first stages the bearer and any consumer proof in private host-local `.pending`
-files, then backs up
+first stages the bearer and its matching consumer proof together in one private
+host-local `.pending` file, then backs up
 the previous credential and replaces the live file. It removes the pending file
 after the live file and adjacent `.consumer-proof` file are durable. File-backed
 Runner, Engine, and Studio edge clients reload this private proof with the bearer
@@ -808,7 +808,9 @@ If the command stops after staging, run it with `--resume` using the same
 operation id. It reads the private pending or installed file and completes the
 same operation. If the command stopped before staging, repeat the management
 request with the same operation id and pipe its replayed response to the
-installer. No retry requests a second bearer.
+installer. An incomplete stage from an older installer that has a bearer but
+no proof is rejected before the live file changes; replay that same operation's
+management response to restage it. No retry requests a second bearer.
 
 The receiving consumer calls `POST /api/v1/principal-rotations/{operationId}/delivered`
 with the new bearer, completes a successful operation on a route requiring its

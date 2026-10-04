@@ -53,6 +53,32 @@ def read_proof(path, consumer):
     return parts[1]
 
 
+def read_staged(path, consumer, legacy_proof_path):
+    value, _ = read_installed(path)
+    try:
+        staged = json.loads(value)
+    except json.JSONDecodeError:
+        staged = None
+    if isinstance(staged, dict):
+        if staged.get("consumerId") != consumer:
+            raise ValueError("The protected pending delivery belongs to another consumer.")
+        bearer = staged.get("credential")
+        proof = staged.get("consumerProof")
+        if proof is not None and (not isinstance(proof, str) or not re.fullmatch(r"[0-9a-f]{64}", proof)):
+            raise ValueError("The protected pending consumer proof is invalid.")
+    else:
+        # Accept a stage written by an older installer, but never install a
+        # shared bearer until its separately staged proof is recovered.
+        bearer = value
+        try:
+            proof = read_proof(legacy_proof_path, consumer)
+        except FileNotFoundError:
+            proof = None
+    if not isinstance(bearer, str) or not bearer.startswith("ats_"):
+        raise ValueError("The protected pending bearer is invalid.")
+    return bearer, proof
+
+
 def install(path, bearer):
     existing = None
     try:
@@ -171,16 +197,30 @@ def main():
     pending_proof = pending + ".proof"
     if args.resume:
         try:
-            bearer, _ = read_installed(pending)
+            bearer, proof_value = read_staged(pending, args.consumer_id, pending_proof)
+            if proof_value is None:
+                installed_bearer, _ = read_installed(args.token_file)
+                if installed_bearer == bearer:
+                    try:
+                        proof_value = read_proof(proof_file, args.consumer_id)
+                    except FileNotFoundError:
+                        pass
+            if os.path.exists(pending_proof) and proof_value:
+                # Normalize a legacy two-file stage before replacing anything.
+                install(pending, json.dumps({"credential": bearer,
+                                             "consumerId": args.consumer_id,
+                                             "consumerProof": proof_value}, separators=(",", ":")))
         except FileNotFoundError:
+            if os.path.exists(pending_proof):
+                raise ValueError("The pending bearer is missing; replay the same operation's management response.")
             bearer, _ = read_installed(args.token_file)
-        try:
-            proof_value = read_proof(pending_proof, args.consumer_id)
-        except FileNotFoundError:
             try:
                 proof_value = read_proof(proof_file, args.consumer_id)
             except FileNotFoundError:
                 proof_value = None
+        current = call(server, "/api/v1/principal-rotations/" +
+                       urllib.parse.quote(args.operation_id, safe=""),
+                       bearer, args.consumer_id, method="GET", proof=proof_value)
     else:
         issued = json.load(sys.stdin)
         receipt = issued.get("rotation") or {}
@@ -200,24 +240,29 @@ def main():
                        bearer, args.consumer_id, method="GET", proof=proof_value)
         require_installable(receipt, current)
         try:
-            staged, _ = read_installed(pending)
-            if staged != bearer:
+            staged_bearer, staged_proof = read_staged(pending, args.consumer_id, pending_proof)
+            if staged_bearer != bearer or staged_proof not in (None, proof_value):
                 raise ValueError("A different pending generation already exists for this operation.")
+            if staged_proof != proof_value or os.path.exists(pending_proof):
+                # Repair an older incomplete stage using the same operation's
+                # protected management replay before touching the live file.
+                install(pending, json.dumps({"credential": bearer,
+                                             "consumerId": args.consumer_id,
+                                             "consumerProof": proof_value}, separators=(",", ":")))
         except FileNotFoundError:
-            # Persist before touching the live file so --resume survives a crash
-            # between backup and replacement without another issuance.
-            install(pending, bearer)
-        if proof_value:
-            install(pending_proof, args.consumer_id + "\n" + proof_value)
+            # One atomic private file binds the bearer and consumer proof. A
+            # crash cannot leave a resumable bearer without its matching proof.
+            install(pending, json.dumps({"credential": bearer,
+                                         "consumerId": args.consumer_id,
+                                         "consumerProof": proof_value}, separators=(",", ":")))
+    if len(current.get("consumers", [])) > 1 and not proof_value:
+        raise ValueError("The shared consumer proof is missing; replay the same operation's management response.")
     installed, _ = read_installed(args.token_file)
     if installed != bearer:
         if not os.path.exists(pending):
             raise ValueError("The installed generation is old and no protected pending bearer exists.")
-        current = call(server, "/api/v1/principal-rotations/" +
-                       urllib.parse.quote(args.operation_id, safe=""),
-                       bearer, args.consumer_id, method="GET", proof=proof_value)
-        if current.get("state") not in ("issued", "delivered", "awaiting-consumers"):
-            raise RuntimeError("The rotation generation is no longer installable.")
+        generation = bearer.split(".", 1)[0][4:]
+        require_installable({"credentialGeneration": generation}, current)
         if os.path.exists(backup):
             previous, _ = read_installed(backup)
             if previous != installed:
@@ -229,10 +274,10 @@ def main():
         install(proof_file, args.consumer_id + "\n" + proof_value)
     elif os.path.exists(proof_file):
         os.unlink(proof_file)
-    if os.path.exists(pending):
-        os.unlink(pending)
     if os.path.exists(pending_proof):
         os.unlink(pending_proof)
+    if os.path.exists(pending):
+        os.unlink(pending)
     operation = urllib.parse.quote(args.operation_id, safe="")
     call(server, f"/api/v1/principal-rotations/{operation}/delivered", bearer, args.consumer_id,
          proof=proof_value)

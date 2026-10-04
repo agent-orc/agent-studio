@@ -18,6 +18,93 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PrincipalRotationInstallerTests(unittest.TestCase):
+    def test_shared_delivery_resumes_from_atomic_bearer_and_proof_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "edge.token"
+            path.write_text("old-bearer\n", encoding="ascii")
+            path.chmod(0o600)
+            bearer = "ats_0123456789abcdef0123456789abcdef." + "a" * 64
+            proof = "b" * 64
+            receipt = {
+                "operationId": "shared-1", "credentialGeneration": "0123456789abcdef0123456789abcdef",
+                "state": "issued", "consumers": [
+                    {"consumerId": "edge-a"}, {"consumerId": "edge-b"}],
+            }
+            issued = json.dumps({"rotation": receipt, "credential": bearer, "consumerProof": proof})
+            argv = ["installer", "--server", "https://task-server.example",
+                    "--operation-id", "shared-1", "--consumer-id", "edge-a",
+                    "--token-file", str(path)]
+            original_install = MODULE.install
+            interrupted = [False]
+
+            def install(target, value):
+                if target == str(path) and value == bearer and not interrupted[0]:
+                    interrupted[0] = True
+                    raise OSError("simulated interruption before replacement")
+                original_install(target, value)
+
+            def call(server, route, credential, consumer, method="POST", body=None, proof=None):
+                self.assertEqual(bearer, credential)
+                self.assertEqual("edge-a", consumer)
+                self.assertEqual("b" * 64, proof)
+                if route.endswith("/ack"):
+                    return {"state": "awaiting-consumers", "acknowledgedConsumers": ["edge-a"]}
+                return receipt
+
+            with mock.patch.object(MODULE, "install", side_effect=install), \
+                    mock.patch.object(MODULE, "call", side_effect=call), \
+                    mock.patch.object(sys, "argv", argv), mock.patch.object(sys, "stdin", io.StringIO(issued)):
+                with self.assertRaises(OSError):
+                    MODULE.main()
+                pending = pathlib.Path(str(path) + ".rotation-shared-1.pending")
+                self.assertEqual((bearer, proof), MODULE.read_staged(str(pending), "edge-a", str(pending) + ".proof"))
+                self.assertEqual(0o600, stat.S_IMODE(pending.stat().st_mode))
+                self.assertFalse(pathlib.Path(str(pending) + ".proof").exists())
+                with mock.patch.object(sys, "argv", argv + ["--resume"]), \
+                        mock.patch.object(sys, "stdin", io.StringIO("")):
+                    MODULE.main()
+            self.assertEqual(bearer, MODULE.read_installed(str(path))[0])
+            self.assertEqual("edge-a\n" + proof, MODULE.read_installed(str(path) + ".consumer-proof")[0])
+
+    def test_resume_with_incomplete_shared_stage_keeps_old_bearer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "edge.token"
+            path.write_text("old-bearer\n", encoding="ascii")
+            path.chmod(0o600)
+            bearer = "ats_0123456789abcdef0123456789abcdef." + "a" * 64
+            pending = pathlib.Path(str(path) + ".rotation-shared-1.pending")
+            MODULE.install(str(pending), bearer)
+            receipt = {
+                "operationId": "shared-1",
+                "credentialGeneration": "0123456789abcdef0123456789abcdef",
+                "state": "issued",
+                "consumers": [{"consumerId": "edge-a"}, {"consumerId": "edge-b"}],
+            }
+            argv = ["installer", "--server", "https://task-server.example",
+                    "--operation-id", "shared-1", "--consumer-id", "edge-a",
+                    "--token-file", str(path), "--resume"]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(MODULE, "call", return_value=receipt):
+                with self.assertRaisesRegex(ValueError, "consumer proof"):
+                    MODULE.main()
+            self.assertEqual("old-bearer", MODULE.read_installed(str(path))[0])
+            self.assertFalse(pathlib.Path(str(path) + ".rotation-shared-1.previous").exists())
+            proof = "b" * 64
+            issued = json.dumps({"rotation": receipt, "credential": bearer, "consumerProof": proof})
+
+            def call(server, route, credential, consumer, method="POST", body=None, proof=None):
+                self.assertEqual(bearer, credential)
+                self.assertEqual("b" * 64, proof)
+                if route.endswith("/ack"):
+                    return {"state": "awaiting-consumers", "acknowledgedConsumers": ["edge-a"]}
+                return receipt
+
+            with mock.patch.object(sys, "argv", argv[:-1]), \
+                    mock.patch.object(sys, "stdin", io.StringIO(issued)), \
+                    mock.patch.object(MODULE, "call", side_effect=call):
+                MODULE.main()
+            self.assertEqual(bearer, MODULE.read_installed(str(path))[0])
+            self.assertEqual("edge-a\n" + proof, MODULE.read_installed(str(path) + ".consumer-proof")[0])
+
     def test_shared_consumer_proof_survives_interrupted_acknowledgement(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "edge.token"
@@ -126,7 +213,8 @@ class PrincipalRotationInstallerTests(unittest.TestCase):
                 self.assertTrue(failed[0])
                 if interruption == "replace":
                     pending = pathlib.Path(str(path) + ".rotation-rotation-1.pending")
-                    self.assertEqual(bearer, MODULE.read_installed(str(pending))[0])
+                    self.assertEqual((bearer, None), MODULE.read_staged(
+                        str(pending), "runner-a", str(pending) + ".proof"))
                     self.assertEqual(0o600, stat.S_IMODE(pending.stat().st_mode))
                     self.assertEqual("old-bearer", MODULE.read_installed(str(path))[0])
                 with mock.patch.object(sys, "argv", argv + ["--resume"]):
