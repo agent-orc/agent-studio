@@ -10,6 +10,8 @@ namespace AgentRunner.Tests;
 public sealed class HostOrchestratorClientTests
 {
     private const string CurrentInstance = "host-1:current";
+    // Claim mapping only carries these timestamps; it never compares them to the clock.
+    private static readonly DateTime ContinuationFixtureTime = DateTime.UnixEpoch;
 
     [Fact]
     public async Task Permit_is_adopted_and_containment_step_is_reported_after_host_report()
@@ -74,7 +76,7 @@ public sealed class HostOrchestratorClientTests
     public async Task Claimed_continuation_round_is_delivered_as_follow_up_and_keeps_explicit_route(
         bool explicitSelection)
     {
-        var now = DateTime.UtcNow;
+        var now = ContinuationFixtureTime;
         var task = new TaskDto(
             "task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
         var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
@@ -110,7 +112,7 @@ public sealed class HostOrchestratorClientTests
     [Fact]
     public async Task Mechanical_fresh_route_precedes_a_claimed_continuation_selection()
     {
-        var now = DateTime.UtcNow;
+        var now = ContinuationFixtureTime;
         var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
         var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
         var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
@@ -142,9 +144,9 @@ public sealed class HostOrchestratorClientTests
     }
 
     [Fact]
-    public async Task Model_only_continuation_selection_leaves_snapshotted_cli_and_thinking_unpinned()
+    public async Task Model_only_continuation_selection_keeps_its_validated_cli_without_pinning_thinking()
     {
-        var now = DateTime.UtcNow;
+        var now = ContinuationFixtureTime;
         var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
         var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
         var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
@@ -165,7 +167,7 @@ public sealed class HostOrchestratorClientTests
             new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
 
         Assert.Equal("gpt-6-sol", claim.RunSpec?.Model);
-        Assert.Null(claim.RunSpec?.CliType);
+        Assert.Equal("codex", claim.RunSpec?.CliType);
         Assert.Null(claim.RunSpec?.ThinkingLevel);
         Assert.Null(claim.RunSpec?.ContextMode);
     }
@@ -176,7 +178,7 @@ public sealed class HostOrchestratorClientTests
     public async Task Partial_continuation_selection_does_not_mix_with_incompatible_provider_fallback(
         bool modelSelected)
     {
-        var now = DateTime.UtcNow;
+        var now = ContinuationFixtureTime;
         var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
         var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
         var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
@@ -201,7 +203,7 @@ public sealed class HostOrchestratorClientTests
             new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
 
         Assert.Equal(modelSelected ? "gpt-6-sol" : null, claim.RunSpec?.Model);
-        Assert.Equal(modelSelected ? null : "codex", claim.RunSpec?.CliType);
+        Assert.Equal("codex", claim.RunSpec?.CliType);
         Assert.Null(claim.RunSpec?.ThinkingLevel);
         Assert.Null(claim.RunSpec?.ContextMode);
     }

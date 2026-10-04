@@ -187,7 +187,11 @@ the policy does not silently replace an operator pin. The server validates an
 explicit CLI and model against the policy's known model catalogue, including
 their provider pairing. This static check does not prove host CLI availability.
 The accepted intent snapshots unspecified route fields from the task's current
-Studio settings and records a per-field selection mask.
+Studio settings and records a per-field selection mask. For a model-only pin,
+the server retains the task's validated CLI or resolves the model's unique CLI
+from the policy catalogue. The runner carries that CLI with the model so normal
+host defaults do not pair it with another provider; the thinking level remains
+unpinned.
 
 `GET /api/v1/projects/{projectId}/tasks/{taskId}/continuations` lists the
 ordered round projections for Studio readers, and its `/{commandId}` child
@@ -196,11 +200,12 @@ reads one. Each projection shows `queued`, `claimed`, `consumed`, or
 the oldest queued round to one fenced run. The claim carries that round as its
 `followUp` delivery, with the run id as its claim id, plus the
 `continuationIntent` projection. A required mechanical fresh route takes
-precedence at claim. Otherwise only route fields explicitly submitted for the
-continuation override normal claim and host resolution; snapshotted values
-remain visible in the projection. A provider rejection fallback is a complete
-CLI/model/thinking route and applies only when the continuation has no explicit
-route fields; it is never used to fill missing fields around an operator pin.
+precedence at claim. Otherwise the explicitly submitted route fields override
+normal claim and host resolution. A model pin also carries its validated CLI,
+while other snapshotted values remain visible only in the projection. A provider
+rejection fallback is a complete CLI/model/thinking route and applies only when
+the continuation has no explicit route fields; it is never used to fill missing
+fields around an operator pin.
 The round is consumed by the runner's existing
 worker-start acknowledgement: the lease renewal names `startedPromptSha256`,
 and only the active lease of the bound run with the matching prompt hash can

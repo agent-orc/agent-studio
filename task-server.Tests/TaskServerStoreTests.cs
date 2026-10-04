@@ -319,6 +319,25 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Model_only_continuation_without_a_studio_cli_snapshots_its_policy_provider()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "model-only-provider", task.Version,
+                "Continue", "gpt-6-sol", null, null, "continue", "operator"),
+            "operator", default);
+        var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            receipt.CommandId, default);
+
+        Assert.Equal("codex", projection!.CliType);
+        Assert.Equal(new ContinuationSelectionMask(true, false, false), projection.Selection);
+    }
+
+    [Fact]
     public async Task Continuation_claim_survives_server_restart_without_false_consumption()
     {
         using var temp = new TempDirectory();

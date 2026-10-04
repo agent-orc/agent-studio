@@ -46,10 +46,20 @@ public sealed partial class TaskServerStore
                 "SELECT COALESCE(MAX(round), 0) FROM continuation_intents WHERE task_id = $task;",
                 ct, transaction, ("$task", task.TaskId)) ?? 0L) + 1;
             var fields = await ReadStudioFieldsAsync(connection, transaction, task.TaskId, ct);
+            var policy = ModelRoutingPolicyDocument.Value;
             var effectiveCli = request.CliType ?? fields?.CliType;
+            if (request.Model is not null && effectiveCli is null)
+            {
+                var modelClis = policy.ExplicitPinModels
+                    .Where(entry => entry.Value.Contains(request.Model))
+                    .Select(entry => entry.Key)
+                    .ToArray();
+                if (modelClis.Length != 1)
+                    throw new ArgumentException("Model requires an unambiguous CLI selection.");
+                effectiveCli = modelClis[0];
+            }
             if (effectiveCli is not null)
             {
-                var policy = ModelRoutingPolicyDocument.Value;
                 if (request.Model is not null
                     && (!policy.ExplicitPinModels.TryGetValue(effectiveCli, out var models)
                         || !models.Contains(request.Model)))
@@ -60,7 +70,7 @@ public sealed partial class TaskServerStore
                     throw new ArgumentException("Thinking level is not supported by the task's selected CLI policy catalogue.");
             }
             var model = request.Model ?? fields?.Model;
-            var cliType = request.CliType ?? fields?.CliType;
+            var cliType = effectiveCli;
             var thinkingLevel = request.ThinkingLevel ?? fields?.ThinkingLevel;
             var now = UtcNow;
             // The row and Ready promotion commit together. Every round remains
