@@ -1,6 +1,6 @@
 <div class="harness" [style.width.px]="container" data-testid="harness-frame">
   <app-usage-cockpit-header data-testid="studio-titlebar"
-                            [snapshot]="snapshot"
+                            [snapshot]="snapshot()"
                             [selectedCliId]="selected()"
                             [defaultCliId]="defaultCli"
                             [navItems]="navItems"
@@ -21,4 +21,5 @@
             (click)="onNav('theme')">Theme</button>
   </app-usage-cockpit-header>
   <output class="harness__action" data-testid="harness-last-action">{{ lastAction() }}</output>
+  <button type="button" data-testid="harness-load-large" (click)="setScenario('large')">Load large usage</button>
 </div>

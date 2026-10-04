@@ -235,6 +235,22 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 test.describe('@mockup header usage cockpit: whole-value fit', () => {
+  test('live wider values replan without a header resize', async ({ page }) => {
+    const errors = await open(page, { width: 320 });
+    await expect(header(page)).toHaveAttribute('data-fit', 'abbreviated');
+    const initialWidth = await header(page).evaluate(el => el.clientWidth);
+    await page.getByTestId('harness-load-large').click();
+    await expect(usageRow(page).getByTestId('usage-cost-chip-value')).toHaveText('$12.5K');
+    await expect(header(page)).toHaveAttribute('data-fit', 'bare');
+    expect(await header(page).evaluate(el => el.clientWidth)).toBe(initialWidth);
+    const report = await fitReport(page);
+    expect(report.problems).toEqual([]);
+    expect(report.docOverflow).toBeLessThanOrEqual(0);
+    expect(report.headerOverflow).toBeLessThanOrEqual(0);
+    await shot(page, 'fit-320-live-value-update');
+    expect(errors).toEqual([]);
+  });
+
   const cases: { name: string; width: number; scenario: string; scale?: number }[] = [
     { name: '320-long', width: 320, scenario: 'long' },
     { name: '320-large', width: 320, scenario: 'large' },

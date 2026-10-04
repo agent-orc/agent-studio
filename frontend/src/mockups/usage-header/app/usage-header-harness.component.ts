@@ -27,7 +27,7 @@ import { FIXTURE_NOW, SCENARIOS } from './usage-header.fixtures';
 export class UsageHeaderHarnessComponent {
   private readonly params = new URLSearchParams(location.search);
   readonly theme = this.params.get('theme') === 'light' ? 'light' : 'dark';
-  readonly snapshot = SCENARIOS[this.params.get('scenario') ?? 'default'] ?? null;
+  readonly snapshot = signal(SCENARIOS[this.params.get('scenario') ?? 'default'] ?? null);
   readonly container = Number(this.params.get('container')) || null;
   readonly selected = signal(this.params.get('selected'));
   readonly defaultCli = this.params.get('default');
@@ -58,5 +58,9 @@ export class UsageHeaderHarnessComponent {
   onUsage(request: UsageDetailRequest): void {
     if (request.section === 'cli' && request.cliId) this.selected.set(request.cliId);
     this.lastAction.set(`usage:${request.section}${request.cliId ? ':' + request.cliId : ''}`);
+  }
+
+  setScenario(name: string): void {
+    this.snapshot.set(SCENARIOS[name] ?? null);
   }
 }

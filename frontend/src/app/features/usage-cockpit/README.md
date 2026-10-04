@@ -63,6 +63,8 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
 - Hosts mark optional inline controls with `data-nav-inline-from="tablet"` or
   `"desktop"` and pass the same destinations in `navItems`.
 - Slot counters, models and weekly cost never appear in the strip.
+- The content fit remeasures every chip variant after a projection or CLI
+  selection changes, even if the header container keeps the same width.
 - Until HUC-S3 lands, the studio shell opens the existing usage hub from
   every chip and from Details.
 

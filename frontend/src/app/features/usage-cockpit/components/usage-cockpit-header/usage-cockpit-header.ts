@@ -171,7 +171,7 @@ export class UsageCockpitHeaderComponent {
     observer?.observe(this.host.nativeElement);
     destroyRef.onDestroy(() => observer?.disconnect());
 
-    let observedLayer: HTMLElement | null = null;
+    const observedMeasures = new Set<HTMLElement>();
     const onFocusIn = (event: FocusEvent) => {
       this.lastFocusedInside = event.target instanceof HTMLElement ? event.target : null;
     };
@@ -180,11 +180,23 @@ export class UsageCockpitHeaderComponent {
 
     afterEveryRender(() => {
       const layer = this.measureLayer()?.nativeElement ?? null;
-      if (layer && layer !== observedLayer) {
-        observedLayer = layer;
-        observer?.observe(layer);
-        this.measure();
+      // The layer itself is fixed at 0 x 0. Observe its max-content children
+      // so a polled value or newly selected CLI triggers a fresh fit even when
+      // the header's width stays the same.
+      const current = new Set(layer?.querySelectorAll<HTMLElement>('[data-measure]') ?? []);
+      for (const element of observedMeasures) {
+        if (!current.has(element)) {
+          observer?.unobserve(element);
+          observedMeasures.delete(element);
+        }
       }
+      for (const element of current) {
+        if (!observedMeasures.has(element)) {
+          observer?.observe(element);
+          observedMeasures.add(element);
+        }
+      }
+      this.measure();
       this.checkNavOverflow();
       this.restoreLostFocus();
     });
