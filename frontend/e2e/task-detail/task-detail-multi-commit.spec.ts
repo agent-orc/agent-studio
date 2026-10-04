@@ -160,7 +160,7 @@ async function installRoutes(page: Page) {
   await page.route('**/api/**', (route) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
   });
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -168,7 +168,7 @@ async function installRoutes(page: Page) {
     }));
   await page.route('**/api/tasks', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -182,9 +182,9 @@ async function installRoutes(page: Page) {
       status: 200, contentType: 'application/json',
       body: JSON.stringify([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }])
     }));
-  await page.route('**/api/workspaces**', (route) =>
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/projects**', (route) =>
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/git/summary**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
@@ -200,7 +200,7 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-05-29T00:00:00Z', snapshots: [] }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } })
@@ -263,7 +263,7 @@ async function installRoutes(page: Page) {
         body: JSON.stringify({ diff: `diff --git a/${c.files[0]} b/${c.files[0]}\n+++ b/${c.files[0]}\n+${c.shortSha} change` })
       }));
   }
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 }
 
@@ -275,7 +275,7 @@ async function installMechanicallySupersededDetail(page: Page) {
     { ...COMMITS[1], runAttemptId: 'round-2' },
     { ...COMMITS[2], runAttemptId: 'round-2' },
   ];
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 }
 
@@ -283,13 +283,13 @@ async function installWorktreeRoutes(page: Page) {
   await page.route('**/api/**', (route) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
   });
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -317,7 +317,7 @@ async function installWorktreeRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route(/\/api\/git\/hygiene(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: WORKTREE_JOB_ID, activeExecution: null, queuedJobIds: [] } } })
@@ -375,7 +375,7 @@ async function installWorktreeRoutes(page: Page) {
         error: null
       })
     }));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 }
 
@@ -444,9 +444,11 @@ async function saveTreePressureShot(page: Page, name: string): Promise<void> {
 async function expectedCommitChainMetas(page: Page): Promise<string[]> {
   return page.evaluate((commits) =>
     commits.map((commit) => {
+      // formatCompactDateTime always renders en-US; the browser default locale
+      // follows the host OS and would expect `08.06. 10:00` on a de-DE machine.
       const date = new Date(commit.at);
-      const day = date.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
-      const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const day = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+      const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       return `${commit.filesChanged}f · ${day} ${time}`;
     }),
     COMMITS

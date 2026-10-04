@@ -533,6 +533,7 @@ builder.Services.AddSingleton<IntegrationLeaseService>();
 builder.Services.AddSingleton<AttemptAuthorityService>();
 builder.Services.AddSingleton<ReviewAttemptTaskLifecycleService>();
 builder.Services.AddSingleton<V1ReviewExecutorRegistry>();
+builder.Services.AddSingleton<ReviewClaimUnclaimableLog>();
 builder.Services.AddSingleton<RemoteDispatchRejectionStore>();
 builder.Services.AddSingleton<RemoteQueueStarvationWatchdog>();
 builder.Services.AddSingleton<AutoReviewQueueStagnationWatchdog>();
@@ -1124,6 +1125,9 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
 app.UseForwardedHeaders();
+// Before routing, so the versioned core-attach paths Angular calls reach the
+// same legacy handlers, guards, and security checks as before (AGT-2983).
+app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
 app.UseRouting();
 // An explicitly selected standalone Task Server owns all task data. Legacy
 // /api handlers still use TaskRepository; do not let compatibility traffic

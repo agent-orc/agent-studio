@@ -83,13 +83,16 @@ evidence.
 1. Before adoption: `linkOwner: tunnel-keeper`. Run
    `probe-runner-route.sh` on the runner host.
 2. Adoption: set `linkOwner: link-supervisor`, bump `revision`, restart
-   backend/Host. `LinkSupervisor` adopts the healthy existing forward
-   (`lastProbe.kind = adoption`). Disable the TunnelKeeper scheduled task in
-   the same window. The probe fails with `duplicated-listener` if both run.
-3. Soak for the period agreed in AGT-2764. Only after it passes, remove the
-   TunnelKeeper registration. The scripts under
-   `deploy/windows/agent-runner-tunnel/` remain as the documented emergency
-   rollback until then.
+   backend/Host, and disable the TunnelKeeper scheduled task in the same
+   window. Confirm `lastProbe.kind = adoption` before claiming a flap-free
+   switch. If a foreign SSH session holds the listener, stop that owner before
+   the supervisor can bind; the 2026-09-25 switch took this recovery path and
+   did not prove live adoption.
+3. Soak for the period agreed in AGT-2764. Keep the TunnelKeeper registration
+   disabled through the remote Task Server cutover and rollback rehearsal. It
+   may be removed after the operator verifies a rollback that no longer needs
+   the registration. The scripts under `deploy/windows/agent-runner-tunnel/`
+   remain the documented manual emergency path under decision D3.
 4. Direct WireGuard (AGT-2737): switch the record to `wireguard-direct`,
    set each runner's server URL to `serverOrigin`, reconcile active attempts,
    then remove its reverse route. `linkOwner` becomes `none`. No unmonitored
@@ -109,6 +112,65 @@ loopback tunnel listener (reverse-ssh), or private DNS, CA-pinned TLS and
 certificate lifetime (private-https). It never prints the credential. In
 `wireguard-direct` the workstation is not on the path: the runner talks to the
 private edge only.
+
+## Network and administration key renewal
+
+AGT-W67 I7 uses D1 option A (host custody with central metadata) and D3
+option A (authorized platform rotation). The promoted dependencies are
+AGT-2971 (registry) and AGT-2976 (principal delivery). This is a host
+adapter contract at the accepted AGT-W63 private-HTTPS placement and AGT-W65
+Task Server command boundary. AGT-2945 continues to own the installation
+connectivity record and single link owner; this section does not introduce a
+second route authority.
+
+For a WireGuard peer (R7), generate its private key on the peer endpoint and
+inventory the public key, gateway peer, allowed IPs, owner, and separate
+preshared-key reference. Stage a second tunnel with its own peer address and
+nonoverlapping gateway allowed IPs and a distinct local interface.
+`WireGuardRotation` checks the gateway
+inventory before enrolment, then requires a fresh handshake and an
+authenticated Task Server API call through the candidate. It switches the
+route and repeats the authenticated call before removing the old peer.
+`generate_wireguard_keypair` writes the private key locally at `0600` and
+returns only the public key and an operation receipt.
+`LinuxWireGuardGateway` limits runtime commands to `wg show` and `wg set`; its
+required `persist_change` callback must durably update the installation's
+gateway configuration so a reboot cannot restore a retired peer. Keep that
+configuration under the installation network owner. If candidate proof fails,
+the old route stays active and the candidate is removed. If old-route recovery
+cannot be proven after a failed cutover, the result is
+`maintenance-recovery-required`, never a claimed rollback. When no separately
+addressed path exists, schedule maintenance with tested console access before
+changing the old peer. WireGuard keys have a rotation due date, not an
+inferred OAuth expiry.
+
+For an administration SSH key (R9), inventory each authorized public key and
+its owner before rotation. Generate the new private key at its custodian,
+retain the old authorized key, and add only the new public key over the
+existing pinned connection. `PinnedSshAdministration` disables agent and
+password fallback, uses the selected identity alone, requires
+`StrictHostKeyChecking=yes` against the existing known-hosts file, and writes
+the provisioner's protected SSH config atomically. `SshKeyRotation` proves a
+fresh new-key connection before selection, again after selection, and again
+after old-key removal, then confirms the old public key is absent. The host
+adapter derives the candidate public key from its private identity and checks
+it against the inventoried fingerprint before any SSH proof. A failed proof
+after selection restores and verifies the old provisioner identity. A changed server host key requires independent identity
+verification; never use automatic trust. Keep a tested console recovery path.
+
+On a lost-host restore, read the current host instance, credential generation,
+and revocation state from the live issuer, not the backup. The host secret CLI
+checks that issuer before installing a file or claiming an envelope, and both
+`WireGuardRotation` and `SshKeyRotation` require an authority binding before
+they inventory or change a route or key. The issuer must live outside the
+restored host backup and answer the HTTPS current-authority contract in the
+control-plane Docker guide. A replaced instance, revoked generation, or
+unavailable issuer refuses authority and requires re-enrolment. Do not start
+restored runner containers with copied native-login volumes or key mounts
+before that check. Recreate provider OAuth
+on the host instead of copying a refresh session. The central command and
+installation records retain operation references and public fingerprints,
+not private keys or bearer values.
 
 ## Failures and exact remediation
 

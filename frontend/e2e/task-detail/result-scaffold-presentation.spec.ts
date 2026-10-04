@@ -127,13 +127,13 @@ function detail(fixture: ScaffoldFixture) {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -149,7 +149,7 @@ async function installRoutes(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify([{ name: 'Agent Studio', path: WATCH_PATH, rootPath: WATCH_PATH }]),
     }));
-  await page.route('**/api/projects', (route) =>
+  await page.route('**/api/v1/projects', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -170,7 +170,7 @@ async function installRoutes(page: Page): Promise<void> {
         items: [],
       }),
     }));
-  await page.route('**/api/workspaces', (route) =>
+  await page.route('**/api/v1/workspaces', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({
@@ -178,7 +178,7 @@ async function installRoutes(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ snapshots: [], ttlSeconds: 600 }),
     }));
-  await page.route('**/api/runner/status**', (route) =>
+  await page.route('**/api/v1/studio/runner/status**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -225,7 +225,7 @@ async function installRoutes(page: Page): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify({ jobId: fixture.id, files: [] }),
       }));
-    await page.route(`**/api/tasks/${id}?**`, (route) =>
+    await page.route(`**/api/v1/projects/*/tasks/${id}?**`, (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',

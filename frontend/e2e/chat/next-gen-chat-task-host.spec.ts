@@ -140,7 +140,7 @@ async function installMocks(
   const runsBody = JSON.stringify(buildRunTimeline());
 
   const escId = encodeURIComponent(target.id);
-  await page.route(`**/api/tasks/${escId}?**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${escId}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: detailBody });
   });
   await page.route(`**/api/tasks/${escId}/output?**`, async (route) => {

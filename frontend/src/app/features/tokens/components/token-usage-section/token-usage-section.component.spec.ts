@@ -3,8 +3,9 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { NO_ERRORS_SCHEMA, provideZonelessChangeDetection } from '@angular/core';
 import { TokenUsageSectionComponent } from './token-usage-section.component';
+import { WorkspaceTokenTimelineComponent } from '../workspace-token-timeline/workspace-token-timeline';
 import type { UsageLedgerScope } from '../../../usage-cockpit';
 
 /**
@@ -13,6 +14,9 @@ import type { UsageLedgerScope } from '../../../usage-cockpit';
  */
 describe('TokenUsageSectionComponent (smoke)', () => {
   it('applies the linked workspace, UTC range and project to the ledger request', async () => {
+    TestBed.overrideComponent(TokenUsageSectionComponent, {
+      set: { imports: [WorkspaceTokenTimelineComponent], schemas: [NO_ERRORS_SCHEMA] },
+    });
     await TestBed.configureTestingModule({
       imports: [TokenUsageSectionComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],

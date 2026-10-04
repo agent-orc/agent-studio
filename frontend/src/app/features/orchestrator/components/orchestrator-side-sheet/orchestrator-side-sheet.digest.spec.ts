@@ -37,7 +37,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
   }
 
   function expectSessionsRequest(http: HttpTestingController) {
-    const request = http.expectOne('/api/orchestrator/sessions');
+    const request = http.expectOne('/api/v1/studio/orchestrator/sessions');
     expect(request.request.method).toBe('GET');
     return request;
   }
@@ -89,7 +89,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
       .toContain('Context captured');
 
     (fixture.nativeElement.querySelector('[data-testid="orch-side-sheet-refresh"]') as HTMLButtonElement).click();
-    const contextRequest = http.expectOne('/api/orchestrator/context/project:Agent%20Studio/refresh');
+    const contextRequest = http.expectOne('/api/v1/studio/orchestrator/context/project:Agent%20Studio/refresh');
     expect(contextRequest.request.method).toBe('POST');
     const chatRequest = http.expectOne('/api/runner/project:Agent%20Studio/orchestrator-chat');
     expect(chatRequest.request.method).toBe('GET');
@@ -99,7 +99,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
       project: 'Agent Studio',
       turns: [],
     });
-    http.expectNone('/api/orchestrator/sessions');
+    http.expectNone('/api/v1/studio/orchestrator/sessions');
     sessionsRequest.flush({ sessions: [] });
 
     expect(component.contextDigestState.digest()?.digest).toBe('lanes: progress=1');
@@ -118,7 +118,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     component.contextDigestState.digest.set(previous);
 
     component.refreshCurrentContext();
-    const contextRequest = http.expectOne('/api/orchestrator/context/project:demo-project/refresh');
+    const contextRequest = http.expectOne('/api/v1/studio/orchestrator/context/project:demo-project/refresh');
     expect(contextRequest.request.method).toBe('POST');
     const chatRequest = http.expectOne('/api/runner/project:demo-project/orchestrator-chat');
     expect(chatRequest.request.method).toBe('GET');
@@ -131,7 +131,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
       project: 'demo-project',
       turns: [],
     });
-    http.expectNone('/api/orchestrator/sessions');
+    http.expectNone('/api/v1/studio/orchestrator/sessions');
     sessionsRequest.flush({ sessions: [] });
 
     expect(component.contextDigestState.digest()).toBe(previous);
@@ -149,7 +149,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     component.show();
     fixture.detectChanges();
     expectSessionsRequest(http).flush({ sessions: [] });
-    const background = http.expectOne('/api/orchestrator/context/project:demo-project');
+    const background = http.expectOne('/api/v1/studio/orchestrator/context/project:demo-project');
     expect(background.request.method).toBe('GET');
     const backgroundChat = http.expectOne('/api/runner/project:demo-project/orchestrator-chat');
     expect(backgroundChat.request.method).toBe('GET');
@@ -158,10 +158,10 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
       turns: [],
     });
     expectSessionsRequest(http).flush({ sessions: [] });
-    http.expectNone('/api/orchestrator/sessions');
+    http.expectNone('/api/v1/studio/orchestrator/sessions');
 
     component.refreshCurrentContext();
-    const forcedContext = http.expectOne('/api/orchestrator/context/project:demo-project/refresh');
+    const forcedContext = http.expectOne('/api/v1/studio/orchestrator/context/project:demo-project/refresh');
     expect(forcedContext.request.method).toBe('POST');
     const forcedChat = http.expectOne('/api/runner/project:demo-project/orchestrator-chat');
     expect(forcedChat.request.method).toBe('GET');
@@ -171,7 +171,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
       project: 'demo-project',
       turns: [],
     });
-    http.expectNone('/api/orchestrator/sessions');
+    http.expectNone('/api/v1/studio/orchestrator/sessions');
     forcedSessions.flush({ sessions: [] });
     background.flush(digest('project:demo-project', 'older background digest'));
 
@@ -193,7 +193,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     fixture.detectChanges();
     expect(component.effectiveProject()).toBeNull();
     expect(component.effectiveJobId()).toBeNull();
-    http.expectOne('/api/orchestrator/context/global').flush(digest('global', 'workspace digest'));
+    http.expectOne('/api/v1/studio/orchestrator/context/global').flush(digest('global', 'workspace digest'));
     http.expectNone('/api/runner/global/orchestrator-chat');
     fixture.detectChanges();
 
@@ -222,14 +222,14 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     expect(component.contextKey()).toBe('task:Agent Studio/AGT-2149');
 
     component.refreshCurrentContext();
-    const contextRequest = http.expectOne('/api/orchestrator/context/task:Agent%20Studio/AGT-2149/refresh');
+    const contextRequest = http.expectOne('/api/v1/studio/orchestrator/context/task:Agent%20Studio/AGT-2149/refresh');
     expect(contextRequest.request.method).toBe('POST');
     const chatRequest = http.expectOne('/api/runner/task:Agent%20Studio/AGT-2149/orchestrator-chat');
     expect(chatRequest.request.method).toBe('GET');
     const sessionsRequest = expectSessionsRequest(http);
     contextRequest.flush(digest('task:Agent Studio/AGT-2149'));
     chatRequest.flush({ project: 'Agent Studio', turns: [] });
-    http.expectNone('/api/orchestrator/sessions');
+    http.expectNone('/api/v1/studio/orchestrator/sessions');
     sessionsRequest.flush({ sessions: [] });
 
     await component.onSubmit({ text: 'Please continue', attachments: [] });
