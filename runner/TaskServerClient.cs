@@ -816,7 +816,8 @@ public sealed class TaskServerClient : IDisposable
                 : selectedIntent is null && providerFallback is null && claim.FollowUp is null
                     ? null
                     : new RunSpecDto(
-                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType || selectedFields.Model)
+                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType
+                            || selectedFields.Model || selectedFields.ThinkingLevel)
                             ? selectedIntent.CliType : providerFallback?.CliType,
                         selectedIntent is not null && (selectedFields is null || selectedFields.Model)
                             ? selectedIntent.Model : providerFallback?.To,

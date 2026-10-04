@@ -338,6 +338,30 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Thinking_only_continuation_without_a_studio_cli_requires_one_policy_provider()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "thinking-only-provider", task.Version,
+                "Continue", null, null, "ultra", "continue", "operator"),
+            "operator", default);
+        var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            receipt.CommandId, default);
+
+        Assert.Equal("codex", projection!.CliType);
+        Assert.Equal(new ContinuationSelectionMask(false, false, true), projection.Selection);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "ambiguous-thinking-provider", receipt.ResultTaskVersion,
+                "Continue again", null, null, "xhigh", "continue", "operator"),
+            "operator", default));
+    }
+
+    [Fact]
     public async Task Continuation_claim_survives_server_restart_without_false_consumption()
     {
         using var temp = new TempDirectory();

@@ -58,6 +58,16 @@ public sealed partial class TaskServerStore
                     throw new ArgumentException("Model requires an unambiguous CLI selection.");
                 effectiveCli = modelClis[0];
             }
+            if (request.ThinkingLevel is not null && effectiveCli is null)
+            {
+                var thinkingClis = policy.ExplicitThinkingLevels
+                    .Where(entry => entry.Value.Contains(request.ThinkingLevel))
+                    .Select(entry => entry.Key)
+                    .ToArray();
+                if (thinkingClis.Length != 1)
+                    throw new ArgumentException("Thinking level requires an unambiguous CLI selection.");
+                effectiveCli = thinkingClis[0];
+            }
             if (effectiveCli is not null)
             {
                 if (request.Model is not null

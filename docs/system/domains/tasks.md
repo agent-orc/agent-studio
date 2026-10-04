@@ -191,7 +191,9 @@ Studio settings and records a per-field selection mask. For a model-only pin,
 the server retains the task's validated CLI or resolves the model's unique CLI
 from the policy catalogue. The runner carries that CLI with the model so normal
 host defaults do not pair it with another provider; the thinking level remains
-unpinned.
+unpinned. A thinking-only pin also carries its validated CLI. If the task has
+no CLI and the thinking level belongs to exactly one policy provider, the
+server resolves that provider; otherwise it rejects the ambiguous selection.
 
 `GET /api/v1/projects/{projectId}/tasks/{taskId}/continuations` lists the
 ordered round projections for Studio readers, and its `/{commandId}` child
@@ -201,7 +203,7 @@ the oldest queued round to one fenced run. The claim carries that round as its
 `followUp` delivery, with the run id as its claim id, plus the
 `continuationIntent` projection. A required mechanical fresh route takes
 precedence at claim. Otherwise the explicitly submitted route fields override
-normal claim and host resolution. A model pin also carries its validated CLI,
+normal claim and host resolution. A model or thinking pin also carries its validated CLI,
 while other snapshotted values remain visible only in the projection. A provider
 rejection fallback is a complete CLI/model/thinking route and applies only when
 the continuation has no explicit route fields; it is never used to fill missing

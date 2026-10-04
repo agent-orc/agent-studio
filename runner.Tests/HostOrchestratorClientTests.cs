@@ -172,6 +172,38 @@ public sealed class HostOrchestratorClientTests
         Assert.Null(claim.RunSpec?.ContextMode);
     }
 
+    [Fact]
+    public async Task Thinking_only_continuation_selection_keeps_its_validated_cli_without_pinning_model()
+    {
+        var now = ContinuationFixtureTime;
+        var task = new TaskDto("task-c", "project-1", "TS-C", "Task", "3-progress", 4, now, now, "prompt");
+        var run = new RunDto("run-c", task.TaskId, "running", "runner-1", 3, now, now, null);
+        var lease = new LeaseDto("lease-c", run.RunId, task.TaskId, "runner-1", CurrentInstance, 3,
+            now, now.AddMinutes(2), "active");
+        var intent = new ContinuationIntentProjection(
+            new ContinuationIntentReceipt("continue-1", task.ProjectId, task.TaskId, 2, 3, 1, 1, 1,
+                "operator", "follow-up", now, "policy-1", true),
+            "claimed", "Next instruction", null, "codex", "ultra", "continue",
+            run.RunId, run.Fence, null, new ContinuationSelectionMask(false, false, true));
+        var handler = new ContractHandler((request, _) =>
+            request.RequestUri!.AbsolutePath == "/api/v1/runners/runner-1/claims"
+                ? Json(new ClaimResponse("claimed", run, task, lease,
+                    ModelFallback: new ProviderModelFallback(
+                        "claude-opus-5-5", "claude-opus-5", "provider-refusal", "claude", "high"),
+                    ContinuationIntent: intent))
+                : new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = Client(http);
+
+        var claim = await client.ClaimAsync(
+            new RunnerClaimRequest("runner-1", "Runner", "host-1", 1, "test"), default);
+
+        Assert.Equal("codex", claim.RunSpec?.CliType);
+        Assert.Equal("ultra", claim.RunSpec?.ThinkingLevel);
+        Assert.Null(claim.RunSpec?.Model);
+        Assert.Null(claim.RunSpec?.ContextMode);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
