@@ -27,7 +27,7 @@ async function installContextFixtures(page: Page) {
   const captured: CapturedSend[] = [];
   const turns: any[] = [];
 
-  await page.route('**/api/orchestrator/sessions', route => json(route, {
+  await page.route('**/api/v1/studio/orchestrator/sessions', route => json(route, {
     sessions: [{
       contextKey: `project:${PROJECT}`,
       kind: 'project', projectId: PROJECT, taskKey: null,

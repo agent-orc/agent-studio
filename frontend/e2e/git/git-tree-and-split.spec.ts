@@ -115,7 +115,7 @@ test.describe('Git pane — tree view and split layout', () => {
       // active job (otherwise: "Working-tree changes belong to whichever
       // task the agent is currently editing"). Mock the runner status so
       // our fixture becomes "active" for the project.
-      await page.route('**/api/runner/status', async (route) => {
+      await page.route('**/api/v1/studio/runner/status', async (route) => {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',

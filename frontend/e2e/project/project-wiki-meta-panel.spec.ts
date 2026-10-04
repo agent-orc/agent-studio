@@ -34,7 +34,7 @@ async function mockWiki(page: Page, projectName: string, options: WikiMockOption
   let pendingPageUpdate = false;
   // Broad fallback first. Later feature routes have priority in Playwright.
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [],
     preparation: [],
     orchestratorPrep: [],
@@ -52,7 +52,7 @@ async function mockWiki(page: Page, projectName: string, options: WikiMockOption
   await page.route('**/api/tasks/archive**', route => json(route, {
     items: [], total: 0, offset: 0, limit: 50,
   }));
-  await page.route('**/api/runner/status**', route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-10T00:00:00Z', ttlSeconds: 600, snapshots: [],
   }));
@@ -71,7 +71,7 @@ async function mockWiki(page: Page, projectName: string, options: WikiMockOption
     rootPath: REPOSITORY_PATH,
     repositoryPath: REPOSITORY_PATH,
   }]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'WS-WIKI',
     displayName: 'Wiki fixtures',
     sortOrder: 0,
@@ -93,7 +93,7 @@ async function mockWiki(page: Page, projectName: string, options: WikiMockOption
       createdAt: '2026-08-10T00:00:00Z',
     }],
   }]));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: false,

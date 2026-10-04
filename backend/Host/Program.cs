@@ -1125,6 +1125,9 @@ var includeExceptionDetails = SecurityProfiles.IsLocal(app.Configuration)
     && app.Configuration.GetValue<bool>("ErrorHandling:IncludeExceptionDetails");
 
 app.UseForwardedHeaders();
+// Before routing, so the versioned core-attach paths Angular calls reach the
+// same legacy handlers, guards, and security checks as before (AGT-2983).
+app.UseStudioV1LegacyRouteAlias(TaskServerPlaneProxy.IsConfigured(app.Configuration));
 app.UseRouting();
 // An explicitly selected standalone Task Server owns all task data. Legacy
 // /api handlers still use TaskRepository; do not let compatibility traffic

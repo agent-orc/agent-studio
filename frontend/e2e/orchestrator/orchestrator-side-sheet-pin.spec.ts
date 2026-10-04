@@ -34,8 +34,8 @@ async function stubWorkspace(page: Page) {
   // or that are list-shaped need a minimally-valid empty body so nothing throws.
   const emptyBodyFor = (path: string): string => {
     if (path === '/api/v1/management/remote-hosts' || path.startsWith('/api/bus/')) return '[]';
-    if (/\/api\/(tags|workspaces|clients|projects)\/?$/.test(path)) return '[]';
-    if (/\/api\/runner\/status$/.test(path)) return '{"projects":{}}';
+    if (/\/api\/(tags|v1\/workspaces|clients|v1\/projects)\/?$/.test(path)) return '[]';
+    if (/\/api\/v1\/studio\/runner\/status$/.test(path)) return '{"projects":{}}';
     if (/\/api\/cli\/quota$/.test(path)) return '{"snapshots":[]}';
     if (/\/api\/tasks\/archive/.test(path)) return '{"items":[],"total":0,"offset":0,"limit":0}';
     return '{}';
@@ -49,7 +49,7 @@ async function stubWorkspace(page: Page) {
     });
   });
 
-  await page.route(/\/api\/auth\/status$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/auth\/status$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -77,7 +77,7 @@ async function stubWorkspace(page: Page) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
 
-  await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/board(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -88,8 +88,8 @@ async function stubWorkspace(page: Page) {
     });
   });
 
-  await page.route(/\/api\/orchestrator\/sessions$/, async (route) => {
-    trace.requests.push(`${route.request().method()} /api/orchestrator/sessions`);
+  await page.route(/\/api\/v1\/studio\/orchestrator\/sessions$/, async (route) => {
+    trace.requests.push(`${route.request().method()} /api/v1/studio/orchestrator/sessions`);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -110,7 +110,7 @@ async function stubWorkspace(page: Page) {
     });
   });
 
-  await page.route(new RegExp(`/api/orchestrator/context/project:${PROJECT}(?:/refresh)?$`), async (route) => {
+  await page.route(new RegExp(`/api/v1/studio/orchestrator/context/project:${PROJECT}(?:/refresh)?$`), async (route) => {
     trace.requests.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
     await route.fulfill({
       status: 200,
@@ -127,7 +127,7 @@ async function stubWorkspace(page: Page) {
     });
   });
 
-  await page.route(new RegExp(`/api/orchestrator/context/task:${PROJECT}/AGT-1933(?:/refresh)?$`), async (route) => {
+  await page.route(new RegExp(`/api/v1/studio/orchestrator/context/task:${PROJECT}/AGT-1933(?:/refresh)?$`), async (route) => {
     trace.requests.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
     await route.fulfill({
       status: 200,
@@ -261,20 +261,20 @@ test.describe('Orchestrator side sheet · navigation context + pin', () => {
     const refreshTraceStart = requestTrace.requests.length;
     const forcedRefresh = page.waitForResponse((response) =>
       response.request().method() === 'POST'
-      && new URL(response.url()).pathname === `/api/orchestrator/context/project:${PROJECT}/refresh`);
+      && new URL(response.url()).pathname === `/api/v1/studio/orchestrator/context/project:${PROJECT}/refresh`);
     const chatRefresh = page.waitForResponse((response) =>
       response.request().method() === 'GET'
       && new URL(response.url()).pathname === `/api/runner/project:${PROJECT}/orchestrator-chat`);
     const sessionsRefresh = page.waitForResponse((response) =>
       response.request().method() === 'GET'
-      && new URL(response.url()).pathname === '/api/orchestrator/sessions');
+      && new URL(response.url()).pathname === '/api/v1/studio/orchestrator/sessions');
     await page.getByTestId('orch-side-sheet-refresh').click();
     await Promise.all([forcedRefresh, chatRefresh, sessionsRefresh]);
     await expect(page.getByTestId('orch-context-freshness')).toContainText('Context captured');
     expect(requestTrace.requests.slice(refreshTraceStart)).toEqual([
-      `POST /api/orchestrator/context/project:${PROJECT}/refresh`,
+      `POST /api/v1/studio/orchestrator/context/project:${PROJECT}/refresh`,
       `GET /api/runner/project:${PROJECT}/orchestrator-chat`,
-      'GET /api/orchestrator/sessions',
+      'GET /api/v1/studio/orchestrator/sessions',
     ]);
 
     const pinBtn = page.getByTestId('orch-side-sheet-pin');

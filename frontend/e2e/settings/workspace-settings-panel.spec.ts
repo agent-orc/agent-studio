@@ -86,7 +86,7 @@ test.describe('Settings — Workspaces section (F47)', () => {
         projects: [project('PROJ-901', 'ws-pop'), project('PROJ-902', 'ws-pop')],
       },
     ];
-    await page.route('**/api/workspaces', async (route, request) => {
+    await page.route('**/api/v1/workspaces', async (route, request) => {
       if (request.method() !== 'GET') { await route.continue(); return; }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(stub) });
     });
