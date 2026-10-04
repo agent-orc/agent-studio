@@ -255,7 +255,8 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var custodyPath = Path.ChangeExtension(manifestPath, null) + "." + CustodyFile;
         if (File.Exists(custodyPath)) File.Copy(custodyPath, Path.Combine(destination, CustodyFile));
 
-        var verified = await VerifyCopyAsync(destination, secretBundleOverride: null, probeGit: false, ct);
+        var verified = await VerifyCopyAsync(destination, secretBundleOverride: null, probeGit: false, ct,
+            requireCopyReceipt: false);
         var blocking = verified.Report.Findings.Where(item => item.Severity == RecoveryFindingSeverity.BlocksRestore).ToList();
         if (blocking.Count > 0)
             throw new InvalidDataException("Copied set failed verification: " + string.Join("; ", blocking.Select(item => item.Code)));
@@ -272,7 +273,8 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
 
     /// <summary>Verifies a copied recovery set without opening any authority store.</summary>
     public async Task<RecoveryVerifyResult> VerifyCopyAsync(
-        string copyRoot, string? secretBundleOverride, bool probeGit, CancellationToken ct)
+        string copyRoot, string? secretBundleOverride, bool probeGit, CancellationToken ct,
+        bool requireCopyReceipt = true)
     {
         var setRoot = Path.Combine(copyRoot, SetDirectory);
         var manifestPath = Path.Combine(copyRoot, ManifestFile);
@@ -284,6 +286,34 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             manifestSchema = JsonDocument.Parse(text).RootElement.TryGetProperty("schema", out var schema) ? schema.GetString() : null;
             if (manifestSchema == RecoveryManifest.CurrentSchema)
                 manifest = JsonSerializer.Deserialize<RecoveryManifest>(text, RecoveryJson.Options);
+        }
+
+        var receiptPath = Path.Combine(copyRoot, CopyReceiptFile);
+        var receiptPresent = File.Exists(receiptPath);
+        var receiptValid = !receiptPresent;
+        var manifestDigestMatches = !receiptPresent;
+        if (receiptPresent)
+        {
+            try
+            {
+                var receipt = JsonSerializer.Deserialize<RecoveryCopyReceipt>(
+                    await File.ReadAllTextAsync(receiptPath, ct), RecoveryJson.Options);
+                receiptValid = receipt is not null && manifest is not null
+                    && receipt.Schema == "agent-studio.recovery-copy-receipt/v1"
+                    && receipt.BackupId == manifest.DataSet.BackupId
+                    && receipt.ManifestId == manifest.ManifestId
+                    && string.Equals(receipt.SetSha256, manifest.DataSet.SetSha256, StringComparison.OrdinalIgnoreCase)
+                    && receipt.FileCount == manifest.DataSet.FileCount
+                    && receipt.TotalBytes == manifest.DataSet.TotalBytes;
+                manifestDigestMatches = receipt is not null && File.Exists(manifestPath)
+                    && string.Equals(receipt.ManifestSha256, await HashFileAsync(manifestPath, ct),
+                        StringComparison.OrdinalIgnoreCase);
+            }
+            catch (JsonException)
+            {
+                receiptValid = false;
+                manifestDigestMatches = false;
+            }
         }
 
         var completePath = Path.Combine(setRoot, "complete.json");
@@ -384,7 +414,10 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             bundleMatches,
             manifest?.SecretCustody.Clients ?? [],
             manifest?.PendingHostObligations ?? [],
-            File.Exists(Path.Combine(copyRoot, CopyReceiptFile)));
+            receiptPresent,
+            requireCopyReceipt,
+            receiptValid,
+            manifestDigestMatches);
         return new RecoveryVerifyResult(manifest, RecoveryCheckPolicy.Evaluate(facts));
     }
 

@@ -137,6 +137,46 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData("repository-ref", "manifest-digest-mismatch")]
+    [InlineData("client-custody", "manifest-digest-mismatch")]
+    [InlineData("receipt-removed", "copy-receipt-missing")]
+    public async Task Resume_rejects_a_copy_whose_manifest_is_no_longer_bound_to_its_receipt(
+        string change, string expectedFinding)
+    {
+        using var temp = new TempDirectory("recovery-manifest-binding");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        await workflow.FenceHostsAsync("drill", default);
+
+        if (change == "receipt-removed")
+            File.Delete(Path.Combine(drill.CopyRoot, RecoveryWorkflow.CopyReceiptFile));
+        else
+        {
+            var path = Path.Combine(drill.CopyRoot, RecoveryWorkflow.ManifestFile);
+            var manifest = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+            if (change == "repository-ref")
+                manifest["repositories"]![0]!["sampledRefs"]![0]!["sha"] = new string('0', 40);
+            else
+                manifest["secretCustody"]!["clients"]![0]!["custody"] = RecoveryCredentialCustody.ReEnrol;
+            await File.WriteAllTextAsync(path, manifest.ToJsonString());
+        }
+
+        var verification = await workflow.VerifyCopyAsync(drill.CopyRoot, null, true, default);
+        Assert.Contains(verification.Report.Findings, item =>
+            item.Code == expectedFinding && item.Severity == RecoveryFindingSeverity.BlocksRestore);
+        var (decision, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.Contains(decision.Blockers, item => item.Code == expectedFinding);
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+    }
+
+    [Theory]
     [InlineData("failed")]
     [InlineData("missing")]
     [InlineData("inconsistent")]

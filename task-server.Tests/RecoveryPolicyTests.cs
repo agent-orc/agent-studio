@@ -11,7 +11,7 @@ public sealed class RecoveryPolicyTests
         [new("repo", "https://origin", "refs/heads/main", "abc", RecoveryGitProbeOutcome.RefPresent, null)],
         true, true, true,
         [new("runner:a", "runner", "a", RecoveryCredentialCustody.SecretBundle)],
-        [], true);
+        [], true, true, true, true);
 
     public static TheoryData<string, Func<RecoveryCheckFacts, RecoveryCheckFacts>, RecoveryFindingSeverity> Faults => new()
     {
@@ -26,13 +26,16 @@ public sealed class RecoveryPolicyTests
         { "git-origin-undeclared", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.OriginNotDeclared }] }, RecoveryFindingSeverity.BlocksResume },
         { "client-credentials-lost", facts => facts with { Clients = [facts.Clients[0] with { Custody = RecoveryCredentialCustody.Undeclared }] }, RecoveryFindingSeverity.BlocksResume },
         { "client-credentials-lost", facts => facts with { Clients = [facts.Clients[0] with { Custody = RecoveryCredentialCustody.ReEnrol }] }, RecoveryFindingSeverity.BlocksResume },
+        { "client-credentials-lost", facts => facts with { Clients = [facts.Clients[0] with { Custody = "unknown-custody" }] }, RecoveryFindingSeverity.BlocksResume },
         { "secret-bundle-missing", facts => facts with { SecretBundlePresent = false, SecretBundleDigestMatches = false }, RecoveryFindingSeverity.BlocksResume },
         { "secret-bundle-changed", facts => facts with { SecretBundleDigestMatches = false }, RecoveryFindingSeverity.BlocksResume },
         { "pending-host-obligation", facts => facts with { Obligations = [new(RecoveryObligationKinds.RunnerOutbox, "a", "run", "artifact-replay", 2, "")] }, RecoveryFindingSeverity.BlocksResume },
         { "release-differs", facts => facts with { TargetRelease = "1.0.1" }, RecoveryFindingSeverity.Advisory },
         { "git-ref-moved", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMoved, Detail = "def" }] }, RecoveryFindingSeverity.BlocksResume },
         { "git-ref-moved-proven", facts => facts with { GitProbes = [facts.GitProbes[0] with { Outcome = RecoveryGitProbeOutcome.RefMovedWithImmutableProof, Detail = "def" }] }, RecoveryFindingSeverity.Advisory },
-        { "copy-receipt-missing", facts => facts with { OffHostCopyReceiptPresent = false }, RecoveryFindingSeverity.Advisory },
+        { "copy-receipt-missing", facts => facts with { OffHostCopyReceiptPresent = false }, RecoveryFindingSeverity.BlocksRestore },
+        { "copy-receipt-invalid", facts => facts with { CopyReceiptValid = false }, RecoveryFindingSeverity.BlocksRestore },
+        { "manifest-digest-mismatch", facts => facts with { ManifestDigestMatches = false }, RecoveryFindingSeverity.BlocksRestore },
     };
 
     [Fact]
@@ -93,6 +96,7 @@ public sealed class RecoveryPolicyTests
         { "git-origin-unavailable", facts => facts with { OpenSetFindings = [new("git-origin-unavailable", RecoveryFindingSeverity.BlocksResume, "repo", "g")] } },
         { "git-ref-moved", facts => facts with { OpenSetFindings = [new("git-ref-moved", RecoveryFindingSeverity.BlocksResume, "repo", "g")] } },
         { "client-credentials-lost", facts => facts with { OpenSetFindings = [new("client-credentials-lost", RecoveryFindingSeverity.BlocksResume, "runner:a", "g")] } },
+        { "copy-receipt-missing", facts => facts with { OpenSetFindings = [new("copy-receipt-missing", RecoveryFindingSeverity.BlocksRestore, "copy-receipt.json", "g")] } },
     };
 
     [Theory]

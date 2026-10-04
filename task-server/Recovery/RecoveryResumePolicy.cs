@@ -25,10 +25,6 @@ public sealed record RecoveryResumeDecision(bool Allowed, IReadOnlyList<Recovery
 /// </summary>
 public static class RecoveryResumePolicy
 {
-    /// <summary>Codes re-evaluated from the live store instead of the capture-time copy report.</summary>
-    public static readonly IReadOnlySet<string> LiveReevaluatedCodes =
-        new HashSet<string>(StringComparer.Ordinal) { "pending-host-obligation", "copy-receipt-missing" };
-
     public static RecoveryResumeDecision Decide(RecoveryResumeFacts facts)
     {
         var blockers = new List<RecoveryResumeBlocker>();
@@ -57,7 +53,7 @@ public static class RecoveryResumePolicy
                 blockers.Add(new("host-obligation-unreconciled", $"{obligation.RunnerId}/{obligation.RunId}",
                     $"Outbox state '{obligation.State}' with {obligation.Backlog} unacknowledged record(s). Keep that host's outbox and salvage, then pass --obligations-retained. The host drains after its fenced reconnect."));
         foreach (var finding in facts.OpenSetFindings.Where(item =>
-                     item.Severity != RecoveryFindingSeverity.Advisory && !LiveReevaluatedCodes.Contains(item.Code)))
+                     item.Severity != RecoveryFindingSeverity.Advisory && item.Code != "pending-host-obligation"))
         {
             if (finding.Code == "client-credentials-lost" &&
                 (facts.ReconciledClientPrincipals?.Contains(finding.Subject, StringComparer.Ordinal) ?? false))

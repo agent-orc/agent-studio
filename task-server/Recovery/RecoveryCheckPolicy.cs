@@ -53,7 +53,10 @@ public sealed record RecoveryCheckFacts(
     bool SecretBundleDigestMatches,
     IReadOnlyList<RecoveryClientCredential> Clients,
     IReadOnlyList<RecoveryHostObligation> Obligations,
-    bool OffHostCopyReceiptPresent);
+    bool OffHostCopyReceiptPresent,
+    bool CopyReceiptRequired,
+    bool CopyReceiptValid,
+    bool ManifestDigestMatches);
 
 /// <summary>
 /// Pure verification policy for a recovery set. Every failure maps to one stable code and specific
@@ -71,6 +74,16 @@ public static class RecoveryCheckPolicy
         else if (!string.Equals(facts.ManifestSchema, RecoveryManifest.CurrentSchema, StringComparison.Ordinal))
             findings.Add(new("manifest-unsupported", RecoveryFindingSeverity.BlocksRestore, facts.ManifestSchema ?? "(none)",
                 $"This release reads {RecoveryManifest.CurrentSchema}. Use the release that captured the set to verify and restore it."));
+
+        if (facts.CopyReceiptRequired && !facts.OffHostCopyReceiptPresent)
+            findings.Add(new("copy-receipt-missing", RecoveryFindingSeverity.BlocksRestore, "copy-receipt.json",
+                "The copied set has no receipt binding its manifest to the verified set. Copy it again from the live authority or use another verified off-host copy."));
+        else if (facts.OffHostCopyReceiptPresent && !facts.CopyReceiptValid)
+            findings.Add(new("copy-receipt-invalid", RecoveryFindingSeverity.BlocksRestore, "copy-receipt.json",
+                "The copy receipt is unreadable or does not identify this manifest and set. Discard this copy and verify another off-host copy; do not edit the receipt."));
+        else if (facts.OffHostCopyReceiptPresent && !facts.ManifestDigestMatches)
+            findings.Add(new("manifest-digest-mismatch", RecoveryFindingSeverity.BlocksRestore, "recovery-manifest.json",
+                "The manifest changed after the copy receipt was written. Discard this copy and verify another off-host copy; do not edit the manifest or receipt."));
 
         if (!facts.CompleteMarkerPresent || !facts.InventoryPresent)
         {
@@ -145,9 +158,8 @@ public static class RecoveryCheckPolicy
                 "The secret bundle digest differs from the one captured with this set. Use the encrypted bundle copy made with this set and verify its digest before resuming."));
 
         var lost = facts.Clients
-            .Where(client => client.Custody is RecoveryCredentialCustody.Undeclared or RecoveryCredentialCustody.ReEnrol
-                             || (client.Custody == RecoveryCredentialCustody.SecretBundle
-                                 && (!facts.SecretBundlePresent || !facts.SecretBundleDigestMatches)))
+            .Where(client => client.Custody != RecoveryCredentialCustody.SecretBundle
+                             || !facts.SecretBundlePresent || !facts.SecretBundleDigestMatches)
             .Select(client => client.PrincipalId)
             .ToList();
         foreach (var principalId in lost)
@@ -160,10 +172,6 @@ public static class RecoveryCheckPolicy
                 obligation.Kind == RecoveryObligationKinds.SalvageBundle
                     ? "The accepted result exists only as a source bundle, not on the origin. Keep the bundle and publish or re-run before resuming. It is not a cache."
                     : $"Host {obligation.RunnerId} still held {obligation.Backlog} unacknowledged outbox record(s) in state '{obligation.State}'. Keep that host's outbox and worktree. After restore, let it drain against the restored authority, which accepts or rejects each record under fencing. Never delete it as cache."));
-
-        if (!facts.OffHostCopyReceiptPresent)
-            findings.Add(new("copy-receipt-missing", RecoveryFindingSeverity.Advisory, "copy-receipt.json",
-                "This set has no off-host copy receipt. A set on the authority's own disk or volume is not off-host recovery."));
 
         return new RecoveryCheckReport(findings);
     }

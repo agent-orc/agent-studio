@@ -108,7 +108,7 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    same disk is not off-host recovery.
 3. **Verify.** `task-server recovery verify --from <copy>/<id> [--secret-bundle <path>]`.
    This needs no store. It checks the manifest schema, the completion marker,
-   every inventory hash, the cold payloads, schema compatibility, the sampled
+   every inventory hash, the manifest digest and copy receipt binding, the cold payloads, schema compatibility, the sampled
    Git refs, the secret bundle digest and client credential
    custody. Exit code 2 means the copy must not be restored. The Task Server
    never starts Git. It reads local bare repositories from their ref files and
@@ -160,16 +160,17 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 | `corrupted-hash` | Restore refused | Discard the copy and fetch another off-host copy whose receipt shows the same set digest. Never edit `inventory.json`. |
 | `missing-cold-payload` | Restore refused | Copy the payload from another verified copy with the same set digest, or capture again while the source archive still holds it. |
 | `schema-mismatch` | Restore refused | Install the release named in the guidance on the empty target, restore, verify, and only then upgrade. |
+| `copy-receipt-missing` / `copy-receipt-invalid` / `manifest-digest-mismatch` | Restore refused; resume blocked | Use another verified off-host copy or copy again from the live authority. A missing or changed receipt cannot establish which manifest was verified. Do not edit the manifest or receipt. |
 | `identity-comparison-failed` | Resume blocked | Read the failed comparisons in `recovery-restore-receipt.json`; restore a verified set to a new empty target. Do not override the receipt. |
 | `recovery-copy-unavailable` | Resume blocked | Restore access to the verified off-host copy named in the restore receipt. Resume checks its inventory and Git refs again; the findings saved at restore time are insufficient. |
 | `manifest-missing` / `manifest-unsupported` | Restore refused | Copy again with `recovery copy`, or use the release that captured the set. |
 | `git-origin-unavailable` | Resume blocked | Restore network access or the origin credential, or declare a verified mirror. Stay in `Maintenance` until the refs verify. |
 | `git-ref-missing` / `git-origin-undeclared` | Resume blocked | Publish the recorded commit from host salvage, or declare the origin, then verify again. |
 | `git-ref-moved` | Resume blocked | The new ref tip does not prove that the recorded commit is still available. Restore the recorded ref or publish an immutable `refs/heads/agent-studio/results/.../<recorded SHA>` ref at that commit, then verify again. The ref must be visible in the origin listing. |
-| `client-credentials-lost` | Resume blocked | Re-enrol each named principal on the restored target, which revokes its old credentials, and deliver the new credential to that client. Fencing runners alone does not prove they can reconnect. |
+| `client-credentials-lost` | Resume blocked | Re-enrol each named principal on the restored target, which revokes its old credentials, and deliver the new credential to that client. Unknown custody values also block. Fencing runners alone does not prove they can reconnect. |
 | `secret-bundle-missing` / `secret-bundle-changed` | Resume blocked | Fetch the encrypted bundle copied with this set and verify its digest. Configuration secrets in that bundle still need recovery even if clients receive fresh credentials. |
 | `pending-host-obligation` | Resume blocked until reconciled or attested | Keep that host's outbox and worktree. It drains against the restored authority under fencing after its reconnect. |
-| `release-differs`, `git-ref-moved-proven`, `copy-receipt-missing` | Advisory | Recorded in the receipt. |
+| `release-differs`, `git-ref-moved-proven` | Advisory | Recorded in the receipt. |
 
 ## Drill and measured objectives
 
