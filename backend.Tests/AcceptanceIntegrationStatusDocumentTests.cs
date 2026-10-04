@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: recorded timestamps are status document fixtures and are never compared with now.
+
 /// <summary>
 /// AGT-2989 - caller text cannot spell the owned section markers, and
 /// preserved task text that quotes them is never truncated or removed.
