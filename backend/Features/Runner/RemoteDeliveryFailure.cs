@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -206,7 +207,7 @@ public static class RemoteDeliveryFailureNote
         string? fenceBranch,
         string? fenceCommitSha)
     {
-        var nl = Environment.NewLine;
+        var nl = PromptText.NewLine;
         var promptPath = Path.Combine(folderPath, "prompt.md");
         var promptMarker = $"<!-- agent-studio:remote-delivery-retry:{attemptId} -->";
         var prompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : string.Empty;

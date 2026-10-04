@@ -1673,7 +1673,13 @@ extending the lease; the same renewal delivery can retry after repair. Each
 claim also carries a follow-up claim id. The runner wraps that id and
 the exact follow-up text in one structural prompt block, so repeated composition
 deduplicates by claim identity rather than by text. It acknowledges delivery
-only when that complete block is present in the worker prompt. A new operator
+only when that complete block is present in the worker prompt. Backend task
+prompt blocks and runner-composed remote prompt framing use LF on every host.
+The claimed follow-up block follows that rule. A durable
+prompt written by an older Windows runner may have CRLF framing around an
+unchanged LF follow-up body; the runner recognizes that complete legacy block
+as already delivered. It preserves the authored follow-up body byte for byte
+and never treats a lone claim marker as a complete delivery. A new operator
 follow-up wins over an older stash. Entering Completed or
 Archive removes either form and records `follow_up_superseded` with state
 `superseded-by-completion`. The queued prompt is staged before the lane move,
