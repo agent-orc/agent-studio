@@ -530,7 +530,10 @@ a decimal amount in `currency` (currently `USD`); and
 `priceCatalogueVersion` identifies the TokenEconomy package used at capture.
 Absent provider data stays `null`. Cached input is reported separately from
 uncached input and is charged once. Existing turns without `metadata` remain
-valid.
+valid. The chat header counts those turns in the session and labels token and
+cost totals incomplete when any assistant turn lacks the corresponding data.
+It also labels model and duration details incomplete rather than presenting a
+partial value as a session total.
 
 ```json
 {

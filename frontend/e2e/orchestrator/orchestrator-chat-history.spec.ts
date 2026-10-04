@@ -92,7 +92,7 @@ const sessions = [
   },
 ];
 
-async function stubWorkspace(page: Page): Promise<void> {
+async function stubWorkspace(page: Page, includeLegacyTurn = false): Promise<void> {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = {};
@@ -172,7 +172,12 @@ async function stubWorkspace(page: Page): Promise<void> {
           reasoningTokens: 2, cost: 0.001, currency: 'USD',
           priceCatalogueVersion: 'TokenEconomy/0.3.5',
         },
-      }],
+      }, ...(includeLegacyTurn ? [{
+        id: 'turn-3',
+        ts: '2026-08-10T11:49:00Z',
+        role: 'orchestrator',
+        text: 'This reply predates usage capture.',
+      }] : [])],
     }),
   }));
   await page.route('**/hubs/**', route => route.abort());
@@ -185,6 +190,19 @@ async function dismissErrorDialogs(page: Page): Promise<void> {
     await page.waitForTimeout(100);
   }
 }
+
+test('shows incomplete session totals when a task chat includes a legacy reply', async ({ page }) => {
+  await stubWorkspace(page, true);
+  await page.goto('/#/chat-history');
+  await dismissErrorDialogs(page);
+  await page.locator(`[data-testid="chat-history-row"][data-context-key="${TASK_CONTEXT_KEY}"]`).click();
+
+  await expect(page.getByTestId('chat-session-usage'))
+    .toContainText('2 turns · tokens incomplete · cost incomplete');
+  await expect(page.getByTestId('chat-session-usage'))
+    .toContainText('model incomplete · duration incomplete');
+  await expect(page.getByTestId('chat-session-usage')).not.toContainText('session thread-1');
+});
 
 for (const theme of ['light', 'dark'] as const) {
   test(`lists current Task Server contexts and opens a chat in ${theme} theme`, async ({ page }, testInfo) => {

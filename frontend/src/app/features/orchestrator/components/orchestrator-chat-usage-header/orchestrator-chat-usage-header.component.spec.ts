@@ -34,6 +34,42 @@ describe('OrchestratorChatUsageHeaderComponent', () => {
     expect(fixture.nativeElement.textContent).not.toContain('35 tokens');
   });
 
+  it('counts a legacy assistant turn and marks its usage and cost incomplete', async () => {
+    const { fixture } = await makeFixture();
+    fixture.componentRef.setInput('turns', [
+      { id: 'user-1', ts: '2026-09-26T09:00:00Z', role: 'user', text: 'Question' },
+      { id: 'turn-1', ts: '2026-09-26T09:00:01Z', role: 'orchestrator', text: 'Answer' },
+    ]);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('1 turn · tokens incomplete · cost incomplete');
+    expect(fixture.nativeElement.textContent).not.toContain('$0.0000');
+  });
+
+  it('does not present partial totals as complete when a legacy turn is mixed with a measured turn', async () => {
+    const { fixture } = await makeFixture();
+    fixture.componentRef.setInput('turns', [
+      {
+        id: 'turn-1', ts: '2026-09-26T09:00:00Z', role: 'orchestrator', text: 'Measured',
+        metadata: {
+          model: 'gpt-6-astra', providerThreadId: 'old-thread', host: 'runner-01',
+          queuedAt: '2026-09-26T09:00:00Z', startedAt: '2026-09-26T09:00:02Z',
+          finishedAt: '2026-09-26T09:00:10Z',
+          inputTokens: 10, cachedInputTokens: 20, outputTokens: 5, cost: 0.001,
+        },
+      },
+      { id: 'turn-2', ts: '2026-09-26T09:00:01Z', role: 'orchestrator', text: 'Legacy' },
+    ]);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('2 turns · tokens incomplete · cost incomplete');
+    expect(fixture.nativeElement.textContent).not.toContain('35 tokens');
+    expect(fixture.nativeElement.textContent).not.toContain('$0.0010');
+    expect(fixture.nativeElement.textContent).toContain('duration incomplete');
+    expect(fixture.nativeElement.textContent).not.toContain('10s total');
+    expect(fixture.nativeElement.textContent).not.toContain('session old-thread');
+  });
+
   it('applies the project default returned by the settings endpoint', async () => {
     const { fixture, preferences, http } = await makeFixture();
     fixture.componentRef.setInput('project', 'Project A');

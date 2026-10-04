@@ -5,6 +5,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: timestamps are serialized data or explicit pricing and tracker inputs.
 public sealed class ChatTurnMetadataTests
 {
     [Fact]
@@ -33,11 +34,12 @@ public sealed class ChatTurnMetadataTests
     [Fact]
     public void Task_server_turn_dto_round_trips_chat_metadata()
     {
+        var timestamp = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc);
         var metadata = new OrchestratorChatMetadataDto(
             "gpt-5.6-sol", "medium", "thread-1", "runner-01",
-            DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(-4), DateTime.UtcNow,
+            timestamp.AddSeconds(-5), timestamp.AddSeconds(-4), timestamp,
             20, 80, 10, 4, 0.002m, "USD", "TokenEconomy/0.3.5");
-        var dto = new OrchestratorContextTurnDto("turn-1", DateTime.UtcNow,
+        var dto = new OrchestratorContextTurnDto("turn-1", timestamp,
             "orchestrator", "Hello", Metadata: metadata);
         var roundTrip = JsonSerializer.Deserialize<OrchestratorContextTurnDto>(JsonSerializer.Serialize(dto));
         Assert.Equal(metadata, roundTrip?.Metadata);

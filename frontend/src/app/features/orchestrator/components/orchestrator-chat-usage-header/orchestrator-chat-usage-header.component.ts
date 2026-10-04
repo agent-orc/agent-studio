@@ -16,22 +16,29 @@ export class OrchestratorChatUsageHeaderComponent {
   readonly preferences = inject(UiPreferencesService);
   private readonly http = inject(HttpClient);
   readonly summary = computed(() => {
-    const turns = this.turns().filter(turn => turn.role === 'orchestrator' && turn.metadata);
+    const turns = this.turns().filter(turn => turn.role === 'orchestrator');
+    const tokensComplete = turns.every(turn => turn.metadata?.inputTokens != null
+      && turn.metadata.cachedInputTokens != null && turn.metadata.outputTokens != null);
     const tokens = turns.reduce((sum, turn) => sum + (turn.metadata?.inputTokens ?? 0)
       + (turn.metadata?.cachedInputTokens ?? 0) + (turn.metadata?.outputTokens ?? 0), 0);
     const cost = turns.reduce((sum, turn) => sum + (turn.metadata?.cost ?? 0), 0);
     const costText = turns.some(turn => turn.metadata?.cost == null)
       ? 'cost incomplete' : `$${cost.toFixed(4)}`;
-    return `${turns.length} ${turns.length === 1 ? 'turn' : 'turns'} · ${tokens.toLocaleString('en-US')} tokens · ${costText}`;
+    const tokenText = tokensComplete ? `${tokens.toLocaleString('en-US')} tokens` : 'tokens incomplete';
+    return `${turns.length} ${turns.length === 1 ? 'turn' : 'turns'} · ${tokenText} · ${costText}`;
   });
   readonly details = computed(() => {
-    const turns = this.turns().filter(turn => turn.role === 'orchestrator' && turn.metadata);
+    const turns = this.turns().filter(turn => turn.role === 'orchestrator');
     const models = [...new Set(turns.map(turn => turn.metadata?.model).filter(Boolean))];
     const latest = turns.at(-1)?.metadata;
     const elapsed = turns.reduce((sum, turn) => sum + milliseconds(turn.metadata?.queuedAt, turn.metadata?.finishedAt), 0);
     const waiting = turns.reduce((sum, turn) => sum + milliseconds(turn.metadata?.queuedAt, turn.metadata?.startedAt), 0);
-    return [models.length === 1 ? models[0] : models.length > 1 ? `${models.length} models` : null,
-      elapsed > 0 ? `${Math.round(elapsed / 1000)}s total (${Math.round(waiting / 1000)}s waiting)` : null,
+    const modelText = turns.some(turn => !turn.metadata?.model)
+      ? 'model incomplete' : models.length === 1 ? models[0] : models.length > 1 ? `${models.length} models` : null;
+    const durationText = turns.some(turn => !turn.metadata?.queuedAt || !turn.metadata.startedAt || !turn.metadata.finishedAt)
+      ? 'duration incomplete'
+      : elapsed > 0 ? `${Math.round(elapsed / 1000)}s total (${Math.round(waiting / 1000)}s waiting)` : null;
+    return [modelText, durationText,
       latest?.host,
       latest?.providerThreadId ? `session ${latest.providerThreadId}` : null,
     ].filter(Boolean).join(' · ');
