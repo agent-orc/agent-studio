@@ -43,6 +43,7 @@ public sealed class MergeIntoDevelopRunner
     private readonly IntegrationWorktreeProvider _integrationWorktrees;
     private readonly IConfiguration? _configuration;
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
+    private readonly RefMutationLeaseService? _refMutationLeases;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -83,7 +84,8 @@ public sealed class MergeIntoDevelopRunner
         AgentStudio.Tasks.AcceptanceRailHostedService? acceptanceRail = null,
         IntegrationWorktreeProvider? integrationWorktrees = null,
         IConfiguration? configuration = null,
-        AgentStudio.Tasks.TimelineLog? timeline = null)
+        AgentStudio.Tasks.TimelineLog? timeline = null,
+        RefMutationLeaseService? refMutationLeases = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -104,6 +106,7 @@ public sealed class MergeIntoDevelopRunner
         _integrationWorktrees = integrationWorktrees ?? new IntegrationWorktreeProvider(git);
         _configuration = configuration;
         _timeline = timeline;
+        _refMutationLeases = refMutationLeases;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -224,6 +227,14 @@ public sealed class MergeIntoDevelopRunner
                     null, null, startedAt, ct).ConfigureAwait(false);
                 return unresolved;
             }
+
+            // The direct merge may advance a ref before its in-process gate
+            // decides whether to keep it. Hold the shared publish boundary for
+            // that complete transaction so a batch cannot race its rollback.
+            using var refMutationLease = _refMutationLeases is null
+                ? null
+                : await _refMutationLeases.AcquireAsync(
+                    project, developerRoot, integrationBranch, ct).ConfigureAwait(false);
 
             var reviewSubject = ReviewSubjectStore.Read(jobFolderPath);
             if (reviewSubject is not null
@@ -1507,6 +1518,11 @@ public sealed class MergeIntoDevelopRunner
         {
             var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+            using var refMutationLease = _refMutationLeases is null
+                || string.IsNullOrWhiteSpace(repoRoot)
+                ? null
+                : await _refMutationLeases.AcquireAsync(
+                    project, repoRoot, integrationBranch, ct).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(repoRoot)
                 && IsReleaseBranch(integrationBranch)
                 && HasDevelopLine(repoRoot))

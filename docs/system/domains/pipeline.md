@@ -60,6 +60,81 @@ These metrics measure local exact-subject gate requests; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Documentation-only batch gate pilot
+
+`backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
+membership digest, append-only replay and member evidence records, bounded
+halving policy, coordinator lease, publication preconditions, and pilot metric
+projection. `GitService.ReplayBatchMember` exposes the existing conflict-free
+mechanical rebase through a disposable detached worktree; candidate refs use
+`refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+The D10 prerequisite estimate is
+[recorded with its limits](../../operations/gates/d10-measurement.md).
+The Task Server gate subject can bind a combined candidate SHA, manifest digest,
+base SHA and member run IDs; its existing claimable executor still checks the
+exact candidate SHA. An infrastructure retry excludes the host of the previous
+attempt.
+
+The default-off `BatchGate` project setting routes documentation-only settled
+Remote Review passes to a durable pending queue. The review plan records the
+build and test aspect as `DeferredToBatch` while retaining model review. The
+settlement journal of such a pass carries no delivery record, so neither the
+settlement reconciler nor Auto Review resume integrates the card or settles it
+as a failed delivery gate; the batch gate owns its publication. Set it
+with `PUT /api/projects/{projectName}/batch-gate` and a JSON
+`BatchGateFormationOptions` body: `enabled` (default `false`), `closeSize`
+(default 4), `maximumSize` (8), `deadlineMinutes` (15), `pressureSize` (2),
+`reviewQueuePressure` (12), and `documentationOnly` (`true`). The endpoint
+rejects invalid thresholds and `documentationOnly: false` for this pilot.
+The hosted pilot worker closes manifests at the configured size, age, or
+pressure threshold, assembles the candidate, persists a run before invoking
+`BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
+Green publication rechecks member generations and the remote pre-tip under a
+coordinator lease and the shared fenced ref-mutation lease. A changed pre-tip
+returns members for reconstruction and another suite run. Both leases are
+rechecked against their durable fences immediately before the push. When the
+coordinator heartbeat loses its lease while the suite runs, the gate stops,
+the batch is recorded `Abandoned` with `coordinator lease lost during the gate`,
+and its members return to the pending queue; other scopes in the same tick
+continue. The worker verifies
+the remote SHA before recording publication. The pilot publishes only a tested
+fast-forward candidate; it does not synthesize a merge commit after the gate.
+Each admitted member receives an
+append-only batch-gate record. The card-local ownership marker makes both
+Human Review entry and Completed acceptance fail closed on missing or stale
+evidence with `batch-gate-evidence-missing`. A superseded pending review's
+marker is cleared; a prior successful marker does not govern later review
+generations. Verified members also
+receive an idempotent integration bookkeeping
+record with their mapped SHA set and tested remote tip. A disabled project and
+a lone aged member use the ordinary per-card
+gate on the same immutable result subject. Within one backend process that
+per-card gate runs at most once at a time per review generation: a retried
+review report or a tick that meets a running fallback waits for it instead of
+starting a second gate. A batch that pauses (a second
+infrastructure red, flaky red, an unresolved cohort, a failed publication or an
+unexpected fault) keeps `Paused` in its state history; on the next tick the
+worker returns every member it still owns to that per-card gate and records the
+batch as `Abandoned` with a `paused-to-per-task-gate` reason. Code-bearing
+cards keep the existing route.
+
+The default local store is
+`<LocalApplicationData>/agentstudio/batch-gates`: `pending/` holds durable
+review subjects and each batch ID directory holds its closed manifest, state,
+replay, run, verdict, publication and member facts. Coordinator leases live in
+`<LocalApplicationData>/agentstudio/batch-gate-leases`; the shared publication
+lease lives in `ref-mutation-leases` beside it. The card-local admission marker
+is `logs/batch-gate-ownership.json`. Native member records carry the gate
+identity and evidence; the integration-record endpoint only records integration
+bookkeeping.
+
+The pilot is currently executed by the backend hosted worker using the local
+gate runner. It does not claim an independently claimable remote `GateAttempt`;
+that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
+`GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
+and the correctness floor; comparable baseline and cost fields remain null
+until measured on the same window.
+
 ## Compose-render gate step (AGT-2981)
 
 A card whose diff can change the Compose stack renders it in its own gate.

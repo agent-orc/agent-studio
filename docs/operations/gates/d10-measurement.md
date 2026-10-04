@@ -1,0 +1,9 @@
+# D10 prerequisite measurement, 2026-09-27
+
+Source: read-only `workspace-frozen-2026-09-25` pipeline snapshot, excluding `results/history/` duplicates. 1,986 task pipeline files were read. Each file's current and `previousAttempts` entries were inspected. The cohort is historical and spans several project gate profiles.
+
+Among attempts whose `post-orchestrator-review` verdict is `complete`, 670 `post-build-test-gate` steps explicitly report `ok`, 488 report failure, and 190 have another or absent gate outcome. The observed individual green fraction among explicit outcomes is 670 / 1,158 = **57.9%**. Sorting these explicit outcomes by review completion time within each project, then taking disjoint groups of four, yields **93 all-green groups out of 287 (32.4%)**. This is the historical four-member proxy for batch green rate. An independent-outcome scenario gives 0.5786^4 = **11.2%**; the difference shows that failures cluster in time or by project. Neither number observes a combined tree, and the grouping cannot enforce matching gate profiles or isolate documentation-only deliveries. Both are below the Dossier's 80% pilot success threshold, so the pilot must remain documentation-only and per-project opt-in until actual candidate results replace these proxies.
+
+The existing exact-SHA gate-result cache statistics contain seven execution SHA entries in two project buckets, zero repeated SHA entries and zero cache hits: **same-SHA re-test rate 0/7 = 0%**. This is a very small post-cache measurement window, not a long-run estimate. The pipeline snapshot lacks a reliable SHA on every historical gate execution, so it cannot improve that denominator.
+
+No staging lane decision follows from this proxy. D10 option A remains measure-first. This file supplies the measurement prerequisite for the batch pilot, with explicit uncertainty and source counts.
