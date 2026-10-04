@@ -388,20 +388,23 @@ public sealed partial class TaskServerStore
         if (!ProjectDeliveryPolicies.All.Contains(policy))
             throw new ArgumentException("Delivery policy must be reviewed-publication or manual-publication.");
 
-        var existing = await GetProjectRepositoryAsync(projectId, ct);
-        if (existing is not null)
-        {
-            if (existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
-                && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy)
-                return (existing, false);
-            throw new TaskServerConflictException(
-                "project-repository-registered",
-                $"Project '{projectId}' already has a different repository registration.");
-        }
-
         var now = UtcNow;
+        ProjectRepositoryDto? existing = null;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
+            // The repeat check must share the write transaction with the insert.
+            // Otherwise concurrent identical requests can both see no row and
+            // the second request reports a false ownership conflict.
+            existing = await ReadProjectRepositoryAsync(connection, transaction, projectId, ct);
+            if (existing is not null)
+            {
+                if (existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
+                    && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy)
+                    return;
+                throw new TaskServerConflictException(
+                    "project-repository-registered",
+                    $"Project '{projectId}' already has a different repository registration.");
+            }
             var owner = Convert.ToString(await ScalarAsync(connection,
                 "SELECT project_id FROM project_repositories WHERE repository_url = $url;", ct, transaction, ("$url", url)));
             if (!string.IsNullOrEmpty(owner))
@@ -426,17 +429,24 @@ public sealed partial class TaskServerStore
             await AuditAsync(connection, transaction, actorId, "project.repository-registered", "project", projectId,
                 JsonSerializer.Serialize(new { repositoryId, url, integrationRef, releaseRef, policy }), ct);
         }, ct);
+        if (existing is not null) return (existing, false);
         return (new ProjectRepositoryDto(projectId, repositoryId, url, integrationRef, releaseRef, policy, now, actorId), true);
     }
 
     public async Task<ProjectRepositoryDto?> GetProjectRepositoryAsync(string projectId, CancellationToken ct)
     {
         await using var connection = await OpenReadyAsync(ct);
+        return await ReadProjectRepositoryAsync(connection, null, projectId, ct);
+    }
+
+    private static async Task<ProjectRepositoryDto?> ReadProjectRepositoryAsync(
+        SqliteConnection connection, SqliteTransaction? transaction, string projectId, CancellationToken ct)
+    {
         await using var command = Command(connection, """
             SELECT project_id, repository_id, repository_url, integration_ref, release_ref,
                    delivery_policy, registered_at, registered_by
               FROM project_repositories WHERE project_id = $project;
-            """, ("$project", projectId));
+            """, transaction, ("$project", projectId));
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
             ? new ProjectRepositoryDto(

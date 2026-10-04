@@ -144,7 +144,9 @@ projects without a registration retain their existing placement behavior.
 ## Upstream failure
 
 The Studio BFF holds no task store. If the Task Server is unreachable it
-returns `502 task-server-unavailable` and writes nothing locally.
+returns `502 task-server-unavailable` and writes nothing locally. An upstream
+HTTP timeout has the same result. `TaskServer:RequestTimeoutSeconds` sets the
+edge's upstream timeout (default 100 seconds, clamped to 1 through 600 seconds).
 
 ## Known limits
 

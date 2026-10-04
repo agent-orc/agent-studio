@@ -22,6 +22,8 @@ if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
 builder.Services.AddHttpClient("task-server", client =>
 {
     client.BaseAddress = new Uri(taskServerUrl);
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(
+        builder.Configuration.GetValue<int?>("TaskServer:RequestTimeoutSeconds") ?? 100, 1, 600));
     var bearerToken = ReadTaskServerToken(builder.Configuration);
     if (!string.IsNullOrWhiteSpace(bearerToken))
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
@@ -95,7 +97,8 @@ RequestDelegate proxyToTaskServer = async context =>
     {
         response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
     }
-    catch (HttpRequestException)
+    catch (Exception ex) when (ex is HttpRequestException
+        || ex is TaskCanceledException && !context.RequestAborted.IsCancellationRequested)
     {
         // No local fallback: the edge holds no task store and never writes tasks itself.
         context.Response.StatusCode = StatusCodes.Status502BadGateway;

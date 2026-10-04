@@ -234,7 +234,7 @@ public sealed class IdentityBootstrapTests
     public async Task Enrolment_issues_one_separately_revocable_principal_and_denies_stolen_or_expired_codes()
     {
         using var temp = new TempDirectory();
-        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
         await using var factory = new IdentityFactory(temp.Path, OwnerCode, clock);
         using var edge = Client(factory, StudioToken);
         var owner = await BootstrapOwnerAsync(edge);
@@ -389,6 +389,14 @@ public sealed class IdentityBootstrapTests
         var registration = (await created.Content.ReadFromJsonAsync<ProjectRepositoryDto>())!;
         Assert.Equal("https://github.com/org/alpha.git", registration.RepositoryUrl);
         Assert.Equal(RepositoryIdentityContract.FromUrl(registration.RepositoryUrl), registration.RepositoryId);
+
+        var repeats = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ =>
+            ownerClient.PostAsJsonAsync("/api/v1/projects/registrations",
+                Registration("prj-concurrent", "https://github.com/org/concurrent.git", workspace.WorkspaceId,
+                    prefix: "CON"))));
+        Assert.Single(repeats, response => response.StatusCode == HttpStatusCode.Created);
+        Assert.Equal(15, repeats.Count(response => response.StatusCode == HttpStatusCode.OK));
+        foreach (var response in repeats) response.Dispose();
 
         Assert.Equal(HttpStatusCode.OK, (await ownerClient.PostAsJsonAsync("/api/v1/projects/registrations",
             Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId))).StatusCode);
