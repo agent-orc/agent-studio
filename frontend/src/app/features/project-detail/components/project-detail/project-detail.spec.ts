@@ -19,6 +19,31 @@ import { ProjectDetailComponent } from './project-detail';
  * stable across template tweaks.
  */
 describe('ProjectDetailComponent (smoke)', () => {
+  it('renders and persists the lifetime review and reissue limits', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectDetailComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([]),
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(ProjectDetailComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.componentRef.setInput('view', 'settings');
+    fixture.detectChanges();
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="project-detail-review-round-limit"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="project-detail-review-reissue-limit"]')).toBeTruthy();
+
+    fixture.componentInstance.maxDeliveredReviewRoundsDraft = 5;
+    fixture.componentInstance.maxAutoReissueAttemptsDraft = 3;
+    fixture.componentInstance.onReviewRoundBudgetsChange();
+    const http = TestBed.inject(HttpTestingController);
+    const write = http.expectOne('/api/projects/demo/review-round-budgets');
+    expect(write.request.body).toEqual({ maxDeliveredReviewRounds: 5, maxAutoReissueAttempts: 3 });
+    write.flush({ maxDeliveredReviewRounds: 5, maxAutoReissueAttempts: 3 });
+  });
+
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectDetailComponent],

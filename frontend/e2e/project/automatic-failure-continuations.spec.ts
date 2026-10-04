@@ -6,10 +6,13 @@ import { setTheme } from '../helpers/theme';
 test('project failure continuation setting persists in both themes', async ({ page }) => {
   const project = 'continuation-demo';
   let enabled = true;
+  let maxDeliveredReviewRounds = 4;
+  let maxAutoReissueAttempts = 2;
   const writes: boolean[] = [];
   const settings = () => ({
     autoCommit: true, crashRecoveryEnabled: true, autoPushStrategy: 'never',
     automaticFailureContinuationsEnabled: enabled,
+    maxDeliveredReviewRounds, maxAutoReissueAttempts,
     pickupMode: 'manual', executionLocation: 'local', integrationBranch: 'develop',
   });
   await page.route('**/api/**', route => route.fulfill({ json: [] }));
@@ -47,6 +50,11 @@ test('project failure continuation setting persists in both themes', async ({ pa
     writes.push(enabled);
     await route.fulfill({ json: settings() });
   });
+  await page.route('**/api/projects/continuation-demo/review-round-budgets', async route => {
+    expect(route.request().method()).toBe('PUT');
+    ({ maxDeliveredReviewRounds, maxAutoReissueAttempts } = route.request().postDataJSON());
+    await route.fulfill({ json: settings() });
+  });
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.addInitScript(projectName => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
@@ -64,6 +72,21 @@ test('project failure continuation setting persists in both themes', async ({ pa
   await expect(control).not.toBeChecked();
   await control.check();
   await expect.poll(() => writes.at(-1)).toBe(true);
+
+  const rounds = page.getByTestId('project-detail-review-round-limit');
+  const reissues = page.getByTestId('project-detail-review-reissue-limit');
+  await expect(rounds).toHaveValue('4');
+  await expect(reissues).toHaveValue('2');
+  await rounds.fill('5');
+  await rounds.blur();
+  await expect.poll(() => maxDeliveredReviewRounds).toBe(5);
+  await expect(rounds).toHaveValue('5');
+  await reissues.fill('3');
+  await reissues.blur();
+  await expect.poll(() => maxAutoReissueAttempts).toBe(3);
+  await page.reload();
+  await expect(rounds).toHaveValue('5');
+  await expect(reissues).toHaveValue('3');
 
   const results = process.env['JOB_RESULTS_DIR'];
   expect(results, 'durable evidence directory').toBeTruthy();

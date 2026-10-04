@@ -25,6 +25,8 @@ interface ProjectSettingsRow {
   autoCommit: boolean;
   crashRecoveryEnabled: boolean;
   automaticFailureContinuationsEnabled: boolean;
+  maxDeliveredReviewRounds: number;
+  maxAutoReissueAttempts: number;
   autoPushStrategy: AutoPushStrategy;
   runnerMode: string | null;
   orchestratorModel: string | null;
@@ -117,6 +119,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   autoCommitDraft = false;
   crashRecoveryDraft = true;
   automaticFailureContinuationsDraft = true;
+  maxDeliveredReviewRoundsDraft = 4;
+  maxAutoReissueAttemptsDraft = 2;
   autoPushStrategyDraft: AutoPushStrategy = 'always-immediate';
   integrationGateReuseDraft: IntegrationGateReuseChoice = 'inherit';
   maxReviewConcernRoundsDraft = 1;
@@ -340,6 +344,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
           autoCommit: snap.settings.autoCommit,
           crashRecoveryEnabled: snap.settings.crashRecoveryEnabled,
           automaticFailureContinuationsEnabled: snap.settings.automaticFailureContinuationsEnabled ?? true,
+          maxDeliveredReviewRounds: snap.settings.maxDeliveredReviewRounds ?? 4,
+          maxAutoReissueAttempts: snap.settings.maxAutoReissueAttempts ?? 2,
           autoPushStrategy: snap.settings.autoPushStrategy,
           runnerMode: snap.settings.runnerMode,
           orchestratorModel: snap.settings.orchestratorModel,
@@ -355,6 +361,8 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
         if (this.crashRecoveryDraft !== row.crashRecoveryEnabled) this.crashRecoveryDraft = row.crashRecoveryEnabled;
         if (this.automaticFailureContinuationsDraft !== row.automaticFailureContinuationsEnabled)
           this.automaticFailureContinuationsDraft = row.automaticFailureContinuationsEnabled;
+        this.maxDeliveredReviewRoundsDraft = row.maxDeliveredReviewRounds;
+        this.maxAutoReissueAttemptsDraft = row.maxAutoReissueAttempts;
         if (this.autoPushStrategyDraft !== row.autoPushStrategy) this.autoPushStrategyDraft = row.autoPushStrategy;
         const wantedReuse: IntegrationGateReuseChoice =
           row.integrationGateReviewReuse === null
@@ -441,6 +449,17 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
   onAutomaticFailureContinuationsChange(): void {
     this.jobService.setProjectAutomaticFailureContinuations(
       this.projectName(), this.automaticFailureContinuationsDraft).subscribe({
+      next: () => this.refreshAll(true),
+      error: () => this.refreshAll(true),
+    });
+  }
+
+  onReviewRoundBudgetsChange(): void {
+    this.maxDeliveredReviewRoundsDraft = Math.max(1, Math.min(20, Math.trunc(this.maxDeliveredReviewRoundsDraft || 1)));
+    this.maxAutoReissueAttemptsDraft = Math.max(0, Math.min(20, Math.trunc(this.maxAutoReissueAttemptsDraft || 0)));
+    this.jobService.setProjectReviewRoundBudgets(
+      this.projectName(), this.maxDeliveredReviewRoundsDraft, this.maxAutoReissueAttemptsDraft,
+    ).subscribe({
       next: () => this.refreshAll(true),
       error: () => this.refreshAll(true),
     });

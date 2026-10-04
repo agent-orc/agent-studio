@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
 using AgentStudio.Pipeline;
+using AgentStudio.Tasks;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -19,6 +20,9 @@ public sealed record RemoteReviewSettlementEntry
     public required Contract.ReviewReportRequest Report { get; init; }
     public RemoteDeliverySettlementRecord? Delivery { get; init; }
     public string? DeliverySha256 { get; init; }
+    public ReviewRoundBudgetDecision? ReviewBudgetDecision { get; init; }
+    public IReadOnlyList<Contract.ReviewVerdictDto>? ReviewBudgetOriginalVerdicts { get; init; }
+    public string? ReviewBudgetSha256 { get; init; }
     public DateTime ReceivedAtUtc { get; init; }
     public bool EvidenceComplete { get; init; }
     public int EvidenceFailures { get; init; }
@@ -62,6 +66,13 @@ public static class RemoteReviewSettlementJournal
         => delivery is null ? null : Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(JsonSerializer.Serialize(delivery, HashJson)))).ToLowerInvariant();
 
+    private static string? HashReviewBudget(RemoteReviewSettlementEntry entry)
+        => entry.ReviewBudgetDecision is null && entry.ReviewBudgetOriginalVerdicts is null
+            ? null
+            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(
+                new { entry.ReviewBudgetDecision, entry.ReviewBudgetOriginalVerdicts }, HashJson))))
+                .ToLowerInvariant();
+
     public static RemoteReviewSettlementRead Read(string folder, string attemptId)
     {
         var path = PathFor(folder, attemptId);
@@ -78,6 +89,8 @@ public static class RemoteReviewSettlementJournal
                        || delivery.Outcome != settledOutcome.ToString()
                        || !Enum.IsDefined(delivery.Stage))
                 || !string.Equals(HashDelivery(entry.Delivery), entry.DeliverySha256, StringComparison.Ordinal)
+                || (entry.ReviewBudgetDecision is null) != (entry.ReviewBudgetOriginalVerdicts is null)
+                || !string.Equals(HashReviewBudget(entry), entry.ReviewBudgetSha256, StringComparison.Ordinal)
                 || !string.Equals(Hash(entry.Report), entry.ReportSha256, StringComparison.Ordinal))
                 return new(RemoteReviewSettlementReadStatus.Repair, Reason: "corrupt-review-settlement-journal");
             return new(RemoteReviewSettlementReadStatus.Ready, entry);
@@ -159,7 +172,11 @@ public static class RemoteReviewSettlementJournal
         try
         {
             File.WriteAllText(temporary, JsonSerializer.Serialize(
-                entry with { DeliverySha256 = HashDelivery(entry.Delivery) }, Json));
+                entry with
+                {
+                    DeliverySha256 = HashDelivery(entry.Delivery),
+                    ReviewBudgetSha256 = HashReviewBudget(entry),
+                }, Json));
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
@@ -168,6 +185,29 @@ public static class RemoteReviewSettlementJournal
 
 public static class RemoteReviewSettlementPolicy
 {
+    /// <summary>Restores the accepted round and its one linked follow-up before delivery resumes.</summary>
+    public static bool RestoreReviewBudgetSideEffects(
+        TaskInfo task,
+        RemoteReviewSettlementEntry entry,
+        TaskMutationService mutations,
+        TaskScannerService scanner)
+    {
+        if (entry.ReviewBudgetDecision is not { } budget
+            || entry.ReviewBudgetOriginalVerdicts is not { } originalVerdicts)
+            return false;
+        var legacy = AgentStudio.Review.ReviewProjectionReader.Read(task, [], null).Attempts
+            .Where(attempt => attempt.AttemptId != entry.AttemptId).ToArray();
+        var seed = ReviewRoundBudgetStore.Read(task.FolderPath, legacy);
+        ReviewRoundBudgetStore.Record(task.FolderPath, seed,
+            new DeliveredReviewRound(entry.AttemptId,
+                originalVerdicts.Where(verdict => Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                    .Select(verdict => verdict.Aspect).ToArray(),
+                budget.DegradedAspects,
+                SpentBy: budget.SpentBy));
+        return V1ReviewPlaneEndpoints.CreateReviewBudgetFollowUpCard(
+            task, entry.AttemptId, originalVerdicts, budget, mutations, scanner) is not null;
+    }
+
     public static bool MatchesAcceptedReview(RemoteReviewSettlementEntry entry, ReviewAttemptDto? review)
         => review is not null
            && entry.AttemptId == review.AttemptId
