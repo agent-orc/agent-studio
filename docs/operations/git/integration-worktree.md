@@ -62,20 +62,61 @@ against the returned path.
 - **Always detached.** A linked worktree that checks a branch out takes that
   branch away from every other checkout of the repository - the developer could
   no longer run `git checkout develop`. The integration worktree stays on a
-  detached HEAD and the branch is moved afterwards.
-- **Publishing the result.** After the merge, `develop` is advanced to the new
-  commit. When a checkout still holds the branch, the fast-forward is asked of
-  that checkout first: git carries unrelated local modifications along and
-  refuses rather than overwriting anything, so a clean checkout stays in step
-  with the branch exactly as if it had pulled. Only if git refuses is the ref
-  advanced directly, compare-and-swapped against the tip observed before the
-  merge. A gate rollback reverses both halves and returns a checkout that was
-  fast-forwarded along, while it is clean and still on the rolled-back commit.
+  detached HEAD.
+- **The integration lane.** The worktree shares every branch ref with the
+  developer checkout, so a merge that moved `develop` itself would sit on the
+  developer's `develop` for the whole build gate. Integration therefore works on
+  its own ref, `refs/agent-studio/integration/<branch>` (AGT-2996). Before each
+  merge the lane is brought up to the published branch (`origin/<branch>`, or
+  the local branch for a repository without an origin): it is seeded or
+  fast-forwarded, keeps gated merges whose push is still pending, and reports a
+  lane that diverged from origin instead of overwriting either tip. The merge,
+  the build gate, and a red-gate rollback move only the lane,
+  compare-and-swapped against the tip observed before the merge. Commits someone
+  made on the developer checkout's local `develop` are never part of the lane.
+- **Publishing the result.** Only the integration push worker publishes
+  `develop`: it pushes the exact SHA the gate approved from the lane to
+  `origin/develop` (`merge-into-develop push enqueued ... approved=<sha>`, then
+  `status=pushed`). See [When the developer checkout moves](#when-the-developer-checkout-moves).
 - **Shared object store.** The worktree shares the repository's `.git`, so
-  branches, tags, and the resulting commit graph are the same objects the
-  developer checkout sees. The origin push
+  branches, tags, the lane, and the resulting commit graph are the same objects
+  the developer checkout sees. The origin push
   (`post-merge-into-develop-push`) is a pure ref operation and keeps running from
   the registered checkout.
+
+## When the developer checkout moves
+
+The developer checkout's local `develop` (and `main`, for a release target) is
+fast-forwarded exactly once per integration: after the gate passed **and** the
+integration push worker published the merge. Until then it stays on the
+pre-merge tip, for the whole gate window, so a push from that checkout can
+never publish an un-gated merge. A failing gate rolls back the lane only; the
+checkout never saw the rejected merge.
+
+At that moment the push worker compares the checkout's branch with the
+published SHA:
+
+| Local branch | What happens |
+|---|---|
+| Behind the published SHA | Fast-forwarded to it. A checkout that holds the branch is asked first, so its working tree follows; git refuses rather than overwriting an overlapping local edit, and then only the ref moves. |
+| Ahead of `origin/<branch>` (someone committed there), including commits made on top of the published SHA | Left untouched. A warning names the local SHA, the `origin/<branch>` SHA, and the published SHA. |
+| Already contains the published SHA and is on origin | Left as it is. |
+| On origin but on another line than the published SHA | Left untouched. |
+
+Only the integration push worker publishes `develop` and moves the checkout.
+If the post-push checkout fast-forward fails, the push step stays passed with a
+visible warning naming the published SHA, stale checkout, error, and manual
+recovery command (`git -C <checkout> merge --ff-only origin/develop`).
+When no push worker runs for the result - the project disabled the
+`post-merge-into-develop-push` step - nothing is published and the checkout is
+not moved either; the gated result stays on the integration lane until a later
+push publishes it.
+
+Recovering a lane that diverged from origin (the integration error names the
+lane): the gated merges on the lane were never published. Drop the lane with
+`git update-ref -d refs/agent-studio/integration/<branch>` in the project
+checkout; the next integration seeds it from `origin/<branch>` again, and the
+affected cards retry their integration.
 
 ## The local worktree run
 
@@ -86,18 +127,22 @@ branch by reference through `GitService.FastForwardIntegrationBranch` and needs
 no integration worktree at all. It used to run `git merge --ff-only` inside the
 developer checkout, which silently required that checkout to have the
 integration branch out and failed whenever a local modification touched a
-delivered file. The publication rule is the same one the delivery merge uses:
-fast-forward the checkout that holds the branch when git allows it, otherwise
-advance the ref.
+delivered file. It has no build gate and no integration lane of its own, so it
+advances the local branch directly: fast-forward the checkout that holds the
+branch when git allows it, otherwise advance the ref.
 
 ## Consequences for a dirty developer checkout
 
 - Uncommitted changes never block an integration and are never discarded.
+- The checkout moves only after the published push (see
+  [When the developer checkout moves](#when-the-developer-checkout-moves)).
 - If the edits do not overlap the delivery, the checkout is fast-forwarded and
   keeps them.
 - If they do overlap, git refuses the fast-forward: the branch still advances,
   the edits stay exactly as they are, and that checkout is simply behind its
   branch until the person commits, stashes, or resets on their own terms.
+- Commits made on the checkout's `develop` are never merged, pushed, or moved
+  by Studio.
 - Studio never switches the branch of the developer checkout.
 
 ## Operations
