@@ -67,10 +67,10 @@ The integration stages run in this fixed order:
 
 If all three stages fail, the merge step persists one structured conflict report with every stage outcome, the capped file list and total count, the integration tip, and the delivery SHA. The card renders that record in three lines beginning `Merge into develop conflicted (direct merge, mechanical merge and rebase fallback all failed)`. Raw Git hint text is never card copy.
 
-- Commit: `Merged`, `MergedAfterRebase`, `AlreadyMerged`, or a pre-existing Git-derived `integrated` status completes the acceptance transaction. `MergedAfterRebase` is a distinct pipeline verdict, but contributes to the existing `merged` counter. The worker clears phase and pending marker, writes `integration_succeeded`, and moves the card to `6-completed`. `NoTaskBranch`, `Conflict`, `GateFailed`, and `Error` clear the phase, retain the pending recovery marker, write `integration_failed`, and leave the card in Human Review. If a legacy accept path already placed the card in Completed, both the worker and restart backstop move it back to Human Review. The red badge names the typed failure, such as `No task branch`, and the application-owned `## Acceptance integration` section in `status.md` preserves the raw outcome, target lane, integration branch, reason, and timestamp. Immediate acceptance failures use the consistent `IntegrationFailed` transition outcome, which the single-card API maps to HTTP `409`; batch results use `integration-failed`. A configured pull-request handoff also remains in Human Review until target-branch membership is real.
+- Commit: `Merged`, `MergedAfterRebase`, or an `AlreadyMerged` / pre-existing Git-derived `integrated` status with exact-tree gate evidence completes the acceptance transaction. `MergedAfterRebase` is a distinct pipeline verdict, but contributes to the existing `merged` counter. The worker clears phase and pending marker, writes `integration_succeeded`, and moves the card to `6-completed`. `NoTaskBranch`, `Conflict`, `GateFailed`, and `Error` clear the phase, retain the pending recovery marker, write `integration_failed`, and leave the card in Human Review. If a legacy accept path already placed the card in Completed, both the worker and restart backstop move it back to Human Review. The red badge names the typed failure, such as `No task branch`, and the application-owned `## Acceptance integration` section in `status.md` preserves the raw outcome, target lane, integration branch, reason, and timestamp. Immediate acceptance failures use the consistent `IntegrationFailed` transition outcome, which the single-card API maps to HTTP `409`; batch results use `integration-failed`. A configured pull-request handoff also remains in Human Review until target-branch membership is real.
 - Explicit completion without integration: operator move requests may set `operatorOverride: true` only with target `6-completed`. The flag is never inferred or defaulted. It bypasses integration for that move and records `operator-override` in pipeline history plus `OperatorOverride` and the supplied reason in `status.md`. Cards that explicitly expect no branch are exempt without an override: report-only or concept modes, epics, `taskType=concept|decision` records, and cards with `noBranchExpected: true`.
 - Restart recovery: `AcceptedIntegrationBackstopHostedService` is a safety net, not the normal Remote path. It resumes cards in `5-human-review` with phase `integrating` from their phase, marker, and pipeline facts. This includes a human acceptance that retried a failed immediate merge but lost its volatile queue item. The backstop consumes the same `TaskIntegrationStatusService` recovery decision as the board status projection, so a stale Passed step cannot overrule missing target-branch membership. It processes accepted deliveries by project and original delivery time, moves cards to Completed only after successful integration, and returns decided failures to ordinary Human Review instead of replaying them in a loop. Legacy Completed and archived recovery remains supported when the card carries live recovery facts. Historical verification runs first, and its bookkeeping records never authorize a merge or lane move. The 15-minute sweep logs `attempted`, `merged`, `alreadyMerged`, and `failed` independently; `Merged` and `MergedAfterRebase` contribute to `merged` and `integrated`. The acute 30-minute alert evaluates terminal Completed and Archive cards that carry a native acceptance receipt, have no historical verification, and remain unintegrated beyond the threshold. Each refresh reads the live task folders so a direct record append converges within one interval. Its project-filtered banner shows at most ten task keys and links to the complete `integration:stalled` Board filter.
-- Read model, attribution, and conflict honesty: `TaskIntegrationStatusService` recomputes `integration.status` from the attributed `commits[]` membership in the configured target branch and projects `integration.deliveryRef` through the same `DeliveryRefResolver` used by both triggers. A mechanical replay retains every historical commit entry, marks it with `supersededBySha`, and appends the replacement SHA with the original producer attribution. Entries superseded by SHA or by a later attempt do not participate in integration completeness, so rewritten objects do not create false `partial` status. Remote `runner/<host>/<KEY>` refs and evidenced local `task/<slug>` refs therefore use one card field; `no-branch` is valid only when neither a delivery ref nor an attributed commit exists. A terminal failed attempt sets typed `integration.failure` state so the chip names the concrete class, including `no-task-branch`, and states whether rebase recovery applies. The service uses a target-HEAD-fingerprinted ancestor set, accepts valid abbreviated SHAs, and invalidates immediately when the target HEAD moves. Lane, provenance merge records, pipeline success, and curated merge subjects cannot force `integrated`. A failed immediate merge still proceeds to Human Review and remains visibly `conflict-skipped` or failed on that card, with the actual conflicted files in the durable verdict. An out-of-band merge self-heals the card on the next read. Card integration badges, delivery-ref wording, the develop segment, Git-state wording, and acceptance wording consume this computed field; `integrationpending` is not rendered as a second status chip. At startup, V2 of `HistoricalIntegrationVerificationSweep` reads task folders directly and extends the V1 population to terminal acceptance-start cards inspected by the alert. It preserves existing V1 rows, checks Git ancestry, no-code artifacts, and surviving result or salvage refs, and classifies evidence-free cards without a historical `commits[]` field as `no-attribution-legacy`. The following `AcceptedIntegrationInventorySweep` emits rows only for `content-on-fence`, `genuinely-missing`, and current recorded `Error` or `NoTaskBranch` outcomes.
+- Read model, attribution, and conflict honesty: `TaskIntegrationStatusService` recomputes `integration.status` from the attributed `commits[]` membership in the configured target branch and projects `integration.deliveryRef` through the same `DeliveryRefResolver` used by both triggers. A mechanical replay retains every historical commit entry, marks it with `supersededBySha`, and appends the replacement SHA with the original producer attribution. Entries superseded by SHA or by a later attempt do not participate in integration completeness, so rewritten objects do not create false `partial` status. Remote `runner/<host>/<KEY>` refs and evidenced local `task/<slug>` refs therefore use one card field; `no-branch` is valid only when neither a delivery ref nor an attributed commit exists. A terminal failed attempt sets typed `integration.failure` state so the chip names the concrete class, including `no-task-branch`, and states whether rebase recovery applies. The service uses a target-HEAD-fingerprinted ancestor set, accepts valid abbreviated SHAs, and invalidates immediately when the target HEAD moves. Lane, provenance merge records, pipeline success, and curated merge subjects cannot force `integrated`. A failed immediate merge still proceeds to Human Review and remains visibly `conflict-skipped` or failed on that card, with the actual conflicted files in the durable verdict. An out-of-band merge updates the containment badge on the next read; the card stays integrated-unverified until the exact tree has gate evidence. Card integration badges, delivery-ref wording, the develop segment, Git-state wording, and acceptance wording consume this computed field; `integrationpending` is not rendered as a second status chip. At startup, V2 of `HistoricalIntegrationVerificationSweep` reads task folders directly and extends the V1 population to terminal acceptance-start cards inspected by the alert. It preserves existing V1 rows, checks Git ancestry, no-code artifacts, and surviving result or salvage refs, and classifies evidence-free cards without a historical `commits[]` field as `no-attribution-legacy`. The following `AcceptedIntegrationInventorySweep` emits rows only for `content-on-fence`, `genuinely-missing`, and current recorded `Error` or `NoTaskBranch` outcomes.
 - Merge-queue terminal history: the Project Hub keeps historical archive outcomes visible without counting them as actionable conflicts. An archived `conflict-skipped` record with a pre-authority review subject that has no `RunAttemptId` is `legacy-unverifiable`; another archived conflict is `superseded` as an in-place merge subject and must be recovered through a new card if its behavior is still required. Both states retain the original integration outcome in their reason. The queue counters are filters for all outcomes, while `conflict` is reserved for work that can still be resolved on its current card.
 - Conflict recovery: a reviewed delivery that exhausts the three-stage sequence
   renders **Rebase & retry** next to its red integration badge. The action calls
@@ -384,6 +384,92 @@ yet checked*, and the containment question is asked before anything is said.
 AGT-2706's delivery `79c2dcf8c` was contained in `develop` and in `main` and had
 shipped with v0.3.0, yet the archive dialog reported it as a pending
 integration purely because its `integration` field was `undefined`.
+
+### What counts as integrated: containment plus gate evidence (AGT-3002)
+
+Containment answers "is the delivery on the branch". It does not answer "did
+anything verify the branch with it". On 2026-09-28/29 an operator script pushed
+the developer checkout's `develop`, which carried merges whose gate later
+failed and was rolled back. The delivery lane then found those deliveries on
+`origin/develop` and completed their cards as `AlreadyMerged` (47 times, and
+`alreadyMerged=8` in the accepted-integration backstop), although the only gate
+that ran on those trees had returned `Fail`.
+
+A card is therefore **integrated** only when both hold:
+
+1. the delivery is contained in the integration branch (the status above), and
+2. a gate passed on the exact tree the card claims.
+
+The integration projection carries the second half as
+`integration.verification.state`:
+
+| State | Meaning |
+|---|---|
+| `integrated-verified` | A gate passed on the merged tree: this lane's own merge gate, a gate receipt on the card for the exact tree, an `integrated-verified` integration record naming that SHA, or the one verification gate the lane ran on the tip. |
+| `integrated-unverified` | The delivery is on the branch, but no gate evidence exists for that tree, or the gate that ran on it failed. |
+| absent | The card is not currently classified as contained. A contained card without exact-tree evidence projects as `integrated-unverified`. |
+
+**How the lane decides a contained delivery.** When the merge runner finds the
+delivery already contained (`AlreadyMerged`, `AlreadyOnIntegrationBranch`), the
+pure `IntegrationVerificationPolicy`
+(`backend/Features/Pipeline/IntegrationVerification/`) decides:
+
+1. **Evidence for the exact tree** completes the card: a gate receipt in the
+   card's `post-steps/` whose tested SHA is, or has the same tree as, the
+   branch tip (`pre-develop-build-gate-*` for develop, or
+   `pre-main-test-gate-*` for main), or an `integrated-verified` record whose
+   `integrationSha` names that tree on the same integration branch. A
+   pre-develop receipt never satisfies the mandatory pre-main full suite,
+   even when develop and main point to the same tree. Records
+   that only prove containment (no `integrationSha`) do not count.
+2. **A red receipt for the exact tree** is the verdict. The gate is not run
+   again.
+3. **No evidence**: the lane writes `integrated-unverified` with the SHA and the
+   reason to `integration-verification.json`, then runs the gate **once** on the
+   current branch tip. The work line runs the pre-develop gate over the
+   delivery's own diff plus the tip's last merge; when the review subject is
+   missing, the lane derives the delivery range from the merge that brought it
+   onto the branch and the Git diffs of every attributed card commit. Without a
+   fenced subject, it also selects the repository's existing stack entry points
+   for a conservative gate. If no trustworthy range
+   or gate scope can be derived, the card stays unverified. A later docs-only
+   tip cannot make an earlier code delivery `NotApplicable`. The release line
+   runs the mandatory full suite. The per-SHA gate cache answers when that
+   exact tip was
+   already gated. "No gate applies" is written as an explicit `NotApplicable`
+   receipt.
+4. **Green**: the card completes and the record says `integrated-verified`.
+   **Red on the code**: the result is `GateFailed`, nothing is pushed, the
+   branch history is left unchanged, the card goes to `5-human-review` with the
+   gate verdict, and a cause card (`integration/unverified-branch`) is opened for
+   the branch. Every card stuck on the same branch joins that one cause card.
+   **No verdict** (host, budget, or source failure): the card does not complete
+   and no cause card blames the branch; an environment failure is replayed by
+   the gate-environment retry ladder.
+
+A fresh merge created by the lane is verified by construction: its own gate
+guarded it, and the lane records that too.
+
+**Who else asks.** The accepted-integration backstop finalizes a merged card only
+when its verification is `integrated-verified` for the current integration SHA.
+Without other exact-tree evidence, a missing or stale verification file and a
+historical Passed merge step fail closed as `integrated-unverified`.
+A stale or current-tree `integrated-unverified` verification file does not hide
+a later `integrated-verified` integration record that names the current SHA and
+branch. The projection checks that exact-tree record before the file.
+An unverified card goes back through
+the merge runner, which applies the rule above; once a gate has failed on that
+tree, the backstop returns the card to Human Review instead of running it
+again, and archived cards are left alone. The acceptance rail does not
+auto-accept an unverified card (`integrated-unverified`). A human acceptance of
+an unverified card is refused with the reason; the operator can still accept it
+with a written override. The board badge reads `merged @sha · verified` or,
+in the acute orange tone, `merged @sha · unverified`.
+
+Cards completed before this rule need exact-tree evidence too. A historical
+Passed merge step without a matching SHA is not proof of the current tree,
+including `merged`, `merged-after-rebase`, and `already-merged` outcomes.
+The backstop verifies that tree once before finalizing the card.
 
 ### The three grounds
 

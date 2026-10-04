@@ -1,7 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { HttpErrorResponse } from '@angular/common/http';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import type { TaskIntegrationStatus } from '../../features/git';
+import { isMergedIntegrationStatus } from '../../features/git';
+import type { IntegrationVerificationState, TaskIntegrationStatus } from '../../features/git';
 import { PendingButtonDirective } from '../async-feedback';
 import { NotificationService } from '../../services/notification.service';
 import { TaskService } from '../../services/task.service';
@@ -15,6 +16,10 @@ import { TaskService } from '../../services/task.service';
  *   - amber  "NICHT integriert"     — accepted work is still not in develop,
  *   - red    "Integration failed"   — the integration step reached a failed outcome,
  *   - grey   "kein Branch"          — nothing to integrate (read-only / no code).
+ *
+ * AGT-3002: a merged verdict also says whether a gate passed on the tree that
+ * carries the delivery ("· verified" / "· unverified"). Containment without a
+ * gate is the acute orange "unverified" kind, never the green "merged" one.
  *
  * Membership is derived from the SAME attributed `commits[]` list the card's
  * commit widget renders. Branch presence comes from the acceptance resolver's
@@ -44,11 +49,24 @@ export class IntegrationStatusBadgeComponent {
   readonly visible = computed(() => !!this.integration());
 
   /**
+   * AGT-3002 - the gate evidence of a merged verdict. Null for every other
+   * status and for a legacy card with no integration record (unknown).
+   */
+  readonly verificationState = computed<IntegrationVerificationState | null>(() => {
+    const value = this.integration();
+    if (!value || !isMergedIntegrationStatus(value.status)) return null;
+    return value.verification?.state ?? null;
+  });
+
+  readonly unverified = computed(() => this.verificationState() === 'integrated-unverified');
+
+  /**
    * Coarse visual kind for colour theming. AGT-2849: a delivery that only a
    * local ref can see shares the amber "accepted, not integrated" treatment,
    * because that is exactly what it is; the label and tooltip say why.
    */
-  readonly kind = computed<'integrated' | 'partial' | 'pending' | 'conflict' | 'no-branch'>(() => {
+  readonly kind = computed<'integrated' | 'unverified' | 'partial' | 'pending' | 'conflict' | 'no-branch'>(() => {
+    if (this.unverified()) return 'unverified';
     switch (this.integration()?.status) {
       case 'integrated': return 'integrated';
       case 'partial': return 'partial';
@@ -62,7 +80,8 @@ export class IntegrationStatusBadgeComponent {
   /** True for the states that mean "accepted, but the code is NOT (fully) in develop". */
   readonly acute = computed(() => {
     const s = this.integration()?.status;
-    return s === 'partial' || s === 'pending' || s === 'merged-locally' || s === 'conflict-skipped';
+    return this.unverified()
+      || s === 'partial' || s === 'pending' || s === 'merged-locally' || s === 'conflict-skipped';
   });
 
   readonly recoveryAvailable = computed(() => {
@@ -84,6 +103,15 @@ export class IntegrationStatusBadgeComponent {
     this.integration()?.failure?.code === 'gate-environment-failure');
 
   readonly label = computed(() => {
+    const base = this.statusLabel();
+    switch (this.verificationState()) {
+      case 'integrated-verified': return `${base} · verified`;
+      case 'integrated-unverified': return `${base} · unverified`;
+      default: return base;
+    }
+  });
+
+  private readonly statusLabel = computed(() => {
     const value = this.integration();
     if (!value) return '';
     if (value.repositories?.length) {
@@ -121,6 +149,7 @@ export class IntegrationStatusBadgeComponent {
   readonly glyph = computed(() => {
     switch (this.kind()) {
       case 'integrated': return '✓'; // check
+      case 'unverified': return '!';
       case 'partial': return '◐';    // half-filled circle
       case 'conflict': return '⚠';   // warning
       case 'pending': return '○';    // hollow circle
@@ -161,8 +190,21 @@ export class IntegrationStatusBadgeComponent {
     })();
     const repositoryDetails = value.repositories?.map((repository) =>
       `${repository.repository}: ${repository.detail}`) ?? [];
-    return [...new Set([head, ...repositoryDetails, value.failure?.reason, value.detail].filter(Boolean))].join('\n');
+    return [...new Set([head, this.verificationLine(), ...repositoryDetails, value.failure?.reason, value.detail]
+      .filter(Boolean))].join('\n');
   });
+
+  /** AGT-3002 - the tooltip line naming the gate evidence of a merged verdict. */
+  private verificationLine(): string | null {
+    const verification = this.integration()?.verification;
+    const state = this.verificationState();
+    if (!verification || !state) return null;
+    const tree = verification.sha ? ` ${verification.sha.slice(0, 7)}` : '';
+    const reason = verification.reason ? ` ${verification.reason}` : '';
+    return state === 'integrated-verified'
+      ? `Integrated-verified: a gate passed on the merged tree${tree}.${reason}`
+      : `Integrated-unverified: no gate passed on the merged tree${tree}.${reason}`;
+  }
 
   private repositoryLine(repository: NonNullable<TaskIntegrationStatus['repositories']>[number]): string {
     const integrated = repository.commits.filter((commit) => commit.onIntegrationBranch).length;
@@ -175,6 +217,15 @@ export class IntegrationStatusBadgeComponent {
   }
 
   readonly ariaLabel = computed(() => {
+    const base = this.statusAriaLabel();
+    switch (this.verificationState()) {
+      case 'integrated-verified': return `${base}, verified by a gate`;
+      case 'integrated-unverified': return `${base}, not verified by any gate`;
+      default: return base;
+    }
+  });
+
+  private readonly statusAriaLabel = computed(() => {
     const value = this.integration();
     if (!value) return '';
     const branch = value.integrationBranch || 'develop';
