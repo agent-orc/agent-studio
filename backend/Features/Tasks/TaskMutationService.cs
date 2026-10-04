@@ -40,9 +40,9 @@ public class TaskMutationService
     private readonly LaneMutexRegistry _laneMutex;
 
     /// <summary>
-    /// Atomic-write boundary for the two task-key sweeps. Null in
-    /// production, where <c>TaskJsonFile</c> uses its own writer; a test
-    /// passes one in to prove what a sweep does when a write fails.
+    /// Atomic-write boundary for task-key sweeps and decision-content writes.
+    /// Null in production, where <c>TaskJsonFile</c> uses its own writer; tests
+    /// pass one in to prove how these operations handle a failed write.
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
     private readonly bool _guardedDelivery;
@@ -992,7 +992,7 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger)) return false;
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger, _keyFileWriter)) return false;
         _logger.LogInformation(
             "decision-content-set job={JobId} status={Status} chosen={Chosen}",
             jobId, decision.Status, decision.ChosenOptionId ?? "");

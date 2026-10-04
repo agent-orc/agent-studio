@@ -60,6 +60,14 @@ public sealed class DecisionCardService
             return new(DecisionCardStatus.NotDecision);
         if (!DecisionCardPolicy.MayDecide(card.Decision, decidedBy, actorRole))
             return new(DecisionCardStatus.Forbidden, Message: "This decision is assigned to another client or role.");
+        // A choice can have reached the completed lane while its apply outcome
+        // could not be persisted. Repeating that same choice resumes the apply
+        // step without recording a second decision cycle.
+        if (card.State == TaskStates.Completed
+            && card.Decision is { Status: DecisionStatuses.Decided } recorded
+            && recorded.History.LastOrDefault() is { ApplyOutcome: null }
+            && string.Equals(recorded.ChosenOptionId, req?.OptionId?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return await ApplyAsync(card, recorded, recorded.DecidedBy ?? decidedBy, ct);
         var errors = DecisionCardPolicy.ValidateChoice(card.Decision, req?.OptionId, req?.Rationale);
         if (errors.Count > 0)
             return errors.Any(error => error.Code == DecisionCardErrorCode.NotOpen)
@@ -109,8 +117,7 @@ public sealed class DecisionCardService
             JobId = jobId,
         });
         _logger.LogInformation("decision-decided job={JobId} option={OptionId}", jobId, optionId);
-        decided = await ApplyAsync(moved, decided, actor, ct);
-        return new(DecisionCardStatus.Success, decided, TaskStates.Completed);
+        return await ApplyAsync(moved, decided, actor, ct);
     }
 
     /// <summary>
@@ -118,10 +125,10 @@ public sealed class DecisionCardService
     /// so the wiki record links whatever the apply step produced. A failed apply
     /// leaves the decision recorded and reports the failure on the feed.
     /// </summary>
-    private async Task<DecisionContent> ApplyAsync(TaskInfo card, DecisionContent decided, string actor,
+    private async Task<DecisionCardOutcome> ApplyAsync(TaskInfo card, DecisionContent decided, string actor,
         CancellationToken ct)
     {
-        if (_apply is null) return decided;
+        if (_apply is null) return new(DecisionCardStatus.Success, decided, TaskStates.Completed);
         var key = card.Key ?? card.Id;
         DecisionApplyResult result;
         try
@@ -140,10 +147,21 @@ public sealed class DecisionCardService
             AppliedTaskKeys = [.. result.TaskKeys],
         };
         var applied = decided with { History = [.. decided.History.Take(decided.History.Count - 1), last] };
-        _mutations.SetDecisionContent(card.Id, applied, card.WatchPath);
+        // Write the receipt first. If it fails, the card still has no apply
+        // outcome and the same choice can safely retry the ledger-backed apply.
         var record = WriteRecord(card, applied);
         if (!record.Success)
+        {
             _logger.LogWarning("decision-apply-record-failed job={JobId} error={Error}", card.Id, record.Error);
+            return new(DecisionCardStatus.Conflict, decided, TaskStates.Completed,
+                Message: "Decision was recorded, but its apply record could not be saved. Retry the same choice.");
+        }
+        if (!_mutations.SetDecisionContent(card.Id, applied, card.WatchPath))
+        {
+            _logger.LogWarning("decision-apply-stamp-failed job={JobId}", card.Id);
+            return new(DecisionCardStatus.Conflict, decided, TaskStates.Completed,
+                Message: "Decision was recorded, but its apply outcome could not be saved. Retry the same choice.");
+        }
 
         var summary = result.Outcome switch
         {
@@ -169,7 +187,7 @@ public sealed class DecisionCardService
             Reasoning = notes,
             JobId = card.Id,
         });
-        return applied;
+        return new(DecisionCardStatus.Success, applied, TaskStates.Completed);
     }
 
     public async Task<DecisionCardOutcome> ReopenAsync(string jobId, string? watchPath,

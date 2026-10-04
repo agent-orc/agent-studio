@@ -219,7 +219,10 @@ unchanged and named in the apply notes. With no linked card, the chosen option's
 through `ConceptPromotionService.CreateCards`, the ledger-backed mechanism
 concept promotion uses. The history entry records `applyOutcome` and
 `appliedTaskKeys`, and the wiki record lists them. A failed apply leaves the
-decision recorded and posts an activity feed alert.
+decision recorded and posts an activity feed alert. If the apply receipt or
+outcome cannot be saved after the choice is recorded, the endpoint returns a
+conflict; repeating the same choice resumes the apply step without adding
+another decision entry or duplicating cards.
 
 Decision cards are also raised automatically through `DecisionCardRequests`:
 by the runner's Blocked outcome when the agent's final message states a question

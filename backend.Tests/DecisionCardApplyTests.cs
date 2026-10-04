@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using AgentStudio.Persistence;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -314,6 +315,50 @@ public sealed class DecisionCardApplyTests : IDisposable
         var record = ReadRecord(decisionCard.Key!);
         Assert.Contains("- Applied: created-cards", record);
         Assert.Contains($"- Applied to: {string.Join(", ", entry.AppliedTaskKeys)}", record);
+    }
+
+    [Fact]
+    public async Task Decide_WhenApplyOutcomeWriteFails_ReportsConflict_ThenRetriesWithoutDuplicateCards()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var decisionKey = h.Scanner.FindJob(decisionId, _watchPath)!.Key!;
+        var writes = 0;
+        writer.ShouldFail = (path, _) =>
+        {
+            if (!path.EndsWith("task.json", StringComparison.Ordinal)) return false;
+            return ++writes == 2;
+        };
+
+        var first = await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "b", Rationale = "Use the manifest." }, "alice");
+
+        Assert.Equal(DecisionCardStatus.Conflict, first.Status);
+        Assert.Equal(2, writes);
+        var incomplete = h.Scanner.FindJob(decisionId, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, incomplete.State);
+        Assert.Null(incomplete.Decision!.History[^1].ApplyOutcome);
+        Assert.Equal(2, AgentStudio.Pipeline.SpawnedTaskLedger.Read(incomplete.FolderPath).Count);
+        Assert.Contains("- Applied: created-cards", ReadRecord(decisionKey));
+
+        var retry = await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "b", Rationale = "Use the manifest." }, "alice");
+
+        Assert.Equal(DecisionCardStatus.Success, retry.Status);
+        var completed = h.Scanner.FindJob(decisionId, _watchPath)!.Decision!;
+        Assert.Single(completed.History);
+        Assert.Equal(DecisionApplyOutcomes.CreatedCards, completed.History[^1].ApplyOutcome);
+        Assert.Equal(2, completed.History[^1].AppliedTaskKeys.Count);
+        Assert.Equal(2, AgentStudio.Pipeline.SpawnedTaskLedger.Read(incomplete.FolderPath).Count);
+        Assert.Equal(3, h.Scanner.ScanAllJobs().Count);
+        Assert.Contains("- Applied: created-cards", ReadRecord(decisionKey));
+        Assert.Contains($"- Applied to: {string.Join(", ", completed.History[^1].AppliedTaskKeys)}",
+            ReadRecord(decisionKey));
     }
 
     [Fact]
@@ -751,7 +796,7 @@ public sealed class DecisionCardApplyTests : IDisposable
         OrchestratorLog ActivityFeed,
         Func<TimeProvider, DecisionReminderSweep> Reminders);
 
-    private Harness Build()
+    private Harness Build(IAtomicJsonFileWriter? fileWriter = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -775,7 +820,7 @@ public sealed class DecisionCardApplyTests : IDisposable
             registry,
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
-            timeline, activityFeed: activityFeed);
+            timeline, fileWriter: fileWriter, activityFeed: activityFeed);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var transitions = new TaskTransitionService(
             scanner, states, mutations,
