@@ -256,6 +256,11 @@ public sealed class InstallationJourneyTests
             await ProductSetup.FinishManifestAsync(root,
                 Manifest("1.2.0", InstallationManifest.PhaseInstalling), false, false,
                 InstallationManifest.PhaseComplete, "services-healthy");
+            var pending = (await ManifestStore.ReadAsync(root))!;
+            Assert.Equal(InstallationManifest.PhaseAwaitingAcceptance, pending.Phase);
+            var retry = Decide(pending, Request("1.2.0"));
+            Assert.Equal(ManifestAction.Resume, retry.Action);
+            Assert.Equal(pending.InstallationId, retry.Next!.InstallationId);
             var lines = await File.ReadAllLinesAsync(Path.Combine(root, InstallationManifest.CheckpointFileName));
             Assert.Contains(lines, line => line.Contains("\"checkpoint\":\"authenticated-canary\"")
                 && line.Contains("\"outcome\":\"not reached\""));
@@ -387,12 +392,15 @@ public sealed class InstallationJourneyTests
         var previous = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         try
         {
-            var config = Path.Combine(root, "config");
+            var config = Path.Combine(root, "custom-config");
+            var defaultConfig = Path.Combine(root, "default-config");
             var state = Path.Combine(root, "state");
             var units = Path.Combine(root, "units");
             Directory.CreateDirectory(config);
+            Directory.CreateDirectory(defaultConfig);
             Directory.CreateDirectory(state);
             Directory.CreateDirectory(units);
+            await File.WriteAllTextAsync(Path.Combine(defaultConfig, "unrelated-data"), "preserve");
             await File.WriteAllTextAsync(Path.Combine(state, "task-data"), "preserve");
             await File.WriteAllTextAsync(Path.Combine(units, "agent-host.service"), "unit");
             var fakeSystemctl = Path.Combine(root, "systemctl");
@@ -401,7 +409,7 @@ public sealed class InstallationJourneyTests
             File.SetUnixFileMode(fakeSystemctl,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             Environment.SetEnvironmentVariable(names[0], Path.Combine(root, "opt"));
-            Environment.SetEnvironmentVariable(names[1], config);
+            Environment.SetEnvironmentVariable(names[1], defaultConfig);
             Environment.SetEnvironmentVariable(names[2], state);
             Environment.SetEnvironmentVariable(names[3], units);
             Environment.SetEnvironmentVariable(names[4], fakeSystemctl);
@@ -431,12 +439,29 @@ public sealed class InstallationJourneyTests
                 "--install-dir", config, "--purge"]));
             Assert.False(Directory.Exists(config));
             Assert.False(Directory.Exists(state));
+            Assert.True(File.Exists(Path.Combine(defaultConfig, "unrelated-data")));
         }
         finally
         {
             foreach (var name in names) Environment.SetEnvironmentVariable(name, previous[name]);
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Fact]
+    public void Delegated_install_and_purge_resolve_the_same_custom_configuration_root()
+    {
+        var custom = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "agent-studio-custom-config"));
+        var defaults = InstallPaths.Load();
+        var host = ProductSetup.ResolveDelegatedPaths(
+            new ProductPlan(ProductProfile.Delegated, "agent-host", "native", []), custom);
+        var authority = ProductSetup.ResolveDelegatedPaths(
+            new ProductPlan(ProductProfile.Delegated, "control-plane", "docker", []), custom);
+
+        Assert.Equal(custom, host.HostConfig);
+        Assert.Equal(defaults.OrchestratorConfig, host.OrchestratorConfig);
+        Assert.Equal(custom, authority.OrchestratorConfig);
+        Assert.Equal(defaults.HostConfig, authority.HostConfig);
     }
 
     [Fact]
@@ -553,6 +578,15 @@ public sealed class InstallationJourneyTests
             await File.WriteAllTextAsync(set + ".rehearsal.json",
                 $$"""{"backupId":"backup-1","setSha256":"{{setHash}}","installationId":"inst_original","verified":true,"restoredIntoEmptyTarget":true}""");
             Assert.Equal("inst_original", (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).InstallationId);
+            var pending = source with { Phase = InstallationManifest.PhaseAwaitingAcceptance };
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(pending));
+            await ManifestStore.WriteAsync(destination, pending with { Mode = "control-plane", Journey = "relocate-authority" });
+            Assert.Equal(InstallationManifest.PhaseAwaitingAcceptance,
+                (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).Phase);
+            Assert.Equal(InstallationManifest.PhaseAwaitingAcceptance,
+                RelocationGate.RelocatedManifest(pending, "docker").Phase);
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(source));
+            await ManifestStore.WriteAsync(destination, source with { Mode = "control-plane", Journey = "relocate-authority" });
             var relocated = RelocationGate.RelocatedManifest(source, "docker");
             Assert.Equal(("inst_original", "control-plane", "relocate-authority"),
                 (relocated.InstallationId, relocated.Mode, relocated.Journey));
@@ -649,6 +683,12 @@ public sealed class InstallationJourneyTests
             await ManifestStore.WriteAsync(root, source);
             Assert.Equal(source.InstallationId,
                 (await RelocationGate.VerifyManifestAfterRestoreAsync(source, root)).InstallationId);
+            var pending = source with { Phase = InstallationManifest.PhaseAwaitingAcceptance };
+            await ManifestStore.WriteAsync(root, pending);
+            Assert.Equal(pending.InstallationId,
+                (await RelocationGate.VerifyManifestAfterRestoreAsync(pending, root)).InstallationId);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyManifestAfterRestoreAsync(source, root));
             await ManifestStore.WriteAsync(root, source with { InstallationId = "new-authority" });
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 RelocationGate.VerifyManifestAfterRestoreAsync(source, root));

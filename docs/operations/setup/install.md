@@ -118,6 +118,10 @@ and use `--target native` for a one-box host. The installer stops and disables
 the owned systemd units; an explicit purge also deletes that role's local
 configuration, release tree and state. On a Docker control-plane host, purge
 removes the Compose volumes. The separately mounted off-host backup remains.
+For delegated Linux modes, `--install-dir` selects the configuration root used
+by both install and uninstall. An explicit purge removes that root and the
+role's installed release and state; it does not delete the default
+configuration root when a different root was selected.
 `checkpoints.jsonl` records observed installer checkpoints with host,
 platform, setup version and release provenance. Identity bootstrap,
 authenticated canary and recovery checkpoint are recorded as `not reached`
@@ -137,6 +141,10 @@ restore into an isolated empty target. Keep the canary and recovery receipts
 with the installation id. Service health alone does not certify these steps.
 The I05 identity and project contract, I07 recovery contract, and I09 journey
 proof own the remaining acceptance evidence for fresh Linux and Windows hosts.
+Until those checkpoints are observed, a one-box `installation.json` has phase
+`awaiting-acceptance`. A healthy service does not change it to `complete`.
+Relocation preserves that pending phase, and still requires the verified full
+recovery set; the installed-host canary remains pending after cutover.
 
 `relocate-authority` is the final certification step of the gated migration.
 First drain the source, resolve every attempt, enter Maintenance and create a

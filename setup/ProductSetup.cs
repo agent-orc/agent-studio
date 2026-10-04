@@ -160,9 +160,8 @@ internal static class ProductSetup
         }
         if (plan.Profile == ProductProfile.Delegated)
         {
-            var paths = InstallPaths.Load();
-            var delegatedRoot = Path.GetFullPath(installDirectory ??
-                (plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig));
+            var paths = ResolveDelegatedPaths(plan, installDirectory);
+            var delegatedRoot = plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig;
             var requestedDelegatedVersion = SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion));
             var delegatedVersion = requestedDelegatedVersion ?? ReleaseArtifacts.CurrentVersion();
             if (plan.Mode == "agent-host" && secretFile is not null && !flags.Contains("--dry-run"))
@@ -186,7 +185,7 @@ internal static class ProductSetup
                     flags.Contains("--purge"), InstallationManifest.PhaseUninstalled, "uninstalled");
                 return 0;
             }
-            var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray());
+            var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray(), paths);
             if (delegatedResult == 0)
                 await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"), false,
                     InstallationManifest.PhaseComplete,
@@ -555,7 +554,15 @@ internal static class ProductSetup
             }
             return;
         }
-        var next = manifest with { Phase = phase, UpdatedUtc = DateTime.UtcNow };
+        // Service health is a bootstrap milestone. A one-box installation is
+        // accepted only after the I05, I07 and I09 evidence is verified.
+        var awaitingAcceptance = phase == InstallationManifest.PhaseComplete
+            && manifest.Journey == "one-box" && checkpoint == "services-healthy";
+        var next = manifest with
+        {
+            Phase = awaitingAcceptance ? InstallationManifest.PhaseAwaitingAcceptance : phase,
+            UpdatedUtc = DateTime.UtcNow,
+        };
         await ManifestStore.WriteAsync(root, next);
         if (phase == InstallationManifest.PhaseComplete)
         {
@@ -573,6 +580,7 @@ internal static class ProductSetup
             Console.WriteLine($"Installation id: {next.InstallationId} (recorded in {Path.Combine(root, InstallationManifest.FileName)})");
             if (next.Journey == "one-box")
             {
+                Console.WriteLine("Installation state: awaiting acceptance; service health is verified.");
                 Console.WriteLine("Next: bootstrap the first human session, register the canonical project origin, and enrol the first runner with finite coding and review budgets.");
                 Console.WriteLine("Acceptance remains pending: run the provider-authenticated coding, review and canonical publication canary, then verify a full backup and rehearse restore into an empty target. Record those receipts against this installation id.");
             }
@@ -635,6 +643,16 @@ internal static class ProductSetup
                 : new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig };
         foreach (var root in roots)
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    internal static InstallPaths ResolveDelegatedPaths(ProductPlan plan, string? installDirectory)
+    {
+        var paths = InstallPaths.Load();
+        if (installDirectory is null) return paths;
+        var configRoot = Path.GetFullPath(installDirectory);
+        return plan.Mode == "agent-host"
+            ? paths with { HostConfig = configRoot }
+            : paths with { OrchestratorConfig = configRoot };
     }
 
     private static string NewInstallationId() => $"inst_{Guid.NewGuid():N}";

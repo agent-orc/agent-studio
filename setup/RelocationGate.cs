@@ -28,10 +28,10 @@ internal static class RelocationGate
         var restored = await ManifestStore.ReadAsync(destinationRoot)
             ?? throw new InvalidOperationException(
                 "No restored installation manifest exists at the destination. Restore into an empty target first; a new install would create another authority.");
-        if (source.Phase != InstallationManifest.PhaseComplete
+        if (source.Phase is not (InstallationManifest.PhaseComplete or InstallationManifest.PhaseAwaitingAcceptance)
             || source.InstallationId != restored.InstallationId
             || source.ReleaseVersion != restored.ReleaseVersion
-            || restored.Phase != InstallationManifest.PhaseComplete
+            || restored.Phase != source.Phase
             || !source.Principals.Order(StringComparer.Ordinal).SequenceEqual(
                 restored.Principals.Order(StringComparer.Ordinal), StringComparer.Ordinal)
             || source.ProjectOrigin != restored.ProjectOrigin)
@@ -148,7 +148,7 @@ internal static class RelocationGate
             ?? throw new InvalidDataException("Restored installation manifest is missing after authority restore.");
         if (source.InstallationId != restored.InstallationId
             || source.ReleaseVersion != restored.ReleaseVersion
-            || restored.Phase != InstallationManifest.PhaseComplete
+            || restored.Phase != source.Phase
             || !source.Principals.Order(StringComparer.Ordinal).SequenceEqual(
                 restored.Principals.Order(StringComparer.Ordinal), StringComparer.Ordinal)
             || source.ProjectOrigin != restored.ProjectOrigin)

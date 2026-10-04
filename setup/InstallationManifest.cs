@@ -31,6 +31,7 @@ internal sealed record InstallationManifest(
     public const string PhaseInstalling = "installing";
     public const string PhaseUpdating = "updating";
     public const string PhaseComplete = "complete";
+    public const string PhaseAwaitingAcceptance = "awaiting-acceptance";
     public const string PhaseUninstalled = "uninstalled";
 }
 
