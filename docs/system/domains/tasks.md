@@ -1087,6 +1087,10 @@ path.
   start a second one; it marks exactly one rerun for after the current run
   finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
   repositories index at once process-wide.
+- **Origin reads are bounded per integration lookup.** Delivered cards in one
+  lookup share one effective origin read per checkout root, including a missing
+  origin. The next lookup reads Git configuration again, so origin changes and
+  external includes remain visible without a persistent TTL cache.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;
