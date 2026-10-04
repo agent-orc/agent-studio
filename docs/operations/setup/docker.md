@@ -57,11 +57,15 @@ and credential mount paths belong in `.env`; Compose service values take
 precedence over `runner.env`. No unused `runner.token` is created.
 
 A one-shot `bootstrap` service creates four independent random 256-bit bearer
-values in the `agent-studio_secrets` named volume. It sets each file to mode
-`0600` and ownership to service uid 10001. The Task Server reads the files to
-create Studio, Engine, coding Runner, and review Runner principals on an empty store. Other services
-read the same files through read-only mounts. Subsequent `up` runs leave the
-files untouched. Rotate a principal with the included host-manager command:
+values in separate subdirectories of the `agent-studio_secrets` named volume.
+It sets each file to mode `0600` and ownership to service uid 10001. The Task
+Server reads the four files to create Studio, Engine, coding Runner, and review
+Runner principals on an empty store. Engine, Studio BFF/API, and each runner
+role mount only their own subdirectory read-only. Bootstrap migrates existing
+root-level files into those directories without changing their values and
+keeps compatibility links inside the bootstrap volume. Subsequent `up` runs
+leave the files untouched. Rotate a principal with the included host-manager
+command:
 
 ```sh
 scripts/compose-rotate.sh runner --dev
@@ -78,17 +82,23 @@ or requires pasting a bearer value. Do not edit or remove individual files
 from the volume. `docker compose down` retains the volume; `down --volumes`
 deletes it and all installation data.
 
-The included coding and review hosts register without a Git remote or CLI login. To run
-coding tasks, set `RUNNER_GIT_REMOTE` and `RUNNER_GIT_PUSH_REMOTE` in `.env`.
-Mount your provider credentials using `RUNNER_CLAUDE_CREDENTIALS_DIR`,
-`RUNNER_CODEX_CREDENTIALS_DIR`, or `RUNNER_GEMINI_CREDENTIALS_DIR`; each maps to
-the corresponding directory under `/home/runner`. For Git over SSH, use
-`RUNNER_SSH_CREDENTIALS_DIR`; for HTTPS credential-store, use
+The included coding and review hosts register without a Git remote or CLI
+login. To run coding tasks, set `RUNNER_GIT_REMOTE` and
+`RUNNER_GIT_PUSH_REMOTE` in `.env`. Each role defaults to its own writable
+native CLI login volumes under `/home/runner`, with service uid 10001 and a
+`0700` root. `runner.env` remains the provider environment source if selected.
+Task Server does not mount either provider source. For an operator-managed
+host bind, set `RUNNER_CLAUDE_CREDENTIALS_DIR`,
+`RUNNER_CODEX_CREDENTIALS_DIR`, or `RUNNER_GEMINI_CREDENTIALS_DIR` for Coding.
+Use the corresponding `REVIEW_RUNNER_` variables for Review. Each role's
+override is independent. For Git over SSH, use the role's
+`RUNNER_SSH_CREDENTIALS_DIR`; for HTTPS credential-store, use the role's
 `RUNNER_GIT_CREDENTIALS_FILE`. These host paths remain outside images and the
 store. On Docker Desktop, use absolute host paths shared with the Linux VM.
 Windows paths pass through WSL2's file sharing and can have different ownership
 semantics from named Linux volumes. Keep the default named volumes for the
-store, backup, secrets, and runner workspaces on all hosts.
+store, backup, principal secrets, runner workspaces, and native CLI stores on
+all hosts.
 On Linux, make mounted provider directories readable and writable by container
 uid 10001 so the CLIs can refresh their own session files. Keep Git credential
 mounts outside the repository build context.
