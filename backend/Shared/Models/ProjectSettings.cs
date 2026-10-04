@@ -38,6 +38,13 @@ public record ProjectSettings
     public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
 
     /// <summary>
+    /// AGT-3011: operator sweeps (<c>fix-rounds</c>, <c>gate-triage</c>,
+    /// <c>salvage</c>) an operator paused for this project. Persisted so a pause
+    /// survives a backend restart. Null or empty means every sweep runs.
+    /// </summary>
+    public IReadOnlyList<OperatorSweepPause>? OperatorSweepPauses { get; init; }
+
+    /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
     /// <see cref="AutoPushStrategies.AlwaysImmediate"/> so every platform-owned
     /// commit is made durable on origin without waiting for lane transitions.
@@ -1175,3 +1182,13 @@ public sealed record BranchSweepSettings
     /// </summary>
     public int? AbandonedRetentionDays { get; init; }
 }
+
+/// <param name="Sweep">One of the operator sweep ids.</param>
+/// <param name="PausedAtUtc">When the operator paused it.</param>
+/// <param name="PausedBy">Operator identity from the request, or <c>operator</c>.</param>
+/// <param name="Reason">Optional operator note shown next to the paused sweep.</param>
+public sealed record OperatorSweepPause(
+    string Sweep,
+    DateTime PausedAtUtc,
+    string PausedBy,
+    string? Reason = null);
