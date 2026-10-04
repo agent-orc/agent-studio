@@ -36,6 +36,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     private const string Slug = "remote-delivery";
     private const string TaskKey = "AGT-2227";
     private const string DeliveryRef = "runner/agent-runner-01/AGT-2227";
+    // Exact-tree evidence is independent of wall-clock recency in these fixtures.
+    private static readonly DateTime VerificationFixtureAtUtc = DateTime.UnixEpoch.AddDays(1);
 
     private readonly string _tempDir;
     private readonly string _watchPath;
@@ -2024,7 +2026,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 {
                     Id = "gate-verified-" + deliverySha[..8],
                     Classification = IntegrationRecordClasses.IntegratedVerified,
-                    RecordedAtUtc = DateTime.UtcNow,
+                    RecordedAtUtc = VerificationFixtureAtUtc,
                     IntegrationBranch = "develop",
                     IntegrationSha = deliverySha,
                     Evidence = "The pre-develop gate passed on this exact tree.",
@@ -2054,8 +2056,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             StepId = PipelineCatalogue.MergeIntoDevelopStepId,
             Kind = StepKind.Tool,
             Status = PipelineStepStatus.Passed,
-            StartedAt = DateTime.UtcNow.AddSeconds(-1),
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = VerificationFixtureAtUtc,
+            CompletedAt = VerificationFixtureAtUtc.AddSeconds(1),
             Verdict = "already-merged",
             Reason = "Task branch already contained in develop; no merge needed.",
         });

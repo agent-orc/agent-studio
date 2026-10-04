@@ -204,6 +204,36 @@ public sealed class IntegrationVerificationPolicyTests
     }
 
     [Fact]
+    public void Projection_StaleFileForTreeA_DoesNotMaskVerifiedIntegrationRecordForTreeB()
+    {
+        var treeB = "abcdef0123456789abcdef0123456789abcdef01";
+        var record = new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = Sha,
+            IntegrationBranch = "develop",
+            Evidence = IntegrationVerificationEvidence.GateRun,
+        };
+        var integrationRecords = new[]
+        {
+            new TaskIntegrationRecord
+            {
+                Classification = IntegrationRecordClasses.IntegratedVerified,
+                IntegrationSha = treeB,
+                IntegrationBranch = "develop",
+            },
+        };
+
+        var projected = IntegrationVerificationProjection.Resolve(
+            record, null, integrationRecords, treeB, "develop");
+
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Equal(treeB, projected.Sha);
+        Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, projected.Evidence);
+        Assert.True(IntegrationVerificationStates.PermitsCompletion(projected));
+    }
+
+    [Fact]
     public void Projection_PreDevelopVerificationForSameTree_DoesNotVerifyMain()
     {
         var record = new IntegrationVerificationRecord
@@ -296,7 +326,7 @@ public sealed class IntegrationVerificationPolicyTests
             TaskType = TaskTypes.Chore,
         };
         var options = new AcceptanceRailOptions(true, TimeSpan.FromMinutes(3), 2, 3, new HashSet<string>());
-        var now = new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
+        var now = DateTimeOffset.UnixEpoch;
         var integration = new TaskIntegrationStatus { Status = status, IntegrationBranch = "develop" };
 
         var unverified = AcceptanceRailPolicy.Decide(

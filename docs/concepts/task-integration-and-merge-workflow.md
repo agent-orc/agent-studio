@@ -452,8 +452,10 @@ guarded it, and the lane records that too.
 
 **Who else asks.** The accepted-integration backstop finalizes a merged card only
 when its verification is `integrated-verified` for the current integration SHA.
-A missing record, a stale record for an older SHA, and a historical Passed merge
-step without exact-tree evidence all fail closed as `integrated-unverified`.
+Without other exact-tree evidence, a missing or stale verification file and a
+historical Passed merge step fail closed as `integrated-unverified`.
+A stale verification file does not hide an `integrated-verified` integration
+record that names the current SHA and branch.
 An unverified card goes back through
 the merge runner, which applies the rule above; once a gate has failed on that
 tree, the backstop returns the card to Human Review instead of running it

@@ -16,16 +16,11 @@ public static class IntegrationVerificationProjection
         if (string.IsNullOrWhiteSpace(currentIntegrationSha))
             return Unverified(null, "The current integration tree SHA is unavailable; gate evidence cannot be matched.");
 
-        if (record is not null)
+        if (record is not null
+            && string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
+            && SameBranch(record.IntegrationBranch, currentIntegrationBranch))
         {
-            if (string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
-                && SameBranch(record.IntegrationBranch, currentIntegrationBranch))
-                return record.ToProjection();
-
-            return Unverified(currentIntegrationSha,
-                $"The current integration tree {currentIntegrationSha} on {currentIntegrationBranch} differs from "
-                + $"the recorded verification tree {record.Sha ?? "unknown"} on "
-                + $"{record.IntegrationBranch}; the current branch has no matching gate evidence.");
+            return record.ToProjection();
         }
 
         if (NamesVerifiedTree(integrationRecords, currentIntegrationSha, currentIntegrationBranch))
@@ -36,6 +31,12 @@ public static class IntegrationVerificationProjection
                 Evidence = IntegrationVerificationEvidence.IntegrationRecord,
                 Reason = "An integrated-verified integration record names this exact tree.",
             };
+
+        if (record is not null)
+            return Unverified(currentIntegrationSha,
+                $"The current integration tree {currentIntegrationSha} on {currentIntegrationBranch} differs from "
+                + $"the recorded verification tree {record.Sha ?? "unknown"} on "
+                + $"{record.IntegrationBranch}; the current branch has no matching gate evidence.");
 
         var outcome = lastMerge?.Verdict;
         return Unverified(currentIntegrationSha,
