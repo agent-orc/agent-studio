@@ -674,10 +674,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush(coreFor(info, 'Agent Studio'));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
 
@@ -690,12 +690,12 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selectedCore()?.coreVersion).toBe('2');
     expect(selection.selected()?.info.title).toBe('New generation');
     expect(selection.detailPreview()).toBeNull();
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     const documents = http.match(req => req.url.endsWith('/details/documents'));
     expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
     for (const request of documents)
       request.flush(documentReply(info, request.request.params.get('name')!, '2'));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
   });
@@ -704,10 +704,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush(coreFor(info, 'Agent Studio'));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
@@ -717,10 +717,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectNone(req => req.url.endsWith('/details/usage'));
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!, '2'));
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
   });
@@ -732,7 +732,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     selection.openDetail(info);
     const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
     expect(selection.selectedCore()?.coreVersion).toBe('1');
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!));
     expect(selection.detailPreview()).toBeNull();
@@ -748,14 +748,40 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.detailPreview()).toBeNull();
     expect(selection.selected()?.info.title).toBe('Renamed task');
     expect(selection.selectedCore()?.coreVersion).toBe('2');
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
     const reload = http.match(req => req.url.endsWith('/details/documents'));
     expect(reload.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
     for (const request of reload) request.flush(documentReply(info, request.request.params.get('name')!, '2'));
     expect(selection.detailPreview()).toBeNull();
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
-    await afterPaint();
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('keeps the rich task and its editing state while a cached core revalidation warms', async () => {
+    const prefetch = TestBed.inject(TaskDetailPrefetchService);
+    prefetch.storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    await paintRich(info);
+    const rich = selection.selected();
+    expect(rich?.promptMarkdown).toBe('prompt markdown');
+    revalidation.flush({ state: 'warming', reason: 'task-index-warming' },
+      { status: 202, statusText: 'Accepted' });
+
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.selected()).toBe(rich);
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.detailLoading()).toBe(false);
+
+    await new Promise(resolve => setTimeout(resolve, 650));
+    const retry = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(selection.selected()).toBe(rich);
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()).toBeNull();
+    retry.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '1' });
+    expect(selection.selected()).toBe(rich);
   });
 });

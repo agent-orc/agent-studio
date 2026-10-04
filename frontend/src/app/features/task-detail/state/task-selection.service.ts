@@ -452,33 +452,40 @@ export class TaskSelectionService {
     };
     const cached = this.prefetch.takeCore(info.id, project);
     if (cached) accept(cached);
-    const request = this.jobService.getCore(info.id, project).pipe(
-      timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
-    ).subscribe({
-      next: core => {
-        if (token !== this.openDetailToken) return;
-        if (core.state === 'warming') {
-          this.detailLoading.set(true);
-          setTimeout(() => {
-            if (token === this.openDetailToken) this.startCore(info, project, token, retry, opts);
-          }, TaskSelectionService.WARMING_RETRY_MS);
-          return;
-        }
-        if (!cached || cached.coreVersion !== core.coreVersion || cached.runtimeVersion !== core.runtimeVersion)
-          accept(core);
-      },
-      error: error => {
-        if (token !== this.openDetailToken || cached) return;
-        if (opts.onNotFound && httpStatus(error) === 404) {
-          opts.onNotFound();
-          return;
-        }
-        if (this.revokeSelection(error, info.id)) return;
-        this.detailLoading.set(false);
-        this.failDetailLoad(error, info.key || info.id, retry);
-      },
-    });
-    this.activeRequests.push(request);
+    const fetchCore = () => {
+      const request = this.jobService.getCore(info.id, project).pipe(
+        timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
+      ).subscribe({
+        next: core => {
+          if (token !== this.openDetailToken) return;
+          if (core.state === 'warming') {
+            // A cached core may already own the rich view and local edits.
+            // Retry only the read, without resetting the painted selection.
+            if (!this.selectedCore()) this.detailLoading.set(true);
+            setTimeout(() => {
+              if (token === this.openDetailToken) fetchCore();
+            }, TaskSelectionService.WARMING_RETRY_MS);
+            return;
+          }
+          if (!cached || cached.coreVersion !== core.coreVersion || cached.runtimeVersion !== core.runtimeVersion)
+            accept(core);
+        },
+        error: error => {
+          if (token !== this.openDetailToken || this.selectedCore()) return;
+          if (opts.onNotFound && httpStatus(error) === 404) {
+            opts.onNotFound();
+            return;
+          }
+          if (this.revokeSelection(error, info.id)) return;
+          this.detailLoading.set(false);
+          this.failDetailLoad(error, info.key || info.id, retry);
+        },
+      });
+      // A long index warm-up can require many retries; retain only live reads.
+      this.activeRequests = this.activeRequests.filter(active => !active.closed);
+      this.activeRequests.push(request);
+    };
+    fetchCore();
   }
 
   private acceptCore(core: TaskCore, info: TaskInfo, project: string, token: number,

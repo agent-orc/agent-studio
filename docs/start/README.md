@@ -194,6 +194,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
 | Execution hosts operator lifecycle | [operations/remote-hosts.md](../operations/remote-hosts.md) |
+| Review lane runbook: capabilities a Review Executor registers, the typed empty-claim reason (`unclaimable-plan-requirements`), and the `lane-drain-stalled` review-claim alarm (AGT-2987) | [operations/review-lane-runbook.md](../operations/review-lane-runbook.md) |
 | Remote runner persistent connection (tunnel-as-a-service + health-check) | [operations/setup/remote-runner-persistent-connection.md](../operations/setup/remote-runner-persistent-connection.md) |
 | Runner link as part of the application (dossier: link ownership, LinkSupervisor design, tunnel retirement with the remote Task Server) | [operations/runner-link/](../operations/runner-link/index.html) |
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |

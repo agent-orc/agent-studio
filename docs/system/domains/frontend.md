@@ -209,8 +209,11 @@ without a parallel surface.
   registered storage location, or a registry still loading after 3 s) is
   resolved server-side through the legacy detail route instead of failing.
   A revalidated core generation refreshes an already painted rich pane in
-  place, and the expanded history or review tab reloads with it. The feature README records the client flow and compatibility
-  boundary; the backend contract of `/details/*` lives in the
+  place, and the expanded history or review tab reloads with it. If core
+  revalidation finds the index warming, only the read retries: the selected
+  core and rich pane, including local editing state, stay painted. The feature
+  README records the client flow and compatibility boundary; the backend contract
+  of `/details/*` lives in the
   [Tasks domain](tasks.md#task-detail-resources-agt-2955).
   Pending crash recovery remains visible through a persistent review control;
   its dialog opens only on operator request, and closing it leaves the durable

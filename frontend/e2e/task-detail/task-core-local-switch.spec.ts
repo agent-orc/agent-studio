@@ -12,7 +12,7 @@ test.describe.configure({ timeout: 900_000 });
 /**
  * Local end-to-end evidence for the progressive task switch (AGT-2955).
  *
- * Unlike `task-detail-instant-navigation.spec.ts`, nothing here is mocked:
+ * Unlike `task-detail-instant-navigation.spec.ts`, task API reads are real:
  * the dev frontend proxies to the worktree's own backend started by the
  * `dev-backend` fixture, so every number includes the real transport, the
  * real `/core` and `/details/*` handlers, and the browser render. The same
@@ -152,7 +152,7 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     const coreRead = summary(reads.core);
     const legacyRead = summary(reads.legacy);
     const report = {
-      environment: 'shared Linux runner, headless Chromium, ng serve proxy to the worktree dev backend on :5030; real transport, no API mocks',
+      environment: 'shared Linux runner, headless Chromium, ng serve proxy to the worktree dev backend on :5030; real task API transport',
       fixture: 'two human-review tasks with a 220 KB prompt in the fixture workspace; not the production-shaped snapshot of the dossier baseline',
       coldOpenMs: Math.round(coldOpenMs * 10) / 10,
       coldOpenFirstView: firstView,
