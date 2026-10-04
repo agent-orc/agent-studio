@@ -1,4 +1,5 @@
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace TaskServer.Tests;
 
@@ -29,14 +30,5 @@ public sealed class RemoteReviewArchitectureTests
     }
 
     private static string FindRepositoryRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "agent-taskboard.sln")))
-                return current.FullName;
-            current = current.Parent;
-        }
-        throw new DirectoryNotFoundException("Repository root was not found.");
-    }
+        => RepositoryRoot.Find();
 }
