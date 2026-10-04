@@ -218,6 +218,8 @@ public sealed record PipelineExecutionRecord
 
 public sealed record PipelineStepExecution
 {
+    /// <summary>Exact integration commit released by this merge step for a deferred push.</summary>
+    public string? ApprovedIntegrationSha { get; init; }
     /// <summary>Executed gate or reused verdict; null for other steps and legacy rows.</summary>
     public AgentStudio.Pipeline.GateVerdictSource? GateVerdictSource { get; init; }
     /// <summary>Original gate evidence, even when this step used the cache.</summary>

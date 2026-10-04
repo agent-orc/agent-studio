@@ -219,6 +219,7 @@ public sealed class MergeIntoDevelopRunner
                     unresolved,
                     preMainResult: null,
                     preDevelopResult: null,
+                    approvedPushSha: null,
                     startedAt);
                 await MaybeRaiseInterventionAsync(project, jobId, watchPath, unresolved,
                     null, null, startedAt, ct).ConfigureAwait(false);
@@ -245,6 +246,7 @@ public sealed class MergeIntoDevelopRunner
                     stale,
                     preMainResult: null,
                     preDevelopResult: null,
+                    approvedPushSha: null,
                     startedAt);
                 await MaybeRaiseInterventionAsync(project, jobId, watchPath, stale,
                     null, null, startedAt, ct).ConfigureAwait(false);
@@ -275,6 +277,7 @@ public sealed class MergeIntoDevelopRunner
                     unavailable,
                     preMainResult: null,
                     preDevelopResult: null,
+                    approvedPushSha: null,
                     startedAt);
                 await MaybeRaiseInterventionAsync(project, jobId, watchPath, unavailable,
                     null, null, startedAt, ct).ConfigureAwait(false);
@@ -487,7 +490,7 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogInformation(
                 "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
                 project, jobId, taskBranch, branch, strategy, result.Outcome);
-            Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
+            Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, approvedPushSha, startedAt);
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             if (!supersededCleanly)
@@ -531,6 +534,7 @@ public sealed class MergeIntoDevelopRunner
                     errored,
                     preMainResult: null,
                     preDevelopResult: null,
+                    approvedPushSha: null,
                     startedAt);
                 await MaybeRaiseInterventionAsync(project, jobId, watchPath, errored,
                     null, null, startedAt, ct).ConfigureAwait(false);
@@ -1499,8 +1503,8 @@ public sealed class MergeIntoDevelopRunner
     /// <paramref name="approvedSha"/> is the merge result the gate released. It is
     /// what gets pushed, so nothing that landed on the integration branch after
     /// the approval rides along. Omitting it keeps the historical branch-tip push
-    /// and is reserved for callers that have no approval record (the durable
-    /// restart backstop).
+    /// only for legacy fixture callers; the durable restart backstop reads the
+    /// exact approval from the passed merge step.
     /// </para>
     /// </summary>
     public async Task<GitPushResult> PushIntegrationBranchAsync(
@@ -1838,6 +1842,7 @@ public sealed class MergeIntoDevelopRunner
         MergeIntoIntegrationResult result,
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult,
+        string? approvedPushSha,
         DateTime startedAt)
     {
         // Record into the existing run when one is present (the deferred merge
@@ -1861,6 +1866,7 @@ public sealed class MergeIntoDevelopRunner
         _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
         {
             StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            ApprovedIntegrationSha = status == PipelineStepStatus.Passed ? approvedPushSha : null,
             Kind = StepKind.Tool,
             Status = status,
             StartedAt = startedAt,

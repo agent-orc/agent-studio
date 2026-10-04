@@ -1519,21 +1519,50 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var archived = deps.States.MoveJob(Slug, TaskStates.Archive, _watchPath);
         Assert.Equal(MoveJobStatus.Success, archived.Status);
 
-        // Simulate a fresh backend process: the in-memory IntegrationPushQueue
-        // is gone, but pipeline-execution.json still proves merge=Passed and
-        // push=Pending. The startup backstop must re-drive the push.
+        var archivedFolder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        var mergeStep = deps.Pipeline.Read(archivedFolder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+        Assert.Equal(localDevelop, mergeStep.ApprovedIntegrationSha);
+
+        // A legacy or torn record with no exact approval cannot authorize the
+        // backstop to publish whatever happens to be at the lane tip.
+        deps.Pipeline.RecordStep(archivedFolder, mergeStep with { ApprovedIntegrationSha = null });
+        var recoveredPipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         var backstop = new IntegrationPushBackstopHostedService(
             deps.Scanner,
             deps.Settings,
-            deps.Pipeline,
+            recoveredPipeline,
             deps.Merge,
             deps.Configuration,
             NullLogger<IntegrationPushBackstopHostedService>.Instance);
+        Assert.Equal(0, await backstop.RunOnceAsync());
+        Assert.Equal(remoteBefore, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
+        deps.Pipeline.RecordStep(archivedFolder, mergeStep);
+
+        // A later, unverified lane commit must not ride along with the earlier
+        // card's approval, even when the backstop sees no in-memory busy gate.
+        RunGit(_repo, "checkout", "-q", "-b", "unverified-tip", localDevelop);
+        File.WriteAllText(Path.Combine(_repo, "unverified.txt"), "not gated\n");
+        RunGit(_repo, "add", "unverified.txt");
+        RunGit(_repo, "commit", "-q", "-m", "test: unverified lane tip");
+        var unverifiedSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), unverifiedSha);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "unverified-tip");
+
+        // Simulate a fresh backend process: the in-memory IntegrationPushQueue
+        // is gone, but pipeline-execution.json still proves merge=Passed and
+        // push=Pending. The startup backstop must re-drive the push.
         var recovered = await backstop.RunOnceAsync();
 
         Assert.Equal(1, recovered);
         var remoteAfter = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
         Assert.Equal(localDevelop, remoteAfter);
+        Assert.NotEqual(unverifiedSha, remoteAfter);
+        var pushStep = recoveredPipeline.Read(archivedFolder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
+        Assert.Equal(PipelineStepStatus.Passed, pushStep.Status);
+        Assert.Equal("pushed", pushStep.Verdict);
     }
 
     [Fact]
