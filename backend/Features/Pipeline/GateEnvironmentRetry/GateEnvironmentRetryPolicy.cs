@@ -171,6 +171,10 @@ public static class GateEnvironmentRetryPolicy
     /// <param name="lastAttemptAt">Instant of the last retry, or null when there was none.</param>
     /// <param name="failedAt">Instant the gate-environment failure was recorded.</param>
     /// <param name="now">Evaluation instant.</param>
+    /// <param name="integrationInFlight">
+    /// A merge for this card holds the in-flight gate journal
+    /// (<see cref="IntegrationGateJournal"/>), so its verdict is not settled yet.
+    /// </param>
     public static GateEnvironmentRetryDecision Decide(
         TaskInfo task,
         TaskIntegrationStatus? integration,
@@ -179,7 +183,8 @@ public static class GateEnvironmentRetryPolicy
         DateTimeOffset? lastAttemptAt,
         DateTimeOffset? failedAt,
         GateEnvironmentRetryOptions options,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool integrationInFlight = false)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(options);
@@ -194,8 +199,14 @@ public static class GateEnvironmentRetryPolicy
         // An acceptance transaction is already driving this card's merge, and
         // AcceptedIntegrationBackstopHostedService re-drives it after a restart.
         // Two owners would run two merges and spend a rung on someone else's
-        // attempt.
-        if (string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal))
+        // attempt. AGT-3009: an Auto Review card in the integrating phase is
+        // different. Its delivery merge already failed, and the guarded delivery
+        // chain leaves it there for the gate-failure router instead of parking
+        // it. Nobody else re-drives it, so only a merge that is actually running
+        // (the in-flight gate journal) holds the ladder back.
+        if (integrationInFlight
+            || (string.Equals(task.Phase, LifecyclePhases.Integrating, StringComparison.Ordinal)
+                && task.State != TaskStates.AutoReview))
             return Ignore(GateEnvironmentRetryReasons.AcceptanceIntegrationInFlight, spent, options);
         if (!IsGateEnvironmentFailure(integration))
             return Ignore(GateEnvironmentRetryReasons.NotAGateEnvironmentFailure, spent, options);

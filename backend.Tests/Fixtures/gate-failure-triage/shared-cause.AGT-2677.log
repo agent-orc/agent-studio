@@ -1,0 +1,504 @@
+verdict=Fail exit=1 durationMs=1250108
+expectedSha=9f5e692a74406cdb123ad14ad97da77ce6879d8a testedSha=9f5e692a74406cdb123ad14ad97da77ce6879d8a
+reason=`dotnet test "backend.Tests/OrchestratorApi.Tests.csproj" --filter Category!=MachineBound` exit 1; output: stderr: [xUnit.net 00:03:04.58] AgentStudio.Tests.BatchMoveJobTests.Endpoint_ReportsProgress_ContinuesAfterItemFailure_AndDoesNotBlockReviewRead [FAIL] | stdout: ... [xUnit.net 00:19:15.06] AgentStudio.Tests.CliResumeContractTests.Resume_AgainstDeadSession_FailsCleanly_DoesNotHang [SKIP] [xUnit.net 00:19:15.07] AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCarDriver_StreamsPastInit [SKIP] [xUnit.net 00:19:15.08] AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCliService_StartAsync_StreamsPastInit [SKIP] Skipped AgentStudio.Tests.CliResumeContractTests.FreshStart_ThenResume_DeliversInitFramesOnBoth [1 ms] Skipped AgentStudio.Tests.CliResumeContractTests.Resume_AgainstDeadSession_FailsCleanly_DoesNotHang [1 ms] Skipped AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCarDriver_StreamsPastInit [1 ms] Skipped AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCliService_StartAsync_StreamsPastInit [1 ms] Failed! - Failed: 1, Passed: 5598, Skipped: 27, Total: 5626, Duration: 19 m 10 s - OrchestratorApi.Tests.dll (net10.0); test-level=work-package; selected=2; full-suite=not-run; omitted=1
+budget=none
+--- dependency-cache.json ---
+[
+  {
+    "WorkingSubdir": "frontend",
+    "State": "hit",
+    "Reason": "lock-unchanged",
+    "LockHash": "aba950aef86b4c2c03e53f78a171952b2ccdd6270358c92ab718fbc7e5435be1",
+    "Lockfiles": [
+      "package-lock.json"
+    ],
+    "InstallRan": false
+  }
+]
+--- test-selection.json ---
+{
+  "Level": "work-package",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "backend.Tests/BuildProfileOnboardingTests.cs",
+    "backend.Tests/ProjectSettingsServiceTests.cs",
+    "backend.Tests/RemoteQueueStarvationPolicyTests.cs",
+    "backend.Tests/RemoteRunnerEndToEndTests.cs",
+    "backend.Tests/VerifyCommandPlannerTests.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Projects/ProjectSettingsService.cs",
+    "backend/Features/Runner/BuildProfileGate.cs",
+    "backend/Features/Runner/BuildProfileValidationService.cs",
+    "backend/Features/Runner/ProjectRunner.cs",
+    "backend/Features/Runner/RemoteQueueStarvationWatchdog.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Features/Tasks/LeaseEndpoints.cs",
+    "backend/Features/Tasks/RemoteDispatchEligibility.cs",
+    "backend/Shared/Models/ProjectSettings.cs",
+    "backend/Shared/Models/TaskRequests.cs",
+    "contracts/TaskServer.Contracts/ReviewContracts.cs",
+    "docs/operations/setup/onboard-a-project.md",
+    "docs/system/domains/runner.md",
+    "frontend/e2e/board/execution-location-badge.spec.ts",
+    "frontend/src/app/features/shell/components/remote-queue-starvation-banner/remote-queue-starvation-banner.html",
+    "frontend/src/app/features/shell/components/remote-queue-starvation-banner/remote-queue-starvation-banner.spec.ts",
+    "frontend/src/app/features/shell/components/remote-queue-starvation-banner/remote-queue-starvation-banner.ts"
+  ],
+  "HistoryInput": [],
+  "Candidates": [
+    {
+      "Id": "test-79d55191acdd",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022backend.Tests/OrchestratorApi.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": [
+        "diff touches this test project or a referenced production project"
+      ]
+    },
+    {
+      "Id": "test-7c70c1c60e31",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022demo-replay-runner.Tests/DemoReplayRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-7752045b73d6",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-f2d03e18b3ab",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022runner.Tests/AgentRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-9962dc073fa3",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022setup.Tests/AgentOrchestratorSetup.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-3cf1cd39e64f",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022task-server.Tests/TaskServer.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-29aece91168a",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022testsupport/AgentStudio.TestSupport.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-085de4f98fe1",
+      "Command": {
+        "Ecosystem": 2,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test --filter Category!=MachineBound --nologo",
+        "Shell": 1,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-331dd074adf9",
+      "Command": {
+        "Ecosystem": 1,
+        "Kind": 1,
+        "WorkingSubdir": "frontend",
+        "Command": "npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/shell/components/remote-queue-starvation-banner/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      },
+      "Reasons": [
+        "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      ]
+    }
+  ],
+  "SelectedCandidateIds": [
+    "test-79d55191acdd",
+    "test-331dd074adf9"
+  ],
+  "SelectedCommands": [
+    "dotnet test \u0022backend.Tests/OrchestratorApi.Tests.csproj\u0022 --filter Category!=MachineBound",
+    "(frontend) npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/shell/components/remote-queue-starvation-banner/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022"
+  ],
+  "OmittedTestCommands": [
+    "dotnet test --filter Category!=MachineBound --nologo"
+  ],
+  "Reasons": [
+    "continuous baseline not configured"
+  ],
+  "Selector": "deterministic",
+  "SelectorModel": null,
+  "AdvisorReason": null,
+  "FullSuiteRequired": false,
+  "FullSuiteRan": false
+}
+--- last-300-lines ---
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\update-service\UpdateService.csproj (in 275 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\setup\AgentOrchestratorSetup.csproj (in 188 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\demo-replay-runner\DemoReplayRunner.csproj (in 174 ms).
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\demo-replay-runner.Tests\DemoReplayRunner.Tests.csproj (in 353 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\setup.Tests\AgentOrchestratorSetup.Tests.csproj (in 802 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner\AgentRunner.csproj (in 756 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\task-server\TaskServer.csproj (in 792 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\testsupport\AgentStudio.TestSupport.csproj (in 817 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\orchestrator-engine.Tests\OrchestratorEngine.Tests.csproj (in 721 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\AgentRunner.Tests.csproj (in 734 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\task-server.Tests\TaskServer.Tests.csproj (in 959 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\tools\SilentCatchAnalyzer\SilentCatchAnalyzer.csproj (in 928 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj (in 958 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj (in 493 ms).
+# dependency preparation: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\frontend
+# dependency-cache hit scope=frontend reason=lock-unchanged lockHash=aba950aef86b4c2c03e53f78a171952b2ccdd6270358c92ab718fbc7e5435be1
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765
+> C:\Program Files\Git\bin\bash.exe -lc dotnet build
+[stdout]   Determining projects to restore...
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout]   All projects are up-to-date for restore.
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout]   TaskServer.Contracts -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\contracts\TaskServer.Contracts\bin\Debug\net10.0\TaskServer.Contracts.dll
+[stdout]   AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll
+[stdout]   SilentCatchAnalyzer -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\tools\SilentCatchAnalyzer\bin\Debug\netstandard2.0\SilentCatchAnalyzer.dll
+[stdout]   UpdateService -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\update-service\bin\Debug\net10.0\UpdateService.dll
+[stdout]   AgentStudio.TestSupport -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\testsupport\bin\Debug\net10.0\AgentStudio.TestSupport.dll
+[stdout]   AgentOrchestratorSetup -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\setup\bin\Debug\net10.0\agent-orchestrator-setup.dll
+[stdout]   OrchestratorEngine -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\orchestrator-engine\bin\Debug\net10.0\orchestrator-engine.dll
+[stdout]   StudioBff -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\studio-bff\bin\Debug\net10.0\agent-studio-bff.dll
+[stdout]   AgentOrchestratorSetup.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\setup.Tests\bin\Debug\net10.0\AgentOrchestratorSetup.Tests.dll
+[stdout]   DemoReplayRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\demo-replay-runner\bin\Debug\net10.0\demo-replay-runner.dll
+[stdout]   AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner\bin\Debug\net10.0\agent-host.dll
+[stdout]   TaskServer -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\task-server\bin\Debug\net10.0\task-server.dll
+[stdout]   DemoReplayRunner.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\demo-replay-runner.Tests\bin\Debug\net10.0\DemoReplayRunner.Tests.dll
+[stdout]   OrchestratorEngine.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\orchestrator-engine.Tests\bin\Debug\net10.0\OrchestratorEngine.Tests.dll
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\GitWorkspaceTests.cs(155,9): warning CA1416: This call site is reachable on all platforms. 'File.SetUnixFileMode(string, UnixFileMode)' is unsupported on: 'windows'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1416) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\AgentRunner.Tests.csproj]
+[stdout]   AgentRunner.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\bin\Debug\net10.0\AgentRunner.Tests.dll
+[stdout]   TaskServer.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\task-server.Tests\bin\Debug\net10.0\TaskServer.Tests.dll
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliCompletionContracts.cs(84,23): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliContextConventions.cs(44,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(182,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(213,18): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\BuiltInCliBehaviors.cs(1223,19): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Shared\Models\WaitsOn.cs(168,43): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Shared\Models\CliModels.cs(357,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Git\GitService.cs(778,35): warning CS8603: Possible null reference return. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Quota\AntigravityQuotaProbe.cs(16,39): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\SessionRegistry.cs(138,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\SessionRegistry.cs(313,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Host\Program.cs(407,64): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Host\Program.cs(416,60): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Tasks\TaskMutationService.cs(696,60): warning CS8604: Possible null reference argument for parameter 'value' in 'void TaskJsonFile.UpdateField(string jobDir, string fieldName, object value, ILogger logger)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ProjectRunner.cs(2932,55): warning CS8604: Possible null reference argument for parameter 'cliType' in 'Task AgentMessageBusBridge.EmitRunStartedAsync(TaskInfo info, string cliType, DateTime startedAtUtc, string? sessionId, string intent, CancellationToken ct = default(CancellationToken))'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7048,29): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7048,90): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout]   OrchestratorApi -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\bin\Debug\net10.0\OrchestratorApi.dll
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliCompletionContractsTests.cs(43,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodexSilentCompletionDetectorTests.cs(114,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\UpdateVersionTruthTests.cs(29,25): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskRunnerPlanTests.cs(292,31): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(58,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(59,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(60,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(65,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(85,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(90,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(91,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(96,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(120,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(121,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(122,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskRunnerPlanTests.cs(751,31): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(140,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskReferencesTests.cs(430,9): warning CS8603: Possible null reference return. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(26,39): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(73,37): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(109,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(399,35): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(400,82): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(402,35): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(404,47): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(430,82): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(452,60): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(89,25): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(170,33): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(196,31): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(214,32): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(271,32): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(297,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(341,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(386,26): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(556,30): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\DuplicateTaskKeyTests.cs(91,38): warning CS8604: Possible null reference argument for parameter 'jobId' in 'TaskInfo? TaskScannerService.FindJob(string jobId, string? watchPath = null)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\DuplicateTaskKeyTests.cs(107,38): warning CS8604: Possible null reference argument for parameter 'jobId' in 'TaskInfo? TaskScannerService.FindJob(string jobId, string? watchPath = null)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodexDetectedDefaultTests.cs(52,80): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliContextModesTests.cs(66,52): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(62,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(68,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(74,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(388,51): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.ImmediateFinishCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(710,47): warning CS0067: The event 'FakeRunningCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(312,53): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(314,52): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnFinished' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(313,52): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnStarted' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(385,53): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.ImmediateFinishCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(709,48): warning CS0067: The event 'FakeRunningCliService.OnFinished' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(708,48): warning CS0067: The event 'FakeRunningCliService.OnStarted' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(315,51): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(707,49): warning CS0067: The event 'FakeRunningCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\BackendCarProjectPipelineAcceptanceTests.cs(409,9): warning CA1416: This call site is reachable on all platforms. 'File.SetUnixFileMode(string, UnixFileMode)' is unsupported on: 'windows'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1416) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\QuotaAdmissionEventEmissionTests.cs(138,20): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\Projection\ConversationProjectionTests.cs(329,79): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ParkedCardRecallSweepTests.cs(127,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ParkedCardRecallSweepTests.cs(153,9): warning xUnit2029: Do not use Assert.Empty to check if a value does not exist in a collection. Use Assert.DoesNotContain instead. (https://xunit.net/xunit.analyzers/rules/xUnit2029) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\HumanReviewEscalationTests.cs(178,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\HumanReviewEscalationTests.cs(179,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\GitProjectInventoryTests.cs(118,23): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\GitProjectInventoryTests.cs(120,22): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodePatternRuleLoaderTests.cs(35,9): warning xUnit2008: Do not use Assert.True() to match on regular expressions. Use Assert.Matches instead. (https://xunit.net/xunit.analyzers/rules/xUnit2008) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout]   OrchestratorApi.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\bin\Debug\net10.0\OrchestratorApi.Tests.dll
+[stdout] 
+[stdout] Build succeeded.
+[stdout] 
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\agent-taskboard.sln]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\GitWorkspaceTests.cs(155,9): warning CA1416: This call site is reachable on all platforms. 'File.SetUnixFileMode(string, UnixFileMode)' is unsupported on: 'windows'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1416) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner.Tests\AgentRunner.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliCompletionContracts.cs(84,23): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliContextConventions.cs(44,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(182,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(213,18): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\BuiltInCliBehaviors.cs(1223,19): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Shared\Models\WaitsOn.cs(168,43): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Shared\Models\CliModels.cs(357,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Git\GitService.cs(778,35): warning CS8603: Possible null reference return. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Quota\AntigravityQuotaProbe.cs(16,39): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\SessionRegistry.cs(138,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Cli\Execution\SessionRegistry.cs(313,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Host\Program.cs(407,64): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Host\Program.cs(416,60): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Tasks\TaskMutationService.cs(696,60): warning CS8604: Possible null reference argument for parameter 'value' in 'void TaskJsonFile.UpdateField(string jobDir, string fieldName, object value, ILogger logger)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ProjectRunner.cs(2932,55): warning CS8604: Possible null reference argument for parameter 'cliType' in 'Task AgentMessageBusBridge.EmitRunStartedAsync(TaskInfo info, string cliType, DateTime startedAtUtc, string? sessionId, string intent, CancellationToken ct = default(CancellationToken))'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7048,29): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7048,90): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliCompletionContractsTests.cs(43,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodexSilentCompletionDetectorTests.cs(114,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\UpdateVersionTruthTests.cs(29,25): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskRunnerPlanTests.cs(292,31): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(58,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(59,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(60,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(65,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(85,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(90,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(91,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(96,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(120,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(121,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(122,29): warning CS8601: Possible null reference assignment. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskRunnerPlanTests.cs(751,31): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskKeyStabilityTests.cs(140,46): warning CS8604: Possible null reference argument for parameter 'jobId' in 'string? TaskKeyStabilityTests.KeyOf(TaskScannerService scanner, string jobId)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TaskReferencesTests.cs(430,9): warning CS8603: Possible null reference return. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(26,39): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(73,37): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\RunTimelineEventFactoryTests.cs(109,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(399,35): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(400,82): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(402,35): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(404,47): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(430,82): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectSettingsServiceTests.cs(452,60): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(89,25): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(170,33): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(196,31): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(214,32): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(271,32): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(297,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(341,27): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(386,26): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectCycleTimeServiceTests.cs(556,30): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\DuplicateTaskKeyTests.cs(91,38): warning CS8604: Possible null reference argument for parameter 'jobId' in 'TaskInfo? TaskScannerService.FindJob(string jobId, string? watchPath = null)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\DuplicateTaskKeyTests.cs(107,38): warning CS8604: Possible null reference argument for parameter 'jobId' in 'TaskInfo? TaskScannerService.FindJob(string jobId, string? watchPath = null)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodexDetectedDefaultTests.cs(52,80): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliContextModesTests.cs(66,52): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(62,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(68,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CliPermissionFlagsTests.cs(74,36): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(388,51): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.ImmediateFinishCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(710,47): warning CS0067: The event 'FakeRunningCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(312,53): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(314,52): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnFinished' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(313,52): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnStarted' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(385,53): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.ImmediateFinishCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(709,48): warning CS0067: The event 'FakeRunningCliService.OnFinished' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(708,48): warning CS0067: The event 'FakeRunningCliService.OnStarted' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ProjectRunnerPickupAtomicityTests.cs(315,51): warning CS0067: The event 'ProjectRunnerPickupAtomicityTests.FailingCliService.OnRunEvent' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\TasksEndpointPerfTests.cs(707,49): warning CS0067: The event 'FakeRunningCliService.OnOutput' is never used [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\BackendCarProjectPipelineAcceptanceTests.cs(409,9): warning CA1416: This call site is reachable on all platforms. 'File.SetUnixFileMode(string, UnixFileMode)' is unsupported on: 'windows'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1416) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\QuotaAdmissionEventEmissionTests.cs(138,20): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\Projection\ConversationProjectionTests.cs(329,79): warning xUnit1031: Test methods should not use blocking task operations, as they can cause deadlocks. Use an async test method and await instead. (https://xunit.net/xunit.analyzers/rules/xUnit1031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ParkedCardRecallSweepTests.cs(127,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\ParkedCardRecallSweepTests.cs(153,9): warning xUnit2029: Do not use Assert.Empty to check if a value does not exist in a collection. Use Assert.DoesNotContain instead. (https://xunit.net/xunit.analyzers/rules/xUnit2029) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\HumanReviewEscalationTests.cs(178,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\HumanReviewEscalationTests.cs(179,9): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\GitProjectInventoryTests.cs(118,23): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\GitProjectInventoryTests.cs(120,22): warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function. (https://xunit.net/xunit.analyzers/rules/xUnit2031) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\CodePatternRuleLoaderTests.cs(35,9): warning xUnit2008: Do not use Assert.True() to match on regular expressions. Use Assert.Matches instead. (https://xunit.net/xunit.analyzers/rules/xUnit2008) [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout]     85 Warning(s)
+[stdout]     0 Error(s)
+[stdout] 
+[stdout] Time Elapsed 00:01:00.80
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765
+> cmd.exe /c dotnet test "backend.Tests/OrchestratorApi.Tests.csproj" --filter Category!=MachineBound
+[stdout]   Determining projects to restore...
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout]   All projects are up-to-date for restore.
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout]   TaskServer.Contracts -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\contracts\TaskServer.Contracts\bin\Debug\net10.0\TaskServer.Contracts.dll
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout]   AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll
+[stdout]   UpdateService -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\update-service\bin\Debug\net10.0\UpdateService.dll
+[stdout]   SilentCatchAnalyzer -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\tools\SilentCatchAnalyzer\bin\Debug\netstandard2.0\SilentCatchAnalyzer.dll
+[stdout]   AgentStudio.TestSupport -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\testsupport\bin\Debug\net10.0\AgentStudio.TestSupport.dll
+[stdout]   AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\runner\bin\Debug\net10.0\agent-host.dll
+[stdout]   OrchestratorApi -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend\bin\Debug\net10.0\OrchestratorApi.dll
+[stdout]   OrchestratorApi.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\bin\Debug\net10.0\OrchestratorApi.Tests.dll
+[stdout] Test run for C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\bin\Debug\net10.0\OrchestratorApi.Tests.dll (.NETCoreApp,Version=v10.0)
+[stdout] A total of 1 test files matched the specified pattern.
+[stdout] [xUnit.net 00:00:11.50]     AgentStudio.Tests.TaskOperationPerfBenchmarks.FlatStorage_TaskOperations_P95Under30ms_At20kTasks [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskOperationPerfBenchmarks.FlatStorage_TaskOperations_P95Under30ms_At20kTasks [1 ms]
+[stdout] [xUnit.net 00:00:20.53]     AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_ReferenceWriteFailure_RestoresSourceAndOriginalReferences [SKIP]
+[stdout]   Skipped AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_ReferenceWriteFailure_RestoresSourceAndOriginalReferences [1 ms]
+[stdout] [xUnit.net 00:00:20.57]     AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_CopyFailure_RestoresArchivedSourceWithoutOrphan [SKIP]
+[stdout]   Skipped AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_CopyFailure_RestoresArchivedSourceWithoutOrphan [1 ms]
+[stdout] [xUnit.net 00:00:49.73]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_SequentialKillRestart_StaysHealthy [SKIP]
+[stdout] [xUnit.net 00:00:49.74]     AgentStudio.Tests.CliSpawnIntegrationTests.DirectExe_PipeStdin_StreamJson_ProducesMultipleFrames [SKIP]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_SequentialKillRestart_StaysHealthy [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.DirectExe_PipeStdin_StreamJson_ProducesMultipleFrames [1 ms]
+[stdout] [xUnit.net 00:00:49.74]     AgentStudio.Tests.CliSpawnIntegrationTests.CmdShim_PipeStdin_StreamJson_LiveScaleFatPrompt_ShouldStreamPastInit [SKIP]
+[stdout] [xUnit.net 00:00:49.74]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_FatPrompt_ProducesStreamingFrames [SKIP]
+[stdout] [xUnit.net 00:00:49.74]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout] [xUnit.net 00:00:49.75]     AgentStudio.Tests.CliSpawnIntegrationTests.AntigravityCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout] [xUnit.net 00:00:49.75]     AgentStudio.Tests.CliSpawnIntegrationTests.CodexCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.CmdShim_PipeStdin_StreamJson_LiveScaleFatPrompt_ShouldStreamPastInit [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_FatPrompt_ProducesStreamingFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.AntigravityCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.CodexCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout] [xUnit.net 00:02:25.04]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptRaceWithMerge_TaskStaysHumanReviewUntilMergeWins [SKIP]
+[stdout] [xUnit.net 00:02:25.04]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Ready_DirectReviewWithoutClaim_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:25.04]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptWithoutIntegrationResult_TaskStaysHumanReview [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptRaceWithMerge_TaskStaysHumanReviewUntilMergeWins [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Ready_DirectReviewWithoutClaim_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptWithoutIntegrationResult_TaskStaysHumanReview [1 ms]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_LeaseTakeover_TaskJsonContainsRunnerRoute [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_BackendRestart_PendingIntegrationRecoversWithoutDelivery [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.AutoReview_DirectComplete_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_TwoRunnerCommits_TaskJsonContainsPerCommitRunnerAttribution [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_DirectComplete_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_MergeFinished_TaskJsonContainsIntegrationOutcome [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_ReissueWhileIntegrationRuns_QueuedMergeIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_SystemEscalation_TaskJsonContainsCategoryAndReason [SKIP]
+[stdout] [xUnit.net 00:02:25.05]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Backlog_DirectAccept_TaskIsRejected [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_LeaseTakeover_TaskJsonContainsRunnerRoute [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_BackendRestart_PendingIntegrationRecoversWithoutDelivery [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.AutoReview_DirectComplete_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_TwoRunnerCommits_TaskJsonContainsPerCommitRunnerAttribution [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_DirectComplete_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_MergeFinished_TaskJsonContainsIntegrationOutcome [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_ReissueWhileIntegrationRuns_QueuedMergeIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_SystemEscalation_TaskJsonContainsCategoryAndReason [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Backlog_DirectAccept_TaskIsRejected [1 ms]
+[stdout]   Failed AgentStudio.Tests.BatchMoveJobTests.Endpoint_ReportsProgress_ContinuesAfterItemFailure_AndDoesNotBlockReviewRead [25 s]
+[stdout]   Error Message:
+[stdout]    Assert.True() Failure
+[stdout] Expected: True
+[stdout] Actual:   False
+[stdout]   Stack Trace:
+[stdout]      at AgentStudio.Tests.BatchMoveJobTests.Endpoint_ReportsProgress_ContinuesAfterItemFailure_AndDoesNotBlockReviewRead() in C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\4e584be7fd0c49be85f9d9cdfe208765\backend.Tests\BatchMoveJobTests.cs:line 81
+[stdout] --- End of stack trace from previous location ---
+[stdout] [xUnit.net 00:04:19.05]     AgentStudio.Tests.WatchPathAddressingRegressionTests.FindJob_CaseVariantProjects_KeepsProjectsDistinct_OnCaseSensitiveFilesystem [SKIP]
+[stdout]   Skipped AgentStudio.Tests.WatchPathAddressingRegressionTests.FindJob_CaseVariantProjects_KeepsProjectsDistinct_OnCaseSensitiveFilesystem [1 ms]
+[stdout] [xUnit.net 00:19:15.06]     AgentStudio.Tests.CliResumeContractTests.FreshStart_ThenResume_DeliversInitFramesOnBoth [SKIP]
+[stdout] [xUnit.net 00:19:15.06]     AgentStudio.Tests.CliResumeContractTests.Resume_AgainstDeadSession_FailsCleanly_DoesNotHang [SKIP]
+[stdout] [xUnit.net 00:19:15.07]     AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCarDriver_StreamsPastInit [SKIP]
+[stdout] [xUnit.net 00:19:15.08]     AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCliService_StartAsync_StreamsPastInit [SKIP]
+[stdout]   Skipped AgentStudio.Tests.CliResumeContractTests.FreshStart_ThenResume_DeliversInitFramesOnBoth [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliResumeContractTests.Resume_AgainstDeadSession_FailsCleanly_DoesNotHang [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCarDriver_StreamsPastInit [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliKestrelHostingRepoTests.HostedClaudeCliService_StartAsync_StreamsPastInit [1 ms]
+[stdout] 
+[stdout] Failed!  - Failed:     1, Passed:  5598, Skipped:    27, Total:  5626, Duration: 19 m 10 s - OrchestratorApi.Tests.dll (net10.0)
+[stderr] [xUnit.net 00:03:04.58]     AgentStudio.Tests.BatchMoveJobTests.Endpoint_ReportsProgress_ContinuesAfterItemFailure_AndDoesNotBlockReviewRead [FAIL]
+# dependency-cache save item=frontend/.angular state=moved
+# dependency-cache save item=frontend/node_modules state=moved
+# dependency-cache save item=frontend/.nm-state state=moved
+# dependency-cache save repository=ba654d41d5c5937d016ab8f8 scopes=1 durationMs=9

@@ -2759,6 +2759,13 @@
           <td>The shell automatically opened a global modal for every review-required pending item. The old dirty-file timestamp was shown as its creation time, with no boot or detection identifier to connect the decision to a restart.</td>
           <td>The observed navigation terminal was an intervention-dependent block with no finite duration. The presentation now keeps the pending decision reachable through a quiet entry point; opening and closing the view leave the shared record untouched. Explicit commit or leave-uncommitted actions retain their backend checks. New findings expose boot and detection identifiers; the 12:23 attribution remains unknown.</td>
         </tr>
+        <tr id="case-agt-3009-gate-failure-triage">
+          <td>2026-10-04</td>
+          <td><code>AGT-3009</code><br><span class="small">every red merge gate parked as operator-decision</span></td>
+          <td>13 of 14 cards in human review were merge-gate parks with <code>parkedBlocker.blockerType = operator-decision</code>; one was a real acceptance decision. An operator script outside the product (<code>gate-triage.mjs</code>) read the newest gate log and queued a redelivery or a fix round by hand. One red baseline test (<code>orchestrator-side-sheet.pin.spec</code>, AGT-3007) held every gate red from about 2026-09-29 and was graded a flake more than 20 times before a cause card existed.</td>
+          <td>The delivery-chain reconciler parked every failed integration with an untyped reason, so the blocker read as a person's decision. Nothing classified the gate log or counted the same failing item across cards.</td>
+          <td><span class="pill ok">fixed in dev</span> The reconciler routes a red gate through <code>GateFailureRouter</code> first. Environment and transport classes stay in Auto Review and the bounded gate-environment ladder replays them. A product class gets one fix round with the failing items. An integration-branch class, or a fingerprint already seen on another card, opens or joins one cause card and waits on it. Only <code>gate-undecidable</code> parks for a person, stating the missing evidence; spent budgets park with their own typed category. See <a href="../system/domains/review.md#merge-gate-failure-triage-agt-3009">merge-gate failure triage</a>.</td>
+        </tr>
       </tbody>
     </table>
 

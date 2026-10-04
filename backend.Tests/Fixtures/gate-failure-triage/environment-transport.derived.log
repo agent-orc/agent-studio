@@ -1,0 +1,21 @@
+verdict=Fail exit=128 durationMs=31877 failureKind=Code
+expectedSha=4b6f0e2d9a8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a testedSha=4b6f0e2d9a8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a
+reason=`git fetch --no-tags origin develop` exit 128; output: stderr: fatal: unable to access 'https://github.com/example-org/agent-taskboard.git/': Recv failure: Connection was reset (ECONNRESET); test-level=work-package; selected=0; full-suite=not-run; omitted=0
+verdictSource=Executed originalRunId=n/a originalCompletedAtUtc=n/a originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=n/a toolchainIdentity=n/a
+testSelectionAuditDigest=n/a
+reviewReuse=not-evaluated
+budget=none
+retryPerformed=false classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+guardViolation=false testQuarantined=none
+--- dependency-cache-decision.json ---
+null
+--- dependency-cache.json ---
+[]
+--- test-selection.json ---
+null
+--- resource-evidence.json ---
+[]
+--- last-300-lines ---
+[stderr] fatal: unable to access 'https://github.com/example-org/agent-taskboard.git/': Recv failure: Connection was reset (ECONNRESET)
+[stderr] error: could not fetch origin
