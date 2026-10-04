@@ -32,20 +32,20 @@ async function installMocks(page: Page): Promise<void> {
     route.fulfill(json(route.request().method() === 'GET' ? [] : {})));
   await page.route('**/hubs/**', (route: Route) => route.abort());
   await page.route('**/api/crash-recovery/pending', r => r.fulfill(json({ pending: [] })));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
-  await page.route('**/api/tasks/grouped**', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/board**', r => r.fulfill(json({
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], review: [], completed: [], archive: [],
   })));
   await page.route('**/api/tasks/archive**', r => r.fulfill(json({ items: [], total: 0, offset: 0, limit: 50 })));
-  await page.route('**/api/runner/status', r => r.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/cli/quota', r => r.fulfill(json({ at: '2026-09-27T16:00:00Z', snapshots: [], ttlSeconds: 600 })));
   await page.route('**/api/cli/usage', r => r.fulfill(json({ snapshots: [], ttlSeconds: 600 })));
   await page.route('**/api/watch-paths', r => r.fulfill(json([{ name: PROJECT, path: STORAGE, rootPath: STORAGE }])));
-  await page.route('**/api/workspaces**', r => r.fulfill(json([{
+  await page.route('**/api/v1/workspaces**', r => r.fulfill(json([{
     id: 'ws1', displayName: 'Default', sortOrder: 0, isDefault: true, color: null,
     createdAt: '2026-09-01T00:00:00Z',
     projects: [{
