@@ -18,26 +18,6 @@ public enum GateEnvironmentRetryStatus
     AlreadyRunning,
 }
 
-/// <summary>One automatic agent round for a parked gate fault on each delivery.</summary>
-public static class GateEnvironmentContinuationPolicy
-{
-    private const string Source = "gate-environment-continuation";
-
-    public static int CountPriorRounds(IEnumerable<TimelineEvent> entries, string deliverySha)
-    {
-        ArgumentNullException.ThrowIfNull(entries);
-        ArgumentException.ThrowIfNullOrWhiteSpace(deliverySha);
-        return entries.Count(entry =>
-            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
-            && entry.Details?.GetValueOrDefault("source") == Source
-            && string.Equals(entry.Details.GetValueOrDefault("deliverySha"),
-                deliverySha, StringComparison.OrdinalIgnoreCase));
-    }
-
-    public static bool ShouldStart(bool automaticEnabled, int priorRoundsForDelivery)
-        => automaticEnabled && priorRoundsForDelivery < 1;
-}
-
 /// <param name="DeliverySha">Delivery SHA whose passed review was reused.</param>
 /// <param name="Rung">
 /// 1-based ladder rung this replay spent, or 0 for an operator replay, which
@@ -80,7 +60,7 @@ public sealed record GateEnvironmentRetrySweep(
 /// <summary>
 /// Bounded automatic recovery from a gate environment failure (AGT-2824).
 /// <para>
-/// A gate environment failure rolls the merge back and leaves the card in Human
+/// A gate environment failure rolls the merge back and leaves the card in Auto
 /// Review saying it "will be retried", but until this service existed nothing
 /// did: the accepted-integration backstop only re-drives accepted cards, and the
 /// acceptance rail only reacts to <c>conflict-skipped</c>, which CAC-18
@@ -110,7 +90,6 @@ public sealed class GateEnvironmentRetryService
     private readonly IConfiguration _configuration;
     private readonly ILogger<GateEnvironmentRetryService> _logger;
     private readonly TimeProvider _time;
-    private readonly TaskRunnerService? _continuations;
 
     // One replay per card at a time. A sweep rung and the operator action run
     // the same merge against the same branch, so letting both in would spend two
@@ -129,8 +108,7 @@ public sealed class GateEnvironmentRetryService
         TaskProvenanceService provenance,
         IConfiguration configuration,
         ILogger<GateEnvironmentRetryService> logger,
-        TimeProvider? time = null,
-        TaskRunnerService? continuations = null)
+        TimeProvider? time = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -143,7 +121,6 @@ public sealed class GateEnvironmentRetryService
         _configuration = configuration;
         _logger = logger;
         _time = time ?? TimeProvider.System;
-        _continuations = continuations;
     }
 
     public GateEnvironmentRetryOptions Options
@@ -189,7 +166,7 @@ public sealed class GateEnvironmentRetryService
                         waiting++;
                         break;
                     case GateEnvironmentRetryAction.Park:
-                        if (await ParkAsync(job, evaluation, ct).ConfigureAwait(false)) parked++;
+                        if (Park(job, evaluation)) parked++;
                         break;
                     case GateEnvironmentRetryAction.Retry:
                         if (!_inFlight.TryAdd(job.TaskKey, 0)) break;
@@ -504,8 +481,8 @@ public sealed class GateEnvironmentRetryService
     /// environment failure the ladder gave up on. Written once per ladder; the
     /// receipt makes the repeat sweeps idempotent.
     /// </summary>
-    private async Task<bool> ParkAsync(
-        TaskInfo job, GateEnvironmentRetryEvaluation evaluation, CancellationToken ct)
+    private bool Park(
+        TaskInfo job, GateEnvironmentRetryEvaluation evaluation)
     {
         if (evaluation.Ledger.Parked) return false;
         var step = evaluation.MergeStep;
@@ -527,60 +504,9 @@ public sealed class GateEnvironmentRetryService
             job.ProjectName,
             job.Id,
             evaluation.Decision.AttemptsSpent);
-        await ContinueParkedFailureOnceAsync(job, evaluation, reason, ct).ConfigureAwait(false);
+        // A spent host retry budget needs an operator-visible gate-host finding.
+        // It cannot be repaired by asking the delivery agent to reason about code.
         return true;
-    }
-
-    private async Task ContinueParkedFailureOnceAsync(
-        TaskInfo job,
-        GateEnvironmentRetryEvaluation evaluation,
-        string reason,
-        CancellationToken ct)
-    {
-        if (_continuations is null || evaluation.DeliverySha is null) return;
-        var priorRounds = GateEnvironmentContinuationPolicy.CountPriorRounds(
-            _timeline.ReadAll(job.FolderPath), evaluation.DeliverySha);
-        if (!GateEnvironmentContinuationPolicy.ShouldStart(
-                _settings.Get(job.ProjectName).AutomaticFailureContinuationsEnabled,
-                priorRounds))
-            return;
-
-        var subject = ReviewSubjectStore.Read(job.FolderPath);
-        var prompt = IntegrationContinuationPrompt.Build(
-            job.Key ?? job.Id,
-            subject?.ResultRef,
-            evaluation.DeliverySha,
-            evaluation.IntegrationBranch,
-            evaluation.MergeStep?.StepId ?? "pre-develop-build-gate",
-            reason,
-            evidence: evaluation.MergeStep?.VerdictSummary,
-            evidenceRef: evaluation.MergeStep?.EvidenceRef);
-        try
-        {
-            await _continuations.ContinueJobAsync(
-                job.Id, prompt, job.WatchPath, mode: ContinueModes.Extend, ct: ct)
-                .ConfigureAwait(false);
-            var current = _scanner.FindJob(job.Id, job.WatchPath) ?? job;
-            _timeline.Append(current.FolderPath,
-                TimelineEventKinds.IntegrationRecoveryQueued,
-                TimelineActors.System,
-                "Automatically queued one continuation after the gate environment retry budget was spent.",
-                payloadRef: evaluation.MergeStep?.EvidenceRef ?? "pipeline-execution.json",
-                details: new Dictionary<string, string>
-                {
-                    ["automatic"] = "true",
-                    ["source"] = "gate-environment-continuation",
-                    ["deliverySha"] = evaluation.DeliverySha,
-                    ["failureStage"] = evaluation.MergeStep?.StepId ?? "pre-develop-build-gate",
-                    ["failureEvidenceRef"] = evaluation.MergeStep?.EvidenceRef ?? string.Empty,
-                });
-        }
-        catch (TaskOperationException ex)
-        {
-            _logger.LogWarning(ex,
-                "gate-environment-retry could not queue continuation project={Project} job={JobId}",
-                job.ProjectName, job.Id);
-        }
     }
 
     private static DateTime Utc(DateTime value)

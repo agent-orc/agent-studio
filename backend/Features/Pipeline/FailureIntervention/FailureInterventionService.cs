@@ -105,19 +105,41 @@ public sealed class FailureInterventionService
     public async Task<FailureInterventionResult> RaiseAsync(
         TaskInfo origin,
         FailureCommandEvidence evidence,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        FailureClassificationResult? knownClassification = null,
+        IReadOnlyList<string>? otherAffectedCards = null)
     {
-        var classification = FailureInterventionPolicy.Classify(evidence)
+        var classification = knownClassification ?? FailureInterventionPolicy.Classify(evidence)
             ?? await ClassifyAmbiguousAsync(origin, evidence, ct);
         ct.ThrowIfCancellationRequested();
 
         lock (_gate)
         {
             var now = _time.GetUtcNow().UtcDateTime;
-            var records = Read(origin.WatchPath);
+            var ledgerWatchPath = origin.WatchPath;
+            var records = Read(ledgerWatchPath);
             var existing = records.FirstOrDefault(item =>
                 string.Equals(item.Fingerprint, classification.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                && IsOpen(item, origin.WatchPath));
+                && IsOpen(item, ledgerWatchPath));
+            if (existing is null && knownClassification is not null)
+            {
+                foreach (var otherPath in _scanner.ScanAllJobs()
+                             .Select(item => item.WatchPath)
+                             .Distinct(StringComparer.OrdinalIgnoreCase)
+                             .Where(path => !string.Equals(path, ledgerWatchPath,
+                                 StringComparison.OrdinalIgnoreCase)))
+                {
+                    var otherRecords = Read(otherPath);
+                    var match = otherRecords.FirstOrDefault(item =>
+                        string.Equals(item.Fingerprint, classification.Fingerprint,
+                            StringComparison.OrdinalIgnoreCase) && IsOpen(item, otherPath));
+                    if (match is null) continue;
+                    existing = match;
+                    records = otherRecords;
+                    ledgerWatchPath = otherPath;
+                    break;
+                }
+            }
             var originKey = origin.Key ?? origin.Id;
             var created = existing is null;
             FailureInterventionRecord intervention;
@@ -147,7 +169,8 @@ public sealed class FailureInterventionService
                     FailureClass = classification.FailureClass,
                     Fingerprint = classification.Fingerprint,
                     Signature = classification.Signature,
-                    AffectedCards = [originKey],
+                    AffectedCards = new[] { originKey }.Concat(otherAffectedCards ?? [])
+                        .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     EvidencePointers = evidence.EvidencePointers?.Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? [],
                     FirstFailureAt = evidence.OccurredAt?.ToUniversalTime() ?? now,
                     CreatedAt = now,
@@ -161,6 +184,7 @@ public sealed class FailureInterventionService
                 intervention = existing with
                 {
                     AffectedCards = existing.AffectedCards.Append(originKey)
+                        .Concat(otherAffectedCards ?? [])
                         .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                     EvidencePointers = existing.EvidencePointers
                         .Concat(evidence.EvidencePointers ?? [])
@@ -170,7 +194,7 @@ public sealed class FailureInterventionService
                         : existing.FirstFailureAt,
                 };
                 records[records.IndexOf(existing)] = intervention;
-                var followUp = _scanner.FindJob(existing.FollowUpTaskId, origin.WatchPath);
+                var followUp = _scanner.FindJob(existing.FollowUpTaskId, ledgerWatchPath);
                 if (followUp is not null)
                 {
                     UpdateFollowUpReferences(followUp, intervention.AffectedCards);
@@ -178,8 +202,15 @@ public sealed class FailureInterventionService
                 }
             }
 
-            UpdateOriginReferences(origin, intervention.FollowUpKey);
-            Write(origin.WatchPath, records);
+            UpdateOriginReferences(origin, intervention.FollowUpKey, knownClassification is not null);
+            foreach (var cardKey in intervention.AffectedCards)
+            {
+                if (string.Equals(cardKey, originKey, StringComparison.OrdinalIgnoreCase)) continue;
+                var affected = _scanner.FindJob(cardKey);
+                if (affected is not null) UpdateOriginReferences(affected, intervention.FollowUpKey,
+                    knownClassification is not null);
+            }
+            Write(ledgerWatchPath, records);
             RecordSurfaces(origin, intervention, created);
             RecordPipelineStep(origin, intervention);
             return new FailureInterventionResult(intervention, created,
@@ -272,11 +303,15 @@ public sealed class FailureInterventionService
         return task is not null && !IsTerminal(task.State);
     }
 
-    private void UpdateOriginReferences(TaskInfo origin, string followUpKey)
+    private void UpdateOriginReferences(TaskInfo origin, string followUpKey, bool waitForCompletion)
     {
         var refs = origin.References ?? new TaskReferences();
         _mutations.SetTaskReferences(origin.Id, refs with
         {
+            DependsOn = !waitForCompletion || refs.DependsOn.Any(item => string.Equals(item.Key, followUpKey,
+                    StringComparison.OrdinalIgnoreCase))
+                ? refs.DependsOn
+                : refs.DependsOn.Append(new TaskDependencyReference(followUpKey)).ToList(),
             BlockedBy = refs.BlockedBy.Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             RaisedFollowUps = refs.RaisedFollowUps.Append(followUpKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
         }, origin.WatchPath);

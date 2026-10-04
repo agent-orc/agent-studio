@@ -1,0 +1,25 @@
+ [stderr] node:internal/modules/cjs/loader:1433
+ [stderr]   throw err;
+ [stderr]   ^
+ [stderr] 
+ [stderr] Error: Cannot find module './javascript-transformer-worker'
+ [stderr] Require stack:
+ [stderr] - /tmp/agentstudio-review-gates/9f2a16888c0440f785fb77acaaa0720f/node_modules/@angular/build/src/tools/esbuild/javascript-transformer.js
+ [stderr] - /tmp/agentstudio-review-gates/9f2a16888c0440f785fb77acaaa0720f/[eval]
+ [stderr]     at Function._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+ [stderr]     at defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+ [stderr]     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+ [stderr]     at Function._load (node:internal/modules/cjs/loader:1216:25)
+ [stderr]     at wrapModuleLoad (node:internal/modules/cjs/loader:254:19)
+ [stderr]     at Module.require (node:internal/modules/cjs/loader:1527:12)
+ [stderr]     at require (node:internal/modules/helpers:147:16)
+ [stderr]     at Object.<anonymous> (/tmp/agentstudio-review-gates/9f2a16888c0440f785fb77acaaa0720f/node_modules/@angular/build/src/tools/esbuild/javascript-transformer.js:1:18)
+ [stderr]     at Module._compile (node:internal/modules/cjs/loader:1781:14)
+ [stderr]     at Object..js (node:internal/modules/cjs/loader:1913:10) {
+ [stderr]   code: 'MODULE_NOT_FOUND',
+ [stderr]   requireStack: [
+ [stderr]     '/tmp/agentstudio-review-gates/9f2a16888c0440f785fb77acaaa0720f/node_modules/@angular/build/src/tools/esbuild/javascript-transformer.js',
+ [stderr]     '/tmp/agentstudio-review-gates/9f2a16888c0440f785fb77acaaa0720f/[eval]'
+ [stderr]   ]
+ [stderr] }
+ [stderr] 

@@ -112,6 +112,10 @@ public enum MergeIntoIntegrationOutcome
     /// conflict and must not spend a rebase-recovery steer round (CAC-18).
     /// </summary>
     GateEnvironmentFailure,
+    /// <summary>The gate was already red on the integration tip; the branch owns the cause.</summary>
+    GateIntegrationBranchFailure,
+    /// <summary>Gate evidence cannot safely assign ownership; explicit review is required.</summary>
+    GateUndecidable,
     /// <summary>A precondition failed (dirty tree, missing branch, checkout failure) or git errored.</summary>
     Error,
     /// <summary>
@@ -158,6 +162,7 @@ public record MergeIntoIntegrationResult(
     public IReadOnlyList<string> EvidenceShas { get; init; } = [];
     public bool ConflictsResolved { get; init; }
     public IntegrationConflictReport? ConflictReport { get; init; }
+    public AgentStudio.Pipeline.GateFailureAssessment? GateFailureAssessment { get; init; }
     public string? AutomaticRecoveryDetail { get; init; }
     public int? AutomaticRecoveryBudgetUsed { get; init; }
     public int? AutomaticRecoveryBudgetLimit { get; init; }

@@ -1,4 +1,5 @@
 using AgentStudio.Pipeline;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -35,6 +36,32 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Null(recovered.GateProfileDigest);
         Assert.Null(recovered.PipelineDefinitionVersion);
         Assert.Null(recovered.ToolchainIdentity);
+    }
+
+    [Fact]
+    public void Failed_receipt_preserves_diagnosis_and_raises_budget_finding()
+    {
+        const string sha = "0123456789abcdef0123456789abcdef01234567";
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
+        var assessment = new GateFailureAssessment(GateFailureAssessmentPolicy.Environment,
+            "gate:budget", [], "violated gate-run budget");
+        var failed = new BuildTestGateResult(BuildTestGateVerdict.Fail, 1, 1200,
+            "violated gate-run budget", "violated gate-run budget", false, false)
+        {
+            ExpectedSha = sha,
+            TestedSha = sha,
+            FailureKind = BuildTestGateFailureKind.Environment,
+            FailureAssessment = assessment,
+            ViolatedBudget = new BuildTestGateBudgetEvidence("gate-run", 1000, 1200, "verification"),
+        };
+
+        IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", failed, timeline);
+        var recovered = IntegrationGateReceipts.ReadExact(_root, "pre-develop-build-gate", sha);
+
+        Assert.Equal(assessment.Classification, recovered?.FailureAssessment?.Classification);
+        Assert.Equal(assessment.Fingerprint, recovered?.FailureAssessment?.Fingerprint);
+        Assert.Single(timeline.ReadAll(_root), entry =>
+            entry.Kind == TimelineEventKinds.IntegrationGateBudgetExceeded);
     }
 
     public void Dispose()

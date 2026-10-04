@@ -17,7 +17,7 @@ public enum RemoteDeliverySettlementStage
     /// <summary>Integration returned (merged, already merged, or failed); the lane transition has not landed yet.</summary>
     IntegrationSettled,
 
-    /// <summary>The card left <c>4-auto-review</c> through the normal transition; nothing is outstanding.</summary>
+    /// <summary>Lane handling settled: the card left Auto Review or is held there for a classified gate retry or cause.</summary>
     LaneSettled,
 }
 

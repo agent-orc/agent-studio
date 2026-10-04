@@ -81,6 +81,12 @@ public static class IntegrationGateReceipts
                 var originPath = cached && !string.IsNullOrEmpty(encodedOriginPath)
                     ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encodedOriginPath))
                     : null;
+                var assessmentLine = reader.ReadLine();
+                var assessmentValue = HeaderValue(assessmentLine ?? string.Empty, "failureAssessmentB64=");
+                var assessment = string.IsNullOrWhiteSpace(assessmentValue) || assessmentValue == "n/a"
+                    ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<GateFailureAssessment>(
+                        Convert.FromBase64String(assessmentValue));
                 return new BuildTestGateResult(
                     verdict,
                     exitCode,
@@ -103,6 +109,7 @@ public static class IntegrationGateReceipts
                         HeaderValue(provenanceLine, "pipelineDefinitionVersion="), out var definitionVersion)
                         ? definitionVersion : null,
                     ToolchainIdentity = HeaderValue(provenanceLine, "toolchainIdentity="),
+                    FailureAssessment = assessment,
                 };
             }
             catch (Exception ex)
@@ -213,7 +220,7 @@ public static class IntegrationGateReceipts
         var flaky =
             $"retryPerformed={result.RetryPerformed.ToString().ToLowerInvariant()} " +
             $"classification={result.FlakyClassification ?? "none"} " +
-            $"flakyQuarantined={(result.FlakyQuarantinedFailures.Count == 0
+            $"flakyQuarantined={(result.FlakyClassification is null
                 ? "none"
                 : string.Join(", ", result.FlakyQuarantinedFailures))}";
         var preparationCacheRetry =
@@ -229,6 +236,8 @@ public static class IntegrationGateReceipts
             $"expectedSha={result.ExpectedSha ?? "n/a"} testedSha={result.TestedSha ?? "n/a"}\n" +
             $"reason={result.Reason}\n" +
             $"verdictSource={result.VerdictSource} originalRunId={result.GateRunId ?? "n/a"} originalCompletedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} originalEvidencePathB64={Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(result.OriginEvidencePath ?? ""))} profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"}\n" +
+            $"failureAssessmentB64={(result.FailureAssessment is null ? "n/a" : Convert.ToBase64String(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(result.FailureAssessment)))}\n" +
+            $"gateClass={result.FailureAssessment?.Classification ?? "none"} fingerprint={result.FailureAssessment?.Fingerprint ?? "none"}\n" +
             $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
             reuseLine + "\n" +
             budget + "\n" +
@@ -259,6 +268,18 @@ public static class IntegrationGateReceipts
             body);
         if (timeline is not null)
         {
+            if (result.ViolatedBudget is { Name: "gate-run" } overrun)
+                timeline.Append(jobFolderPath, TimelineEventKinds.IntegrationGateBudgetExceeded,
+                    TimelineActors.System,
+                    $"{prefix} exceeded its gate-run budget: {overrun.ConsumedMs} ms used of {overrun.LimitMs} ms.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["gate"] = prefix,
+                        ["testedSha"] = result.TestedSha ?? "unknown",
+                        ["fingerprint"] = result.FailureAssessment?.Fingerprint ?? result.FailureFingerprint ?? "unknown",
+                        ["consumedMs"] = overrun.ConsumedMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["limitMs"] = overrun.LimitMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    });
             if (result.VerdictSource == GateVerdictSource.CacheHit)
                 timeline.Append(jobFolderPath, TimelineEventKinds.GateVerdictCacheHit,
                     TimelineActors.System,
@@ -271,8 +292,9 @@ public static class IntegrationGateReceipts
                         ["originalCompletedAtUtc"] = result.GateCompletedAtUtc?.ToString("O") ?? "",
                         ["originalEvidencePath"] = result.OriginEvidencePath ?? "",
                     });
-            GateFlakyRerunReceipts.Record(
-                timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
+            if (result.FlakyClassification is not null)
+                GateFlakyRerunReceipts.Record(
+                    timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
             if (result.PreparationCacheRetryPerformed)
             {
                 timeline.Append(

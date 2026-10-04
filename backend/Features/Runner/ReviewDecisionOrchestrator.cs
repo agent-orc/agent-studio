@@ -7488,7 +7488,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             review?.Outcome,
             IntegrationStatuses.IsMerged(integration?.Status),
             settlement?.Stage,
-            settlement?.ShouldIntegrate ?? false);
+            settlement?.ShouldIntegrate ?? false,
+            integrationOutcome: settlement?.IntegrationOutcome,
+            integrationDetail: settlement?.IntegrationDetail);
 
         return AutoReviewResumePolicy.ClassifyPostProcessingWait(decision);
     }

@@ -420,6 +420,13 @@ counter. `environment` evacuates the participating dependency cache entry and
 frozen review state. An unavailable fingerprint store cannot establish a
 card-specific failure, so it cannot produce `product`.
 
+The merge gate projects this diagnosis into the four actionable AGT-3009
+classes. A red baseline is `integration-branch`; a repeated clean red item
+opens a shared cause rather than charging each card. An unavailable baseline
+or clean repeat is `undecidable` unless a concrete host or transport marker
+establishes `environment`. Human Review is the fallback for undecidable gate
+results, not the route for known environment or product failures.
+
 The older `ReviewFailureAttributionPolicy` still explains pre-AGT-2916
 reports, but does not authorize a new card charge. For evidence that carries a
 diagnosis and a measured baseline it defers to the diagnosis: only `product`

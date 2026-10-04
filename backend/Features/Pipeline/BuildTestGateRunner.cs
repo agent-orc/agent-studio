@@ -202,6 +202,8 @@ public sealed record BuildTestGateResult(
     public BuildTestGateFailureKind FailureKind { get; init; }
     public string? FailureFingerprint { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
+    public GateFailureAssessment? FailureAssessment { get; init; }
+    public IReadOnlyList<string> FailureHistoryOtherCards { get; init; } = [];
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
@@ -237,7 +239,10 @@ public sealed record BuildTestGateResult(
     /// The shared classification both surfaces write for a re-run-cleared
     /// failure, or null when this gate quarantined nothing.
     /// </summary>
-    public string? FlakyClassification => FlakyQuarantinedFailures.Count > 0
+    public string? FlakyClassification => RetryPerformed
+        && !string.IsNullOrWhiteSpace(ExpectedSha)
+        && string.Equals(ExpectedSha, TestedSha, StringComparison.OrdinalIgnoreCase)
+        && FlakyQuarantinedFailures.Count > 0
         ? ReviewFlakyQuarantine.Classification
         : null;
 
@@ -830,6 +835,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         .Distinct(StringComparer.Ordinal).ToArray()
                     : completed.Requirements,
             };
+            if (completed.Verdict == BuildTestGateVerdict.Fail)
+                completed = completed with
+                {
+                    FailureAssessment = GateFailureAssessmentPolicy.Classify(completed),
+                };
             if (profileDigest is not null && completed.VerdictSource == GateVerdictSource.Executed)
                 completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
             return completed;
@@ -924,6 +934,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var historyAvailable = false;
         var prior = 0;
         var otherCards = 0;
+        IReadOnlyList<string> otherCardKeys = [];
         HttpClient? client = null;
         try
         {
@@ -939,6 +950,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 prior = history?.Count ?? 0;
                 otherCards = history?.CardKeys.Count(card =>
                     !string.Equals(card, request.JobId, StringComparison.Ordinal)) ?? 0;
+                otherCardKeys = history?.CardKeys.Where(card =>
+                    !string.Equals(card, request.JobId, StringComparison.Ordinal)).ToArray() ?? [];
                 historyAvailable = true;
             }
         }
@@ -997,6 +1010,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             FailureKind = diagnosis.ChargesCard
                 ? BuildTestGateFailureKind.Code : BuildTestGateFailureKind.Environment,
             FailureFingerprint = fingerprint,
+            FailureHistoryOtherCards = otherCardKeys,
             Reason = original.Reason + "; diagnosis=" + diagnosis.Classification +
                      $" confidence={diagnosis.Confidence:0.00}; " + string.Join("; ", diagnosis.Evidence),
         };
@@ -1175,11 +1189,12 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             process.ExitCode != 0 || process.TimedOut || process.LaunchError is not null);
         if (failed is null) return Fingerprint(BuildTestGateFailureKind.Code, result.Reason);
         var output = failed.StandardOutput + "\n" + failed.StandardError;
-        var tests = GateFlakyRerunPolicy.ParseFailedTests(output);
+        var tests = GateFailureAssessmentPolicy.ParseFailingItems(output);
+        if (tests.Length > 0)
+            return Fingerprint(BuildTestGateFailureKind.Code,
+                result.GateId + "\n" + string.Join("\n", tests.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)));
         var roots = DiagnosticPathRoots(failed, workspaceRoot, preparationCacheRoot ?? PreparationCacheRoot);
-        var normalized = tests.Count > 0
-            ? string.Join("\n", tests.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
-            : FailureOutputNormalizer.Identity(FailureOutputNormalizer.ReplaceRoots(output, roots), failed.ExitCode);
+        var normalized = FailureOutputNormalizer.Identity(FailureOutputNormalizer.ReplaceRoots(output, roots), failed.ExitCode);
         return Fingerprint(BuildTestGateFailureKind.Code,
             $"{failed.Phase}\n{FailureOutputNormalizer.ReplaceRoots(failed.Command, roots)}\nexit={failed.ExitCode}\n{normalized}");
     }

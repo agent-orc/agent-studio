@@ -152,6 +152,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Action<RemoteDeliveryIntegrationRequest, string, string, string> _recordFailure;
     private readonly ILogger<RemoteDeliveryIntegrationCoordinator> _logger;
     private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isCurrentReview;
+    private readonly Func<RemoteDeliveryIntegrationRequest, GateFailureAssessment, Task<string?>> _raiseCause;
     private long _sequence;
 
     public RemoteDeliveryIntegrationCoordinator(
@@ -162,7 +163,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         TimelineLog timeline,
         IntegrationAgentRoundService agentRounds,
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
-        AttemptAuthorityService authority)
+        AttemptAuthorityService authority,
+        FailureInterventionService? failureInterventions = null)
         : this(
             request => IntegrateAndRecordAsync(
                 request,
@@ -185,7 +187,10 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => request.ReviewAttemptId is null
                 || authority.GetReview(request.ReviewAttemptId) is { } review
                    && authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId
-                       == request.ReviewAttemptId)
+                       == request.ReviewAttemptId,
+            failureInterventions is null
+                ? (_, _) => throw new InvalidOperationException("The gate cause service is unavailable.")
+                : (request, assessment) => RaiseGateCauseAsync(request, assessment, scanner, failureInterventions))
     {
     }
 
@@ -194,13 +199,16 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         Action<RemoteDeliveryIntegrationRequest, string, string, string>? recordFailure = null,
         Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null,
-        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null)
+        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null,
+        Func<RemoteDeliveryIntegrationRequest, GateFailureAssessment, Task<string?>>? raiseCause = null)
     {
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
         _recordFailure = recordFailure ?? ((_, _, _, _) => { });
         _isCurrentReview = isCurrentReview ?? (_ => true);
+        _raiseCause = raiseCause ?? ((_, _) => throw new InvalidOperationException(
+            "The gate cause service is unavailable."));
         _logger = logger;
     }
 
@@ -316,10 +324,31 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     delivery.Sequence,
                     delivery.Request.DeliveredAtUtc);
                 var result = await _integrate(delivery.Request).ConfigureAwait(false);
+                if (result.GateFailureAssessment is { } assessment
+                    && GateOutcomeRoutingPolicy.OpensCause(assessment))
+                {
+                    try
+                    {
+                        var waitReason = await _raiseCause(delivery.Request, assessment).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(waitReason))
+                            result = result with { AutomaticRecoveryDetail = waitReason };
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "gate-cause-registration-failed project={Project} job={JobId}",
+                            delivery.Request.Project, delivery.Request.JobId);
+                        result = result with
+                        {
+                            Outcome = MergeIntoIntegrationOutcome.GateUndecidable,
+                            AutomaticRecoveryDetail = "Gate class undecidable: the cause card could not be recorded.",
+                        };
+                    }
+                }
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
                 // a stale repair round, which a successor refuses.
-                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                if ((result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                    or MergeIntoIntegrationOutcome.GateFailed)
                     && !_isCurrentReview(delivery.Request))
                 {
                     _logger.LogInformation(
@@ -328,7 +357,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         delivery.Request.JobId,
                         MergeIntoDevelopRunner.SupersededReviewGenerationError);
                 }
-                else if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
+                else if ((result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                    or MergeIntoIntegrationOutcome.GateFailed)
+                    && result.AutomaticRecoveryDetail?.StartsWith("waiting on ", StringComparison.OrdinalIgnoreCase) != true)
                 {
                     var continuation = await _startAgentRound(
                         delivery.Request,
@@ -341,6 +372,31 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                             AutomaticRecoveryBudgetUsed = continuation.BudgetUsed,
                             AutomaticRecoveryBudgetLimit = continuation.BudgetLimit,
                         };
+                    }
+                    if (!continuation.Started
+                        && result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+                        && result.GateFailureAssessment is { } productGate)
+                    {
+                        try
+                        {
+                            var waitReason = await _raiseCause(delivery.Request, productGate)
+                                .ConfigureAwait(false);
+                            result = result with
+                            {
+                                AutomaticRecoveryDetail = waitReason + "; " + continuation.Reason,
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex,
+                                "gate-cause-registration-failed project={Project} job={JobId}",
+                                delivery.Request.Project, delivery.Request.JobId);
+                            result = result with
+                            {
+                                Outcome = MergeIntoIntegrationOutcome.GateUndecidable,
+                                AutomaticRecoveryDetail = "Gate class undecidable: the product repair could not start and its cause card could not be recorded.",
+                            };
+                        }
                     }
                     _logger.LogInformation(
                         "remote-delivery-integration continuation project={Project} job={JobId} started={Started} reason={Reason}",
@@ -412,6 +468,36 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request.ReviewAttemptId ?? string.Empty,
             request.DeliveredAtUtc.ToUniversalTime().Ticks.ToString(
                 System.Globalization.CultureInfo.InvariantCulture));
+
+    internal static async Task<string?> RaiseGateCauseAsync(
+        RemoteDeliveryIntegrationRequest request,
+        GateFailureAssessment assessment,
+        TaskScannerService scanner,
+        FailureInterventionService interventions)
+    {
+        var task = scanner.FindJob(request.JobId, request.WatchPath);
+        if (task is null) throw new InvalidOperationException("The affected gate card could not be resolved.");
+        var classification = new FailureClassificationResult(
+            assessment.Classification == GateFailureAssessmentPolicy.Product
+                ? FailureDomains.Product : FailureDomains.Infrastructure,
+            "gate/" + assessment.Classification,
+            assessment.Fingerprint,
+            string.Join(", ", assessment.FailingItems),
+            true,
+            assessment.Reason);
+        var evidence = new FailureCommandEvidence(
+            AcceptedIntegrationFailureCodes.BuildGateFailed,
+            assessment.Classification,
+            StdoutTail: assessment.Reason,
+            StepId: PipelineCatalogue.MergeIntoDevelopStepId,
+            EvidencePointers: ["post-steps/"]);
+        var raised = await interventions.RaiseAsync(task, evidence,
+            knownClassification: classification,
+            otherAffectedCards: assessment.OtherCards?.Select(card =>
+                scanner.FindJob(card) is { } affected
+                    ? affected.Key ?? affected.Id : card).ToArray()).ConfigureAwait(false);
+        return raised.WaitReason;
+    }
 
     private sealed class ProjectQueue
     {

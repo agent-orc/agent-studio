@@ -209,6 +209,38 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_ProductRepairCannotStart_OpensCauseInsteadOfHumanPark()
+    {
+        var assessment = new GateFailureAssessment(
+            GateFailureAssessmentPolicy.Product, "code:clock-guard",
+            ["AgentStudio.Tests.Architecture.TestClockGuardTests"], "TestClockGuardTests [FAIL]");
+        var causeCalls = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ => Task.FromResult(MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.GateFailed) with { GateFailureAssessment = assessment }),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            startAgentRound: (_, _) => Task.FromResult(new IntegrationAgentRoundStartResult(
+                false, "automatic recovery budget used: 2/2")
+            {
+                BudgetExhausted = true,
+                BudgetUsed = 2,
+                BudgetLimit = 2,
+            }),
+            raiseCause: (_, _) =>
+            {
+                causeCalls++;
+                return Task.FromResult<string?>("waiting on AGT-CAUSE: TestClockGuardTests");
+            });
+
+        var result = await coordinator.EnqueueAsync(Request("product-budget", 1));
+
+        Assert.Equal(1, causeCalls);
+        Assert.True(GateOutcomeRoutingPolicy.WaitsInAutoReview(result.Outcome.ToString(),
+            result.AutomaticRecoveryDetail));
+        Assert.Contains("automatic recovery budget used: 2/2", result.AutomaticRecoveryDetail);
+    }
+
+    [Fact]
     public async Task EnqueueAsync_SerializesSameProjectInDeliveryOrder()
     {
         var firstEntered = new TaskCompletionSource(

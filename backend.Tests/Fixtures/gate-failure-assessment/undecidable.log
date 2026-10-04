@@ -1,0 +1,14 @@
+  run 5: Passed!  - Failed:     0, Passed:     7, Skipped:     0, Total:     7, Duration: 32 s - OrchestratorApi.Tests.dll (net10.0)
+  run 6: Failed!  - Failed:     1, Passed:     6, Skipped:     0, Total:     7, Duration: 43 s - OrchestratorApi.Tests.dll (net10.0)
+Test run for /home/agent/runner-work/PROJ-002/worktrees/AGT-2859/backend.Tests/bin/Debug/net10.0/OrchestratorApi.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:38.95]     AgentStudio.Tests.BoardConditionalReadTests.ListRead_ValidatesTheSameWay [FAIL]
+  Failed AgentStudio.Tests.BoardConditionalReadTests.ListRead_ValidatesTheSameWay [4 s]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+Expected: NotModified
+Actual:   OK
+  Stack Trace:
+     at AgentStudio.Tests.BoardConditionalReadTests.ListRead_ValidatesTheSameWay() in /home/agent/runner-work/PROJ-002/worktrees/AGT-2859/backend.Tests/BoardConditionalReadTests.cs:line 372
+--- End of stack trace from previous location ---
+

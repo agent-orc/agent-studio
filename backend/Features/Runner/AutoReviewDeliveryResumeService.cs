@@ -166,7 +166,9 @@ public sealed class AutoReviewDeliveryResumeService
             ReadIntegrationStatus(task) == IntegrationStatuses.Integrated,
             settlement?.Stage,
             settlement?.ShouldIntegrate ?? false,
-            IntegrationGateJournal.Read(task.FolderPath) is not null);
+            IntegrationGateJournal.Read(task.FolderPath) is not null,
+            settlement?.IntegrationOutcome,
+            settlement?.IntegrationDetail);
 
         if (decision.Action == AutoReviewResumeAction.None)
             return new AutoReviewResumeOutcome(decision.Action, decision.Reason, Resumed: false);

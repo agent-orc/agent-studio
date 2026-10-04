@@ -52,6 +52,7 @@ public static class AutoReviewResumePolicy
         public const string NoSettlementRecord = "no-delivery-settlement-record";
         public const string GateRecoveryPending = "integration-gate-recovery-pending";
         public const string DeliveryGateFailed = "delivery-gate-failed";
+        public const string GateClassWaiting = "gate-class-waiting";
     }
 
     /// <summary>
@@ -75,7 +76,9 @@ public static class AutoReviewResumePolicy
         bool deliveryMerged,
         RemoteDeliverySettlementStage? settlementStage,
         bool settlementShouldIntegrate,
-        bool integrationGateInFlight = false)
+        bool integrationGateInFlight = false,
+        string? integrationOutcome = null,
+        string? integrationDetail = null)
     {
         if (fixtureCard || !string.Equals(laneState, TaskStates.AutoReview, StringComparison.Ordinal))
             return new AutoReviewResumeDecision(AutoReviewResumeAction.None, Reasons.OutsideAutoReview);
@@ -104,6 +107,9 @@ public static class AutoReviewResumePolicy
         // driver of the same card is exactly what nobody needs.
         if (integrationGateInFlight)
             return new AutoReviewResumeDecision(AutoReviewResumeAction.None, Reasons.GateRecoveryPending);
+
+        if (GateOutcomeRoutingPolicy.WaitsInAutoReview(integrationOutcome, integrationDetail))
+            return new AutoReviewResumeDecision(AutoReviewResumeAction.None, Reasons.GateClassWaiting);
 
         // AGT-2854: the merge is on the branch, so the gate that created it has
         // nothing left to do and the record it would have been read from is
@@ -152,6 +158,8 @@ public static class AutoReviewResumePolicy
             AutoReviewResumeAction.CompleteTransition =>
                 PostProcessingCardResult.AwaitingIntegrationCompletion,
             _ when decision.Reason == Reasons.NoSettlementRecord =>
+                PostProcessingCardResult.AwaitingDeliveryIntegration,
+            _ when decision.Reason == Reasons.GateClassWaiting =>
                 PostProcessingCardResult.AwaitingDeliveryIntegration,
             _ => PostProcessingCardResult.AwaitingCanonicalReviewVerdict,
         };

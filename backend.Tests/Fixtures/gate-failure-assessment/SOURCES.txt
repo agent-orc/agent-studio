@@ -1,0 +1,11 @@
+These fixtures are verbatim excerpts of captured task-result logs, with no
+synthetic failure lines added.
+
+environment.log: AGT-2782/results/web-19-replay-gate.log, lines 24-48.
+product.log: AGT-2995/results/backend-test-partial.log, lines 45-52.
+frontend-product.log: AGT-2596/results/03-candidate-targeted-reproduction-after-ci.log,
+  lines 75-84.
+integration-branch.log: the same AGT-2995 lines; the test supplies a measured
+  red-baseline diagnosis to exercise branch ownership of that failure.
+undecidable.log: AGT-2859/results/loop-evidence.log, lines 6-19; the test
+  deliberately has no baseline or clean-repeat diagnosis.

@@ -1,0 +1,10 @@
+
+ RUN  v4.1.5 /home/agent/runner-work/PROJ-002/worktrees/AGT-2596/frontend
+
+ ❯ |frontend| src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.digest.spec.ts (5 tests | 4 failed) 606ms
+     × uses the visible Refresh action to force context, then reconcile chat and sessions 400ms
+     × preserves the last good digest when a forced refresh fails 17ms
+     × does not let an older background read overwrite a forced refresh 75ms
+     × self-heals a stale selection and shares the spaced task key across digest, chat and send 55ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯

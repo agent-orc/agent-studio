@@ -561,6 +561,10 @@ public sealed class MergeIntoDevelopRunner
 
         var gate = new[] { preMainResult, preDevelopResult }
             .FirstOrDefault(item => item?.Verdict == BuildTestGateVerdict.Fail);
+        // Gate fingerprints use the shared AGT-2916 history and the second-card
+        // cause boundary in RemoteDeliveryIntegrationCoordinator. The generic
+        // intervention signature would create a different first-card cause.
+        if (ReferenceEquals(gate, preDevelopResult) && gate?.FailureAssessment is not null) return;
         var code = gate?.FailureKind == BuildTestGateFailureKind.MissingSource
             ? "MissingSource"
             : gate is not null
@@ -904,8 +908,7 @@ public sealed class MergeIntoDevelopRunner
             else
             {
                 var (preDevelopTimeout, preDevelopTimeoutSource) = ResolveGateTimeout(project, _preDevelopTimeout);
-                gate = await _preDevelopBuildGate.RunAsync(
-                    new BuildTestGateRequest(repoRoot, gatedSha, "merge-into-develop-build-gate")
+                var gateRequest = new BuildTestGateRequest(repoRoot, gatedSha, "merge-into-develop-build-gate")
                     {
                         Project = project,
                         JobId = jobId,
@@ -915,7 +918,9 @@ public sealed class MergeIntoDevelopRunner
                         SubjectRef = integrationBranch,
                         TimeoutBudgetSource = preDevelopTimeoutSource,
                         CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
-                    },
+                    };
+                gate = await _preDevelopBuildGate.RunAsync(
+                    gateRequest,
                     changedPaths,
                     profile,
                     preDevelopTimeout,
@@ -924,6 +929,20 @@ public sealed class MergeIntoDevelopRunner
                     // consistent terminal state. The gate stays bounded by its timeout.
                     CancellationToken.None,
                     reuse.Reused).ConfigureAwait(false);
+                // Transport loss has no test verdict. Repeat this exact gate once
+                // while the candidate merge is still held by this integration lock.
+                var firstAssessment = gate.Verdict == BuildTestGateVerdict.Fail
+                    ? gate.FailureAssessment ?? GateFailureAssessmentPolicy.Classify(gate)
+                    : null;
+                if (firstAssessment?.TransportFailure == true
+                    && firstAssessment.Classification == GateFailureAssessmentPolicy.Environment)
+                {
+                    IntegrationGateReceipts.Record(
+                        jobFolderPath, "pre-develop-build-gate", gate, _timeline, reuse);
+                    gate = await _preDevelopBuildGate.RunAsync(
+                        gateRequest, changedPaths, profile, preDevelopTimeout,
+                        CancellationToken.None, reuse.Reused).ConfigureAwait(false);
+                }
             }
             IntegrationGateReceipts.Record(
                 jobFolderPath, "pre-develop-build-gate", gate, _timeline, reuse);
@@ -975,9 +994,14 @@ public sealed class MergeIntoDevelopRunner
         // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
-        var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
-            ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
-            : MergeIntoIntegrationOutcome.GateFailed;
+        var assessment = gate.FailureAssessment ?? GateFailureAssessmentPolicy.Classify(gate);
+        var outcome = assessment.Classification switch
+        {
+            GateFailureAssessmentPolicy.Environment => MergeIntoIntegrationOutcome.GateEnvironmentFailure,
+            GateFailureAssessmentPolicy.IntegrationBranch => MergeIntoIntegrationOutcome.GateIntegrationBranchFailure,
+            GateFailureAssessmentPolicy.Product => MergeIntoIntegrationOutcome.GateFailed,
+            _ => MergeIntoIntegrationOutcome.GateUndecidable,
+        };
         var error = result.Outcome == MergeIntoIntegrationOutcome.AlreadyMerged
             ? $"The build gate blocked recovery of the existing {integrationBranch} commit {Short(gatedSha)}: {gate.Reason}. " +
               "The integration history was left unchanged, no push was released, and the delivery needs manual repair."
@@ -987,11 +1011,18 @@ public sealed class MergeIntoDevelopRunner
                   ? $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
                     "GateEnvironment: the gate host or run budget prevented verification from completing; the same reviewed delivery will be retried without a new review."
                   : $"{integrationBranch} was rolled back to {Short(preMergeTip!)} and nothing was pushed; " +
-                    "start a steer round so the delivery builds on top of the current integration branch.")
+                    $"class={assessment.Classification}; fingerprint={assessment.Fingerprint}; " +
+                    (assessment.MissingEvidence ?? assessment.Reason))
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+        return (MergeIntoIntegrationResult.Of(outcome, error: error) with
+        {
+            GateFailureAssessment = assessment,
+            AutomaticRecoveryDetail = outcome == MergeIntoIntegrationOutcome.GateUndecidable
+                ? $"Gate class undecidable ({assessment.Fingerprint}): {assessment.MissingEvidence ?? assessment.Reason}"
+                : null,
+        }, gate);
     }
 
     /// <summary>
@@ -1863,6 +1894,12 @@ public sealed class MergeIntoDevelopRunner
                     "gate-environment-failure",
                     result.Error
                         ?? $"The build gate for {integrationBranch} failed before verification reached test discovery.",
+                    preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.GateIntegrationBranchFailure:
+                return (PipelineStepStatus.Failed, "gate-integration-branch", result.Error,
+                    preDevelopResult?.Reason);
+            case MergeIntoIntegrationOutcome.GateUndecidable:
+                return (PipelineStepStatus.Failed, "gate-undecidable", result.Error,
                     preDevelopResult?.Reason);
             case MergeIntoIntegrationOutcome.MergedAfterRebase:
                 var replacementCount = result.RebasedCommits.Count;

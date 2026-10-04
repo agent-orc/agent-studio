@@ -1758,14 +1758,14 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
-        Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.GateUndecidable, outcome.Outcome);
         Assert.Equal(tip, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
         Assert.False(queue.Reader.TryRead(out _));
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
-        Assert.Equal("gate-failed", step.Verdict);
+        Assert.Equal("gate-undecidable", step.Verdict);
         Assert.Contains("no push was released", step.Reason);
     }
 
@@ -1851,14 +1851,14 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var outcome = await runner.RunAsync(
             "Fixture", "48", jobFolder, repo, "develop", CancellationToken.None);
 
-        Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.GateUndecidable, outcome.Outcome);
         Assert.Equal(tip, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
         Assert.False(queue.Reader.TryRead(out _));
 
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Failed, step!.Status);
-        Assert.Equal("gate-failed", step.Verdict);
+        Assert.Equal("gate-undecidable", step.Verdict);
         Assert.Contains("not available", step.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1927,7 +1927,12 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
         var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
             BuildTestGateVerdict.Fail, 1, 20, "CS0103: the merge does not compile",
-            "backend build exit 1", true, false));
+            "backend build exit 1", true, false)
+        {
+            Diagnosis = new AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosisResult(
+                AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosis.Product, 1,
+                ["baseline=green", "clean-repeat=red"]),
+        });
         var queue = new IntegrationPushQueue();
         var jobFolder = BeginRun(log, repo, jobId: "60");
         var runner = new MergeIntoDevelopRunner(
@@ -2015,6 +2020,36 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("gate-environment-failure", step.Verdict);
         Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, step.FailureCode);
         Assert.Contains("GateEnvironment:", step.Reason);
+    }
+
+    [Fact]
+    public async Task RunAsync_DevelopTarget_TransportFailure_RerunsTheSameGateCandidate()
+    {
+        var repo = SeedRepo("develop-gate-transport");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/transport");
+        File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
+        Commit(repo, "feat: task work");
+        RunGit(repo, "checkout -q develop");
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new SequenceBuildTestGateRunner(
+            new BuildTestGateResult(BuildTestGateVerdict.Fail, 1, 20,
+                "fatal: unable to access origin: ECONNRESET", "transport lost", false, false),
+            new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 20,
+                "build passed", "build passed", false, false));
+        var jobFolder = BeginRun(log, repo, jobId: "transport");
+        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings, preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+
+        var outcome = await runner.RunAsync("Fixture", "transport", jobFolder, repo,
+            "develop", CancellationToken.None);
+
+        Assert.True(outcome.Outcome.IsSuccessfulIntegration());
+        Assert.Equal(2, gateRunner.Requests.Count);
+        Assert.Equal(gateRunner.Requests[0].ExpectedSha, gateRunner.Requests[1].ExpectedSha);
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(jobFolder, "post-steps"),
+            "pre-develop-build-gate-*.log").Length);
     }
 
     [Theory]
@@ -2738,6 +2773,24 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return (git, log);
+    }
+
+    private sealed class SequenceBuildTestGateRunner(params BuildTestGateResult[] results) : IBuildTestGateRunner
+    {
+        public List<BuildTestGateRequest> Requests { get; } = [];
+
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile, PostStepMode mode,
+            TimeSpan timeout, CancellationToken ct)
+        {
+            Requests.Add(request);
+            var result = results[Math.Min(Requests.Count - 1, results.Length - 1)];
+            return Task.FromResult(result with
+            {
+                ExpectedSha = request.ExpectedSha,
+                TestedSha = request.ExpectedSha,
+            });
+        }
     }
 
     private sealed class CapturingBuildTestGateRunner : IBuildTestGateRunner

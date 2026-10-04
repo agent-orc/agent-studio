@@ -22,7 +22,8 @@ public static class RemoteIntegrationContinuationPolicy
         int automaticAgentRoundsUsed,
         int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
-        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
+        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+            or MergeIntoIntegrationOutcome.GateFailed))
             return RemoteIntegrationContinuationAction.None;
 
         return Math.Max(0, automaticAgentRoundsUsed) < Math.Min(MaxAutomaticAgentRounds,
@@ -176,7 +177,8 @@ public sealed class IntegrationAgentRoundService
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
 
-        if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
+        if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+            or MergeIntoIntegrationOutcome.GateFailed))
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
 
         if (_settings?.Get(job.ProjectName).AutomaticFailureContinuationsEnabled == false)
@@ -222,11 +224,13 @@ public sealed class IntegrationAgentRoundService
         }
 
         var prompt = BuildPrompt(job, subject, request, result);
+        var recoveryReason = result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+            ? "gate-product-failure" : AttributionAmbiguousReason;
         var intent = _mutations.SavePendingIntent(
             job.Id,
             ContinueModes.Steer,
             prompt,
-            reason: AttributionAmbiguousReason,
+            reason: recoveryReason,
             activeJobId: null,
             watchPath: job.WatchPath);
         if (intent is null)
@@ -274,7 +278,7 @@ public sealed class IntegrationAgentRoundService
                 ["resultSha"] = subject.ResultSha,
                 ["integrationBranch"] = request.IntegrationBranch,
                 ["mode"] = ContinueModes.Steer,
-                ["reason"] = AttributionAmbiguousReason,
+                ["reason"] = recoveryReason,
                 ["supersededCommits"] = Invariant(supersession.MarkedCommits),
                 ["budgetUsed"] = Invariant(budget.Used + 1),
                 ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
@@ -336,11 +340,16 @@ public sealed class IntegrationAgentRoundService
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
     {
-        return IntegrationContinuationPrompt.Build(
+        var prompt = IntegrationContinuationPrompt.Build(
             job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",
             result.Error ?? "Delivery attribution needs a new agent round.", result.ConflictReport,
             conflictedFiles: result.ConflictedFiles);
+        if (result.GateFailureAssessment is { } gate)
+            prompt += $"\n\nGate class: {gate.Classification}\nFingerprint: {gate.Fingerprint}\n"
+                      + $"Reason line: {gate.Reason}\nFailing items:\n"
+                      + string.Join("\n", gate.FailingItems.Select(item => "- " + item)) + "\n";
+        return prompt;
     }
 
     private static IntegrationAgentRoundStartResult Failed(

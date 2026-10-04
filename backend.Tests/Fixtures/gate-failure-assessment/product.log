@@ -1,0 +1,8 @@
+  Skipped AgentStudio.Tests.TaskOperationPerfBenchmarks.FlatStorage_TaskOperations_P95Under30ms_At20kTasks [1 ms]
+[xUnit.net 00:24:12.10]     AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock [FAIL]
+  Failed AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock [2 s]
+  Error Message:
+   Tests must not depend on the day they run on:
+  backend.Tests/AutoReviewRestartDrillTests.cs: reads the wall clock 13 time(s) (baseline 12) at line(s) 485, 485, 557, 673, 673, 699, 883, 914, 989, 1025, 1027, 1181, 1247. Inject a clock (FakeTimeProvider, TimeProvider or a utcNow parameter) instead.
+  backend.Tests/MergeIntoDevelopRunnerFailureCodeTests.cs: reads the wall clock 1 time(s) (baseline 0) at line(s) 107. Inject a clock (FakeTimeProvider, TimeProvider or a utcNow parameter) instead.
+  Stack Trace:

@@ -162,6 +162,37 @@ public sealed class FailureInterventionTests : IDisposable
             item, followUp, firstRoundTrip, followUpTimeline, originTimeline, originPipeline, feed, reportLine);
     }
 
+    [Fact]
+    public async Task Second_gate_fingerprint_card_opens_one_cause_and_holds_both_cards()
+    {
+        var (scanner, mutations, service, _, _, _) = Build();
+        var first = CreateOrigin(scanner, mutations, "First red gate");
+        var second = CreateOrigin(scanner, mutations, "Same red gate on another card");
+        var firstAssessment = new GateFailureAssessment(
+            GateFailureAssessmentPolicy.Product, "code:captured-clock-guard",
+            ["AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock"],
+            "TestClockGuardTests [FAIL]", OtherCards: []);
+        var secondAssessment = firstAssessment with { OtherCards = [first.Key!] };
+        Assert.False(GateOutcomeRoutingPolicy.OpensCause(firstAssessment));
+        Assert.Empty(service.List(_project));
+
+        var request = new RemoteDeliveryIntegrationRequest("demo", second.Id, second.FolderPath,
+            _project, "develop", "merge", "standard", DateTimeOffset.Parse("2026-10-04T00:00:00Z"));
+        var wait = await RemoteDeliveryIntegrationCoordinator.RaiseGateCauseAsync(
+            request, secondAssessment, scanner, service);
+
+        var cause = Assert.Single(service.List(_project));
+        Assert.Contains(cause.FollowUpKey, wait);
+        Assert.Equal(2, cause.AffectedCards.Count);
+        foreach (var origin in new[] { first, second })
+        {
+            var updated = scanner.FindJob(origin.Id, _project)!;
+            Assert.Contains(updated.References.DependsOn, item => item.Key == cause.FollowUpKey);
+            Assert.Contains(cause.FollowUpKey, updated.References.BlockedBy);
+        }
+        Assert.Single(scanner.ScanAllJobs(), item => item.CreationSource == TimelineActors.Orchestrator);
+    }
+
     private static void WriteEvidenceSnapshots(
         FailureInterventionRecord item,
         TaskInfo followUp,

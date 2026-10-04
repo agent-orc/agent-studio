@@ -89,6 +89,23 @@ public sealed class AutoReviewResumePolicyTests
     }
 
     [Theory]
+    [InlineData(nameof(MergeIntoIntegrationOutcome.GateEnvironmentFailure), null)]
+    [InlineData(nameof(MergeIntoIntegrationOutcome.GateIntegrationBranchFailure), null)]
+    [InlineData(nameof(MergeIntoIntegrationOutcome.GateFailed), "waiting on AGT-3007: shared gate cause")]
+    public void A_classified_gate_wait_never_restarts_into_human_review(
+        string integrationOutcome, string? detail)
+    {
+        var decision = AutoReviewResumePolicy.Decide(
+            TaskStates.AutoReview, false, AttemptLifecycleState.Completed,
+            ReviewTerminalOutcome.Pass, false,
+            RemoteDeliverySettlementStage.LaneSettled, true,
+            integrationOutcome: integrationOutcome, integrationDetail: detail);
+
+        Assert.Equal(AutoReviewResumeAction.None, decision.Action);
+        Assert.Equal(AutoReviewResumePolicy.Reasons.GateClassWaiting, decision.Reason);
+    }
+
+    [Theory]
     [InlineData(ReviewTerminalOutcome.Pass)]
     [InlineData(ReviewTerminalOutcome.IntegrationBranchDefect)]
     public void Both_admissible_outcomes_reach_integration(ReviewTerminalOutcome outcome)

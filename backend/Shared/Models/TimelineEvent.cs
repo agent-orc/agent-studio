@@ -372,6 +372,8 @@ public static class TimelineEventKinds
     /// the integration explicitly.
     /// </summary>
     public const string IntegrationGateEnvironmentParked = "integration_gate_environment_parked";
+    /// <summary>A gate-run budget was exceeded; the limit and consumption remain visible for tuning.</summary>
+    public const string IntegrationGateBudgetExceeded = "integration_gate_budget_exceeded";
     /// <summary>
     /// AGT-2853: the integration build/test gate re-ran exactly the tests that
     /// failed in its full run, they passed, and the gate stayed green.

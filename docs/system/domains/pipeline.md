@@ -199,6 +199,28 @@ See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
 
 ## Failure intervention step
 
+### Merge gate result ownership (AGT-3009)
+
+`GateFailureAssessmentPolicy` reads the failed gate report after the AGT-2916
+baseline and clean-repeat diagnosis. It records a fingerprint, failing item
+names, and one of `environment`, `product`, `integration-branch`, or
+`undecidable` in the gate receipt. A red baseline with the same failure
+fingerprint belongs to the integration branch. A failed item repeated on another card uses the shared Task Server
+fingerprint history and opens or joins one intervention cause card on the
+second card. The affected cards gain a `dependsOn` edge and wait for that
+cause. The integration branch itself remains unpushed after a red gate.
+
+Transport failures repeat the exact gate once while the merge candidate is
+held. Other environment failures stay in Auto Review for the bounded gate
+redelivery ladder. A confirmed product failure starts one bounded agent fix
+round with the failing names and reason line in its prompt. If that round
+cannot start, the card waits on a cause card with the budget or failure reason.
+Missing or
+conflicting diagnosis evidence is `undecidable` and reaches Human Review with
+the missing evidence named. A targeted rerun earns a flaky label only when
+the same failed item passes on the same tested tree; the failed run and rerun
+remain in the gate evidence.
+
 `post-failure-intervention` is an opt-in failure-boundary step configured through
 the existing per-project `PipelineSteps` map. It is triggered by failed run,
 review, gate, integration, merge, and crash-completion outcomes rather than by a
@@ -723,15 +745,13 @@ may supply failure context; an older failed step cannot revive a prior delivery.
 operator action, the automatic remote conflict or attribution agent round, the
 existing operator rebase recovery, the council review finding round, and the
 solution-quality review concern reissue. The mechanical gate-environment retry
-first reuses the unchanged delivery and its passed review. When that retry
-budget parks the delivery, it uses the same builder to queue one automatic
-agent continuation for that delivery; a later repeat of the same delivery parks
-with the card action. A new delivery receives its own one-round budget. The
-existing automatic budgets remain in their respective
-policies (`IntegrationRecoveryBudget`, solution-quality reissue policy, and
-`GateEnvironmentRetryPolicy`), with `GateEnvironmentContinuationPolicy` limiting
-the parked gate continuation to one. The council review finding round is capped
-at one automatic reissue before it parks for operator review.
+reuses the unchanged delivery and its passed review within
+`GateEnvironmentRetryPolicy`'s bounded ladder. Exhausting that host budget
+records a parked gate-host finding and keeps the manual Retry integration
+action available. It does not queue a coding agent. The other automatic
+budgets remain in `IntegrationRecoveryBudget` and the solution-quality reissue
+policy. The council review finding round is capped at one automatic reissue
+before it parks for operator review.
 
 `ProjectSettings.AutomaticFailureContinuationsEnabled` controls automatic
 integration and review continuations and the automatic gate-environment retry

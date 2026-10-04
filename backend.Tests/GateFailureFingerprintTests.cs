@@ -80,6 +80,17 @@ public sealed class GateFailureFingerprintTests
     }
 
     [Fact]
+    public void Same_failed_test_item_has_one_fleet_fingerprint_across_gate_commands()
+    {
+        const string failed = "AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock [FAIL]";
+        var first = RedGate(Lease, "dotnet test backend.Tests --filter Category!=MachineBound", failed, "");
+        var second = RedGate(CleanClone, "dotnet test backend.Tests --no-build", failed, "");
+
+        Assert.Equal(BuildTestGateRunner.DiagnosticFingerprint(first),
+            BuildTestGateRunner.DiagnosticFingerprint(second));
+    }
+
+    [Fact]
     public void Gate_and_review_share_one_output_normaliser()
     {
         var identity = FailureOutputNormalizer.Identity(

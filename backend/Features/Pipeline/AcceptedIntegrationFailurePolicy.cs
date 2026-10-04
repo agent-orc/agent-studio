@@ -33,6 +33,8 @@ public static class AcceptedIntegrationFailureCodes
     /// <c>ConflictSkipped</c>/<c>Partial</c> (CAC-18).
     /// </summary>
     public const string GateEnvironmentFailure = "gate-environment-failure";
+    public const string GateIntegrationBranchFailure = "gate-integration-branch";
+    public const string GateUndecidable = "gate-undecidable";
 
     /// <summary>
     /// The build/test gate never reached a verdict at all: the process that owned
@@ -176,6 +178,14 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The gate host or run budget prevented verification from completing."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure => new(
+                code, "Integration branch gate failure",
+                FirstNonBlank(reason, verdictSummary, "The integration tip already fails this gate."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateUndecidable => new(
+                code, "Gate diagnosis undecidable",
+                FirstNonBlank(reason, verdictSummary, "The gate report lacks evidence needed to assign the failure."),
+                RebaseRecoveryAvailable: false),
             AcceptedIntegrationFailureCodes.GateInterrupted => new(
                 code,
                 "Integration gate interrupted",
@@ -213,6 +223,10 @@ public static class AcceptedIntegrationFailurePolicy
             return AcceptedIntegrationFailureCodes.BuildGateFailed;
         if (string.Equals(verdict, "gate-environment-failure", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.GateEnvironmentFailure;
+        if (string.Equals(verdict, "gate-integration-branch", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure;
+        if (string.Equals(verdict, "gate-undecidable", StringComparison.OrdinalIgnoreCase))
+            return AcceptedIntegrationFailureCodes.GateUndecidable;
         if (string.Equals(verdict, "gate-interrupted", StringComparison.OrdinalIgnoreCase))
             return AcceptedIntegrationFailureCodes.GateInterrupted;
         if (string.Equals(verdict, "delivery-gate-failed", StringComparison.OrdinalIgnoreCase))
@@ -261,6 +275,8 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.IntegrationError => AcceptedIntegrationFailureCodes.IntegrationError,
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure => AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure => AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure,
+            AcceptedIntegrationFailureCodes.GateUndecidable => AcceptedIntegrationFailureCodes.GateUndecidable,
             AcceptedIntegrationFailureCodes.GateInterrupted => AcceptedIntegrationFailureCodes.GateInterrupted,
             _ => null,
         };

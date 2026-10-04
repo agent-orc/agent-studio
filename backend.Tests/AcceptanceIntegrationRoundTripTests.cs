@@ -1190,7 +1190,12 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             "CS0103: the merge does not compile",
             "backend build exit 1",
             true,
-            false));
+            false)
+        {
+            Diagnosis = new AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosisResult(
+                AgentStudio.TaskServer.Contracts.DeliveryFailureDiagnosis.Product, 1,
+                ["baseline=green", "clean-repeat=red"]),
+        });
         var deps = Build(
             deliverySha,
             backgroundIntegration: true,

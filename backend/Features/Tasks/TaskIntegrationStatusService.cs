@@ -742,11 +742,15 @@ public sealed class TaskIntegrationStatusService
             // AGT-2849 joins the same family: a gate that was killed before it
             // could answer is a host fault, not a verdict on the delivery.
             if (failure.Code is AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-                or AcceptedIntegrationFailureCodes.GateInterrupted)
+                or AcceptedIntegrationFailureCodes.GateInterrupted
+                or AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure)
             {
-                var prefix = failure.Code == AcceptedIntegrationFailureCodes.GateInterrupted
-                    ? "gate interrupted"
-                    : "gate environment";
+                var prefix = failure.Code switch
+                {
+                    AcceptedIntegrationFailureCodes.GateInterrupted => "gate interrupted",
+                    AcceptedIntegrationFailureCodes.GateIntegrationBranchFailure => "integration branch gate failure",
+                    _ => "gate environment",
+                };
                 return new TaskIntegrationStatus
                 {
                     Status = IntegrationStatuses.Pending,

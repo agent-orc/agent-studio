@@ -1462,7 +1462,14 @@ public static class V1ReviewPlaneEndpoints
                         logger);
                 }
 
-                if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
+                    && GateOutcomeRoutingPolicy.WaitsInAutoReview(integrationOutcome, integrationParkReason))
+                {
+                    taskState = TaskStates.AutoReview;
+                    AdvanceDeliverySettlement(task.FolderPath, RemoteDeliverySettlementStage.LaneSettled,
+                        integrationOutcome, integrationParkReason, logger);
+                }
+                else if (string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
                 {
                     if (authority.GetTaskProjection(settled.ReviewAttempt.TaskKey).CurrentReviewAttempt?.AttemptId
                         != attemptId)
