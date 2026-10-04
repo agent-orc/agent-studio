@@ -6,7 +6,8 @@ import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { App } from './app';
 import { TaskService } from './services/task.service';
-import type { TaskDetail, TaskInfo } from './models/task.model';
+import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from './models/task.model';
+import { ProjectLookupService } from './services/project-lookup.service';
 import { studioTabKey } from './features/studio-shell';
 import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
@@ -374,8 +375,8 @@ describe('App studio-tab mirror (pager reuse)', () => {
 
   /** Directly drive the extracted mirror mapping (the effect body). */
   function mirror(app: App, detail: TaskDetail, retargetNav: boolean): void {
-    (app as unknown as { mirrorSelectionToStudioTab(d: TaskDetail, r: boolean): void })
-      .mirrorSelectionToStudioTab(detail, retargetNav);
+    (app as unknown as { mirrorSelectionToStudioTab(d: TaskInfo, r: boolean): void })
+      .mirrorSelectionToStudioTab(detail.info, retargetNav);
   }
 
   it('retargets the active task tab in place on a pager/cursor step (no new tab)', async () => {
@@ -461,6 +462,12 @@ describe('App browser-history lane reconciliation', () => {
       projectName: 'Project A',
     } as TaskInfo;
 
+    // A multi-project registry where no short code owns the `AGT` prefix:
+    // the restore must let the backend resolve the public key.
+    TestBed.inject(ProjectLookupService).setWorkspaces(([{ projects: [
+      { id: 'PROJ-A', displayName: 'Project A', shortCode: 'PA', storageLocation: 'C:/watch' },
+      { id: 'PROJ-B', displayName: 'Project B', shortCode: 'PB', storageLocation: 'C:/other' },
+    ] }]) as unknown as RegistryWorkspaceListItem[]);
     selection.triageLaneState = '5-human-review';
     history.replaceState({
       studioTaskPager: {
@@ -559,6 +566,17 @@ describe('App active project scope on task open', () => {
     app.jobService.jobs.set(jobs);
     app.jobService.grouped.set({ ...app.jobService.grouped(), ready: jobs });
   }
+
+  it('lands a board open on Overview in the selection too, so the previous tab is not reloaded', async () => {
+    const app = await configure();
+    const tabs = vi.spyOn(TestBed.inject(TaskSelectionService), 'loadResourcesForTab');
+    app.onTaskDetailTabChange('timeline');
+
+    app.openDetail(boardTask({}));
+
+    expect(tabs.mock.calls).toEqual([['timeline'], [null]]);
+    expect(app.routeDetailTab()).toBeNull();
+  });
 
   it('leaves the active scope on All projects when a task is opened from the cross-project board', async () => {
     const app = await configure();

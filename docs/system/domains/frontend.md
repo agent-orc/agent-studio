@@ -197,6 +197,24 @@ without a parallel surface.
   backend seed + navigate).
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
+  Ordinary task selection reads the bounded `/core` projection first and paints
+  identity, lane, pins, execution, status, prompt, and recent events before
+  independent detail resources begin. Two documents load after core paint;
+  usage follows the rich view, Git waits for its pane, and review evidence and
+  history wait for explicit tabs. The selection service keeps the pager and
+  public URL identity guards while resource replies carry their own freshness,
+  retry state, and task, attempt, and core generation checks. A reference the
+  project registry cannot place (a keyless task, a key prefix no project
+  short code owns in a multi-project workspace, a pager entry outside every
+  registered storage location, or a registry still loading after 3 s) is
+  resolved server-side through the legacy detail route instead of failing.
+  A revalidated core generation refreshes an already painted rich pane in
+  place, and the expanded history or review tab reloads with it. The feature README records the client flow and compatibility
+  boundary; the backend contract of `/details/*` lives in the
+  [Tasks domain](tasks.md#task-detail-resources-agt-2955).
+  Pending crash recovery remains visible through a persistent review control;
+  its dialog opens only on operator request, and closing it leaves the durable
+  recovery record untouched so task navigation remains available.
   The middle inspector uses the fixed `Task | Activity | Result` order. Task
   renders `prompt.md` and the read-only refinement projection from run/log and
   steering-history evidence. When `enrichment-report.json` exists, Task keeps

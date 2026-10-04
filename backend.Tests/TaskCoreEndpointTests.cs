@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -44,6 +45,9 @@ public sealed class TaskCoreEndpointTests : IDisposable
         using var body = JsonDocument.Parse(bytes);
         Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
         Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
+        Assert.Equal(Jobs, body.RootElement.GetProperty("watchPath").GetString());
+        Assert.Equal(Path.Combine(Jobs, TaskStates.Ready, "AGT-core"),
+            body.RootElement.GetProperty("folderPath").GetString());
         Assert.Equal("ready", body.RootElement.GetProperty("prompt").GetProperty("state").GetString());
         var timeline = body.RootElement.GetProperty("timeline");
         Assert.Equal(5, timeline.GetProperty("events").GetArrayLength());
@@ -79,6 +83,88 @@ public sealed class TaskCoreEndpointTests : IDisposable
 
         using var unknown = await client.GetAsync($"/api/tasks/AGT-unknown/core?project={project.Id}");
         Assert.Equal(HttpStatusCode.Accepted, unknown.StatusCode);
+    }
+
+    [Fact]
+    public async Task DetailResources_AreTypedConditionalAndGenerationBound()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.ForceRefresh();
+        using var coreResponse = await client.GetAsync($"/api/tasks/AGT-core/core?project={project.Id}");
+        coreResponse.EnsureSuccessStatusCode();
+        using var core = JsonDocument.Parse(await coreResponse.Content.ReadAsStringAsync());
+        // The 64-bit generation is a string so JavaScript clients echo it exactly.
+        Assert.Equal(JsonValueKind.String, core.RootElement.GetProperty("coreVersion").ValueKind);
+        var generation = long.Parse(core.RootElement.GetProperty("coreVersion").GetString()!, CultureInfo.InvariantCulture);
+        var scans = index.Misses;
+
+        var url = $"/api/tasks/AGT-core/details/documents?project={project.Id}&generation={generation}&name=prompt";
+        using var response = await client.GetAsync(url);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("documents", body.RootElement.GetProperty("resource").GetString());
+        Assert.Equal("ready", body.RootElement.GetProperty("state").GetString());
+        Assert.Equal("AGT-core", body.RootElement.GetProperty("id").GetString());
+        Assert.Equal(generation.ToString(CultureInfo.InvariantCulture), body.RootElement.GetProperty("coreVersion").GetString());
+        Assert.Equal(900, body.RootElement.GetProperty("data").GetProperty("markdown")
+            .GetString()!.EnumerateRunes().Count());
+        Assert.False(body.RootElement.TryGetProperty("info", out _));
+        Assert.NotNull(response.Headers.ETag);
+
+        using var conditional = new HttpRequestMessage(HttpMethod.Get, url);
+        conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!);
+        using var notModified = await client.SendAsync(conditional);
+        Assert.Equal(HttpStatusCode.NotModified, notModified.StatusCode);
+
+        using var stale = await client.GetAsync($"/api/tasks/AGT-core/details/usage?project={project.Id}&generation=0");
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var history = await client.GetAsync($"/api/tasks/AGT-core/details/history?project={project.Id}&generation={generation}");
+        history.EnsureSuccessStatusCode();
+        using var git = await client.GetAsync($"/api/tasks/AGT-core/details/git?project={project.Id}&generation={generation}");
+        git.EnsureSuccessStatusCode();
+        Assert.Equal(scans, index.Misses);
+    }
+
+    [Fact]
+    public async Task DetailResources_VersionHashesTheWireData_AndWarmingIsNotMissing()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        var index = factory.Services.GetRequiredService<TaskIndexCache>();
+        index.ForceRefresh();
+
+        // `version` is the hash of exactly the `data` bytes on the wire, which
+        // are serialized once with the host's HTTP JSON options (string enums).
+        using var response = await client.GetAsync(
+            $"/api/tasks/AGT-core/details/documents?project={project.Id}&name=status");
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var data = body.RootElement.GetProperty("data");
+        Assert.Equal(JsonValueKind.String, data.GetProperty("summaryState").GetProperty("status").ValueKind);
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(data.GetRawText()))).ToLowerInvariant();
+        Assert.Equal(hash, body.RootElement.GetProperty("version").GetString());
+
+        // A task the re-hydrating index cannot place yet answers 202 like the
+        // core route, so the client keeps the selection instead of revoking it.
+        index.Invalidate();
+        using var warming = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
+        Assert.Equal(HttpStatusCode.Accepted, warming.StatusCode);
+        using var warmingBody = JsonDocument.Parse(await warming.Content.ReadAsStringAsync());
+        Assert.Equal("warming", warmingBody.RootElement.GetProperty("state").GetString());
+        Assert.Equal("task-index-warming", warmingBody.RootElement.GetProperty("reason").GetString());
+
+        index.ForceRefresh();
+        using var missing = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
     [Fact]
