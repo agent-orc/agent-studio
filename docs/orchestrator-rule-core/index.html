@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en" data-document-pattern="concept">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator rule core | Concept Dossier</title>
+  <style data-article-template="v2">
+    :root {
+      color-scheme: light;
+      --article-paper: #fcfcfb;
+      --article-surface: #f2f1ee;
+      --article-surface-strong: #e9e8e3;
+      --article-ink: #151515;
+      --article-muted: #5f5e59;
+      --article-faint: #7c7a74;
+      --article-line: #d8d6cf;
+      --article-link: #1f67b2;
+      --article-link-soft: #eaf1fb;
+      --article-good: #18753a;
+      --article-good-soft: #eaf4ea;
+      --article-warn: #8b6100;
+      --article-warn-soft: #f8f0dd;
+      --article-bad: #b72f2f;
+      --article-bad-soft: #fbecec;
+      --article-serif: Georgia, "Times New Roman", serif;
+      --article-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --article-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --article-paper: #1a1a19;
+        --article-surface: #232322;
+        --article-surface-strong: #2c2c2a;
+        --article-ink: #f7f7f4;
+        --article-muted: #c3c2b7;
+        --article-faint: #9d9c94;
+        --article-line: #3d3d3a;
+        --article-link: #78aef0;
+        --article-link-soft: #1e2a3a;
+        --article-good: #67b867;
+        --article-good-soft: #1f2f1f;
+        --article-warn: #d9a63f;
+        --article-warn-soft: #33301e;
+        --article-bad: #e66767;
+        --article-bad-soft: #382222;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--article-paper); }
+    body {
+      margin: 0;
+      background: var(--article-paper);
+      color: var(--article-ink);
+      font: 17px/1.75 var(--article-serif);
+      text-rendering: optimizeLegibility;
+    }
+    main,
+    .article {
+      width: min(70ch, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 0 0 80px;
+    }
+    header.page {
+      margin-bottom: 12px;
+      padding: 48px 0 28px;
+      border-bottom: 1px solid var(--article-line);
+    }
+    h1,
+    h2,
+    h3,
+    h4,
+    .kicker,
+    .meta,
+    .number,
+    nav,
+    table,
+    figcaption,
+    .box,
+    .callout,
+    .evidence-figure,
+    .variant-grid,
+    .evidence-list {
+      font-family: var(--article-sans);
+    }
+    h1 {
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 6vw, 3.4rem);
+      line-height: 1.08;
+      letter-spacing: -0.025em;
+    }
+    h2 {
+      margin: 56px 0 10px;
+      font-size: 1.55rem;
+      line-height: 1.25;
+    }
+    h3 { margin: 34px 0 8px; font-size: 1.08rem; line-height: 1.35; }
+    h4 { margin: 0 0 8px; font-size: 0.94rem; }
+    p { margin: 0 0 18px; }
+    p:last-child { margin-bottom: 0; }
+    .kicker,
+    .number {
+      margin: 0 0 12px;
+      color: var(--article-faint);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .lede { margin: 0; color: var(--article-muted); font-size: 1.18rem; line-height: 1.6; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; color: var(--article-faint); font-size: 0.78rem; }
+    .meta b { color: var(--article-muted); font-weight: 650; }
+    a { color: var(--article-link); text-underline-offset: 0.16em; }
+    a:focus-visible { outline: 2px solid var(--article-link); outline-offset: 3px; border-radius: 2px; }
+    code {
+      padding: 0.08em 0.34em;
+      border-radius: 4px;
+      background: var(--article-surface-strong);
+      font: 0.84em/1.5 var(--article-mono);
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    pre code { padding: 0; background: transparent; }
+    ul,
+    ol { margin: 0 0 18px; padding-left: 24px; }
+    li + li { margin-top: 6px; }
+    table { width: 100%; margin: 24px 0; border-collapse: collapse; font-size: 0.88rem; line-height: 1.5; }
+    th,
+    td { padding: 10px 12px; border-bottom: 1px solid var(--article-line); text-align: left; vertical-align: top; }
+    th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .box,
+    .callout {
+      margin: 24px 0;
+      padding: 18px 22px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+    .box.accent,
+    .callout[data-tone="accent"] { border-color: color-mix(in srgb, var(--article-link) 30%, var(--article-line)); background: var(--article-link-soft); }
+    .box.good,
+    .callout[data-tone="good"] { border-color: color-mix(in srgb, var(--article-good) 30%, var(--article-line)); background: var(--article-good-soft); }
+    .box.warn,
+    .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
+    .box.bad,
+    .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
+    figure { margin: 30px 0; }
+    figure > img,
+    figure > svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
+    .evidence-figure { margin-top: 38px; margin-bottom: 38px; }
+    .evidence-captures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+      gap: 12px;
+    }
+    .evidence-capture {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-paper);
+    }
+    .evidence-capture > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+    .capture-theme,
+    .figure-annotation {
+      position: absolute;
+      z-index: 1;
+      border: 1px solid var(--article-line);
+      border-radius: 999px;
+      background: var(--article-surface);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      line-height: 1.35;
+    }
+    .capture-theme {
+      top: 10px;
+      left: 10px;
+      padding: 3px 8px;
+      text-transform: uppercase;
+    }
+    .figure-annotation {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(28ch, calc(100% - 24px));
+      padding: 5px 10px;
+      border-color: color-mix(in srgb, var(--article-link) 45%, var(--article-line));
+      background: var(--article-link-soft);
+      color: var(--article-link);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .figure-claim { display: block; color: var(--article-ink); font-size: 0.84rem; }
+    .figure-as-of {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px 14px;
+      margin-top: 6px;
+      color: var(--article-faint);
+      font-size: 0.72rem;
+    }
+    .breakout,
+    .media-breakout {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+    }
+    .variant-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0; }
+    .variant {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--article-line);
+      border-radius: 10px;
+      background: var(--article-surface);
+    }
+    .variant h3 { margin: 0 0 8px; }
+    .variant img,
+    .variant svg { display: block; width: 100%; height: auto; margin-top: 12px; }
+    [data-document-pattern="ui"] .variant-grid {
+      width: min(1120px, calc(100vw - 48px));
+      margin-left: 50%;
+      transform: translateX(-50%);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    [data-document-pattern="ui"] .mockup { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
+    .evidence-list { display: grid; gap: 10px; margin: 24px 0; }
+    .evidence {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 10px 14px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--article-line);
+      border-radius: 9px;
+      background: var(--article-surface);
+      color: var(--article-ink);
+      text-decoration: none;
+    }
+    .evidence:hover { border-color: var(--article-link); background: var(--article-link-soft); }
+    .evidence-class {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--article-surface-strong);
+      color: var(--article-muted);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    [data-document-pattern="concept"] .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
+    .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
+    .dim { color: var(--article-muted); }
+
+    @media (max-width: 760px) {
+      main,
+      .article { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
+      header.page { padding-top: 32px; }
+      .breakout,
+      .media-breakout,
+      [data-document-pattern="ui"] .variant-grid,
+      [data-document-pattern="ui"] .mockup { width: calc(100vw - 20px); }
+      [data-document-pattern="ui"] .variant-grid { grid-template-columns: 1fr; }
+      .evidence { grid-template-columns: 1fr; }
+      .evidence-captures { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; }
+    }
+  
+    .contents { display: flex; flex-wrap: wrap; gap: 7px 13px; margin: 22px 0 6px; padding: 0 0 18px; border-bottom: 1px solid var(--article-line); font: 0.78rem/1.4 var(--article-sans); }
+    .contents a { white-space: nowrap; }
+    .mechanism { margin: 28px 0; padding: 18px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-family: var(--article-sans); }
+    .mechanism-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+    .mechanism-node { min-width: 0; padding: 14px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); text-align: center; }
+    .mechanism-node.center { width: min(420px, 100%); margin: 0 auto; border-color: var(--article-link); background: var(--article-link-soft); }
+    .mechanism-node b { display: block; font-size: 0.88rem; }
+    .mechanism-node small { display: block; margin-top: 4px; color: var(--article-muted); font-size: 0.72rem; line-height: 1.4; }
+    .mechanism svg { display: block; width: 100%; height: 50px; }
+    @media (max-width: 550px) { .mechanism-row { grid-template-columns: 1fr; gap: 8px; } .mechanism svg { height: 30px; } }
+</style>
+</head>
+<body>
+<main class="article">
+  <header class="page">
+    <p class="kicker">Concept Dossier · AGT-3010 · ORCH-3</p>
+    <h1>Orchestrator rule core</h1>
+    <p class="lede">A versioned, deterministic rule evaluation turns budget, progress, quality floors, and fleet pressure into one reviewable decision for each card. Consumption raises scrutiny continuously; it does not grant an LLM authority to change limits or execute actions.</p>
+    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 4 October 2026</span><span><b>Source card</b> AGT-3010</span></div>
+  </header>
+
+  <nav aria-label="Dossier sections" class="contents">
+    <a href="#rule-model">Rule model</a><a href="#signal-set">Signals</a><a href="#gradient">Gradient</a><a href="#actions">Actions</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a>
+  </nav>
+
+  <section id="rule-model">
+    <h2>Rule model</h2>
+    <p>ORCH-3 owns a rule core with one pure evaluation boundary. It receives a frozen signal snapshot and a versioned policy bundle, and returns a typed decision receipt. Existing deciders remain the owners of their domain transitions. The core resolves shared pressure, admission, floors, and conflicts before dispatch through their existing APIs. It never mutates a task, starts a model, or reads a log in the pure function.</p>
+    <div class="callout" data-tone="accent"><h3>Rule record</h3><p><code>id</code> and immutable <code>version</code>; scope (<code>workspace | project | delivery | card</code>) and applicability; named signal inputs with freshness and missing-data behavior; one typed derivation; <code>soft | hard | floor</code>; predicate and parameters; admitted and forbidden action variants; required evidence kinds; autonomy class; owner and effective interval. A rule also names the loop-inventory id when it guards a re-entry. The existing inventory remains the only loop register.</p></div>
+    <p>Evaluation order is fixed: validate facts and authority, apply safety and correctness floors, enforce hard ceilings and loop breakers, evaluate soft rules, then choose the least costly admitted action that can satisfy the current objective. The receipt records every matching rule, including a losing one and why it lost. A missing required fact blocks the dependent automatic action and yields an explicit wait or human decision. Cost pressure cannot lower a model, evidence, security, exact-SHA, or human-only floor.</p>
+    <p>Workspace rules provide defaults. A project overlay may tighten a hard cap or raise a floor; it may relax a soft threshold only within the workspace's declared range. A card or delivery budget override uses AGT-W68's audited override and stays clamped by the host ceiling. No override can disable a loop breaker or change A3 authority. Pin the effective bundle version at admission; an in-flight run keeps that version, while a safety emergency rule can stop it with a separate, explicit decision receipt.</p>
+    <div class="mechanism" role="img" aria-label="Signal producers create a bounded evidence pack. A pure rule core evaluates versioned rules around an optional artefact-reading orchestrator step. A typed dispatcher applies the result and writes a decision receipt.">
+      <div class="mechanism-row">
+        <div class="mechanism-node"><b>Signal snapshot</b><small>budget ledger · token cost · progress · quota · slots</small></div>
+        <div class="mechanism-node"><b>Rule bundle vN</b><small>workspace + project overlay · floors · loop ids</small></div>
+      </div>
+      <svg viewBox="0 0 700 50" aria-hidden="true" focusable="false"><path d="M175 2 V25 H350 V48 M525 2 V25 H350" fill="none" stroke="var(--article-line)" stroke-width="2"/><path d="m344 41 6 7 6-7" fill="none" stroke="var(--article-link)" stroke-width="2"/></svg>
+      <div class="mechanism-node center"><b>Pure rule core</b><small>pre-guard → optional bounded LLM classification → post-guard</small></div>
+      <svg viewBox="0 0 700 50" aria-hidden="true" focusable="false"><path d="M350 2 V48" fill="none" stroke="var(--article-line)" stroke-width="2"/><path d="m344 41 6 7 6-7" fill="none" stroke="var(--article-link)" stroke-width="2"/></svg>
+      <div class="mechanism-row">
+        <div class="mechanism-node"><b>Typed dispatcher</b><small>existing action owner · fenced API · loop budget</small></div>
+        <div class="mechanism-node"><b>Decision receipt</b><small>timeline · bus · rule history · evidence link</small></div>
+      </div>
+    </div>
+    <p class="dim">The optional LLM is a reusable <code>StepKind.Orchestrator</code> pipeline step. It classifies a bounded artefact pack with a schema-validated output. ADR-0032's pure decider remains the final authority, and ADR-0051's step verdict remains the pipeline projection.</p>
+  </section>
+
+  <section id="signal-set">
+    <h2>Signal set and normalization</h2>
+    <p>Each signal records value, unit, source, observed time, coverage, and confidence in the measurement. Raw token counts are retained for audit; priced spend in cents comes from Token Economy at the rate version effective when the call was made. Unknown price is unknown, never zero. Slot occupancy counts wall-clock slot minutes, including tool waits; model latency remains a separate diagnostic. Quota is tied to its actual provider window, not added across incomparable buckets.</p>
+    <table><thead><tr><th>Signal</th><th>Normalized reading</th><th>Missing or unreliable input</th></tr></thead><tbody>
+      <tr><td>Priced spend and tokens</td><td><code>spentCents / routeMatchedExpectedCents</code> and token share against the same model, thinking level, and phase; retain an absolute exposure term</td><td>Show unpriced tokens and price status; bar cost-based upgrade or auto-extension until a price is known</td></tr>
+      <tr><td>Slot minutes and elapsed time</td><td><code>usedSlotMinutes / forecastSlotMinutes</code> and <code>elapsed / effectiveRoundBudget</code></td><td>Use AGT-W68's explicit budget and label the forecast unavailable</td></tr>
+      <tr><td>Rounds and attempts</td><td>Per-delivery exhaustions from RB-S1; per-attempt epoch counters stay separate; each loop uses its inventory counter</td><td>No counter reset inferred from a restart or requeue</td></tr>
+      <tr><td>Progress</td><td>New tree SHA, new verification bound to tree SHA, or completed acceptance item; compare to the prior receipt</td><td>Unknown is not progress; request a checkpoint or human assessment</td></tr>
+      <tr><td>Quota and capacity</td><td>Remaining fraction of the provider's five-hour and weekly windows, plus reserved coding slot minutes divided by available fleet minutes</td><td>Stale quota blocks new expensive admission, not an already running safe checkpoint</td></tr>
+      <tr><td>Liveness and repetition</td><td>Time since last output and CPU progress; repeated identical tool-call fingerprint count</td><td>Distinguish a long productive command from silence using the existing no-CPU window</td></tr>
+    </tbody></table>
+    <p>Route expectations use completed, comparable cards by task class, execution phase, CLI, model tier, thinking level, verification profile, and host class. Use the median expected cumulative spend at the same phase, not a global dollar average. The price-normalized and route-normalized terms keep an expensive approved model from being treated as an overrun merely because its tokens cost more. The absolute exposure term still makes a $400 card more consequential than a $2 card. All per-card pressure resets at accepted delivery or an audited new-scope decision; portfolio reservations do not reset with the card.</p>
+    <h3>Measured coding budgets</h3>
+    <p>Use the gate policy's principle, not its sample without filtering. For coding rounds, derive a starting budget from <code>1.25 × p90</code> of at least 20 comparable, cleanly completed rounds from the last 90 days, then clamp it to the RB-S2 project and host bounds. Require stable instrumentation and a recorded completion, result SHA, and slot duration. Exclude timeout-censored rounds, no-progress repeats, quota waits, host loss, and verification runs at anomalous host load from the estimator; keep them in risk analysis. Record cohort, sample count, window, percentile, margin, and clamp in the derivation sentence. With fewer than 20 comparable rounds, use the explicit RB-S2 card/project/host resolution; do not infer a ceiling from a handful of lucky completions. The RB-S5 120/150/180/240 minute choices remain operator override rungs, not the default estimator.</p>
+  </section>
+
+  <section id="gradient">
+    <h2>Consumption gradient</h2>
+    <p>Pressure is a continuous, bounded diagnostic in <code>[0,1]</code>, computed per delivery after every material event. Working default: <code>P = clamp(0.35Rcost + 0.25Rslot + 0.15Rclock + 0.10Rround + 0.15A, 0, 1)</code>. The first four terms are capped usage fractions against the effective route expectation, forecast slot budget, current round budget, and RB-S1 exhaustion allowance. <code>A = clamp(log(1 + spentUSD/20) / log(1 + 400/20), 0, 1)</code> expresses absolute money at risk without letting a large price dominate the score. These weights and anchors are proposed first-version parameters, subject to dry-run calibration, not observed laws.</p>
+    <p>At $2, the absolute term is about 0.03; at $400 it is 1.00. With otherwise equal normalized usage, the $400 card has about 0.15 more pressure. If a strong model legitimately costs more, its route-matched expected cost raises the denominator of <code>Rcost</code>; the absolute term alone cannot trigger a stop. A new delivery starts a new pressure trajectory. Show both the dollar value and normalized terms in every decision so the number is not opaque.</p>
+    <table><thead><tr><th>What tightens as P rises</th><th>Working rule</th><th>Boundary</th></tr></thead><tbody>
+      <tr><td>Automatic action confidence</td><td>Required calibrated confidence for another costly round: <code>0.65 + 0.25P</code></td><td>An LLM self-report alone is insufficient; use class-specific calibration and deterministic evidence</td></tr>
+      <tr><td>Expected value margin</td><td>Continuation's projected value must exceed opportunity cost by <code>15% + 30%P</code></td><td>No subjective money value is invented; compare operator priority, completion chance, and queue slot demand</td></tr>
+      <tr><td>Soft signal sensitivity</td><td>After the existing repetition warning boundary, weigh severity by <code>1 + P</code>; shorten no-progress review interval from 10 to 4 minutes as P grows</td><td>The interval requests a liveness review, not an automatic kill; CPU activity can clear the suspicion</td></tr>
+      <tr><td>Admitted route</td><td>Prefer a lower thinking level or smaller trusted model at the next safe turn when quality floor, model pin, and AGT-W56 route permit it</td><td>Never swap the active model in place; resume only if the provider supports the new route safely, otherwise start a new bounded attempt</td></tr>
+      <tr><td>Action set</td><td>As evidence weakens, move from automatic retry to checkpoint, prepared scope cut, or human decision</td><td>Hard loop counts, host ceilings, and correctness floors remain fixed</td></tr>
+    </tbody></table>
+    <p>Example: a sixth identical tool call is a warning at either spend level. At low pressure, the core can observe and wait for a changed result. At high pressure with no changed SHA or CPU progress, it requests an AGT-W68 checkpoint and may refuse a further automatic round. The log-silence and no-CPU window in <code>RemoteReviewWorkspace</code> is the precedent for a soft review before a hard command budget.</p>
+    <p>Pre-admission applies the same test before a slot is claimed: forecast the card's slot minutes and quota draw, reserve capacity, and compare with eligible Ready work under operator priority, deadline, age, and project fairness. Reserve the card's p90 incremental quota draw against the provider's remaining weekly window after active reservations; reserve forecast slot minutes against the fleet's staffed weekly coding minutes. Release a reservation on a fenced completion, cancellation, or expired claim, and reconcile it with actual use. A low-priority card with a poor measured completion chance may wait or enter a scope-cut decision when its projected slot use would displace higher-priority work. It is never silently judged "not worth doing". AGT-W56 owns complexity and the trusted model route; this core consumes that route and its floor. AGT-W70 owns integration gate slots; this core reads their reservations but governs coding admission only.</p>
+    <p>Spent money is a scrutiny signal, not a reason to finish a card merely to justify past expense. A continuation compares its forecast <em>additional</em> priced tokens, slot minutes, and chance of accepted delivery against the eligible queue. The receipt shows both cumulative exposure and marginal cost. At high exposure, the same weak progress evidence needs a stronger case for another round.</p>
+  </section>
+
+  <section id="actions">
+    <h2>Action vocabulary</h2>
+    <p>One typed verb is written to the receipt; an explicit variant names the existing dispatcher and target. An LLM may propose a verb, but the rule table selects it. The action union is <code>observe | prepare | defer | continue | adapt | checkpoint | retry | halt | ask</code>. <code>Adapt</code> covers a safe route change or a proposed scope cut. A scope cut changes acceptance only after an operator decision; while a run is live, the safe first action is a checkpoint. <code>Halt</code> includes a target and terminal reason so a force-failed process cannot be mistaken for an accepted task.</p>
+    <table><thead><tr><th>Existing vocabulary</th><th>Canonical mapping</th></tr></thead><tbody>
+      <tr><td>Model escalation: accept / upgrade / human-review</td><td><code>continue</code> / <code>retry(route-upgrade)</code> / <code>ask</code></td></tr>
+      <tr><td>Supervision: force-fail / cancel-run / pause-pickup / resume / park / queue-fix / wait / escalate-deep</td><td><code>halt(run,force-fail)</code> / <code>halt(run,cancel)</code> / <code>defer(project,pause)</code> / <code>continue(project,resume)</code> / <code>halt(card,park)</code> / <code>prepare(follow-up)</code> / <code>defer</code> / <code>prepare(deep-analysis)</code></td></tr>
+      <tr><td>Telemetry: observe / prepare / intervene / ask</td><td><code>observe</code> / <code>prepare</code> / the chosen typed intervention (<code>adapt</code>, <code>retry</code>, or <code>halt</code>) / <code>ask</code></td></tr>
+      <tr><td>ADR-0051: pass / reopen-with-feedback / escalate</td><td><code>continue(pipeline-pass)</code> / <code>retry(reopen)</code> / <code>ask</code></td></tr>
+    </tbody></table>
+    <p>Autonomy classes from the Watcher remain authority limits: A0 observation, A1 reversible bounded acts, A2 prepared non-trivial intervention awaiting approval, A3 human-only. A rule cannot turn an A2 or A3 action into A1 because pressure is high. Every retry also spends its existing loop-inventory budget. An exhausted budget resolves to the existing owned terminal, including <code>GaveUpToHuman</code> where applicable.</p>
+  </section>
+
+  <section id="administration">
+    <h2>Administration surface</h2>
+    <p>ORCH-3 adds a workspace Rules page and a project Rules overlay page. The list shows rule id, scope, version, soft/hard/floor, effective source, last firing, last override, and affected cards. Opening a rule shows its typed signal fields and freshness, formula or measured derivation, threshold range, allowed action variants, floor, evidence requirements, and a plain-language example. A project row displays the inherited workspace value next to its override and the resulting effective value. Card budget overrides remain in the AGT-W68 card gate, linked to the rule that admitted them.</p>
+    <p>Save creates an immutable definition under <code>.metadata/orchestrator-rules/&lt;scope&gt;/&lt;version&gt;.json</code> through the application API. The stored revision includes actor, reason, UTC time, parent revision, normalized diff, dry-run digest, and activation time; decisions retain the version they used. An assistant may draft a schema-valid change, but never applies it. Compare, revert, and scheduled activation follow the pipeline editor's versioned-definition discipline.</p>
+    <p>The editor runs a read-only replay over the last 30 days or 100 eligible decisions, with matched cohort and a clearly marked missing-data count. It shows old versus proposed actions, extra model calls, projected cents and slot minutes, cards deferred, missed successful continuations, floor conflicts, and human reversals. The replay never claims a counterfactual result as observed: actual outcomes belong to the old action, while alternative outcome estimates carry uncertainty. A dangerous edit cannot activate if it weakens a hard loop breaker, host cap, A3 boundary, or quality floor, lacks a breaker test, or increases automatic spending beyond an approved range. A change that expands authority requires an operator review with reason and a shadow period. The first release may only edit bounded parameters and disable soft rules; new action kinds require code and tests.</p>
+    <h3>History and correction</h3>
+    <p>Each decision appends a receipt with rule ids and versions, matched predicates, input values and freshness, derived budget and provenance, pressure terms, candidate and chosen action, decider identity, model and calibrated confidence when used, evidence pack digest, dispatch result, and later outcome link. Daily rollups compare predicted completion, cost, and slot use with observed results by cohort. A threshold is suspect when false interventions, human reversals, wasted continuations, or missed completions exceed its declared target for a minimum cohort; the UI opens a proposed revision with cases, confidence interval, and replay. The service may refresh measured percentiles inside an approved formula and sample window. It may not silently change weights, thresholds, floors, action authority, or model eligibility.</p>
+  </section>
+
+  <section id="visibility">
+    <h2>Visibility contract</h2>
+    <p>Every binding decision appears as one primary card statement above the pipeline: action, immediate blocker or next step, rule id and version, and actor. The timeline has a dedicated decision event linked to its precipitating signal and dispatch receipt. It always shows the signals actually read, their freshness, current budget and usage (cents, tokens, slot minutes, round count, quota window when relevant), derivation, pressure, chosen action, and a one-click evidence link. For an LLM classification it also names <code>decidedByModel</code>, provider, thinking level, calibrated confidence, and the deterministic decider that admitted the action. For mechanical decisions it says <code>system rule</code>, with no fabricated model.</p>
+    <p>The bus decision payload carries the same decision id, rule reference, model identity, confidence, reason, and evidence reference. Fix the current missing model field at the producer, not by joining a separate token event. The card header, banner, Result panel, and timeline project one canonical gate item and reason; they must not independently author competing red summaries. If the card needs a human decision, the specific blocker and controls appear in the primary statement, with the pipeline as supporting history. A dismissible symptom may be shown below it, but cannot replace the blocker.</p>
+    <figure class="evidence-figure media-breakout">
+      <div class="evidence-captures">
+        <div class="evidence-capture"><span class="capture-theme">Light</span><img src="assets/escalated-decision--light--pinned.png" alt="Pinned demo escalated task in light theme, with an escalation summary above the tabs and a decision-required panel in the Result pane below."></div>
+        <div class="evidence-capture"><span class="capture-theme">Dark</span><img src="assets/escalated-decision--dark--pinned.png" alt="The same pinned demo escalated task in dark theme, showing the separated summary and decision panel."></div>
+      </div>
+      <figcaption><span class="figure-claim"><b>Evidence.</b> In the pinned demo, the escalation summary is above the tabs while the actionable “Decision required” panel is in the lower Result pane. This supports the placement requirement; it is not a claim about a live October card.</span><span class="figure-as-of"><span><b>Light:</b> capture published <time datetime="2026-08-10">10 August 2026</time> in commit <code>684688c92</code>; deterministic ADR-0056 pinned workspace and presentation-capture spec, browser clock fixed to 9 August; source <code>08-landing-task-detail--light--pinned.png</code>.</span><span><b>Dark:</b> capture published <time datetime="2026-08-10">10 August 2026</time> in the same commit and pinned capture run, browser clock fixed to 9 August; source <code>08-landing-task-detail--dark--pinned.png</code>.</span></span></figcaption>
+    </figure>
+    <p class="dim">The original wall-clock capture time is not embedded in the PNGs; the publication date and fixed browser date are recorded separately. Both images are copied unchanged from the committed presentation set. No annotation was added.</p>
+  </section>
+
+  <section id="artefacts">
+    <h2>Artefact boundary</h2>
+    <p>A reusable orchestrator LLM step sees only a versioned <code>DecisionEvidencePack</code>, never a CLI session transcript or a path granting unrestricted log access. The deterministic producer joins run outcome, fenced attempt and tree SHA, token and slot ledger, rule snapshot, quota and capacity snapshots, progress receipts, prior decisions, and artifact descriptors. It may attach a redacted bounded log window when a named detector selects a specific interval. The pack is capped at 32 KiB of UTF-8 content and 8,000 estimated tokens; each log excerpt is at most 80 lines and 8 KiB, with at most two excerpts. On overflow it drops lower-priority excerpts, records omissions, and requires a narrower follow-up pack rather than reading the full file.</p>
+    <p>A bounded window carries source artifact id, attempt and fence, first and last line, byte-range checksum, selection reason, redaction version, and an authenticated drill-down reference such as <code>task/AGT-3010/attempt/abc/log/cli-output?lines=3187-3230&amp;sha256=...</code>. The LLM sees the excerpt and opaque reference, not an open filesystem path. The UI opens the immutable source interval with access control and context lines. A raw stream is an unbounded sequential reader that can change under the consumer; it is forbidden at this boundary. The pack and model output are schema validated and stored beside the step input and output contracts.</p>
+    <p>Migration targets are the supervision-loop reader of <code>cli-output.log</code> and its line citations, the per-task session-log projection described in <code>multichat-orchestrator.md</code> when used as orchestrator context, and any <code>StepKind.Orchestrator</code> assembler that currently embeds an unrestricted cli-output tail, including abort review. Their deterministic source adapters may still read logs to select and redact windows; the LLM step cannot. <code>RunTimeline</code> may continue to serve an authorized human run view, but its output is not an unlimited prompt source. The Watcher already follows the bounded-pack pattern. This boundary reconciles the supervision concept with the telemetry layer's clusters and receipts rule.</p>
+  </section>
+
+  <section id="migration">
+    <h2>Migration of existing policies</h2>
+    <p>These are adapters into one decision receipt, not eight rewrites. A rule references its existing owner and derivation. During shadow mode, the old owner still dispatches and the core records what it would have done; promotion is per policy after replay and breaker coverage.</p>
+    <table><thead><tr><th>Current policy</th><th>Rule-core treatment</th><th>Preserved authority</th></tr></thead><tbody>
+      <tr><td><a href="../../backend/Features/Pipeline/GateRunBudgetPolicy.cs">Gate run budget</a></td><td><code>gate.run.duration</code>, hard ceiling from project override or 20-sample p95 × 1.5; store cohort and derivation</td><td>Existing gate owner; no coding-budget sample reuse</td></tr>
+      <tr><td><a href="../../contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs">Review aspect budget</a></td><td><code>review.aspect.duration</code>, derived from CLI base × model × thinking plus material, 60–7200 s, with its sentence</td><td>Existing aspect owner and floor</td></tr>
+      <tr><td><a href="../../backend/Features/Watcher/WatcherContingentService.cs">Watcher contingent</a></td><td><code>watcher.contingent</code>, daily and weekly token/call admission plus durable ledger</td><td>Watcher ledger and exhaustion semantics</td></tr>
+      <tr><td><a href="../../runner/RunnerOptions.cs">Coding run timeout</a></td><td><code>coding.round.duration</code>, RB-S2 effective budget with optional measured default; hard host ceiling and RB-S3 soft checkpoint</td><td>Runner enforces the clock; RB-S1 owns delivery accounting</td></tr>
+      <tr><td><a href="../../backend/Features/Runner/RunTimeoutSalvageContinuation.cs">Salvage continuation</a></td><td><code>coding.salvage.continuation</code>, post-guard on progress and RB-S1 exhaustions</td><td>RB-S4 changes the one-round policy as already specified</td></tr>
+      <tr><td><a href="../../backend/Features/Runner/ReviewDecisionOrchestrator.cs">Review reissue</a></td><td><code>review.reissue</code>, hard attempt-epoch ceiling of two automatic reissues</td><td>ReviewDecisionOrchestrator counter</td></tr>
+      <tr><td><a href="../../backend/Features/Tasks/GitCallBudgetPolicy.cs">Git call budget</a></td><td><code>git.call.duration</code>, hard total and per-call ceilings</td><td>GitCallBudgetPolicy in-process enforcement</td></tr>
+      <tr><td><a href="../../backend/Features/Pipeline/GateEnvironmentRetry/GateEnvironmentRetryPolicy.cs">Gate environment retry</a></td><td><code>gate.environment.retry</code>, hard backoff ladder and attempts per delivery SHA</td><td>GateEnvironmentRetryPolicy reasons and dispatcher</td></tr>
+    </tbody></table>
+    <p>Every loop-backed row references its existing stable id in <a href="../system/contracts/loop-inventory.md">the 13-entry loop inventory</a>, its named budget constant, and breaker test. Adding a genuinely new retry path updates that register under its current CI contract. No second register or counter namespace is introduced.</p>
+    <p><b>AGT-W68 dependency and supersession.</b> The first useful rule-core slice needs RB-S1's delivery ledger and can shadow-evaluate before RB-S2 through RB-S5 ship. Live coding admission needs RB-S2 transport; live checkpoint and continuation decisions need RB-S3 and RB-S4; card decision controls reuse RB-S5. This concept supersedes no whole RB slice. Once activated, measured <code>coding.round.duration</code> supersedes RB-S2's fixed default selection while preserving its precedence, override audit, transport and host clamp. The core's evidence-based suggestion supersedes RB-S5's initial 60%-verification, three-remaining-steps, and two-no-progress suggestion heuristic, while preserving its gate and raise/cut/stop actions. AGT-W68's six decisions remain its own; this Dossier neither reopens nor duplicates them.</p>
+    <p><b>Adjacent boundaries.</b> AGT-W56 owns task complexity and the trusted model/thinking route. This core may ask that route for a cheaper admissible pair; it does not define a second complexity rubric. AGT-W69 owns merge gate economics; this core reads any approved reservation and never reprices or waives a gate. AGT-W70 owns integration-lane gate token supply and publication order; the portfolio rule concerns coding slot admission and weekly quota only.</p>
+  </section>
+
+  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+    <h2>Alternatives</h2>
+    <div class="variant-grid">
+      <article class="variant"><h3>A · Federate the eight policies</h3><p>Add a common dashboard and leave decisions isolated. Smallest migration, but no rule can compare a card's spend with quota or another card's slot demand. Rejected for the cross-budget decision.</p></article>
+      <article class="variant"><h3>B · Versioned deterministic rule core</h3><p>Adapt existing policies into typed rules, retain domain dispatchers, and use bounded LLM classification only for ambiguous evidence. Recommended. It gives one decision receipt without losing measured derivations or local hard guards.</p></article>
+      <article class="variant"><h3>C · LLM policy judge</h3><p>Feed all signals to one model and let it choose actions and limits. Flexible in prose, but inconsistent on replay and incompatible with ADR-0032's pure-decider boundary. Rejected.</p></article>
+      <article class="variant"><h3>D · One universal score</h3><p>Collapse cost, quality, quota, and liveness into a scalar stop threshold. Easy to graph, but a cheap signal could offset a correctness floor. Rejected. Pressure is a scrutiny input, not a substitute for typed hard rules.</p></article>
+    </div>
+  </section>
+
+  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+    <h2>Recommendation</h2>
+    <div class="callout" data-tone="accent"><h3>Adopt B through ORCH-3</h3><p>Start with a read-only decision receipt over RB-S1's ledger and the eight policy snapshots. Add the bounded artefact contract, then one shadow coding admission rule. Promote individual actions after replay, floor tests, and operator review. Use the pressure gradient to increase evidence and economic scrutiny, while existing hard ceilings and quality floors remain authoritative.</p></div>
+  </section>
+
+  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+    <h2>Evidence</h2>
+    <div class="evidence-list">
+      <a class="evidence" href="../run-budget-per-card/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-W68 run-budget Dossier</b><small>Measured AGT-2955 timeouts and repeated verification; owns RB-S1 through RB-S5, the six open decisions, checkpoint, continuation, and operator gate.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Pipeline/GateRunBudgetPolicy.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Measured gate budget</b><small>20 samples, p95 × 1.5, project override, and 3600-second fallback establish a concrete derived-policy precedent.</small></span></a>
+      <a class="evidence" href="../../contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Derived review budget</b><small>CLI, model, thinking, and material terms travel with a human-readable derivation and 60–7200-second clamp.</small></span></a>
+      <a class="evidence" href="../system/contracts/loop-inventory.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Loop inventory and guard contract</b><small>13 named loops with budget, exhausted action, and breaker test; ADR-0032 makes model proposals advisory.</small></span></a>
+      <a class="evidence" href="../concepts/platform-architecture/telemetry-layer.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Telemetry artefact boundary</b><small>Clusters and receipts, never unbounded raw streams; the current supervision concept still cites raw log lines.</small></span></a>
+      <a class="evidence" href="#visibility"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Pinned task capture</b><small>Light and dark screenshots above prove the placement of the escalation summary and decision panel in the August pinned demo only.</small></span></a>
+      <a class="evidence" href="#gradient"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Pressure formula and thresholds</b><small>Working parameters for shadow replay. No historical calibration is claimed yet.</small></span></a>
+    </div>
+  </section>
+
+  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+    <h2>Open decisions</h2>
+    <p>Each recommendation is the working option for implementation unless a recorded operator decision selects another.</p>
+    <table><thead><tr><th>Decision</th><th>Recommended working option</th><th>Rejected option</th></tr></thead><tbody>
+      <tr><td>D1 · Core authority</td><td>Versioned pure evaluator with existing domain dispatchers and ADR-0032 guards</td><td>One LLM chooses actions and edits limits</td></tr>
+      <tr><td>D2 · Consumption</td><td>Route-normalized spend plus bounded absolute exposure, slot, time, and rounds; stricter confidence and admission as pressure rises</td><td>Binary cost fence or a dollar-only score</td></tr>
+      <tr><td>D3 · Coding budget default</td><td>Filtered 20-sample cohort p90 × 1.25, clamped; RB-S2 fallback without history</td><td>Fixed 90/120/150/180/240 minute defaults or raw p95 over censored runs</td></tr>
+      <tr><td>D4 · Pre-admission</td><td>Visible defer or prepared scope decision using quota reservations and eligible queue priority</td><td>Silent rejection based on an opaque worth score</td></tr>
+      <tr><td>D5 · Route and scope adaptation</td><td>Change at safe turn within AGT-W56 floor; propose acceptance-scope cuts to operator</td><td>In-place model swap or silent scope shrink</td></tr>
+      <tr><td>D6 · Rule editing</td><td>ORCH-3 typed workspace rules with bounded project overlays, immutable versions, replay, and activation guard</td><td>Arbitrary expressions or assistant proposals applied directly</td></tr>
+      <tr><td>D7 · Self-tracking</td><td>Append-only receipts and outcome calibration; auto-refresh only measured values inside approved formulas</td><td>Silent threshold, floor, or authority retuning</td></tr>
+      <tr><td>D8 · Artefact boundary</td><td>32 KiB, 8,000-token pack with at most two selected log windows and immutable drill-down refs</td><td>Direct session or unbounded cli-output reading by an orchestrator step</td></tr>
+      <tr><td>D9 · Visibility</td><td>One canonical gate statement above pipeline plus linked timeline and bus receipt</td><td>Independent banners and a blocker buried under pipeline history</td></tr>
+    </tbody></table>
+  </section>
+
+  <!-- agent-studio:implementation-section:start -->
+  <section id="implementation" data-document-section="implementation">
+    <h2>Implementation cards in order</h2>
+    <ol>
+      <li><b>ORC-S1 · Decision receipt and shadow adapter.</b> Smallest useful slice: read RB-S1 and the eight owners, pin policy version, calculate pressure, and emit a read-only receipt with all matched rules. No dispatch change.</li>
+      <li><b>ORC-S2 · Bounded evidence pack.</b> Introduce the typed pack and change the supervision, abort-review, and orchestrator multichat readers to use selected artefacts.</li>
+      <li><b>ORC-S3 · Coding admission and measured budget.</b> Shadow and then promote the filtered estimator and portfolio reservation at claim time, using RB-S2 transport.</li>
+      <li><b>ORC-S4 · Safe adaptation and post-guard.</b> Connect gradient thresholds to safe route change, checkpoint, continuation, and scope proposal through RB-S3/RB-S4/RB-S5 and AGT-W56 floors.</li>
+      <li><b>ORC-S5 · ORCH-3 rule administration.</b> Add versioned workspace/project editor, dry-run replay, activation guard, and audit history.</li>
+      <li><b>ORC-S6 · Decision visibility.</b> Project the canonical receipt to card, timeline, bus, and Result pane; prove both themes and the one-click evidence path.</li>
+    </ol>
+    <p>These are proposed cards in <code>workbench.json</code>, not tasks created in the application. No production implementation or operator acceptance is claimed by this Dossier.</p>
+    <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<!-- agent-studio:implementation-log:end -->
+    </ol>
+  </section>
+  <!-- agent-studio:implementation-section:end -->
+  <footer>Source card AGT-3010 · Decision pending · 4 October 2026</footer>
+</main>
+</body>
+</html>
