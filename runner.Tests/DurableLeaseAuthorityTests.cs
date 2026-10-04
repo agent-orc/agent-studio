@@ -13,7 +13,7 @@ public sealed class DurableLeaseAuthorityTests
     public async Task Confirmed_worker_start_is_carried_by_the_next_heartbeat()
     {
         using var temp = new TempDirectory();
-        var now = DateTime.UtcNow;
+        var now = new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc);
         var options = Options(temp.Path);
         var lease = Lease(now, now.AddMinutes(15));
         var handler = new CapturingRenewHandler(lease);
@@ -29,7 +29,7 @@ public sealed class DurableLeaseAuthorityTests
             {
                 stop.Cancel();
                 return Task.CompletedTask;
-            });
+            }, utcNow: () => now);
         var promptHash = new string('a', 64);
         heartbeat.ConfirmWorkerStartedWithPrompt(promptHash);
 

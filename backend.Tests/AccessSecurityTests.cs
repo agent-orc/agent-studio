@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -246,7 +247,7 @@ public sealed class AccessSecurityTests : IDisposable
     [Fact]
     public void Reference_caddy_profile_contains_transport_limits_and_websocket_proxy()
     {
-        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../deploy/networked/Caddyfile"));
+        var path = Path.Combine(RepositoryRoot.Find(), "deploy", "networked", "Caddyfile");
         var caddy = File.ReadAllText(path);
         Assert.Contains("http://{$STUDIO_DOMAIN}", caddy);
         Assert.Contains("Strict-Transport-Security", caddy);
