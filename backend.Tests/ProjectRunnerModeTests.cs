@@ -657,7 +657,8 @@ public sealed class ProjectRunnerModeTests : IDisposable
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
-            timeline: timeline);
+            timeline: timeline,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
         if (maxParallelism is { } configuredMaxParallelism)
             settings.SetMaxParallelism(ProjectName, configuredMaxParallelism);
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(config));
