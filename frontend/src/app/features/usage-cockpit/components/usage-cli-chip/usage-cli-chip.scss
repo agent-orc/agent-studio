@@ -41,3 +41,32 @@
 .usage-cli-chip__mark {
   @include chip.mark;
 }
+
+.usage-cli-chip--warning {
+  @include chip.alarm-warning;
+
+  .usage-cli-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-warn));
+  }
+}
+
+.usage-cli-chip--limited {
+  @include chip.alarm-limited;
+
+  .usage-cli-chip__mark--alarm {
+    @include chip.alarm-mark(var(--studio-error));
+  }
+}
+
+.usage-cli-chip__alarm {
+  @include chip.alarm-word;
+}
+
+// Nonnumeric mark for alarms on providers whose chip is hidden.
+.usage-cli-chip__hidden {
+  @include chip.alarm-mark(var(--studio-warn));
+
+  &[data-severity='limited'] {
+    color: var(--studio-error);
+  }
+}

@@ -1,0 +1,87 @@
+<main class="gallery" [attr.data-theme]="theme">
+  <h1 class="gallery__title">Usage alarms (HUC-S5), {{ theme }} theme</h1>
+  <p class="gallery__note">Synthetic fixture pinned to 25 September 2026, 16:58 Europe/Berlin. Real components and alarm policy; budgets are fixture values. Not live telemetry.</p>
+
+  <section class="gallery__section" data-testid="alarm-quota">
+    <h2>Quota warning (strictly above 80%)</h2>
+    <div class="gallery__row">
+      @for (c of a.QUOTA; track c.id) {
+        <app-usage-cli-chip [attr.data-case]="c.id" [cliId]="c.cli.cliId" [cli]="c.cli" [timeZone]="a.ZONE" [now]="a.NOW" [alarms]="c.alarms" />
+      }
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-cost">
+    <h2>Cost warning (budget exceeded)</h2>
+    <div class="gallery__row">
+      @for (c of a.COSTS; track c.id) {
+        <app-usage-cost-chip [attr.data-case]="c.id" [cost]="c.cost" [now]="a.NOW" [alarms]="c.alarms" />
+      }
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-limited">
+    <h2>Provider limited</h2>
+    <div class="gallery__row">
+      @for (c of a.LIMITED; track c.id) {
+        <app-usage-cli-chip [attr.data-case]="c.id" [cliId]="c.cli.cliId" [cli]="c.cli" [timeZone]="a.ZONE" [now]="a.NOW" [alarms]="c.alarms" />
+      }
+      <app-usage-cli-chip data-case="claude-limited-compact" [cliId]="a.LIMITED[0].cli.cliId" [cli]="a.LIMITED[0].cli"
+                          [timeZone]="a.ZONE" [now]="a.NOW" [alarms]="a.LIMITED[0].alarms" [compact]="true" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-stale">
+    <h2>Stale and suspicious readings</h2>
+    <div class="gallery__row">
+      @for (c of a.STALE; track c.id) {
+        <app-usage-cli-chip [attr.data-case]="c.id" [cliId]="c.cli.cliId" [cli]="c.cli" [timeZone]="a.ZONE" [now]="a.NOW" [alarms]="c.alarms" />
+      }
+      <app-usage-cost-chip [attr.data-case]="a.COST_STALE.id" [cost]="a.COST_STALE.cost" [now]="a.NOW" [alarms]="a.COST_STALE.alarms" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-partial">
+    <h2>Partial coverage</h2>
+    <div class="gallery__row">
+      @for (c of a.PARTIAL; track c.id) {
+        <app-usage-cost-chip [attr.data-case]="c.id" [cost]="c.cost" [now]="a.NOW" [alarms]="c.alarms" />
+      }
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-unknown">
+    <h2>Unknown</h2>
+    <div class="gallery__row">
+      <app-usage-cli-chip [attr.data-case]="a.UNKNOWN_CLI.id" [cliId]="a.UNKNOWN_CLI.cli.cliId" [cli]="a.UNKNOWN_CLI.cli"
+                          [timeZone]="a.ZONE" [now]="a.NOW" [alarms]="a.UNKNOWN_CLI.alarms" />
+      <app-usage-cost-chip [attr.data-case]="a.UNKNOWN_COST.id" [cost]="a.UNKNOWN_COST.cost" [now]="a.NOW" [alarms]="a.UNKNOWN_COST.alarms" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-phone">
+    <h2>Phone row: hidden-provider alarm</h2>
+    <div class="gallery__row gallery__row--phone">
+      <span class="gallery__identity">Studio</span>
+      <app-usage-cli-chip [attr.data-case]="a.PHONE_PRIMARY.id" cliId="codex" [cli]="a.PHONE_PRIMARY.cli" [timeZone]="a.ZONE" [now]="a.NOW"
+                          [alarms]="a.PHONE_PRIMARY.alarms" [hiddenAlarms]="a.PHONE_PRIMARY.hidden" [compact]="true" />
+      <app-usage-cost-chip [cost]="a.PHONE_COST" [now]="a.NOW" [compact]="true" />
+    </div>
+  </section>
+
+  <section class="gallery__section" data-testid="alarm-transitions">
+    <h2>Transitions and polite announcements</h2>
+    <div class="gallery__row">
+      <app-usage-cli-chip cliId="codex" [cli]="codex()" [timeZone]="a.ZONE" [now]="current().at" [alarms]="codexAlarms()" />
+      <button type="button" class="gallery__action" data-testid="alarm-refresh" (click)="refresh()"
+              [disabled]="step() >= a.TRANSITIONS.length - 1">Next refresh</button>
+      <span class="gallery__note" data-testid="alarm-step">{{ stepCaption() }}</span>
+    </div>
+    <app-usage-alarm-status />
+    <ol class="gallery__log" data-testid="alarm-spoken-log" aria-label="Fixture copy of the polite announcements">
+      @for (line of spokenLog(); track $index) {
+        <li>{{ line }}</li>
+      }
+    </ol>
+  </section>
+</main>

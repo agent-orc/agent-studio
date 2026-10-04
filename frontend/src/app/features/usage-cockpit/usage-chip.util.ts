@@ -5,6 +5,7 @@ import type {
   UsageSlotPool,
   UsageSourceState,
 } from './models/usage-cockpit.model';
+import type { UsageAlarm } from './usage-alarm.policy';
 
 /**
  * Pure view models for the header usage chips (HUC-S2,
@@ -17,15 +18,16 @@ import type {
  * - visible values may be shortened (`$12.5K`), the accessible name and the
  *   detail text always carry the exact amount.
  *
- * Alarm states (quota warning, provider limited, budget crossed) belong to
- * HUC-S5 and are not derived here.
+ * Alarm states (quota warning, provider limited, budget crossed) are derived
+ * and latched by `usage-alarm.policy.ts` (HUC-S5); the builders here only
+ * present the latched alarms they are given.
  */
 export type UsageChipState = 'normal' | 'loading' | 'unknown' | 'stale' | 'suspicious' | 'partial';
 
 /** Visible replacement for a value the source did not report. */
 export const NOT_AVAILABLE = 'N/A';
 
-const DEFAULT_TTL_SECONDS = 600;
+export const DEFAULT_TTL_SECONDS = 600;
 /** Visible cost values from this amount on use a compact unit ($12.5K). */
 const COMPACT_USD_FROM = 10_000;
 
@@ -132,11 +134,17 @@ export interface UsageWindowView {
   detail: string;
 }
 
+/** Spoken window name: `weekly`, `current five-hour window` or `current session`. */
+export function windowSpokenName(window: UsageCliWindow | null, kind: UsageWindowKind): string {
+  if (kind === 'weekly') return 'weekly';
+  return window && isFiveHour(window.label) ? 'current five-hour window' : 'current session';
+}
+
 function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZone: string | null): UsageWindowView {
   const pct = formatUsedPct(window?.usedPct);
   const fiveHour = kind === 'session' && !!window && isFiveHour(window.label);
   const tag = kind === 'weekly' ? 'WK' : fiveHour ? '5H' : 'Session';
-  const spokenName = kind === 'weekly' ? 'weekly' : fiveHour ? 'current five-hour window' : 'current session';
+  const spokenName = windowSpokenName(window, kind);
   const providerLabel = window?.label ?? (kind === 'weekly' ? 'Weekly' : 'Current session');
   if (pct == null) {
     return {
@@ -148,18 +156,23 @@ function windowView(window: UsageCliWindow | null, kind: UsageWindowKind, timeZo
   const reset = formatLocalWithUtc(window?.resetAtUtc, timeZone) ?? window?.resetLabel ?? null;
   return {
     kind, tag, value: pct, reported: true,
-    spoken: `${spokenName} ${pct.replace('%', ' percent')} used`,
+      spoken: `${spokenName} ${percentSpoken(pct)} used`,
     detail: `${providerLabel}: ${pct} used${reset ? `, resets ${reset}` : ''}`,
   };
 }
 
 // ---------------------------------------------------------------- states
 
-function ageExceedsTtl(observedAt: string | null | undefined, ttlSeconds: number | null | undefined, now: number): boolean {
+export function ageExceedsTtl(observedAt: string | null | undefined, ttlSeconds: number | null | undefined, now: number): boolean {
   if (!observedAt) return false;
   const at = Date.parse(observedAt);
   if (!Number.isFinite(at)) return false;
   return now - at > (ttlSeconds && ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS) * 1000;
+}
+
+/** The same percent wording used by chip labels and alarm announcements. */
+export function percentSpoken(pct: string): string {
+  return pct.replace('%', ' percent');
 }
 
 /** Short visible and spoken wording per state; `null` for normal. */
@@ -179,6 +192,30 @@ function sentence(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
+// ---------------------------------------------------------------- alarms
+
+/** Alarm treatment of a chip. It outranks the data-quality `state`. */
+export type UsageChipAlarm = 'limited' | 'warning';
+
+function alarmTreatment(alarms: readonly UsageAlarm[]): UsageChipAlarm | null {
+  if (alarms.some(a => a.severity === 'critical')) return 'limited';
+  return alarms.length > 0 ? 'warning' : null;
+}
+
+/** Spoken alarm clause: `Limited: ... Warning: ...`, limit first. */
+function alarmClause(alarms: readonly UsageAlarm[]): string {
+  return alarms.map(a => `${a.severity === 'critical' ? 'Limited' : 'Warning'}: ${a.sentence}`).join(' ');
+}
+
+/** Explanation for alarms on CLIs whose chip is not visible. */
+function hiddenClause(hidden: readonly UsageAlarm[]): string {
+  return hidden.length ? `Also needs attention: ${hidden.map(a => a.sentence).join(' ')}` : '';
+}
+
+function join(...parts: string[]): string {
+  return parts.filter(Boolean).join(' ');
+}
+
 // ------------------------------------------------------------- CLI chip
 
 const CLI_NAMES: Record<string, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' };
@@ -193,6 +230,12 @@ export interface UsageCliChipView {
   name: string;
   state: UsageChipState;
   stateLabel: string | null;
+  /** Latched alarm treatment; `null` for ordinary headroom. */
+  alarm: UsageChipAlarm | null;
+  /** Visible alarm word on the full chip; the compact chip shows only the mark. */
+  alarmLabel: string | null;
+  /** Worst alarm among CLIs whose chip is hidden; rendered as a nonnumeric mark. */
+  hiddenAlarm: UsageChipAlarm | null;
   weekly: UsageWindowView;
   session: UsageWindowView;
   ariaLabel: string;
@@ -204,21 +247,33 @@ export interface UsageCliChipView {
  * `cli === null` means the projection has not arrived yet. A CLI with no
  * reported value is unknown; otherwise the Dossier precedence applies:
  * suspicious, then stale, then normal ("Chip states").
+ *
+ * `alarms` are this CLI's latched HUC-S5 alarms and outrank the data state;
+ * `hidden` are alarms of CLIs whose chip is not visible, announced on this
+ * (primary) chip without another number.
  */
 export function buildCliChipView(
   cliId: string,
   cli: UsageCli | null,
   timeZone: string | null,
   now: number,
+  alarms: readonly UsageAlarm[] = [],
+  hidden: readonly UsageAlarm[] = [],
+  readFailed = false,
 ): UsageCliChipView {
   const name = cliDisplayName(cli?.cliId ?? cliId);
+  const alarm = alarmTreatment(alarms);
+  const alarmLabel = alarm === 'limited' ? 'Limited' : null;
+  const hiddenAlarm = alarmTreatment(hidden);
+  const alarmText = alarmClause(alarms);
+  const hiddenText = hiddenClause(hidden);
   if (!cli) {
     const empty = (kind: UsageWindowKind) => ({ ...windowView(null, kind, timeZone), value: '' });
     return {
-      cliId, name, state: 'loading', stateLabel: 'Loading',
+      cliId, name, state: readFailed ? 'unknown' : 'loading', stateLabel: readFailed ? 'Unavailable' : 'Loading', alarm, alarmLabel, hiddenAlarm,
       weekly: empty('weekly'), session: empty('session'),
-      ariaLabel: `${name}, usage loading. Open usage.`,
-      detail: `${name}: usage loading`,
+      ariaLabel: join(`${name}, usage ${readFailed ? 'unavailable' : 'loading'}.`, readFailed ? 'The usage cockpit could not be loaded.' : '', alarmText, hiddenText, 'Open usage.'),
+      detail: [`${name}: usage ${readFailed ? 'unavailable' : 'loading'}`, readFailed ? 'The usage cockpit could not be loaded.' : '', ...alarms.map(a => a.label), hiddenText].filter(Boolean).join('\n'),
     };
   }
   const weeklyWindow = findWindow(cli.windows, 'weekly');
@@ -230,7 +285,7 @@ export function buildCliChipView(
     ?? weeklyWindow?.suspiciousReason ?? sessionWindow?.suspiciousReason ?? null;
   const suspicious = cli.suspicious || status === 'suspicious'
     || !!weeklyWindow?.suspiciousReason || !!sessionWindow?.suspiciousReason;
-  const stale = status === 'stale' || !!cli.probeFailedAt
+  const stale = readFailed || status === 'stale' || !!cli.probeFailedAt
     || ageExceedsTtl(cli.fetchedAt, cli.ttlSeconds, now);
   const unknown = status === 'unavailable' || !cli.fetchedAt || (!weekly.reported && !session.reported);
   const state: UsageChipState = unknown ? 'unknown' : suspicious ? 'suspicious' : stale ? 'stale' : 'normal';
@@ -241,7 +296,7 @@ export function buildCliChipView(
     : state === 'suspicious'
       ? suspiciousReason ?? 'The latest snapshot is not yet confirmed'
       : state === 'stale'
-        ? cli.probeFailedAt ? 'The latest probe failed; showing the last good values' : 'The snapshot is older than its refresh interval'
+        ? readFailed ? 'The latest refresh failed; showing the last-known values' : cli.probeFailedAt ? 'The latest probe failed; showing the last good values' : 'The snapshot is older than its refresh interval'
         : null;
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
@@ -249,22 +304,27 @@ export function buildCliChipView(
     ? 'usage unavailable'
     : `${weekly.spoken}, ${session.spoken}`;
   const updatedClause = state === 'stale' && updated ? ` Last updated ${updated}.` : '';
-  const ariaLabel = `${name}, ${spokenWindows}.${stateClause ? ` ${stateClause}` : ''}${updatedClause} Open usage.`;
+  const ariaLabel = join(`${name}, ${spokenWindows}.`, alarmText, stateClause, updatedClause.trim(), hiddenText, 'Open usage.');
+  // Simultaneous causes stay visible together in the detail.
   const detail = [
     cli.plan ? `${name} (${cli.plan})` : name,
+    ...alarms.map(a => a.label),
     weekly.detail,
     session.detail,
     updated ? `Updated ${updated}` : 'Never updated',
     stateClause || null,
+    hiddenText || null,
   ].filter(Boolean).join('\n');
 
-  return { cliId, name, state, stateLabel, weekly, session, ariaLabel, detail };
+  return { cliId, name, state, stateLabel, alarm, alarmLabel, hiddenAlarm, weekly, session, ariaLabel, detail };
 }
 
 // ------------------------------------------------------------ cost chip
 
 export interface UsageCostChipView {
   state: UsageChipState;
+  /** `warning` while a daily or weekly budget is exceeded; `null` otherwise. */
+  alarm: UsageChipAlarm | null;
   /** Visible amount; `N/A` when unknown, empty while loading. */
   value: string;
   exact: string | null;
@@ -275,13 +335,23 @@ export interface UsageCostChipView {
 /**
  * Today's USD ledger estimate. The amount comes straight from the
  * projection; `todayUsd === null` is unknown and never shown as zero.
+ *
+ * `alarms` are the latched budget alarms. A configured budget without a
+ * confirmed overrun is never reported as safe unless coverage is complete.
  */
-export function buildCostChipView(cost: UsageCostProjection | null, now: number): UsageCostChipView {
+export function buildCostChipView(
+  cost: UsageCostProjection | null,
+  now: number,
+  alarms: readonly UsageAlarm[] = [],
+  readFailed = false,
+): UsageCostChipView {
+  const alarm = alarmTreatment(alarms);
+  const alarmText = alarmClause(alarms);
   if (!cost) {
     return {
-      state: 'loading', value: '', exact: null,
-      ariaLabel: "Today's cost, loading. Open cost detail.",
-      detail: "Today's cost: loading",
+      state: readFailed ? 'unknown' : 'loading', alarm, value: readFailed ? NOT_AVAILABLE : '', exact: null,
+      ariaLabel: join(`Today's cost, ${readFailed ? 'unavailable' : 'loading'}.`, readFailed ? 'The usage cockpit could not be loaded.' : '', alarmText, 'Open cost detail.'),
+      detail: [`Today's cost: ${readFailed ? 'unavailable' : 'loading'}`, readFailed ? 'The usage cockpit could not be loaded.' : '', ...alarms.map(a => a.label)].filter(Boolean).join('\n'),
     };
   }
   const zone = cost.calendar?.timeZone ?? null;
@@ -289,7 +359,7 @@ export function buildCostChipView(cost: UsageCostProjection | null, now: number)
   const coverage: UsageSourceState | undefined = cost.coverage;
   const status = coverage?.status;
   const unknown = exact == null || status === 'unavailable';
-  const stale = status === 'stale' || ageExceedsTtl(coverage?.observedAt, coverage?.ttlSeconds, now);
+  const stale = readFailed || status === 'stale' || ageExceedsTtl(coverage?.observedAt, coverage?.ttlSeconds, now);
   const state: UsageChipState = unknown ? 'unknown'
     : status === 'suspicious' ? 'suspicious'
       : stale ? 'stale'
@@ -300,25 +370,60 @@ export function buildCostChipView(cost: UsageCostProjection | null, now: number)
     : state === 'partial'
       ? coverage?.reason ?? 'Some usage is not priced or not yet received'
       : state === 'stale'
-        ? 'The ledger snapshot is older than its refresh interval'
+        ? readFailed ? 'The latest refresh failed; showing the last-known ledger total' : 'The ledger snapshot is older than its refresh interval'
         : state === 'suspicious' ? coverage?.reason ?? 'The ledger snapshot is not yet confirmed' : null;
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
   const updated = formatLocalWithUtc(coverage?.observedAt, zone);
   const spokenValue = unknown ? 'unavailable' : `${exact} USD ledger estimate`;
+  const budget = budgetClause(cost, state, alarms, now);
   return {
     state,
+    alarm,
     value: unknown ? NOT_AVAILABLE : formatUsdCompact(cost.todayUsd) ?? NOT_AVAILABLE,
     exact: unknown ? null : exact,
-    ariaLabel: `Today's cost, ${spokenValue}.${stateClause ? ` ${stateClause}` : ''} Open cost detail.`,
+    ariaLabel: join(`Today's cost, ${spokenValue}.`, alarmText, stateClause, budget, 'Open cost detail.'),
     detail: [
       unknown ? "Today's cost: unavailable" : `Today's cost: ${exact} USD, token-ledger estimate`,
+      ...alarms.map(a => a.label),
       dayStart ? `Day starts ${dayStart}` : null,
       updated ? `Updated ${updated}` : null,
       stateClause || null,
+      budget || null,
     ].filter(Boolean).join('\n'),
   };
+}
+
+/**
+ * Budget wording beside the amount. Unset budgets say nothing (no alarm
+ * without a budget). A configured budget without complete, fresh coverage
+ * never reads as safe.
+ */
+export function hasCompleteBudgetCoverage(cost: UsageCostProjection, now: number): boolean {
+  if (cost.coverage?.status !== 'complete' || !cost.coverage.observedAt
+    || !Number.isFinite(Date.parse(cost.coverage.observedAt))
+    || ageExceedsTtl(cost.coverage.observedAt, cost.coverage.ttlSeconds, now)) return false;
+  for (const [budget, amount, startIso, endIso] of [
+    [cost.dailyBudgetUsd, cost.todayUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
+    [cost.weeklyBudgetUsd, cost.weekUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
+  ] as const) {
+    if (budget == null) continue;
+    if (!Number.isFinite(budget) || amount == null || !Number.isFinite(amount)) return false;
+    const start = Date.parse(startIso ?? '');
+    const end = Date.parse(endIso ?? '');
+    if (!Number.isFinite(start) || !Number.isFinite(end) || now < start || now >= end) return false;
+  }
+  return true;
+}
+
+function budgetClause(cost: UsageCostProjection, state: UsageChipState, alarms: readonly UsageAlarm[], now: number): string {
+  const configured = cost.dailyBudgetUsd != null || cost.weeklyBudgetUsd != null;
+  if (!configured) return '';
+  if (state === 'normal' && hasCompleteBudgetCoverage(cost, now)) return alarms.length ? '' : 'Within budget.';
+  return state === 'partial'
+    ? 'Budget: totals are partial, an overrun may not be detected yet.'
+    : 'Budget: not confirmed while the ledger is not current.';
 }
 
 // ------------------------------------------------------------ slot chip

@@ -54,3 +54,38 @@
   color: var(--studio-text-secondary);
   font-size: 12px;
 }
+
+// HUC-S5 alarm gallery additions. A phone-width fixture row, not the HUC-S4 header.
+.gallery__row--phone {
+  flex-wrap: nowrap;
+  width: 390px;
+  box-sizing: border-box;
+  min-height: 48px;
+  padding-inline: var(--studio-spacing-3);
+  gap: var(--studio-spacing-2);
+}
+
+.gallery__identity {
+  margin-inline-end: auto;
+  color: var(--studio-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gallery__action {
+  padding: var(--studio-spacing-1) var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gallery__log {
+  margin: 0;
+  padding-inline-start: var(--studio-spacing-5);
+  color: var(--studio-text-secondary);
+  font-size: 12px;
+}
