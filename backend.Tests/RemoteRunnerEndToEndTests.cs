@@ -109,7 +109,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // Keep the seeded Progress card stable while this endpoint acceptance
         // inspects the operator timeline, rather than allowing the unrelated
         // boot liveness sweep to move it during server startup.
-        using var factory = BuildFactory(authorityNow: () => DateTime.UtcNow);
+        var authorityNow = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        using var factory = BuildFactory(authorityNow: () => authorityNow);
         using var http = factory.CreateClient();
         using var client = new RClient(http, RunnerId);
         var ct = CancellationToken.None;
