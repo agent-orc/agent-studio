@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Drift;
 
@@ -847,7 +848,7 @@ public sealed class SoftwareArchitectureDriftAnalysisService
         if (refs.Count == 0) return "(none found)";
         var sb = new StringBuilder();
         foreach (var r in refs)
-            sb.Append("- `").Append(r.Path).Append("` - ").AppendLine(r.Label);
+            sb.Append("- `").Append(r.Path).Append("` - ").AppendLf(r.Label);
         return sb.ToString().TrimEnd();
     }
 
@@ -856,7 +857,7 @@ public sealed class SoftwareArchitectureDriftAnalysisService
         if (tasks.Count == 0) return "(no recent task evidence)";
         var sb = new StringBuilder();
         foreach (var t in tasks)
-            sb.Append("- `").Append(t.Lane).Append('/').Append(t.JobId).Append("` - ").AppendLine(t.Title);
+            sb.Append("- `").Append(t.Lane).Append('/').Append(t.JobId).Append("` - ").AppendLf(t.Title);
         return sb.ToString().TrimEnd();
     }
 
@@ -865,7 +866,7 @@ public sealed class SoftwareArchitectureDriftAnalysisService
         if (reports.Count == 0) return "(none)";
         var sb = new StringBuilder();
         foreach (var r in reports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 
@@ -875,68 +876,68 @@ public sealed class SoftwareArchitectureDriftAnalysisService
         if (model is null)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("(no architecture model found)");
+            sb.AppendLf("(no architecture model found)");
             if (lookup.RejectionReason is { Length: > 0 } rj)
-                sb.Append("Rejected candidate: ").AppendLine(rj);
+                sb.Append("Rejected candidate: ").AppendLf(rj);
             if (lookup.AttemptedPaths.Count > 0)
             {
-                sb.AppendLine("Looked under:");
+                sb.AppendLf("Looked under:");
                 foreach (var p in lookup.AttemptedPaths)
-                    sb.Append("- `").Append(p).AppendLine("`");
+                    sb.Append("- `").Append(p).AppendLf("`");
             }
-            sb.AppendLine();
-            sb.AppendLine("Treat the architecture model as **not yet defined** and emit a high-severity Architecture finding instead of inventing elements.");
+            sb.AppendLf();
+            sb.AppendLf("Treat the architecture model as **not yet defined** and emit a high-severity Architecture finding instead of inventing elements.");
             return sb.ToString().TrimEnd();
         }
 
         var body = new StringBuilder();
-        body.Append("**Model:** `").Append(model.ModelId).Append("` - ").AppendLine(model.Title);
+        body.Append("**Model:** `").Append(model.ModelId).Append("` - ").AppendLf(model.Title);
         if (!string.IsNullOrWhiteSpace(model.SourcePath))
-            body.Append("Source: `").Append(model.SourcePath).AppendLine("`");
+            body.Append("Source: `").Append(model.SourcePath).AppendLf("`");
         if (!string.IsNullOrWhiteSpace(model.UpdatedAt))
-            body.Append("Updated: ").AppendLine(model.UpdatedAt);
-        body.AppendLine();
+            body.Append("Updated: ").AppendLf(model.UpdatedAt);
+        body.AppendLf();
         for (int i = 0; i < model.Elements.Count; i++)
         {
             var el = model.Elements[i];
-            body.Append("### ").Append(i + 1).Append(". `").Append(el.ElementId).Append("` - ").AppendLine(el.Label);
-            body.Append("- expectedRole: ").AppendLine(el.ExpectedRole);
+            body.Append("### ").Append(i + 1).Append(". `").Append(el.ElementId).Append("` - ").AppendLf(el.Label);
+            body.Append("- expectedRole: ").AppendLf(el.ExpectedRole);
             if (el.OwnershipBoundary.Count > 0)
             {
                 body.Append("- ownershipBoundary: ");
-                body.AppendLine(string.Join(", ", el.OwnershipBoundary.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.OwnershipBoundary.Select(b => "`" + b + "`")));
             }
             if (el.AllowedDependencies.Count > 0)
             {
                 body.Append("- allowedDependencies: ");
-                body.AppendLine(string.Join(", ", el.AllowedDependencies.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.AllowedDependencies.Select(b => "`" + b + "`")));
             }
             if (el.Guidelines.Count > 0)
             {
                 body.Append("- guidelines: ");
-                body.AppendLine(string.Join("; ", el.Guidelines));
+                body.AppendLf(string.Join("; ", el.Guidelines));
             }
             if (el.SourceRefs.Count > 0)
             {
                 body.Append("- sourceRefs: ");
-                body.AppendLine(string.Join(", ", el.SourceRefs.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.SourceRefs.Select(b => "`" + b + "`")));
             }
             if (el.RelevantTests.Count > 0)
             {
                 body.Append("- relevantTests: ");
-                body.AppendLine(string.Join(", ", el.RelevantTests.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.RelevantTests.Select(b => "`" + b + "`")));
             }
             if (el.RelevantSchemas.Count > 0)
             {
                 body.Append("- relevantSchemas: ");
-                body.AppendLine(string.Join(", ", el.RelevantSchemas.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.RelevantSchemas.Select(b => "`" + b + "`")));
             }
             if (el.RuntimeSignals.Count > 0)
             {
                 body.Append("- runtimeSignals: ");
-                body.AppendLine(string.Join(", ", el.RuntimeSignals.Select(b => "`" + b + "`")));
+                body.AppendLf(string.Join(", ", el.RuntimeSignals.Select(b => "`" + b + "`")));
             }
-            body.AppendLine();
+            body.AppendLf();
         }
         return body.ToString().TrimEnd();
     }

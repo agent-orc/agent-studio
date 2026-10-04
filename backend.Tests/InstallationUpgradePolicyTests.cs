@@ -8,6 +8,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the timestamp is serialized fixture data for upgrade-policy parsing.
+
 /// <summary>
 /// AGT-2947 (Dossier AGT-W63 D6 option A, I06). Direct matrix for the
 /// installation upgrade contract: one updater per placement, bounded drain,

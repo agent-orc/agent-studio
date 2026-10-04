@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -102,15 +103,7 @@ internal static class PerfReportSink
     }
 
     private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "AGENTS.md"))) return dir.FullName;
-            dir = dir.Parent;
-        }
-        return AppContext.BaseDirectory;
-    }
+        => RepositoryRoot.TryFind() ?? AppContext.BaseDirectory;
 
     private static string? TryGitOutput(string args, string cwd)
     {

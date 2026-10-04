@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 using Xunit.Abstractions;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -403,13 +404,5 @@ public class CodePatternDriftAnalysisServiceTests : IDisposable
     }
 
     private static string? LocateRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "AGENTS.md"))) return dir.FullName;
-            dir = dir.Parent;
-        }
-        return null;
-    }
+        => RepositoryRoot.TryFind();
 }
