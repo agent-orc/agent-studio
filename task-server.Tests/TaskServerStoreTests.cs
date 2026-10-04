@@ -57,6 +57,48 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Follow_up_saved_before_continuation_intents_is_still_delivered_on_worker_start()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        const string prompt = "Follow-up saved by an older server.";
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO pending_follow_ups(task_id, state, prompt, mode, prompt_sha256, saved_at, saved_reason, author)
+                VALUES ($task, 'queued', $prompt, 'continue', $sha, '2026-09-20T10:00:00.0000000+00:00', 'operator', 'human:owner');
+                """;
+            command.Parameters.AddWithValue("$task", task.TaskId);
+            command.Parameters.AddWithValue("$prompt", prompt);
+            command.Parameters.AddWithValue("$sha", FollowUpPromptDigest.Compute(prompt));
+            await command.ExecuteNonQueryAsync();
+        }
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Null(claim.ContinuationIntent);
+        Assert.Equal(prompt, claim.FollowUp!.Prompt);
+
+        await store.RenewLeaseAsync(
+            claim.Run!.RunId,
+            new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                StartedPromptSha256: claim.FollowUp.PromptSha256),
+            "runner-a",
+            default);
+
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        var delivered = Assert.Single(history!.Audit, row => row.Action == "follow-up.delivered");
+        Assert.Equal(claim.Run.RunId, delivered.TargetId);
+        Assert.DoesNotContain(history.Audit, row => row.Action == "continuation.consumed");
+        await using var verify = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await verify.OpenAsync();
+        Assert.Equal(0L, Scalar(verify, "SELECT count(*) FROM pending_follow_ups;"));
+    }
+
+    [Fact]
     public async Task Follow_up_is_restored_when_claimed_worker_is_lost_before_start()
     {
         using var temp = new TempDirectory();
@@ -118,6 +160,236 @@ public sealed partial class TaskServerStoreTests
         Assert.Equal("empty", claim.Status);
         var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
         Assert.Contains(history!.Audit, row => row.Action == "follow-up.superseded");
+    }
+
+    [Fact]
+    public async Task Continuation_rounds_are_ordered_idempotent_and_bound_to_one_run()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-thinking", task.Version,
+                "Instruction", "gpt-5.6-sol", "codex", "unbounded", "continue", "operator"),
+            "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-model", task.Version,
+                "Instruction", "not-in-policy", "codex", null, "continue", "operator"),
+            "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "invalid-cli", task.Version,
+                "Instruction", "gpt-5.6-sol", "gemini", null, "continue", "operator"),
+            "operator", default));
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "mismatched-cli", task.Version,
+                "Instruction", "gpt-5.6-sol", "claude", null, "continue", "operator"),
+            "operator", default));
+        Assert.Null(await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            "invalid-thinking", default));
+        var first = new ContinuationIntentRequest(1, "continue-1", task.Version,
+            "First instruction", "gpt-5.6-sol", "codex", "xhigh", "continue", "operator follow-up");
+        var receipt1 = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            first, "operator", default);
+        var receipt2 = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            first with { CommandId = "continue-2", ExpectedTaskVersion = receipt1.ResultTaskVersion,
+                Prompt = "Second instruction", Model = null, CliType = null, ThinkingLevel = null },
+            "operator", default);
+        Assert.Equal(1, receipt1.Round);
+        Assert.Equal(2, receipt2.Round);
+        Assert.True(receipt1.ExplicitSelection);
+        Assert.False(receipt2.ExplicitSelection);
+        Assert.False(string.IsNullOrWhiteSpace(receipt1.PolicyVersion));
+        Assert.Equal(new[] { "continue-1", "continue-2" },
+            (await store.ListContinuationIntentsAsync(project.ProjectId, task.TaskId, default))
+                .Select(item => item.Receipt.CommandId));
+        Assert.Equal(receipt1, await store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId, first, "operator", default));
+        var conflict = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+                first with { Prompt = "Different" }, "operator", default));
+        Assert.Equal("continuation-command-conflict", conflict.Code);
+        var stale = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+                first with { CommandId = "continue-stale" }, "operator", default));
+        Assert.Equal("continuation-task-stale", stale.Code);
+
+        // A restart after acceptance retains both ordered rounds.
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-2", default))!.Status);
+        await restarted.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal("continue-1", claim.ContinuationIntent?.Receipt.CommandId);
+        Assert.Equal("First instruction", claim.FollowUp!.Prompt);
+        Assert.Equal(claim.Run!.RunId, claim.FollowUp.ClaimId);
+        // The explicit selection is delivered exactly as submitted.
+        Assert.Equal("gpt-5.6-sol", claim.ContinuationIntent!.Model);
+        Assert.Equal("xhigh", claim.ContinuationIntent.ThinkingLevel);
+        Assert.Equal(new ContinuationSelectionMask(true, true, true), claim.ContinuationIntent.Selection);
+
+        // Only the prompt reserved by this run can consume the round.
+        var mismatch = await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            restarted.RenewLeaseAsync(claim.Run.RunId,
+                new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence,
+                    StartedPromptSha256: FollowUpPromptDigest.Compute("Second instruction")),
+                "runner-a", default));
+        Assert.Equal("follow-up-prompt-mismatch", mismatch.Code);
+        Assert.Equal("claimed", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+
+        // An acknowledged claim whose spawn failed remains recoverable.
+        await restarted.ReleaseLeaseAsync(claim.Run.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, "runner-process-missing"), "runner-a", default);
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+        var retryClaim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "test", default);
+        Assert.Equal("continue-1", retryClaim.ContinuationIntent?.Receipt.CommandId);
+        Assert.Equal(retryClaim.Run!.RunId, retryClaim.FollowUp!.ClaimId);
+        // The released run no longer holds authority to consume it.
+        await Assert.ThrowsAsync<TaskServerConflictException>(() =>
+            restarted.RenewLeaseAsync(claim.Run.RunId,
+                new LeaseRenewRequest("runner-a", "instance-a", claim.Lease.LeaseId, claim.Lease.Fence,
+                    StartedPromptSha256: claim.FollowUp.PromptSha256), "runner-a", default));
+
+        var acknowledgement = new LeaseRenewRequest("runner-a", "instance-a",
+            retryClaim.Lease!.LeaseId, retryClaim.Lease.Fence,
+            StartedPromptSha256: retryClaim.FollowUp.PromptSha256);
+        await restarted.RenewLeaseAsync(retryClaim.Run.RunId, acknowledgement, "runner-a", default);
+        var consumed = (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!;
+        Assert.Equal("consumed", consumed.Status);
+        Assert.Equal(retryClaim.Run.RunId, consumed.RunId);
+        Assert.Equal(retryClaim.Lease.Fence, consumed.Fence);
+        Assert.NotNull(consumed.ConsumedAt);
+        // A repeated start acknowledgement keeps the first receipt.
+        await restarted.RenewLeaseAsync(retryClaim.Run.RunId, acknowledgement, "runner-a", default);
+        Assert.Equal(consumed, await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default));
+        var history = await restarted.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        Assert.Single(history!.Audit, row => row.Action == "continuation.consumed");
+
+        Assert.Equal("queued", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-2", default))!.Status);
+        await restarted.CompleteRunAsync(retryClaim.Run.RunId,
+            new CompleteRunRequest("runner-a", "instance-a", retryClaim.Lease.LeaseId,
+                retryClaim.Lease.Fence, ExecutionOutcomeKind.LaunchFailure.ToString(),
+                IdempotencyKey: "continuation-first-complete", Sequence: 1), "runner-a", default);
+        var secondClaim = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "test", default);
+        Assert.Equal("continue-2", secondClaim.ContinuationIntent?.Receipt.CommandId);
+        Assert.Equal("Second instruction", secondClaim.FollowUp!.Prompt);
+        Assert.Equal(new ContinuationSelectionMask(false, false, false), secondClaim.ContinuationIntent!.Selection);
+        Assert.Equal("consumed", (await restarted.GetContinuationIntentAsync(
+            project.ProjectId, task.TaskId, "continue-1", default))!.Status);
+    }
+
+    [Fact]
+    public async Task Untiered_known_model_can_be_explicitly_pinned_without_policy_rewriting()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SetTaskCliTypeAsync(project.ProjectId, task.TaskId,
+            new SetTaskCliTypeRequest("claude", 0), "operator", default);
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SubmitContinuationIntentAsync(
+            project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "implicit-cli-mismatch", task.Version,
+                "Continue", "gpt-6-sol", null, null, "continue", "operator"),
+            "operator", default));
+
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "explicit-untiered", task.Version,
+                "Continue", "gpt-6-sol", "codex", null, "continue", "operator"),
+            "operator", default);
+        var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            receipt.CommandId, default);
+
+        Assert.Equal("gpt-6-sol", projection!.Model);
+        Assert.Equal(new ContinuationSelectionMask(true, true, false), projection.Selection);
+        Assert.True(receipt.ExplicitSelection);
+    }
+
+    [Fact]
+    public async Task Model_only_continuation_without_a_studio_cli_snapshots_its_policy_provider()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+
+        var receipt = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "model-only-provider", task.Version,
+                "Continue", "gpt-6-sol", null, null, "continue", "operator"),
+            "operator", default);
+        var projection = await store.GetContinuationIntentAsync(project.ProjectId, task.TaskId,
+            receipt.CommandId, default);
+
+        Assert.Equal("codex", projection!.CliType);
+        Assert.Equal(new ContinuationSelectionMask(true, false, false), projection.Selection);
+    }
+
+    [Fact]
+    public async Task Continuation_claim_survives_server_restart_without_false_consumption()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "restart-claim", task.Version,
+                "Recover this instruction", null, null, null, "continue", "operator"),
+            "operator", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"),
+            "runner-a", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var projection = await restarted.GetContinuationIntentAsync(project.ProjectId,
+            task.TaskId, "restart-claim", default);
+        Assert.Equal("claimed", projection!.Status);
+        Assert.Equal(claim.Run!.RunId, projection.RunId);
+        Assert.Equal(claim.Lease!.Fence, projection.Fence);
+        Assert.Null(projection.ConsumedAt);
+    }
+
+    [Fact]
+    public async Task Terminal_move_explicitly_supersedes_every_waiting_continuation_round()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var first = await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "late-1", task.Version,
+                "First late round", null, null, null, "continue", "operator"),
+            "operator", default);
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "late-2", first.ResultTaskVersion,
+                "Second late round", null, null, null, "continue", "operator"),
+            "operator", default);
+
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("6-completed"), "human:owner", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+
+        Assert.Equal("empty", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+        Assert.All(await store.ListContinuationIntentsAsync(project.ProjectId, task.TaskId, default),
+            round => Assert.Equal("superseded", round.Status));
+        var history = await store.GetTaskHistoryAsync(project.ProjectId, task.TaskId, 0, default);
+        var superseded = Assert.Single(history!.Audit, row => row.Action == "follow-up.superseded");
+        Assert.Contains("late-1", superseded.DetailJson, StringComparison.Ordinal);
+        Assert.Contains("late-2", superseded.DetailJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -391,6 +663,34 @@ public sealed partial class TaskServerStoreTests
         command.CommandText =
             $"SELECT count(*) FROM schema_migrations WHERE version = {TaskServerStore.CurrentSchemaVersion};";
         Assert.Equal(1L, (long)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Fact]
+    public async Task Version_twenty_five_store_adds_ordered_continuation_intents()
+    {
+        using var temp = new TempDirectory();
+        var first = Store(temp.Path);
+        await first.InitializeAsync();
+        await using (var connection = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DROP TABLE continuation_intents;
+                DELETE FROM schema_migrations WHERE version = 26;
+                UPDATE meta SET value = '25' WHERE key = 'schema_version';
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(upgraded);
+        var receipt = await upgraded.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            new ContinuationIntentRequest(1, "upgraded-round", task.Version,
+                "Keep going", null, null, null, "continue", "operator"), "operator", default);
+        Assert.Equal(1, receipt.Round);
+        Assert.Equal(26, upgraded.Status().SchemaVersion);
     }
 
     [Fact]

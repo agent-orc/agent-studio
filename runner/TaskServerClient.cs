@@ -782,6 +782,13 @@ public sealed class TaskServerClient : IDisposable
             claim.Run.RunId);
         _v1Leases[claim.Task.TaskKey] = (claim.Run.RunId, legacyLease, RunnerInstanceId);
         if (!string.IsNullOrWhiteSpace(claim.Task.Body)) _v1TaskBodies[claim.Task.TaskKey] = claim.Task.Body;
+        var selectedIntent = claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
+            ? intent : null;
+        var selectedFields = selectedIntent?.Selection;
+        // Provider fallback is a whole route from a previous refusal. Once an
+        // operator selects any continuation field, filling the other fields
+        // from that route can cross provider boundaries.
+        var providerFallback = selectedIntent is null ? claim.ModelFallback : null;
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,
@@ -800,17 +807,22 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
+            // A required mechanical route wins. Otherwise operator fields
+            // resolve with normal host settings as one route.
             RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
                     FollowUp: claim.FollowUp)
-                : claim.ModelFallback is null && claim.FollowUp is null
+                : selectedIntent is null && providerFallback is null && claim.FollowUp is null
                     ? null
                     : new RunSpecDto(
-                        claim.ModelFallback?.CliType,
-                        claim.ModelFallback?.To,
-                        claim.ModelFallback?.ThinkingLevel,
-                        ContextMode: claim.ModelFallback is null
+                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType || selectedFields.Model)
+                            ? selectedIntent.CliType : providerFallback?.CliType,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.Model)
+                            ? selectedIntent.Model : providerFallback?.To,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.ThinkingLevel)
+                            ? selectedIntent.ThinkingLevel : providerFallback?.ThinkingLevel,
+                        ContextMode: providerFallback is null
                             ? null
                             : CodingAgentRunner.Model.CliContextModes.Clean,
                         FollowUp: claim.FollowUp),
