@@ -154,6 +154,49 @@ public sealed class RunnerHostRecordTests
     }
 
     [Fact]
+    public void Migration_preserves_a_shared_ceiling_below_the_sum_of_role_caps()
+    {
+        var desired = Record(total: 3, coding: 2, review: 2);
+        var files = RunnerHostRecordPolicy.Render(desired).Files;
+
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            files["runner.env"], files["review.env"], files["profile.conf"], "linux");
+
+        Assert.Empty(migrated.Errors);
+        Assert.Equal(new HostEnvelopeDto(3, 2, 2), migrated.Record!.Envelope);
+        Assert.Equal("3", RunnerHostRecordPolicy.ParseEnv(
+            RunnerHostRecordPolicy.Render(migrated.Record).Files["profile.conf"])["HOST_TOTAL_SLOTS"]);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("invalid")]
+    [InlineData("1")]
+    public void Migration_refuses_an_invalid_or_underprovisioned_shared_ceiling(string total)
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            files["runner.env"], files["review.env"], $"HOST_TOTAL_SLOTS={total}\n", "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.NotEmpty(migrated.Errors);
+    }
+
+    [Fact]
+    public void Migration_refuses_profile_role_caps_that_disagree_with_role_files()
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var profile = files["profile.conf"].Replace(
+            "CODING_SLOTS=2", "CODING_SLOTS=1", StringComparison.Ordinal);
+        Assert.Equal("1", RunnerHostRecordPolicy.ParseEnv(profile)["CODING_SLOTS"]);
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            files["runner.env"], files["review.env"], profile, "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains("CODING_SLOTS must match"));
+    }
+
+    [Fact]
     public void Migration_refuses_disagreeing_or_shared_host_facts()
     {
         const string coding = "RUNNER_SERVER_URL=http://a\nRUNNER_ID=same\nRUNNER_AUTH_TOKEN_FILE=/t1\nRUNNER_GIT_REMOTE=r\n";

@@ -217,8 +217,9 @@ public static class RunnerHostRecordPolicy
                 notes.Add($"{otherKey}={declaredOther} in the {role} file disagreed with the {otherRole} file; the {otherRole} file wins.");
         }
 
+        var profile = ParseEnv(profileConf ?? string.Empty);
         var resources = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (key, value) in ParseEnv(profileConf ?? string.Empty))
+        foreach (var (key, value) in profile)
         {
             if (ResourceKeys.Contains(key, StringComparer.Ordinal)) resources[key] = value;
             else if (key is not ("HOST_TOTAL_SLOTS" or "CODING_SLOTS" or "REVIEW_SLOTS"))
@@ -227,9 +228,21 @@ public static class RunnerHostRecordPolicy
 
         var coding = slots.GetValueOrDefault(HostRoles.Coding);
         var review = slots.GetValueOrDefault(HostRoles.Review);
-        // Today both roles run side by side, so the conserving envelope starts
-        // at their sum. Tightening it is a deliberate administrator edit.
-        var envelope = new HostEnvelopeDto(Math.Max(1, coding + review), coding, review);
+        foreach (var (key, roleSlots) in new[] { ("CODING_SLOTS", coding), ("REVIEW_SLOTS", review) })
+        {
+            if (!profile.TryGetValue(key, out var declared)) continue;
+            if (!int.TryParse(declared, out var parsed) || parsed != roleSlots)
+                errors.Add($"profile.conf {key} must match the role environment slot count ({roleSlots}).");
+        }
+        // Legacy profiles had no shared ceiling. A profile rendered from an
+        // owned record does, and importing it must keep that tighter budget.
+        var total = Math.Max(1, coding + review);
+        if (profile.TryGetValue("HOST_TOTAL_SLOTS", out var declaredTotal))
+        {
+            if (!int.TryParse(declaredTotal, out total) || total < 1)
+                errors.Add("profile.conf HOST_TOTAL_SLOTS must be a positive integer.");
+        }
+        var envelope = new HostEnvelopeDto(total, coding, review);
         notes.Add($"Envelope set to {envelope.TotalSlots} total slots (coding {coding}, review {review}); project parallelism is unchanged.");
         var record = new RunnerHostRecord(
             RunnerHostRecord.CurrentSchemaVersion,
