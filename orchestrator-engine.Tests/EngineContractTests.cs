@@ -174,12 +174,7 @@ public sealed class EngineContractTests
     [Fact]
     public void Version_surface_contains_release_and_git_sha()
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "VERSION")))
-            directory = directory.Parent;
-
-        Assert.NotNull(directory);
-        var repositoryVersion = File.ReadAllText(Path.Combine(directory.FullName, "VERSION")).Trim();
+        var repositoryVersion = File.ReadAllText(Path.Combine(RepositoryRoot(), "VERSION")).Trim();
         Assert.StartsWith($"orchestrator-engine {repositoryVersion} (", EngineVersion.Display);
         Assert.EndsWith(")", EngineVersion.Display);
     }
@@ -473,12 +468,7 @@ public sealed class EngineContractTests
             clock);
 
     private static string RepositoryRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "agent-taskboard.sln")))
-            current = current.Parent;
-        return current?.FullName ?? throw new DirectoryNotFoundException("Repository root was not found.");
-    }
+        => AgentStudio.TestSupport.RepositoryRoot.Find();
 
     private sealed class AdjustableTimeProvider(DateTimeOffset now) : TimeProvider
     {

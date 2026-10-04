@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Review;
 
@@ -122,12 +123,12 @@ public static class CouncilReviewPolicy
     public static string BuildTargetedFollowUp(CouncilReviewReaction reaction)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append("Council reaction to quality grade ").Append(reaction.Grade).AppendLine(": fix the named findings below.");
-        sb.AppendLine("Do not redo unrelated work. For each item, implement the fix and add the focused test or evidence it asks for:");
+        sb.Append("Council reaction to quality grade ").Append(reaction.Grade).AppendLf(": fix the named findings below.");
+        sb.AppendLf("Do not redo unrelated work. For each item, implement the fix and add the focused test or evidence it asks for:");
         foreach (var assessment in reaction.Assessments.Where(a => a.Action == CouncilFindingAction.FixNextRound))
-            sb.Append("- ").AppendLine(assessment.Finding);
-        sb.AppendLine();
-        sb.AppendLine("Finish with a concise verification summary and the required terminal sentinel.");
+            sb.Append("- ").AppendLf(assessment.Finding);
+        sb.AppendLf();
+        sb.AppendLf("Finish with a concise verification summary and the required terminal sentinel.");
         return sb.ToString().TrimEnd();
     }
 

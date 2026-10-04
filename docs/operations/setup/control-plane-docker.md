@@ -51,6 +51,82 @@ the only one with a published port, and it is bound to the WireGuard address
 only (`${WG_ADDRESS}:443:443`, never a bare `443:443`, which would default to
 the wildcard address).
 
+## Secret custody and replacement
+
+The distributed package mounts only the three bootstrap principal files into
+Task Server, only `engine.token` into Engine, and only `studio.token` into the
+backup sidecar. Edge receives none. Runner provider login material stays on
+the runner host and is never mounted into Task Server. `install-docker.sh`
+checks the actual owner and mode of all three host files after provisioning:
+UID/GID 10001:10001 and `0600`, below a `0750` directory with the same owner.
+It refuses an existing file with broader access instead of assuming that the
+configured mode took effect.
+
+On the one-box profile, the bootstrap volume contains distinct `studio`,
+`engine`, `runner`, and `review_runner` subdirectories. Task Server reads the
+four bootstrap verifiers; Engine, Studio BFF/API, and each runner role mount
+only their own subdirectory read-only. The one-shot bootstrap moves existing
+principal files into those directories without changing their values and
+retains compatibility links inside the bootstrap volume. Coding and Review
+get separate writable native-login volumes with `0700` roots; an explicit
+operator bind override remains an operator-owned custody decision. The
+optional credential-manager profile has full principal access for its
+authorized rotation operation and is not a long-running service.
+
+Host writes use `deploy/host_secret_transport.py`: `NativeCliStoreAdapter`
+validates JSON and requires service-user `0700`/`0600`; `EnvironmentFileAdapter`
+validates environment records and requires root:agent `0750`/`0640`;
+`FileSecretAdapter` locks, writes and fsyncs a temporary file, atomically
+replaces the target, fsyncs the directory, and rechecks ownership and mode.
+`DockerSecretMountAdapter` checks that the service sees a read-only mount.
+`ExternalSecretStore` is an optional host adapter boundary, not a Task Server
+secret store. Operation receipts contain references and generation only.
+From a checkout, `python3 -m deploy.host_secret_transport install` reads the
+new value from stdin and takes a profile, target, owner IDs, operation
+reference and generation as nonsecret arguments. Install and envelope
+consumption also require `--host-id`, `--instance-id`, `--credential-kind`,
+`--authority-url` and `--authority-token-file`. For a private CA, pass
+`--authority-ca-file` so the issuer certificate is verified against that CA.
+The URL is the live installation
+issuer's HTTPS current-authority endpoint, outside the restored host backup.
+It accepts `hostId` and `credentialKind` query parameters and returns HTTP 200
+with `hostId`, `credentialKind`, `instanceId`, `generation` and a boolean
+`revoked`. A missing, mismatched, revoked or unreachable response stops the
+operation before any replacement or envelope claim. The caller's issuer
+credential file must be owner-only `0700`/`0600`; the issuer must authorize
+that caller to read only its host authority. The distributed installer
+copies the same tool to `/opt/agent-orchestrator/compose/host_secret_transport.py`
+for direct invocation. `issue-envelope` also reads the value from stdin;
+`consume-envelope` uses the enrolled host private-key file and installs through
+the same adapter. Install the optional envelope dependency from the adjacent
+`host-secret-requirements.txt`. Never pass a secret as a shell argument.
+The issuer response is current authority, not the metadata-only credential
+registry or a copy of its backed-up records. The installation owner must make
+this endpoint available before restoring a host's secret mounts or routes.
+
+A Docker file-backed secret keeps its old bound inode when the host file is
+atomically replaced. Within the principal overlap and after the consumer
+acknowledgement from AGT-2976, recreate the affected consumer with
+`docker compose up -d --force-recreate --no-deps <service>` and prove its
+scoped authenticated call before retiring the old generation. A Task Server
+or busy runner restart follows the existing drain and reattachment contract;
+do not recycle an active worker merely to refresh a mount. The redacted local
+fixture `scripts/secret-transport.test.sh` proves old-inode retention and
+new-inode visibility after recreation.
+
+Where local issuance is unavailable, `DeliveryEnvelopeStore` encrypts a
+single-use, expiring envelope to an enrolled host X25519 public key outside
+the command bus. The durable command carries only the envelope operation
+reference, host and expected generation. The receiver checks those bindings,
+claims the envelope once, and installs locally. It needs Python
+`cryptography` on issuer and receiver hosts; failed or expired delivery needs
+a fresh envelope for the same issuance operation. Neither ciphertext nor
+plaintext belongs in task artifacts or the durable bus.
+Enroll the host public key through the existing pinned SSH administration
+path; keep its private key in a service-owned `0700` directory as a `0600`
+file. A missing host key or expired envelope blocks delivery until that
+protected channel is re-established.
+
 ## Install
 
 ```bash

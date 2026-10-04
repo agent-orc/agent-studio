@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -72,7 +73,7 @@ public sealed class GateShellInvocationTests
     public void WindowsComposedDotNetTest_ProducesTrx()
     {
         Skip.IfNot(OperatingSystem.IsWindows(), "Windows shell regression.");
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var root = RepositoryRoot.TryFind() ?? string.Empty;
         var project = Path.Combine(root, "backend.Tests", "OrchestratorApi.Tests.csproj");
         Skip.IfNot(File.Exists(project), "Repository test project is unavailable.");
         var prefix = "gate-shell-" + Guid.NewGuid().ToString("N");
