@@ -126,6 +126,10 @@ public class TaskFolderAccessIsolationTest
                 "Moves and replaces dependency caches under the OS review-workspace temp root, never task storage.",
             ["backend/Features/Pipeline/GateResultCache.cs"] =
                 "Deletes only the hashed per-project gate-result cache under local application data, never task storage.",
+            ["backend/Features/Pipeline/RemoteGateTransport.cs"] =
+                "Deletes only its generated GUID directory under the fixed OS-temp transport root, never task storage.",
+            ["backend/Features/Pipeline/RemoteGateWorker.cs"] =
+                "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
 
             // Re-added after the structure migration folded the src/ executor
             // projects back into backend/ (the scan covers them again):

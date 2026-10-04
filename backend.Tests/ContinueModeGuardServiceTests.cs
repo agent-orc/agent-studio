@@ -12,7 +12,7 @@ namespace AgentStudio.Tests;
 /// wired into <see cref="TaskRunnerService.ContinueJobAsync"/> (AGT-2795): a
 /// concept or planning card whose follow-up reads as a code-change request is
 /// refused before anything is written, and an explicit mode override lets the
-/// same continue proceed like any other.
+/// same continue reach the remote-only execution boundary.
 /// </summary>
 public sealed class ContinueModeGuardServiceTests : IDisposable
 {
@@ -82,12 +82,13 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
         WriteJob("agt-2795-override", TaskStates.Progress, mode: TaskModes.Concept);
         var harness = Build();
 
-        // The lane is runnable and local, so a continue that clears the guard
-        // reaches the normal admission path instead of throwing.
-        var response = await harness.Service.ContinueJobAsync(
-            "agt-2795-override", ImplementationPrompt, _watchPath, modeOverride: TaskModes.Concept);
+        // A matching override clears the mode guard. Local execution then
+        // fails at the independent remote-only admission boundary.
+        var ex = await Assert.ThrowsAsync<TaskOperationException>(() => harness.Service.ContinueJobAsync(
+            "agt-2795-override", ImplementationPrompt, _watchPath, modeOverride: TaskModes.Concept));
 
-        Assert.NotNull(response);
+        Assert.Equal(400, ex.Status);
+        Assert.Contains(RemoteExecutionRequirement.Code, ex.Message);
     }
 
     [Fact]
@@ -96,10 +97,11 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
         WriteJob("agt-2795-discuss", TaskStates.Progress, mode: TaskModes.Concept);
         var harness = Build();
 
-        var response = await harness.Service.ContinueJobAsync(
-            "agt-2795-discuss", "What do you think of Option B for the retention window?", _watchPath);
+        var ex = await Assert.ThrowsAsync<TaskOperationException>(() => harness.Service.ContinueJobAsync(
+            "agt-2795-discuss", "What do you think of Option B for the retention window?", _watchPath));
 
-        Assert.NotNull(response);
+        Assert.Equal(400, ex.Status);
+        Assert.Contains(RemoteExecutionRequirement.Code, ex.Message);
     }
 
     [Fact]
@@ -108,10 +110,11 @@ public sealed class ContinueModeGuardServiceTests : IDisposable
         WriteJob("coding-card", TaskStates.Progress, mode: TaskModes.Coding);
         var harness = Build();
 
-        var response = await harness.Service.ContinueJobAsync(
-            "coding-card", ImplementationPrompt, _watchPath);
+        var ex = await Assert.ThrowsAsync<TaskOperationException>(() => harness.Service.ContinueJobAsync(
+            "coding-card", ImplementationPrompt, _watchPath));
 
-        Assert.NotNull(response);
+        Assert.Equal(400, ex.Status);
+        Assert.Contains(RemoteExecutionRequirement.Code, ex.Message);
     }
 
     // ── fixture ───────────────────────────────────────────────────────────────
