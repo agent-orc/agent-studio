@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -103,15 +104,15 @@ public static class SolutionQualityGate
     public static string BuildFollowUp(Decision decision)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Auto-review found solution-quality concerns that are not acceptable as ordinary human-review notes.");
-        sb.AppendLine("Resolve every item below before ending with [[TASK_DONE]] again:");
-        sb.AppendLine();
+        sb.AppendLf("Auto-review found solution-quality concerns that are not acceptable as ordinary human-review notes.");
+        sb.AppendLf("Resolve every item below before ending with [[TASK_DONE]] again:");
+        sb.AppendLf();
         foreach (var finding in decision.Findings.Take(MaxFindings))
         {
-            sb.AppendLine($"- [ ] {finding}");
+            sb.AppendLf($"- [ ] {finding}");
         }
-        sb.AppendLine();
-        sb.AppendLine("Do not redo already-complete work. First compare against the current code/task state, then make only the missing or corrective change. If the task goal is already satisfied, prove that with evidence and end with [[TASK_DONE]]. If it cannot be completed, stop with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason.");
+        sb.AppendLf();
+        sb.AppendLf("Do not redo already-complete work. First compare against the current code/task state, then make only the missing or corrective change. If the task goal is already satisfied, prove that with evidence and end with [[TASK_DONE]]. If it cannot be completed, stop with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason.");
         return sb.ToString();
     }
 

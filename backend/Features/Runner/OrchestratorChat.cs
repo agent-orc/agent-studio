@@ -5,6 +5,7 @@ using AgentStudio.Orchestrator;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
 using AgentStudio.Tasks;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -976,12 +977,12 @@ public class OrchestratorChatService
         var history = allocated.FirstOrDefault(item => item.Kind == "recent-conversation");
         if (history is not null && history.IncludedContent.Length > 0)
         {
-            sb.AppendLine("=== CONVERSATION CONTINUITY ===");
-            sb.AppendLine(history.IncludedContent);
-            sb.AppendLine();
+            sb.AppendLf("=== CONVERSATION CONTINUITY ===");
+            sb.AppendLf(history.IncludedContent);
+            sb.AppendLf();
         }
 
-        sb.AppendLine("=== USER MESSAGE ===");
+        sb.AppendLf("=== USER MESSAGE ===");
         sb.Append(req.Text.TrimEnd());
 
         _logger.LogInformation(
@@ -1290,17 +1291,17 @@ public class OrchestratorChatService
 
         var files = _git.GetProjectCommitFiles(projectName, sha);
         var content = new StringBuilder()
-            .Append("Commit ").AppendLine(sha)
-            .Append("Changed files: ").AppendLine(files.Count.ToString());
+            .Append("Commit ").AppendLf(sha)
+            .Append("Changed files: ").AppendLf(files.Count.ToString());
         foreach (var file in files.Take(80))
             content.Append("- ").Append(file.Status).Append(' ')
                 .Append(file.Path).Append(" (+").Append(file.Added)
-                .Append(" / -").Append(file.Removed).AppendLine(")");
+                .Append(" / -").Append(file.Removed).AppendLf(")");
         if (files.Count > 80)
-            content.Append("- ").Append(files.Count - 80).AppendLine(" more files omitted from the source summary");
+            content.Append("- ").Append(files.Count - 80).AppendLf(" more files omitted from the source summary");
         if (!string.IsNullOrWhiteSpace(diff.Diff))
         {
-            content.AppendLine().AppendLine("Bounded unified diff:");
+            content.AppendLf().AppendLf("Bounded unified diff:");
             var remaining = Math.Max(0, 64_000 - content.Length);
             content.Append(diff.Diff.AsSpan(0, Math.Min(diff.Diff.Length, remaining)));
         }
@@ -1494,24 +1495,24 @@ public class OrchestratorChatService
         string projectName,
         OrchestratorContextEnvelope envelope)
     {
-        builder.AppendLine("=== SCOPED ORCHESTRATOR CHAT PREAMBLE ===");
-        builder.AppendLine("You are the read-only Orchestrator answering an operator question.");
-        builder.AppendLine($"Conversation scope: {envelope.Scope.ContextKey}");
-        builder.AppendLine($"Project isolation boundary: {projectName}");
-        builder.AppendLine("Use only evidence listed in this request. Never infer facts from another project.");
-        builder.AppendLine("Do not start, stop, continue, move, or otherwise mutate a task from this chat turn.");
-        builder.AppendLine("Reply directly and concretely. Use the word 'tasks', not 'jobs'. Use Markdown when useful.");
-        builder.AppendLine();
+        builder.AppendLf("=== SCOPED ORCHESTRATOR CHAT PREAMBLE ===");
+        builder.AppendLf("You are the read-only Orchestrator answering an operator question.");
+        builder.AppendLf($"Conversation scope: {envelope.Scope.ContextKey}");
+        builder.AppendLf($"Project isolation boundary: {projectName}");
+        builder.AppendLf("Use only evidence listed in this request. Never infer facts from another project.");
+        builder.AppendLf("Do not start, stop, continue, move, or otherwise mutate a task from this chat turn.");
+        builder.AppendLf("Reply directly and concretely. Use the word 'tasks', not 'jobs'. Use Markdown when useful.");
+        builder.AppendLf();
     }
 
     private static void AppendContextLedger(StringBuilder builder, OrchestratorContextReceipt receipt)
     {
-        builder.AppendLine("=== CONTEXT LEDGER ===");
-        builder.AppendLine($"Receipt: {receipt.ReceiptId}");
-        builder.AppendLine($"User turn: {receipt.UserTurnId}");
-        builder.AppendLine($"Captured at: {receipt.CapturedAt:O}");
-        builder.AppendLine($"Scope: {receipt.ContextKey}");
-        builder.AppendLine($"Budget: automatic-soft={receipt.Budget?.AutomaticSoftCapTokens}; automatic-hard={receipt.Budget?.AutomaticHardCapTokens}; total-hard={receipt.Budget?.TotalHardCapTokens}; estimated-included={receipt.Budget?.EstimatedIncludedTokens}");
+        builder.AppendLf("=== CONTEXT LEDGER ===");
+        builder.AppendLf($"Receipt: {receipt.ReceiptId}");
+        builder.AppendLf($"User turn: {receipt.UserTurnId}");
+        builder.AppendLf($"Captured at: {receipt.CapturedAt:O}");
+        builder.AppendLf($"Scope: {receipt.ContextKey}");
+        builder.AppendLf($"Budget: automatic-soft={receipt.Budget?.AutomaticSoftCapTokens}; automatic-hard={receipt.Budget?.AutomaticHardCapTokens}; total-hard={receipt.Budget?.TotalHardCapTokens}; estimated-included={receipt.Budget?.EstimatedIncludedTokens}");
         foreach (var source in receipt.Sources ?? [])
         {
             builder.Append("- ").Append(source.SourceId)
@@ -1524,9 +1525,9 @@ public class OrchestratorChatService
                 .Append(" | tokens~=").Append(source.EstimatedTokens);
             if (!string.IsNullOrWhiteSpace(source.Reason))
                 builder.Append(" | reason=").Append(source.Reason);
-            builder.AppendLine();
+            builder.AppendLf();
         }
-        builder.AppendLine();
+        builder.AppendLf();
     }
 
     private static void AppendResolvedBlocks(
@@ -1538,13 +1539,13 @@ public class OrchestratorChatService
             .Where(item => item.Kind != "recent-conversation" && item.IncludedContent.Length > 0)
             .ToArray();
         if (included.Length == 0) return;
-        builder.Append("=== ").Append(heading).AppendLine(" ===");
+        builder.Append("=== ").Append(heading).AppendLf(" ===");
         foreach (var block in included)
         {
-            builder.Append("--- ").Append(block.SourceId).AppendLine(" ---");
-            builder.AppendLine(block.IncludedContent.TrimEnd());
+            builder.Append("--- ").Append(block.SourceId).AppendLf(" ---");
+            builder.AppendLf(block.IncludedContent.TrimEnd());
         }
-        builder.AppendLine();
+        builder.AppendLf();
     }
 
     private static string RenderContinuity(IEnumerable<OrchestratorChatTurn> turns)
@@ -1555,7 +1556,7 @@ public class OrchestratorChatService
             if (string.IsNullOrWhiteSpace(turn.Text)) continue;
             builder.Append(turn.Role == OrchestratorChatRoles.User ? "Operator" : "Orchestrator")
                 .Append(" [").Append(turn.Id).Append("]: ")
-                .AppendLine(turn.Text.Trim());
+                .AppendLf(turn.Text.Trim());
         }
         return builder.ToString().TrimEnd();
     }
@@ -1692,21 +1693,21 @@ public class OrchestratorChatService
         string projectName,
         IReadOnlyCollection<TaskInfo> tasksForProject)
     {
-        sb.AppendLine($"AUTHORITATIVE current state of \"{projectName}\" ({tasksForProject.Count} tasks total):");
+        sb.AppendLf($"AUTHORITATIVE current state of \"{projectName}\" ({tasksForProject.Count} tasks total):");
         if (tasksForProject.Count == 0)
         {
-            sb.AppendLine("  (no tasks)");
+            sb.AppendLf("  (no tasks)");
         }
         else
         {
             foreach (var sg in tasksForProject.GroupBy(j => j.State).OrderBy(g => g.Key))
             {
-                sb.AppendLine($"  {sg.Key}: {sg.Count()}");
+                sb.AppendLf($"  {sg.Key}: {sg.Count()}");
             }
         }
-        sb.AppendLine("Use these exact numbers. Any counts you remember from earlier in this session are stale and must be ignored.");
-        sb.AppendLine("These items are called \"tasks\" (not \"jobs\") in the user-facing vocabulary.");
-        sb.AppendLine();
+        sb.AppendLf("Use these exact numbers. Any counts you remember from earlier in this session are stale and must be ignored.");
+        sb.AppendLf("These items are called \"tasks\" (not \"jobs\") in the user-facing vocabulary.");
+        sb.AppendLf();
     }
 
     /// <summary>
@@ -1737,16 +1738,16 @@ public class OrchestratorChatService
         var effectiveCli = string.IsNullOrWhiteSpace(cli) ? fallbackCli : cli!;
         var effectiveModel = string.IsNullOrWhiteSpace(model) ? fallbackModel : model!;
 
-        sb.AppendLine("=== CURRENT USER PREFERENCES ===");
-        sb.AppendLine($"Default CLI: {effectiveCli}");
-        sb.AppendLine($"Default model: {effectiveModel}");
+        sb.AppendLf("=== CURRENT USER PREFERENCES ===");
+        sb.AppendLf($"Default CLI: {effectiveCli}");
+        sb.AppendLf($"Default model: {effectiveModel}");
         if (!string.IsNullOrWhiteSpace(clientId))
         {
-            sb.AppendLine($"Active client id (forward as X-Client-Id when calling /api/* on the user's behalf): {clientId}");
+            sb.AppendLf($"Active client id (forward as X-Client-Id when calling /api/* on the user's behalf): {clientId}");
         }
-        sb.AppendLine("These supersede any defaults named in the boot prompt for this turn.");
-        sb.AppendLine("If the user asks you to create a task without naming a CLI or model, use these.");
-        sb.AppendLine();
+        sb.AppendLf("These supersede any defaults named in the boot prompt for this turn.");
+        sb.AppendLf("If the user asks you to create a task without naming a CLI or model, use these.");
+        sb.AppendLf();
     }
 
     /// <summary>
@@ -1758,7 +1759,7 @@ public class OrchestratorChatService
     /// </summary>
     internal static void AppendNavigationContext(StringBuilder sb, ChatNavigationContext? nav)
     {
-        sb.AppendLine("=== NAVIGATION CONTEXT ===");
+        sb.AppendLf("=== NAVIGATION CONTEXT ===");
         if (nav == null
             || (string.IsNullOrWhiteSpace(nav.CurrentPage)
                 && string.IsNullOrWhiteSpace(nav.CurrentTaskId)
@@ -1774,29 +1775,29 @@ public class OrchestratorChatService
                 && string.IsNullOrWhiteSpace(nav.PageType)
                 && string.IsNullOrWhiteSpace(nav.PageExcerpt)))
         {
-            sb.AppendLine("No navigation context was sent with this message.");
-            sb.AppendLine("If the user asks a context-dependent question (\"what is the current task?\", \"explain this\"), say no specific task is in scope and ask which task they mean. Do NOT invent a task or hallucinate a context.");
-            sb.AppendLine();
+            sb.AppendLf("No navigation context was sent with this message.");
+            sb.AppendLf("If the user asks a context-dependent question (\"what is the current task?\", \"explain this\"), say no specific task is in scope and ask which task they mean. Do NOT invent a task or hallucinate a context.");
+            sb.AppendLf();
             return;
         }
 
-        sb.AppendLine("The operator's UI state when they sent this message:");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentPage)) sb.AppendLine($"  currentPage: {nav.CurrentPage}");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskId)) sb.AppendLine($"  currentTaskId: {nav.CurrentTaskId}");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskKey)) sb.AppendLine($"  currentTaskKey: {nav.CurrentTaskKey}");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskTitle)) sb.AppendLine($"  currentTaskTitle: {nav.CurrentTaskTitle}");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskState)) sb.AppendLine($"  currentTaskState: {nav.CurrentTaskState}");
-        if (!string.IsNullOrWhiteSpace(nav.CurrentLaneFilter)) sb.AppendLine($"  currentLaneFilter: {nav.CurrentLaneFilter}");
-        if (!string.IsNullOrWhiteSpace(nav.ViewportTimestamp)) sb.AppendLine($"  viewportTimestamp: {nav.ViewportTimestamp}");
-        if (!string.IsNullOrWhiteSpace(nav.ObservedSurface)) sb.AppendLine($"  observedSurface: {nav.ObservedSurface}");
-        if (!string.IsNullOrWhiteSpace(nav.AffectedComponent)) sb.AppendLine($"  affectedComponent: {nav.AffectedComponent}");
-        if (!string.IsNullOrWhiteSpace(nav.PageRef)) sb.AppendLine($"  pageRef: {nav.PageRef}");
-        if (!string.IsNullOrWhiteSpace(nav.PageTitle)) sb.AppendLine($"  pageTitle: {nav.PageTitle}");
-        if (!string.IsNullOrWhiteSpace(nav.PageType)) sb.AppendLine($"  pageType: {nav.PageType}");
-        if (!string.IsNullOrWhiteSpace(nav.PageExcerpt)) sb.AppendLine($"  pageExcerpt: {nav.PageExcerpt}");
-        sb.AppendLine();
-        sb.AppendLine("Use this when interpreting context-dependent questions. When pageRef is set, the operator is asking from THAT repository page; use its title, type, path, and excerpt. When currentTaskKey or currentTaskId is set, the operator is most likely asking about THAT task; answer with its title/state and refer to it by key. When neither pageRef, currentTaskKey, nor currentTaskId is set, do NOT invent one; say no specific page or task is in scope and ask what they mean. Never produce filler tokens or repeated greetings in place of a real answer.");
-        sb.AppendLine();
+        sb.AppendLf("The operator's UI state when they sent this message:");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentPage)) sb.AppendLf($"  currentPage: {nav.CurrentPage}");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskId)) sb.AppendLf($"  currentTaskId: {nav.CurrentTaskId}");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskKey)) sb.AppendLf($"  currentTaskKey: {nav.CurrentTaskKey}");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskTitle)) sb.AppendLf($"  currentTaskTitle: {nav.CurrentTaskTitle}");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentTaskState)) sb.AppendLf($"  currentTaskState: {nav.CurrentTaskState}");
+        if (!string.IsNullOrWhiteSpace(nav.CurrentLaneFilter)) sb.AppendLf($"  currentLaneFilter: {nav.CurrentLaneFilter}");
+        if (!string.IsNullOrWhiteSpace(nav.ViewportTimestamp)) sb.AppendLf($"  viewportTimestamp: {nav.ViewportTimestamp}");
+        if (!string.IsNullOrWhiteSpace(nav.ObservedSurface)) sb.AppendLf($"  observedSurface: {nav.ObservedSurface}");
+        if (!string.IsNullOrWhiteSpace(nav.AffectedComponent)) sb.AppendLf($"  affectedComponent: {nav.AffectedComponent}");
+        if (!string.IsNullOrWhiteSpace(nav.PageRef)) sb.AppendLf($"  pageRef: {nav.PageRef}");
+        if (!string.IsNullOrWhiteSpace(nav.PageTitle)) sb.AppendLf($"  pageTitle: {nav.PageTitle}");
+        if (!string.IsNullOrWhiteSpace(nav.PageType)) sb.AppendLf($"  pageType: {nav.PageType}");
+        if (!string.IsNullOrWhiteSpace(nav.PageExcerpt)) sb.AppendLf($"  pageExcerpt: {nav.PageExcerpt}");
+        sb.AppendLf();
+        sb.AppendLf("Use this when interpreting context-dependent questions. When pageRef is set, the operator is asking from THAT repository page; use its title, type, path, and excerpt. When currentTaskKey or currentTaskId is set, the operator is most likely asking about THAT task; answer with its title/state and refer to it by key. When neither pageRef, currentTaskKey, nor currentTaskId is set, do NOT invent one; say no specific page or task is in scope and ask what they mean. Never produce filler tokens or repeated greetings in place of a real answer.");
+        sb.AppendLf();
     }
 
     internal string ResolveWorkingDirectory(string projectName, string watchPath)

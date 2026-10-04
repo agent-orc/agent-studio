@@ -160,6 +160,20 @@ restores the old link, starts the old release, reopens admission only after its
 own readiness gate, and exits nonzero. A failed candidate is never reported as
 a successful update.
 
+### Review-plan format and executor capabilities ship together
+
+A change to the review-plan format, such as a new `ReviewLibraryStepPolicy`
+version or a new required capability key, needs the matching Review Executor
+capability change in the same release. Both Task Server implementations match
+a sealed plan against the executor's registration. A plan that requires a key
+no deployed executor registers is unclaimable, and before AGT-2987 that
+looked like an idle queue for 24 hours. Add new toolchain keys only through
+`ReviewLibraryStepPolicy.ToolchainRequirements`, which the runner registration
+reads, and keep the registration contract test green. Before promotion, confirm
+that a review claim on the candidate does not answer
+`reason: unclaimable-plan-requirements`. See the
+[review lane runbook](review-lane-runbook.md).
+
 ### Restart-continuity release gate
 
 Before promoting a candidate, run the

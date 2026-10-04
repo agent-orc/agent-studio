@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -26,15 +27,7 @@ public class FeatureFolderBoundaryTests
         ["Services", "Models", "Endpoints", "Handlers", "Dtos", "Helpers", "Utils", "Infrastructure"];
 
     private static string RepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        while (current != null)
-        {
-            if (File.Exists(Path.Combine(current, "agent-taskboard.sln"))) return current;
-            current = Path.GetDirectoryName(current);
-        }
-        throw new InvalidOperationException("agent-taskboard.sln not found above test base directory.");
-    }
+        => RepositoryRoot.Find();
 
     private static IEnumerable<string> SourceFiles(string root)
         => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
