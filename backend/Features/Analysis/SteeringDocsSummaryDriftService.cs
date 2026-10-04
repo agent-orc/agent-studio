@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Analysis;
 
@@ -568,9 +569,9 @@ public sealed class SteeringDocsSummaryDriftService
                     sb.Append(", ").Append(s.ChildCount).Append(" entries");
                 sb.Append(")_");
             }
-            sb.AppendLine();
+            sb.AppendLf();
             if (!string.IsNullOrWhiteSpace(s.Why))
-                sb.Append("    > ").AppendLine(s.Why);
+                sb.Append("    > ").AppendLf(s.Why);
         }
         return sb.ToString().TrimEnd();
     }
@@ -582,7 +583,7 @@ public sealed class SteeringDocsSummaryDriftService
         foreach (var w in warnings)
         {
             sb.Append("- **").Append(w.Severity).Append("** _(")
-                .Append(w.Kind).Append(")_ ").AppendLine(w.Message);
+                .Append(w.Kind).Append(")_ ").AppendLf(w.Message);
         }
         return sb.ToString().TrimEnd();
     }
@@ -592,7 +593,7 @@ public sealed class SteeringDocsSummaryDriftService
         if (reports.Count == 0) return "(no prior analysis reports for this project)";
         var sb = new StringBuilder();
         foreach (var r in reports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 
@@ -604,7 +605,7 @@ public sealed class SteeringDocsSummaryDriftService
         foreach (var lane in InspectedLanes)
         {
             if (!byLane.TryGetValue(lane, out var jobs) || jobs.Count == 0) continue;
-            sb.Append("### ").AppendLine(lane);
+            sb.Append("### ").AppendLf(lane);
             foreach (var j in jobs)
             {
                 sb.Append("- `").Append(j.Lane).Append('/').Append(j.JobId).Append("` - ")
@@ -618,7 +619,7 @@ public sealed class SteeringDocsSummaryDriftService
                     sb.Append(string.Join(", ", tags));
                     sb.Append(")_");
                 }
-                sb.AppendLine();
+                sb.AppendLf();
             }
         }
         return sb.ToString().TrimEnd();
