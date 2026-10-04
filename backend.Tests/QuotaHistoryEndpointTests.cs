@@ -24,7 +24,11 @@ public sealed class QuotaHistoryEndpointTests : IDisposable
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["TaskRepository"] = _root }).Build();
         var store = new QuotaHistoryStore(configuration, NullLogger<QuotaHistoryStore>.Instance);
-        var latest = DateTime.UtcNow.AddMinutes(-5);
+        using var factory = NewFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        using var baseline = JsonDocument.Parse(await client.GetStringAsync("/api/cli/quota/history?cli=codex"));
+        var latest = baseline.RootElement.GetProperty("to").GetDateTime().ToUniversalTime().AddMinutes(-5);
         var weeklyReset = latest.AddDays(3);
         // 60 hours of readings every 30 minutes, weekly rising 0.5 %/h, then 2 %/h for the last 3 h.
         for (var i = 120; i >= 0; i--)
@@ -42,10 +46,6 @@ public sealed class QuotaHistoryEndpointTests : IDisposable
                 ],
             });
         }
-
-        using var factory = NewFactory();
-        using var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
 
         var response = await client.GetAsync("/api/cli/quota/history?cli=claude&hours=48");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

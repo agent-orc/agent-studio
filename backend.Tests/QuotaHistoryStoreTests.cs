@@ -162,7 +162,7 @@ public sealed class QuotaHistoryStoreTests : IDisposable
             call++;
             return call == 2
                 ? new QuotaSnapshot { CliType = "claude", Error = "probe timed out" }
-                : Snap(DateTime.UtcNow.AddSeconds(call), 10 + call, 60 + call);
+                : Snap(_clock.GetUtcNow().UtcDateTime.AddSeconds(call), 10 + call, 60 + call);
         });
         var service = new QuotaService(
             NullLogger<QuotaService>.Instance, [probe], _config, cache, versionTracker: null, history: history);
