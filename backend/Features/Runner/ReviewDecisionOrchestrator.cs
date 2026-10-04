@@ -6651,33 +6651,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         => CountReissuesInCurrentChain(ReviewDecisionLog.ReadAll(workspace, project), jobId);
 
     /// <summary>
-    /// Count the reissues in the job's current operator-owned attempt epoch.
-    /// The epoch changes only when an explicit
-    /// <see cref="ReviewDecisionKind.OperatorRequeue"/> boundary is appended.
-    /// Automatic escalate, accept, and lane moves stay in the same epoch and
-    /// therefore retain the anti-churn budget.
-    ///
-    /// <para>
-    /// Legacy records without <see cref="ReviewDecisionRecord.AttemptEpoch"/>
-    /// belong to epoch 0. Once an operator requeue opens epoch N, only reissues
-    /// stamped with N count. Old rows remain readable history. This deliberately
-    /// does not infer a reset from an Escalate or AcceptAsDone verdict: an
-    /// automated move must never replenish an agent loop's budget.
-    /// </para>
-    ///
-    /// <para><see cref="ReviewDecisionKind.Skipped"/> is neither a count nor a
-    /// boundary. Records are consumed in append order, the order
-    /// <see cref="ReviewDecisionLog.ReadAll"/> returns them.</para>
+    /// Count every automatic reissue charged to this card, including reissues
+    /// from earlier operator attempt epochs. A continuation or lane move cannot
+    /// replenish the per-card budget. Skipped and operator records do not charge it.
     /// </summary>
     internal static int CountReissuesInCurrentChain(IEnumerable<ReviewDecisionRecord> records, string jobId)
     {
-        var jobRecords = records.Where(r => r.JobId == jobId).ToList();
-        var currentEpoch = jobRecords.Count == 0
-            ? 0
-            : jobRecords.Max(r => Math.Max(0, r.AttemptEpoch ?? 0));
-        return jobRecords.Count(r =>
-            r.Kind == ReviewDecisionKind.Reissue
-            && IsInAttemptEpoch(r, currentEpoch));
+        return records.Count(r => r.JobId == jobId && r.Kind == ReviewDecisionKind.Reissue);
     }
 
     internal static bool IsInAttemptEpoch(ReviewDecisionRecord record, int epoch)

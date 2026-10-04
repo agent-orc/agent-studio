@@ -773,6 +773,7 @@ if (!publicDemoExecutionProfile)
 builder.Services.AddSingleton<AgentStudio.Runner.PostAbortReviewStepService>();
 builder.Services.AddSingleton<AutoReviewStatusSnapshot>();
 builder.Services.AddSingleton<ReviewDecisionOrchestrator>();
+builder.Services.AddSingleton<OperatorSweepService>();
 // Transitional single-owner boundary. Engine mode deliberately registers none
 // of the legacy review/council/post-processing hosted loops.
 if (!publicDemoExecutionProfile)
@@ -871,7 +872,6 @@ if (!publicDemoExecutionProfile)
         sp.GetRequiredService<AgentStudio.Pipeline.AcceptedIntegrationBackstopHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
-    builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
 }
 // Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
 // detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),

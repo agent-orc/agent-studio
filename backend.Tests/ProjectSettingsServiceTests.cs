@@ -79,6 +79,19 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void OperatorSweepPause_SurvivesRestartAndRemainsProjectScoped()
+    {
+        var settings = Build();
+        settings.SetOperatorSweepPaused("demo", OperatorSweepNames.AutoFix, true);
+        settings.SetOperatorSweepPaused("demo", OperatorSweepNames.Salvage, false);
+
+        var restarted = Build();
+        Assert.True(restarted.Get("demo").OperatorSweepPauses[OperatorSweepNames.AutoFix]);
+        Assert.False(restarted.Get("demo").OperatorSweepPauses[OperatorSweepNames.Salvage]);
+        Assert.Empty(restarted.Get("other").OperatorSweepPauses);
+    }
+
+    [Fact]
     public void AutomaticFailureContinuationSetting_PersistsPerProject()
     {
         var svc = Build();

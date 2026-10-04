@@ -111,6 +111,22 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetOperatorSweepPaused(string projectName, string sweep, bool paused)
+    {
+        if (!AgentStudio.Runner.OperatorSweepNames.All.Contains(sweep))
+            throw new ArgumentException("Unknown operator sweep.", nameof(sweep));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var settings) ? settings : new ProjectSettings();
+            var pauses = new Dictionary<string, bool>(current.OperatorSweepPauses ?? new(),
+                StringComparer.OrdinalIgnoreCase) { [sweep] = paused };
+            _cache[key] = current with { OperatorSweepPauses = pauses };
+            Persist();
+        }
+    }
+
     public void SetAutomaticFailureContinuationsEnabled(string projectName, bool enabled)
     {
         EnsureLoaded();

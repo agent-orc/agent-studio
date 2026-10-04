@@ -3,10 +3,8 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Locks the per-attempt-epoch reissue budget (AGT-1935 / AGT-2260):
-/// <see cref="ReviewDecisionOrchestrator.CountReissuesInCurrentChain"/> counts the
-/// reissues recorded in the latest operator-owned attempt epoch. Automated
-/// verdicts do not replenish the budget; an explicit OperatorRequeue does.
+/// Locks the per-card reissue budget: neither an automatic verdict nor an
+/// operator continuation opens a new automatic budget.
 /// </summary>
 public class ReviewDecisionChainBudgetTests
 {
@@ -76,7 +74,7 @@ public class ReviewDecisionChainBudgetTests
     }
 
     [Fact]
-    public void OperatorRequeue_OpensFreshEpoch()
+    public void OperatorRequeue_DoesNotResetCardBudget()
     {
         var records = new[]
         {
@@ -86,7 +84,7 @@ public class ReviewDecisionChainBudgetTests
             Rec(ReviewDecisionKind.OperatorRequeue, epoch: 1),
             Rec(ReviewDecisionKind.Reissue, epoch: 1),
         };
-        Assert.Equal(1, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, Job));
+        Assert.Equal(3, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, Job));
     }
 
     [Fact]
@@ -160,7 +158,7 @@ public class ReviewDecisionChainBudgetTests
 }
 
 /// <summary>
-/// End-to-end coverage of the per-attempt-epoch reissue budget through
+/// End-to-end coverage of the per-card reissue budget through
 /// the REAL on-disk decision journal: records are appended with
 /// <see cref="ReviewDecisionLog.Append"/> and counted back with
 /// <see cref="ReviewDecisionOrchestrator.CountReissuesInCurrentChain"/> over
@@ -213,7 +211,7 @@ public sealed class ReviewDecisionChainBudgetJournalTests : IDisposable
         => Assert.Equal(0, CurrentChainReissues());
 
     [Fact]
-    public void PersistedOperatorRequeueStartsFreshEpoch()
+    public void PersistedOperatorRequeueKeepsCardBudget()
     {
         Append(ReviewDecisionKind.Reissue, 1);
         Append(ReviewDecisionKind.Reissue, 2);
@@ -221,7 +219,7 @@ public sealed class ReviewDecisionChainBudgetJournalTests : IDisposable
         Append(ReviewDecisionKind.OperatorRequeue, 4, epoch: 1);
         Append(ReviewDecisionKind.Reissue, 5, epoch: 1);
 
-        Assert.Equal(1, CurrentChainReissues());
+        Assert.Equal(3, CurrentChainReissues());
     }
 
     [Fact]

@@ -177,6 +177,15 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
       { lane: '5-human-review', queueCount: 3, completedPerHour: 2, isStalled: false },
     ],
     alerts: [],
+    operatorSweeps: {
+      sweeps: [
+        { sweep: 'auto-fix', paused: false, lastRunAtUtc: '2026-07-23T00:59:00Z', lastActions: 2 },
+        { sweep: 'gate-triage', paused: true, lastRunAtUtc: '2026-07-22T22:00:00Z', lastActions: 0 },
+        { sweep: 'salvage', paused: false, lastRunAtUtc: '2026-07-23T00:59:00Z', lastActions: 1 },
+      ],
+      cards: [{ taskKey: 'AGT-3011', jobId: 'job-1', sweep: 'auto-fix', reason: 'round-budget-exhausted',
+        atUtc: '2026-07-23T00:59:00Z', roundsUsed: 2, roundsLeft: 0, waitingForPerson: true }],
+    },
   })));
   await page.route('**/api/projects/*/pipeline-steps/post-lint-scss/probe', r => r.fulfill(json({
     stepId: 'post-lint-scss', status: 'passed', applicable: true, exitCode: 0,
@@ -200,6 +209,8 @@ test('pipeline page: reworked panel shows health, steps, models, prompt bindings
   await expect(page.getByTestId('pipeline-health-gate')).toContainText('Gate hanging since 150 min');
   await expect(page.getByTestId('pipeline-health-fingerprint')).toContainText('Systemic gate problem');
   await expect(page.getByTestId('pipeline-health-drain').locator('[data-lane="4-auto-review"]')).toContainText('0/h');
+  await expect(page.getByTestId('operator-sweeps')).toContainText('1 waiting for a person');
+  await expect(page.getByTestId('operator-sweeps')).toContainText('round-budget-exhausted');
 
   // Phase groups: core renders "always on"; aspects expose a model picker; a
   // prompt cell deep-links to the Prompts registry rather than editing inline.

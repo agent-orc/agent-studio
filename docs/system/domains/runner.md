@@ -34,6 +34,29 @@ state.
 
 ## Key Code
 
+### Supervised operator sweeps
+
+`backend/Features/Runner/OperatorSweepService.cs` owns one backend tick for
+ProductFailure fix rounds, merge-gate triage, and timed-out salvage continuation.
+It reads current task and attempt authority before acting. A pending or leased
+ReviewAttempt blocks every sweep, including the delegated gate-environment retry.
+Product findings and failed review commands come from the durable Remote Review
+settlement report. Gate environment retries reuse `GateEnvironmentRetryService`;
+product gate failures reuse `IntegrationContinuationPrompt` and
+`TaskRunnerService.ContinueJobAsync`. Salvage continuation uses the recorded
+run-result ref and `ContinuationBaseStore`.
+
+Automatic coding rounds append `Reissue` to the orchestrator decision journal.
+The shared count is per card across attempt epochs, so a continuation cannot
+refill the budget. Each card's latest action or refusal is recorded in
+`operator-sweep-decisions.jsonl` in its task folder. Project pauses persist in
+`ProjectSettings.OperatorSweepPauses`. The project pipeline-health response
+includes sweep timestamps, actions, card reasons, and remaining rounds;
+`PUT /api/projects/{projectName}/operator-sweeps/{sweep}` controls each pause.
+The three sweeps share one cadence and do not require an operator shell session.
+
+The host watchdog and start wrapper still need their own product home.
+
 `runner/WorkstationProfile.cs` and
 [workstation runner-host setup](../../operations/setup/workstation-runner-host.md)
 adapt the same `agent-host` binary for a Windows operator workstation. Its

@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-10-04</td>
+          <td><code>AGT-3011</code><br><span class="small">operator sweeps outside product</span></td>
+          <td>ProductFailure and gate parks accumulated when the operator's ten-minute shell sweep was absent. On 2026-09-29/30 the fleet stood still for 41 hours; on 2026-10-04 the manual sweeps resumed at 12:48.</td>
+          <td>Three recovery decisions depended on a long-lived operator session. The script's continue calls also opened new attempt epochs, replenishing the old epoch-scoped automatic reissue count.</td>
+          <td>The observed terminal was an operator-dependent park. The backend now supervises the three bounded sweeps and counts their coding rounds against the card's full decision history. A card with live review authority remains parked with an explicit reason.</td>
+        </tr>
+        <tr>
           <td>2026-09-27</td>
           <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>
           <td>No reviewer crashed. A product block mentioning "infra crash" or "no parseable verdict" was reproduced as a review-infrastructure decision.</td>

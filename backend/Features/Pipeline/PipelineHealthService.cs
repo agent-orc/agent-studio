@@ -73,7 +73,10 @@ public sealed record PipelineHealthSnapshot(
     PipelineActiveGateHealth? ActiveGate,
     PipelineFingerprintHealth? Fingerprint,
     IReadOnlyList<PipelineLaneDrainHealth> Lanes,
-    IReadOnlyList<PipelineHealthAlert> Alerts);
+    IReadOnlyList<PipelineHealthAlert> Alerts)
+{
+    public OperatorSweepHealth? OperatorSweeps { get; init; }
+}
 
 /// <summary>
 /// Pure, deterministic state machine shared by live sensing and log replay.

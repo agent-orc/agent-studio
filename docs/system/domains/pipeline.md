@@ -9,6 +9,12 @@ pipeline view.
 
 ## Entry Points
 
+The project pipeline-health snapshot also carries the three supervised
+operator sweeps. The Pipeline view shows each sweep's last tick and action count,
+per-project pause control, and cards waiting for a person with their remaining
+automatic round budget. This is a read projection of the runner's task-folder
+decision evidence and the orchestrator decision journal.
+
 - [docs/system/architecture/decisions/proposed/adr-0051-task-processing-pipeline.md](../architecture/decisions/proposed/adr-0051-task-processing-pipeline.md)
   is the concept ADR for CI/CD-style task pipelines.
 - [docs/concepts/distributed-agent-studio-target-architecture.md](../../concepts/distributed-agent-studio-target-architecture.md)

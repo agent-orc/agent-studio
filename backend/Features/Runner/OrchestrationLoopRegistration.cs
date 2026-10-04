@@ -22,6 +22,7 @@ public static class OrchestrationLoopRegistration
         services.AddHostedService<AutoReviewPostProcessingRecoveryService>();
         services.AddHostedService<RemoteReviewEvidenceProjectionWorker>();
         services.AddHostedService<RemoteReviewSettlementReconciler>();
+        services.AddHostedService(provider => provider.GetRequiredService<OperatorSweepService>());
         return services;
     }
 }

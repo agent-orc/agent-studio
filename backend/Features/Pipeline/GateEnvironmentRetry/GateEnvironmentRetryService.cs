@@ -153,13 +153,16 @@ public sealed class GateEnvironmentRetryService
     /// One bounded ladder sweep over the delivered lanes. Never throws: a single
     /// unhealthy card must not stop the others from being retried.
     /// </summary>
-    public async Task<GateEnvironmentRetrySweep> RunOnceAsync(CancellationToken ct = default)
+    public async Task<GateEnvironmentRetrySweep> RunOnceAsync(
+        CancellationToken ct = default, string? project = null,
+        Action<TaskInfo, string, bool>? onCard = null)
     {
         var options = Options;
         if (!options.Enabled) return new GateEnvironmentRetrySweep(0, 0, 0, 0);
 
         var jobs = _scanner.ScanAllAutomationJobs()
             .Where(job => GateEnvironmentRetryPolicy.Lanes.Contains(job.State))
+            .Where(job => project is null || string.Equals(job.ProjectName, project, StringComparison.OrdinalIgnoreCase))
             .OrderBy(job => job.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(job => job.EnteredLaneAt)
             .ThenBy(job => job.Id, StringComparer.OrdinalIgnoreCase)
@@ -175,21 +178,37 @@ public sealed class GateEnvironmentRetryService
         foreach (var job in jobs)
         {
             ct.ThrowIfCancellationRequested();
-            if (!_settings.Get(job.ProjectName).AutomaticFailureContinuationsEnabled) continue;
+            if (!_settings.Get(job.ProjectName).AutomaticFailureContinuationsEnabled)
+            {
+                onCard?.Invoke(job, "automatic-failure-continuations-disabled", true);
+                continue;
+            }
+            if (_authority.GetTaskProjection(job.TaskKey).ReviewAttempts.Any(review =>
+                    review.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased))
+            {
+                onCard?.Invoke(job, "active-review-attempt", true);
+                continue;
+            }
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
                 var evaluation = Evaluate(job, status, options);
-                if (evaluation.Decision.Action == GateEnvironmentRetryAction.Ignore) continue;
+                if (evaluation.Decision.Action == GateEnvironmentRetryAction.Ignore)
+                {
+                    onCard?.Invoke(job, evaluation.Decision.Reason, true);
+                    continue;
+                }
 
                 candidates++;
                 switch (evaluation.Decision.Action)
                 {
                     case GateEnvironmentRetryAction.Wait:
                         waiting++;
+                        onCard?.Invoke(job, evaluation.Decision.Reason, false);
                         break;
                     case GateEnvironmentRetryAction.Park:
                         if (await ParkAsync(job, evaluation, ct).ConfigureAwait(false)) parked++;
+                        onCard?.Invoke(job, evaluation.Decision.Reason, true);
                         break;
                     case GateEnvironmentRetryAction.Retry:
                         if (!_inFlight.TryAdd(job.TaskKey, 0)) break;
@@ -201,6 +220,8 @@ public sealed class GateEnvironmentRetryService
                                 GateEnvironmentRetrySources.Sweep,
                                 ct).ConfigureAwait(false);
                             if (result.Status == GateEnvironmentRetryStatus.Replayed) retried++;
+                            onCard?.Invoke(job, result.Code ?? result.Status.ToString(),
+                                result.Status != GateEnvironmentRetryStatus.Replayed);
                         }
                         finally
                         {

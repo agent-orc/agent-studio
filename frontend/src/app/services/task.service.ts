@@ -77,6 +77,7 @@ import type {
   PipelineStepCondition,
   StepPromptsResponse,
   PipelineHealthSnapshot,
+  OperatorSweepHealth,
 } from '../features/task-pipeline';
 import type { TaskScreenshotsResponse, WorkspaceScreenshotsResponse } from '../features/screenshots';
 import type { ExecutiveSummaryResponse } from '../features/summary';
@@ -2313,6 +2314,13 @@ export class TaskService {
   getProjectPipelineHealth(projectName: string) {
     return this.http.get<PipelineHealthSnapshot>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/pipeline-health`,
+    );
+  }
+
+  setOperatorSweepPaused(projectName: string, sweep: string, paused: boolean) {
+    return this.http.put<OperatorSweepHealth>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/operator-sweeps/${encodeURIComponent(sweep)}`,
+      { paused },
     );
   }
 

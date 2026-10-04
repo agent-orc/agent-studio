@@ -37,6 +37,9 @@ public record ProjectSettings
     /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
     public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
 
+    /// <summary>Operator pauses for the three supervised recovery sweeps.</summary>
+    public Dictionary<string, bool> OperatorSweepPauses { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
     /// <see cref="AutoPushStrategies.AlwaysImmediate"/> so every platform-owned

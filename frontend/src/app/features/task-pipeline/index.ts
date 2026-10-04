@@ -36,5 +36,8 @@ export type {
   PipelineFingerprintHealth,
   PipelineLaneDrainHealth,
   PipelineHealthSnapshot,
+  OperatorSweepHealth,
+  OperatorSweepStatus,
+  OperatorSweepCardStatus,
 } from './models/pipeline-health.model';
 export { stepKindLabel } from './step-kind-display.util';

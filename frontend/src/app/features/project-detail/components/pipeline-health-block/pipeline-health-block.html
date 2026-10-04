@@ -43,5 +43,39 @@
         </div>
       </section>
     </div>
+    @if (h.operatorSweeps; as operatorSweeps) {
+      <section class="ph__sweeps" data-testid="operator-sweeps">
+        <div class="ph__sweep-heading">
+          <strong>Operator sweeps</strong>
+          <span>{{ waitingCards().length }} waiting for a person</span>
+        </div>
+        <div class="ph__sweep-list">
+          @for (sweep of operatorSweeps.sweeps; track sweep.sweep) {
+            <div class="ph__sweep" [attr.data-sweep]="sweep.sweep">
+              <strong>{{ sweepLabel(sweep.sweep) }}</strong>
+              <span>{{ sweep.paused ? 'Paused' : 'Running' }} · {{ lastRun(sweep.lastRunAtUtc) }} · {{ sweep.lastActions }} actions</span>
+              @if (sweep.lastError) { <small>{{ sweep.lastError }}</small> }
+              <button type="button" [disabled]="sweepBusy() !== null"
+                      [attr.aria-label]="(sweep.paused ? 'Resume ' : 'Pause ') + sweepLabel(sweep.sweep)"
+                      (click)="toggleSweep(sweep.sweep, !sweep.paused)">
+                {{ sweep.paused ? 'Resume' : 'Pause' }}
+              </button>
+            </div>
+          }
+        </div>
+        @if (sweepError(); as error) { <p role="alert">{{ error }}</p> }
+        @if (waitingCards().length > 0) {
+          <details class="ph__waiting">
+            <summary>Cards waiting for a person</summary>
+            <ul>
+              @for (card of waitingCards(); track card.taskKey + card.sweep) {
+                <li><strong>{{ card.taskKey }}</strong> · {{ sweepLabel(card.sweep) }} · {{ card.reason }}
+                  <span>{{ card.roundsLeft }} rounds left</span></li>
+              }
+            </ul>
+          </details>
+        }
+      </section>
+    }
   </section>
 }

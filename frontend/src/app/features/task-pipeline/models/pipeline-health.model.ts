@@ -41,4 +41,30 @@ export interface PipelineHealthSnapshot {
   fingerprint?: PipelineFingerprintHealth | null;
   lanes: PipelineLaneDrainHealth[];
   alerts: PipelineHealthAlert[];
+  operatorSweeps?: OperatorSweepHealth | null;
+}
+
+export interface OperatorSweepHealth {
+  sweeps: OperatorSweepStatus[];
+  cards: OperatorSweepCardStatus[];
+}
+
+export interface OperatorSweepStatus {
+  sweep: string;
+  paused: boolean;
+  lastRunAtUtc?: string | null;
+  lastActions: number;
+  lastError?: string | null;
+}
+
+export interface OperatorSweepCardStatus {
+  taskKey: string;
+  jobId: string;
+  sweep: string;
+  reason: string;
+  attemptId?: string | null;
+  atUtc: string;
+  roundsUsed: number;
+  roundsLeft: number;
+  waitingForPerson: boolean;
 }
