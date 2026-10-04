@@ -1118,6 +1118,23 @@ export function buildQuotaWaitBadge(wait: TaskInfo['quotaWait'], nowMs: number):
   };
 }
 
+export interface CauseWaitBadge { label: string; causeKey: string; tooltip: string; }
+
+/**
+ * AGT-W57: visible projection of the durable cause-wait marker. The lane says
+ * "Waiting for <key>" so the operator sees which cause card holds the card,
+ * not an escalation.
+ */
+export function buildCauseWaitBadge(wait: TaskInfo['causeWait']): CauseWaitBadge | null {
+  if (!wait?.causeKey) return null;
+  return {
+    label: `Waiting for ${wait.causeKey}`,
+    causeKey: wait.causeKey,
+    tooltip: `${wait.failureClass} keeps failing across the fleet. The cause breaker holds this card until `
+      + `${wait.causeKey} is integrated or a probe review passes, then plans a fresh review.`,
+  };
+}
+
 /**
  * Format a steer wait as compact total-minutes `mm:ss`. The card keeps this
  * established long-wait representation while lifecycle labels elsewhere use

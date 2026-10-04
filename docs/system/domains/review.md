@@ -288,12 +288,39 @@ the budget of three, the delay, and the failure reason at schedule time; the
 card stays in `4-auto-review` with no successor to claim until the delay
 elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
 `AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
-successor once it is due, reusing the failed attempt's exact ReviewSubject
-(same Result-SHA, same commands) unless the failure was `PreparationFailed`, in
-which case it rebuilds the plan the same way the endpoint's inline retry used
-to (AGT-2831 stale checkouts get a fresh preparation profile). This closes the
+successor once it is due. The successor keeps the failed attempt's immutable
+ReviewSubject identity (same Result-SHA, requirements, policy and evidence) but
+always carries a plan built fresh from the current project settings
+(`ReviewInfrastructureRetryScheduler.CreateFreshSuccessor`, AGT-W57): a frozen
+plan kept calling a withdrawn review model for 59 attempts, so a corrected
+setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
+
+Before that per-card retry runs, the fleet-wide cause breaker
+(`backend/Features/Runner/CauseBreaker/`, AGT-W57) counts the failure by its
+cause fingerprint: failure class (`ReviewInfra/<classification>`), normalised
+failure text (card keys, SHAs, times, durations, GUIDs, ports and temp paths
+removed) and toolchain context (`agent:<cli>:<model>` for an aspect call,
+`tool:<executable>` otherwise; the step id is not part of it). At three attempts
+or two distinct cards within 24 hours, all three adjustable per project via
+`PUT /api/projects/{project}/cause-breaker`, it raises one cause card through
+`FailureInterventionService.RaiseCause` (ledger
+`.orchestrator/failure-interventions.json`, fleet store
+`.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
+with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
+retry, and is skipped by the review claim. A pending review whose plan calls
+an open breaker's model route (any project), or whose project already saw an
+open tool-level cause, is held before it is claimed. The breaker closes when
+the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
+of the exact successor attempt released by
+`POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
+older review on the same waiting card does not close it. Each waiting card then gets one freshly
+planned attempt. A red probe, including a product finding or an exhausted
+aspect retry, returns the card to its visible wait and clears the probe
+reservation. A later explicit probe creates a new attempt from current settings.
+With the breaker disabled for a project, the opt-in
+`post-failure-intervention` step keeps its previous first-failure behaviour.
 
 Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
 retries have all failed, no further retry is scheduled and the card is parked
