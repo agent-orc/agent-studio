@@ -10,22 +10,25 @@ public static class IntegrationVerificationProjection
         IntegrationVerificationRecord? record,
         PipelineStepExecution? lastMerge,
         IReadOnlyCollection<TaskIntegrationRecord> integrationRecords,
-        string? currentIntegrationSha)
+        string? currentIntegrationSha,
+        string currentIntegrationBranch)
     {
         if (string.IsNullOrWhiteSpace(currentIntegrationSha))
             return Unverified(null, "The current integration tree SHA is unavailable; gate evidence cannot be matched.");
 
         if (record is not null)
         {
-            if (string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(record.Sha, currentIntegrationSha, StringComparison.OrdinalIgnoreCase)
+                && SameBranch(record.IntegrationBranch, currentIntegrationBranch))
                 return record.ToProjection();
 
             return Unverified(currentIntegrationSha,
-                $"The current integration tree {currentIntegrationSha} differs from the recorded verification tree "
-                + $"{record.Sha ?? "unknown"}; the current tree has no matching gate evidence.");
+                $"The current integration tree {currentIntegrationSha} on {currentIntegrationBranch} differs from "
+                + $"the recorded verification tree {record.Sha ?? "unknown"} on "
+                + $"{record.IntegrationBranch}; the current branch has no matching gate evidence.");
         }
 
-        if (NamesVerifiedTree(integrationRecords, currentIntegrationSha))
+        if (NamesVerifiedTree(integrationRecords, currentIntegrationSha, currentIntegrationBranch))
             return new TaskIntegrationVerification
             {
                 State = IntegrationVerificationStates.Verified,
@@ -42,13 +45,23 @@ public static class IntegrationVerificationProjection
                   + $"'{outcome}' has no gate evidence for that exact tree.");
     }
 
-    /// <summary>Only a verified record naming the exact integration SHA proves this tree.</summary>
-    public static bool NamesVerifiedTree(IEnumerable<TaskIntegrationRecord> records, string sha)
+    /// <summary>Only a verified record naming the exact integration SHA and branch proves this tree.</summary>
+    public static bool NamesVerifiedTree(IEnumerable<TaskIntegrationRecord> records, string sha, string branch)
         => records.Any(record => string.Equals(
                                     record.Classification,
                                     IntegrationRecordClasses.IntegratedVerified,
                                     StringComparison.Ordinal)
-                                 && string.Equals(record.IntegrationSha, sha, StringComparison.OrdinalIgnoreCase));
+                                 && string.Equals(record.IntegrationSha, sha, StringComparison.OrdinalIgnoreCase)
+                                 && SameBranch(record.IntegrationBranch, branch));
+
+    /// <summary>Local and remote ref spellings of one branch carry the same gate scope.</summary>
+    public static bool SameBranch(string? recordedBranch, string? currentBranch)
+        => !string.IsNullOrWhiteSpace(recordedBranch)
+           && !string.IsNullOrWhiteSpace(currentBranch)
+           && string.Equals(
+               AgentStudio.Tasks.TaskIntegrationBranch.Name(recordedBranch, fallback: string.Empty),
+               AgentStudio.Tasks.TaskIntegrationBranch.Name(currentBranch, fallback: string.Empty),
+               StringComparison.OrdinalIgnoreCase);
 
     private static TaskIntegrationVerification Unverified(string? sha, string reason) => new()
     {

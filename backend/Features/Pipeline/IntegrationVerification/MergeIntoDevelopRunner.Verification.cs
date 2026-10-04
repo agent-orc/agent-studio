@@ -54,11 +54,15 @@ public sealed partial class MergeIntoDevelopRunner
                 ? null
                 : IntegrationGateReceipts.ReadNewest(
                     jobFolderPath,
-                    [PreMainTestGateStep, IntegrationGateJournal.PreDevelopBuildGateStep],
+                    // A work-line receipt cannot satisfy the release line's
+                    // mandatory full suite, even when both branches point to
+                    // the same tree. Only reuse a receipt from this target's gate.
+                    [releaseGate ? PreMainTestGateStep : IntegrationGateJournal.PreDevelopBuildGateStep],
                     SameTree),
             HasVerifiedIntegrationRecord: tree is not null
                 && ReadIntegrationRecords(jobId, watchPath).Any(record =>
                     string.Equals(record.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
+                    && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
                     && ReviewSubjectStore.IsValidResultSha(record.IntegrationSha)
                     && SameTree(record.IntegrationSha!)),
             GateRun: null);

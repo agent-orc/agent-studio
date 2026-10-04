@@ -1752,6 +1752,55 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
     [Fact]
     [Trait("Category", "MachineBound")]
+    public async Task RunAsync_MainTarget_ContainedDeliveryWithPreDevelopReceipt_RunsPreMainFullSuite()
+    {
+        var repo = SeedRepo("contained-main-pre-develop-receipt");
+        RunGit(repo, "checkout -q -b task/main-contained");
+        File.WriteAllText(Path.Combine(repo, "rule.cs"), "public class Rule {}\n");
+        Commit(repo, "feat: delivered code");
+        RunGit(repo, "checkout -q main");
+        RunGit(repo, "merge -q --ff-only task/main-contained");
+        var tip = RunGit(repo, "rev-parse main").Out.Trim();
+
+        var (git, log, settings) = BuildWithSettings(repo);
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 20, string.Empty, "pre-main full suite passed", true, false)
+        {
+            TestSelection = new TestSelectionAudit
+            {
+                Level = TestExecutionLevels.Full,
+                FullSuiteRequired = true,
+                FullSuiteRan = true,
+            },
+        });
+        var jobFolder = BeginRun(log, repo, jobId: "main-contained");
+        var evidenceDir = Path.Combine(jobFolder, "post-steps");
+        Directory.CreateDirectory(evidenceDir);
+        File.WriteAllText(
+            Path.Combine(evidenceDir, "pre-develop-build-gate-1.log"),
+            $"verdict=NotApplicable exit=n/a durationMs=0\n" +
+            $"expectedSha={tip} testedSha={tip}\n" +
+            "reason=no pre-develop gate applies\n");
+        var runner = new MergeIntoDevelopRunner(
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: settings,
+            preMainTestGate: new PreMainTestGate(gateRunner));
+
+        var outcome = await runner.RunAsync(
+            "Fixture", "main-contained", jobFolder, repo, "main", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, outcome.Outcome);
+        Assert.Equal(1, gateRunner.Invocations);
+        Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
+        Assert.Equal(TestExecutionLevels.Full, gateRunner.Request.RequiredTestLevel);
+        Assert.True(gateRunner.Request.RequireExactSubject);
+        Assert.Equal(IntegrationVerificationStates.Verified,
+            IntegrationVerificationStore.Read(jobFolder)?.State);
+        Assert.Single(Directory.GetFiles(evidenceDir, "pre-main-test-gate-*.log"));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
     public async Task RunAsync_DevelopTarget_AlreadyMergedWithoutReceipt_RedGateNeverPassesOrEnqueues()
     {
         var repo = SeedRepo("run-already-merged-red-gate");

@@ -192,7 +192,10 @@ public sealed class TaskIntegrationStatusService
             {
                 TargetRefFingerprint = fingerprint,
                 Verification = IntegrationStatuses.IsMerged(classified.Status)
-                    ? ResolveVerification(job, CurrentIntegrationSha(classified, card, reaches))
+                    ? ResolveVerification(
+                        job,
+                        CurrentIntegrationSha(classified, card, reaches),
+                        classified.IntegrationBranch)
                     : null,
             };
         }
@@ -356,7 +359,10 @@ public sealed class TaskIntegrationStatusService
             : reach.PublishedHead;
     }
 
-    private TaskIntegrationVerification? ResolveVerification(TaskInfo job, string? currentIntegrationSha)
+    private TaskIntegrationVerification? ResolveVerification(
+        TaskInfo job,
+        string? currentIntegrationSha,
+        string currentIntegrationBranch)
     {
         try
         {
@@ -364,7 +370,8 @@ public sealed class TaskIntegrationStatusService
                 IntegrationVerificationStore.Read(job.FolderPath),
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
-                currentIntegrationSha);
+                currentIntegrationSha,
+                currentIntegrationBranch);
         }
         catch (Exception ex)
         {

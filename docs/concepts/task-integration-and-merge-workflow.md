@@ -416,8 +416,11 @@ pure `IntegrationVerificationPolicy`
 
 1. **Evidence for the exact tree** completes the card: a gate receipt in the
    card's `post-steps/` whose tested SHA is, or has the same tree as, the
-   branch tip (`pre-develop-build-gate-*` or `pre-main-test-gate-*`), or an
-   `integrated-verified` record whose `integrationSha` names that tree. Records
+   branch tip (`pre-develop-build-gate-*` for develop, or
+   `pre-main-test-gate-*` for main), or an `integrated-verified` record whose
+   `integrationSha` names that tree on the same integration branch. A
+   pre-develop receipt never satisfies the mandatory pre-main full suite,
+   even when develop and main point to the same tree. Records
    that only prove containment (no `integrationSha`) do not count.
 2. **A red receipt for the exact tree** is the verdict. The gate is not run
    again.

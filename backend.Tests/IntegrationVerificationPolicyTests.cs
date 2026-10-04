@@ -127,13 +127,14 @@ public sealed class IntegrationVerificationPolicyTests
         {
             State = IntegrationVerificationStates.Unverified,
             Sha = Sha,
+            IntegrationBranch = "develop",
             Evidence = IntegrationVerificationEvidence.GateRun,
             GateVerdict = "Fail",
             GateFailed = true,
             Reason = "red",
         };
 
-        var projected = IntegrationVerificationProjection.Resolve(record, Step(PipelineStepStatus.Passed, "merged"), [], Sha);
+        var projected = IntegrationVerificationProjection.Resolve(record, Step(PipelineStepStatus.Passed, "merged"), [], Sha, "develop");
 
         Assert.NotNull(projected);
         Assert.Equal(IntegrationVerificationStates.Unverified, projected!.State);
@@ -160,7 +161,7 @@ public sealed class IntegrationVerificationPolicyTests
             GateVerdictSource = gateVerdict ? GateVerdictSource.Executed : null,
         };
 
-        var projected = IntegrationVerificationProjection.Resolve(null, step, [], Sha);
+        var projected = IntegrationVerificationProjection.Resolve(null, step, [], Sha, "develop");
 
         Assert.Equal(expected, projected?.State);
     }
@@ -172,12 +173,13 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.False(IntegrationVerificationStates.PermitsCompletion(
             new TaskIntegrationVerification { State = IntegrationVerificationStates.Verified }));
         Assert.Equal(IntegrationVerificationStates.Unverified,
-            IntegrationVerificationProjection.Resolve(null, null, [], Sha).State);
+            IntegrationVerificationProjection.Resolve(null, null, [], Sha, "develop").State);
         var verified = IntegrationVerificationProjection.Resolve(
             null,
             null,
-            [new TaskIntegrationRecord { Classification = IntegrationRecordClasses.IntegratedVerified, IntegrationSha = Sha }],
-            Sha);
+            [new TaskIntegrationRecord { Classification = IntegrationRecordClasses.IntegratedVerified, IntegrationSha = Sha, IntegrationBranch = "develop" }],
+            Sha,
+            "develop");
         Assert.Equal(IntegrationVerificationStates.Verified, verified?.State);
     }
 
@@ -189,15 +191,56 @@ public sealed class IntegrationVerificationPolicyTests
         {
             State = IntegrationVerificationStates.Verified,
             Sha = Sha,
+            IntegrationBranch = "develop",
             Evidence = IntegrationVerificationEvidence.GateRun,
         };
 
-        var projected = IntegrationVerificationProjection.Resolve(record, null, [], treeB);
+        var projected = IntegrationVerificationProjection.Resolve(record, null, [], treeB, "develop");
 
         Assert.Equal(IntegrationVerificationStates.Unverified, projected.State);
         Assert.Equal(treeB, projected.Sha);
         Assert.Contains(Sha, projected.Reason);
         Assert.False(IntegrationVerificationStates.PermitsCompletion(projected));
+    }
+
+    [Fact]
+    public void Projection_PreDevelopVerificationForSameTree_DoesNotVerifyMain()
+    {
+        var record = new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = Sha,
+            IntegrationBranch = "develop",
+            Evidence = IntegrationVerificationEvidence.GateReceipt,
+        };
+        var integrationRecords = new[]
+        {
+            new TaskIntegrationRecord
+            {
+                Classification = IntegrationRecordClasses.IntegratedVerified,
+                IntegrationSha = Sha,
+                IntegrationBranch = "develop",
+            },
+        };
+
+        var projected = IntegrationVerificationProjection.Resolve(
+            record, null, integrationRecords, Sha, "main");
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, projected.State);
+        Assert.Equal(Sha, projected.Sha);
+        Assert.False(IntegrationVerificationStates.PermitsCompletion(projected));
+        Assert.False(IntegrationVerificationProjection.NamesVerifiedTree(integrationRecords, Sha, "main"));
+    }
+
+    [Theory]
+    [InlineData("develop", "refs/heads/develop", true)]
+    [InlineData("origin/develop", "develop", true)]
+    [InlineData("develop", "main", false)]
+    [InlineData(null, "develop", false)]
+    public void SameBranch_NormalizesRefSpellingWithoutAcceptingAnotherBranch(
+        string? recorded, string current, bool expected)
+    {
+        Assert.Equal(expected, IntegrationVerificationProjection.SameBranch(recorded, current));
     }
 
     [Fact]
@@ -209,10 +252,11 @@ public sealed class IntegrationVerificationPolicyTests
             new() { Classification = IntegrationRecordClasses.IntegratedHistorical, IntegrationSha = Sha },
         ];
 
-        Assert.False(IntegrationVerificationProjection.NamesVerifiedTree(records, Sha));
+        Assert.False(IntegrationVerificationProjection.NamesVerifiedTree(records, Sha, "develop"));
         Assert.True(IntegrationVerificationProjection.NamesVerifiedTree(
-            [.. records, new TaskIntegrationRecord { Classification = IntegrationRecordClasses.IntegratedVerified, IntegrationSha = Sha }],
-            Sha));
+            [.. records, new TaskIntegrationRecord { Classification = IntegrationRecordClasses.IntegratedVerified, IntegrationSha = Sha, IntegrationBranch = "develop" }],
+            Sha,
+            "develop"));
     }
 
     [Theory]

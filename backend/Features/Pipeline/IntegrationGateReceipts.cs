@@ -43,8 +43,9 @@ public static class IntegrationGateReceipts
     /// AGT-3002: the newest receipt across <paramref name="prefixes"/> whose
     /// expected and tested SHA agree and whose tested SHA satisfies
     /// <paramref name="testedMatches"/> - typically "is, or has the same tree
-    /// as, the exact integration-branch SHA". Receipts are ordered by write
-    /// time so a develop and a main receipt compete fairly.
+    /// as, the exact integration-branch SHA". Callers must select the gate
+    /// prefix for their target branch; a pre-develop receipt cannot prove a
+    /// pre-main full-suite gate. Receipts are ordered by write time.
     /// </summary>
     public static BuildTestGateResult? ReadNewest(
         string jobFolderPath,
