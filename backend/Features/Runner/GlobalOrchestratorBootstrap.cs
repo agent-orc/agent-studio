@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -124,12 +125,12 @@ public sealed class GlobalOrchestratorBootstrap
         var sb = new System.Text.StringBuilder();
         foreach (var e in entries)
         {
-            sb.AppendLine($"- {e.Name}");
-            if (!string.IsNullOrWhiteSpace(e.RootPath)) sb.AppendLine($"    working directory: {e.RootPath}");
-            if (!string.IsNullOrWhiteSpace(e.RepositoryPath)) sb.AppendLine($"    git repository:    {e.RepositoryPath}");
-            sb.AppendLine($"    task folder:       {e.Path}");
+            sb.AppendLf($"- {e.Name}");
+            if (!string.IsNullOrWhiteSpace(e.RootPath)) sb.AppendLf($"    working directory: {e.RootPath}");
+            if (!string.IsNullOrWhiteSpace(e.RepositoryPath)) sb.AppendLf($"    git repository:    {e.RepositoryPath}");
+            sb.AppendLf($"    task folder:       {e.Path}");
             if (IsSelfModificationTarget(e))
-                sb.AppendLine(_prompts.Render(SelfModNoteTemplate, EmptyValues).TrimEnd('\r', '\n'));
+                sb.AppendLf(_prompts.Render(SelfModNoteTemplate, EmptyValues).TrimEnd('\r', '\n'));
         }
         return sb.ToString().TrimEnd('\r', '\n');
     }
@@ -148,9 +149,9 @@ public sealed class GlobalOrchestratorBootstrap
             var byProject = new System.Text.StringBuilder();
             foreach (var grp in jobs.GroupBy(j => j.ProjectName))
             {
-                byProject.AppendLine($"  {grp.Key}:");
+                byProject.AppendLf($"  {grp.Key}:");
                 foreach (var sg in grp.GroupBy(j => j.State).OrderBy(g => g.Key))
-                    byProject.AppendLine($"    {sg.Key}: {sg.Count()}");
+                    byProject.AppendLf($"    {sg.Key}: {sg.Count()}");
             }
             var rendered = _prompts.Render(TaskSnapshotTemplate, new Dictionary<string, string?>
             {

@@ -45,6 +45,33 @@ public static class ReviewLibraryStepPolicy
               && (plan.Preparation ?? []).All(command => command.LibraryStep is not null)
               && Steps(plan).All(step => step.RequiredCapabilities.All(capabilities.Contains));
 
+    /// <summary>
+    /// Every toolchain key a sealed step can require, with the invocation tokens
+    /// that trigger it and the executable a host probes to satisfy it. Review
+    /// executors register from this table (AGT-2987), so a new key added here
+    /// reaches the registration set in the same release as the plans that
+    /// require it.
+    /// </summary>
+    public static IReadOnlyList<ReviewToolchainRequirement> ToolchainRequirements { get; } =
+    [
+        new(CapabilityProtocol.DotNet, "dotnet", ["dotnet"]),
+        new(CapabilityProtocol.Node, "node", ["node", "npm", "npx"]),
+        new(CapabilityProtocol.Playwright, "playwright", ["playwright"]),
+    ];
+
+    /// <summary>
+    /// Why <see cref="Supports"/> refuses <paramref name="plan"/> for
+    /// <paramref name="capabilities"/>: the required keys the executor lacks,
+    /// or the library-step version key when the envelope itself is unusable.
+    /// Empty exactly when the plan is supported.
+    /// </summary>
+    public static IReadOnlyList<string> MissingCapabilities(ReviewPlanDto plan, IReadOnlySet<string> capabilities)
+    {
+        if (Supports(plan, capabilities)) return [];
+        var missing = RequiredCapabilities(plan).Where(key => !capabilities.Contains(key)).ToArray();
+        return missing.Length > 0 ? missing : [$"review:library-step:v{plan.LibraryVersion}"];
+    }
+
     public static IReadOnlyList<string> RequiredCapabilities(ReviewPlanDto plan)
         => Steps(plan).SelectMany(step => step.RequiredCapabilities)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -131,10 +158,11 @@ public static class ReviewLibraryStepPolicy
         ICollection<string> capabilities, string fileName, IReadOnlyList<string> arguments)
     {
         var invocation = fileName + " " + string.Join(" ", arguments);
-        if (ContainsTool(invocation, "dotnet")) capabilities.Add(CapabilityProtocol.DotNet);
-        if (ContainsTool(invocation, "node") || ContainsTool(invocation, "npm")
-            || ContainsTool(invocation, "npx")) capabilities.Add(CapabilityProtocol.Node);
-        if (ContainsTool(invocation, "playwright")) capabilities.Add(CapabilityProtocol.Playwright);
+        foreach (var requirement in ToolchainRequirements)
+        {
+            if (requirement.InvocationTools.Any(tool => ContainsTool(invocation, tool)))
+                capabilities.Add(requirement.Key);
+        }
         // AGT-2981: the render scripts call `docker compose config` and node.
         if (ComposeRenderGatePolicy.IsRenderInvocation(invocation))
         {
@@ -178,3 +206,9 @@ public static class ReviewLibraryStepPolicy
            && supplied.MaxDotNetCpuCount == expected.MaxDotNetCpuCount
            && supplied.RequiredCapabilities.SequenceEqual(expected.RequiredCapabilities, StringComparer.Ordinal);
 }
+
+/// <summary>One toolchain key of the review library and how a host proves it.</summary>
+public sealed record ReviewToolchainRequirement(
+    string Key,
+    string ProbeExecutable,
+    IReadOnlyList<string> InvocationTools);
