@@ -55,7 +55,7 @@ describe('ProjectOverviewDashboardComponent', () => {
     http.expectOne('/api/projects/Demo%20Project/snapshot').flush(snapshot());
     http.expectOne(request => request.url === '/api/git/inventory' && request.params.get('project') === 'Demo Project').flush(gitInventory());
     http.expectOne('/api/projects/Demo%20Project/visual-evidence').flush(evidenceQueue());
-    http.expectOne('/api/workspaces').flush([{ id: 'ws', displayName: 'Workspace', projects: [{
+    http.expectOne('/api/v1/workspaces').flush([{ id: 'ws', displayName: 'Workspace', projects: [{
       id: 'PROJ-1', displayName: 'Demo Project', workspaceId: 'ws', storageLocation: 'C:/tasks/demo',
       sortOrder: 0, archived: false, urls: [],
     }] }]);
@@ -235,7 +235,7 @@ function flushEmpty(http: HttpTestingController): void {
   http.expectOne('/api/projects/Demo%20Project/visual-evidence').flush({
     project: 'Demo Project', capturedAt: '2026-07-11T12:00:00Z', unseenCount: 0, items: [],
   });
-  http.expectOne('/api/workspaces').flush([]);
+  http.expectOne('/api/v1/workspaces').flush([]);
 }
 
 function gitInventory() {

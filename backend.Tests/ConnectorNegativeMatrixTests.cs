@@ -71,50 +71,50 @@ public sealed class ConnectorNegativeMatrixTests
             var client = connector.Client;
             var csrf = await CsrfAsync(client);
 
-            using (var accepted = Mutation(HttpMethod.Post, "/api/workspaces", Origin, csrf, new CreateWorkspaceRequest("matrix-control")))
+            using (var accepted = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, csrf, new CreateWorkspaceRequest("matrix-control")))
                 await matrix.RecordAsync("control", "Studio mutation with Origin, session, and CSRF reaches the Task Server", 201, null, await client.SendAsync(accepted));
 
             credential.Remove();
-            using (var read = new HttpRequestMessage(HttpMethod.Get, "/api/workspaces"))
+            using (var read = new HttpRequestMessage(HttpMethod.Get, "/api/v1/workspaces"))
             {
                 await matrix.RecordAttachAsync("absent-bearer", "Connector without a stored Studio credential",
                     ConnectorCredentialFailureCodes.Unavailable, await client.SendAsync(read));
             }
 
             credential.Write("invalid-" + studioToken);
-            using (var read = new HttpRequestMessage(HttpMethod.Get, "/api/workspaces"))
+            using (var read = new HttpRequestMessage(HttpMethod.Get, "/api/v1/workspaces"))
             {
                 await matrix.RecordAttachAsync("invalid-bearer", "Connector holding a credential the Task Server rejects",
                     ConnectorAttachFailureCodes.CredentialRejected, await client.SendAsync(read));
             }
 
             credential.Write(studioToken);
-            using (var rotated = new HttpRequestMessage(HttpMethod.Get, "/api/workspaces"))
+            using (var rotated = new HttpRequestMessage(HttpMethod.Get, "/api/v1/workspaces"))
                 await matrix.RecordAsync("control", "Credential rotated back in place is used without a restart", 200, null, await client.SendAsync(rotated));
 
-            using (var crossOrigin = Mutation(HttpMethod.Post, "/api/workspaces", "http://evil.example", csrf, new CreateWorkspaceRequest("cross-origin")))
+            using (var crossOrigin = Mutation(HttpMethod.Post, "/api/v1/workspaces", "http://evil.example", csrf, new CreateWorkspaceRequest("cross-origin")))
                 await matrix.RecordAsync("cross-origin", "Mutation from a foreign Origin", 403, ConnectorRequestPolicy.OriginRejected, await client.SendAsync(crossOrigin));
-            using (var foreignLoopback = Mutation(HttpMethod.Post, "/api/workspaces", "http://127.0.0.1:8080", csrf, new CreateWorkspaceRequest("foreign-loopback")))
+            using (var foreignLoopback = Mutation(HttpMethod.Post, "/api/v1/workspaces", "http://127.0.0.1:8080", csrf, new CreateWorkspaceRequest("foreign-loopback")))
                 await matrix.RecordAsync("cross-origin", "Mutation from an unconfigured loopback Origin", 403, ConnectorRequestPolicy.OriginRejected, await client.SendAsync(foreignLoopback));
-            using (var noOrigin = Mutation(HttpMethod.Post, "/api/workspaces", null, csrf, new CreateWorkspaceRequest("no-origin")))
+            using (var noOrigin = Mutation(HttpMethod.Post, "/api/v1/workspaces", null, csrf, new CreateWorkspaceRequest("no-origin")))
                 await matrix.RecordAsync("cross-origin", "Mutation without an Origin header", 403, ConnectorRequestPolicy.OriginRequired, await client.SendAsync(noOrigin));
-            using (var noSession = Mutation(HttpMethod.Post, "/api/workspaces", Origin, csrf, new CreateWorkspaceRequest("no-session")))
+            using (var noSession = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, csrf, new CreateWorkspaceRequest("no-session")))
             {
                 using var fresh = connector.NewCookielessBrowser();
                 await matrix.RecordAsync("csrf", "Mutation without a connector session", 401, ConnectorRequestPolicy.SessionRequired, await fresh.SendAsync(noSession));
             }
-            using (var missing = Mutation(HttpMethod.Post, "/api/workspaces", Origin, null, new CreateWorkspaceRequest("missing-csrf")))
+            using (var missing = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, null, new CreateWorkspaceRequest("missing-csrf")))
                 await matrix.RecordAsync("csrf", "Mutation without the CSRF token", 403, ConnectorRequestPolicy.CsrfRejected, await client.SendAsync(missing));
 
             using var otherBrowser = connector.NewBrowser();
             using var otherSession = await SessionAsync(otherBrowser);
             var otherCookie = ReadCookie(otherSession, ConnectorSessionStore.SessionCookieName);
             var otherToken = ReadCookie(otherSession, ConnectorSessionStore.CsrfCookieName);
-            using (var crossSession = Mutation(HttpMethod.Post, "/api/workspaces", Origin, csrf, new CreateWorkspaceRequest("replayed")))
+            using (var crossSession = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, csrf, new CreateWorkspaceRequest("replayed")))
                 await matrix.RecordAsync("csrf", "Replayed token: another session's CSRF token", 403, ConnectorRequestPolicy.CsrfRejected, await otherBrowser.SendAsync(crossSession));
             using (var logout = Mutation(HttpMethod.Delete, "/connector/session", Origin, otherToken))
                 Assert.Equal(HttpStatusCode.NoContent, (await otherBrowser.SendAsync(logout)).StatusCode);
-            using (var afterLogout = Mutation(HttpMethod.Post, "/api/workspaces", Origin, otherToken, new CreateWorkspaceRequest("after-logout")))
+            using (var afterLogout = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, otherToken, new CreateWorkspaceRequest("after-logout")))
             {
                 afterLogout.Headers.Add("Cookie", $"{ConnectorSessionStore.SessionCookieName}={otherCookie}; {ConnectorSessionStore.CsrfCookieName}={otherToken}");
                 using var replay = connector.NewCookielessBrowser();
@@ -130,7 +130,7 @@ public sealed class ConnectorNegativeMatrixTests
         {
             await using var mismatched = ConnectorUnderTest.Boot(Setup(serverUrl, credential) with { Protocols = range });
             var mismatchCsrf = await CsrfAsync(mismatched.Client);
-            using var request = Mutation(HttpMethod.Post, "/api/workspaces", Origin, mismatchCsrf, new CreateWorkspaceRequest("mismatch"));
+            using var request = Mutation(HttpMethod.Post, "/api/v1/workspaces", Origin, mismatchCsrf, new CreateWorkspaceRequest("mismatch"));
             await matrix.RecordAttachAsync("protocol-mismatch", probe, expected, await mismatched.Client.SendAsync(request));
         }
 

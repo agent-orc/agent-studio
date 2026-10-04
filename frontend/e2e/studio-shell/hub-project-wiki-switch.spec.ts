@@ -55,7 +55,7 @@ async function installMocks(page: Page): Promise<void> {
       body: JSON.stringify({ pending: [] }),
     }),
   );
-  await page.route('**/api/auth/status', (route: Route) =>
+  await page.route('**/api/v1/studio/auth/status', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -79,7 +79,7 @@ async function installMocks(page: Page): Promise<void> {
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], review: [], completed: [], archive: [],
   };
-  await page.route('**/api/tasks/grouped', (route: Route) =>
+  await page.route('**/api/v1/studio/board', (route: Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(emptyGrouped) }),
   );
   await page.route('**/api/tasks/archive**', (route: Route) =>
@@ -87,7 +87,7 @@ async function installMocks(page: Page): Promise<void> {
   );
   // Runner status is an object keyed by project; the status bar does
   // Object.values(status.projects) and throws on an array/undefined.
-  await page.route('**/api/runner/status', (route: Route) =>
+  await page.route('**/api/v1/studio/runner/status', (route: Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }),
   );
   // The header quota strip reads a QuotaReport object (has `.snapshots`).
@@ -227,7 +227,7 @@ async function installMocks(page: Page): Promise<void> {
 
   // A real registry workspace so the project row renders as a normal tree row
   // (a null projectId makes the tree render an inline rename input instead).
-  await page.route('**/api/workspaces**', (route: Route) =>
+  await page.route('**/api/v1/workspaces**', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

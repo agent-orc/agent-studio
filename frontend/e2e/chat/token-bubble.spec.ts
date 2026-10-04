@@ -118,7 +118,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    if (p === '/api/auth/status') {
+    if (p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -139,7 +139,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
         body: JSON.stringify({ pending: [] }),
       });
     }
-    if (p === '/api/orchestrator/sessions') {
+    if (p === '/api/v1/studio/orchestrator/sessions') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -170,7 +170,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
     if (p === '/api/projects/settings') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     }
-    if (p === '/api/tasks/grouped') {
+    if (p === '/api/v1/studio/board') {
       const body = {
         backlog: [],
         preparation: jobs.filter((j) => j.state === '1-preparation'),
@@ -216,8 +216,8 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
     if (p === '/api/v1/management/links'
         || p === '/api/v1/management/provider-refusals'
         || p === '/api/tags'
-        || p === '/api/workspaces'
-        || p === '/api/projects'
+        || p === '/api/v1/workspaces'
+        || p === '/api/v1/projects'
         || p === '/api/git/summary') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
     }
@@ -230,7 +230,7 @@ async function stubGroupedJobs(page: Page, jobs: JobInfoStub[]): Promise<void> {
     if (p === '/api/auto-review/status') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ lastTickAt: null, accept: 0, reissue: 0, escalate: 0, aspectsRun: 0, currentJob: null, currentProject: null, activeJobs: [] }) });
     }
-    if (p.startsWith('/api/runner')) {
+    if (p.startsWith('/api/runner') || p === '/api/v1/studio/runner/status') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
     }
     // Catch-all: empty array works for list endpoints, empty object for
