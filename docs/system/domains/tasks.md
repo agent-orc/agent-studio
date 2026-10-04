@@ -643,7 +643,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   remain task text. Each retry advances the marker generation, so a copy of
   an older complete writer block remains task text after replacement. When
   task text appends an exact copy of the current block, the first occurrence
-  remains the writer's section (AGT-2989).
+  remains the writer's section. For status files written before the ownership
+  marker existed, retry and clear also recognize the previous writer's complete
+  field layout when it is separated from the task result by a blank line and
+  ends the document. The next write replaces it with a marked section; other
+  marker pairs remain task text (AGT-2989).
 - `HistoricalIntegrationVerificationSweep` runs once off the startup request
   path before the accepted integration inventory. The V2 pass reads every task
   folder directly, groups Git reads by repository, and processes card writes in

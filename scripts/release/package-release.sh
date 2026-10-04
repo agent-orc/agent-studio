@@ -62,6 +62,8 @@ install -m 0755 "$publish_root/task-server/task-server" \
 install -m 0755 "$publish_root/orchestrator-engine/orchestrator-engine" \
     "$work/$orchestrator/orchestrator-engine"
 cp -a "$repo_root/deploy/release/agent-orchestrator/." "$work/$orchestrator/"
+install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$orchestrator/host_secret_transport.py"
+install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$orchestrator/host-secret-requirements.txt"
 
 install -m 0755 "$publish_root/agent-host-linux-x64/agent-host" \
     "$work/$host/linux-x64/agent-host"
@@ -73,9 +75,13 @@ install -m 0644 "$repo_root/deploy/systemd/agent-host.service" \
     "$work/$host/systemd/agent-host.service"
 install -m 0755 "$repo_root/scripts/agent-host-resource-governance.sh" \
     "$work/$host/agent-host-resource-governance.sh"
+install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$host/host_secret_transport.py"
+install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$host/host-secret-requirements.txt"
 
 cp -a "$frontend_root/." "$work/$studio/browser/"
 install -m 0644 "$repo_root/docker-compose.yml" "$work/$compose/docker-compose.yml"
+install -m 0644 "$repo_root/deploy/host_secret_transport.py" "$work/$compose/deploy/host_secret_transport.py"
+install -m 0644 "$repo_root/deploy/host-secret-requirements.txt" "$work/$compose/deploy/host-secret-requirements.txt"
 install -m 0755 "$repo_root/scripts/compose-secret-bootstrap.sh" "$work/$compose/scripts/"
 install -m 0755 "$repo_root/scripts/compose-rotate-credentials.sh" "$work/$compose/scripts/"
 cp -a "$repo_root/deploy/compose/empty-credentials" "$work/$compose/deploy/compose/"

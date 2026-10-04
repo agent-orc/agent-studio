@@ -236,6 +236,45 @@ public sealed class AcceptanceIntegrationStatusDocumentTests : IDisposable
         Assert.Equal(1, Count(cleared, Start));
     }
 
+    [Fact]
+    public void LegacyFailureSectionWithoutOwnershipMarker_IsReplacedAndCleared()
+    {
+        var taskText = "# Result\n\nDelivered work.\n\nQuoted markers:\n"
+            + Start + "\nexample text\n" + End + "\n";
+        File.WriteAllText(StatusPath, taskText + "\n" + LegacyFailureSection);
+
+        AcceptanceIntegrationStatusDocument.WriteFailure(_folder, "Error", "retry failed", "develop");
+        var updated = File.ReadAllText(StatusPath).ReplaceLineEndings("\n");
+        Assert.StartsWith(taskText + "\n", updated);
+        Assert.DoesNotContain("- Reason: old merge conflict", updated);
+        Assert.Contains("- Reason: retry failed", updated);
+        Assert.Equal(2, Count(updated, Start));
+        Assert.Equal(1, Count(updated, "<!-- agent-studio:acceptance-integration:owned:"));
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+        Assert.Equal(taskText, File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+    }
+
+    [Fact]
+    public void LegacyOperatorOverrideWithoutOwnershipMarker_CanBeCleared()
+    {
+        File.WriteAllText(StatusPath, "# Result\n\nDelivered work.\n\n"
+            + Start + "\n## Acceptance integration\n\n"
+            + "- Outcome: `OperatorOverride`\n- Lane: `6-completed`\n"
+            + "- Integration: explicitly waived by the operator\n"
+            + "- Reason: approved\n- Recorded at: `2026-09-28T00:00:00.0000000Z`\n"
+            + End + "\n");
+
+        AcceptanceIntegrationStatusDocument.Clear(_folder);
+
+        Assert.Equal("# Result\n\nDelivered work.\n", File.ReadAllText(StatusPath).ReplaceLineEndings("\n"));
+    }
+
+    private static string LegacyFailureSection => Start + "\n## Acceptance integration\n\n"
+        + "- Outcome: `Conflict`\n- Lane: `5-human-review`\n"
+        + "- Integration branch: `develop`\n- Reason: old merge conflict\n"
+        + "- Recorded at: `2026-09-28T00:00:00.0000000Z`\n" + End + "\n";
+
     private string StatusPath => Path.Combine(_folder, "status.md");
 
     private static int Count(string content, string marker)

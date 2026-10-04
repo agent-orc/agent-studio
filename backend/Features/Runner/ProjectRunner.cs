@@ -8,6 +8,7 @@ using AgentStudio.ExecutionPreparation;
 using AgentStudio.Pipeline;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -2270,7 +2271,7 @@ public class ProjectRunner
         IntegrationResult conflict)
     {
         var files = conflict.ConflictedFiles is { Count: > 0 }
-            ? string.Join(Environment.NewLine, conflict.ConflictedFiles.Select(f => $"- {f}"))
+            ? string.Join(PromptText.NewLine, conflict.ConflictedFiles.Select(f => $"- {f}"))
             : "- none reported; run git diff --name-only --diff-filter=U";
         return _prompts.Render(ConflictResolutionTemplate, new Dictionary<string, string?>
         {
@@ -4484,10 +4485,10 @@ public class ProjectRunner
         var entries = _orchestratorLog.Read(Entry.Path);
         if (entries.Count > 0)
         {
-            activity.AppendLine("Recent orchestrator activity (newest first, latest 10):");
+            activity.AppendLf("Recent orchestrator activity (newest first, latest 10):");
             foreach (var e in entries.AsEnumerable().Reverse().Take(10))
-                activity.AppendLine($"- [{e.Kind}/{e.Topic}] {e.Summary}");
-            activity.AppendLine();
+                activity.AppendLf($"- [{e.Kind}/{e.Topic}] {e.Summary}");
+            activity.AppendLf();
         }
 
         return _prompts.Render(ProjectBootTemplate, new Dictionary<string, string?>
@@ -4507,9 +4508,9 @@ public class ProjectRunner
             if (!File.Exists(path)) return;
             var text = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(text)) return;
-            sb.AppendLine($"--- {fileName} (truncated to {maxChars} chars) ---");
-            sb.AppendLine(text.Length > maxChars ? text[..maxChars] + "\n... [truncated]" : text);
-            sb.AppendLine();
+            sb.AppendLf($"--- {fileName} (truncated to {maxChars} chars) ---");
+            sb.AppendLf(text.Length > maxChars ? text[..maxChars] + "\n... [truncated]" : text);
+            sb.AppendLf();
         }
         catch (Exception __ex) { SilentCatch.Note(__ex, "ProjectRunner: best-effort: missing or unreadable docs are fine"); /* best-effort: missing or unreadable docs are fine */ }
     }
@@ -8478,12 +8479,12 @@ public class ProjectRunner
         var sb = new StringBuilder();
         if (decision.Action == ReissueOpenItemsPreCheck.PreCheckAction.Escalate)
         {
-            sb.AppendLine(
+            sb.AppendLf(
                 "This task has already been reissued multiple times. Resolve only these findings in this run, or stop with `[[TASK_BLOCKED:missing-dependency-xyz]]`, replacing the example reason with the actual short reason.");
-            sb.AppendLine();
+            sb.AppendLf();
         }
         // AGT-2989: open items carry reviewer text; quote them as data.
-        sb.AppendLine(AgentStudio.Review.ReviewFindingDataBlock.Render(
+        sb.AppendLf(AgentStudio.Review.ReviewFindingDataBlock.Render(
             decision.OpenItems.Select(item => $"- [ ] {item}").ToList()));
         return sb.ToString().TrimEnd();
     }
@@ -9999,9 +10000,9 @@ public class ProjectRunner
             if (existing.Contains(item, StringComparison.Ordinal)) return;
 
             var prefix = string.IsNullOrWhiteSpace(existing)
-                ? "# Orchestrator follow-up" + Environment.NewLine + Environment.NewLine
-                : existing.TrimEnd() + Environment.NewLine + Environment.NewLine;
-            File.WriteAllText(path, prefix + item + Environment.NewLine);
+                ? "# Orchestrator follow-up" + PromptText.NewLine + PromptText.NewLine
+                : existing.TrimEnd() + PromptText.NewLine + PromptText.NewLine;
+            File.WriteAllText(path, prefix + item + PromptText.NewLine);
             _logger.LogWarning(
                 "[taskboard] worktree-blocked gate item recorded for {JobId} at {FollowUpPath}",
                 jobId, path);

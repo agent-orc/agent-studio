@@ -26,6 +26,24 @@ for entry in compose-distributed-bootstrap.sh compose-runner-bootstrap.sh; do
             (.value.environment.RUNNER_SERVER_URL | startswith("http://task-server")) and
             .value.environment.RUNNER_ID != "wrong-id" and
             .value.environment.RUNNER_ROLE == (if (.key | contains("review")) then "review" else "coding" end))' >/dev/null
+    docker compose --project-directory "$install" -f "$install/docker-compose.yml" --profile dev config --format json |
+        jq -e '
+          .services as $services |
+          all(["orchestrator-engine", "orchestrator-engine-dev"][]; . as $name |
+            [$services[$name].volumes[] | select(.source == "secrets") | .volume.subpath] == ["engine"]) and
+          all(["studio-bff", "studio-bff-dev", "orchestrator-api", "orchestrator-api-dev"][]; . as $name |
+            [$services[$name].volumes[] | select(.source == "secrets") | .volume.subpath] == ["studio"]) and
+          all(["agent-host-distributed", "agent-host-distributed-dev"][]; . as $name |
+            [$services[$name].volumes[] | select(.source == "secrets") | .volume.subpath] == ["runner"]) and
+          all(["agent-host-review-distributed", "agent-host-review-distributed-dev"][]; . as $name |
+            [$services[$name].volumes[] | select(.source == "secrets") | .volume.subpath] == ["review_runner"]) and
+          all(["task-server", "task-server-dev", "orchestrator-engine", "studio-bff", "orchestrator-api", "web"][]; . as $name |
+            [$services[$name].volumes[]? | .target] | all(.[]; (contains("/home/runner/.claude") or contains("/home/runner/.codex") or contains("/home/runner/.config/gemini")) | not)) and
+          all(["agent-host-distributed", "agent-host-review-distributed"][]; . as $name |
+            [$services[$name].volumes[] | select(.target == "/home/runner/.claude" or .target == "/home/runner/.codex" or .target == "/home/runner/.config/gemini") | .type] == ["volume", "volume", "volume"]) and
+          all(["/home/runner/.claude", "/home/runner/.codex", "/home/runner/.config/gemini"][]; . as $target |
+            ([$services["agent-host-distributed"].volumes[] | select(.target == $target) | .source][0]) !=
+            ([$services["agent-host-review-distributed"].volumes[] | select(.target == $target) | .source][0]))' >/dev/null
     test ! -e "$install/runner.token"
 done
 printf 'compose-bootstrap-contract=passed\n'

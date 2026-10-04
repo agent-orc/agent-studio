@@ -495,12 +495,7 @@ public sealed class ProtocolTests
     }
 
     internal static string RepositoryRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !File.Exists(Path.Combine(current.FullName, "agent-taskboard.sln")))
-            current = current.Parent;
-        return current?.FullName ?? throw new DirectoryNotFoundException("Repository root was not found.");
-    }
+        => AgentStudio.TestSupport.RepositoryRoot.Find();
 
     private sealed class TaskServerFactory(
         string dataDirectory,

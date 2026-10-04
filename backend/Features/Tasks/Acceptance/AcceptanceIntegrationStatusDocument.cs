@@ -15,7 +15,9 @@ namespace AgentStudio.Tasks;
 /// nor an agent-written task result above the section can make a later
 /// upsert truncate the document. A writer-owned marker immediately before
 /// the section identifies it even when task text around it changes. Quoted
-/// marker pairs and copied section bodies lack that marker and remain task text.
+/// marker pairs and copied section bodies without that marker remain task text.
+/// Sections written before ownership markers existed are recognized by the
+/// previous writer's trailing section layout during the first retry or clear.
 /// </para>
 /// </summary>
 public static class AcceptanceIntegrationStatusDocument
@@ -102,10 +104,40 @@ public static class AcceptanceIntegrationStatusDocument
 
     internal static string RemoveOwnedSection(string content)
     {
-        var owned = FindOwnedSection(content);
+        var owned = FindOwnedSection(content) ?? FindLegacySection(content);
         return owned is { } section
             ? content.Remove(section.Start, section.End - section.Start)
             : content;
+    }
+
+    private static (int Start, int End, long Generation)? FindLegacySection(string content)
+    {
+        // The previous writer appended this exact section after a blank line.
+        // Migrate only a complete trailing section. An earlier quoted pair, a
+        // pair inside task text, or a section followed by task notes is not
+        // sufficient evidence of ownership without the new marker.
+        if (content.Contains(OwnershipPrefix, StringComparison.Ordinal)) return null;
+        var end = content.LastIndexOf(EndMarker, StringComparison.Ordinal);
+        if (end < 0 || !IsWholeLine(content, end, EndMarker.Length)
+            || !string.IsNullOrWhiteSpace(content[(end + EndMarker.Length)..]))
+            return null;
+
+        var start = content.LastIndexOf(StartMarker, end, StringComparison.Ordinal);
+        while (start >= 0 && !IsWholeLine(content, start, StartMarker.Length))
+            start = start == 0 ? -1 : content.LastIndexOf(StartMarker, start - 1, StringComparison.Ordinal);
+        if (start < 0) return null;
+        var prefix = content[..start];
+        if (start != 0 && !prefix.EndsWith("\n\n", StringComparison.Ordinal)
+            && !prefix.EndsWith("\r\n\r\n", StringComparison.Ordinal))
+            return null;
+
+        var bodyStart = start + StartMarker.Length;
+        if (bodyStart < content.Length && content[bodyStart] == '\r') bodyStart++;
+        if (bodyStart >= content.Length || content[bodyStart] != '\n') return null;
+        bodyStart++;
+        return IsOwnedBody(content[bodyStart..end])
+            ? (start, end + EndMarker.Length, 0)
+            : null;
     }
 
     private static (int Start, int End, long Generation)? FindOwnedSection(string content)

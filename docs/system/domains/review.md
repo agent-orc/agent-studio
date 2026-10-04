@@ -96,7 +96,12 @@ older hosts can finish legacy attempts but cannot claim the new steps.
 
 Only a review registration advertising `review:library-step:v1` and all step
 requirements can claim a version-one subject. Requirements include the command's
-declared CLI/provider and detected .NET, Node, or Playwright toolchain. Coding and review registrations
+declared CLI/provider and detected .NET, Node, or Playwright toolchain. The
+toolchain keys come from `ReviewLibraryStepPolicy.ToolchainRequirements`, and the
+review registration adds every key from that table the host probe finds
+(AGT-2987). An executor that still lacks a key receives the typed empty reason
+`unclaimable-plan-requirements` with the missing keys; see the
+[review lane runbook](../../operations/review-lane-runbook.md). Coding and review registrations
 have separate identities and capacity. The runner checks the sealed plan before
 materializing the exact subject. Each command evidence row echoes the step
 envelope beside its actual SHA, timings, exit status, output hashes, and

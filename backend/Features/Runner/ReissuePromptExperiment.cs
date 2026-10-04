@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -70,9 +71,9 @@ public static class ReissuePromptExperiment
         var sb = new StringBuilder();
         if (escalate)
         {
-            sb.AppendLine(
+            sb.AppendLf(
                 "This task has already been reissued multiple times. Resolve only the numbered findings below, or stop with `[[TASK_BLOCKED:missing-dependency-xyz]]`, replacing the example reason with the actual short reason.");
-            sb.AppendLine();
+            sb.AppendLf();
         }
 
         // AGT-2989: the deficiency text is reviewer output, so it is quoted in
@@ -85,11 +86,11 @@ public static class ReissuePromptExperiment
             data.Add("   - Exact deficiency: " + finding);
             data.Add("   - File, symbol, or artifact: " + ExtractReference(finding));
         }
-        sb.AppendLine(AgentStudio.Review.ReviewFindingDataBlock.Render(data, nonce));
-        sb.AppendLine();
-        sb.AppendLine("For each numbered finding above:");
-        sb.AppendLine("   - Required change: Resolve the exact deficiency without unrelated scope.");
-        sb.AppendLine("   - Focused verification or acceptance evidence: Run or add the smallest focused check that proves this finding is resolved, and report the result.");
+        sb.AppendLf(AgentStudio.Review.ReviewFindingDataBlock.Render(data, nonce));
+        sb.AppendLf();
+        sb.AppendLf("For each numbered finding above:");
+        sb.AppendLf("   - Required change: Resolve the exact deficiency without unrelated scope.");
+        sb.AppendLf("   - Focused verification or acceptance evidence: Run or add the smallest focused check that proves this finding is resolved, and report the result.");
 
         return sb.ToString().TrimEnd();
     }

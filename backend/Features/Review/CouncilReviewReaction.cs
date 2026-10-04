@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Review;
 
@@ -131,11 +132,11 @@ public static class CouncilReviewPolicy
             .Select(a => "- " + Regex.Replace(a.Finding, @"\s+", " ").Trim())
             .ToList();
         var sb = new System.Text.StringBuilder();
-        sb.Append("Council reaction to quality grade ").Append(reaction.Grade).AppendLine(": fix the named findings below.");
-        sb.AppendLine("Do not redo unrelated work. For each finding, implement the fix and add the focused test or evidence that proves it.");
-        sb.AppendLine(ReviewFindingDataBlock.Render(findings, nonce));
-        sb.AppendLine();
-        sb.AppendLine("Finish with a concise verification summary and the required terminal sentinel.");
+        sb.Append("Council reaction to quality grade ").Append(reaction.Grade).AppendLf(": fix the named findings below.");
+        sb.AppendLf("Do not redo unrelated work. For each finding, implement the fix and add the focused test or evidence that proves it.");
+        sb.AppendLf(ReviewFindingDataBlock.Render(findings, nonce));
+        sb.AppendLf();
+        sb.AppendLf("Finish with a concise verification summary and the required terminal sentinel.");
         return sb.ToString().TrimEnd();
     }
 

@@ -192,7 +192,13 @@ public sealed class CarWorkerExecutionTests : IDisposable
         Assert.Contains("--permission-mode", run.SpawnedArgv!);
         Assert.Contains("plan", run.SpawnedArgv!);
         Assert.DoesNotContain("--dangerously-skip-permissions", run.SpawnedArgv!);
-        Assert.False(run.SpawnedEnvironment!.ContainsKey("CLAUDE_CONFIG_DIR"));
+        // Shared context injects no task-isolated config home. The spawn
+        // environment also carries what the test host inherited, so a host that
+        // runs inside a Claude session (CLAUDE_CONFIG_DIR set) must see exactly
+        // its own value passed through, not a clean-context directory.
+        Assert.Equal(
+            Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR"),
+            run.SpawnedEnvironment!.GetValueOrDefault("CLAUDE_CONFIG_DIR"));
     }
 
     [Fact]
