@@ -245,6 +245,15 @@ public sealed record PipelineStepExecution
     public string? RecommendedThinkingLevel { get; init; }
     /// <summary>Where the effective selection came from: policy, policy-economy, or task-override.</summary>
     public string? SelectionSource { get; init; }
+    /// <summary>
+    /// Which level of the model-resolution chain chose <see cref="Model"/> for
+    /// this execution: <c>step</c>, <c>project</c>, <c>global</c>,
+    /// <c>catalogue</c> or <c>runtime</c> from
+    /// <c>PipelineStepConfigResolver</c>, <c>task</c> for a card-pinned core
+    /// run, or <c>config</c> for a host-configured decision model. Null on
+    /// legacy rows and on steps that ran no model.
+    /// </summary>
+    public string? ModelSource { get; init; }
     /// <summary>Heuristic saving versus the live catalogue's top rung.</summary>
     public int? EstimatedSavingsPercent { get; init; }
     public PipelineStepStatus Status { get; init; } = PipelineStepStatus.Pending;
@@ -259,6 +268,40 @@ public sealed record PipelineStepExecution
     public bool? InputIncludesCached { get; init; }
     /// <summary>Stable marker for a historical normalization applied after capture.</summary>
     public string? UsageNormalization { get; init; }
+    /// <summary>
+    /// How this execution's cost was measured, from
+    /// <c>AgentStudio.Pipeline.StepCostBasis</c>: <c>model</c> (an LLM call
+    /// with recorded tokens), <c>deterministic</c> (no model call, a measured
+    /// zero) or <c>not-run</c>. Null on legacy rows and while running, and on
+    /// a model-backed row whose executor reported no model, which is a
+    /// measurement gap rather than a zero.
+    /// </summary>
+    public string? CostBasis { get; init; }
+    /// <summary>
+    /// Historical list-price estimate for this execution's tokens. Zero for a
+    /// deterministic or not-run step. Null when the model has no catalogue
+    /// price (see <see cref="ModelPriced"/>): an unpriced call is never zero.
+    /// </summary>
+    public decimal? EstimatedCostUsd { get; init; }
+    /// <summary>
+    /// True when the price catalogue resolved <see cref="Model"/> at the run
+    /// date, false when the model is unpriced, null when no model ran.
+    /// </summary>
+    public bool? ModelPriced { get; init; }
+    /// <summary>
+    /// How many times this step executed inside this pipeline attempt,
+    /// counting review rounds and repeated decisions. Earlier executions are
+    /// kept in <see cref="EarlierRuns"/>; archived attempts carry their own
+    /// count, so the per-card total is the sum across every attempt.
+    /// </summary>
+    public int Runs { get; init; }
+    /// <summary>
+    /// Earlier executions of this step inside the same attempt, oldest first,
+    /// bounded. <c>PipelineExecutionLog.RecordStep</c> moves the
+    /// previous terminal row here when a step starts again instead of
+    /// overwriting it, so a repeated decision keeps its own model and cost.
+    /// </summary>
+    public List<PipelineStepRunSummary>? EarlierRuns { get; init; }
     /// <summary>Physical placement reported by the executor, for example local or remote.</summary>
     public string? ExecutionLocation { get; init; }
     /// <summary>Runner host that executed the step when placement is remote.</summary>
@@ -309,6 +352,34 @@ public sealed record PipelineStepExecution
     public int? FixedInRun { get; init; }
     /// <summary>True when the finding remained after the bounded fix round.</summary>
     public bool? StillOpen { get; init; }
+}
+
+/// <summary>
+/// One earlier execution of a step inside a pipeline attempt. Carries what the
+/// transition view and the cost rollup need: when it ran, what it decided, on
+/// which model, and what it cost. Token counts are zero when the step
+/// accumulates its own totals in place (the core run), so a repeated core run
+/// is counted without being priced twice.
+/// </summary>
+public sealed record PipelineStepRunSummary
+{
+    public PipelineStepStatus Status { get; init; }
+    public DateTime? StartedAt { get; init; }
+    public DateTime? CompletedAt { get; init; }
+    public long DurationMs { get; init; }
+    public string? Model { get; init; }
+    public string? ThinkingLevel { get; init; }
+    public string? ModelSource { get; init; }
+    public long InputTokens { get; init; }
+    public long OutputTokens { get; init; }
+    public long CacheReadTokens { get; init; }
+    public long CacheCreationTokens { get; init; }
+    public string? CostBasis { get; init; }
+    public decimal? EstimatedCostUsd { get; init; }
+    public bool? ModelPriced { get; init; }
+    public string? Verdict { get; init; }
+    public string? Reason { get; init; }
+    public string? EvidenceRef { get; init; }
 }
 
 public enum PipelineStepStatus

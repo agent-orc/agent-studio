@@ -197,6 +197,77 @@ See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
   package adapter, repository-owned activation policy, canonical finding
   projection, and the first executable Angular named-rule pass.
 
+## Step cost measurement and the cost of deciding (AGT-3015)
+
+Every write to `pipeline-execution.json` passes through
+`PipelineExecutionLog.RecordStep`. That write applies the pure policy in
+`backend/Features/Pipeline/StepCost/StepCostMeasurement.cs`. Executors report
+only what ran; the log owns the arithmetic.
+
+- **Model-backed or deterministic.** `IsModelBacked(stepId, kind)` makes the
+  call. Core and aspect steps are model-backed. Drift and orchestrator steps
+  are model-backed except these rule or human gates:
+  `post-orchestrator-review`, `post-concept-review`,
+  `post-concept-sight-review`, `post-ui-human-review-gate` and
+  `post-drift-code-pattern`. Module, tool and analysis steps are
+  deterministic, except `post-analysis-model-review`. Model qualification,
+  prompt enrichment and orchestrator prep name a model but run rule-based
+  selectors.
+- **Cost stamp.** A terminal row gets `costBasis`, `estimatedCostUsd` and
+  `modelPriced`:
+  - `costBasis` is `model`, `deterministic` (a measured zero) or `not-run`.
+  - An unpriced model has `modelPriced = false` and a null cost, never zero.
+  - A model-backed row without a model keeps a null `costBasis`. The log warns
+    about that measurement gap and `StepCostMeasurementTests` guard it.
+  - A decision taken by rule records `costBasis = deterministic` explicitly.
+- **Resolution path.** `modelSource` names the level that chose the model:
+  - the step resolver levels: `step`, `project`, `global`, `catalogue`,
+    `runtime`;
+  - for the core run: the model-qualification source, `task` or
+    `client-default`;
+  - `config` for the host-configured review-decision model;
+  - `economy` for an economy-routed step.
+
+  The resolver has no job level, despite the older `PipelineStep.Model`
+  comment.
+- **Occurrences.** `runs` counts executions inside one attempt.
+  - When a step starts again, the replaced execution moves into
+    `earlierRuns`, bounded to 50, instead of being overwritten.
+  - Archived attempts keep their own counts, so per-card and per-project
+    totals survive both review rounds and epochs.
+  - The core run carries its accumulated tokens on its live row. Its earlier
+    runs are counted but not priced a second time.
+- **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
+  receipt the token ledger records. `DecisionModelContext` carries it to the
+  decision row and to `decidedByModel` on the bus decision message.
+
+Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
+
+- `ProjectPipelineCostService.MergeSources` now reads the execution log of a
+  receipt-backed (remote) task as well.
+- The receipt still prices that task's agent run. The log adds the aspect,
+  orchestrator and drift rows, plus the core run count.
+- Before this change, the log of a receipt-backed task was skipped entirely.
+  That is why no orchestrator step appeared in the ledger.
+- Kinds and steps carry `runs`; steps also carry `tasks` and `models`.
+- `decisionCost` compares deciding (orchestrator kind) against agent runs
+  (core) and other, with the unpriced tokens stated.
+
+The card rollup is `PipelineCostCalculator.SummarizeDecisionCost`. It is
+returned as `decisionCost` by `GET /api/tasks/{id}/pipeline` and covers every
+attempt.
+
+The Overview pipeline block renders both under the step table, through
+`pipeline-decision-chain`: one line per decision execution, showing the step
+that ended, verdict, model, duration, cost and evidence. The project token
+usage trend shows the project rollup and a decision-step table.
+
+Two known ledger distortions remain and are not corrected here:
+
+- Codex input that includes cached tokens (AGT-2882) overstates historical GPT
+  costs.
+- One card accumulated duplicate entries.
+
 ## Failure intervention step
 
 `post-failure-intervention` is an opt-in failure-boundary step configured through

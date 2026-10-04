@@ -263,7 +263,8 @@ public sealed class CodeReviewStepService
             StartedAt: startedAt,
             Grade: grade,
             ExecutionError: executionError,
-            Findings: findings);
+            Findings: findings,
+            Usage: callUsage);
     }
 
     /// <summary>Tag id for the given verdict, or null when no tag should be hung.</summary>
@@ -552,4 +553,5 @@ public sealed record CodeReviewStepReport(
     DateTime StartedAt,
     CodeReviewGrade? Grade = null,
     string? ExecutionError = null,
-    IReadOnlyList<string>? Findings = null);
+    IReadOnlyList<string>? Findings = null,
+    OrchestratorTokenUsage? Usage = null);

@@ -1,0 +1,49 @@
+@if (transitions().length > 0 || summary()) {
+  <div class="decision-chain" data-testid="overview-decision-chain">
+    <div class="decision-chain__header">
+      <span class="decision-chain__title">Decisions between steps</span>
+      @if (summary(); as s) {
+        <span class="decision-chain__rollup" data-testid="overview-decision-cost"
+              [cacTooltip]="'Every attempt of this card. Deciding = orchestrator steps; agent runs = the core run; other = reviews, drift, tools.'">
+          <span>Deciding <strong class="decision-chain__num" data-testid="overview-decision-cost-deciding">{{ s.decidingText }}</strong>
+            · {{ s.decidingRuns }} decision{{ s.decidingRuns === 1 ? '' : 's' }}</span>
+          <span>agent runs <strong class="decision-chain__num" data-testid="overview-decision-cost-agent">{{ s.agentRunsText }}</strong>
+            · {{ s.agentRuns }} run{{ s.agentRuns === 1 ? '' : 's' }}</span>
+          <span>other <span class="decision-chain__num">{{ s.otherText }}</span></span>
+          @if (s.decidingShare) { <span class="decision-chain__num">{{ s.decidingShare }} of priced cost</span> }
+          @if (s.unpricedText) {
+            <span class="decision-chain__unpriced" data-testid="overview-decision-cost-unpriced">{{ s.unpricedText }}</span>
+          }
+        </span>
+      }
+    </div>
+    @if (transitions().length > 0) {
+      <ol class="decision-chain__list">
+        @for (item of transitions(); track item.key) {
+          <li class="decision-chain__item" data-testid="overview-decision-transition"
+              [attr.data-step-id]="item.stepId" [attr.data-decided-by]="item.decidedBy">
+            <span class="decision-chain__time decision-chain__num">{{ formatClock(item.completedAt) }}</span>
+            <span class="decision-chain__flow">
+              <span class="decision-chain__from">{{ item.fromLabel ?? 'Start' }}</span>
+              <span class="decision-chain__arrow" aria-hidden="true">→</span>
+              <span class="decision-chain__step">{{ item.decisionLabel }}@if (item.occurrences > 1) { <span class="decision-chain__occurrence"> #{{ item.occurrence }}/{{ item.occurrences }}</span> }</span>
+            </span>
+            <span class="decision-chain__verdict" data-testid="overview-decision-verdict"
+                  [cacTooltip]="item.summary">{{ item.verdict ?? '—' }}</span>
+            <span class="decision-chain__model" data-testid="overview-decision-model"
+                  [cacTooltip]="modelTooltip(item)">{{ item.model ?? 'rule' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
+            <span class="decision-chain__num decision-chain__duration">{{ formatStepDuration(item.durationMs) }}</span>
+            <span class="decision-chain__num decision-chain__cost" data-testid="overview-decision-cost-cell"
+                  [attr.data-cost-tone]="item.costTone" [cacTooltip]="costTooltip(item)">{{ item.costText }}</span>
+            @if (item.evidenceRef; as evidence) {
+              <button type="button" class="decision-chain__link" data-testid="overview-decision-evidence"
+                      (click)="documentRequested.emit(evidence)">Evidence</button>
+            } @else {
+              <span class="decision-chain__link decision-chain__link--none">—</span>
+            }
+          </li>
+        }
+      </ol>
+    }
+  </div>
+}

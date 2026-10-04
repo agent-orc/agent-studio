@@ -157,7 +157,9 @@ public sealed class PostAbortReviewStepService
             Model: request.Model,
             CliType: request.CliType,
             DurationMs: sw.ElapsedMilliseconds,
-            StartedAt: startedAt);
+            StartedAt: startedAt,
+            ThinkingLevel: request.ThinkingLevel,
+            Usage: callUsage);
     }
 
     /// <summary>Tag id hung on the card for the decided action.</summary>
@@ -435,7 +437,9 @@ public sealed record PostAbortReviewStepReport(
     string Model,
     string CliType,
     long DurationMs,
-    DateTime StartedAt);
+    DateTime StartedAt,
+    string? ThinkingLevel = null,
+    OrchestratorTokenUsage? Usage = null);
 
 /// <summary>
 /// Serialized input contract written to

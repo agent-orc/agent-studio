@@ -68,20 +68,18 @@ public sealed class ProjectPipelineCostService
             .Select(entry => entry.JobId!)
             .ToHashSet(StringComparer.Ordinal);
 
-        records.AddRange(BuildReceiptRecords(projectName, receiptRead.Entries));
+        var taskLogs = new List<(string JobId, PipelineExecutionRecord Record)>();
         if (!string.IsNullOrWhiteSpace(watchPath))
         {
             foreach (var task in _scanner.ScanAllAutomationJobsWithArchive())
             {
                 if (!string.Equals(task.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase)) continue;
                 if (string.IsNullOrWhiteSpace(task.FolderPath)) continue;
-                if (receiptJobIds.Contains(task.Id)) continue;
                 var rec = _log.Read(task.FolderPath);
                 if (rec != null)
                 {
                     sources.Add("pipeline-execution-log");
-                    records.Add(rec);
-                    records.AddRange(rec.PreviousAttempts);
+                    taskLogs.Add((task.Id, rec));
                 }
                 else if (File.Exists(Path.Combine(task.FolderPath, PipelineExecutionLog.FileName)))
                 {
@@ -89,6 +87,10 @@ public sealed class ProjectPipelineCostService
                 }
             }
         }
+        records.AddRange(MergeSources(
+            BuildReceiptRecords(projectName, receiptRead.Entries),
+            receiptJobIds,
+            taskLogs));
 
         var timeline = BuildFromRecords(projectName, records, d, nowUtc);
         var distinctWarnings = warnings.Distinct(StringComparer.Ordinal).ToList();
@@ -127,6 +129,7 @@ public sealed class ProjectPipelineCostService
         for (var i = 0; i < d; i++)
             dayList.Add(endDay.AddDays(-(d - 1 - i)).ToString("yyyy-MM-dd"));
 
+        var decisionCost = new DecisionCostAccumulator();
         var perKindDay = new Dictionary<(StepKind Kind, string Day), Acc>();
         var perDay = new Dictionary<string, Acc>(StringComparer.Ordinal);
         var perKind = new Dictionary<StepKind, Acc>();
@@ -148,29 +151,50 @@ public sealed class ProjectPipelineCostService
             var dayKey = AlignDay(ts).ToString("yyyy-MM-dd");
             var contributed = false;
 
+            // Receipt rows are per call, not per execution: they price the
+            // agent run but do not count as occurrences.
+            var countsOccurrences = !string.Equals(rec.PipelineId, ReceiptPipelineId, StringComparison.Ordinal);
             foreach (var s in rec.Steps)
             {
-                var stepTokens = s.InputTokens + s.OutputTokens + s.CacheReadTokens + s.CacheCreationTokens;
-                if (stepTokens <= 0) continue;
-                var est = TokenPricing.Estimate(
-                    s.Model, s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheCreationTokens, ts);
+                // Every execution of the step in this attempt, repeats across
+                // review rounds included, each priced at its own model.
+                foreach (var run in StepCostMeasurement.Executions(s))
+                {
+                    var stepTokens = StepCostMeasurement.Tokens(run);
+                    var est = stepTokens > 0
+                        ? TokenPricing.Estimate(
+                            run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
+                            run.StartedAt ?? ts)
+                        : null;
+                    if (countsOccurrences)
+                    {
+                        CountRun(perKind, s.Kind);
+                        CountStepRun(perStep, s.StepId, s.Kind, rec.JobId, run.CostBasis == StepCostBasis.Model || stepTokens > 0 ? run.Model : null);
+                        decisionCost.AddExecution(s.Kind, stepTokens, est);
+                    }
+                    else
+                    {
+                        decisionCost.AddTokens(s.Kind, stepTokens, est);
+                    }
+                    if (est is null) continue;
 
-                Add(perKindDay, (s.Kind, dayKey), stepTokens, est, runIndex, s.Model);
-                Add(perDay, dayKey, stepTokens, est, runIndex, s.Model);
-                Add(perKind, s.Kind, stepTokens, est, runIndex, s.Model);
-                AddStep(perStep, s.StepId, s.Kind, stepTokens, est, runIndex, s.Model);
-                grandTokens += stepTokens;
-                if (est.ModelKnown)
-                {
-                    grandCost += est.Total;
+                    Add(perKindDay, (s.Kind, dayKey), stepTokens, est, runIndex, run.Model);
+                    Add(perDay, dayKey, stepTokens, est, runIndex, run.Model);
+                    Add(perKind, s.Kind, stepTokens, est, runIndex, run.Model);
+                    AddStep(perStep, s.StepId, s.Kind, stepTokens, est, runIndex, run.Model);
+                    grandTokens += stepTokens;
+                    if (est.ModelKnown)
+                    {
+                        grandCost += est.Total;
+                    }
+                    else
+                    {
+                        grandUnknown = true;
+                        grandUnpricedRuns.Add(runIndex);
+                        grandPricingGaps.Add(est, runIndex, run.Model);
+                    }
+                    contributed = true;
                 }
-                else
-                {
-                    grandUnknown = true;
-                    grandUnpricedRuns.Add(runIndex);
-                    grandPricingGaps.Add(est, runIndex, s.Model);
-                }
-                contributed = true;
             }
             if (contributed) contributingTasks.Add(rec.JobId);
         }
@@ -189,7 +213,7 @@ public sealed class ProjectPipelineCostService
         var series = new List<PipelineKindSeries>();
         foreach (var kind in KindOrder)
         {
-            if (!perKind.TryGetValue(kind, out var kindAcc)) continue;
+            if (!perKind.TryGetValue(kind, out var kindAcc) || kindAcc.Tokens <= 0) continue;
             var cells = new List<PipelineKindDayCell>(d);
             foreach (var day in dayList)
             {
@@ -208,7 +232,8 @@ public sealed class ProjectPipelineCostService
                 AnyModelUnknown: kindAcc.AnyUnknown,
                 UnpricedRuns: kindAcc.UnpricedRuns.Count,
                 PricingGaps: kindAcc.PricingGaps.Build(),
-                Cells: cells));
+                Cells: cells,
+                Runs: kindAcc.Runs));
         }
 
         // Per-step rollup over the whole window, most-expensive first so the
@@ -222,8 +247,12 @@ public sealed class ProjectPipelineCostService
                 TotalCostUsd: Round(kv.Value.Cost),
                 AnyModelUnknown: kv.Value.AnyUnknown,
                 UnpricedRuns: kv.Value.UnpricedRuns.Count,
-                PricingGaps: kv.Value.PricingGaps.Build()))
+                PricingGaps: kv.Value.PricingGaps.Build(),
+                Runs: kv.Value.Runs,
+                Tasks: kv.Value.Tasks.Count,
+                Models: kv.Value.Models.OrderBy(model => model, StringComparer.OrdinalIgnoreCase).ToList()))
             .OrderByDescending(s => s.TotalTokens)
+            .ThenByDescending(s => s.Runs)
             .ThenBy(s => s.StepId, StringComparer.Ordinal)
             .ToList();
 
@@ -249,7 +278,8 @@ public sealed class ProjectPipelineCostService
             Freshness: new ProjectTokenDataFreshness
             {
                 AsOf = asOf?.ToString("o"),
-            });
+            },
+            DecisionCost: decisionCost.Build());
     }
 
     internal static IReadOnlyList<PipelineExecutionRecord> BuildReceiptRecords(
@@ -277,7 +307,7 @@ public sealed class ProjectPipelineCostService
             };
             records.Add(new PipelineExecutionRecord
             {
-                PipelineId = "task-token-receipt",
+                PipelineId = ReceiptPipelineId,
                 Project = projectName,
                 JobId = entry.JobId!,
                 StartedAt = entry.Ts,
@@ -304,6 +334,71 @@ public sealed class ProjectPipelineCostService
         }
         return records;
     }
+
+    private const string ReceiptPipelineId = "task-token-receipt";
+
+    /// <summary>
+    /// Combine durable receipts and execution logs into one record list
+    /// without counting a token twice. For a task with a receipt, the receipt
+    /// prices the agent run and the execution log contributes every other
+    /// step (aspects, the orchestrator decisions, drift) plus the core row's
+    /// run count. Before AGT-3015 a receipt task's log was skipped entirely,
+    /// which is why no orchestrator step reached this ledger.
+    /// </summary>
+    internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(
+        IReadOnlyList<PipelineExecutionRecord> receiptRecords,
+        IReadOnlySet<string> receiptJobIds,
+        IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
+    {
+        var merged = new List<PipelineExecutionRecord>();
+        var receiptTasksWithLog = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (jobId, record) in taskLogs)
+        {
+            var attempts = new List<PipelineExecutionRecord> { record };
+            attempts.AddRange(record.PreviousAttempts);
+            if (receiptJobIds.Contains(jobId))
+            {
+                receiptTasksWithLog.Add(jobId);
+                attempts = attempts.Select(WithoutCoreTokens).ToList();
+            }
+            merged.AddRange(attempts);
+        }
+        // A supporting-agent receipt row duplicates a step row the execution
+        // log already carries; drop it when that log was read.
+        merged.AddRange(receiptRecords.Where(record =>
+            !receiptTasksWithLog.Contains(record.JobId)
+            || record.Steps.All(step => step.Kind != StepKind.Aspect)));
+        return merged;
+    }
+
+    /// <summary>
+    /// Zero the core rows' tokens so a receipt-backed task counts its agent
+    /// runs from the log while the receipt alone prices them.
+    /// </summary>
+    private static PipelineExecutionRecord WithoutCoreTokens(PipelineExecutionRecord record)
+        => record with
+        {
+            Steps = record.Steps
+                .Select(step => step.Kind != StepKind.Core
+                    ? step
+                    : step with
+                    {
+                        InputTokens = 0,
+                        OutputTokens = 0,
+                        CacheReadTokens = 0,
+                        CacheCreationTokens = 0,
+                        EarlierRuns = step.EarlierRuns?
+                            .Select(run => run with
+                            {
+                                InputTokens = 0,
+                                OutputTokens = 0,
+                                CacheReadTokens = 0,
+                                CacheCreationTokens = 0,
+                            })
+                            .ToList(),
+                    })
+                .ToList(),
+        };
 
     public static int ResolveDays(int requested) =>
         requested <= 0 ? DefaultDays : Math.Min(requested, MaxDays);
@@ -352,6 +447,29 @@ public sealed class ProjectPipelineCostService
         }
     }
 
+    private static void CountRun(Dictionary<StepKind, Acc> map, StepKind kind)
+    {
+        if (!map.TryGetValue(kind, out var acc))
+        {
+            acc = new Acc();
+            map[kind] = acc;
+        }
+        acc.Runs++;
+    }
+
+    private static void CountStepRun(Dictionary<string, StepAcc> map, string stepId, StepKind kind, string jobId, string? model)
+    {
+        var key = string.IsNullOrWhiteSpace(stepId) ? KindKey(kind) : stepId.Trim();
+        if (!map.TryGetValue(key, out var acc))
+        {
+            acc = new StepAcc { Kind = kind };
+            map[key] = acc;
+        }
+        acc.Runs++;
+        if (!string.IsNullOrWhiteSpace(jobId)) acc.Tasks.Add(jobId);
+        if (!string.IsNullOrWhiteSpace(model)) acc.Models.Add(model.Trim());
+    }
+
     private static void AddStep(
         Dictionary<string, StepAcc> map,
         string stepId,
@@ -395,6 +513,7 @@ public sealed class ProjectPipelineCostService
 
     private sealed class Acc
     {
+        public int Runs;
         public long Tokens;
         public decimal Cost;
         public bool AnyUnknown;
@@ -405,6 +524,9 @@ public sealed class ProjectPipelineCostService
     private sealed class StepAcc
     {
         public StepKind Kind;
+        public int Runs;
+        public HashSet<string> Tasks { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> Models { get; } = new(StringComparer.OrdinalIgnoreCase);
         public long Tokens;
         public decimal Cost;
         public bool AnyUnknown;
@@ -465,7 +587,8 @@ public sealed record ProjectPipelineCostTimeline(
     int TaskCount,
     bool HasData,
     string FetchedAt,
-    ProjectTokenDataFreshness Freshness);
+    ProjectTokenDataFreshness Freshness,
+    DecisionCostRollup? DecisionCost = null);
 
 public sealed record PipelineDayCostCell(
     string Day,
@@ -490,7 +613,10 @@ public sealed record PipelineStepCostSeries(
     decimal TotalCostUsd,
     bool AnyModelUnknown,
     int UnpricedRuns,
-    IReadOnlyList<PipelinePricingGap> PricingGaps);
+    IReadOnlyList<PipelinePricingGap> PricingGaps,
+    int Runs = 0,
+    int Tasks = 0,
+    IReadOnlyList<string>? Models = null);
 
 /// <summary>
 /// One step-kind's series over the window. <see cref="Kind"/> is the
@@ -507,7 +633,8 @@ public sealed record PipelineKindSeries(
     bool AnyModelUnknown,
     int UnpricedRuns,
     IReadOnlyList<PipelinePricingGap> PricingGaps,
-    IReadOnlyList<PipelineKindDayCell> Cells);
+    IReadOnlyList<PipelineKindDayCell> Cells,
+    int Runs = 0);
 
 public sealed record PipelineKindDayCell(
     string Day,

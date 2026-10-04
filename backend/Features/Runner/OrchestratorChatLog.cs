@@ -52,7 +52,9 @@ public class OrchestratorChatLog
             // canonical record (the activity-log parser reads it). The bus
             // mirrors typed entries so future tooling can query without
             // reparsing prose. See docs/system/architecture/bus/agent-message-bus.md section 9.
-            try { _ = _bus?.EmitOrchestratorChatAsync(info, kind, text); }
+            // A decision executor that called a model holds its receipt in
+            // the ambient decision scope; the bus line names that model.
+            try { _ = _bus?.EmitOrchestratorChatAsync(info, kind, text, decidedBy: DecisionModelContext.Current); }
             catch (Exception ex) { _logger.LogDebug(ex, "Bus mirror of orchestrator chat failed for {JobId}", info?.Id); }
         }
         return ok;
