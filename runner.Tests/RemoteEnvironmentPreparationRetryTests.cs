@@ -5,6 +5,7 @@ namespace AgentRunner.Tests;
 
 public sealed class RemoteEnvironmentPreparationRetryTests
 {
+    // clock-independent: the timestamp is only a non-null process-start marker for a pure classification rule.
     [Theory]
     [InlineData(true, false, "claimed", null, false, true)]
     [InlineData(true, false, "launching", null, false, false)]
@@ -17,7 +18,7 @@ public sealed class RemoteEnvironmentPreparationRetryTests
     {
         Assert.Equal(expected, RemoteTaskRunner.ShouldReleasePrelaunchSalvageFailure(
             durable, reattach, phase, processId,
-            processStarted ? DateTime.UtcNow : null));
+            processStarted ? new DateTime(2026, 9, 27, 8, 0, 0, DateTimeKind.Utc) : null));
     }
 
     [Fact]

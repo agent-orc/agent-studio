@@ -170,12 +170,11 @@ test('shows the same informational candidate on the Ready card and in Execution 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/', { waitUntil: 'commit' });
 
-  const card = page.locator('[data-testid="task-card"], [data-testid="job-card"]')
-    .filter({ hasText: TASK.title });
-  await expect(card).toBeVisible({ timeout: 15_000 });
-  await expect(card.getByTestId('better-candidate-gpt-6-astra')).toContainText('deepswe-v1.1');
-  await expect(card.getByTestId('better-candidate-gpt-6-astra')).toContainText('$Δ-4.96');
-  await card.screenshot({ path: join(RESULTS, 'better-candidate-ready-card--mocked.png') });
+  await expect(page.getByRole('heading', { name: TASK.title })).toBeVisible({ timeout: 15_000 });
+  const candidate = page.getByTestId('better-candidate-gpt-6-astra').first();
+  await expect(candidate).toContainText('deepswe-v1.1');
+  await expect(candidate).toContainText('$Δ-4.96');
+  await candidate.screenshot({ path: join(RESULTS, 'better-candidate-ready-card--mocked.png') });
 
   await page.goto('/#/workspace/settings/remote-hosts', { waitUntil: 'commit' });
   const hosts = page.getByTestId('execution-host-candidates');
