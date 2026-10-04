@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.ExecutionPreparation;
 
@@ -85,40 +86,40 @@ public sealed class ProjectDefinitionProposalService
     internal static string BuildPrompt(ProjectDefinitionProposal proposal, string? failureReason)
     {
         var text = new StringBuilder();
-        text.AppendLine("# Repository execution definition proposal");
-        text.AppendLine();
-        text.AppendLine("Add the generated repository-owned preparation contract. Review it against the actual project before applying it. The product owns the technology caches; this card owns only project composition.");
-        text.AppendLine();
-        text.AppendLine("## Reasoning");
-        text.AppendLine();
-        text.AppendLine(proposal.Reasoning);
+        text.AppendLf("# Repository execution definition proposal");
+        text.AppendLf();
+        text.AppendLf("Add the generated repository-owned preparation contract. Review it against the actual project before applying it. The product owns the technology caches; this card owns only project composition.");
+        text.AppendLf();
+        text.AppendLf("## Reasoning");
+        text.AppendLf();
+        text.AppendLf(proposal.Reasoning);
         if (!string.IsNullOrWhiteSpace(failureReason))
         {
-            text.AppendLine();
-            text.AppendLine("The proposal was triggered by this preparation evidence:");
-            text.AppendLine();
-            text.AppendLine("> " + failureReason.Trim().Replace("\n", "\n> ", StringComparison.Ordinal));
+            text.AppendLf();
+            text.AppendLf("The proposal was triggered by this preparation evidence:");
+            text.AppendLf();
+            text.AppendLf("> " + failureReason.Trim().Replace("\n", "\n> ", StringComparison.Ordinal));
         }
-        text.AppendLine();
-        text.AppendLine("## Required files");
-        text.AppendLine();
-        text.AppendLine($"Write `{ProjectPreparationPaths.Definition}` with:");
-        text.AppendLine();
-        text.AppendLine("```yaml");
+        text.AppendLf();
+        text.AppendLf("## Required files");
+        text.AppendLf();
+        text.AppendLf($"Write `{ProjectPreparationPaths.Definition}` with:");
+        text.AppendLf();
+        text.AppendLf("```yaml");
         text.Append(proposal.Definition);
-        text.AppendLine("```");
-        text.AppendLine();
-        text.AppendLine($"Write executable `{ProjectPreparationPaths.Script}` with:");
-        text.AppendLine();
-        text.AppendLine("```sh");
+        text.AppendLf("```");
+        text.AppendLf();
+        text.AppendLf($"Write executable `{ProjectPreparationPaths.Script}` with:");
+        text.AppendLf();
+        text.AppendLf("```sh");
         text.Append(proposal.PrepareScript);
-        text.AppendLine("```");
-        text.AppendLine();
-        text.AppendLine("## Acceptance criteria");
-        text.AppendLine();
-        text.AppendLine("- The definition validates against `docs/app/schemas/project-execution.schema.json`.");
-        text.AppendLine("- The prepare script uses `npm ci`, `dotnet restore`, and Playwright only when the detected stack needs them.");
-        text.AppendLine("- A preparation run writes `preparation-manifest.json`; a second unchanged run reports cache hits.");
+        text.AppendLf("```");
+        text.AppendLf();
+        text.AppendLf("## Acceptance criteria");
+        text.AppendLf();
+        text.AppendLf("- The definition validates against `docs/app/schemas/project-execution.schema.json`.");
+        text.AppendLf("- The prepare script uses `npm ci`, `dotnet restore`, and Playwright only when the detected stack needs them.");
+        text.AppendLf("- A preparation run writes `preparation-manifest.json`; a second unchanged run reports cache hits.");
         return text.ToString();
     }
 }
@@ -171,45 +172,45 @@ public static class ProjectDefinitionGenerator
         }
 
         var yaml = new StringBuilder();
-        yaml.AppendLine("schemaVersion: 1");
-        yaml.AppendLine($"stack: [{string.Join(", ", stacks)}]");
-        yaml.AppendLine("toolVersions:");
-        if (File.Exists(Path.Combine(root, ".nvmrc"))) yaml.AppendLine("  node: .nvmrc");
-        if (File.Exists(Path.Combine(root, "global.json"))) yaml.AppendLine("  dotnetSdk: global.json");
-        yaml.AppendLine("commands:");
-        yaml.AppendLine($"  prepare: {ProjectPreparationPaths.Script}");
+        yaml.AppendLf("schemaVersion: 1");
+        yaml.AppendLf($"stack: [{string.Join(", ", stacks)}]");
+        yaml.AppendLf("toolVersions:");
+        if (File.Exists(Path.Combine(root, ".nvmrc"))) yaml.AppendLf("  node: .nvmrc");
+        if (File.Exists(Path.Combine(root, "global.json"))) yaml.AppendLf("  dotnetSdk: global.json");
+        yaml.AppendLf("commands:");
+        yaml.AppendLf($"  prepare: {ProjectPreparationPaths.Script}");
         AppendList(yaml, "build", build, 2);
         AppendList(yaml, "test", test, 2);
         AppendList(yaml, "lint", lint, 2);
-        yaml.AppendLine("testSuites:");
+        yaml.AppendLf("testSuites:");
         foreach (var suite in suites)
         {
-            yaml.AppendLine($"  - id: {suite.Id}");
-            yaml.AppendLine($"    category: {suite.Category}");
-            yaml.AppendLine($"    expectedDurationSeconds: {suite.Duration}");
-            yaml.AppendLine($"    command: {Quote(suite.Command)}");
+            yaml.AppendLf($"  - id: {suite.Id}");
+            yaml.AppendLf($"    category: {suite.Category}");
+            yaml.AppendLf($"    expectedDurationSeconds: {suite.Duration}");
+            yaml.AppendLf($"    command: {Quote(suite.Command)}");
         }
-        yaml.AppendLine("cachePaths:");
+        yaml.AppendLf("cachePaths:");
         foreach (var packageRoot in packageRoots)
-            yaml.AppendLine($"  - {(string.IsNullOrWhiteSpace(packageRoot) ? "node_modules" : packageRoot + "/node_modules")}");
-        yaml.AppendLine("capabilities: [linux]");
-        yaml.AppendLine("environment:");
-        yaml.AppendLine("  CI: \"true\"");
+            yaml.AppendLf($"  - {(string.IsNullOrWhiteSpace(packageRoot) ? "node_modules" : packageRoot + "/node_modules")}");
+        yaml.AppendLf("capabilities: [linux]");
+        yaml.AppendLf("environment:");
+        yaml.AppendLf("  CI: \"true\"");
 
         var script = new StringBuilder();
-        script.AppendLine("#!/bin/sh");
-        script.AppendLine("set -eu");
-        if (hasDotNet) script.AppendLine("dotnet restore");
+        script.AppendLf("#!/bin/sh");
+        script.AppendLf("set -eu");
+        if (hasDotNet) script.AppendLf("dotnet restore");
         foreach (var packageRoot in packageRoots)
         {
             var prefix = string.IsNullOrWhiteSpace(packageRoot) ? string.Empty : $" --prefix {Shell(packageRoot)}";
-            script.AppendLine($"npm{prefix} ci --prefer-offline");
+            script.AppendLf($"npm{prefix} ci --prefer-offline");
         }
         if (hasPlaywright)
         {
             var packageRoot = packageRoots.FirstOrDefault() ?? string.Empty;
             var prefix = string.IsNullOrWhiteSpace(packageRoot) ? string.Empty : $" --prefix {Shell(packageRoot)}";
-            script.AppendLine($"npm{prefix} exec -- playwright install chromium");
+            script.AppendLf($"npm{prefix} exec -- playwright install chromium");
         }
 
         var detected = string.Join(", ", stacks);
@@ -275,8 +276,8 @@ public static class ProjectDefinitionGenerator
     private static void AppendList(StringBuilder yaml, string key, IReadOnlyList<string> values, int indent)
     {
         var spaces = new string(' ', indent);
-        yaml.AppendLine($"{spaces}{key}:");
-        foreach (var value in values) yaml.AppendLine($"{spaces}  - {Quote(value)}");
+        yaml.AppendLf($"{spaces}{key}:");
+        foreach (var value in values) yaml.AppendLf($"{spaces}  - {Quote(value)}");
     }
 
     private static string Quote(string value) => "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -200,15 +201,15 @@ public static partial class VisualQaPolicy
     public static string BuildSteerPrompt(IReadOnlyList<VisualQaDefect> defects)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("Automatic visual QA found clear visible defects. Fix only the named defects, preserve the intended behavior, and rerun the relevant checks:");
+        builder.AppendLf("Automatic visual QA found clear visible defects. Fix only the named defects, preserve the intended behavior, and rerun the relevant checks:");
         foreach (var defect in defects.Take(MaxDefects))
         {
             builder.Append("- ").Append(defect.Category).Append(": ").Append(defect.Description);
             if (!string.IsNullOrWhiteSpace(defect.Screenshot))
                 builder.Append(" (evidence: ").Append(defect.Screenshot).Append(')');
-            builder.AppendLine();
+            builder.AppendLf();
         }
-        builder.AppendLine("This is the one automatic visual-QA steer round. End with [[TASK_DONE]] and leave the new iteration evidence in the existing results directory.");
+        builder.AppendLf("This is the one automatic visual-QA steer round. End with [[TASK_DONE]] and leave the new iteration evidence in the existing results directory.");
         return builder.ToString().TrimEnd();
     }
 

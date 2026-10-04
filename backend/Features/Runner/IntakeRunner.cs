@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -356,42 +357,42 @@ public sealed class IntakeRunner
     public static string RenderEnrichedContextMarkdown(IntakeEnrichmentManifest manifest)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("## Prompt enrichment");
-        sb.AppendLine();
-        sb.AppendLine("The task server appended these labelled project constraints before CLI spawn. They supplement the original prompt, which remains unchanged.");
-        sb.AppendLine();
-        sb.AppendLine($"- Selector: `{(string.IsNullOrWhiteSpace(manifest.Selector) ? EnrichmentSelector : manifest.Selector)}`");
-        sb.AppendLine($"- Detected areas: `{(manifest.Areas.Count == 0 ? "general" : string.Join("`, `", manifest.Areas))}`");
-        sb.AppendLine("- Audit artifact: `enrichment-report.json`");
+        sb.AppendLf("## Prompt enrichment");
+        sb.AppendLf();
+        sb.AppendLf("The task server appended these labelled project constraints before CLI spawn. They supplement the original prompt, which remains unchanged.");
+        sb.AppendLf();
+        sb.AppendLf($"- Selector: `{(string.IsNullOrWhiteSpace(manifest.Selector) ? EnrichmentSelector : manifest.Selector)}`");
+        sb.AppendLf($"- Detected areas: `{(manifest.Areas.Count == 0 ? "general" : string.Join("`, `", manifest.Areas))}`");
+        sb.AppendLf("- Audit artifact: `enrichment-report.json`");
         if (!string.IsNullOrWhiteSpace(manifest.StyleGuideSnapshotId))
-            sb.AppendLine($"- Style-guide snapshot: `{manifest.StyleGuideSnapshotId}`");
-        sb.AppendLine($"- Hard budget: `{(manifest.CharacterBudget > 0 ? manifest.CharacterBudget : MaxEnrichmentContextCharacters)} characters` / `~{(manifest.EstimatedTokenBudget > 0 ? manifest.EstimatedTokenBudget : MaxEnrichmentEstimatedTokens)} tokens` / `{(manifest.OptionalBlockLimit > 0 ? manifest.OptionalBlockLimit : MaxOptionalEnrichmentBlocks)} optional blocks`");
-        sb.AppendLine();
+            sb.AppendLf($"- Style-guide snapshot: `{manifest.StyleGuideSnapshotId}`");
+        sb.AppendLf($"- Hard budget: `{(manifest.CharacterBudget > 0 ? manifest.CharacterBudget : MaxEnrichmentContextCharacters)} characters` / `~{(manifest.EstimatedTokenBudget > 0 ? manifest.EstimatedTokenBudget : MaxEnrichmentEstimatedTokens)} tokens` / `{(manifest.OptionalBlockLimit > 0 ? manifest.OptionalBlockLimit : MaxOptionalEnrichmentBlocks)} optional blocks`");
+        sb.AppendLf();
 
         if (manifest.Constraints.Count == 0)
         {
-            sb.AppendLine("No task-specific constraints were selected.");
+            sb.AppendLf("No task-specific constraints were selected.");
         }
         else
         {
-            sb.AppendLine("### Injected constraints");
-            sb.AppendLine();
+            sb.AppendLf("### Injected constraints");
+            sb.AppendLf();
             foreach (var constraint in manifest.Constraints)
                 sb.Append(RenderConstraintMarkdown(constraint));
         }
 
         if (manifest.Omissions.Count > 0 || manifest.AdditionalOmissionCount > 0)
         {
-            sb.AppendLine();
-            sb.AppendLine("### Omitted relevant constraints");
-            sb.AppendLine();
-            sb.AppendLine("These constraints matched the task but were not injected because their sources were unavailable, their catalogue did not belong to this project, or the context budget was exhausted:");
+            sb.AppendLf();
+            sb.AppendLf("### Omitted relevant constraints");
+            sb.AppendLf();
+            sb.AppendLf("These constraints matched the task but were not injected because their sources were unavailable, their catalogue did not belong to this project, or the context budget was exhausted:");
             foreach (var omission in manifest.Omissions)
             {
-                sb.AppendLine($"- `{omission.Id}`: {omission.Reason}{(omission.MissingPath is null ? "" : $" ({omission.MissingPath})")} (~{omission.EstimatedCharacters} characters)");
+                sb.AppendLf($"- `{omission.Id}`: {omission.Reason}{(omission.MissingPath is null ? "" : $" ({omission.MissingPath})")} (~{omission.EstimatedCharacters} characters)");
             }
             if (manifest.AdditionalOmissionCount > 0)
-                sb.AppendLine($"- `{manifest.AdditionalOmissionCount}` additional omission(s) are summarized by count.");
+                sb.AppendLf($"- `{manifest.AdditionalOmissionCount}` additional omission(s) are summarized by count.");
         }
 
         return sb.ToString().TrimEnd();

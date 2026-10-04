@@ -20,6 +20,8 @@ namespace AgentStudio.Tests;
 [Trait("Category", "MachineBound")]
 public sealed class DeliveryClaimSweepScopeTests : IDisposable
 {
+    // clock-independent: the commit timestamp is only serialized task history.
+    private static readonly DateTimeOffset CommitAt = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
     private const string Project = "Fixture";
     private const string TaskId = "contained-without-record";
     private readonly string _root;
@@ -70,7 +72,7 @@ public sealed class DeliveryClaimSweepScopeTests : IDisposable
                     shortSha = sha[..8],
                     message = "feat: contained delivery",
                     filesChanged = 1,
-                    at = DateTimeOffset.UtcNow,
+                    at = CommitAt,
                     attribution = "automatic",
                     confidence = 1,
                 },

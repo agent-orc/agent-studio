@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Analysis;
 
@@ -608,15 +609,15 @@ public sealed class RecurringOutputPatternService
             return "(no recurring patterns detected in the window)";
 
         var sb = new StringBuilder();
-        sb.AppendLine("| Kind | Sample | Hits | Job ids |");
-        sb.AppendLine("|------|--------|-----:|---------|");
+        sb.AppendLf("| Kind | Sample | Hits | Job ids |");
+        sb.AppendLf("|------|--------|-----:|---------|");
         foreach (var g in scope.Groups)
         {
             sb.Append("| ").Append(g.Kind).Append(" | ");
             sb.Append(EscapeMd(g.SampleLabel)).Append(" | ");
             sb.Append(g.Members.Count).Append(" | ");
             sb.Append(string.Join(", ", g.Members.Select(m => "`" + m.JobId + "`")));
-            sb.AppendLine(" |");
+            sb.AppendLf(" |");
         }
         return sb.ToString().TrimEnd();
     }
@@ -638,7 +639,7 @@ public sealed class RecurringOutputPatternService
             if (!j.HasStatus) sb.Append(" no-status");
             if (!j.HasCommitMarker) sb.Append(" no-commit");
             if (!j.HasScreenshots) sb.Append(" no-screenshots");
-            sb.AppendLine();
+            sb.AppendLf();
         }
         return sb.ToString().TrimEnd();
     }
@@ -648,7 +649,7 @@ public sealed class RecurringOutputPatternService
         if (scope.RecentReports.Count == 0) return "(no prior analysis reports for this project)";
         var sb = new StringBuilder();
         foreach (var r in scope.RecentReports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 

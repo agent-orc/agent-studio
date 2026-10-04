@@ -1,4 +1,5 @@
 using System.Text;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -26,12 +27,12 @@ public static class RequirementAcceptanceScope
         if (normalized?.DeliveryMode == TaskAcceptanceDeliveryModes.BoundedSlice)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("Acceptance mode: bounded slice (structured card field, authoritative).");
-            sb.AppendLine($"Slice: {normalized.Slice}");
-            sb.AppendLine("Required criteria for this delivery:");
+            sb.AppendLf("Acceptance mode: bounded slice (structured card field, authoritative).");
+            sb.AppendLf($"Slice: {normalized.Slice}");
+            sb.AppendLf("Required criteria for this delivery:");
             foreach (var criterion in normalized.Criteria)
-                sb.AppendLine($"- {criterion}");
-            sb.AppendLine("Requirements outside this slice belong to the parent, Dossier, or later slice. Do not block this delivery because that broader wishlist remains open.");
+                sb.AppendLf($"- {criterion}");
+            sb.AppendLf("Requirements outside this slice belong to the parent, Dossier, or later slice. Do not block this delivery because that broader wishlist remains open.");
             return sb.ToString().TrimEnd();
         }
 

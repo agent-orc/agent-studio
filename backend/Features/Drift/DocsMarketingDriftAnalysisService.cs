@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Drift;
 
@@ -638,7 +639,7 @@ public sealed class DocsMarketingDriftAnalysisService
         if (refs.Count == 0) return "(none found)";
         var sb = new StringBuilder();
         foreach (var r in refs)
-            sb.Append("- `").Append(r.Path).Append("` - ").AppendLine(r.Label);
+            sb.Append("- `").Append(r.Path).Append("` - ").AppendLf(r.Label);
         return sb.ToString().TrimEnd();
     }
 
@@ -649,7 +650,7 @@ public sealed class DocsMarketingDriftAnalysisService
         foreach (var t in jobs)
         {
             sb.Append("- `").Append(t.Lane).Append('/').Append(t.JobId).Append("` - ")
-                .AppendLine(t.Title);
+                .AppendLf(t.Title);
         }
         return sb.ToString().TrimEnd();
     }
@@ -661,7 +662,7 @@ public sealed class DocsMarketingDriftAnalysisService
         foreach (var t in tasks)
         {
             sb.Append("- `").Append(t.Lane).Append('/').Append(t.JobId).Append("` - ")
-                .AppendLine(t.Title);
+                .AppendLf(t.Title);
         }
         return sb.ToString().TrimEnd();
     }
@@ -683,7 +684,7 @@ public sealed class DocsMarketingDriftAnalysisService
         if (marketing.Docs.Count == 0) return "(marketing repository has no Markdown files)";
         var sb = new StringBuilder();
         foreach (var d in marketing.Docs)
-            sb.Append("- `").Append(d.Path).AppendLine("`");
+            sb.Append("- `").Append(d.Path).AppendLf("`");
         return sb.ToString().TrimEnd();
     }
 
@@ -692,7 +693,7 @@ public sealed class DocsMarketingDriftAnalysisService
         if (reports.Count == 0) return "(none)";
         var sb = new StringBuilder();
         foreach (var r in reports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 
