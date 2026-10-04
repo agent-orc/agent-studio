@@ -88,8 +88,7 @@ public sealed class RunnerCapabilityProbeTests
             Role = "review",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "sh",
-            CliArgs = "",
+            ClaudeCliBin = "sh",
         };
 
         var everything = RunnerCapabilityProbe.ReviewRegistrationCapabilities(options, onPath: _ => true);
