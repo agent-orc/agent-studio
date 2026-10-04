@@ -5,6 +5,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: every quarantine policy evaluation receives its date explicitly.
+
 /// <summary>
 /// AGT-W57 D4 option A: quarantine with expiry and a card. Covers the expiry
 /// transition, the partition the gate applies, and the report projection.

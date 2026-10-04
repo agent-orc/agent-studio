@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using static AgentStudio.Tasks.TaskEndpointHelpers;
+using AgentStudio.Prompts;
 namespace AgentStudio.Tasks;
 
 /// <summary>
@@ -1309,16 +1310,16 @@ public static class TaskCrudEndpoints
     {
         if (route.ConsumerProjects.Count == 0 && route.DeploymentSteps.Count == 0) return prompt;
         var sb = new System.Text.StringBuilder(prompt?.TrimEnd() ?? "");
-        if (sb.Length > 0) sb.AppendLine().AppendLine();
-        sb.AppendLine("## Ownership and delivery acceptance criteria");
-        sb.AppendLine();
-        sb.AppendLine($"- Primary implementation: {route.PrimaryProject!.Id} ({route.PrimaryProject.ShortCode}), repository/package `{route.Repository ?? route.PackageOrModule ?? "unspecified"}`.");
+        if (sb.Length > 0) sb.AppendLf().AppendLf();
+        sb.AppendLf("## Ownership and delivery acceptance criteria");
+        sb.AppendLf();
+        sb.AppendLf($"- Primary implementation: {route.PrimaryProject!.Id} ({route.PrimaryProject.ShortCode}), repository/package `{route.Repository ?? route.PackageOrModule ?? "unspecified"}`.");
         if (route.ConsumerProjects.Count > 0)
-            sb.AppendLine($"- Integrate in consumer project(s): {string.Join(", ", route.ConsumerProjects.Select(p => $"{p.Id} ({p.ShortCode})"))}.");
-        foreach (var step in route.DeploymentSteps) sb.AppendLine($"- {step.Trim().TrimEnd('.')}.");
+            sb.AppendLf($"- Integrate in consumer project(s): {string.Join(", ", route.ConsumerProjects.Select(p => $"{p.Id} ({p.ShortCode})"))}.");
+        foreach (var step in route.DeploymentSteps) sb.AppendLf($"- {step.Trim().TrimEnd('.')}.");
         if (route.Environments.Count > 0)
-            sb.AppendLine($"- Verify integration in: {string.Join(", ", route.Environments)}.");
-        sb.AppendLine($"- Routing evidence: {string.Join("; ", route.Evidence)} (mapping {route.MappingId ?? "local"} v{route.MappingVersion?.ToString() ?? "1"}).");
+            sb.AppendLf($"- Verify integration in: {string.Join(", ", route.Environments)}.");
+        sb.AppendLf($"- Routing evidence: {string.Join("; ", route.Evidence)} (mapping {route.MappingId ?? "local"} v{route.MappingVersion?.ToString() ?? "1"}).");
         return sb.ToString();
     }
 

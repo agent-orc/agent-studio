@@ -444,9 +444,11 @@ async function saveTreePressureShot(page: Page, name: string): Promise<void> {
 async function expectedCommitChainMetas(page: Page): Promise<string[]> {
   return page.evaluate((commits) =>
     commits.map((commit) => {
+      // formatCompactDateTime always renders en-US; the browser default locale
+      // follows the host OS and would expect `08.06. 10:00` on a de-DE machine.
       const date = new Date(commit.at);
-      const day = date.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
-      const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const day = date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+      const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       return `${commit.filesChanged}f · ${day} ${time}`;
     }),
     COMMITS

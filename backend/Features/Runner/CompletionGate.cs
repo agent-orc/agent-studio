@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -334,23 +335,23 @@ public static class CompletionGate
     public static string BuildFollowUp(IReadOnlyList<string> findings, IReadOnlyList<string>? priorCommits = null)
     {
         var sb = new StringBuilder();
-        sb.AppendLine(RunOutcomePolicy.DiffOnlySteeringRule);
-        sb.AppendLine();
-        sb.AppendLine("The Orchestrator Completion-Gate found unfinished work in the previous run's own result/status evidence.");
-        sb.AppendLine("Resolve these items before doing anything else, then end with [[TASK_DONE]] only when the task is actually complete.");
-        sb.AppendLine();
+        sb.AppendLf(RunOutcomePolicy.DiffOnlySteeringRule);
+        sb.AppendLf();
+        sb.AppendLf("The Orchestrator Completion-Gate found unfinished work in the previous run's own result/status evidence.");
+        sb.AppendLf("Resolve these items before doing anything else, then end with [[TASK_DONE]] only when the task is actually complete.");
+        sb.AppendLf();
         foreach (var finding in findings.Take(MaxFindings))
         {
-            sb.AppendLine($"- [ ] {finding}");
+            sb.AppendLf($"- [ ] {finding}");
         }
         var commitsBlock = RunOutcomePolicy.RenderPriorCommitsBlock(priorCommits);
         if (commitsBlock.Length > 0)
         {
             sb.Append(commitsBlock);
-            sb.AppendLine();
+            sb.AppendLf();
         }
-        sb.AppendLine();
-        sb.AppendLine("If any item cannot be completed, stop and end with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason, instead of claiming done.");
+        sb.AppendLf();
+        sb.AppendLf("If any item cannot be completed, stop and end with [[TASK_BLOCKED:missing-dependency-xyz]], replacing the example reason with the actual short reason, instead of claiming done.");
         return sb.ToString();
     }
 
