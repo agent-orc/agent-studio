@@ -115,8 +115,11 @@ empty receipt collection is valid: a complete empty project returns zero,
 while a bus-only project returns its bus-derived amount. Both leave
 `latestReceiptAt` null.
 
-`dailyBudgetUsd` and
-`weeklyBudgetUsd` are null until a real workspace USD budget owner exists.
+The read contract permits optional `cost.dailyBudgetUsd` and
+`cost.weeklyBudgetUsd` fields. The client reads either field when present to
+evaluate a strict daily or weekly ledger-cost overrun; equality does not warn.
+The current projection may omit them or return null until a real workspace
+USD budget owner exists. An absent budget never implies a financial limit.
 The `ledgerEndpointTemplate` points to the existing project token report API.
 
 The cost reader consumes `BusBackedProjectTokenUsageReader.LoadSnapshot`, which

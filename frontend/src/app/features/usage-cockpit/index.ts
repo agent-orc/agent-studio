@@ -1,7 +1,29 @@
-/** Header usage cockpit public API (HUC-S2). Cycle 9h / ADR-0034. */
+/** Header usage cockpit public API (HUC-S2, HUC-S5). Cycle 9h / ADR-0034. */
 export { UsageCliChipComponent } from './components/usage-cli-chip/usage-cli-chip';
 export { UsageCostChipComponent } from './components/usage-cost-chip/usage-cost-chip';
+export { UsageCockpitHostComponent } from './components/usage-cockpit-host/usage-cockpit-host';
 export { UsageSlotChipComponent } from './components/usage-slot-chip/usage-slot-chip';
+export { UsageAlarmStatusComponent } from './components/usage-alarm-status/usage-alarm-status';
+export { UsageAlarmStateService } from './state/usage-alarm-state.service';
+export {
+  alarmsForSource,
+  EMPTY_USAGE_ALARM_STATE,
+  hiddenProviderAlarms,
+  isTrustedQuotaSample,
+  observeCli,
+  observeCost,
+  observeSnapshot,
+  QUOTA_WARNING_ABOVE_PCT,
+  reduceUsageAlarms,
+} from './usage-alarm.policy';
+export type {
+  UsageAlarm,
+  UsageAlarmKind,
+  UsageAlarmSeverity,
+  UsageAlarmState,
+  UsageAlarmStep,
+  UsageSourceObservation,
+} from './usage-alarm.policy';
 export {
   buildCliChipView,
   buildCostChipView,
@@ -15,6 +37,7 @@ export {
   NOT_AVAILABLE,
 } from './usage-chip.util';
 export type {
+  UsageChipAlarm,
   UsageChipState,
   UsageCliChipView,
   UsageCostChipView,
