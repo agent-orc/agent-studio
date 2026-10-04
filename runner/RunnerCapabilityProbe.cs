@@ -765,6 +765,7 @@ public sealed class ProviderAuthProbe
     private readonly HashSet<string> _refreshInFlight =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _activeRuns = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _successfulWorkVersions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SemaphoreSlim> _singleFlights = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (DateTimeOffset Window, int Used)> _realBudgets = new(StringComparer.Ordinal);
     private ProviderAuthLauncher? _realLauncher;
@@ -955,12 +956,14 @@ public sealed class ProviderAuthProbe
         ProviderStatusIncidentAdapter? incidents;
         Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? comparisons;
         string hostId;
+        long successfulWorkVersion;
         lock (_sync)
         {
             launcher = _realLauncher;
             incidents = _incidentAdapter;
             comparisons = _comparisonAdapter;
             hostId = _hostId;
+            successfulWorkVersion = _successfulWorkVersions.GetValueOrDefault(cliBinary);
         }
         if (launcher is null || status.Status == Limited
             || (!statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
@@ -975,8 +978,13 @@ public sealed class ProviderAuthProbe
             if (now - budget.Window >= TimeSpan.FromDays(1)) budget = (now, 0);
             if (budget.Used >= DailyRealRequestBudget)
             {
-                var expired = ExpireStaleHealthy(status, now);
-                if (expired != status && _observed.TryGetValue(cliBinary, out var existing))
+                if (!_observed.TryGetValue(cliBinary, out var existing)) return status;
+                if (existing.Status.CredentialGeneration != status.CredentialGeneration
+                    || existing.Status.EffectiveSource != status.EffectiveSource
+                    || _successfulWorkVersions.GetValueOrDefault(cliBinary) != successfulWorkVersion)
+                    return existing.Status;
+                var expired = ExpireStaleHealthy(existing.Status, now);
+                if (expired != existing.Status)
                     _observed[cliBinary] = existing with { Status = expired };
                 return expired;
             }
@@ -1047,10 +1055,17 @@ public sealed class ProviderAuthProbe
         };
         lock (_sync)
         {
-            if (_observed.TryGetValue(cliBinary, out var existing)
-                && existing.Status.CredentialGeneration == status.CredentialGeneration
-                && existing.Status.EffectiveSource == status.EffectiveSource)
+            if (_observed.TryGetValue(cliBinary, out var existing))
+            {
+                // A completed run is newer evidence than a request started before it.
+                // Use a sequence because fake or stepped clocks can give both events
+                // the same timestamp.
+                if (existing.Status.CredentialGeneration != status.CredentialGeneration
+                    || existing.Status.EffectiveSource != status.EffectiveSource
+                    || _successfulWorkVersions.GetValueOrDefault(cliBinary) != successfulWorkVersion)
+                    return existing.Status;
                 _observed[cliBinary] = existing with { Status = updated };
+            }
         }
         return updated;
     }
@@ -1268,6 +1283,7 @@ public sealed class ProviderAuthProbe
                         ProbeDegraded = ready ? false : last.Status.ProbeDegraded,
                         Detail = ready ? "Same-generation work confirmed provider access." : last.Status.Detail,
                     } };
+                    _successfulWorkVersions[cliBinary] = _successfulWorkVersions.GetValueOrDefault(cliBinary) + 1;
                 }
             }
             // Current() still owns expired-limit and TTL re-probes.

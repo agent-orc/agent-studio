@@ -42,8 +42,12 @@ context with a 30-second deadline, one in-flight check per provider, a daily
 check. When that ceiling passes and the request budget is exhausted, the
 outcome becomes `indeterminate`; the original real-success time is retained.
 Successful work counts only for the same credential generation. A
-degraded local status probe keeps the original last-good timestamp and marks
-the evidence indeterminate after ten minutes. Binary presence alone is
+same-generation run that succeeds while a probe is in flight is newer evidence:
+the pending probe cannot replace that healthy outcome or its success time with
+an older failure. A probe for a replaced source or generation also cannot
+replace the current observation. A degraded local status probe keeps the
+original last-good timestamp and marks the evidence indeterminate after ten
+minutes. Binary presence alone is
 unverified. Legacy claim admission is unchanged in this slice; fleet reactions
 and operator items remain owned by the later admission slice.
 

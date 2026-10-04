@@ -368,6 +368,41 @@ public sealed class ProviderProbeEvidenceTests
     }
 
     [Fact]
+    public async Task In_flight_probe_cannot_replace_newer_successful_work_on_the_same_generation()
+    {
+        var now = At;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest(async (_, _, _) =>
+        {
+            entered.TrySetResult();
+            return await release.Task;
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+
+        var inFlight = probe.RefreshAsync("codex", CancellationToken.None);
+        await entered.Task;
+        now = now.AddMinutes(1);
+        var work = probe.RecordProcessResult("codex", new ProcessResult(0, "OK", ""),
+            credentialGeneration: "g1");
+        Assert.Equal(ProviderProbeOutcome.Healthy, work.Outcome);
+        Assert.Equal(now, work.LastRealSuccessAt);
+
+        now = now.AddMinutes(1);
+        release.SetResult(new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        var completed = await inFlight;
+        Assert.Equal(ProviderProbeOutcome.Healthy, completed.Outcome);
+        Assert.Equal(work.LastRealSuccessAt, completed.LastRealSuccessAt);
+        Assert.Equal(ProviderProbeOutcome.Healthy, probe.Current("codex").Outcome);
+        Assert.Null(probe.Current("codex").EvidenceExcerpt);
+    }
+
+    [Fact]
     public async Task Concurrent_refreshes_keep_one_real_request_in_flight()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

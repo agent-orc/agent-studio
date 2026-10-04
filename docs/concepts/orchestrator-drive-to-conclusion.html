@@ -2764,7 +2764,7 @@
           <td><code>AGT-2968</code><br><span class="small">provider-401-incident-evidence</span></td>
           <td>The operator reported Codex 401 responses across runs and rejected Codex claims. The provider incident was found later through the status page; the incident ID and recovery-call transcript were not supplied.</td>
           <td>A 401 by itself could not distinguish a bad host credential from a provider incident. The prior probe path did not perform a real request after a degraded local status 401, and no independent-host comparison reached live classification.</td>
-          <td>The historical card terminal is unknown. AGT-2972 now classifies a fresh applicable official incident or registry-backed independent-host comparison as <code>provider_incident</code>; absent corroboration remains <code>indeterminate</code>. Fleet admission and recovery remain the later I3 slice.</td>
+          <td>The historical card terminal is unknown. AGT-2972 now classifies a fresh applicable official incident or registry-backed independent-host comparison as <code>provider_incident</code>; absent corroboration remains <code>indeterminate</code>. A pending probe cannot supersede newer same-generation successful-work evidence. Fleet admission and recovery remain the later I3 slice.</td>
         </tr>
       </tbody>
     </table>
