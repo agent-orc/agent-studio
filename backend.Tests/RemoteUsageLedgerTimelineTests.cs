@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -320,8 +321,8 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
     {
         var before = store.Query(_workspace, Project, new AgentMessageQuery(Kind: "token-usage")).Count;
         await bridge.EmitTokenUsageAsync(Project, jobId, participantId, "token", usage, createdAt: ts);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < deadline)
+        var wait = Stopwatch.StartNew();
+        while (wait.Elapsed < TimeSpan.FromSeconds(5))
         {
             if (store.Query(_workspace, Project, new AgentMessageQuery(Kind: "token-usage")).Count > before) return;
             await Task.Delay(25);

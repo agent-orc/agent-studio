@@ -153,7 +153,9 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
                 claim.Work!.WorkId, claim.Work.ClaimToken, RunnerId,
                 true, "remote reply", claim.Work.Model, usage, null,
                 new ChatExecutionContext(
-                    "remote", "host-02", "/runner/repo", "main", "abc", "ready", DateTime.UtcNow),
+                    "remote", "host-02", "/runner/repo", "main", "abc", "ready",
+                    // clock-independent: context timestamp is provenance data, never compared with now.
+                    new DateTime(2026, 9, 28, 12, 0, 0, DateTimeKind.Utc)),
                 CliType: claim.Work.CliType)));
             return await send;
         }

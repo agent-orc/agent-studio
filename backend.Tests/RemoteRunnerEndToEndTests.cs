@@ -854,7 +854,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 [("Token Economy", teWatchPath)],
                 windowHours: 24,
                 bucketMinutes: 60,
-                nowUtc: DateTime.UtcNow.AddHours(1));
+                nowUtc: receiptCall.GetProperty("Ts").GetDateTime().AddHours(1));
         var timelineProject = Assert.Single(timeline.Projects);
         Assert.Equal(1500, timelineProject.Total);
         Assert.Equal(400, timelineProject.Input);
