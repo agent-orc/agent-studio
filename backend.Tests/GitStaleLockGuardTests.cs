@@ -415,7 +415,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Fact]
-    public void Probe_matches_a_windows_git_command_line_naming_the_repository()
+    public void Probe_matches_a_windows_git_command_line_and_keeps_unresolved_processes()
     {
         var inventory = GitProcessLockOwnerProbe.ParseWindowsInventory(
             "[{\"ProcessId\":4242,\"Name\":\"git.exe\",\"CommandLine\":\"git.exe -C C:\\\\Projects\\\\agent-taskboard-workspace add -A\"}," +
@@ -424,7 +424,9 @@ public sealed class GitStaleLockGuardTests : IDisposable
 
         Assert.Equal(2, inventory.Count);
         Assert.True(GitProcessLockOwnerProbe.IsTiedTo(inventory[0], paths));
-        Assert.False(GitProcessLockOwnerProbe.IsTiedTo(inventory[1], paths));
+        var scope = new GitLockScope(paths[0], paths[0] + "/.git", paths[0] + "/.git");
+        Assert.Equal(GitLockOwnership.Unknown,
+            new GitProcessLockOwnerProbe(() => [], () => [inventory[1]]).Probe(scope));
     }
 
     [Fact]
