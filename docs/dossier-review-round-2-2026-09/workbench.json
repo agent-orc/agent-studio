@@ -13,15 +13,16 @@
   "implementationTasks": [
     {
       "title": "Carry round 2 into AGT-W53",
-      "promptMarkdown": "Extend docs/operations/dossier-review-2026-09/index.html with a section headed “Round 2, 2026-09-24”. Transfer the full 62-row matrix, counts, delta, source register, and date caveat from docs/dossier-review-round-2-2026-09/index.html. Keep the complete round-1 text as history. Verify all 62 keys and links, and distinguish the 25 September cluster review timestamps from the requested section label. Update only AGT-W53 documentation and its descriptor if required by the publication contract."
+      "promptMarkdown": "Extend docs/operations/dossier-review-2026-09/index.html with a section headed \u201CRound 2, 2026-09-24\u201D. Transfer the full 62-row matrix, counts, delta, source register, and date caveat from docs/dossier-review-round-2-2026-09/index.html. Keep the complete round-1 text as history. Verify all 62 keys and links, and distinguish the 25 September cluster review timestamps from the requested section label. Update only AGT-W53 documentation and its descriptor if required by the publication contract."
     },
     {
       "title": "Rebuild the AGT-W14 current map",
-      "promptMarkdown": "In docs/operations/nordstern/index.html, rebuild the §5 current-Dossier map from the reviewed current and partially-superseded entries listed in docs/dossier-review-round-2-2026-09/index.html. Link the twenty Dossiers other than W14 after the AGT-W18 and AGT-W55 review repairs. Remove W50, W12 and unreviewed W64 from that dated map. Check every relative target exists, none is archived, and the map matches the review metadata. Preserve the historical §6 links and the other North star content."
+      "promptMarkdown": "In docs/operations/nordstern/index.html, rebuild the \u00A75 current-Dossier map from the reviewed current and partially-superseded entries listed in docs/dossier-review-round-2-2026-09/index.html. Link the twenty Dossiers other than W14 after the AGT-W18 and AGT-W55 review repairs. Remove W50, W12 and unreviewed W64 from that dated map. Check every relative target exists, none is archived, and the map matches the review metadata. Preserve the historical \u00A76 links and the other North star content."
     },
     {
       "title": "Repair review metadata and verify catalogue",
       "promptMarkdown": "Use PUT /api/projects/PROJ-002/workbenches/{id}/review with X-Client-Id and reviewedBy=AGT-2900 to restore AGT-W18 as partially-superseded by AGT-W59 and AGT-W57, review AGT-W55 as current, and reclassify AGT-W11 as historical with no supersededBy target because AGT-W46 is archived. Preserve reviewHistory through the API. Then GET /api/projects/PROJ-002/workbenches and inspect lifecycleState, not only descriptor status. The 3 October read-only response had 16 review-requested entries, five unchanged after cluster review: AGT-W14, W41, W56, W58 and W60. Diagnose and process those through the documented Dossier lifecycle and operator review lane; do not treat relevance-review metadata as a substitute for operator decision acceptance. Require no review-requested September Dossier except ones changed after the round before closing this acceptance check. Verify every supersededBy key exists and is not archived, every archived descriptor has statusReason, and docs/operations/README.md does not claim a stale current set. Report API response and corrected counts; do not start the dev backend outside the approved Playwright fixture."
     }
-  ]
+  ],
+  "key": "AGT-W72"
 }
