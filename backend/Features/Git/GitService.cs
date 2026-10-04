@@ -3406,9 +3406,9 @@ public class GitService
     /// <paramref name="approvedSha"/> pins the exact object that is pushed. The
     /// caller passes the merge result its gate approved, so a merge that landed
     /// on the branch after the approval can never ride along to origin; the
-    /// branch tip is only used when no approval SHA is known (the durable restart
-    /// backstop). An approved SHA that is missing or not contained in the
-    /// integration line is a fail-closed <c>missing-sha</c> / <c>sha-not-on-branch</c>.
+    /// branch tip is only used by legacy callers without an approval SHA; the
+    /// durable restart backstop supplies the recorded approval. An approved SHA
+    /// that is missing or not contained in the integration line is a fail-closed <c>missing-sha</c> / <c>sha-not-on-branch</c>.
     /// </para>
     /// <para>
     /// The integration line is the Studio lane (<see cref="IntegrationLaneRef"/>)

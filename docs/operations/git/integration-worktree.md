@@ -77,7 +77,10 @@ against the returned path.
 - **Publishing the result.** Only the integration push worker publishes
   `develop`: it pushes the exact SHA the gate approved from the lane to
   `origin/develop` (`merge-into-develop push enqueued ... approved=<sha>`, then
-  `status=pushed`). See [When the developer checkout moves](#when-the-developer-checkout-moves).
+  `status=pushed`). The restart backstop reads that SHA from the durable passed
+  merge step and passes it to the same push worker path. If the step lacks an
+  approved SHA, it warns and requires integration revalidation; it never
+  pushes the lane tip. See [When the developer checkout moves](#when-the-developer-checkout-moves).
 - **Shared object store.** The worktree shares the repository's `.git`, so
   branches, tags, the lane, and the resulting commit graph are the same objects
   the developer checkout sees. The origin push
