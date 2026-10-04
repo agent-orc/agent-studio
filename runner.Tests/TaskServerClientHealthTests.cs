@@ -8,6 +8,34 @@ namespace AgentRunner.Tests;
 public class TaskServerClientHealthTests
 {
     [Fact]
+    public async Task Provider_comparison_reads_only_safe_runner_scoped_metadata()
+    {
+        var at = new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero);
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new ProviderProbeComparisonResponseDto(
+                "local-credential", new ProviderProbeComparisonEvidenceDto(
+                    "codex", "codex-exec", "minimal-text-v1", "unauthorized",
+                    at.AddMinutes(-3), at, true, true,
+                    "other-host", "other-credential", true)))),
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, "runner-v1", usesDurableTaskServer: true,
+            options: CapacityOptions(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))));
+
+        var result = await client.ReadProviderComparisonAsync(
+            new ProviderComparisonQuery("codex", "codex-exec", "minimal-text-v1",
+                "unauthorized", "native-cli-store", "g1"), CancellationToken.None);
+
+        Assert.Equal("local-credential", result.CredentialIdentity);
+        Assert.Equal("other-host", result.Comparison?.HostId);
+        Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/runners/runner-v1/provider-comparison?provider=codex&generation=g1&requestShape=minimal-text-v1&effectiveSource=native-cli-store&failureSignature=unauthorized",
+            handler.Requests[0].PathAndQuery);
+    }
+
+    [Fact]
     public async Task V1_completion_artifact_and_finalization_send_exact_authority_then_release_locally()
     {
         var now = DateTime.UtcNow;
