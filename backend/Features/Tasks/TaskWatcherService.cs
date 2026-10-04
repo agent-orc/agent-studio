@@ -372,10 +372,10 @@ public class TaskWatcherService : BackgroundService
     /// writers invalidate synchronously, while genuinely external edits are
     /// covered by the safety TTL.
     ///
-    /// A task.json-only <c>lastProgressAt</c> heartbeat is also excluded after
-    /// its first observation. That field is crash-recovery metadata and is not
-    /// projected into <see cref="TaskInfo"/>; treating every heartbeat as a
-    /// board mutation caused a full workspace scan feedback loop.
+    /// Task-local <c>lastProgressAt</c> and <c>contextUsage</c> telemetry is
+    /// excluded after the first observation. Neither field is projected into
+    /// <see cref="TaskInfo"/>; treating each activity flush as a board mutation
+    /// caused a full workspace scan feedback loop.
     /// </summary>
     internal bool ShouldNotifyIndexChange(
         string watchPath,
@@ -426,7 +426,8 @@ public class TaskWatcherService : BackgroundService
             var signature = new StringBuilder();
             foreach (var property in document.RootElement.EnumerateObject())
             {
-                if (string.Equals(property.Name, "lastProgressAt", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(property.Name, "lastProgressAt", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "contextUsage", StringComparison.OrdinalIgnoreCase))
                     continue;
                 signature.Append(property.Name.Length).Append(':').Append(property.Name)
                     .Append('=').Append(property.Value.GetRawText()).Append(';');

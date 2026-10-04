@@ -545,13 +545,11 @@ public sealed class TaskIntegrationStatusService
 
         var primaryRoot = _git.ResolveRepoRootForWatchPath(job.WatchPath);
         string? primaryOrigin = null;
-        if (!string.IsNullOrWhiteSpace(primaryRoot))
+        if (!string.IsNullOrWhiteSpace(primaryRoot)
+            && !origins.TryGetValue(primaryRoot, out primaryOrigin))
         {
-            if (!origins.TryGetValue(primaryRoot, out primaryOrigin))
-            {
-                primaryOrigin = _readOriginUrl(primaryRoot);
-                origins[primaryRoot] = primaryOrigin;
-            }
+            primaryOrigin = _readOriginUrl(primaryRoot);
+            origins[primaryRoot] = primaryOrigin;
         }
         IReadOnlyList<ProjectRecord> registeredProjects = [];
         try

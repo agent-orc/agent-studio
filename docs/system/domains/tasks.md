@@ -1248,6 +1248,10 @@ their authoritative checks; display state never grants permission to mutate.
   board read that spans several repositories groups tasks by watch path and
   takes each task's facts only from its own repository's snapshot; a fact a
   snapshot carries for a task outside its group is never merged.
+- **Origin reads are bounded per integration lookup.** Delivered cards in one
+  lookup share one effective origin read per checkout root, including a missing
+  origin. The next lookup reads Git configuration again, so origin changes and
+  external includes remain visible without a persistent TTL cache.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;
@@ -1330,6 +1334,20 @@ strong `ETag` plus `Cache-Control: no-cache`, and both answer a matching
 was measured at roughly 1.9 MB, polled every two seconds; on an unchanged board
 every byte of it is a byte the client already holds.
 
+- **Concurrent board builds are bounded.** Both routes share one
+  `BoardReadConcurrencyGate`, held from the first scanner read through the
+  completion of JSON serialization. Waiting requests do not build snapshots;
+  `RequestAborted` removes disconnected clients from the queue before they
+  start work. This prevents overlapping full-board projections from multiplying
+  the heap under load. Responses are still built from current authorized inputs
+  when their turn starts; the gate does not retain or share response bodies.
+- **Dependency review activity never waits for authority persistence.** The
+  board reads one immutable snapshot of the current review state and lease end
+  per task. It is initialized from durable authority and published only after
+  a successful authority write; an in-flight or failed write leaves the last
+  committed snapshot visible. Lease expiry is still evaluated at read time.
+  This display projection does not change authoritative pickup, fencing, or
+  mutation checks.
 - **The 304 skips the work, not just the transfer.** The validator is computed
   from cache reads over the already scanned task set. Enrichment (token,
   verdict, dependency, Git and live-status lookups), the per-lane sort, and
