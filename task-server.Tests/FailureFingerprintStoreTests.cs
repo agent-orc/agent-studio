@@ -11,9 +11,10 @@ public sealed class FailureFingerprintStoreTests
     public async Task Events_are_append_only_idempotent_and_queryable_across_cards()
     {
         using var temp = new TempDirectory();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
         var store = new TaskServerStore(
             Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            TimeProvider.System);
+            clock);
         await store.InitializeAsync();
 
         var first = new RecordFailureFingerprintRequest("test:guard", "AGT-1", "host-a", "review", "report-1");
@@ -34,7 +35,7 @@ public sealed class FailureFingerprintStoreTests
 
         var reopened = new TaskServerStore(
             Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
-            TimeProvider.System);
+            clock);
         await reopened.InitializeAsync();
         Assert.Equal(2, Assert.Single(await reopened.ReadFailureFingerprintsAsync("test:guard")).Count);
     }
@@ -43,7 +44,7 @@ public sealed class FailureFingerprintStoreTests
     public async Task History_window_excludes_old_events_without_rewriting_them()
     {
         using var temp = new TempDirectory();
-        var clock = new ManualClock(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 25, 12, 0, 0, TimeSpan.Zero));
         var store = new TaskServerStore(
             Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
         await store.InitializeAsync();
@@ -60,7 +61,7 @@ public sealed class FailureFingerprintStoreTests
         Assert.Equal(2, Assert.Single(await store.ReadFailureFingerprintsAsync("test:guard")).Count);
     }
 
-    private sealed class ManualClock(DateTimeOffset now) : TimeProvider
+    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = now;
         public override DateTimeOffset GetUtcNow() => Now;

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
 using Xunit.Abstractions;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -621,15 +622,7 @@ public class WikiPerformanceCacheTests : IDisposable
     }
 
     private static string FindRepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        while (current != null)
-        {
-            if (File.Exists(Path.Combine(current, "agent-taskboard.sln"))) return current;
-            current = Path.GetDirectoryName(current);
-        }
-        throw new InvalidOperationException("agent-taskboard.sln not found above test base directory.");
-    }
+        => RepositoryRoot.Find();
 
     private static void RunGit(string cwd, string args)
     {

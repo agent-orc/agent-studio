@@ -1,4 +1,5 @@
 using System.Text;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Pipeline;
 
@@ -295,32 +296,32 @@ public sealed class TaskSpawnerPostStepRunner
     private static string BuildInlinePrompt(Dictionary<string, string?> v)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("You evaluate whether a just-completed change should spawn a follow-up task in another project.");
-        sb.AppendLine();
-        sb.AppendLine("Relevance question: " + (v["relevance_question"] ?? ""));
-        sb.AppendLine($"Source: {v["source_project"]} {v["source_key"]} - {v["source_title"]}");
-        sb.AppendLine("Target project: " + (v["target_project"] ?? ""));
-        sb.AppendLine();
-        sb.AppendLine("## Task prompt");
-        sb.AppendLine(v["task_body"] ?? "");
-        sb.AppendLine();
-        sb.AppendLine("## Status summary");
-        sb.AppendLine(v["status_summary"] ?? "");
-        sb.AppendLine();
-        sb.AppendLine("## Change summary");
-        sb.AppendLine(v["diff_summary"] ?? "");
-        sb.AppendLine();
-        sb.AppendLine("## Results inventory");
-        sb.AppendLine(v["results_inventory"] ?? "");
-        sb.AppendLine();
-        sb.AppendLine("Be conservative: only judge relevant when a follow-up in the target project is clearly warranted.");
-        sb.AppendLine("Reply with, on its own line:");
-        sb.AppendLine("[[TASK_SPAWN: relevant=<yes|no>; reason=<one short sentence>]]");
-        sb.AppendLine("If relevant=yes, also add:");
-        sb.AppendLine("### SPAWN_TITLE");
-        sb.AppendLine("<one-line title for the follow-up task>");
-        sb.AppendLine("### SPAWN_PROMPT");
-        sb.AppendLine("<a complete, self-contained task prompt for the target project's agent>");
+        sb.AppendLf("You evaluate whether a just-completed change should spawn a follow-up task in another project.");
+        sb.AppendLf();
+        sb.AppendLf("Relevance question: " + (v["relevance_question"] ?? ""));
+        sb.AppendLf($"Source: {v["source_project"]} {v["source_key"]} - {v["source_title"]}");
+        sb.AppendLf("Target project: " + (v["target_project"] ?? ""));
+        sb.AppendLf();
+        sb.AppendLf("## Task prompt");
+        sb.AppendLf(v["task_body"] ?? "");
+        sb.AppendLf();
+        sb.AppendLf("## Status summary");
+        sb.AppendLf(v["status_summary"] ?? "");
+        sb.AppendLf();
+        sb.AppendLf("## Change summary");
+        sb.AppendLf(v["diff_summary"] ?? "");
+        sb.AppendLf();
+        sb.AppendLf("## Results inventory");
+        sb.AppendLf(v["results_inventory"] ?? "");
+        sb.AppendLf();
+        sb.AppendLf("Be conservative: only judge relevant when a follow-up in the target project is clearly warranted.");
+        sb.AppendLf("Reply with, on its own line:");
+        sb.AppendLf("[[TASK_SPAWN: relevant=<yes|no>; reason=<one short sentence>]]");
+        sb.AppendLf("If relevant=yes, also add:");
+        sb.AppendLf("### SPAWN_TITLE");
+        sb.AppendLf("<one-line title for the follow-up task>");
+        sb.AppendLf("### SPAWN_PROMPT");
+        sb.AppendLf("<a complete, self-contained task prompt for the target project's agent>");
         return sb.ToString();
     }
 
@@ -334,14 +335,14 @@ public sealed class TaskSpawnerPostStepRunner
         sb.Append("> Auto-spawned from ").Append(ctx.SourceProjectName).Append(' ').Append(sourceKey);
         if (!string.IsNullOrWhiteSpace(ctx.Source.Title))
             sb.Append(": \"").Append(ctx.Source.Title!.Trim()).Append('"');
-        sb.AppendLine();
+        sb.AppendLf();
         var commits = RenderCommits(ctx.Source);
         if (!string.IsNullOrWhiteSpace(commits) && commits != "(no commits recorded)")
-            sb.Append("> Source commits: ").AppendLine(commits.Replace("\n", "; "));
+            sb.Append("> Source commits: ").AppendLf(commits.Replace("\n", "; "));
         if (!string.IsNullOrWhiteSpace(decision.Reason))
-            sb.Append("> Relevance: ").AppendLine(decision.Reason!.Trim());
-        sb.AppendLine("> Created by the task-spawner pipeline step; this card references its source task.");
-        sb.AppendLine();
+            sb.Append("> Relevance: ").AppendLf(decision.Reason!.Trim());
+        sb.AppendLf("> Created by the task-spawner pipeline step; this card references its source task.");
+        sb.AppendLf();
         sb.Append(decision.Prompt!.Trim());
         return sb.ToString();
     }

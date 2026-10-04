@@ -260,19 +260,25 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PipelineHealthAlert> _currentAlerts =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
+
+    /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
+    internal const string ReviewClaimStallIdentity = "review-claims:" + TaskStates.AutoReview;
 
     public PipelineHealthService(
         PipelineHealthDetector detector,
         TaskScannerService scanner,
         TimelineLog timeline,
         OrchestratorLog orchestratorLog,
-        ILogger<PipelineHealthService> logger)
+        ILogger<PipelineHealthService> logger,
+        AutoReviewQueueStagnationWatchdog? reviewQueue = null)
     {
         _detector = detector;
         _scanner = scanner;
         _timeline = timeline;
         _orchestratorLog = orchestratorLog;
         _logger = logger;
+        _reviewQueue = reviewQueue;
     }
 
     public void GateAcquired(PipelineGateContext gate) => _detector.GateAcquired(gate);
@@ -307,7 +313,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             .ToArray();
         var unhealthy = activeGate?.IsHanging == true
             || fingerprint?.IsSystemic == true
-            || lanes.Any(lane => lane.IsStalled);
+            || lanes.Any(lane => lane.IsStalled)
+            || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
             now,
@@ -354,8 +361,58 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             }
         }
 
+        EvaluateReviewClaims(nowUtc);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// AGT-2987: the file-based lane drain above counts cards leaving Auto
+    /// Review, which other exits (supersede, human moves) can satisfy while no
+    /// ReviewAttempt is ever claimed. This raises the same alarm kind from the
+    /// claim-side verdict of <see cref="AutoReviewQueueStagnationWatchdog"/>,
+    /// naming the oldest pending attempt and, when known, why it is unclaimable.
+    /// </summary>
+    private void EvaluateReviewClaims(DateTime nowUtc)
+    {
+        if (_reviewQueue is null) return;
+        var queue = _reviewQueue.Refresh(nowUtc);
+        if (!queue.ReviewClaimStagnant)
+        {
+            foreach (var key in _currentAlerts.Keys.Where(key =>
+                         key.EndsWith("\0" + ReviewClaimStallIdentity, StringComparison.OrdinalIgnoreCase)))
+                _currentAlerts.TryRemove(key, out _);
+            return;
+        }
+
+        var owner = queue.OldestPendingTaskKey is null
+            ? null
+            : _scanner.ScanAllAutomationJobsWithArchive().FirstOrDefault(task =>
+                string.Equals(task.Id, queue.OldestPendingTaskKey, StringComparison.OrdinalIgnoreCase));
+        var project = owner?.ProjectName ?? "review-plane";
+
+        var lastClaim = queue.LastReviewClaimAt is { } claimedAt ? claimedAt.ToString("O") : "never";
+        var waitingSince = Later(queue.OldestPendingAttemptCreatedAt, queue.LastReviewClaimAt);
+        var waitingMinutes = waitingSince is null
+            ? queue.StagnantThresholdMinutes
+            : Math.Max(0, (int)(nowUtc - waitingSince.Value).TotalMinutes);
+        var cause = queue.UnclaimableReason is null
+            ? "No executor has reported it unclaimable; check that a review executor is registered and polling."
+            : $"Unclaimable: {queue.UnclaimableReason}, missing "
+              + $"{string.Join(", ", queue.UnclaimableMissingCapabilities ?? [])}.";
+        var alert = new PipelineHealthAlert(
+            "lane-drain-stalled",
+            "high",
+            $"{TaskStates.AutoReview} has {queue.PendingReviewAttempts} pending review attempt(s) "
+            + $"and no claim for {waitingMinutes} min",
+            $"Oldest pending attempt {queue.OldestPendingAttemptId} ({queue.OldestPendingTaskKey}) was created "
+            + $"{queue.OldestPendingAttemptCreatedAt:O}. Last review claim: {lastClaim}. {cause}",
+            nowUtc,
+            queue.OldestPendingTaskKey);
+        EmitAlert(project, owner?.WatchPath, alert, ReviewClaimStallIdentity);
+    }
+
+    private static DateTime? Later(DateTime? a, DateTime? b)
+        => a is null ? b : b is null ? a : a > b ? a : b;
 
     internal IReadOnlyList<PipelineLaneDrainHealth> BuildLaneDrainHealth(
         string project,
@@ -414,7 +471,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
 
     private void EmitAlert(
         string project,
-        string watchPath,
+        string? watchPath,
         PipelineHealthAlert alert,
         string identity)
     {
@@ -427,20 +484,24 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             return;
         }
         _lastAlertAt[key] = now;
-        _orchestratorLog.Append(watchPath, new OrchestratorLogEntry
+        if (watchPath is not null)
         {
-            Ts = now,
-            Kind = OrchestratorLogKinds.Alert,
-            Topic = OrchestratorLogTopics.PipelineHealth,
-            Summary = alert.Summary,
-            Reasoning = alert.Detail,
-            JobId = alert.JobId,
-        });
+            _orchestratorLog.Append(watchPath, new OrchestratorLogEntry
+            {
+                Ts = now,
+                Kind = OrchestratorLogKinds.Alert,
+                Topic = OrchestratorLogTopics.PipelineHealth,
+                Summary = alert.Summary,
+                Reasoning = alert.Detail,
+                JobId = alert.JobId,
+            });
+        }
         _logger.LogWarning(
-            "pipeline_health_alarm kind={Kind} project={Project} job_id={JobId} summary={Summary}",
+            "pipeline_health_alarm kind={Kind} project={Project} job_id={JobId} summary={Summary} detail={Detail}",
             alert.Kind,
             project,
             alert.JobId ?? "n/a",
-            alert.Summary);
+            alert.Summary,
+            alert.Detail);
     }
 }
