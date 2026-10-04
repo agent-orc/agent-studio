@@ -12,6 +12,8 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class TaskListGitProjectionCacheTests
 {
+    private static readonly DateTimeOffset SnapshotTime = DateTimeOffset.UnixEpoch;
+
     [Fact]
     public void ReadCacheOnly_BeforeAnySnapshot_ReturnsEmptyAndSpawnsNoGit()
     {
@@ -78,12 +80,12 @@ public sealed class TaskListGitProjectionCacheTests
         {
             Signatures = new Dictionary<string, string> { ["same"] = TaskGitSignature.For(taskA) },
             SubjectVersions = new Dictionary<string, long> { ["same"] = 0 },
-        }, DateTimeOffset.UtcNow);
+        }, SnapshotTime);
         cache.SetSnapshot(taskB.WatchPath, ProjectionFor(taskB, "task/b") with
         {
             Signatures = new Dictionary<string, string> { ["same"] = TaskGitSignature.For(taskB) },
             SubjectVersions = new Dictionary<string, long> { ["same"] = 0 },
-        }, DateTimeOffset.UtcNow);
+        }, SnapshotTime);
 
         var merged = cache.ReadCacheOnly([taskA, taskB]);
 
@@ -115,12 +117,12 @@ public sealed class TaskListGitProjectionCacheTests
         var older = ProjectionFor(taskA, "task/a-older");
         ((Dictionary<string, TaskMergeSignal>)older.Merge)[taskB.TaskKey] =
             new TaskMergeSignal { Branch = "task/b-from-watch-a" };
-        cache.SetSnapshot(taskA.WatchPath, older, DateTimeOffset.UtcNow);
+        cache.SetSnapshot(taskA.WatchPath, older, SnapshotTime);
         cache.SetSnapshot(taskB.WatchPath, ProjectionFor(taskB, "task/b-current") with
         {
             Signatures = new Dictionary<string, string> { [taskB.TaskKey] = TaskGitSignature.For(taskB) },
             SubjectVersions = new Dictionary<string, long> { [taskB.TaskKey] = 1 },
-        }, DateTimeOffset.UtcNow);
+        }, SnapshotTime);
 
         foreach (var order in new[] { new[] { taskA, taskB }, new[] { taskB, taskA } })
         {
@@ -178,7 +180,7 @@ public sealed class TaskListGitProjectionCacheTests
                 [task.TaskKey] = TaskGitSignature.For(task),
             },
         };
-        var computedAt = DateTimeOffset.UtcNow;
+        var computedAt = SnapshotTime;
         cache.SetSnapshot(task.WatchPath, projection, computedAt);
 
         using var telemetry = GitProcessTelemetry.BeginRequest("task/detail/git", NullLogger.Instance);
@@ -230,7 +232,7 @@ public sealed class TaskListGitProjectionCacheTests
             [task.TaskKey] = new() { Branch = "task/first" },
         };
         cache.SetSnapshot(task.WatchPath, ProjectionFor(task, "unused") with { Merge = source },
-            DateTimeOffset.UtcNow);
+            SnapshotTime);
         source[task.TaskKey] = new TaskMergeSignal { Branch = "task/second" };
         Assert.Equal("task/first", cache.ReadCacheOnly([task]).Merge[task.TaskKey].Branch);
     }
@@ -253,7 +255,7 @@ public sealed class TaskListGitProjectionCacheTests
             {
                 Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
                 SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = cache.SubjectVersion(folder) },
-            }, DateTimeOffset.UtcNow);
+            }, SnapshotTime);
             Assert.Equal("ready", cache.ReadTask(task).State);
             File.WriteAllText(subject, "new");
             File.SetLastWriteTimeUtc(subject, originalTime);
@@ -285,7 +287,7 @@ public sealed class TaskListGitProjectionCacheTests
         {
             Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
             SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = 0 },
-        }, DateTimeOffset.UtcNow);
+        }, SnapshotTime);
         Assert.Equal("ready", cache.ReadTask(task).State);
 
         readFailure = denied ? new UnauthorizedAccessException() : new IOException();
@@ -436,7 +438,7 @@ public sealed class TaskListGitProjectionCacheTests
             {
                 Signatures = new Dictionary<string, string> { [task.TaskKey] = TaskGitSignature.For(task) },
                 SubjectVersions = new Dictionary<string, long> { [task.TaskKey] = 0 },
-            }, DateTimeOffset.UtcNow);
+            }, SnapshotTime);
         }
     }
 

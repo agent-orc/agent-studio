@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Text.Json;
 
 using AgentStudio.Pipeline;
@@ -32,6 +33,8 @@ namespace AgentStudio.Tests;
 public sealed class TaskIntegrationStatusServiceTests : IDisposable
 {
     private readonly string _tempDir;
+    private static FakeTimeProvider NewClock() => new(
+        new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero));
 
     public TaskIntegrationStatusServiceTests()
     {
@@ -108,7 +111,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         var reads = new List<string>();
         var service = new TaskIntegrationStatusService(git, settings, log,
-            NullLogger<TaskIntegrationStatusService>.Instance, TimeProvider.System,
+            NullLogger<TaskIntegrationStatusService>.Instance, NewClock(),
             readOriginUrl: root =>
             {
                 reads.Add(root);
@@ -1460,7 +1463,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
             git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance,
-            TimeProvider.System, readOriginUrl: readOriginUrl);
+            NewClock(), readOriginUrl: readOriginUrl);
     }
 
     private (TaskIntegrationStatusService Service, string Project, PipelineExecutionLog Log)

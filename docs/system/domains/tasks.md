@@ -1233,8 +1233,10 @@ their authoritative checks; display state never grants permission to mutate.
   discards the result and queues one rerun. A failed run retains the last
   successful snapshot, marked stale with a bounded reason. Git children have
   deadlines and are killed on timeout; failed runs back off with at most five
-  automatic retries. A repository computation runs at most four Git children
-  at once. One Git config command per index run supplies both the effective
+  automatic retries. Later safety sweeps retry a failed repository even when
+  its inputs are unchanged, and only a successful publication clears stale
+  state. A repository computation runs at most four Git children at once.
+  One Git config command per index run supplies both the effective
   config signature and primary origin. The 45 s sweep checks effective config
   separately. `TaskIntegrationStatusService` also memoizes origin once per
   repository in authoritative action lookups, using Git's own config semantics.

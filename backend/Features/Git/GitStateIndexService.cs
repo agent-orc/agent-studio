@@ -375,7 +375,8 @@ public sealed class GitStateIndexService : BackgroundService
                     RequestRefreshCore(state, "sweep");
                     continue;
                 }
-                if (refs == state.LastSweepSignature && config == state.LastSweepConfig
+                if (Volatile.Read(ref state.LastErrorReason) is null
+                    && refs == state.LastSweepSignature && config == state.LastSweepConfig
                     && _settingsVersion(state.ProjectName) == state.LastSettingsVersion
                     && taskSignature == state.LastPublishedInput?.Tasks) continue;
                 state.LastSweepSignature = refs;
@@ -452,7 +453,8 @@ public sealed class GitStateIndexService : BackgroundService
                 var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
                 using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
                 var input = CaptureInput(state, tasksForRepo, effectiveConfig.Signature);
-                if ((trigger is "task-event" or "fs-watch" or "sweep")
+                if (Volatile.Read(ref state.LastErrorReason) is null
+                    && (trigger is "task-event" or "fs-watch" or "sweep")
                     && input == state.LastPublishedInput)
                     return;
                 if (trigger is "task-event" or "fs-watch" or "sweep")

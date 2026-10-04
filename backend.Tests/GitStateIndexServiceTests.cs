@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Diagnostics;
 
 using Xunit;
@@ -79,6 +80,9 @@ public sealed class GitStateIndexServiceTests : IDisposable
         Debounce: TimeSpan.FromMilliseconds(20),
         SweepInterval: TimeSpan.FromSeconds(5),
         SlowRunWarnMs: TimeSpan.FromSeconds(5));
+
+    private static FakeTimeProvider NewClock() => new(
+        new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero));
 
     /// <summary>A fake per-repository build delegate that counts and can block on demand.</summary>
     private sealed class FakeBuilder
@@ -511,7 +515,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var cache = new TaskListGitProjectionCache();
         var builder = new FakeBuilder();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
-            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), TimeProvider.System);
+            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -613,7 +617,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         }
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             Build, _ => { }, NullLogger.Instance,
-            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, TimeProvider.System);
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -645,7 +649,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         };
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, NullLogger.Instance,
-            FastOptions(), TimeProvider.System);
+            FastOptions(), NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -680,7 +684,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         };
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, NullLogger.Instance,
-            FastOptions(), TimeProvider.System);
+            FastOptions(), NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -709,7 +713,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var builder = new FakeBuilder();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), builder.BuildAsync, _ => { }, logger,
-            FastOptions() with { MaxRetries = 1 }, TimeProvider.System);
+            FastOptions() with { MaxRetries = 1 }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -746,7 +750,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             _ => { Interlocked.Increment(ref builds); return Task.FromResult(projection); },
             _ => { }, NullLogger.Instance,
-            FastOptions() with { MaxRetries = 0 }, TimeProvider.System);
+            FastOptions() with { MaxRetries = 0 }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -797,7 +801,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var cache = new TaskListGitProjectionCache();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             _ => Task.FromResult(TaskListGitProjection.Empty), _ => { }, NullLogger.Instance,
-            FastOptions() with { MaxRetries = 0 }, TimeProvider.System);
+            FastOptions() with { MaxRetries = 0 }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -832,7 +836,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var cache = new TaskListGitProjectionCache();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             builder.BuildAsync, _ => { }, NullLogger.Instance,
-            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, TimeProvider.System);
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100) }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -875,7 +879,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
             new TaskListGitProjectionCache(), _ => Task.FromResult(TaskListGitProjection.Empty),
             _ => { }, logger,
             FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100), MaxRetries = 0 },
-            TimeProvider.System);
+            NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -968,13 +972,53 @@ public sealed class GitStateIndexServiceTests : IDisposable
         }
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner),
             new TaskListGitProjectionCache(), Fail, _ => { }, NullLogger.Instance,
-            FastOptions() with { MaxRetries = 2 }, TimeProvider.System);
+            FastOptions() with { MaxRetries = 2 }, NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
             await WaitUntilAsync(() => Volatile.Read(ref calls) == 3);
             await Task.Delay(250);
             Assert.Equal(3, Volatile.Read(ref calls));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task SafetySweep_RecoversFailedSnapshotWhenRepositoryInputIsUnchanged()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var scanner = BuildScanner("proj", jobsPath, Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo"));
+        var cache = new TaskListGitProjectionCache();
+        var clock = NewClock();
+        var calls = 0;
+        var fail = 0;
+        Task<TaskListGitProjection> Build(IReadOnlyCollection<TaskInfo> _)
+        {
+            Interlocked.Increment(ref calls);
+            if (Volatile.Read(ref fail) == 1) throw new IOException("transient Git failure");
+            return Task.FromResult(TaskListGitProjection.Empty);
+        }
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            Build, _ => { }, NullLogger.Instance,
+            FastOptions() with { SweepInterval = TimeSpan.FromMilliseconds(100), MaxRetries = 0 },
+            clock);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().SingleOrDefault()?.GitStateAt is not null);
+            var original = service.GetRepositoryStatuses().Single().GitStateAt;
+            Volatile.Write(ref fail, 1);
+            service.RequestRefresh("proj", "transient-failure");
+            await WaitUntilAsync(() => service.GetRepositoryStatuses().Single().ReasonCode == "refresh-failed");
+            Assert.Equal(original, service.GetRepositoryStatuses().Single().GitStateAt);
+            Assert.True(cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
+
+            Volatile.Write(ref fail, 0);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await WaitUntilAsync(() => Volatile.Read(ref calls) >= 3
+                && service.GetRepositoryStatuses().Single().ReasonCode is null
+                && !cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
+            Assert.True(service.GetRepositoryStatuses().Single().GitStateAt > original);
         }
         finally { await service.StopAsync(CancellationToken.None); }
     }
@@ -1004,7 +1048,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
             Hang, _ => { }, NullLogger.Instance,
             FastOptions() with { RunDeadline = TimeSpan.FromMilliseconds(300), MaxRetries = 0 },
-            TimeProvider.System);
+            NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {
