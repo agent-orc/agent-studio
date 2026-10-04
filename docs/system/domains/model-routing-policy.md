@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-25
+Version: 2026-10-04
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -22,11 +22,11 @@ should explain when a pin is below the policy floor.
 
 | Route | Default use | Do not use for | Evidence and rationale |
 |---|---|---|---|
-| `gpt-5.6-luna` / `medium` | Trivial, mechanical, locally specified changes with a small expected diff and an obvious verification path. Examples: remove one control, rename a local label, update a narrow fixture. | Unclear bugs, cross-subsystem behavior, public contracts, migrations, security, concurrency, or distributed state. | No Luna cohort existed in the 2026-07-23 benchmark. This is therefore a cost-saving hypothesis, not a validated quality claim. The empirical uncertainty adds points and keeps borderline work on Terra. |
-| `gpt-5.6-sol` / `low` (or `claude-sonnet-5` / `low`) | Added 2026-09-13 (AGT-2808). The economy floor for feature (and any coding/concept/planning/research) work: the weakest route economy mode may ever select for that class. Not a normal-mode default; only reached by an economy-mode downgrade. | Anything below the floor - economy mode must never fall through to a Haiku-class model for feature/bug work. Haiku-class models are only used by the separate pipeline-support/classification path (`ModelFamilyResolver`, not this registry). | No dedicated historical cohort; introduced to close the Haiku-fallback gap found in AGT-2793/AGT-2807 (economy mode landing Claude-CLI feature cards on `claude-haiku-4-5` via the old positional catalogue fallback). |
-| `gpt-5.6-terra` / `medium` | Standard features, content, and reversible UI or service changes inside one subsystem. This is the default sweet spot when requirements and test seams are clear. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Keep Terra as the working default, but promote on substantive reissue until controlled data validates it. |
-| `gpt-5.6-sol` / `medium` | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
-| `gpt-5.6-sol` / `xhigh` | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
+| `gpt-6-luna` / `medium` (`luna-medium`) | Trivial, mechanical, locally specified changes with a small expected diff and an obvious verification path. Examples: remove one control, rename a local label, update a narrow fixture. | Unclear bugs, cross-subsystem behavior, public contracts, migrations, security, concurrency, or distributed state. | No Luna cohort existed in the 2026-07-23 benchmark. This is therefore a cost-saving hypothesis, not a validated quality claim. The empirical uncertainty adds points and keeps borderline work on Terra. |
+| `gpt-6-sol` / `low` (`sonnet-low`; or `claude-sonnet-5` / `low`) | Added 2026-09-13 (AGT-2808). The economy floor for feature (and any coding/concept/planning/research) work: the weakest route economy mode may ever select for that class. Not a normal-mode default; only reached by an economy-mode downgrade. | Anything below the floor - economy mode must never fall through to a Haiku-class model for feature/bug work. Haiku-class models are only used by the separate pipeline-support/classification path (`ModelFamilyResolver`, not this registry). | No dedicated historical cohort; introduced to close the Haiku-fallback gap found in AGT-2793/AGT-2807 (economy mode landing Claude-CLI feature cards on `claude-haiku-4-5` via the old positional catalogue fallback). |
+| `gpt-5.6-terra` / `medium` (`terra-medium`) | Standard features, content, and reversible UI or service changes inside one subsystem. This is the default sweet spot when requirements and test seams are clear. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Keep Terra as the working default, but promote on substantive reissue until controlled data validates it. |
+| `gpt-6-sol` / `medium` (`sol-medium`) | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
+| `gpt-6-sol` / `xhigh` (`sol-xhigh`) | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
 
 `high` and `ultra` are supported reasoning levels but are not default core-task
 routes in this policy. Add a default tier only after controlled comparisons
@@ -39,22 +39,80 @@ in the benchmark below. Whether it becomes a tier or the default is a separate
 operator decision; until then it is selectable only as an explicit pin, and an
 explicit pin is not evidence that it clears any correctness floor.
 
-Claude Opus 5.5, GPT-6 Sol, and GPT-6 Luna are also known, untiered models.
-They can be explicitly pinned when the installed CLI offers them. This
-catalogue update does not change any routing tier, vendor override, or default:
-Claude Opus 5 remains the Claude default and Codex still derives its default
-from live `gpt-5.6-sol` discovery. The new models have no local outcome cohort
-that justifies a tier change. Claude Opus 5.5 uses Studio's `high` default
-effort, while [Anthropic's API default is `medium`](https://platform.claude.com/docs/en/models/opus-5-5/overview).
-Its CLI floor is claude-code `2.1.281`. GPT-6 Sol and GPT-6 Luna require
-codex-cli `0.155.0`; their reasoning ladders and defaults come from live CLI
-discovery. Sol ran successfully on a ChatGPT account with that CLI version.
-Luna appeared in discovery, but execution on that account is unverified.
+### GPT-6 re-base (policy 2026-10-04, AGT-2903)
+
+The operator moved new fleet cards to GPT-6 Sol on 2026-09-25. Policy
+`2026-10-04` records that decision and mirrors the Token Economy GPT-6 ladder
+revision shipped in TokenEconomy `0.3.6` (TE-57 routes, TE-59 catalogue
+refresh, TE policy `2026-09-25`):
+
+- `luna-medium` routes to `gpt-6-luna`; `sonnet-low`, `sol-medium` and
+  `sol-xhigh` route to `gpt-6-sol`. `terra-medium` stays on `gpt-5.6-terra`
+  because Token Economy retained Terra as the 21-50 tier. The tier count is
+  unchanged, so no ADR was needed.
+- Feature and bug cards default to `sol-medium` (intake score 51). This is the
+  operator decision, not a cohort result: at dated prices GPT-6 Sol
+  (USD 2 / 0.20 / 10 per MTok input / cached / output) is cheaper on output than
+  GPT-5.6 Terra (2 / 0.20 / 12). The Anthropic route for Sol/medium is the same
+  Sonnet 5/medium route Terra used, so Claude cards are unaffected. The
+  correctness floor for bugs (`terra-medium`) and the feature economy floor
+  (`sonnet-low`) are unchanged. Chores stay on `luna-medium`.
+- Economy mode still lowers one tier, so a feature or bug card lands on
+  Terra/medium. At dated prices that saves nothing over GPT-6 Sol/medium, so
+  `estimatedSavingsPercent` for Terra is now 0. Revisit this when Token Economy
+  decides Terra's future.
+- `estimatedSavingsPercent` is measured against GPT-6 Sol/medium: Luna 95 (GPT-6
+  Luna lists at USD 0.10 / 0.01 / 0.50), Sol/low 50 (fewer reasoning tokens,
+  same price; still a hypothesis).
+- Everything GPT-6 is still **provisional**. TE-57 ran 32 medium fixture
+  attempts without returned model identity (GPT-6 Luna passed 5/8 with one
+  output-contract failure), and xhigh, max and ultra have no local cohort. The
+  routes rest on dated prices, vendor claims (OpenAI states GPT-6 Sol makes
+  about half the mistakes of GPT-5.6 Sol) and the operator decision. Promote on
+  substantive reissue as usual.
+- When the installed codex-cli does not offer the GPT-6 tier model, the
+  recommendation uses the declared provider-rejection sibling (`gpt-6-sol` to
+  `gpt-5.6-sol`, `gpt-6-luna` to `gpt-5.6-luna`) instead of the positional
+  catalogue fallback. Those siblings also inherit the GPT-6 tier when
+  correctness floors are checked, so an existing `gpt-5.6-sol xhigh` pin still
+  clears Sol/xhigh.
+- `gpt-6-astra` is still untiered: two `access_programs.cyber` HTTP 400s in
+  about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
+  (listed by live discovery, released 2026-09-29) is not in TokenEconomy
+  `0.3.6` and has no registry entry yet.
+
+**Codex default.** `ModelMetadataRegistry.DefaultForCli(codex)` prefers
+`gpt-6-sol` when live discovery offers it, then `gpt-5.6-sol`, then the static
+`gpt-5.5` baseline. The CLI's own flagged default does not override this
+order. Its default level comes from discovery (`medium`).
+
+**Ladders and unoffered levels.** Live codex-cli discovery on 2026-10-04
+reports `gpt-6-sol` as `low, medium, high, xhigh, max, ultra` and `gpt-6-luna`
+as `low, medium, high, xhigh, max` (both default `medium`; `minimal` is
+rejected). No per-model mapping is hard-coded. A pinned level the discovered
+ladder does not offer runs at the highest offered rung below it (for example
+`ultra` on `gpt-6-luna` runs at `max`; `ultra` on a ladder ending at `xhigh`
+runs at `xhigh`). An unknown level, or one below the ladder, still lands on the
+model default. The picker and the card's model badge state the mapping
+visibly ("Pinned ultra is not offered by gpt-6-luna; runs at max."). The badge
+shows it as an `ultra→max` chip.
+
+**Picker and prices.** The picker lists the newest generation first, so GPT-6
+models lead and GPT-5.6 entries sit under "Older models". Each row shows the
+current input/output list price from the TokenEconomy cost API
+(`POST /api/token-pricing/calculate`). Studio holds no rates. Token cost for
+GPT-6 runs comes from the same dated TokenEconomy price snapshots. Cached
+input is priced once at the cache-read rate (AGT-2882).
+
+GPT-6 Sol and GPT-6 Luna require codex-cli `0.155.0`. Claude Opus 5.5 uses
+Studio's `high` default effort, while [Anthropic's API default is `medium`](https://platform.claude.com/docs/en/models/opus-5-5/overview).
+Its CLI floor is claude-code `2.1.281`. Claude Sonnet 5.5 is `unsupported` in
+TokenEconomy `0.3.6` until claude-code `2.1.284`.
 The [Sol model page](https://developers.openai.com/api/docs/models/gpt-6-sol)
 and [Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
 each list a 1,050,000 token context window.
 The picker disables a missing model with a version reason when an older CLI is
-installed. Pricing and aliases come from TokenEconomy `0.3.5`, using
+installed. Pricing and aliases come from TokenEconomy `0.3.6`, using
 [Anthropic's pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 and [OpenAI's pricing](https://developers.openai.com/api/docs/pricing).
 
@@ -87,11 +145,11 @@ For core task execution, map the total to the ladder:
 
 | Score | Route |
 |---:|---|
-| `0-20` | Luna / medium |
+| `0-20` | Luna / medium (GPT-6 Luna) |
 | `21-24` | Sol / low (`sonnet-low`, economy floor only - see below) |
 | `25-50` | Terra / medium |
-| `51-69` | Sol / medium |
-| `70-100` | Sol / xhigh |
+| `51-69` | Sol / medium (GPT-6 Sol) |
+| `70-100` | Sol / xhigh (GPT-6 Sol) |
 
 Luna/high is a role exception for bounded pipeline decisions with structured
 evidence and a parseable output contract. It is not the bottom rung of the
@@ -132,8 +190,8 @@ qualification starts from this convention:
 | Task type | Intake score | Normal tier | Economy mode | Correctness floor | Economy floor |
 |---|---:|---|---|---|---|
 | Chore | 15 | Luna / medium | Luna / medium | None | None |
-| Feature | 25 | Terra / medium | Sol / low (`sonnet-low`) | None | `sonnet-low` |
-| Bug | 49 | Terra / medium | Terra / medium | Terra / medium | None (the correctness floor already exceeds `sonnet-low`) |
+| Feature | 51 | Sol / medium | Terra / medium | None | `sonnet-low` |
+| Bug | 51 | Sol / medium | Terra / medium | Terra / medium | None (the correctness floor already exceeds `sonnet-low`) |
 
 This is an intake fallback, not permission to ignore better task evidence.
 Security boundaries, distributed authority, credible data-loss paths, and
@@ -144,7 +202,7 @@ floors and economy mode cannot lower them.
 
 Added 2026-09-13 (AGT-2808): economy mode's one-step downgrade can never drop
 feature (or any coding/concept/planning/research) work below `sonnet-low`
-(Sonnet 5, or `gpt-5.6-sol`, at `low`). Before this floor existed, the
+(Sonnet 5, or `gpt-6-sol`, at `low`). Before this floor existed, the
 registry's per-vendor model id fallback for an unrecognized catalogue (e.g. a
 Claude CLI, since this registry's tiers are keyed to `gpt-5.6-*` ids) picked a
 model by position in the catalogue's ranked list; on a Claude catalogue this
@@ -238,7 +296,7 @@ the task, improve its evidence, or ask for a human decision.
 ### Benchmark candidate notes
 
 Agent Studio consumes the Token Economy `ModelBenchmarkMatrix.FindCandidates`
-query from package version 0.3.5. The benchmark library recommends alternatives;
+query from package version 0.3.6. The benchmark library recommends alternatives;
 Agent Studio keeps the selected route unchanged. A candidate can therefore
 inform an operator decision but cannot bypass the score ladder, correctness
 floors, explicit pins, or quota admission.
@@ -286,7 +344,7 @@ Available/Deprecated flags when discovery has not run yet:
 | `claude-sonnet` | claude-sonnet-5, claude-sonnet-4-6, claude-sonnet-4-5 | claude-sonnet-5 |
 | `claude-opus` | claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-opus-4-5 | claude-opus-5 |
 | `gpt-mini` compatibility id | gpt-5.6-luna | gpt-5.6-luna |
-| `gpt-flagship` | detected gpt-5.6-\* else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
+| `gpt-flagship` | detected gpt-6-sol, else gpt-5.6-sol, else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
 
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
 default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
@@ -318,8 +376,15 @@ Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
 Haiku entry. Retired GPT-5.4 Mini is not a migration target or route.
 It also proposes `claude-opus-5` to `claude-opus-5-5`, `gpt-5.6-sol` to
 `gpt-6-sol`, and `gpt-5.6-luna` to `gpt-6-luna`. These three entries have
-`safeAuto: false`: operators can review and apply them, while run admission
-never applies them. The release dates and model ids are documented in the
+`safeAuto: false`, mirroring the TokenEconomy `0.3.6` verdicts (ladder-compatible,
+lower dated price, no qualifying no-regression evidence): operators can review
+and apply them, while run admission never applies them. A card pinned to the
+source model shows the proposal on its model badge. The operator accepts it per
+card (`PUT /api/tasks/{id}/model`) or for every explicitly pinned card of a
+project in backlog, preparation, orchestrator-prep, or ready
+(`POST /api/projects/{project}/model-migrations/apply` with `{ "from": ... }`).
+Running, reviewed, and finished cards are never rewritten, and a non-explicit
+card follows the policy default instead. The release dates and model ids are documented in the
 [Anthropic release notes](https://platform.claude.com/docs/en/release-notes/overview#september-22-2026)
 and [OpenAI API changelog](https://developers.openai.com/api/docs/changelog).
 

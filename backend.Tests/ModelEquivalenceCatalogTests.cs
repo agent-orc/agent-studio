@@ -61,6 +61,13 @@ public sealed class ModelEquivalenceCatalogTests
 
     [Fact]
     public void UnsupportedThinkingFloor_ReturnsNoDowngradedRoute()
-        => Assert.Null(_catalogue.TryGetRoute(
-            CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex));
+    {
+        // TokenEconomy 0.3.6 (TE-59) added max to the GPT-5.6 Sol ladder, so
+        // Opus 5/max now has an exact-level Codex route ...
+        var max = _catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex);
+        Assert.NotNull(max);
+        Assert.Equal("max", max.ToThinkingLevel);
+        // ... while a level the source ladder lacks still gets no downgraded route.
+        Assert.Null(_catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "ultra", CliTypes.Codex));
+    }
 }
