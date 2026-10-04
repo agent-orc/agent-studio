@@ -174,9 +174,9 @@ for (const [serviceName, contract] of Object.entries(expected)) {
 }
 const tokenFiles = {
   "task-server": {
-    STUDIO_AUTH_TOKEN_FILE: "studio_token",
-    ENGINE_AUTH_TOKEN_FILE: "engine_token",
-    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: "runner_token",
+    STUDIO_AUTH_TOKEN_FILE: "studio/studio_token",
+    ENGINE_AUTH_TOKEN_FILE: "engine/engine_token",
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: "runner/runner_token",
   },
   "studio-bff": { TaskServer__AuthTokenFile: "studio_token" },
   "orchestrator-engine": { CLIENT_CREDENTIAL_FILE: "engine_token" },
@@ -186,6 +186,10 @@ for (const [serviceName, files] of Object.entries(tokenFiles)) {
   const volume = service.volumes.find(volume => volume.target === "/run/agent-studio-secrets");
   if (volume?.source !== "secrets" || !volume.read_only) {
     throw new Error(`${serviceName} must read the Compose credential volume`);
+  }
+  if (serviceName === "studio-bff" && volume.volume?.subpath !== "studio" ||
+      serviceName === "orchestrator-engine" && volume.volume?.subpath !== "engine") {
+    throw new Error(`${serviceName} can read another service credential`);
   }
   for (const [variable, file] of Object.entries(files)) {
     if (service.environment?.[variable] !== `/run/agent-studio-secrets/${file}`) {
