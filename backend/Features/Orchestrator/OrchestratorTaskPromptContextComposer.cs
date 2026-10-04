@@ -3,6 +3,7 @@ using System.Text;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Orchestrator;
 
@@ -109,18 +110,18 @@ public sealed class OrchestratorTaskPromptContextComposer
             RunOutcomeTokenLimit));
 
         var sb = new StringBuilder();
-        sb.AppendLine("=== ACTIVE TASK CONTEXT ===");
-        sb.AppendLine("The operator is asking from this task. Treat this task block as the authoritative task scope for the current message.");
-        sb.AppendLine($"Included context blocks: {string.Join(", ", included)}.");
+        sb.AppendLf("=== ACTIVE TASK CONTEXT ===");
+        sb.AppendLf("The operator is asking from this task. Treat this task block as the authoritative task scope for the current message.");
+        sb.AppendLf($"Included context blocks: {string.Join(", ", included)}.");
         if (string.IsNullOrWhiteSpace(detail.PromptMarkdown))
-            sb.AppendLine("prompt.md: missing or empty, so no prompt.md content was included.");
+            sb.AppendLf("prompt.md: missing or empty, so no prompt.md content was included.");
         if (string.IsNullOrWhiteSpace(detail.StatusMarkdown))
-            sb.AppendLine("status.md: missing or empty, so no status.md content was included.");
-        sb.AppendLine();
+            sb.AppendLf("status.md: missing or empty, so no status.md content was included.");
+        sb.AppendLf();
         foreach (var block in blocks)
         {
-            sb.AppendLine(block);
-            sb.AppendLine();
+            sb.AppendLf(block);
+            sb.AppendLf();
         }
 
         return new OrchestratorTaskPromptContext(taskKey, sb.ToString().TrimEnd(), included);

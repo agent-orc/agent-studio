@@ -45,6 +45,31 @@ public sealed record AutoReviewQueueSnapshot
 
     public int StagnantThresholdMinutes { get; init; }
 
+    /// <summary>
+    /// AGT-2987: true when pending ReviewAttempts exist and no attempt has been
+    /// claimed for <see cref="StagnantThresholdMinutes"/>. Only a delivered
+    /// claim restarts this clock; coding runs and legacy dequeues do not.
+    /// </summary>
+    public bool ReviewClaimStagnant { get; init; }
+
+    /// <summary>Latest delivered review claim (persisted lease acquisitions included). Null when none is known.</summary>
+    public DateTime? LastReviewClaimAt { get; init; }
+
+    public string? OldestPendingAttemptId { get; init; }
+
+    public string? OldestPendingTaskKey { get; init; }
+
+    public DateTime? OldestPendingAttemptCreatedAt { get; init; }
+
+    /// <summary>
+    /// Typed reason the oldest pending attempt could not be claimed, as last
+    /// observed by the claim endpoint (for example <c>unclaimable-plan-requirements</c>).
+    /// Null when no executor has reported it unclaimable.
+    /// </summary>
+    public string? UnclaimableReason { get; init; }
+
+    public IReadOnlyList<string>? UnclaimableMissingCapabilities { get; init; }
+
     /// <summary>Completed review passes per minute over the trailing <see cref="ThroughputWindowMinutes"/> window.</summary>
     public double DrainRatePerMinute { get; init; }
 
@@ -61,13 +86,15 @@ public sealed record AutoReviewQueueSnapshot
 /// queue remains non-empty. Acute transitions are visible at the admin REST
 /// endpoint and as warning-level structured log events.
 ///
-/// Stagnation rule: the combined backlog (<see cref="AutoReviewPostProcessingQueue.PendingCount"/>
-/// plus current attempt-authority ReviewAttempts in state Pending) is greater
-/// than zero, AND no card has left either side of that backlog (the later of
-/// <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/> and
-/// <see cref="AttemptAuthorityService.LastReviewClaimAtUtc"/>) since the
-/// combined backlog last became non-empty, for longer than the configured
-/// threshold.
+/// Stagnation rule, one clock per side of the backlog (AGT-2987):
+/// <list type="bullet">
+/// <item>Canonical: pending ReviewAttempts exist and none has been claimed for
+/// the threshold (<see cref="ReviewClaimStagnationPolicy"/>). Before AGT-2987
+/// one shared clock was reset by any legacy dequeue as well, which kept the
+/// flag false for 24 hours while every pending attempt was unclaimable.</item>
+/// <item>Legacy: the local post-processing queue is non-empty and no legacy
+/// card has started since it last became non-empty, for the threshold.</item>
+/// </list>
 /// </summary>
 public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
 {
@@ -77,6 +104,7 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
 
     private readonly AutoReviewPostProcessingQueue _queue;
     private readonly AttemptAuthorityService _authority;
+    private readonly ReviewClaimUnclaimableLog _unclaimable;
     private readonly AutoReviewStatusSnapshot _status;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AutoReviewQueueStagnationWatchdog> _logger;
@@ -91,12 +119,14 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
     public AutoReviewQueueStagnationWatchdog(
         AutoReviewPostProcessingQueue queue,
         AttemptAuthorityService authority,
+        ReviewClaimUnclaimableLog unclaimable,
         AutoReviewStatusSnapshot status,
         IConfiguration configuration,
         ILogger<AutoReviewQueueStagnationWatchdog> logger)
     {
         _queue = queue;
         _authority = authority;
+        _unclaimable = unclaimable;
         _status = status;
         _configuration = configuration;
         _logger = logger;
@@ -121,11 +151,14 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
         // sits in attempt authority. Both sources feed the one backlog number
         // the stagnation and parallelism policies react to.
         var legacyQueueDepth = _queue.PendingCount;
-        var pendingReviewAttempts = _authority.ListPendingReviewAttempts().Count;
+        var claimActivity = _authority.ReadReviewClaimActivity();
+        var pendingReviewAttempts = claimActivity.PendingAttempts;
         var pendingCount = legacyQueueDepth + pendingReviewAttempts;
-        var lastStartedAt = Later(_queue.LastStartedAt, _authority.LastReviewClaimAtUtc);
+        var legacyStartedAt = _queue.LastStartedAt;
         var activeJobs = _status.Read().ActiveJobs.Count;
         var threshold = TimeSpan.FromMinutes(thresholdMinutes);
+        var claimStagnation = ReviewClaimStagnationPolicy.Evaluate(claimActivity, now, threshold);
+        var unclaimable = _unclaimable.Latest(claimActivity.OldestPendingAttemptId);
 
         var throughputWindowMinutes = Math.Clamp(
             _configuration.GetValue<int?>("AutoReviewQueueStagnation:ThroughputWindowMinutes")
@@ -135,7 +168,7 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
 
         lock (_gate)
         {
-            if (pendingCount == 0)
+            if (legacyQueueDepth == 0)
             {
                 _nonEmptyQueueSince = null;
                 _lastStartedAtWhenNonEmpty = null;
@@ -145,22 +178,25 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
                 if (_nonEmptyQueueSince == null)
                 {
                     _nonEmptyQueueSince = now;
-                    _lastStartedAtWhenNonEmpty = lastStartedAt;
+                    _lastStartedAtWhenNonEmpty = legacyStartedAt;
                 }
-                else if (lastStartedAt != _lastStartedAtWhenNonEmpty)
+                else if (legacyStartedAt != _lastStartedAtWhenNonEmpty)
                 {
-                    // A card was picked up since we noticed the queue was non-empty:
-                    // reset the stagnation clock so the threshold applies to a
-                    // new period of undraining depth, not from the first card ever.
+                    // A legacy card was picked up since we noticed the legacy
+                    // queue was non-empty: reset only the legacy clock. The
+                    // canonical side has its own claim clock (AGT-2987).
                     _nonEmptyQueueSince = now;
-                    _lastStartedAtWhenNonEmpty = lastStartedAt;
+                    _lastStartedAtWhenNonEmpty = legacyStartedAt;
                 }
             }
 
-            var isStagnant = pendingCount > 0
+            var legacyStagnant = legacyQueueDepth > 0
                 && _nonEmptyQueueSince is { } since
                 && now - since >= threshold;
-            var stagnantSince = isStagnant ? _nonEmptyQueueSince : null;
+            var isStagnant = legacyStagnant || claimStagnation.IsStagnant;
+            var stagnantSince = Earlier(
+                legacyStagnant ? _nonEmptyQueueSince : null,
+                claimStagnation.IsStagnant ? claimStagnation.WaitingSince : null);
 
             var next = new AutoReviewQueueSnapshot
             {
@@ -171,6 +207,15 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
                 IsStagnant = isStagnant,
                 StagnantSince = stagnantSince,
                 StagnantThresholdMinutes = thresholdMinutes,
+                ReviewClaimStagnant = claimStagnation.IsStagnant,
+                LastReviewClaimAt = claimActivity.LastClaimAt,
+                OldestPendingAttemptId = claimActivity.OldestPendingAttemptId,
+                OldestPendingTaskKey = claimActivity.OldestPendingTaskKey,
+                OldestPendingAttemptCreatedAt = claimActivity.OldestPendingCreatedAt,
+                UnclaimableReason = unclaimable is null
+                    ? null
+                    : AgentStudio.TaskServer.Contracts.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                UnclaimableMissingCapabilities = unclaimable?.MissingCapabilities,
                 DrainRatePerMinute = throughput.DrainRatePerMinute,
                 MedianReviewDurationMs = throughput.MedianDurationMs,
                 ThroughputWindowMinutes = throughput.WindowMinutes,
@@ -183,9 +228,9 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
         }
     }
 
-    /// <summary>Later of two optional timestamps; null only when both are null.</summary>
-    private static DateTime? Later(DateTime? a, DateTime? b)
-        => a is null ? b : b is null ? a : a > b ? a : b;
+    /// <summary>Earlier of two optional timestamps; null only when both are null.</summary>
+    private static DateTime? Earlier(DateTime? a, DateTime? b)
+        => a is null ? b : b is null ? a : a < b ? a : b;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -241,11 +286,20 @@ public sealed class AutoReviewQueueStagnationWatchdog : BackgroundService
             return;
 
         _logger.LogWarning(
-            "auto-review-queue-stagnant queueDepth={QueueDepth} activeJobs={ActiveJobs} stagnantSince={StagnantSince} thresholdMinutes={ThresholdMinutes}",
+            "auto-review-queue-stagnant queueDepth={QueueDepth} activeJobs={ActiveJobs} stagnantSince={StagnantSince} "
+            + "thresholdMinutes={ThresholdMinutes} reviewClaimStagnant={ReviewClaimStagnant} "
+            + "oldestPendingAttempt={OldestPendingAttemptId} oldestPendingTask={OldestPendingTaskKey} "
+            + "lastReviewClaimAt={LastReviewClaimAt} unclaimableReason={UnclaimableReason} missing={MissingCapabilities}",
             next.QueueDepth,
             next.ActiveJobs,
             next.StagnantSince,
-            next.StagnantThresholdMinutes);
+            next.StagnantThresholdMinutes,
+            next.ReviewClaimStagnant,
+            next.OldestPendingAttemptId ?? "none",
+            next.OldestPendingTaskKey ?? "none",
+            next.LastReviewClaimAt,
+            next.UnclaimableReason ?? "none",
+            string.Join(",", next.UnclaimableMissingCapabilities ?? []));
         _warningActive = true;
         _lastWarningAt = now;
     }
