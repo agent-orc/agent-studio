@@ -1,0 +1,5 @@
+verdict=Fail exit=1 durationMs=35000 failureKind=Environment
+expectedSha=n/a testedSha=n/a
+reason=verification failed; diagnosis=environment confidence=1.00; fingerprint=code:clock-guard; baseline=red; fingerprint=code:clock-guard; clean-repeat=red; fingerprint=code:clock-guard; history-24h: other-cards=0; prior=0
+--- last-300-lines ---
+AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock [FAIL]

@@ -1468,79 +1468,90 @@ public static class V1ReviewPlaneEndpoints
                         != attemptId)
                         return Results.Conflict(new Contract.ApiError("superseded-review-generation",
                             "A successor review generation owns this task."));
-                    var moved = await transitions.MoveAsync(
-                        task.Id,
-                        TaskStates.HumanReview,
-                        task.WatchPath,
-                        ct,
-                        cause: $"remote-review:{attemptId}",
-                        reason: integrationParkReason,
-                        authorityWrite: new AttemptWriteReference(
-                            attemptId,
-                            request.Fence,
-                            request.AuthorityEpoch,
-                            $"lane:{request.IdempotencyKey}"),
-                        suppressProductExecution: true,
-                        expectedSourceState: TaskStates.AutoReview,
-                        transitionCause: LaneChangeCauses.ReviewVerdict,
-                        transitionDetail: integrationOutcome ?? request.Outcome);
-                    if (moved.Status == MoveJobStatus.SourceStateMismatch)
+                    // A failed integration gate has not delivered the card. The
+                    // environment ladder and cause card own these waits in Auto
+                    // Review; Human Review is reserved for acceptance or an
+                    // undecidable gate result.
+                    if (MergeGateFailurePolicy.WaitsInAutoReview(integrationOutcome, integrationParkReason))
                     {
-                        var racedTask = FindTask(scanner, settled.ReviewAttempt.TaskKey);
-                        if (racedTask is null)
-                        {
-                            return Results.Json(
-                                new Contract.ApiError(
-                                    "task-not-found",
-                                    "Review task disappeared while its report was being recorded."),
-                                statusCode: StatusCodes.Status503ServiceUnavailable);
-                        }
-                        taskState = racedTask.State;
-                        RecordPostAcceptanceReportIfTerminal(timeline, racedTask, attemptId, request, evidenceFile);
-                    }
-                    else if (moved.Status == MoveJobStatus.IntegrationFailed)
-                    {
-                        // The review verdict is durable. Integration is a
-                        // separate phase in Auto Review, including PR approval
-                        // and a pushed merge that has not appeared on the
-                        // target ref yet. The reconciler advances or escalates.
                         taskState = TaskStates.AutoReview;
-                        EnqueueEvidenceProjection();
-                    }
-                    else if (moved.Status != MoveJobStatus.Success)
-                    {
-                        // The lane write failed, not the task-folder location -
-                        // still enqueue so the settled report's evidence is not
-                        // permanently stranded behind this 503.
-                        EnqueueEvidenceProjection();
-                        return Results.Json(
-                            new Contract.ApiError(
-                                "review-lane-write-failed",
-                                $"Review grade is durable, but the Human Review lane write failed: {moved.Status} {moved.Message}"),
-                            statusCode: StatusCodes.Status503ServiceUnavailable);
                     }
                     else
                     {
-                        taskState = TaskStates.HumanReview;
-                        AdvanceDeliverySettlement(
-                            moved.NewFolderPath ?? task.FolderPath,
-                            RemoteDeliverySettlementStage.LaneSettled,
-                            integrationOutcome,
-                            integrationParkReason,
-                            logger);
-                        // Board contract: the human-review park needs a journal
-                        // verdict, or the boot-time verdict-less backfill later
-                        // escalates the freshly reviewed card as pre-funnel
-                        // legacy (observed 28.07. after a backend restart).
-                        // The move relocated the card folder; the epoch sidecar
-                        // must be read from the NEW path or it stamps epoch 0.
-                        escalation.RecordRemoteReviewParkVerdict(
-                            task.ProjectName,
+                        var moved = await transitions.MoveAsync(
                             task.Id,
-                            moved.NewFolderPath ?? task.FolderPath,
-                            request.Outcome,
-                            request.Summary ?? string.Empty,
-                            BuildAttemptChainSummary(authority, settled.ReviewAttempt.TaskKey));
+                            TaskStates.HumanReview,
+                            task.WatchPath,
+                            ct,
+                            cause: $"remote-review:{attemptId}",
+                            reason: integrationParkReason,
+                            authorityWrite: new AttemptWriteReference(
+                                attemptId,
+                                request.Fence,
+                                request.AuthorityEpoch,
+                                $"lane:{request.IdempotencyKey}"),
+                            suppressProductExecution: true,
+                            expectedSourceState: TaskStates.AutoReview,
+                            transitionCause: LaneChangeCauses.ReviewVerdict,
+                            transitionDetail: integrationOutcome ?? request.Outcome);
+                        if (moved.Status == MoveJobStatus.SourceStateMismatch)
+                        {
+                            var racedTask = FindTask(scanner, settled.ReviewAttempt.TaskKey);
+                            if (racedTask is null)
+                            {
+                                return Results.Json(
+                                    new Contract.ApiError(
+                                        "task-not-found",
+                                        "Review task disappeared while its report was being recorded."),
+                                    statusCode: StatusCodes.Status503ServiceUnavailable);
+                            }
+                            taskState = racedTask.State;
+                            RecordPostAcceptanceReportIfTerminal(timeline, racedTask, attemptId, request, evidenceFile);
+                        }
+                        else if (moved.Status == MoveJobStatus.IntegrationFailed)
+                        {
+                            // The review verdict is durable. Integration is a
+                            // separate phase in Auto Review, including PR approval
+                            // and a pushed merge that has not appeared on the
+                            // target ref yet. The reconciler advances or escalates.
+                            taskState = TaskStates.AutoReview;
+                            EnqueueEvidenceProjection();
+                        }
+                        else if (moved.Status != MoveJobStatus.Success)
+                        {
+                            // The lane write failed, not the task-folder location -
+                            // still enqueue so the settled report's evidence is not
+                            // permanently stranded behind this 503.
+                            EnqueueEvidenceProjection();
+                            return Results.Json(
+                                new Contract.ApiError(
+                                    "review-lane-write-failed",
+                                    $"Review grade is durable, but the Human Review lane write failed: {moved.Status} {moved.Message}"),
+                                statusCode: StatusCodes.Status503ServiceUnavailable);
+                        }
+                        else
+                        {
+                            taskState = TaskStates.HumanReview;
+                            AdvanceDeliverySettlement(
+                                moved.NewFolderPath ?? task.FolderPath,
+                                RemoteDeliverySettlementStage.LaneSettled,
+                                integrationOutcome,
+                                integrationParkReason,
+                                logger);
+                            // Board contract: the human-review park needs a journal
+                            // verdict, or the boot-time verdict-less backfill later
+                            // escalates the freshly reviewed card as pre-funnel
+                            // legacy (observed 28.07. after a backend restart).
+                            // The move relocated the card folder; the epoch sidecar
+                            // must be read from the NEW path or it stamps epoch 0.
+                            escalation.RecordRemoteReviewParkVerdict(
+                                task.ProjectName,
+                                task.Id,
+                                moved.NewFolderPath ?? task.FolderPath,
+                                request.Outcome,
+                                request.Summary ?? string.Empty,
+                                BuildAttemptChainSummary(authority, settled.ReviewAttempt.TaskKey));
+                        }
                     }
                 }
                 else if (string.Equals(task.State, TaskStates.HumanReview, StringComparison.OrdinalIgnoreCase))

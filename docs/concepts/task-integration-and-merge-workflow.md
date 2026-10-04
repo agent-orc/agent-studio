@@ -131,6 +131,22 @@ The one contention allowance and slow-test evidence are documented in
 `GateEnvironmentRetryService`
 (`backend/Features/Pipeline/GateEnvironmentRetry/`) closes that gap.
 
+The Windows merge gate now passes its pre-merge integration tip to the AGT-2916
+baseline and clean-repeat diagnosis. `MergeGateFailurePolicy` reads that verdict,
+the gate report and the shared 24-hour fingerprint history. It routes a proven
+environment fault to the existing redelivery ladder, retries an identified
+transport failure once on the same merge candidate, and sends a proven product
+failure to one bounded fix round with the failing item names and gate reason.
+A red integration baseline is a branch cause. On the second distinct card with
+the same fingerprint, or the third matching attempt on one card, the existing
+failure intervention ledger creates or joins one cause card and adds `blockedBy`
+references to affected cards. Missing or
+contradictory evidence is `undecidable` and states the missing proof in the
+Human Review park. Environment and cause waits stay in Auto Review until the
+delivery is integrated. This implements the Delivery Chain Dossier's recorded
+option A for integrated-only Human Review and its shared-cause direction; the
+gate's pass criteria and acceptance decision remain unchanged.
+
 - **Eligibility.** `GateEnvironmentRetryPolicy` is a pure matrix. A card
   qualifies when it sits in `4-auto-review`, `5-human-review`, or `5e-escalated`, expects a code
   delivery, has no acceptance integration already in flight (`phase` is not
@@ -140,8 +156,8 @@ The one contention allowance and slow-test evidence are documented in
   re-reviewed without changing, and an older `Pass` that a later
   `ProductFailure` overturned is not a green light. Any other failure code
   belongs to its existing owner: `merge-conflict` to rebase recovery,
-  `build-gate-failed` to the operator, `integration-push-blocked` to the push
-  backstop.
+  `build-gate-failed` to the typed merge-gate router, and
+  `integration-push-blocked` to the push backstop.
 - **Ladder.** Rungs of 5, 15, and 45 minutes. The first rung measures from the
   recorded gate failure, every later rung from the replay that produced the
   current completed failure (or its retry receipt if later). An unfinished review

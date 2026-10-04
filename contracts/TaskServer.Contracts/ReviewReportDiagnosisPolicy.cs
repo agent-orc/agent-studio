@@ -15,6 +15,30 @@ public static class ReviewReportDiagnosisPolicy
             : verdict).ToArray();
         request = request with { Verdicts = verdicts };
 
+        // A flake label needs a passing repeat of this command on the same
+        // immutable tree. A prior trait, a grade narrative, or a retry flag
+        // alone cannot establish that the named item cleared.
+        foreach (var candidate in request.Commands.Where(command =>
+                     command.Phase == "verification" && command.WorkspaceRole == "candidate"
+                     && command.FlakyQuarantinedFailures is { Count: > 0 }))
+        {
+            var repeat = request.Commands.FirstOrDefault(command =>
+                command.StepId == candidate.StepId
+                && command.Phase == "clean-repeat"
+                && command.WorkspaceRole == "clean-repeat"
+                && command.ExitCode == 0
+                && string.Equals(command.ExpectedResultSha, candidate.ExpectedResultSha,
+                    StringComparison.OrdinalIgnoreCase)
+                && string.Equals(command.TreeBefore, candidate.TreeBefore,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!candidate.RetryPerformed || repeat is null)
+                return request with
+                {
+                    Outcome = "ReviewInfra",
+                    FailureClassification = DeliveryFailureDiagnosis.FirstOccurrence,
+                };
+        }
+
         var failed = request.Commands.Where(command =>
             command.Phase == "verification"
             && command.WorkspaceRole == "candidate"

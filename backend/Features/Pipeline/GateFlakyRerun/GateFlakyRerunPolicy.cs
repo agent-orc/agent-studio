@@ -122,6 +122,7 @@ public static class GateFlakyRerunPolicy
             var normalized = AnsiEscapeSequence.Replace(line, string.Empty);
             var match = DotNetFailedPrefix.Match(normalized);
             if (!match.Success) match = DotNetFailSuffix.Match(normalized);
+            if (!match.Success) match = VitestFailedFile.Match(normalized);
             if (!match.Success) continue;
             var name = match.Groups["name"].Value.Trim();
             if (name.Length > 0) failures.Add(name);
@@ -185,6 +186,10 @@ public static class GateFlakyRerunPolicy
 
     private static readonly Regex DotNetFailSuffix = new(
         @"^\s*(?:\[[^\]]+\]\s+)?(?<name>.+?)\s+\[FAIL\]\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex VitestFailedFile = new(
+        @"^\s*(?:FAIL\s+|❯\s+)(?<name>\S+\.(?:spec|test)\.(?:ts|tsx|js))\b",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex AnsiEscapeSequence = new(

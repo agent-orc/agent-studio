@@ -402,6 +402,10 @@ home, temp, and cache directories) becomes a placeholder, and all timestamps
 and durations are removed. Output without a diagnostic line falls back to the
 exit status. A reproducible build or lint regression therefore produces the
 same fingerprint in both runs and can be classified as `product`.
+The Windows merge gate also parses Vitest failed spec paths, so a repeated red
+spec on separate cards has one fleet fingerprint. A review report can label a
+named failure as flaky only when a clean repeat of the same command passed on
+the same SHA and tree; absent that proof the report is undecidable.
 
 | Evidence | Diagnosis | Card charge |
 |---|---|---|

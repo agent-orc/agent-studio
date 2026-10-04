@@ -161,6 +161,7 @@ public record MergeIntoIntegrationResult(
     public string? AutomaticRecoveryDetail { get; init; }
     public int? AutomaticRecoveryBudgetUsed { get; init; }
     public int? AutomaticRecoveryBudgetLimit { get; init; }
+    public AgentStudio.Pipeline.MergeGateFailure? GateFailure { get; init; }
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,

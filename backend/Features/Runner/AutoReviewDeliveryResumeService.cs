@@ -158,18 +158,33 @@ public sealed class AutoReviewDeliveryResumeService
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
             settlement = null;
 
+        var deliveryMerged = ReadIntegrationStatus(task) == IntegrationStatuses.Integrated;
+        var causeWait = settlement?.IntegrationDetail?.StartsWith("waiting on ", StringComparison.Ordinal) == true;
+        var causeResolved = causeWait && CausesIntegrated(task);
         var decision = AutoReviewResumePolicy.Decide(
             task.State,
             task.Fixture,
             review?.State,
             review?.Outcome,
-            ReadIntegrationStatus(task) == IntegrationStatuses.Integrated,
+            deliveryMerged,
             settlement?.Stage,
             settlement?.ShouldIntegrate ?? false,
             IntegrationGateJournal.Read(task.FolderPath) is not null);
 
+        if (causeResolved && !deliveryMerged
+            && decision.Action == AutoReviewResumeAction.CompleteTransition)
+            decision = new AutoReviewResumeDecision(AutoReviewResumeAction.StartIntegration,
+                "integration-cause-resolved");
+
         if (decision.Action == AutoReviewResumeAction.None)
             return new AutoReviewResumeOutcome(decision.Action, decision.Reason, Resumed: false);
+
+        if (!deliveryMerged
+            && (MergeGateFailurePolicy.WaitsInAutoReview(
+                    settlement?.IntegrationOutcome, settlement?.IntegrationDetail)
+                && !causeResolved))
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                "integration-gate-recovery-pending", Resumed: false, settlement?.IntegrationDetail);
 
         if (!IsCurrent(review!))
             return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
@@ -189,6 +204,8 @@ public sealed class AutoReviewDeliveryResumeService
             // the merge runner answers AlreadyMerged for a delivery the branch
             // already contains, so re-entering here cannot double-merge.
             var request = BuildIntegrationRequest(task, settlement!);
+            if (causeResolved)
+                request = request with { DeliveredAtUtc = DateTimeOffset.UtcNow };
             var result = await _integration.EnqueueAsync(request).ConfigureAwait(false);
             if (!IsCurrent(review!))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
@@ -225,6 +242,20 @@ public sealed class AutoReviewDeliveryResumeService
     private bool IsCurrent(ReviewAttemptDto review)
         => string.Equals(_authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId,
             review.AttemptId, StringComparison.Ordinal);
+
+    private bool CausesIntegrated(TaskInfo task)
+    {
+        var keys = task.References?.BlockedBy ?? [];
+        if (keys.Count == 0) return false;
+        foreach (var key in keys)
+        {
+            var cause = _scanner.FindJob(key, null);
+            if (cause is null) return false;
+            var status = _integrationStatus.BuildLookup([cause]).GetValueOrDefault(cause.TaskKey);
+            if (status?.Status != IntegrationStatuses.Integrated) return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// The normal <c>4-auto-review -&gt; 5-human-review</c> transition the

@@ -230,6 +230,30 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal("concerns", Assert.Single(normalized.Verdicts).Status);
     }
 
+    [Fact]
+    public void Flake_label_requires_a_passing_repeat_on_the_same_tree()
+    {
+        var candidate = FailedCommand("flaky", DeliveryFailureDiagnosis.Intermittent, false)
+            with { RetryPerformed = true, FlakyQuarantinedFailures = ["Tests.Flaky"] };
+        var report = EmptyReport("Pass") with
+        {
+            Commands =
+            [
+                candidate,
+                candidate with
+                {
+                    Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+                    TreeBefore = "other-tree",
+                    FlakyQuarantinedFailures = [],
+                },
+            ],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+    }
+
     private static ReviewReportRequest EmptyReport(string outcome)
         => new("executor", "instance", "lease", 1, "report-1", outcome,
             "legacy-classification", null,

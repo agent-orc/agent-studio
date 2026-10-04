@@ -384,6 +384,13 @@
         </tr>
       </thead>
       <tbody>
+        <tr id="case-agt-3009-gate-result-default-park">
+          <td>2026-10-04</td>
+          <td><code>AGT-3009</code><br><span class="small">failed Windows merge gates defaulted to Human Review</span></td>
+          <td>Thirteen of fourteen cards in Human Review were gate parks, although only one required an acceptance decision. Worker crashes, budget overruns, product test failures and a red integration baseline all reached the same operator-decision park.</td>
+          <td>The merge runner retained a coarse gate outcome, and the post-review lane transition advanced a failed delivery before the AGT-2916 diagnosis and fleet fingerprint could determine its owner.</td>
+          <td><span class="pill ok">fixed in dev</span> The merge runner supplies the pre-merge baseline, records a typed gate class and routes transport to one exact-candidate gate retry, environment to bounded redelivery, product to a bounded named fix round, and repeated or branch failures to one cause card. Missing or conflicting proof reaches Human Review with its reason. The original terminal was a Human Review park; recoverable cases now wait in Auto Review or Ready until integration succeeds.</td>
+        </tr>
         <tr>
           <td>2026-09-27</td>
           <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>

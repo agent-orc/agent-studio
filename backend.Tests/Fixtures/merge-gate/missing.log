@@ -1,0 +1,5 @@
+verdict=Fail exit=1 durationMs=35000 failureKind=Code
+expectedSha=n/a testedSha=n/a
+reason=verification failed
+--- last-300-lines ---
+Build failed without a diagnostic line.

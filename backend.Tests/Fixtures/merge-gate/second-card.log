@@ -1,0 +1,5 @@
+verdict=Fail exit=1 durationMs=35000 failureKind=Environment
+expectedSha=n/a testedSha=n/a
+reason=verification failed; diagnosis=environment confidence=0.90; baseline=green; fingerprint=none; clean-repeat=red; fingerprint=none; history-24h: other-cards=1; prior=1; history-24h: cards=AGT-2988
+--- last-300-lines ---
+AgentStudio.Tests.Architecture.TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock [FAIL]

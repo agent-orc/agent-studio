@@ -22,7 +22,8 @@ public static class RemoteIntegrationContinuationPolicy
         int automaticAgentRoundsUsed,
         int maximumAgentRounds = MaxAutomaticAgentRounds)
     {
-        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
+        if (outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+            or MergeIntoIntegrationOutcome.GateFailed))
             return RemoteIntegrationContinuationAction.None;
 
         return Math.Max(0, automaticAgentRoundsUsed) < Math.Min(MaxAutomaticAgentRounds,
@@ -176,7 +177,10 @@ public sealed class IntegrationAgentRoundService
         if (job is null)
             return Task.FromResult(Failed("The task disappeared before its automatic integration recovery round could start."));
 
-        if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict))
+        if (result.Outcome is not (MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+            or MergeIntoIntegrationOutcome.GateFailed)
+            || result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+               && result.GateFailure?.Classification != MergeGateFailurePolicy.Product)
             return Task.FromResult(Failed("The integration result does not require an agent continuation."));
 
         if (_settings?.Get(job.ProjectName).AutomaticFailureContinuationsEnabled == false)
@@ -226,7 +230,8 @@ public sealed class IntegrationAgentRoundService
             job.Id,
             ContinueModes.Steer,
             prompt,
-            reason: AttributionAmbiguousReason,
+            reason: result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+                ? "merge-gate-product-failure" : AttributionAmbiguousReason,
             activeJobId: null,
             watchPath: job.WatchPath);
         if (intent is null)
@@ -274,7 +279,8 @@ public sealed class IntegrationAgentRoundService
                 ["resultSha"] = subject.ResultSha,
                 ["integrationBranch"] = request.IntegrationBranch,
                 ["mode"] = ContinueModes.Steer,
-                ["reason"] = AttributionAmbiguousReason,
+                ["reason"] = result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+                    ? "merge-gate-product-failure" : AttributionAmbiguousReason,
                 ["supersededCommits"] = Invariant(supersession.MarkedCommits),
                 ["budgetUsed"] = Invariant(budget.Used + 1),
                 ["budgetLimit"] = Invariant(_maximumRecoveryRounds),
@@ -336,6 +342,13 @@ public sealed class IntegrationAgentRoundService
         RemoteDeliveryIntegrationRequest request,
         MergeIntoIntegrationResult result)
     {
+        if (result.GateFailure is { Classification: MergeGateFailurePolicy.Product } failure)
+            return $"The Windows merge gate failed on the current integration tip. Fix the delivery and run the failing items before redelivery.\n\n"
+                + $"Failure fingerprint: {failure.Fingerprint}\n"
+                + $"Failing items: {string.Join(", ", failure.FailingItems)}\n"
+                + $"Reason: {failure.Reason}\n"
+                + "Gate evidence: post-steps/pre-develop-build-gate-*.log\n"
+                + $"Delivery ref: {subject.ResultRef}; SHA: {subject.ResultSha}; integration branch: {request.IntegrationBranch}.";
         return IntegrationContinuationPrompt.Build(
             job.Key ?? job.Id, subject.ResultRef, subject.ResultSha,
             request.IntegrationBranch, "merge-into-develop",

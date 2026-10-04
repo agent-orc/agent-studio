@@ -162,6 +162,36 @@ public sealed class FailureInterventionTests : IDisposable
             item, followUp, firstRoundTrip, followUpTimeline, originTimeline, originPipeline, feed, reportLine);
     }
 
+    [Fact]
+    public void Second_gate_fingerprint_occurrence_opens_one_cause_and_blocks_both_cards()
+    {
+        var (scanner, mutations, service, _, _, _) = Build();
+        var first = CreateOrigin(scanner, mutations, "First gate failure");
+        var second = CreateOrigin(scanner, mutations, "Second gate failure");
+        var log = File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "merge-gate", "second-card.log"));
+        var failure = MergeGateFailurePolicy.ClassifyLog(log);
+        Assert.Equal(MergeGateFailureRoute.WaitForCause, MergeGateFailurePolicy.Route(failure));
+        Assert.Empty(service.List(_project));
+
+        var evidence = new FailureCommandEvidence("build-gate-failed", "GateFailed", 1,
+            35_000, log, failure.Reason, PipelineCatalogue.MergeIntoDevelopStepId,
+            ["post-steps/pre-develop-build-gate-2.log"]);
+        var classification = new FailureClassificationResult(FailureDomains.Product,
+            "gate/build-gate-failed", failure.Fingerprint,
+            string.Join(", ", failure.FailingItems), true, failure.Classification);
+        var raised = service.RaiseClassified(second, evidence, classification,
+            otherCardKeys: [first.Key!]);
+
+        Assert.True(raised.Created);
+        Assert.Single(service.List(_project));
+        Assert.Equal(2, raised.Intervention.AffectedCards.Count);
+        Assert.Contains(raised.Intervention.FollowUpKey,
+            scanner.FindJob(first.Id, _project)!.References.BlockedBy);
+        Assert.Contains(raised.Intervention.FollowUpKey,
+            scanner.FindJob(second.Id, _project)!.References.BlockedBy);
+    }
+
     private static void WriteEvidenceSnapshots(
         FailureInterventionRecord item,
         TaskInfo followUp,

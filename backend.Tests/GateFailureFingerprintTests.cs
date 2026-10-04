@@ -80,6 +80,20 @@ public sealed class GateFailureFingerprintTests
     }
 
     [Fact]
+    public void Repeated_vitest_spec_across_cards_has_one_failure_fingerprint()
+    {
+        var first = RedGate(Lease, "npm run test:ci",
+            "FAIL frontend/e2e/orchestrator-side-sheet.pin.spec.ts (1 test)\nDuration 12.4s\n", "");
+        var second = RedGate(CleanClone, "npm run test:ci",
+            "FAIL frontend/e2e/orchestrator-side-sheet.pin.spec.ts (1 test)\nDuration 18.8s\n", "");
+
+        Assert.Equal(BuildTestGateRunner.DiagnosticFingerprint(first),
+            BuildTestGateRunner.DiagnosticFingerprint(second));
+        Assert.Contains("frontend/e2e/orchestrator-side-sheet.pin.spec.ts",
+            GateFlakyRerunPolicy.ParseFailedTests(first.Processes[0].StandardOutput));
+    }
+
+    [Fact]
     public void Gate_and_review_share_one_output_normaliser()
     {
         var identity = FailureOutputNormalizer.Identity(

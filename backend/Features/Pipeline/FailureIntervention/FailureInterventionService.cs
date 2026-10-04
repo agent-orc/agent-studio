@@ -109,6 +109,17 @@ public sealed class FailureInterventionService
     {
         var classification = FailureInterventionPolicy.Classify(evidence)
             ?? await ClassifyAmbiguousAsync(origin, evidence, ct);
+        return RaiseClassified(origin, evidence, classification, ct);
+    }
+
+    /// <summary>Uses an already proven gate diagnosis and its fleet fingerprint.</summary>
+    public FailureInterventionResult RaiseClassified(
+        TaskInfo origin,
+        FailureCommandEvidence evidence,
+        FailureClassificationResult classification,
+        CancellationToken ct = default,
+        IReadOnlyList<string>? otherCardKeys = null)
+    {
         ct.ThrowIfCancellationRequested();
 
         lock (_gate)
@@ -178,6 +189,30 @@ public sealed class FailureInterventionService
                 }
             }
 
+            var otherCards = (otherCardKeys ?? [])
+                .Select(key => _scanner.FindJob(key, null))
+                .Where(task => task is not null && task.Id != origin.Id)
+                .Cast<TaskInfo>()
+                .ToArray();
+            if (otherCards.Length > 0)
+            {
+                intervention = intervention with
+                {
+                    AffectedCards = intervention.AffectedCards
+                        .Concat(otherCards.Select(task => task.Key ?? task.Id))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                };
+                var index = records.FindIndex(item => item.Id == intervention.Id);
+                records[index] = intervention;
+                var followUp = _scanner.FindJob(intervention.FollowUpTaskId, origin.WatchPath);
+                if (followUp is not null)
+                {
+                    UpdateFollowUpReferences(followUp, intervention.AffectedCards);
+                    UpdateFollowUpPrompt(followUp, intervention);
+                }
+                foreach (var card in otherCards)
+                    UpdateOriginReferences(card, intervention.FollowUpKey);
+            }
             UpdateOriginReferences(origin, intervention.FollowUpKey);
             Write(origin.WatchPath, records);
             RecordSurfaces(origin, intervention, created);

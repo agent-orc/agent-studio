@@ -1,0 +1,5 @@
+verdict=Fail exit=n/a durationMs=1800164 failureKind=Timeout
+expectedSha=n/a testedSha=n/a
+reason=dotnet test task-server.Tests/TaskServer.Tests.csproj violated gate-run budget (limit=1800000ms, consumed=1800164ms, phase=verification)
+--- last-300-lines ---
+Passed Product.Tests.Green [12 ms]

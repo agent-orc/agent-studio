@@ -319,7 +319,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 // The runner's publication fence already decided a merge; its
                 // result stays true. Only an unmerged delivery could still start
                 // a stale repair round, which a successor refuses.
-                if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+                if (RequiresAgentRound(result)
                     && !_isCurrentReview(delivery.Request))
                 {
                     _logger.LogInformation(
@@ -328,7 +328,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         delivery.Request.JobId,
                         MergeIntoDevelopRunner.SupersededReviewGenerationError);
                 }
-                else if (result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict)
+                else if (RequiresAgentRound(result))
                 {
                     var continuation = await _startAgentRound(
                         delivery.Request,
@@ -388,6 +388,12 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             }
         }
     }
+
+    private static bool RequiresAgentRound(MergeIntoIntegrationResult result)
+        => result.Outcome is MergeIntoIntegrationOutcome.AgentRoundRequired or MergeIntoIntegrationOutcome.Conflict
+            || result.Outcome == MergeIntoIntegrationOutcome.GateFailed
+               && result.GateFailure is { } failure
+               && MergeGateFailurePolicy.Route(failure) == MergeGateFailureRoute.FixRound;
 
     private void PruneCompletedReplays(DateTimeOffset nowUtc)
     {

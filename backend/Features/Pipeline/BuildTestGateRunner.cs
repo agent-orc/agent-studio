@@ -202,6 +202,7 @@ public sealed record BuildTestGateResult(
     public BuildTestGateFailureKind FailureKind { get; init; }
     public string? FailureFingerprint { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
+    public MergeGateFailure? RecordedFailure { get; init; }
     public IReadOnlyList<BuildTestGateProcessEvidence> Processes { get; init; } = [];
     public IReadOnlyList<BuildTestGateDependencyCacheEvidence> DependencyCache { get; init; } = [];
     public BuildTestGateDependencyCacheDecision? DependencyCacheDecision { get; init; }
@@ -924,6 +925,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var historyAvailable = false;
         var prior = 0;
         var otherCards = 0;
+        IReadOnlyList<string> otherCardKeys = [];
         HttpClient? client = null;
         try
         {
@@ -939,6 +941,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 prior = history?.Count ?? 0;
                 otherCards = history?.CardKeys.Count(card =>
                     !string.Equals(card, request.JobId, StringComparison.Ordinal)) ?? 0;
+                otherCardKeys = history?.CardKeys.Where(card =>
+                    !string.Equals(card, request.JobId, StringComparison.Ordinal)).ToArray() ?? [];
                 historyAvailable = true;
             }
         }
@@ -964,6 +968,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 $"baseline-sha={baselineSha ?? "unavailable"}",
                 $"baseline-source={(baseline is null ? "unavailable" : baseline.Output == "# baseline cache hit" ? "cache" : "fresh")}",
                 "clean-repeat-workspace=fresh; restored-dependency-cache=false",
+                "history-24h: cards=" + string.Join(",", otherCardKeys),
             ]).ToArray(),
         };
 
@@ -1180,8 +1185,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         var normalized = tests.Count > 0
             ? string.Join("\n", tests.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
             : FailureOutputNormalizer.Identity(FailureOutputNormalizer.ReplaceRoots(output, roots), failed.ExitCode);
-        return Fingerprint(BuildTestGateFailureKind.Code,
-            $"{failed.Phase}\n{FailureOutputNormalizer.ReplaceRoots(failed.Command, roots)}\nexit={failed.ExitCode}\n{normalized}");
+        var context = tests.Count > 0
+            ? $"{result.GateId}\n{failed.Phase}\n{result.ToolchainIdentity ?? "unknown-toolchain"}"
+            : $"{failed.Phase}\n{FailureOutputNormalizer.ReplaceRoots(failed.Command, roots)}\nexit={failed.ExitCode}";
+        return Fingerprint(BuildTestGateFailureKind.Code, $"{context}\n{normalized}");
     }
 
     /// <summary>

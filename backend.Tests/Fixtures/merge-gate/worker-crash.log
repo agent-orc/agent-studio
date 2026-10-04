@@ -1,0 +1,5 @@
+verdict=Fail exit=1 durationMs=1800000 failureKind=Environment
+expectedSha=n/a testedSha=n/a
+reason=Error: Worker exited unexpectedly
+--- last-300-lines ---
+Error: Worker exited unexpectedly

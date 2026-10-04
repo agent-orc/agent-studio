@@ -489,8 +489,10 @@ public sealed class MergeIntoDevelopRunner
             // a failed rollback needs the operator.
             if (!supersededCleanly)
             {
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
+                var intervention = await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
                     preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
+                if (intervention is not null)
+                    result = result with { AutomaticRecoveryDetail = intervention.WaitReason };
             }
 
             // AGT-1999: once the accepted task is folded into the integration
@@ -538,7 +540,7 @@ public sealed class MergeIntoDevelopRunner
         }
     }
 
-    private async Task MaybeRaiseInterventionAsync(
+    private async Task<FailureInterventionResult?> MaybeRaiseInterventionAsync(
         string project,
         string jobId,
         string? watchPath,
@@ -552,21 +554,42 @@ public sealed class MergeIntoDevelopRunner
             || _failureInterventions is null
             || _taskScanner is null
             || _projectSettings is null)
-            return;
+            return null;
         var task = _taskScanner.FindJob(jobId, watchPath);
-        if (task is null) return;
-        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(project), task);
-        var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
-        if (!PipelineStepConfigResolver.IsEnabled(settings, interventionStep)) return;
-
+        if (task is null) return null;
         var gate = new[] { preMainResult, preDevelopResult }
             .FirstOrDefault(item => item?.Verdict == BuildTestGateVerdict.Fail);
+        if (gate is not null)
+        {
+            var failure = result.GateFailure ?? gate.RecordedFailure ?? MergeGateFailurePolicy.Classify(gate);
+            if (MergeGateFailurePolicy.Route(failure) != MergeGateFailureRoute.WaitForCause)
+                return null;
+            var gateEvidence = new FailureCommandEvidence(
+                AcceptedIntegrationFailureCodes.BuildGateFailed,
+                result.Outcome.ToString(), gate.ExitCode,
+                (long)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+                gate.Output, failure.Reason, PipelineCatalogue.MergeIntoDevelopStepId,
+                ["post-steps/pre-develop-build-gate-*.log"], startedAt);
+            var classification = new FailureClassificationResult(
+                FailureDomains.Product,
+                failure.Classification == MergeGateFailurePolicy.IntegrationBranch
+                    ? "gate/integration-branch" : "gate/build-gate-failed",
+                failure.Fingerprint,
+                string.Join(", ", failure.FailingItems),
+                true,
+                failure.Classification);
+            return _failureInterventions.RaiseClassified(task, gateEvidence, classification, ct,
+                failure.OtherCardKeys);
+        }
+        var settings = PipelineTypeSettings.ForTask(_projectSettings.Get(project), task);
+        var interventionStep = PipelineCatalogue.FindStep(PipelineCatalogue.FailureInterventionStepId)!;
+        if (!PipelineStepConfigResolver.IsEnabled(settings, interventionStep)) return null;
         var code = gate?.FailureKind == BuildTestGateFailureKind.MissingSource
             ? "MissingSource"
             : gate is not null
                 ? AcceptedIntegrationFailureCodes.BuildGateFailed
                 : AcceptedIntegrationFailureCodes.IntegrationError;
-        await _failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
+        return await _failureInterventions.RaiseAsync(task, new FailureCommandEvidence(
             code,
             result.Outcome.ToString(),
             gate?.ExitCode,
@@ -909,6 +932,7 @@ public sealed class MergeIntoDevelopRunner
                     {
                         Project = project,
                         JobId = jobId,
+                        IntegrationRef = preMergeTip,
                         Lane = TaskStates.Completed,
                         TestExecution = TestExecutionFor(project),
                         JobFolderPath = jobFolderPath,
@@ -933,6 +957,35 @@ public sealed class MergeIntoDevelopRunner
             _logger.LogInformation(
                 "merge-into-develop recovered exact build-gate verdict for project={Project} job={JobId} integration={Integration} sha={Sha} verdict={Verdict}",
                 project, jobId, integrationBranch, gatedSha, gate.Verdict);
+        }
+
+        // A transport error has no test verdict. Retry this exact merge
+        // candidate once while the integration lock still owns it, before any
+        // rollback or card transition. A second failure uses the normal bounded
+        // environment redelivery ladder.
+        if (gate.Verdict == BuildTestGateVerdict.Fail
+            && MergeGateFailurePolicy.Route(gate.RecordedFailure ?? MergeGateFailurePolicy.Classify(gate))
+                == MergeGateFailureRoute.RetryGate
+            && _preDevelopBuildGate is not null && changedPaths is not null)
+        {
+            var (retryTimeout, retryTimeoutSource) = ResolveGateTimeout(project, _preDevelopTimeout);
+            gate = await _preDevelopBuildGate.RunAsync(
+                new BuildTestGateRequest(repoRoot, gatedSha, "merge-into-develop-build-gate")
+                {
+                    Project = project,
+                    JobId = jobId,
+                    IntegrationRef = preMergeTip,
+                    Lane = TaskStates.Completed,
+                    TestExecution = TestExecutionFor(project),
+                    JobFolderPath = jobFolderPath,
+                    SubjectRef = integrationBranch,
+                    TimeoutBudgetSource = retryTimeoutSource,
+                    CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
+                },
+                changedPaths, profile, retryTimeout, CancellationToken.None, reuse.Reused)
+                .ConfigureAwait(false);
+            IntegrationGateReceipts.Record(
+                jobFolderPath, "pre-develop-build-gate", gate, _timeline, reuse);
         }
 
         // A verdict exists, in either direction: this process is no longer the
@@ -975,7 +1028,17 @@ public sealed class MergeIntoDevelopRunner
         // separately so the card is never marked
         // a conflict and no rebase-recovery steer round is spent chasing a gate
         // environment problem the delivery cannot fix.
-        var outcome = gate.FailureKind == BuildTestGateFailureKind.Environment
+        var gateFailure = gate.RecordedFailure ?? MergeGateFailurePolicy.Classify(gate);
+        if (reset?.Success != true)
+            gateFailure = gateFailure with
+            {
+                Classification = MergeGateFailurePolicy.Undecidable,
+                MissingEvidence = reset is null
+                    ? "The existing branch commit has no rollback anchor owned by this gate."
+                    : "Rollback to the exact pre-merge tip did not complete.",
+            };
+        var outcome = MergeGateFailurePolicy.Route(gateFailure) is
+            MergeGateFailureRoute.RetryGate or MergeGateFailureRoute.Redeliver
             ? MergeIntoIntegrationOutcome.GateEnvironmentFailure
             : MergeIntoIntegrationOutcome.GateFailed;
         var error = result.Outcome == MergeIntoIntegrationOutcome.AlreadyMerged
@@ -991,7 +1054,15 @@ public sealed class MergeIntoDevelopRunner
             : $"The build gate blocked the merge into {integrationBranch}: {gate.Reason}. " +
               $"Rolling {integrationBranch} back to {Short(preMergeTip!)} FAILED ({reset.Error ?? "unknown error"}); " +
               "the unverified merge is still on the local integration branch and needs manual repair.";
-        return (MergeIntoIntegrationResult.Of(outcome, error: error), gate);
+        var detail = gateFailure.Classification == MergeGateFailurePolicy.Undecidable
+            ? $"gate class=undecidable; missing evidence: {gateFailure.MissingEvidence}; {gateFailure.Reason}"
+            : $"gate class={gateFailure.Classification}; fingerprint={gateFailure.Fingerprint}; "
+              + $"failing items={string.Join(", ", gateFailure.FailingItems)}; {gateFailure.Reason}";
+        return (MergeIntoIntegrationResult.Of(outcome, error: error) with
+        {
+            GateFailure = gateFailure,
+            AutomaticRecoveryDetail = detail,
+        }, gate);
     }
 
     /// <summary>

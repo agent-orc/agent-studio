@@ -1,0 +1,5 @@
+verdict=Fail exit=128 durationMs=1200 failureKind=Environment
+expectedSha=n/a testedSha=n/a
+reason=git fetch: unable to access origin: ECONNRESET
+--- last-300-lines ---
+fatal: unable to access origin: ECONNRESET

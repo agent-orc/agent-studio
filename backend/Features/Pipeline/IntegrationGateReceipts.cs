@@ -103,6 +103,8 @@ public static class IntegrationGateReceipts
                         HeaderValue(provenanceLine, "pipelineDefinitionVersion="), out var definitionVersion)
                         ? definitionVersion : null,
                     ToolchainIdentity = HeaderValue(provenanceLine, "toolchainIdentity="),
+                    RecordedFailure = verdict == BuildTestGateVerdict.Fail
+                        ? MergeGateFailurePolicy.ClassifyLog(File.ReadAllText(path)) : null,
                 };
             }
             catch (Exception ex)
@@ -218,6 +220,12 @@ public static class IntegrationGateReceipts
                 : string.Join(", ", result.FlakyQuarantinedFailures))}";
         var preparationCacheRetry =
             $"preparationCacheRetryPerformed={result.PreparationCacheRetryPerformed.ToString().ToLowerInvariant()}";
+        var failure = result.Verdict == BuildTestGateVerdict.Fail
+            ? MergeGateFailurePolicy.Classify(result) : null;
+        var failureLine = failure is null
+            ? "gateClass=none"
+            : $"gateClass={failure.Classification} fingerprint={failure.Fingerprint} " +
+              $"failingItems={string.Join(",", failure.FailingItems)} missingEvidence={failure.MissingEvidence}";
         // The first three lines are the durable-recovery header parsed by
         // ReadExact; the reuse line is appended after it so a new field can
         // never shift that contract (AGT-2839).
@@ -234,6 +242,7 @@ public static class IntegrationGateReceipts
             budget + "\n" +
             flaky + "\n" +
             preparationCacheRetry + "\n" +
+            failureLine + "\n" +
             $"guardViolation={result.GuardViolation.ToString().ToLowerInvariant()} testQuarantined=" +
             (result.QuarantinedFailures.Count == 0
                 ? "none"
@@ -273,6 +282,18 @@ public static class IntegrationGateReceipts
                     });
             GateFlakyRerunReceipts.Record(
                 timeline, jobFolderPath, prefix, result.TestedSha, result.FlakyQuarantinedFailures);
+            if (result.ViolatedBudget is { } overrun)
+                timeline.Append(jobFolderPath, TimelineEventKinds.IntegrationFailed,
+                    TimelineActors.System,
+                    $"Gate budget finding: {overrun.Name} consumed {overrun.ConsumedMs} ms of {overrun.LimitMs} ms during {overrun.Phase}; inspect post-steps/{prefix}-{index}.log.",
+                    details: new Dictionary<string, string>
+                    {
+                        ["classification"] = MergeGateFailurePolicy.Environment,
+                        ["gate"] = prefix,
+                        ["limitMs"] = overrun.LimitMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["consumedMs"] = overrun.ConsumedMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["evidence"] = $"post-steps/{prefix}-{index}.log",
+                    });
             if (result.PreparationCacheRetryPerformed)
             {
                 timeline.Append(
