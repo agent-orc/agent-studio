@@ -97,15 +97,15 @@ async function mockApplication(page: Page): Promise<void> {
     const pathname = url.pathname;
     if (pathname.endsWith('/graph')) return fulfillJson(route, graph);
     if (pathname === '/api/watch-paths') return fulfillJson(route, [{ name: PROJECT_NAME, path: project.storageLocation, rootPath: project.rootPath, repositoryPath: project.repositoryPath }]);
-    if (pathname === '/api/workspaces') return fulfillJson(route, [{
+    if (pathname === '/api/v1/workspaces') return fulfillJson(route, [{
       id: 'ws-product', displayName: 'Product Engineering', sortOrder: 0, isDefault: true,
       color: '#6c8cff', createdAt: '2026-07-13T10:00:00Z', projects: [project],
     }]);
-    if (pathname === '/api/projects') return fulfillJson(route, [project]);
+    if (pathname === '/api/v1/projects') return fulfillJson(route, [project]);
     if (pathname === '/api/tasks') return fulfillJson(route, []);
-    if (pathname === '/api/tasks/grouped') return fulfillJson(route, grouped());
+    if (pathname === '/api/v1/studio/board') return fulfillJson(route, grouped());
     if (pathname === '/api/tasks/archive') return fulfillJson(route, { items: [], total: 0, offset: 0, limit: 50 });
-    if (pathname === '/api/runner/status') return fulfillJson(route, { projects: {} });
+    if (pathname === '/api/v1/studio/runner/status') return fulfillJson(route, { projects: {} });
     if (pathname === '/api/cli/quota') return fulfillJson(route, { at: '2026-07-13T12:00:00Z', ttlSeconds: 600, snapshots: [] });
     if (pathname === '/api/crash-recovery/pending') return fulfillJson(route, { pending: [] });
     return fulfillJson(route, []);

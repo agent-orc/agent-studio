@@ -128,14 +128,14 @@ async function installRoutes(page: Page): Promise<void> {
   // Catch-all first (returns []); specific routes registered afterwards win.
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => { /* late */ }));
   await page.route('**/api/runner/orchestrator-feed**', r => r.fulfill(json({ entries: [], generatedAtUtc: '2026-07-31T00:00:00Z' })));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, r => r.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: REPO_PATH, rootPath: REPO_PATH, repositoryPath: REPO_PATH }])));
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/clients', r => r.fulfill(json([])));
   await page.route('**/api/cli/usage**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', r => r.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
