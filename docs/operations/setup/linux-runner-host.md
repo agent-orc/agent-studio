@@ -58,7 +58,11 @@ unit supplies the role cgroup policy described in
 Do not point the review root at `RUNNER_WORKDIR`.
 
 The Review Executor advertises Git/source-bundle, semantic, and vision
-capabilities. Each claimed ReviewAttempt receives a fresh workspace, cache,
+capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
+`toolchain:playwright` keys for every tool its probe finds on the unit's
+`PATH`. Review plans require them; see the
+[review lane runbook](../review-lane-runbook.md) for the typed empty-claim
+reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
 and fenced cleanup lifecycle. Child processes start from a cleared environment.
 Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
@@ -81,7 +85,11 @@ account, credential file, cgroup quota, and `RUNNER_REVIEW_WORKDIR`. Do not poin
 the review root at `RUNNER_WORKDIR`.
 
 The Review Executor advertises Git/source-bundle, semantic, and vision
-capabilities. Each claimed ReviewAttempt receives a fresh workspace, cache,
+capabilities, and registers the `toolchain:dotnet`, `toolchain:node`, and
+`toolchain:playwright` keys for every tool its probe finds on the unit's
+`PATH`. Review plans require them; see the
+[review lane runbook](../review-lane-runbook.md) for the typed empty-claim
+reason and the review-claim stall alarm. Each claimed ReviewAttempt receives a fresh workspace, cache,
 temporary directory, eight-port block, Compose namespace, database namespace,
 and fenced cleanup lifecycle. Child processes start from a cleared environment.
 Only names in `RUNNER_REVIEW_CREDENTIAL_ENV` are admitted to cleared review
@@ -124,8 +132,14 @@ The tunnel procedure and health gate are documented in
 ### Own the Task Server route
 
 Do not run the tunnel as an unattended bare `ssh -N` process. For the current
-Windows-to-Linux reverse route, register the repository-owned functional keeper
-from the Studio checkout:
+Windows-to-Linux reverse route, the Task Server's `LinkSupervisor` owns the
+connection. Configure and verify it using
+[Remote runner: persistent connection](./remote-runner-persistent-connection.md).
+The keeper task was disabled on 2026-09-25 and must stay disabled during normal
+operation.
+
+For an explicit emergency rollback only, disable the product `RunnerLinks`
+entry before registering the repository-owned keeper from the Studio checkout:
 
 ```powershell
 .\deploy\windows\agent-runner-tunnel\register-tunnel-keeper.ps1 `
@@ -136,10 +150,10 @@ from the Studio checkout:
 ```
 
 The keeper probes `/healthz` from the Linux host, removes only the matching dead
-forward, and recreates it with SSH keepalives and `ExitOnForwardFailure`. If the
-host can initiate the SSH connection, prefer the host-owned `autossh` plus
-systemd form in the linked tunnel runbook because it starts before an
-interactive Windows logon.
+forward, and recreates it with SSH keepalives and `ExitOnForwardFailure`. Do
+not run it alongside the supervisor. If the host can initiate the SSH
+connection, the host-owned `autossh` plus systemd form in the linked runbook is
+another emergency route.
 
 Treat either tunnel form as an interim local-profile topology. Once an
 authenticated private Task Server URL is available to the host, point
@@ -1910,7 +1924,7 @@ proof.
   This is the board-visible transport alarm even when the host itself is still
   running, because a broken route cannot carry a fresh failure report through
   itself. For the Windows-to-Linux reverse-tunnel topology, inspect
-  `%LOCALAPPDATA%\AgentTaskboard\tunnel-keeper\events.log`, then run the
+  `GET /api/v1/management/links` and its `lastError`, then run the
   functional host-side curl from
   [Remote runner: persistent connection](./remote-runner-persistent-connection.md).
   Repair the route instead of restarting the review daemon.

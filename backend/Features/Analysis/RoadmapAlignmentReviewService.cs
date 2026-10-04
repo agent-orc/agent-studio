@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Analysis;
 
@@ -442,12 +443,12 @@ public sealed class RoadmapAlignmentReviewService
     private static string RenderQueueSummary(RoadmapAlignmentReviewScope scope)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("| Lane | Count |");
-        sb.AppendLine("|------|------:|");
+        sb.AppendLf("| Lane | Count |");
+        sb.AppendLf("|------|------:|");
         foreach (var lane in InspectedLanes)
         {
             var count = scope.JobsByLane.TryGetValue(lane, out var jobs) ? jobs.Count : 0;
-            sb.Append("| `").Append(lane).Append("` | ").Append(count).AppendLine(" |");
+            sb.Append("| `").Append(lane).Append("` | ").Append(count).AppendLf(" |");
         }
         return sb.ToString().TrimEnd();
     }
@@ -457,13 +458,13 @@ public sealed class RoadmapAlignmentReviewService
         var sb = new StringBuilder();
         foreach (var lane in InspectedLanes)
         {
-            sb.Append("### ").AppendLine(lane);
-            sb.AppendLine();
+            sb.Append("### ").AppendLf(lane);
+            sb.AppendLf();
             var jobs = scope.JobsByLane.TryGetValue(lane, out var list) ? list : Array.Empty<TaskSummary>();
             if (jobs.Count == 0)
             {
-                sb.AppendLine("(no jobs)");
-                sb.AppendLine();
+                sb.AppendLf("(no jobs)");
+                sb.AppendLf();
                 continue;
             }
             foreach (var j in jobs)
@@ -471,9 +472,9 @@ public sealed class RoadmapAlignmentReviewService
                 sb.Append("- `").Append(j.JobId).Append("` - ").Append(j.Title);
                 if (!string.IsNullOrWhiteSpace(j.CliType))
                     sb.Append(" _(cli: ").Append(j.CliType).Append(")_");
-                sb.AppendLine();
+                sb.AppendLf();
             }
-            sb.AppendLine();
+            sb.AppendLf();
         }
         return sb.ToString().TrimEnd();
     }
@@ -483,7 +484,7 @@ public sealed class RoadmapAlignmentReviewService
         if (scope.Docs.Count == 0) return "(no canonical docs found)";
         var sb = new StringBuilder();
         foreach (var d in scope.Docs)
-            sb.Append("- `").Append(d.Path).Append("` - ").AppendLine(d.Label);
+            sb.Append("- `").Append(d.Path).Append("` - ").AppendLf(d.Label);
         return sb.ToString().TrimEnd();
     }
 
@@ -492,7 +493,7 @@ public sealed class RoadmapAlignmentReviewService
         if (scope.RecentReports.Count == 0) return "(no prior analysis reports for this project)";
         var sb = new StringBuilder();
         foreach (var r in scope.RecentReports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 
@@ -501,7 +502,7 @@ public sealed class RoadmapAlignmentReviewService
         if (scope.StrayLaneFolders.Count == 0) return "(none)";
         var sb = new StringBuilder();
         foreach (var s in scope.StrayLaneFolders)
-            sb.Append("- ").AppendLine(s);
+            sb.Append("- ").AppendLf(s);
         return sb.ToString().TrimEnd();
     }
 
