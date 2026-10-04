@@ -17,12 +17,12 @@ x-task-server: &task-server
     STORE_PATH: /var/lib/agent-orchestrator/store
     BACKUP_PATH: /var/lib/agent-orchestrator/backup
     AUTH: bearer
-    STUDIO_AUTH_TOKEN_FILE: /run/agent-studio-secrets/studio_token
-    ENGINE_AUTH_TOKEN_FILE: /run/agent-studio-secrets/engine_token
+    STUDIO_AUTH_TOKEN_FILE: /run/agent-studio-secrets/studio/studio_token
+    ENGINE_AUTH_TOKEN_FILE: /run/agent-studio-secrets/engine/engine_token
     BOOTSTRAP_RUNNER_ID: distributed-runner
-    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
+    BOOTSTRAP_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner/runner_token
     BOOTSTRAP_REVIEW_RUNNER_ID: distributed-review-runner
-    BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
+    BOOTSTRAP_REVIEW_RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner/review_runner_token
     OWNER_BOOTSTRAP_CODE_FILE: /run/agent-studio-secrets/owner_bootstrap_code
   volumes:
     - store:/var/lib/agent-orchestrator/store
@@ -47,7 +47,11 @@ x-engine: &engine
     CLIENT_CREDENTIAL_FILE: /run/agent-studio-secrets/engine_token
     ENGINE_ALLOW_INSECURE_HTTP: "1"
   volumes:
-    - secrets:/run/agent-studio-secrets:ro
+    - type: volume
+      source: secrets
+      target: /run/agent-studio-secrets
+      read_only: true
+      volume: {subpath: engine}
   networks: [control]
   mem_limit: 1g
   cpus: 2
@@ -68,7 +72,11 @@ x-bff: &bff
     TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
     Studio__AllowedOrigins: ${STUDIO_ALLOWED_ORIGINS:-http://127.0.0.1:4011,http://localhost:4011}
   volumes:
-    - secrets:/run/agent-studio-secrets:ro
+    - type: volume
+      source: secrets
+      target: /run/agent-studio-secrets
+      read_only: true
+      volume: {subpath: studio}
   networks: [control]
   mem_limit: 512m
   cpus: 1
@@ -88,7 +96,11 @@ x-api: &api
     TaskServer__BaseUrl: http://task-server:5071
     TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
   volumes:
-    - secrets:/run/agent-studio-secrets:ro
+    - type: volume
+      source: secrets
+      target: /run/agent-studio-secrets
+      read_only: true
+      volume: {subpath: studio}
   networks: [control]
   mem_limit: 2g
   cpus: 2
@@ -142,10 +154,14 @@ x-runner: &runner
     RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/runner_token
   volumes:
     - runner-workspaces:/var/lib/agent-host
-    - secrets:/run/agent-studio-secrets:ro
-    - ${RUNNER_CLAUDE_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.claude
-    - ${RUNNER_CODEX_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.codex
-    - ${RUNNER_GEMINI_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.config/gemini
+    - type: volume
+      source: secrets
+      target: /run/agent-studio-secrets
+      read_only: true
+      volume: {subpath: runner}
+    - ${RUNNER_CLAUDE_CREDENTIALS_DIR:-runner-claude-auth}:/home/runner/.claude
+    - ${RUNNER_CODEX_CREDENTIALS_DIR:-runner-codex-auth}:/home/runner/.codex
+    - ${RUNNER_GEMINI_CREDENTIALS_DIR:-runner-gemini-auth}:/home/runner/.config/gemini
     - ${RUNNER_SSH_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.ssh:ro
     - ${RUNNER_GIT_CREDENTIALS_FILE:-./deploy/compose/empty-credentials/git-credentials}:/home/runner/.git-credentials:ro
   networks: [control, runner]
@@ -172,6 +188,12 @@ services:
       - workspace:/data/workspace
       - projects:/data/projects
       - runner-workspaces:/var/lib/agent-host
+      - runner-claude-auth:/run/native-auth/coding/claude
+      - runner-codex-auth:/run/native-auth/coding/codex
+      - runner-gemini-auth:/run/native-auth/coding/gemini
+      - review-claude-auth:/run/native-auth/review/claude
+      - review-codex-auth:/run/native-auth/review/codex
+      - review-gemini-auth:/run/native-auth/review/gemini
       - ./scripts/compose-secret-bootstrap.sh:/opt/compose-secret-bootstrap.sh:ro
     networks: [control]
     mem_limit: 128m
@@ -236,6 +258,18 @@ services:
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
+    volumes:
+      - runner-workspaces:/var/lib/agent-host
+      - type: volume
+        source: secrets
+        target: /run/agent-studio-secrets
+        read_only: true
+        volume: {subpath: review_runner}
+      - ${REVIEW_RUNNER_CLAUDE_CREDENTIALS_DIR:-review-claude-auth}:/home/runner/.claude
+      - ${REVIEW_RUNNER_CODEX_CREDENTIALS_DIR:-review-codex-auth}:/home/runner/.codex
+      - ${REVIEW_RUNNER_GEMINI_CREDENTIALS_DIR:-review-gemini-auth}:/home/runner/.config/gemini
+      - ${REVIEW_RUNNER_SSH_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.ssh:ro
+      - ${REVIEW_RUNNER_GIT_CREDENTIALS_FILE:-./deploy/compose/empty-credentials/git-credentials}:/home/runner/.git-credentials:ro
     depends_on:
       task-server: {condition: service_healthy}
 
@@ -325,8 +359,6 @@ services:
   orchestrator-api-dev:
     <<: *api
     build: {context: ., dockerfile: backend/Dockerfile, args: {VERSION: "${AGENT_STUDIO_VERSION:-0.0.0-dev}"}}
-    volumes:
-      - secrets:/run/agent-studio-secrets:ro
     environment:
       TaskServer__BaseUrl: http://task-server-dev:5071
       TaskServer__AuthTokenFile: /run/agent-studio-secrets/studio_token
@@ -369,6 +401,18 @@ services:
       RUNNER_NAME: distributed-review-runner
       RUNNER_ROLE: review
       RUNNER_AUTH_TOKEN_FILE: /run/agent-studio-secrets/review_runner_token
+    volumes:
+      - runner-workspaces:/var/lib/agent-host
+      - type: volume
+        source: secrets
+        target: /run/agent-studio-secrets
+        read_only: true
+        volume: {subpath: review_runner}
+      - ${REVIEW_RUNNER_CLAUDE_CREDENTIALS_DIR:-review-claude-auth}:/home/runner/.claude
+      - ${REVIEW_RUNNER_CODEX_CREDENTIALS_DIR:-review-codex-auth}:/home/runner/.codex
+      - ${REVIEW_RUNNER_GEMINI_CREDENTIALS_DIR:-review-gemini-auth}:/home/runner/.config/gemini
+      - ${REVIEW_RUNNER_SSH_CREDENTIALS_DIR:-./deploy/compose/empty-credentials}:/home/runner/.ssh:ro
+      - ${REVIEW_RUNNER_GIT_CREDENTIALS_FILE:-./deploy/compose/empty-credentials/git-credentials}:/home/runner/.git-credentials:ro
     depends_on:
       task-server-dev: {condition: service_healthy}
     profiles: [dev]
@@ -380,6 +424,12 @@ volumes:
   projects:
   runner-workspaces:
   secrets:
+  runner-claude-auth:
+  runner-codex-auth:
+  runner-gemini-auth:
+  review-claude-auth:
+  review-codex-auth:
+  review-gemini-auth:
   edge-data:
   edge-config:
 

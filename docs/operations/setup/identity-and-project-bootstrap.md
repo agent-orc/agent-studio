@@ -80,7 +80,8 @@ scripts/enrol-host-principal.sh https://tasks.example.com <installationId> \
     /etc/agent-runner/enrolment-code /etc/agent-runner/runner-auth-token
 ```
 
-The script refuses a non-HTTPS non-loopback URL, refuses to join an
+The script accepts HTTPS origins or exact loopback HTTP origins
+(`localhost`, `127.0.0.1`, `[::1]`), refuses to join an
 installation other than the one named, never prints either secret, writes the
 credential mode 600 and deletes the spent code. Set
 `RUNNER_AUTH_TOKEN_FILE` to the credential file.
@@ -124,7 +125,8 @@ scripts/probe-project-repository.sh https://tasks.example.com build-02 prj-alpha
     /etc/agent-runner/runner-auth-token
 ```
 
-The script runs `git ls-remote` for the integration ref and a dry-run push
+The script applies the same Task Server origin check before reading the bearer.
+It runs `git ls-remote` for the integration ref and a dry-run push
 against the **registered** origin, then posts the receipt to
 `POST /api/v1/runners/{runnerId}/project-probes/{projectId}`. The verdict is
 `admitted` only if the observed fetch and push URLs equal the registered origin

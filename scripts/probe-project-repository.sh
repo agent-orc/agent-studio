@@ -7,6 +7,8 @@
 set -euo pipefail
 [ "$#" -eq 4 ] || { echo "usage: $0 <task-server-url> <runner-id> <project-id> <credential-file>" >&2; exit 2; }
 server="${1%/}" runner="$2" project="$3" credential_file="$4"
+source "$(dirname "${BASH_SOURCE[0]}")/task-server-url.sh"
+validate_task_server_url "$server"
 umask 077
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -14,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 printf 'Authorization: Bearer %s\nX-Task-Protocol-Version: %s\n' \
     "$(tr -d '\n' < "$credential_file")" "${TASK_PROTOCOL_VERSION:-2}" > "$work/headers"
 auth=(-H "@$work/headers")
-registration="$(curl -fsS "${auth[@]}" "$server/api/v1/projects/$project/repository" | jq .registration)"
+registration="$(curl "${task_server_curl_options[@]}" -fsS "${auth[@]}" "$server/api/v1/projects/$project/repository" | jq .registration)"
 url="$(jq -r .repositoryUrl <<<"$registration")"
 ref="$(jq -r .integrationRef <<<"$registration")"
 
@@ -34,5 +36,5 @@ fi
 jq -n --arg url "$url" --argjson fetch "$fetch" --argjson push "$push" --arg detail "$detail" \
     '{observedFetchUrl: $url, observedPushUrl: $url, fetchSucceeded: $fetch, pushSucceeded: $push,
       usedFallbackRemote: false, detail: (if $detail == "" then null else $detail end)}' > "$work/probe.json"
-curl -fsS "${auth[@]}" -H 'Content-Type: application/json' --data-binary "@$work/probe.json" \
+curl "${task_server_curl_options[@]}" -fsS "${auth[@]}" -H 'Content-Type: application/json' --data-binary "@$work/probe.json" \
     "$server/api/v1/runners/$runner/project-probes/$project" | jq -c '{projectId, runnerId, admitted, verdict}'
