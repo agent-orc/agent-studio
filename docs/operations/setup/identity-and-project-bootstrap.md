@@ -115,8 +115,10 @@ POST /api/v1/projects/registrations
   `git@host:path`). Embedded credentials, query, fragment, `http://`,
   `file://` and local paths are rejected.
 - One repository belongs to one project (`409 repository-owned-by-other-project`).
-- An identical repeat returns `200`; any differing value is
-  `409 project-repository-registered`, never an implicit change.
+- An identical repeat returns `200`; the check includes the stored workspace,
+  project name and task key prefix as well as the repository fields. Any
+  differing value is `409 project-repository-registered`, never an implicit
+  change.
 
 ## Prove the repository from the host
 

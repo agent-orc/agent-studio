@@ -400,6 +400,17 @@ public sealed class IdentityBootstrapTests
 
         Assert.Equal(HttpStatusCode.OK, (await ownerClient.PostAsJsonAsync("/api/v1/projects/registrations",
             Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId))).StatusCode);
+        var otherWorkspace = await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
+            new CreateWorkspaceRequest("Other"))).Content.ReadFromJsonAsync<WorkspaceDto>();
+        var identicalRepository = Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId);
+        foreach (var changedProject in new[]
+                 {
+                     identicalRepository with { WorkspaceId = otherWorkspace!.WorkspaceId },
+                     identicalRepository with { Name = "Changed name" },
+                     identicalRepository with { TaskKeyPrefix = "CHANGED" }
+                 })
+            Assert.Equal("project-repository-registered", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
+                "/api/v1/projects/registrations", changedProject), HttpStatusCode.Conflict));
         Assert.Equal("project-repository-registered", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
             "/api/v1/projects/registrations",
             Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId, integrationRef: "main")),

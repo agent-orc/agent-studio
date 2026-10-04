@@ -398,7 +398,15 @@ public sealed partial class TaskServerStore
             existing = await ReadProjectRepositoryAsync(connection, transaction, projectId, ct);
             if (existing is not null)
             {
-                if (existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
+                await using var projectCommand = Command(connection, """
+                    SELECT workspace_id, name, task_key_prefix FROM projects WHERE id = $project;
+                    """, transaction, ("$project", projectId));
+                await using var projectReader = await projectCommand.ExecuteReaderAsync(ct);
+                var projectMatches = await projectReader.ReadAsync(ct)
+                    && projectReader.GetString(0) == request.WorkspaceId
+                    && projectReader.GetString(1) == request.Name.Trim()
+                    && projectReader.GetString(2) == request.TaskKeyPrefix.Trim().ToUpperInvariant();
+                if (projectMatches && existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
                     && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy)
                     return;
                 throw new TaskServerConflictException(
