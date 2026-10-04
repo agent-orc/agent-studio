@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Drift;
 
@@ -646,7 +647,7 @@ public sealed class SpecTaskDriftAnalysisService
         if (refs.Count == 0) return "(none found)";
         var sb = new StringBuilder();
         foreach (var r in refs)
-            sb.Append("- `").Append(r.Path).Append("` - ").AppendLine(r.Label);
+            sb.Append("- `").Append(r.Path).Append("` - ").AppendLf(r.Label);
         return sb.ToString().TrimEnd();
     }
 
@@ -667,7 +668,7 @@ public sealed class SpecTaskDriftAnalysisService
                 sb.Append(string.Join(", ", tags));
                 sb.Append(")_");
             }
-            sb.AppendLine();
+            sb.AppendLf();
             if (!string.IsNullOrWhiteSpace(t.PromptExcerpt))
             {
                 var excerpt = t.PromptExcerpt!
@@ -675,7 +676,7 @@ public sealed class SpecTaskDriftAnalysisService
                     .Replace("\r", " ");
                 if (excerpt.Length > PromptExcerptLimit)
                     excerpt = excerpt[..PromptExcerptLimit] + "...";
-                sb.Append("    > ").AppendLine(excerpt);
+                sb.Append("    > ").AppendLf(excerpt);
             }
         }
         return sb.ToString().TrimEnd();
@@ -688,7 +689,7 @@ public sealed class SpecTaskDriftAnalysisService
         foreach (var t in jobs)
         {
             sb.Append("- `").Append(t.Lane).Append('/').Append(t.JobId).Append("` - ")
-                .AppendLine(t.Title);
+                .AppendLf(t.Title);
         }
         return sb.ToString().TrimEnd();
     }
@@ -701,7 +702,7 @@ public sealed class SpecTaskDriftAnalysisService
         {
             sb.Append("- `").Append(p.LeftLane).Append('/').Append(p.LeftJobId).Append('`')
                 .Append(" vs `").Append(p.RightLane).Append('/').Append(p.RightJobId).Append("` ")
-                .Append("(token overlap ").Append(p.Overlap.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)).AppendLine(")");
+                .Append("(token overlap ").Append(p.Overlap.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)).AppendLf(")");
         }
         return sb.ToString().TrimEnd();
     }
@@ -711,7 +712,7 @@ public sealed class SpecTaskDriftAnalysisService
         if (reports.Count == 0) return "(none)";
         var sb = new StringBuilder();
         foreach (var r in reports)
-            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLine(")_");
+            sb.Append("- `").Append(r.ReportId).Append("` _(").Append(r.Topic).Append(", ").Append(r.CreatedAt).AppendLf(")_");
         return sb.ToString().TrimEnd();
     }
 

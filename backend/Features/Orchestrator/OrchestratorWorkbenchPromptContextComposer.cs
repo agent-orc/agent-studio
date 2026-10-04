@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using AgentStudio.Docs;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Orchestrator;
 
@@ -54,14 +55,14 @@ public sealed class OrchestratorWorkbenchPromptContextComposer
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine("=== ACTIVE DOSSIER CONTEXT ===");
-        sb.AppendLine("The operator is chatting from this Dossier. Treat this block as the authoritative scope for the current message. Do not assume board or task state that was not explicitly requested.");
-        sb.AppendLine($"Included context blocks: {string.Join(", ", included)}.");
-        sb.AppendLine();
+        sb.AppendLf("=== ACTIVE DOSSIER CONTEXT ===");
+        sb.AppendLf("The operator is chatting from this Dossier. Treat this block as the authoritative scope for the current message. Do not assume board or task state that was not explicitly requested.");
+        sb.AppendLf($"Included context blocks: {string.Join(", ", included)}.");
+        sb.AppendLf();
         foreach (var block in blocks)
         {
-            sb.AppendLine(block);
-            sb.AppendLine();
+            sb.AppendLf(block);
+            sb.AppendLf();
         }
 
         var repositoryRoot = _workbenches.ResolveCanonicalForMutation(projectName, item.Id)?.Root;
