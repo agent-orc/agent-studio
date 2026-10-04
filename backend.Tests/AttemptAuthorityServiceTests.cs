@@ -1684,6 +1684,168 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         });
     }
 
+    [Fact]
+    public void AuthorityMutations_UseStructuredAtomicWrites_AndRemainDurable()
+    {
+        var writer = new StructuredOnlyWriter();
+        var service = NewService(writer: writer);
+        var run = service.AcquireRun("AGT-stream", "PROJ-1", null, "runner-a", "host-a", 120, "claim-stream");
+
+        Assert.Equal(AttemptWriteStatus.Accepted, run.Status);
+        Assert.Equal(AttemptWriteStatus.Accepted, service.RenewRun(
+            new AttemptWriteReference(run.RunAttempt!.AttemptId, run.RunAttempt.LastFence,
+                run.RunAttempt.AuthorityEpoch, "renew-stream"), "runner-a", 120).Status);
+        var restarted = NewService(writer: writer);
+        Assert.True(writer.StructuredWrites >= 2);
+        Assert.Equal(run.RunAttempt!.AttemptId,
+            restarted.GetTaskProjection("AGT-stream").CurrentRunAttempt!.AttemptId);
+        Assert.Equal(AttemptWriteStatus.Duplicate,
+            restarted.AcquireRun("AGT-stream", "PROJ-1", null, "runner-a", "host-a", 120, "claim-stream").Status);
+    }
+
+    [Fact]
+    public async Task BoardReviewSnapshot_remains_readable_while_authority_write_is_blocked()
+    {
+        var writer = new BoardSnapshotWriter();
+        var service = NewService(writer: writer);
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        writer.BeforeWrite = () =>
+        {
+            entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(30)))
+                throw new TimeoutException("Test did not release the authority writer.");
+        };
+        var mutation = Task.Factory.StartNew(
+            () => service.ClaimReview(review.AttemptId, "reviewer", "host", 60, "claim-review"),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Task<System.Collections.Immutable.ImmutableDictionary<string, BoardReviewActivity>>? read = null;
+        var completedBeforeRelease = false;
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "Authority writer did not enter.");
+            read = Task.Factory.StartNew(service.ReadBoardReviewActivity,
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            completedBeforeRelease = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(3))) == read;
+        }
+        finally
+        {
+            release.Set();
+            await mutation.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        var duringWrite = await read!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(completedBeforeRelease, "A board read waited for the authority persistence lock.");
+        Assert.Equal(AttemptLifecycleState.Pending, duringWrite["AGT-1"].State);
+        Assert.Equal(AttemptLifecycleState.Leased, service.ReadBoardReviewActivity()["AGT-1"].State);
+    }
+
+    [Fact]
+    public void BoardReviewSnapshot_does_not_publish_a_write_that_fails()
+    {
+        var writer = new BoardSnapshotWriter();
+        var service = NewService(writer: writer);
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var committed = service.ReadBoardReviewActivity();
+        BoardReviewActivity? observedDuringWrite = null;
+        writer.BeforeWrite = () => observedDuringWrite = service.ReadBoardReviewActivity()["AGT-1"];
+        writer.Fail = true;
+
+        Assert.Throws<IOException>(() =>
+            service.ClaimReview(review.AttemptId, "reviewer", "host", 60, "claim-review"));
+
+        Assert.Equal(AttemptLifecycleState.Pending, observedDuringWrite!.Value.State);
+        Assert.Same(committed, service.ReadBoardReviewActivity());
+        Assert.Equal(AttemptLifecycleState.Pending, service.GetReview(review.AttemptId)!.State);
+        Assert.Equal(AttemptLifecycleState.Pending, NewService().ReadBoardReviewActivity()["AGT-1"].State);
+    }
+
+    [Fact]
+    public void BoardReviewSnapshot_tracks_committed_lease_changes_without_mutating_previous_reads()
+    {
+        var now = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var pending = service.ReadBoardReviewActivity();
+        var claimed = service.ClaimReview(review.AttemptId, "reviewer", "host", 60, "claim-review").ReviewAttempt!;
+        var leased = service.ReadBoardReviewActivity();
+        now = now.AddSeconds(20);
+        var renewed = service.RenewReview(new AttemptWriteReference(
+            claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "renew-review"),
+            "reviewer", 120).ReviewAttempt!;
+
+        Assert.Equal(AttemptLifecycleState.Pending, pending["AGT-1"].State);
+        Assert.Null(pending["AGT-1"].LeaseExpiresAt);
+        Assert.Equal(claimed.Lease!.ExpiresAt, leased["agt-1"].LeaseExpiresAt);
+        Assert.Equal(renewed.Lease!.ExpiresAt, service.ReadBoardReviewActivity()["AGT-1"].LeaseExpiresAt);
+        Assert.Equal(renewed.Lease.ExpiresAt, NewService(() => now).ReadBoardReviewActivity()["agt-1"].LeaseExpiresAt);
+        Assert.False(service.ReadBoardReviewActivity().ContainsKey("AGT-UNKNOWN"));
+
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(renewed.AttemptId, renewed.LastFence, renewed.AuthorityEpoch, "settle-review"),
+            "sha-a", ReviewTerminalOutcome.Pass));
+        Assert.Equal(AttemptLifecycleState.Completed, service.ReadBoardReviewActivity()["AGT-1"].State);
+        Assert.Equal(AttemptLifecycleState.Leased, leased["AGT-1"].State);
+    }
+
+    [Fact]
+    public void BoardReviewSnapshot_uses_current_review_pointer_and_supports_in_memory_authority()
+    {
+        var service = new AttemptAuthorityService(NullLogger<AttemptAuthorityService>.Instance);
+        var (oldRun, oldReview) = CompletedRunWithReview(service, "sha-a");
+        var oldClaim = service.ClaimReview(oldReview.AttemptId, "reviewer", "host", 60, "claim-old").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(oldClaim.AttemptId, oldClaim.LastFence, oldClaim.AuthorityEpoch, "settle-old"),
+            "sha-a", ReviewTerminalOutcome.Pass));
+        var next = service.AcquireRun("AGT-1", "PROJ-1", oldRun.AttemptId,
+            "runner", "host", 60, "run-next").RunAttempt!;
+        service.SettleRun(new SettleRunAttemptRequest
+        {
+            Write = new AttemptWriteReference(next.AttemptId, next.LastFence, next.AuthorityEpoch, "complete-next"),
+            Outcome = "done",
+            ResultSha = "sha-b",
+        });
+        var current = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-1", "PROJ-1", "sha-b", next.AttemptId, "req", "policy", [], "review-next")).ReviewAttempt!;
+
+        Assert.NotEqual(oldReview.AttemptId, current.AttemptId);
+        var snapshot = service.ReadBoardReviewActivity();
+        Assert.Single(snapshot);
+        Assert.Equal(AttemptLifecycleState.Pending, snapshot["agt-1"].State);
+        Assert.Null(snapshot["agt-1"].LeaseExpiresAt);
+    }
+
+    private sealed class BoardSnapshotWriter : IAtomicJsonFileWriter
+    {
+        private readonly IAtomicJsonFileWriter _inner = new AtomicJsonFileWriter();
+        public Action? BeforeWrite { get; set; }
+        public bool Fail { get; set; }
+
+        public void Write(string path, string content) => _inner.Write(path, content);
+
+        public void WriteJson<T>(string path, T value, JsonSerializerOptions? options = null)
+        {
+            BeforeWrite?.Invoke();
+            if (Fail) throw new IOException("Simulated authority persistence failure.");
+            _inner.WriteJson(path, value, options);
+        }
+    }
+
+    private sealed class StructuredOnlyWriter : IAtomicJsonFileWriter
+    {
+        public int StructuredWrites { get; private set; }
+
+        public void Write(string path, string content)
+            => throw new InvalidOperationException("Authority persistence must not materialize the complete JSON string.");
+
+        public void WriteJson<T>(string path, T value, JsonSerializerOptions? options = null)
+        {
+            StructuredWrites++;
+            IAtomicJsonFileWriter writer = new AtomicJsonFileWriter();
+            writer.WriteJson(path, value, options);
+        }
+    }
+
     private AttemptAuthorityService NewService(
         Func<DateTime>? now = null,
         IAtomicJsonFileWriter? writer = null,
