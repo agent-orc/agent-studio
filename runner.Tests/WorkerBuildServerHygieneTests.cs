@@ -80,8 +80,8 @@ public sealed class WorkerBuildServerHygieneTests
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "codex",
-            CliArgs = "",
+            CliType = "codex",
+            CodexCliBin = "codex",
         };
         var spec = DurableAgentProcess.BuildSpec(
             options, Path.GetTempPath(), "prompt", Path.GetTempPath(),

@@ -53,10 +53,8 @@ services:
       RUNNER_BRANCH: main
       RUNNER_WORKDIR: /scenario/runner-work
       RUNNER_STATE_DIR: /scenario/runner-state
-      RUNNER_CLI_BIN: /usr/local/bin/scenario-coding-agent
+      RUNNER_CLAUDE_CLI_BIN: /usr/local/bin/scenario-coding-agent
       RUNNER_AUTH_TOKEN_FILE: /scenario/runner.token
-      RUNNER_EXEC_ENGINE: legacy
-      RUNNER_CLI_ARGS: ""
       RUNNER_HEARTBEAT_SECONDS: "5"
       RUNNER_RUN_TIMEOUT_SECONDS: "45"
       RUNNER_TTL_SECONDS: "15"
