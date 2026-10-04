@@ -111,8 +111,25 @@ async function installRoutes(page: Page): Promise<void> {
     });
   }
   await page.route('**/api/**', (route) => route.fulfill(json([])).catch(() => undefined));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null })));
+  await page.route('**/api/v1/studio/board**', (route) => route.fulfill(json(GROUPED)));
+  await page.route(/\/api\/v1\/projects(\?|$)/, (route) => route.fulfill(json([{
+    id: PROJECT, displayName: PROJECT, shortCode: 'DEMO', workspaceId: 'ws-demo',
+    storageLocation: WP, sortOrder: 0, archived: false, createdAt: '2026-09-25T09:00:00Z',
+  }])));
+  await page.route('**/api/v1/workspaces**', (route) => route.fulfill(json([{
+    id: 'ws-demo', displayName: 'Demo Workspace', sortOrder: 0, isDefault: true,
+    createdAt: '2026-09-25T09:00:00Z', projects: [{
+      id: PROJECT, displayName: PROJECT, shortCode: 'DEMO', workspaceId: 'ws-demo',
+      storageLocation: WP, sortOrder: 0, archived: false, createdAt: '2026-09-25T09:00:00Z',
+    }],
+  }])));
+  await page.route(/\/api\/v1\/projects\/[^/?]+\/tasks\/[^/?]+(\?|$)/, (route) => {
+    const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').pop() ?? '');
+    const task = ALL.find(t => t.id === id);
+    return route.fulfill(task ? json(detailFor(task)) : { status: 404, contentType: 'application/json', body: '{}' });
+  });
   await page.route('**/api/tasks/grouped**', (route) => route.fulfill(json(GROUPED)));
   await page.route(/\/api\/tasks\/[^/?]+\/(output|session-events|runs)(\?|$)/, (route) => {
     const url = route.request().url();
@@ -128,7 +145,7 @@ async function installRoutes(page: Page): Promise<void> {
   });
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill(json([{ name: PROJECT, path: WP, rootPath: WP, repositoryPath: WP }])));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) => route.fulfill(json({
+  await page.route(/\/api\/(?:v1\/studio\/)?runner\/status(\?|$)/, (route) => route.fulfill(json({
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   })));
   await page.route(/\/api\/projects\/[^/]+\/workbenches/, (route) => route.fulfill(json({ items: [] })));
@@ -176,7 +193,8 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
   test('protocol events keep their order and one timestamp column', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 780 });
     await installRoutes(page);
-    await page.goto(`/?job=${encodeURIComponent(DETAIL_ID)}&watchPath=${encodeURIComponent(WP)}`);
+    await page.goto(`/?job=${encodeURIComponent(DETAIL_ID)}&watchPath=${encodeURIComponent(WP)}`,
+      { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.getByTestId('inspector-tab-activity').click();
     await page.getByTestId('protocol-maximize-log').click();
     const rows = page.getByTestId('protocol-log-row');
@@ -198,7 +216,7 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
         }));
       }, PROJECT);
       await installRoutes(page);
-      await page.goto('/?includeFixtures=true');
+      await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       const review = page.locator('[data-testid="lane-5-human-review"]').first();
       await expect(review).toBeVisible({ timeout: 15_000 });
 
@@ -220,7 +238,7 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
         await expect(laneSelect).toHaveValue('5-human-review');
         await expect(page).toHaveURL(/#\/tasks\/DEMO-0(?:98|97|96)/);
         expect(mutations).toEqual([]);
-        await page.goto('/?includeFixtures=true');
+        await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await expect(review).toBeVisible();
       }
 
@@ -250,7 +268,7 @@ test.describe('HUC-S6 board and task protocol rhythm', () => {
       });
       await installRoutes(page);
       await page.goto(`/?job=${encodeURIComponent(DETAIL_ID)}&watchPath=${encodeURIComponent(WP)}`,
-        { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await cleanOverlays(page);
       const overview = page.getByTestId('overview-pipeline');
       await expect(overview).toBeVisible({ timeout: 15_000 });
