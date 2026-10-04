@@ -108,7 +108,7 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 5,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 12,
+                [ExecutionAdmissionPath.Continue] = 11,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
