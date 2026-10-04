@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskTimelinePaneComponent } from './task-timeline-pane.component';
@@ -241,16 +241,24 @@ describe('TaskTimelinePaneComponent', () => {
     const fixture = await build([]);
     const c = fixture.componentInstance;
 
-    const today = new Date();
-    const todayIso = today.toISOString();
-    const todayOut = c.formatTime(todayIso);
-    expect(todayOut).toBe(today.toLocaleTimeString());
-    expect(todayOut).not.toContain(today.toLocaleDateString());
+    // Pin "now" at local noon: with the real clock the spec's "today" and the
+    // component's own `new Date()` can straddle midnight.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const today = new Date(2026, 5, 10, 12, 0, 0);
+      vi.setSystemTime(today);
+      const todayIso = today.toISOString();
+      const todayOut = c.formatTime(todayIso);
+      expect(todayOut).toBe(today.toLocaleTimeString());
+      expect(todayOut).not.toContain(today.toLocaleDateString());
 
-    const other = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000);
-    const otherOut = c.formatTime(other.toISOString());
-    expect(otherOut).toContain(other.toLocaleDateString());
-    expect(otherOut).toContain(other.toLocaleTimeString());
+      const other = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000);
+      const otherOut = c.formatTime(other.toISOString());
+      expect(otherOut).toContain(other.toLocaleDateString());
+      expect(otherOut).toContain(other.toLocaleTimeString());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('formatAbsoluteTime (hover tooltip) always carries the full date + time', async () => {

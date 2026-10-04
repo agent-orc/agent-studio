@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: command evidence timestamps are inputs to a pure diagnosis policy.
+
 public sealed class DeliveryFailureDiagnosisTests
 {
     public static IEnumerable<object[]> RecordedCases()
@@ -240,7 +242,9 @@ public sealed class DeliveryFailureDiagnosisTests
     private static ReviewCommandEvidenceDto FailedCommand(
         string step, string classification, bool chargesCard)
         => new(step, "build-tests", "sh", [], "sha", "sha", "tree",
-            DateTime.UtcNow, DateTime.UtcNow, 1, null, "stdout", "stderr",
+            new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc),
+            1, null, "stdout", "stderr",
             BaselineExitCode: 0,
             Diagnosis: new DeliveryFailureDiagnosisResult(classification, 1,
                 [chargesCard ? "confirmed regression" : "environment fault"]));

@@ -194,6 +194,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Website onboarding source copy (Demo, Single Machine, Multi Machine) | [operations/setup/website-onboarding-template.md](../operations/setup/website-onboarding-template.md) |
 | Runner-host resource governance (Linux cgroups, coding/review role defaults, AIMD capacity boundary) | [target architecture](../operations/haertung-verteilte-ausfuehrung/target-architecture/resource-governance.md) |
 | Execution hosts operator lifecycle | [operations/remote-hosts.md](../operations/remote-hosts.md) |
+| Review lane runbook: capabilities a Review Executor registers, the typed empty-claim reason (`unclaimable-plan-requirements`), and the `lane-drain-stalled` review-claim alarm (AGT-2987) | [operations/review-lane-runbook.md](../operations/review-lane-runbook.md) |
 | Remote runner persistent connection (tunnel-as-a-service + health-check) | [operations/setup/remote-runner-persistent-connection.md](../operations/setup/remote-runner-persistent-connection.md) |
 | Runner link as part of the application (dossier: link ownership, LinkSupervisor design, tunnel retirement with the remote Task Server) | [operations/runner-link/](../operations/runner-link/index.html) |
 | Remote three-unit Compose infrastructure harness | [operations/setup/remote-compose-test-harness.md](../operations/setup/remote-compose-test-harness.md) |
@@ -204,6 +205,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
+| Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
+| Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
 | Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |
