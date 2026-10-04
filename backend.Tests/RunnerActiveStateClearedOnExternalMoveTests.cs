@@ -315,6 +315,7 @@ public sealed class RunnerActiveStateClearedOnExternalMoveTests : IDisposable
             d.Scanner, d.States, d.Sessions, d.Router,
             d.Summary, d.Prompts, d.Transitions, d.ChatLog, d.Mutations,
             d.OrchestratorLog, d.OrchestratorRunner, d.OrchestratorSessions,
-            d.Settings, quotaService, quotaCaps, d.Git, pickupFailures, infraBreaker, d.TaskAccess, bus: null);
+            d.Settings, quotaService, quotaCaps, d.Git, pickupFailures, infraBreaker, d.TaskAccess, bus: null,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
     }
 }

@@ -6,6 +6,12 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 using Serilog.Events;
 
+if (args is ["--remote-build-test-gate-worker", var remoteGateRequest])
+{
+    Environment.ExitCode = await AgentStudio.Pipeline.RemoteGateWorker.RunAsync(remoteGateRequest);
+    return;
+}
+
 if (args is ["--durable-local-cli-worker", var durableLocalCliSpec])
 {
     Environment.ExitCode = await DurableLocalCliProcess.RunWorkerAsync(durableLocalCliSpec);
@@ -462,6 +468,7 @@ builder.Services.AddSingleton<JobStatsMetadataCache>();
 // the other watcher wiring.
 builder.Services.AddSingleton<TaskSidecarGeneration>();
 builder.Services.AddSingleton<BoardReadSignatureSource>();
+builder.Services.AddSingleton<BoardReadConcurrencyGate>();
 // TaskAccess layer (ADR-0024 phase 2-4): the typed façade in front of
 // TaskScannerService / TaskMutationService / TaskStateMachine /
 // TaskTransitionService. Outside callers (endpoints, runner, supervisor)
@@ -711,13 +718,14 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
-    AgentStudio.Pipeline.LintScssRunner>();
+    AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
     AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IBuildTestGateRunner,
-    AgentStudio.Pipeline.BuildTestGateRunner>();
+    AgentStudio.Pipeline.RemoteBuildTestGateRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreMainTestGate>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepProbeService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PreDevelopBuildGate>();
@@ -818,7 +826,7 @@ builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<GitBranchRetentionHostedService>();
 // Slice P (ASS-1663): build-profile onboarding validation dry-run.
-builder.Services.AddSingleton<IBuildCommandRunner, ProcessBuildCommandRunner>();
+builder.Services.AddSingleton<IBuildCommandRunner, RemoteRequiredBuildCommandRunner>();
 builder.Services.AddSingleton<BuildProfileValidationService>();
 // Completed-job auto-push runs off the request path: TaskTransitionService
 // enqueues here on the move to 6-completed (instant), CompletedPushWorker

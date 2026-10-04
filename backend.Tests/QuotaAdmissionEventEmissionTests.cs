@@ -283,7 +283,8 @@ public sealed class QuotaAdmissionEventEmissionTests : IDisposable
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess,
-            timeline: timeline, quotaFallback: quotaFallback);
+            timeline: timeline, quotaFallback: quotaFallback,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
 
         return (runner, timeline);
     }
