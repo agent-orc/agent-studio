@@ -78,9 +78,11 @@ public sealed class RemoteClaimFailureBudgetTest
             var twoAttemptBudget = new RemoteClaimFailureBudget(NullLogger<RemoteClaimFailureBudget>.Instance, 2);
             Assert.False(twoAttemptBudget.Record(task, "fatal: not a git repository").Escalate);
             Assert.True(twoAttemptBudget.Record(task, "fatal: not a git repository").Escalate);
+            Assert.True(twoAttemptBudget.GetState(task)!.BudgetExhausted);
 
             var threeAttemptBudget = NewBudget();
             threeAttemptBudget.PrepareForClaim(task);
+            Assert.Null(threeAttemptBudget.GetState(task));
             var firstAfterRequeue = threeAttemptBudget.Record(task, "fatal: not a git repository");
             Assert.Equal(1, firstAfterRequeue.Attempt);
             Assert.False(firstAfterRequeue.Escalate);
