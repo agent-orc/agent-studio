@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentRunner.Tests;
 
+// clock-independent: recorded timestamps are raw log text for fingerprint normalization.
+
 /// <summary>
 /// AGT-2916 review finding (2026-09-29): the raw-output fingerprint of a build
 /// or lint failure kept the clean repeat clone's random suffix, the runtime

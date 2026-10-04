@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -787,7 +788,7 @@ public class TaskRunnerService : BackgroundService
             {
                 var nextIndex = NextPromptHistoryIndex(info.FolderPath);
                 var promptFile = Path.Combine(info.FolderPath, $"prompt-{nextIndex}.md");
-                await File.WriteAllTextAsync(promptFile, followupPrompt.TrimEnd() + Environment.NewLine, System.Text.Encoding.UTF8, ct);
+                await File.WriteAllTextAsync(promptFile, followupPrompt.TrimEnd() + PromptText.NewLine, System.Text.Encoding.UTF8, ct);
                 _logger.LogInformation("Extend mode: wrote {File} for job {JobId}", Path.GetFileName(promptFile), jobId);
             }
             catch (Exception ex)

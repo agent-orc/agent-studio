@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
 
@@ -182,13 +183,13 @@ public static class UiIterationGate
     {
         var relative = $"results/ui-iteration-{iteration:D3}";
         var sb = new StringBuilder();
-        sb.AppendLine();
-        sb.AppendLine("UI ITERATION CONTRACT (mandatory for this run):");
-        sb.AppendLine($"- This is visual iteration {iteration}/{maxIterations}.");
-        sb.AppendLine($"- Save at least one non-empty screenshot or Playwright capture under `{relative}/`.");
-        sb.AppendLine($"- Write a short, concrete description of what changed to `{relative}/{ChangeDescriptionFileName}`.");
-        sb.AppendLine("- Evidence from another iteration does not count. Do not claim DONE until both files exist.");
-        sb.AppendLine($"- The task result directory is `{TaskPaths.ResultsDir(jobFolder)}`.");
+        sb.AppendLf();
+        sb.AppendLf("UI ITERATION CONTRACT (mandatory for this run):");
+        sb.AppendLf($"- This is visual iteration {iteration}/{maxIterations}.");
+        sb.AppendLf($"- Save at least one non-empty screenshot or Playwright capture under `{relative}/`.");
+        sb.AppendLf($"- Write a short, concrete description of what changed to `{relative}/{ChangeDescriptionFileName}`.");
+        sb.AppendLf("- Evidence from another iteration does not count. Do not claim DONE until both files exist.");
+        sb.AppendLf($"- The task result directory is `{TaskPaths.ResultsDir(jobFolder)}`.");
         return sb.ToString();
     }
 
