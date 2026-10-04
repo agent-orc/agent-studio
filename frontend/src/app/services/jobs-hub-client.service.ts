@@ -10,8 +10,10 @@ import type { WorkbenchHubEvent } from '../models/project-docs.model';
 /**
  * Callbacks the {@link TaskService} registers for the fine-grained task
  * mutation pushes that {@link backend/Hubs/TaskHubBroadcaster.cs} fans out
- * over the `/hubs/jobs` SignalR hub. Every handler is optional; only the ones
- * supplied are wired onto the connection.
+ * over the versioned `/hubs/v1/studio` SignalR hub (OrchestratorApi serves it
+ * from its `/hubs/jobs` hub; the connector forwards it to the Task Server).
+ * Every handler is optional; only the ones supplied are wired onto the
+ * connection.
  *
  * `reconnected` is the convergence hook — fired after the initial connect AND
  * after every auto-reconnect, so the caller can re-pull the full board to
@@ -89,7 +91,7 @@ export class JobsHubClient {
     this.stopped = false;
 
     const conn = new HubConnectionBuilder()
-      .withUrl('/hubs/jobs')
+      .withUrl('/hubs/v1/studio')
       .withAutomaticReconnect([...JobsHubClient.RECONNECT_DELAYS_MS])
       .configureLogging(LogLevel.Warning)
       .build();

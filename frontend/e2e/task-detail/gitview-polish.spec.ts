@@ -71,7 +71,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, (route) =>
+  await page.route(/\/api\/v1\/studio\/board/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -88,9 +88,9 @@ async function installRoutes(page: Page): Promise<void> {
       body: JSON.stringify([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]),
     }),
   );
-  await page.route('**/api/workspaces**', (route) =>
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/projects**', (route) =>
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/environment**', (route) =>
     route.fulfill({
@@ -105,7 +105,7 @@ async function installRoutes(page: Page): Promise<void> {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -173,7 +173,7 @@ async function installRoutes(page: Page): Promise<void> {
       }),
     }),
   );
-  await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }),
   );
 }

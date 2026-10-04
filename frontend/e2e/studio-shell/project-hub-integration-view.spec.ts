@@ -49,12 +49,12 @@ const EMPTY_GROUPED = {
 async function installRoutes(page: Page): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/**', route => route.fulfill(json([])).catch(() => undefined));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, route => route.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, route => route.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, route => route.fulfill(json([])));
   await page.route('**/api/watch-paths**', route => route.fulfill(json([{ name: PROJECT, path: '/tasks', rootPath: '/repo', repositoryPath: '/repo' }])));
-  await page.route('**/api/auth/status', route => route.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: false, user: null })));
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: false, user: null })));
   await page.route('**/api/environment**', route => route.fulfill(json({ isDev: true, devTools: {} })));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
   await page.route('**/api/clients', route => route.fulfill(json([])));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
