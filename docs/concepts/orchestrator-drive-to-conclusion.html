@@ -2763,6 +2763,30 @@
             transport or proof failures produce an infrastructure-failure gate instead of acceptance.
           </td>
         </tr>
+        <tr id="case-deployment-smoke-completion-budget">
+          <td>2026-10-04</td>
+          <td><code>Deployment regression</code><br><span class="small">completion-wait-excluded-worker-cleanup</span></td>
+          <td>
+            Two full verification runs passed all 9,114 .NET tests, then the explicit deployment smoke
+            timed out after 30 seconds waiting for <code>run.completed</code>. Identical-environment
+            retries both failed and passed. A diagnostic passing run finished its fake CLI immediately,
+            then spent another 7.1 seconds before the worker published its result.
+          </td>
+          <td>
+            The harness completion wait was shorter than the runner's allowed lifecycle: the CLI may
+            run for 45 seconds, and build-server shutdown may take 30 seconds before
+            <code>result.json</code> appears. The failed runs did not retain the inner worker timing,
+            so the precise delay in those attempts remains unproven; the conflicting budgets are explicit.
+          </td>
+          <td>
+            The test harness now budgets 45 seconds for the CLI, the actual 30-second cleanup allowance,
+            and 10 seconds for result transport, totaling 85 seconds. A runner-side contract test checks
+            the shared harness allowance against the production cleanup budget. The scenario still
+            requires <code>run.completed</code>, durable result evidence, and a real review verdict reaching
+            <span class="lane">5-human-review</span>. Production execution and cleanup limits are unchanged;
+            an earlier failed gate remains failed evidence rather than being relabelled by a retry.
+          </td>
+        </tr>
       </tbody>
     </table>
 

@@ -1,4 +1,5 @@
 using AgentRunner;
+using AgentStudio.TestSupport.Scenario;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -96,5 +97,18 @@ public sealed class WorkerBuildServerHygieneTests
 
         foreach (var (key, value) in WorkerBuildServerHygiene.Variables)
             Assert.Equal(value, attempt[key]);
+    }
+
+    [Fact]
+    public void Scenario_completion_wait_covers_cli_cleanup_and_result_transport()
+    {
+        Assert.Equal(WorkerBuildServerHygiene.ShutdownBudget,
+            ScenarioExecutionBudgets.WorkerCleanupTimeout);
+        var required = TimeSpan.FromSeconds(ScenarioExecutionBudgets.CodingRunTimeoutSeconds)
+            + WorkerBuildServerHygiene.ShutdownBudget
+            + ScenarioExecutionBudgets.CompletionTransportAllowance;
+        Assert.True(ScenarioExecutionBudgets.CodingCompletionTimeout >= required,
+            $"Scenario completion wait {ScenarioExecutionBudgets.CodingCompletionTimeout} must cover {required} "
+            + "for the CLI run, cleanup before result.json, and result transport.");
     }
 }
