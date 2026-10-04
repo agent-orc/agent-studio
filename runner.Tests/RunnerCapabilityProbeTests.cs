@@ -71,6 +71,55 @@ public sealed class RunnerCapabilityProbeTests
         Assert.Empty(missing);
     }
 
+    /// <summary>
+    /// AGT-2987: sealed library-v1 plans require toolchain keys, and both Task
+    /// Server implementations match plans against the registration set. The
+    /// review registration must therefore carry every library toolchain key the
+    /// probe finds, the same keys the advertisement reports.
+    /// </summary>
+    [Fact]
+    public void Review_registration_carries_every_library_toolchain_key_the_probe_finds()
+    {
+        var options = new RunnerOptions
+        {
+            ServerUrl = "http://127.0.0.1:5031",
+            RunnerId = "review-a",
+            RunnerName = "review-a",
+            Hostname = "host-a",
+            BackendName = "test",
+            Role = "review",
+            WorkDir = Path.GetTempPath(),
+            BaseBranch = "main",
+            CliBin = "sh",
+            CliArgs = "",
+        };
+
+        var everything = RunnerCapabilityProbe.ReviewRegistrationCapabilities(options, onPath: _ => true);
+        var dotnetOnly = RunnerCapabilityProbe.ReviewRegistrationCapabilities(
+            options, onPath: tool => tool == "dotnet");
+
+        Assert.All(ReviewLibraryStepPolicy.ToolchainRequirements,
+            requirement => Assert.Contains(requirement.Key, everything));
+        Assert.Contains(CapabilityProtocol.DotNet, dotnetOnly);
+        Assert.DoesNotContain(CapabilityProtocol.Node, dotnetOnly);
+        Assert.DoesNotContain(CapabilityProtocol.Playwright, dotnetOnly);
+        Assert.Contains(CapabilityProtocol.ComposeRender,
+            RunnerCapabilityProbe.ReviewRegistrationCapabilities(
+                options, onPath: _ => false, composeRenderVersion: () => "2.40.3"));
+        Assert.DoesNotContain(CapabilityProtocol.ComposeRender,
+            RunnerCapabilityProbe.ReviewRegistrationCapabilities(
+                options, onPath: _ => false, composeRenderVersion: () => null));
+        // Registration and advertisement read the same probe on this host.
+        var advertisedToolchains = RunnerCapabilityProbe.Advertise(options, gitPushReady: false)
+            .Select(item => item.Key)
+            .Intersect(ReviewLibraryStepPolicy.ToolchainRequirements.Select(requirement => requirement.Key))
+            .Order(StringComparer.Ordinal);
+        var registeredToolchains = RunnerCapabilityProbe.ReviewRegistrationCapabilities(options)
+            .Intersect(ReviewLibraryStepPolicy.ToolchainRequirements.Select(requirement => requirement.Key))
+            .Order(StringComparer.Ordinal);
+        Assert.Equal(advertisedToolchains, registeredToolchains);
+    }
+
     [Fact]
     public async Task Capability_snapshot_reports_cli_version_and_resolved_install_path()
     {
