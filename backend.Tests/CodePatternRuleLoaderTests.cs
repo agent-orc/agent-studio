@@ -1,5 +1,6 @@
 
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -110,13 +111,5 @@ public class CodePatternRuleLoaderTests
     }
 
     private static string? LocateRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "AGENTS.md"))) return dir.FullName;
-            dir = dir.Parent;
-        }
-        return null;
-    }
+        => RepositoryRoot.TryFind();
 }

@@ -1,6 +1,7 @@
 
 
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -272,26 +273,15 @@ public class TokenPricingTests
 
     private static string ConfiguredTokenEconomyVersion()
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
-        {
-            var projectPath = Path.Combine(directory.FullName, "backend", "OrchestratorApi.csproj");
-            if (File.Exists(projectPath))
-            {
-                var project = System.Xml.Linq.XDocument.Load(projectPath);
-                var packageReference = project
-                    .Descendants("PackageReference")
-                    .Single(element => string.Equals(
-                        (string?)element.Attribute("Include"),
-                        "TokenEconomy",
-                        StringComparison.Ordinal));
-                return ((string?)packageReference.Attribute("Version"))!
-                    .Trim('[', ']');
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Agent Studio repository root was not found.");
+        var projectPath = Path.Combine(RepositoryRoot.Find(), "backend", "OrchestratorApi.csproj");
+        var project = System.Xml.Linq.XDocument.Load(projectPath);
+        var packageReference = project
+            .Descendants("PackageReference")
+            .Single(element => string.Equals(
+                (string?)element.Attribute("Include"),
+                "TokenEconomy",
+                StringComparison.Ordinal));
+        return ((string?)packageReference.Attribute("Version"))!
+            .Trim('[', ']');
     }
 }

@@ -42,6 +42,20 @@ resolved_source=$(resolve_compose_source "$compose_source" "$SCRIPT_DIR")
 validate_compose_source "$resolved_source"
 cp -a "$resolved_source/." "$COMPOSE_ROOT/"
 log "Installed compose sources to $COMPOSE_ROOT from $resolved_source."
+for adapter_source in "$SCRIPT_DIR/host_secret_transport.py" "$SCRIPT_DIR/../../host_secret_transport.py"; do
+    if [ -f "$adapter_source" ]; then
+        install -m 0644 "$adapter_source" "$COMPOSE_ROOT/host_secret_transport.py"
+        break
+    fi
+done
+for requirements_source in "$SCRIPT_DIR/host-secret-requirements.txt" "$SCRIPT_DIR/../../host-secret-requirements.txt"; do
+    if [ -f "$requirements_source" ]; then
+        install -m 0644 "$requirements_source" "$COMPOSE_ROOT/host-secret-requirements.txt"
+        break
+    fi
+done
+[ -f "$COMPOSE_ROOT/host_secret_transport.py" ] && [ -f "$COMPOSE_ROOT/host-secret-requirements.txt" ] \
+    || die "Host secret adapter is missing from the release package."
 
 prompt()
 {
@@ -89,6 +103,11 @@ if [ "${AGENT_ORCHESTRATOR_SKIP_USER_CREATE:-0}" != "1" ]; then
     # The images run as UID 10001, which must be able to read the 0600 files.
     chown -R 10001:10001 "$SECRETS_DIR"
 fi
+[ "$(stat -c '%u:%g:%a' "$SECRETS_DIR")" = '10001:10001:750' ] \
+    || die "Secret directory must be owned by 10001:10001 with mode 0750: $SECRETS_DIR"
+for secret_name in studio engine runner; do
+    verify_secret_permissions "$SECRETS_DIR/$secret_name.token"
+done
 
 log "Pulling images and starting the control plane."
 compose_cmd pull
