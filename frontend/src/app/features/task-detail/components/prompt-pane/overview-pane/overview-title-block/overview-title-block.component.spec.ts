@@ -92,12 +92,15 @@ describe('OverviewTitleBlockComponent', () => {
   });
 
   it('renders the lifecycle phase chip with elapsed time from the injected tick', async () => {
-    const enteredAt = new Date(Date.now() - 42_000).toISOString();
+    // A fixed tick: with the real clock a slow TestBed compile moves the
+    // elapsed wording past 0:42 on a loaded host.
+    const nowMs = Date.parse('2026-07-11T00:00:42Z');
     const fixture = await build(baseJob({
       state: '3-progress',
       phase: 'loop-waiting',
-      phaseEnteredAt: enteredAt,
+      phaseEnteredAt: '2026-07-11T00:00:00Z',
     }));
+    fixture.componentRef.setInput('nowMs', nowMs);
     fixture.detectChanges();
     await fixture.whenStable();
 

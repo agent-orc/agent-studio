@@ -1,5 +1,6 @@
 using AgentStudio.Prompts;
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -14,15 +15,7 @@ namespace AgentStudio.Tests;
 public class PromptCoverageGuardTests
 {
     private static string RepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        while (current != null)
-        {
-            if (File.Exists(Path.Combine(current, "agent-taskboard.sln"))) return current;
-            current = Path.GetDirectoryName(current);
-        }
-        throw new InvalidOperationException("agent-taskboard.sln not found above test base directory.");
-    }
+        => RepositoryRoot.Find();
 
     /// <summary>
     /// The build-breaker. After T3a the product source tree must carry ZERO
