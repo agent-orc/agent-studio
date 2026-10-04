@@ -1589,6 +1589,65 @@ evidence. The board mentions a latest rejection only when that evidence exists.
 The watchdog emits the rate-limited `remote-ready-starvation` warning event and
 clears the acute signal when claim progress, the queue, or capacity recovers.
 
+## Operator sweeps (AGT-3011)
+
+`backend/Features/Runner/OperatorSweeps/` replaces the night-shift scripts
+(`auto-fix-rounds.mjs`, `gate-triage.mjs`, `salvage-sweep.mjs`, `sweeper.sh`)
+with one hosted service. `OperatorSweepHostedService` ticks every
+`OperatorSweeps:TickSeconds` seconds (default 600, after `InitialDelaySeconds`, default 60).
+`OperatorSweeps:Enabled` turns the service off. A failed tick is logged and the
+next tick runs on schedule.
+
+| Sweep | Trigger | Side effect (internal path) |
+|---|---|---|
+| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round sequence: guarded move to the top of Ready, `prompt.md` note, orchestrator follow-up, reissue tag. The prompt carries the non-pass verdicts and the failed or planned verification commands. |
+| `gate-triage` | Card in `5-human-review` or `5e-escalated`; its current failure is the merge gate | Product failure: `TaskFailureContinuationService`, the service the operator failure panel calls. Environment failure: held for the gate-environment retry ladder (AGT-2824). Unclassified: waits for a person. The domain comes from the gate runner verdict, then the run-failure taxonomy, then `FailureInterventionPolicy`. |
+| `salvage` | Card in `5e-escalated`; its latest `agent_run_finished` is non-terminal and names a salvage pair | `continuation-base.json` plus the AGT-2861 continuation prompt, queued through `TaskRunnerService.ContinueJobAsync`. |
+
+`OperatorSweepPolicy` applies these guards in order:
+
+1. An active review attempt (`Pending` or `Leased`) holds.
+2. An active run attempt holds.
+3. A paused sweep holds.
+4. Disabled `AutomaticFailureContinuationsEnabled` holds.
+5. An already-handled subject holds.
+6. An exhausted budget waits for a person.
+
+At most one sweep acts on a card per tick.
+
+**Round budget.** `CardRoundBudget` is shared with the orchestrator and is
+counted per card across every review-attempt epoch. Default 4, set by
+`OperatorSweeps:MaxRoundsPerCard`. It counts each of these once:
+
+- `Reissue` decision-journal records (orchestrator and sweep rounds)
+- Remote Review finding and concern reopens
+- automatic `continuation_round_started` events
+
+A sweep round appends a `Reissue` record, so the orchestrator's
+epoch-scoped count sees it as well. A requeue, a `/continue`, or a sweep never
+refills the budget. The orchestrator still applies its own per-epoch cap
+(`MaxAutoReissueAttempts`).
+
+**State.** The service has no state file:
+
+- Pause state is `ProjectSettings.OperatorSweepPauses`, which survives a restart.
+- The per-subject receipt is an `operator_sweep_round_started` timeline event in the task folder.
+- The budget charge is the decision journal record.
+- The last tick's per-card reasons are kept in memory and rebuilt by the next tick.
+
+**API.**
+
+- `GET /api/projects/{project}/operator-sweeps` returns the projection:
+  - per sweep: last run, counts, recent actions, error, and whether it is paused or overdue
+  - per card: rounds left and every sweep's action and reason
+  - the cards waiting for a person
+- `POST .../operator-sweeps/{sweep}/pause` with body `{ reason? }` pauses a sweep.
+- `POST .../operator-sweeps/{sweep}/resume` resumes it.
+
+The UI renders the projection directly under the pipeline health block.
+
+**Out of scope.** The night-shift watchdog and start wrapper are not part of this service.
+
 ## Follow-ups: admission, queueing, preservation
 
 A user follow-up (`POST /api/tasks/{id}/continue` in mode `continue`, `steer`,

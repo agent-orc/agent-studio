@@ -2752,6 +2752,13 @@
             integration branch tip. The observed terminal was manual operator repair.
           </td>
         </tr>
+        <tr id="case-agt-3011-operator-sweeps">
+          <td>2026-10-04</td>
+          <td><code>AGT-3011</code><br><span class="small">operator-sweeps-outside-product</span></td>
+          <td>No CLI crashed. ProductFailure parks, merge-gate parks, and timed-out salvage runs were only driven forward by three scripts in an operator shell loop. The fleet stood still for 41 hours on 2026-09-29/30 with no supervisor running, and on 2026-10-04 the sweeps resumed only at 12:48 when an operator started them by hand. One card reached 13 rounds because every requeue opened a new attempt epoch and refilled the reissue budget.</td>
+          <td>The drive-to-conclusion step after a ProductFailure or gate park had no in-product owner, and the round budget was scoped to the review-attempt epoch.</td>
+          <td><span class="pill ok">fixed in dev</span> <code>OperatorSweepService</code> runs the fix-round, gate-triage and salvage sweeps from one hosted tick. Each sweep charges <code>CardRoundBudget</code>, which counts every round once across all epochs (default 4 per card), and is never reset by a sweep, a requeue or <code>/continue</code>. A card with a pending or leased review attempt is held. Pause is per project and persisted. The terminal is <code>WaitForPerson</code> with a stated reason, shown under the pipeline health alarm.</td>
+        </tr>
         <tr id="case-agt-2959-pending-recovery-navigation">
           <td>2026-09-25</td>
           <td><code>AGT-2959</code><br><span class="small">pending recovery obscured task navigation</span></td>
