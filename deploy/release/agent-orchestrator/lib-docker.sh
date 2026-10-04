@@ -132,6 +132,18 @@ generate_secret()
     chmod 0600 "$file"
 }
 
+verify_secret_permissions()
+{
+    file=$1
+    expected_uid=${2:-10001}
+    expected_gid=${3:-10001}
+    [ -f "$file" ] && [ ! -L "$file" ] && [ -s "$file" ] \
+        || die "Secret file is missing, empty or linked: $file"
+    actual=$(stat -c '%u:%g:%a' "$file")
+    [ "$actual" = "$expected_uid:$expected_gid:600" ] \
+        || die "Secret file has unsafe ownership or mode: $file ($actual)"
+}
+
 read_env_value()
 {
     key=$1

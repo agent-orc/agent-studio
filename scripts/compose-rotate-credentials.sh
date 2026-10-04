@@ -12,13 +12,13 @@ case "$role" in
 esac
 secret_dir=/run/agent-studio-secrets
 if [ "$role" = review-runner ]; then
-    target="$secret_dir/review_runner_token"
+    target="$secret_dir/review_runner/review_runner_token"
 else
-    target="$secret_dir/${role}_token"
+    target="$secret_dir/${role}/${role}_token"
 fi
 test -s "$target" || { echo "Missing $role credential; start the stack first." >&2; exit 1; }
 response="$(mktemp "$secret_dir/.rotation-response.XXXXXXXX")"
-replacement="$(mktemp "$secret_dir/.${role}-replacement.XXXXXXXX")"
+replacement="$(mktemp "$(dirname "$target")/.${role}-replacement.XXXXXXXX")"
 trap 'rm -f "$response" "$replacement"' EXIT HUP INT TERM
 curl --fail --silent --show-error \
     --header "Authorization: Bearer $(cat "$secret_dir/studio_token")" \
