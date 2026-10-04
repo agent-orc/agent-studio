@@ -46,12 +46,12 @@ async function installBootMocks(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }),
     }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   // Grouped board payload is a lane-keyed object (every lane an array); an
   // empty [] leaves the archive lane's `.length` read undefined and throws
   // into the global error dialog, so ship all lanes present-but-empty.
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

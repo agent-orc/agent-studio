@@ -82,7 +82,7 @@ async function pickAnyJob(): Promise<{ id: string; watchPath: string } | null> {
 async function installRunningJobMocks(page: Page, target: { id: string; watchPath: string }, output: OutLine[]): Promise<void> {
   const detailBody = JSON.stringify(buildRunningJobDetail(target.id, target.watchPath));
 
-  await page.route(`**/api/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: detailBody });
   });
   await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/output?**`, async (route) => {
@@ -190,7 +190,7 @@ test.describe('Activity log - live status indicator', () => {
     detail.info.execution!.exitCode = 0;
     detail.info.execution!.durationSeconds = 12;
 
-    await page.route(`**/api/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) });
     });
     await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/output?**`, async (route) => {

@@ -21,11 +21,11 @@ test('wiki tree distinguishes proposed and applied article tags in both themes',
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = [];
-    if (path === '/api/auth/status')
+    if (path === '/api/v1/studio/auth/status')
       body = { profile: 'local', bootstrapRequired: false, authenticated: true };
-    else if (path === '/api/workspaces')
+    else if (path === '/api/v1/workspaces')
       body = [{ id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true, projects: [project] }];
-    else if (path === '/api/projects') body = [project];
+    else if (path === '/api/v1/projects') body = [project];
     else if (path === '/api/watch-paths')
       body = [{ name: PROJECT, path: '/repo', rootPath: '/repo', repositoryPath: '/repo' }];
     else if (path.endsWith('/workbenches')) body = { items: [], projectName: PROJECT };
@@ -34,9 +34,9 @@ test('wiki tree distinguishes proposed and applied article tags in both themes',
     else if (path.endsWith('/wiki/home')) body = { sections: [] };
     else if (path.endsWith('/wiki/pulse')) body = null;
     else if (path === '/api/cli/quota') body = { snapshots: [], ttlSeconds: 600 };
-    else if (path === '/api/runner/status') body = { projects: {} };
+    else if (path === '/api/v1/studio/runner/status') body = { projects: {} };
     else if (path === '/api/crash-recovery/pending') body = { pending: [] };
-    else if (path === '/api/tasks/grouped')
+    else if (path === '/api/v1/studio/board')
       body = { backlog: [], preparation: [], ready: [], progress: [], autoReview: [], humanReview: [], completed: [], archive: [] };
     else if (/^\/api\/cli\/[^/]+\/models$/.test(path)) body = { models: [] };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });

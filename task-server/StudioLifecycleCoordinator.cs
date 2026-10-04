@@ -81,6 +81,23 @@ public sealed class StudioLifecycleCoordinator(TaskServerStore store, IStudioEve
         return response;
     }
 
+    public async Task<StudioOrchestratorTurnResponse> AppendWorkbenchTurnAsync(
+        string projectIdentity,
+        string workbenchIdentity,
+        StudioOrchestratorTurnRequest request,
+        string actorId,
+        CancellationToken ct)
+    {
+        var project = await store.RequireProjectAsync(projectIdentity, ct);
+        var response = await store.AppendStudioWorkbenchTurnAsync(
+            projectIdentity, workbenchIdentity, request, actorId, ct);
+        var evt = await store.AppendStudioStreamEventAsync(
+            StudioStreamEventKinds.OrchestratorChatAppended, project.ProjectId, null,
+            new { project.ProjectId, response.ContextKey, response.Turn.TurnId }, ct);
+        await publisher.PublishAsync(evt, ct);
+        return response;
+    }
+
     private async Task PublishTaskEventAsync(string kind, TaskDto task, CancellationToken ct, object? payload = null)
     {
         var evt = await store.AppendStudioStreamEventAsync(
