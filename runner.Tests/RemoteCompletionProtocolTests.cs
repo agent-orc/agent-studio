@@ -33,6 +33,28 @@ public sealed class RemoteCompletionProtocolTests
     }
 
     [Fact]
+    public void Legacy_crlf_framing_with_lf_follow_up_body_is_delivered_only_once()
+    {
+        const string taskPrompt = "# Original task\n\nKeep the regression focused.";
+        var followUp = FollowUp("Run the focused test.\nKeep its result.", "follow-up-claim-mixed-lines");
+        var current = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, followUp).Prompt;
+        var blockStart = current.IndexOf("<!-- agent-studio-follow-up-claim-sha256:", StringComparison.Ordinal);
+        Assert.True(blockStart >= 0);
+        var currentBlock = current[blockStart..];
+        var legacyBlock = currentBlock.Replace("\n", "\r\n", StringComparison.Ordinal)
+            .Replace(followUp.Prompt.Replace("\n", "\r\n", StringComparison.Ordinal),
+                followUp.Prompt, StringComparison.Ordinal);
+        var legacyPrompt = taskPrompt + "\r\n\r\n---\r\n\r\n" + legacyBlock;
+
+        var reapplied = RemoteRunPrompt.ApplyClaimedFollowUp(legacyPrompt, followUp);
+
+        Assert.True(RemoteRunPrompt.ContainsClaimedFollowUp(legacyPrompt, followUp));
+        Assert.Equal(legacyPrompt, reapplied.Prompt);
+        Assert.True(reapplied.ShouldAcknowledge);
+        Assert.Equal(1, CountOccurrences(reapplied.Prompt, followUp.Prompt));
+    }
+
+    [Fact]
     public void Follow_up_acknowledgement_requires_the_complete_claimed_prompt_block()
     {
         const string taskPrompt = "# Original task\n\nKeep the regression focused.";
@@ -142,7 +164,10 @@ public sealed class RemoteCompletionProtocolTests
         Assert.Contains("Replace the example reason", prompt);
         Assert.DoesNotContain("<reason>", prompt);
         Assert.Contains("[[TASK_NOOP]]", prompt);
-        Assert.EndsWith(Environment.NewLine, prompt);
+        // Prompts are composed with LF on every host (PromptText); a CRLF here
+        // would make the Windows prompt differ from the Linux one.
+        Assert.EndsWith("\n", prompt);
+        Assert.DoesNotContain("\r", prompt);
     }
 
     [Fact]

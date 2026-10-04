@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -73,15 +74,5 @@ public class TaskEndpointProjectHandleCoverageTest
     }
 
     private static string ResolveRepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        for (var i = 0; i < 8 && current is not null; i++)
-        {
-            if (File.Exists(Path.Combine(current, "backend", "OrchestratorApi.csproj"))) return current;
-            current = Directory.GetParent(current)?.FullName;
-        }
-
-        throw new InvalidOperationException(
-            $"Could not locate repo root by walking up from {AppContext.BaseDirectory}.");
-    }
+        => RepositoryRoot.Find();
 }
