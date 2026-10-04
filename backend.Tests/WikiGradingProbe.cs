@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -196,16 +197,7 @@ public class WikiGradingProbe : IDisposable
     }
 
     private static string LocateRepoRoot()
-    {
-        var dir = AppContext.BaseDirectory;
-        for (var i = 0; i < 10 && dir != null; i++)
-        {
-            if (File.Exists(Path.Combine(dir, "AGENTS.md")) && Directory.Exists(Path.Combine(dir, "docs")))
-                return dir;
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-        throw new InvalidOperationException("Could not locate the repo root from the test base directory.");
-    }
+        => RepositoryRoot.Find();
 
     private ProjectDocsService BuildDocsService(params (string Name, string RootPath)[] entries)
         => new(BuildScanner(entries),
