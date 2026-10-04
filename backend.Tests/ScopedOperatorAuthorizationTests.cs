@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Primitives;
 using Xunit;
 
@@ -22,6 +23,8 @@ namespace AgentStudio.Tests;
 public sealed class ScopedOperatorAuthorizationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "studio-scoped-auth-" + Guid.NewGuid().ToString("N"));
+    private static readonly FakeTimeProvider TestClock = new(new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero));
+    private static DateTime Now => TestClock.GetUtcNow().UtcDateTime;
 
     // --- Pure route-scope policy -------------------------------------------
 
@@ -385,7 +388,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
             id, key = id, title = "Scoped authorization fixture", state = TaskStates.Ready, order = 10,
-            enteredLaneAt = DateTime.UtcNow, mode = "coding",
+            enteredLaneAt = Now, mode = "coding",
         }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "fixture");
     }
@@ -448,7 +451,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         };
         if (extra is not null) foreach (var pair in extra) values[pair.Key] = pair.Value;
         configure = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
-        return new AccessSecurityStore(configure, NullLogger<AccessSecurityStore>.Instance, TimeProvider.System);
+        return new AccessSecurityStore(configure, NullLogger<AccessSecurityStore>.Instance, TestClock);
     }
 
     private static async Task<(DefaultHttpContext Context, BoolBox Called)> InvokeRaw(
@@ -484,7 +487,7 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
     {
         Id = "usr_" + role, Username = role + ".user", DisplayName = role, Role = role,
         PasswordHash = "unused", Projects = projects,
-        CreatedAt = DateTime.UtcNow, PasswordChangedAt = DateTime.UtcNow,
+        CreatedAt = Now, PasswordChangedAt = Now,
     };
 
     private static HttpContext Context(StudioUser user)
@@ -493,8 +496,8 @@ public sealed class ScopedOperatorAuthorizationTests : IDisposable
         context.Items[AccessSecurityMiddleware.HumanPrincipalItem] = new HumanPrincipal(user, new StudioSession
         {
             Id = "sess", UserId = user.Id, TokenHash = "h", CsrfHash = "h",
-            CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddHours(1), AbsoluteExpiresAt = DateTime.UtcNow.AddHours(8),
+            CreatedAt = Now, LastSeenAt = Now,
+            ExpiresAt = Now.AddHours(1), AbsoluteExpiresAt = Now.AddHours(8),
         });
         return context;
     }
