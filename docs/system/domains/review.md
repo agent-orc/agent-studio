@@ -320,8 +320,11 @@ open tool-level cause, is held before it is claimed. The breaker closes when
 the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
 of the exact successor attempt released by
 `POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
-older review on the same waiting card does not close it. Each waiting card then gets one freshly
-planned attempt. A red probe, including a product finding or an exhausted
+older review on the same waiting card does not close it. A card whose existing review is still
+pending resumes that attempt; a terminal review gets one freshly planned successor.
+If successor creation fails, the card keeps its visible wait
+and the hosted sweep retries the release; the breaker closes only after every
+waiting card is released. A red probe, including a product finding or an exhausted
 aspect retry, returns the card to its visible wait and clears the probe
 reservation. A later explicit probe creates a new attempt from current settings.
 With the breaker disabled for a project, the opt-in

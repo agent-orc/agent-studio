@@ -2778,7 +2778,8 @@
             "Waiting for &lt;key&gt;", and are skipped by the review claim; a pending review whose plan calls the broken model
             route is held before it runs. Every review retry is planned from current project settings. The breaker closes
             when the cause card reaches <span class="lane">6-completed</span> or the exact attempt released as a probe passes, and releases each
-            waiting card with one freshly planned attempt. Replay of both incidents: at most three attempts and one cause card.
+            waiting card by admitting its pending review or planning a fresh successor to a terminal review. A failed successor creation keeps the card waiting until a later
+            sweep releases it, so closure does not discard its wait. Replay of both incidents: at most three attempts and one cause card.
             New terminal: waiting on the cause card, not escalated.
           </td>
         </tr>
@@ -2824,6 +2825,8 @@
        too low is visible in the log. <code>GET /api/cause-breakers</code> lists the breakers, and
        <code>POST /api/cause-breakers/{fingerprint}/probe</code> releases one waiting card as a probe.
        A terminal red probe restores the card's wait and frees the probe reservation for another explicit attempt.
+       If creating a successor fails after a cause is resolved, its wait marker remains and the hosted sweep retries
+       the release before closing the breaker.
        <span class="filelist"><code>backend/Features/Runner/CauseBreaker/</code></span></p>
 
     <h3>Session-resume preference</h3>

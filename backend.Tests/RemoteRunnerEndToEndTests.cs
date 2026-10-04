@@ -3248,7 +3248,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? repositoryPath = null,
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
-        Func<DateTime>? authorityNow = null) =>
+        Func<DateTime>? authorityNow = null,
+        Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3278,12 +3279,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     }
                     cfg.AddInMemoryCollection(values);
                 });
-                if (writer is not null || summaryOneShot is not null || authorityNow is not null)
+                if (writer is not null || summaryOneShot is not null || authorityNow is not null
+                    || causeWaitReleaseFactory is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
                         if (writer is not null)
                             services.AddSingleton<IAtomicJsonFileWriter>(writer);
+                        if (causeWaitReleaseFactory is not null)
+                            services.AddSingleton(causeWaitReleaseFactory);
                         if (summaryOneShot is not null)
                         {
                             services.AddSingleton(
@@ -6014,6 +6018,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     {
         SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
         using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
         var task = scanner.FindJob(TaskKey, _watchPath)!;
@@ -6038,6 +6043,74 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(1, breaker.Sweep());
         Assert.False(Assert.Single(breaker.List()).IsOpen);
         Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+    }
+
+    [Fact]
+    public void Cause_breaker_keeps_wait_until_failed_successor_creation_can_be_retried()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        using var factory = BuildFactory(causeWaitReleaseFactory: services =>
+            new FailOnceCauseWaitRelease(new SchedulerCauseWaitRelease(
+                services.GetRequiredService<AttemptAuthorityService>(),
+                services.GetRequiredService<ReviewInfrastructureRetryScheduler>(),
+                services.GetRequiredService<ILogger<SchedulerCauseWaitRelease>>() )));
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claim = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var review = Assert.IsType<ReviewAttemptDto>(claim.ReviewAttempt);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, "seed-infrastructure-failure"),
+            review.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "PreparationFailed", "npm ci: command not found")).Status);
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"rva-{number}", fingerprint, evidence, evidence.StderrTail);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        var cause = scanner.FindJob(opened.CauseTaskId!, opened.CauseWatchPath)!;
+        var causeJson = JsonNode.Parse(File.ReadAllText(Path.Combine(cause.FolderPath, "task.json")))!;
+        causeJson["state"] = TaskStates.Completed;
+        File.WriteAllText(Path.Combine(cause.FolderPath, "task.json"), causeJson.ToJsonString());
+        Directory.Move(cause.FolderPath,
+            Path.Combine(cause.WatchPath, TaskStates.Completed, Path.GetFileName(cause.FolderPath)));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.True(Assert.Single(breaker.List(openOnly: true)).Waiting.Any());
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Contains(TaskKey, breaker.HoldPendingReviews());
+        Assert.Equal(1, breaker.Sweep());
+        Assert.False(Assert.Single(breaker.List()).IsOpen);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        var successor = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId;
+        Assert.NotNull(successor);
+        Assert.NotEqual(review.AttemptId, successor);
+        var replayed = new SchedulerCauseWaitRelease(authority,
+            factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>(),
+            factory.Services.GetRequiredService<ILogger<SchedulerCauseWaitRelease>>())
+            .Release(task, $"cause-breaker-release:{fingerprint.Value}:{opened.Opens}");
+        Assert.Equal(successor, replayed);
+    }
+
+    private sealed class FailOnceCauseWaitRelease(ICauseWaitRelease inner) : ICauseWaitRelease
+    {
+        private bool _failed;
+
+        public string? Release(TaskInfo task, string deliveryKey)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                return null;
+            }
+            return inner.Release(task, deliveryKey);
+        }
     }
 
     [Theory]

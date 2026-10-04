@@ -441,12 +441,18 @@ public sealed class CauseBreakerService
                 cause ??= string.IsNullOrWhiteSpace(record.CauseTaskId)
                     ? null
                     : _scanner.FindJob(record.CauseTaskId!, record.CauseWatchPath);
-                var reason = CauseBreakerPolicy.Close(cause?.State, probeGreen: false);
+                var reason = record.CloseReason switch
+                {
+                    "probe-green" => CauseBreakerCloseReason.ProbeGreen,
+                    "cause-integrated" => CauseBreakerCloseReason.CauseIntegrated,
+                    _ => CauseBreakerPolicy.Close(cause?.State, probeGreen: false),
+                };
                 if (reason == CauseBreakerCloseReason.None) continue;
-                CloseLocked(records, record, reason, exceptTaskKey: null);
-                closed++;
+                var updated = CloseLocked(records, record, reason, exceptTaskKey: null);
+                if (!updated.IsOpen) closed++;
             }
-            if (closed > 0) Persist(records);
+            if (records.Any(item => item.IsOpen && item.CloseReason is not null) || closed > 0)
+                Persist(records);
             return closed;
         }
     }
@@ -462,7 +468,8 @@ public sealed class CauseBreakerService
         {
             var records = Records();
             var record = records.FirstOrDefault(item => item.IsOpen && Same(item.Fingerprint, fingerprint));
-            if (record is null || record.ProbeTaskKey is not null) return record;
+            if (record is null || record.ProbeTaskKey is not null || record.CloseReason is not null)
+                return record;
             foreach (var waiting in record.Waiting.OrderBy(item => item.Since))
             {
                 var task = ResolveWaitingTask(record, waiting);
@@ -551,18 +558,33 @@ public sealed class CauseBreakerService
         _checkedPendingReviewIds.Clear();
         var now = _time.GetUtcNow().UtcDateTime;
         var closeReason = reason == CauseBreakerCloseReason.CauseIntegrated ? "cause-integrated" : "probe-green";
+        var stillWaiting = new List<CauseBreakerWaitingCard>();
         foreach (var waiting in record.Waiting)
         {
             var task = ResolveWaitingTask(record, waiting);
             var folderPath = task?.FolderPath ?? waiting.FolderPath;
-            if (folderPath is null || !Directory.Exists(folderPath)) continue;
-            CauseWaitMarker.Clear(folderPath, _logger);
-            if (task is null) continue;
+            if (task is null || folderPath is null || !Directory.Exists(folderPath))
+            {
+                stillWaiting.Add(waiting);
+                continue;
+            }
             // The probe card already has its green review; every other card
             // gets one fresh attempt planned from current settings.
-            var released = !Same(waiting.TaskKey, exceptTaskKey)
-                && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(_release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}"));
+            var needsSuccessor = !Same(waiting.TaskKey, exceptTaskKey)
+                && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase);
+            var released = needsSuccessor && !string.IsNullOrWhiteSpace(
+                _release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}"));
+            if (needsSuccessor && !released)
+            {
+                // Keep the marker and the durable wait. The hosted sweep will
+                // retry; clearing either here strands a terminal review.
+                stillWaiting.Add(waiting);
+                _logger.LogWarning(
+                    "cause-breaker-release-deferred fingerprint={Fingerprint} cause={CauseKey} task={TaskKey}",
+                    record.Fingerprint, record.CauseKey, waiting.TaskKey);
+                continue;
+            }
+            CauseWaitMarker.Clear(folderPath, _logger);
             _timeline.Append(folderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
                 $"{record.CauseKey} resolved the cause ({closeReason}); "
                 + (released ? "a fresh review attempt was planned." : "no new review attempt was needed."),
@@ -576,18 +598,19 @@ public sealed class CauseBreakerService
         }
         var closed = record with
         {
-            State = CauseBreakerStates.Closed,
-            ClosedAt = now,
+            State = stillWaiting.Count == 0 ? CauseBreakerStates.Closed : CauseBreakerStates.Open,
+            ClosedAt = stillWaiting.Count == 0 ? now : null,
             CloseReason = closeReason,
             ProbeTaskKey = null,
             ProbeAttemptId = null,
-            Observations = [],
-            Waiting = [],
+            Observations = stillWaiting.Count == 0 ? [] : record.Observations,
+            Waiting = stillWaiting,
         };
-        _logger.LogInformation(
-            "cause-breaker-closed fingerprint={Fingerprint} cause={CauseKey} reason={Reason} released={Released}",
-            record.Fingerprint, record.CauseKey, closeReason,
-            string.Join(",", record.Waiting.Select(item => item.TaskKey)));
+        if (stillWaiting.Count == 0)
+            _logger.LogInformation(
+                "cause-breaker-closed fingerprint={Fingerprint} cause={CauseKey} reason={Reason} released={Released}",
+                record.Fingerprint, record.CauseKey, closeReason,
+                string.Join(",", record.Waiting.Select(item => item.TaskKey)));
         Upsert(records, closed);
         return closed;
     }
@@ -703,14 +726,29 @@ public sealed class SchedulerCauseWaitRelease : ICauseWaitRelease
     {
         // Review authority may be keyed by the stable public key or by the
         // path-qualified scanner identity, depending on when the attempt was
-        // minted. Resolve the current terminal review before planning anew.
-        var review = new[] { task.Key, task.TaskKey, task.Id }
+        // minted. A pending attempt can be admitted as it stands. Search the
+        // history for terminal cards so a retry after a crash can replay the
+        // same delivery key even when its successor is already pending.
+        var projections = new[] { task.Key, task.TaskKey, task.Id }
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(key => _authority.GetTaskProjection(key!).CurrentReviewAttempt)
-            .FirstOrDefault(candidate => candidate?.Outcome is ReviewTerminalOutcome.InfrastructureFailure
+            .Select(key => _authority.GetTaskProjection(key!))
+            .ToArray();
+        // A card held before its first claim already owns a pending attempt.
+        // Clearing its marker admits that attempt without minting another one.
+        var pending = projections.Select(item => item.CurrentReviewAttempt)
+            .FirstOrDefault(item => item is { Outcome: null });
+        if (pending is not null)
+            return pending.AttemptId;
+
+        var review = projections
+            .SelectMany(item => item.ReviewAttempts)
+            .DistinctBy(candidate => candidate.AttemptId, StringComparer.OrdinalIgnoreCase)
+            .Where(candidate => candidate.Outcome is ReviewTerminalOutcome.InfrastructureFailure
                 or ReviewTerminalOutcome.ProductFailure or ReviewTerminalOutcome.Inconclusive
-                or ReviewTerminalOutcome.Cancellation or ReviewTerminalOutcome.IntegrationBranchDefect);
+                or ReviewTerminalOutcome.Cancellation or ReviewTerminalOutcome.IntegrationBranchDefect)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
         if (review is null)
             return null;
         // The predecessor attempt makes each explicit probe request unique,
