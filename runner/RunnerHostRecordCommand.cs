@@ -11,9 +11,20 @@ public static class RunnerHostRecordCommand
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
     {
         var verb = args.Count > 0 ? args[0] : string.Empty;
+        if (args.Count > 0 && args.Count % 2 == 0)
+        {
+            error.WriteLine($"error: {args[^1]} needs a value.");
+            return 2;
+        }
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 1; index + 1 < args.Count; index += 2) options[args[index]] = args[index + 1];
-        string? Read(string key) => options.TryGetValue(key, out var path) && File.Exists(path) ? File.ReadAllText(path) : null;
+        string? Read(string key)
+        {
+            if (!options.TryGetValue(key, out var path)) return null;
+            if (!File.Exists(path))
+                throw new ArgumentException($"{key} input file '{path}' does not exist or is not a regular file.");
+            return File.ReadAllText(path);
+        }
         var recordPath = options.GetValueOrDefault("--record", RunnerHostRecord.DefaultPath);
         try
         {
@@ -77,7 +88,7 @@ public static class RunnerHostRecordCommand
                     return 2;
             }
         }
-        catch (Exception exception) when (exception is ArgumentException or JsonException or IOException or FormatException)
+        catch (Exception exception) when (exception is ArgumentException or JsonException or IOException or FormatException or UnauthorizedAccessException)
         {
             error.WriteLine($"error: {exception.Message}");
             return 2;

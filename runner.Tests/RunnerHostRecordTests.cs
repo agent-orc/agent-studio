@@ -167,6 +167,72 @@ public sealed class RunnerHostRecordTests
         Assert.Contains(shared.Errors, item => item.Contains("distinct principals"));
     }
 
+    [Theory]
+    [InlineData("--runner-env", "runner.env")]
+    [InlineData("--review-env", "review.env")]
+    [InlineData("--profile", "profile.conf")]
+    public void Migration_refuses_an_explicit_missing_input_before_writing_the_record(string option, string file)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "host-record-missing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var rendering = RunnerHostRecordPolicy.Render(Record());
+            foreach (var (name, content) in rendering.Files)
+                if (name != file) File.WriteAllText(Path.Combine(root, name), content);
+            var outputPath = Path.Combine(root, "host.json");
+            var output = new StringWriter();
+            var error = new StringWriter();
+
+            Assert.Equal(2, RunnerHostRecordCommand.Run(
+                ["migrate", "--runner-env", Path.Combine(root, "runner.env"),
+                    "--review-env", Path.Combine(root, "review.env"),
+                    "--profile", Path.Combine(root, "profile.conf"), "--out", outputPath], output, error));
+            Assert.Empty(output.ToString());
+            Assert.False(File.Exists(outputPath));
+            Assert.Contains(option, error.ToString());
+            Assert.Contains(Path.Combine(root, file), error.ToString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Migration_allows_an_omitted_optional_role_and_profile_but_refuses_a_flag_without_a_path()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "host-record-single-role-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var record = Record(total: 2, coding: 2, review: 0) with
+            {
+                Roles = [Record().Roles[0]],
+            };
+            var runnerEnvPath = Path.Combine(root, "runner.env");
+            File.WriteAllText(runnerEnvPath, RunnerHostRecordPolicy.Render(record).Files["runner.env"]);
+            var output = new StringWriter();
+            var error = new StringWriter();
+
+            Assert.Equal(0, RunnerHostRecordCommand.Run(
+                ["migrate", "--runner-env", runnerEnvPath], output, error));
+            Assert.Contains("\"role\": \"coding\"", output.ToString());
+            Assert.DoesNotContain("\"role\": \"review\"", output.ToString());
+
+            output.GetStringBuilder().Clear();
+            error.GetStringBuilder().Clear();
+            Assert.Equal(2, RunnerHostRecordCommand.Run(
+                ["migrate", "--runner-env", runnerEnvPath, "--profile"], output, error));
+            Assert.Empty(output.ToString());
+            Assert.Contains("--profile needs a value", error.ToString());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public void Generated_role_files_load_into_runner_options_with_the_declared_slot_budget()
     {

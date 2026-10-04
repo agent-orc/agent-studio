@@ -291,7 +291,11 @@ agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
 ```
 
 The import refuses disagreeing shared facts (server URL, origin, host id) and
-shared principals instead of choosing one. A missing `RUNNER_HOSTNAME` is
+shared principals instead of choosing one. Every file named by `--runner-env`,
+`--review-env` or `--profile` must exist; a missing named file stops migration
+before the record is written. Omit `--review-env` only for a coding-only host,
+or omit `--runner-env` only for a review-only host. Omit `--profile` only when
+there is no existing resource profile to import. A missing `RUNNER_HOSTNAME` is
 pinned to the current machine name. The envelope starts at the sum of today's
 role slots; tightening it is a deliberate edit. Review the imported resource
 values, then use `--host-record` on the normal onboarding controller. The
