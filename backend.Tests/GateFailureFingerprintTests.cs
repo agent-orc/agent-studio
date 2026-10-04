@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: recorded timestamps are raw log text for fingerprint normalization.
+
 /// <summary>
 /// AGT-2916 review finding (2026-09-29): gate-side fingerprinting hashed raw
 /// output with timings and per-run cache paths, so a reproducible build or lint
