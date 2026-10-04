@@ -6,6 +6,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: ledger timestamps are ordering data; the readers do not compare them with now.
+
 /// <summary>
 /// AGT-2991: <c>logs/timeline.jsonl</c> and <c>logs/session-events.jsonl</c>
 /// have no size cap, so their readers are bounded to
