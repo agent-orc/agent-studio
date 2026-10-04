@@ -103,6 +103,39 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
     }
 
+    [Fact]
+    public async Task Resume_requires_the_copied_set_for_fresh_git_verification()
+    {
+        using var temp = new TempDirectory("recovery-copy-resume");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+
+        var unavailableCopy = drill.CopyRoot + ".offline";
+        Directory.Move(drill.CopyRoot, unavailableCopy);
+        Directory.Move(drill.Origin, drill.Origin + ".offline");
+        var (missing, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.Contains(missing.Blockers, item => item.Code == "recovery-copy-unavailable");
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+
+        Directory.Move(unavailableCopy, drill.CopyRoot);
+        var (staleOrigin, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.Contains(staleOrigin.Blockers, item => item.Code == "git-origin-unavailable");
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+
+        Directory.Move(drill.Origin + ".offline", drill.Origin);
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
+    }
+
     [Theory]
     [InlineData("failed")]
     [InlineData("missing")]

@@ -161,6 +161,7 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 | `missing-cold-payload` | Restore refused | Copy the payload from another verified copy with the same set digest, or capture again while the source archive still holds it. |
 | `schema-mismatch` | Restore refused | Install the release named in the guidance on the empty target, restore, verify, and only then upgrade. |
 | `identity-comparison-failed` | Resume blocked | Read the failed comparisons in `recovery-restore-receipt.json`; restore a verified set to a new empty target. Do not override the receipt. |
+| `recovery-copy-unavailable` | Resume blocked | Restore access to the verified off-host copy named in the restore receipt. Resume checks its inventory and Git refs again; the findings saved at restore time are insufficient. |
 | `manifest-missing` / `manifest-unsupported` | Restore refused | Copy again with `recovery copy`, or use the release that captured the set. |
 | `git-origin-unavailable` | Resume blocked | Restore network access or the origin credential, or declare a verified mirror. Stay in `Maintenance` until the refs verify. |
 | `git-ref-missing` / `git-origin-undeclared` | Resume blocked | Publish the recorded commit from host salvage, or declare the origin, then verify again. |

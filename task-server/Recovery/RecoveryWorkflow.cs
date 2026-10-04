@@ -491,8 +491,14 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
     {
         var receipt = await ReadReceiptAsync(ct);
         IReadOnlyList<RecoveryFinding> findings = receipt?.Findings ?? [];
-        if (receipt is not null && Directory.Exists(receipt.CopyDirectory))
-            findings = (await VerifyCopyAsync(receipt.CopyDirectory, secretBundleOverride, probeGit: true, ct)).Report.Findings;
+        if (receipt is not null)
+        {
+            findings = Directory.Exists(receipt.CopyDirectory)
+                ? (await VerifyCopyAsync(receipt.CopyDirectory, secretBundleOverride, probeGit: true, ct)).Report.Findings
+                : [new RecoveryFinding("recovery-copy-unavailable", RecoveryFindingSeverity.BlocksResume,
+                    receipt.CopyDirectory,
+                    "The copied recovery set is unavailable. Restore access to the verified off-host copy and run the resume check again so its inventory and Git refs can be verified afresh.")];
+        }
         var facts = await store.ReadRecoveryResumeFactsAsync(
             receipt?.HostsFencedAt ?? receipt?.RestoreCompletedAt ?? DateTime.MaxValue,
             receipt is not null, oldWriterClosed, obligationsRetained, findings, ct);
