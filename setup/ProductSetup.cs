@@ -73,7 +73,7 @@ internal static class ProductSetup
         var explicitMode = Get("--mode", answers.Mode);
         var explicitTarget = Get("--target", answers.Target);
         var installDirectory = Get("--install-dir", answers.InstallDirectory);
-        var located = command != "install" && explicitMode is null && explicitTarget is null
+        var located = command is not ("install" or "preflight") && explicitMode is null && explicitTarget is null
             ? await LocateInstallationAsync(installDirectory)
             : null;
         var mode = located?.State.Mode ?? ProductCommand.NormalizeMode(explicitMode,
@@ -90,24 +90,127 @@ internal static class ProductSetup
         {
             if (Get(option, answer) is { } value) forwarded.Add((option, value));
         }
+        var journey = JourneyPolicy.ForMode(mode);
+        var authorityUrl = Get("--server-url", answers.ServerUrl);
+        var secretFile = Get("--join-token-file", answers.JoinTokenFile) ?? Get("--token-file", answers.TokenFile);
+        var backupPath = Get("--backup-path", null) ?? PassthroughValue(parsed, "--offhost-backup-path");
+        var probeRoot = installDirectory ?? DefaultInstallRoot(ProductProfile.StudioDocker);
+        if (command == "preflight" || command == "install")
+        {
+            PrintJourney(journey);
+            var findings = PreflightPolicy.Evaluate(journey, target, await PreflightProbe.ObserveAsync(
+                journey, target, authorityUrl, backupPath, secretFile is null ? null : Path.GetFullPath(secretFile),
+                probeRoot, default));
+            var failed = PrintPreflight(journey, target, findings);
+            if (command == "preflight") return failed ? 1 : 0;
+            if (failed && !flags.Contains("--dry-run"))
+                throw new InvalidOperationException(
+                    "Preflight failed. Apply the recovery actions above and rerun; nothing was changed.");
+        }
+        if (command == "install" && values.TryGetValue("--journey", out var journeyName)
+            && JourneyPolicy.Parse(journeyName) == InstallationJourney.RelocateAuthority
+            && JourneyPolicy.RelocationBlocker(values.GetValueOrDefault("--recovery-checkpoint"),
+                flags.Contains("--authority-frozen")) is { } blocker)
+            throw new InvalidOperationException(blocker);
+        if (command == "install" && mode == "agent-host" && secretFile is null)
+            throw new ArgumentException(
+                "Joining a host requires --join-token-file with an owner-only token file; interactive token paste is not supported by the guided installer.");
+        if (command == "install" && secretFile is not null && !flags.Contains("--dry-run"))
+            SetupSecrets.RequireProtected(Path.GetFullPath(secretFile),
+                mode == "agent-host" ? "Join token file" : "Token file");
         var plan = ProductPlanner.Plan(parsed, mode, target, OperatingSystem.IsWindows(), forwarded);
+        if (command == "install" && values.TryGetValue("--journey", out var relocationJourney)
+            && JourneyPolicy.Parse(relocationJourney) == InstallationJourney.RelocateAuthority)
+        {
+            var paths = InstallPaths.Load();
+            var destination = Path.GetFullPath(installDirectory ?? paths.OrchestratorConfig);
+            var restored = await RelocationGate.VerifyAsync(
+                values.GetValueOrDefault("--source-manifest"),
+                values.GetValueOrDefault("--recovery-checkpoint"), destination,
+                flags.Contains("--authority-frozen"));
+            if (restored.Journey == "relocate-authority" && restored.Mode == "control-plane")
+            {
+                Console.WriteLine($"Relocated authority {restored.InstallationId} is already recorded; no restore was repeated.");
+                return 0;
+            }
+            if (!flags.Contains("--dry-run"))
+            {
+                var targetUrl = values.GetValueOrDefault("--server-url")
+                    ?? throw new ArgumentException("Relocation requires --server-url for the target Task Server.");
+                var managementToken = values.GetValueOrDefault("--token-file")
+                    ?? throw new ArgumentException("Relocation requires --token-file for the target management principal.");
+                var authorityIdentity = await RelocationGate.RestoreAsync(targetUrl, managementToken,
+                    values["--recovery-checkpoint"]);
+                var postRestore = await RelocationGate.VerifyManifestAfterRestoreAsync(restored, destination);
+                var relocated = RelocationGate.RelocatedManifest(postRestore, target);
+                await ManifestStore.WriteAsync(destination, relocated);
+                await ManifestStore.CheckpointAsync(destination, relocated, "recovery-verified", "observed",
+                    "Full recovery set hashes and target Task Server verify and restore responses passed.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "identity-matched", "observed",
+                    $"Post-restore authority digest {authorityIdentity} and installation id, principals and project origin match the frozen source.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "authority-frozen", "operator attested",
+                    "--authority-frozen was supplied; the old host mode was not observed by this installer.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "workspace-restored", "observed",
+                    "The target Task Server reported full backup restoration; the empty-target rehearsal receipt was supplied.");
+                await ManifestStore.CheckpointAsync(destination, relocated, "authenticated-canary", "not reached",
+                    "I09 owns the detached provider canary after private HTTPS cutover.");
+            }
+            Console.WriteLine($"Relocated authority {restored.InstallationId} verified. Resume admission only after the authenticated canary and network cutover.");
+            return 0;
+        }
         if (plan.Profile == ProductProfile.Delegated)
-            return await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray());
+        {
+            var paths = InstallPaths.Load();
+            var delegatedRoot = Path.GetFullPath(installDirectory ??
+                (plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig));
+            var requestedDelegatedVersion = SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion));
+            var delegatedVersion = requestedDelegatedVersion ?? ReleaseArtifacts.CurrentVersion();
+            if (plan.Mode == "agent-host" && secretFile is not null && !flags.Contains("--dry-run"))
+            {
+                var tokenVersion = JoinTokenCodec.Decode(await File.ReadAllTextAsync(secretFile)).ReleaseVersion;
+                if (requestedDelegatedVersion is not null && requestedDelegatedVersion != tokenVersion)
+                    throw new InvalidOperationException(
+                        $"Join token requires release {tokenVersion}, but --release-version selected {requestedDelegatedVersion}.");
+                delegatedVersion = tokenVersion;
+            }
+            var delegatedManifest = await ReconcileManifestAsync(delegatedRoot, command, plan, journey,
+                delegatedVersion, null, flags.Contains("--dry-run"));
+            if (command == "uninstall")
+            {
+                if (delegatedManifest is null && !flags.Contains("--dry-run"))
+                    throw new InvalidOperationException($"No installation manifest exists at {delegatedRoot}.");
+                await UninstallDelegatedAsync(plan, paths, flags.Contains("--dry-run"), flags.Contains("--purge"));
+                if (flags.Contains("--purge") && !flags.Contains("--dry-run"))
+                    PurgeDelegatedPaths(plan, paths);
+                await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"),
+                    flags.Contains("--purge"), InstallationManifest.PhaseUninstalled, "uninstalled");
+                return 0;
+            }
+            var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray());
+            if (delegatedResult == 0)
+                await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"), false,
+                    InstallationManifest.PhaseComplete,
+                    plan.Mode == "agent-host" ? "host-enrolled" : "services-healthy");
+            return delegatedResult;
+        }
 
         var root = located?.Root ?? Path.GetFullPath(installDirectory ?? DefaultInstallRoot(plan.Profile));
         var statePath = Path.Combine(root, "install-state.json");
         var state = located?.State ?? await ReadStateAsync(statePath);
-        if (command == "install" && state is not null)
-            throw new InvalidOperationException(
-                $"Agent Studio ({state.Mode}, {state.Target}) is already installed at {root}. Use update or uninstall.");
         if (command != "install" && state is null)
             throw new InvalidOperationException($"No Agent Studio installation found at {root}.");
         if (state is not null && (state.Mode != plan.Mode || state.Target != plan.Target))
             throw new InvalidOperationException(
                 $"The installation at {root} is --mode {state.Mode} --target {state.Target}.");
+        var requestedVersion = command == "rollback"
+            ? state?.PreviousVersion
+            : SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion))
+              ?? ReleaseArtifacts.CurrentVersion();
+        var manifest = await ReconcileManifestAsync(root, command, plan, journey, requestedVersion, state,
+            flags.Contains("--dry-run"));
         var process = new ProcessRunner(flags.Contains("--dry-run"));
         if (plan.Profile != ProductProfile.StudioDocker)
-            return await RunWindowsServicesAsync(parsed, plan, root, statePath, state, process, prompter,
+            return await RunWindowsServicesAsync(parsed, plan, root, statePath, state, manifest, process, prompter,
                 Get("--release-version", answers.ReleaseVersion),
                 Get("--release-dir", answers.ReleaseDirectory),
                 Get("--server-url", answers.ServerUrl),
@@ -130,6 +233,8 @@ internal static class ProductSetup
                     if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
                 }
             }
+            await FinishManifestAsync(root, manifest, flags.Contains("--dry-run"), flags.Contains("--purge"),
+                InstallationManifest.PhaseUninstalled, "uninstalled");
             Console.WriteLine(flags.Contains("--purge")
                 ? "Studio and its data volumes were removed."
                 : $"Studio was stopped. Data volumes and installation files remain at {root}.");
@@ -146,8 +251,11 @@ internal static class ProductSetup
             : int.Parse(portText);
         if (port is < 1 or > 65535)
             throw new ArgumentException("UI port must be between 1 and 65535.");
-        if (command == "update" && version == state!.Version)
+        if (command == "update" && version == state!.Version
+            && manifest?.Phase != InstallationManifest.PhaseUpdating)
             throw new InvalidOperationException("This version is already installed.");
+        if (command == "install" && state is not null)
+            Console.WriteLine($"Installation {manifest?.InstallationId} is already present; re-applying {version} and keeping its data.");
         var bundle = Path.Combine(root, "releases", version);
         var offlineDirectory = Get("--release-dir", answers.ReleaseDirectory);
         if (flags.Contains("--offline") && offlineDirectory is null && command != "rollback")
@@ -187,9 +295,11 @@ internal static class ProductSetup
                 using var response = await http.GetAsync(url);
                 if (response.StatusCode != HttpStatusCode.OK)
                     throw new InvalidOperationException($"Studio health check returned {(int)response.StatusCode} at {url}.");
-                var next = new InstalledState("studio", "docker", version,
-                    command == "rollback" ? state!.Version : state?.Version, port);
+                var previousVersion = PreviousVersionFor(state, version, command);
+                var next = new InstalledState("studio", "docker", version, previousVersion, port);
                 await WritePrivateFileAsync(statePath, JsonSerializer.Serialize(next));
+                await FinishManifestAsync(root, manifest is null ? null : manifest with { ReleaseVersion = version }, false, false,
+                    InstallationManifest.PhaseComplete, "services-healthy", url);
             }
         }
         catch
@@ -265,7 +375,8 @@ internal static class ProductSetup
     }
 
     private static async Task<int> RunWindowsServicesAsync(ProductCommand parsed, ProductPlan plan,
-        string root, string statePath, InstalledState? state, ProcessRunner process, ConsolePrompter prompter,
+        string root, string statePath, InstalledState? state, InstallationManifest? manifest,
+        ProcessRunner process, ConsolePrompter prompter,
         string? releaseVersion, string? releaseDirectory, string? serverUrl, string? tokenFile)
     {
         var command = parsed.Verb;
@@ -279,6 +390,7 @@ internal static class ProductSetup
         {
             var purge = parsed.Has("--purge");
             await services.UninstallAsync(profile, purge);
+            await FinishManifestAsync(root, manifest, dryRun, purge, InstallationManifest.PhaseUninstalled, "uninstalled");
             if (!dryRun)
             {
                 File.Delete(statePath);
@@ -310,7 +422,8 @@ internal static class ProductSetup
         var version = command == "rollback"
             ? state!.PreviousVersion ?? throw new InvalidOperationException("No previous release is available.")
             : SetupOptions.NormalizeVersion(releaseVersion) ?? ReleaseArtifacts.CurrentVersion();
-        if (command == "update" && version == state!.Version)
+        if (command == "update" && version == state!.Version
+            && manifest?.Phase != InstallationManifest.PhaseUpdating)
             throw new InvalidOperationException("This version is already installed.");
         if (parsed.Has("--offline") && releaseDirectory is null && command != "rollback")
             throw new ArgumentException("--offline requires --release-dir with the verified Windows package.");
@@ -350,11 +463,215 @@ internal static class ProductSetup
             Directory.CreateDirectory(root);
             await WritePrivateFileAsync(statePath, JsonSerializer.Serialize(new InstalledState(
                 plan.Mode, plan.Target, version,
-                command == "install" ? null : state!.Version, 0,
+                PreviousVersionFor(state, version, command), 0,
                 upstream ?? state?.ServerUrl)));
         }
+        if (manifest is not null)
+            await FinishManifestAsync(root, manifest is null ? null : manifest with { ReleaseVersion = version }, dryRun, false,
+                InstallationManifest.PhaseComplete,
+                profile == ProductProfile.ConnectorWindows ? "authority-reachable" : "services-healthy");
         services.PrintSummary(profile, upstream ?? state?.ServerUrl);
         return 0;
+    }
+
+    /// <summary>
+    /// Applies <see cref="ManifestPolicy"/>: a re-run keeps the installation id,
+    /// recorded principals and data; an interrupted install resumes with the same
+    /// release; a different release requires update or rollback.
+    /// </summary>
+    internal static async Task<InstallationManifest?> ReconcileManifestAsync(string root, string command,
+        ProductPlan plan, InstallationJourney journey, string? version, InstalledState? state, bool dryRun)
+    {
+        if (command is "preflight" || version is null) return null;
+        var existing = await ManifestStore.ReadAsync(root);
+        if (existing is null && state is not null)
+        {
+            // Installations from before the manifest adopt one without changing their data.
+            existing = new InstallationManifest(InstallationManifest.CurrentSchema, NewInstallationId(),
+                JourneyPolicy.Name(journey), state.Mode, state.Target, state.Version,
+                InstallationManifest.PhaseComplete, [], null, null, null, null, DateTime.UtcNow, DateTime.UtcNow);
+        }
+        if (command is "uninstall" or "rollback")
+        {
+            if (existing is not null && (existing.Mode != plan.Mode || existing.Target != plan.Target))
+                throw new InvalidOperationException(
+                    $"Installation {existing.InstallationId} is --mode {existing.Mode} --target {existing.Target}.");
+            if (command == "rollback" && existing?.Phase == InstallationManifest.PhaseUpdating)
+                throw new InvalidOperationException(
+                    $"Retry the interrupted update to {existing.ReleaseVersion} before rolling back.");
+            return existing;
+        }
+        var principals = plan.Profile switch
+        {
+            ProductProfile.ConnectorWindows => new[] { "studio-connector" },
+            ProductProfile.Delegated when plan.Mode == "agent-host" => ["runner-coding", "runner-review"],
+            ProductProfile.Delegated when plan.Mode == "control-plane" =>
+                ["task-server-admin", "orchestrator-engine", "runner-bootstrap"],
+            _ => ["task-server-admin", "orchestrator-engine", "studio-bff", "runner-coding", "runner-review"],
+        };
+        var decision = ManifestPolicy.Decide(existing,
+            new ManifestRequest(JourneyPolicy.Name(journey), plan.Mode, plan.Target, version, command, principals),
+            NewInstallationId, DateTime.UtcNow);
+        if (decision.Action == ManifestAction.Reject)
+            throw new InvalidOperationException(decision.Reason);
+        if (decision.Action == ManifestAction.Resume && existing!.Phase is
+            InstallationManifest.PhaseInstalling or InstallationManifest.PhaseUpdating)
+            Console.WriteLine($"Resuming interrupted {existing.Phase} operation for installation {existing.InstallationId} at {existing.ReleaseVersion}.");
+        // ReleaseVersion is the requested pin while this operation is in progress.
+        // install-state.json remains the observed release until health succeeds.
+        var next = decision.Next! with
+        {
+            Phase = command == "update"
+                ? InstallationManifest.PhaseUpdating
+                : InstallationManifest.PhaseInstalling,
+        };
+        if (dryRun)
+        {
+            Console.WriteLine($"[dry-run] installation manifest: {decision.Action} {next.InstallationId}");
+            return null;
+        }
+        await ManifestStore.WriteAsync(root, next);
+        if (command == "install")
+            await ManifestStore.CheckpointAsync(root, next, "preflight", "observed",
+                $"The {JourneyPolicy.Name(journey)} preflight passed for --target {plan.Target}.");
+        return next;
+    }
+
+    internal static string? PreviousVersionFor(InstalledState? state, string requestedVersion, string command)
+        => command == "rollback" ? state?.Version
+            : state?.Version == requestedVersion ? state.PreviousVersion
+            : state?.Version;
+
+    internal static async Task FinishManifestAsync(string root, InstallationManifest? manifest, bool dryRun,
+        bool purge, string phase, string checkpoint, string? detail = null)
+    {
+        if (manifest is null || dryRun) return;
+        if (purge)
+        {
+            if (Directory.Exists(root))
+            {
+                File.Delete(Path.Combine(root, InstallationManifest.FileName));
+                File.Delete(Path.Combine(root, InstallationManifest.CheckpointFileName));
+            }
+            return;
+        }
+        var next = manifest with { Phase = phase, UpdatedUtc = DateTime.UtcNow };
+        await ManifestStore.WriteAsync(root, next);
+        if (phase == InstallationManifest.PhaseComplete)
+        {
+            await ManifestStore.CheckpointAsync(root, next, "release-verified", "observed",
+                "The selected package or Compose release passed the installer artifact verification path.");
+            await ManifestStore.CheckpointAsync(root, next, checkpoint, "observed", detail);
+            foreach (var pending in new[]
+            {
+                (Name: "identity-bootstrapped", Owner: "I05"),
+                (Name: "authenticated-canary", Owner: "I09"),
+                (Name: "recovery-checkpoint", Owner: "I07"),
+            })
+                await ManifestStore.CheckpointAsync(root, next, pending.Name, "not reached",
+                    $"Owned by {pending.Owner}; this installer did not verify the checkpoint.");
+            Console.WriteLine($"Installation id: {next.InstallationId} (recorded in {Path.Combine(root, InstallationManifest.FileName)})");
+            if (next.Journey == "one-box")
+            {
+                Console.WriteLine("Next: bootstrap the first human session, register the canonical project origin, and enrol the first runner with finite coding and review budgets.");
+                Console.WriteLine("Acceptance remains pending: run the provider-authenticated coding, review and canonical publication canary, then verify a full backup and rehearse restore into an empty target. Record those receipts against this installation id.");
+            }
+        }
+        else
+            await ManifestStore.CheckpointAsync(root, next, checkpoint, "observed", detail);
+    }
+
+    private static async Task UninstallDelegatedAsync(ProductPlan plan, InstallPaths paths, bool dryRun, bool purge)
+    {
+        var process = new ProcessRunner(dryRun);
+        if (plan.Mode == "control-plane" && plan.Target == "docker")
+        {
+            var composeRoot = Path.Combine(paths.OrchestratorOpt, "compose");
+            var args = new List<string> { "compose", "--project-directory", composeRoot,
+                "--env-file", Path.Combine(paths.OrchestratorConfig, "docker.env"), "down" };
+            if (purge) args.Add("--volumes");
+            await process.RequireAsync("docker", args);
+            return;
+        }
+        var units = plan.Mode == "agent-host"
+            ? new[] { "agent-host-review.service", "agent-host.service" }
+            : plan.Mode == "studio"
+                ? new[] { "agent-host-review.service", "agent-host.service",
+                    "agent-orchestrator-engine.service", "agent-task-server.service",
+                    "agent-task-server-backup.timer", "agent-task-server-backup.service" }
+                : new[] { "agent-orchestrator-engine.service", "agent-task-server.service",
+                    "agent-task-server-backup.timer", "agent-task-server-backup.service" };
+        var systemctl = Environment.GetEnvironmentVariable("AGENT_SETUP_SYSTEMCTL") ?? "systemctl";
+        if (plan.Mode is "agent-host" or "studio"
+            && File.Exists(Path.Combine(paths.Systemd, "agent-host-review.service")))
+        {
+            var active = await process.RunAsync(systemctl, ["is-active", "--quiet", "agent-host-review.service"],
+                printOutput: false);
+            if (active.ExitCode == 0)
+                await process.RequireAsync(Path.Combine(paths.HostOpt, "current", "agent-host"),
+                    NativeInstaller.BuildReviewRestartGuardArguments(Path.Combine(paths.HostState, "review-state")));
+            var guardPath = NativeInstaller.ResolveReviewRestartGuardPath(
+                "review", paths.Systemd, "agent-host-review.service")!;
+            if (!dryRun && File.Exists(guardPath)) File.Delete(guardPath);
+            await process.RequireAsync(systemctl, ["daemon-reload"]);
+        }
+        foreach (var unit in units)
+        {
+            var path = Path.Combine(paths.Systemd, unit);
+            if (!File.Exists(path)) continue;
+            await process.RequireAsync(systemctl, ["disable", "--now", unit]);
+            if (!dryRun) File.Delete(path);
+        }
+        await process.RequireAsync(systemctl, ["daemon-reload"]);
+    }
+
+    private static void PurgeDelegatedPaths(ProductPlan plan, InstallPaths paths)
+    {
+        var roots = plan.Mode == "agent-host"
+            ? new[] { paths.HostOpt, paths.HostState, paths.HostConfig }
+            : plan.Mode == "studio"
+                ? new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig,
+                    paths.StudioOpt, paths.HostOpt, paths.HostState, paths.HostConfig }
+                : new[] { paths.OrchestratorOpt, paths.OrchestratorState, paths.OrchestratorConfig };
+        foreach (var root in roots)
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    private static string NewInstallationId() => $"inst_{Guid.NewGuid():N}";
+
+    private static string? PassthroughValue(ProductCommand command, string option)
+    {
+        var index = command.Passthrough.ToList().IndexOf(option);
+        return index >= 0 && index + 1 < command.Passthrough.Count ? command.Passthrough[index + 1] : null;
+    }
+
+    private static void PrintJourney(InstallationJourney journey)
+    {
+        var steps = JourneyPolicy.Steps(journey);
+        Console.WriteLine($"Journey: {JourneyPolicy.Name(journey)} (--mode {steps.Mode})");
+        foreach (var fact in steps.Facts)
+            Console.WriteLine($"  {fact.Name}: {fact.Meaning}");
+        Console.WriteLine($"  Checkpoints: {string.Join(" -> ", steps.Checkpoints)}");
+    }
+
+    private static bool PrintPreflight(InstallationJourney journey, string target, IReadOnlyList<PreflightFinding> findings)
+    {
+        Console.WriteLine("Preflight:");
+        foreach (var finding in findings)
+        {
+            var marker = finding.Status switch
+            {
+                PreflightStatus.Pass => "ok  ",
+                PreflightStatus.Fail => "FAIL",
+                _ => "n/a ",
+            };
+            Console.WriteLine($"  [{marker}] {finding.Check}: {finding.Observed}");
+            if (finding.Recovery is not null)
+                Console.WriteLine($"         Recovery: {finding.Recovery}");
+        }
+        if (PreflightPolicy.ExecutionPlatformNote(journey, OperatingSystem.IsWindows(), target) is { } note)
+            Console.WriteLine($"  Note: {note}");
+        return findings.Any(finding => finding.Status == PreflightStatus.Fail);
     }
 
     internal static void ValidateUpstream(string url)
@@ -424,6 +741,16 @@ internal static class ProductSetup
               agent-studio-setup update [--release-version X.Y.Z]
               agent-studio-setup rollback
               agent-studio-setup uninstall [--purge]
+              agent-studio-setup preflight [--journey NAME] [--server-url URL]
+
+            Journeys (--journey):
+              one-box             Install the whole system on one machine; a
+                                  workstation is a placement of this journey.
+              join-host           Join a runner host to an existing Task Server.
+              attach-studio       Attach a Studio edge to a remote Task Server.
+              relocate-authority  Move Task Server and engine to an always-on box.
+                                  Requires --recovery-checkpoint ID and
+                                  --authority-frozen (gated migration).
 
             Modes:
               studio          Full product on this machine (default). Docker by default;
@@ -448,6 +775,8 @@ internal static class ProductSetup
             The Docker path runs without elevation. Docker Desktop on Windows and
             macOS may require a paid subscription for larger companies; Docker
             Engine on Linux does not. Use --target native on hosts without Docker.
+            Re-running install keeps the installation id, principals and data.
+            Secrets are read only from owner-only files, never from arguments.
             Uninstall keeps data unless --purge is given.
             """);
     }

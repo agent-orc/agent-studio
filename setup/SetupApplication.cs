@@ -73,7 +73,9 @@ internal static class SetupApplication
             return;
         }
 
-        await CheckRootAsync(processes);
+        // A dry run plans the native installation without writing system paths.
+        if (!options.DryRun)
+            await CheckRootAsync(processes);
         await CheckPlatformAsync(
             processes,
             native: true,
