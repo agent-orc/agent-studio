@@ -297,7 +297,8 @@ public sealed class WaitsOnPickupGateTests : IDisposable
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
-            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null);
+            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
     }
 
     /// <summary>
