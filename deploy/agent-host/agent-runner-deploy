@@ -842,13 +842,19 @@ restart_release_services() {
 watch_for_accepted_completion() {
   local invocation_id="$1"
   local window_seconds="$2"
+  local activated_epoch="$3"
+  local cutoff_epoch=$((activated_epoch + completion_watch_seconds))
   local deadline=$((SECONDS + window_seconds))
   local journal=""
   local accepted
 
   while :; do
+    # The invocation identifies the new runner. Include its completions during
+    # restart observation, but never read past the recorded ten-minute cutoff.
     journal="$(journalctl _SYSTEMD_UNIT="$coding_unit" \
-      _SYSTEMD_INVOCATION_ID="$invocation_id" -o cat --no-pager 2>/dev/null)" \
+      _SYSTEMD_INVOCATION_ID="$invocation_id" \
+      --until="@$cutoff_epoch" \
+      -o cat --no-pager 2>/dev/null)" \
       || journal=""
     accepted="$(grep -m 1 -F "handed back to the local board: " <<<"$journal" || true)"
     if [[ -n "$accepted" ]]; then
@@ -914,7 +920,7 @@ verify_completions() {
   ((remaining > 0)) || remaining=0
   printf 'agent-runner-deploy: waiting up to %ss for %s to report an accepted completion from release %s\n' \
     "$remaining" "$coding_unit" "$release_id"
-  if observation="$(watch_for_accepted_completion "$invocation_id" "$remaining")"; then
+  if observation="$(watch_for_accepted_completion "$invocation_id" "$remaining" "$activated_epoch")"; then
     logger -p authpriv.notice -t agent-runner-deploy \
       "action=verify-completions release=$release_id result=accepted" || true
     printf 'agent-runner-deploy: completion accepted after release %s: %s\n' "$release_id" "$observation"

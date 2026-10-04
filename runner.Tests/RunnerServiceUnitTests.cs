@@ -565,11 +565,14 @@ public sealed class RunnerServiceUnitTests
         var output = result.StandardOutput;
         Assert.Contains("accepted-status=0", output);
         Assert.Contains("accepted-polls=1", output);
+        Assert.Contains("early-new-invocation-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-polls=1", output);
         Assert.Contains("late-acceptance-status=0", output);
         Assert.Contains("late-acceptance-polls=3", output);
         const string rollback =
             "rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/rel-previous /opt/agent-host/current";
-        foreach (var failed in new[] { "outgoing-acceptance", "rejected", "idle" })
+        foreach (var failed in new[] { "outgoing-acceptance", "rejected", "idle", "expired-late-acceptance" })
         {
             Assert.Contains($"{failed}-status=2", output);
             Assert.Contains($"{failed}-output: agent-runner-deploy: {rollback}", output);
@@ -580,6 +583,8 @@ public sealed class RunnerServiceUnitTests
             "no completion was accepted within 600s of its activation; 1 completion(s) were rejected",
             output);
         Assert.DoesNotContain("outgoing-acceptance-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("expired-late-acceptance-polls=1", output);
+        Assert.DoesNotContain("expired-late-acceptance-output: agent-runner-deploy: completion accepted", output);
         Assert.Contains("no completion was attempted within 600s", output);
         Assert.DoesNotContain("accepted-output: agent-runner-deploy: rollback", output);
 
