@@ -690,6 +690,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthDetector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineHealthSensor>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.IEvidenceFlushAlarm>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+// AGT-3000: clears git locks left by dead git processes before a server-owned write.
+builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();

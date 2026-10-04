@@ -45,15 +45,18 @@ public sealed class IntegrationWorktreeProvider
     private readonly GitService _git;
     private readonly ILogger<IntegrationWorktreeProvider> _logger;
     private readonly string? _temporaryRoot;
+    private readonly GitStaleLockGuard _staleLocks;
 
     public IntegrationWorktreeProvider(
         GitService git,
         ILogger<IntegrationWorktreeProvider>? logger = null,
-        string? temporaryRoot = null)
+        string? temporaryRoot = null,
+        GitStaleLockGuard? staleLocks = null)
     {
         _git = git;
         _logger = logger ?? NullLogger<IntegrationWorktreeProvider>.Instance;
         _temporaryRoot = temporaryRoot;
+        _staleLocks = staleLocks ?? new GitStaleLockGuard();
     }
 
     /// <summary>
@@ -208,6 +211,10 @@ public sealed class IntegrationWorktreeProvider
     private string? Refresh(string worktreePath, string baseRef)
     {
         RemoveStaleIndexLock(worktreePath, baseRef);
+        // Any other lock (a merge that died after the last rollback marker, a
+        // ref lock in the shared repository) goes through the general guard:
+        // older than the threshold and held by no git process (AGT-3000).
+        _staleLocks.EnsureWritable(worktreePath);
         _git.AbortInterruptedIntegration(worktreePath);
 
         var detached = _git.CheckoutDetachedAt(worktreePath, baseRef);

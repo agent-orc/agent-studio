@@ -120,6 +120,36 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3000: the Temp slot failed every merge for 92 hours because its
+    /// index lock was newer than the last rollback marker, which the slot's own
+    /// rule reads as "an integration is writing". The general stale-lock guard
+    /// clears it: older than the threshold and no git process holds it.
+    /// </summary>
+    [Fact]
+    public void Resolve_ClearsAnAgedUnownedIndexLockNewerThanTheRollbackMarker()
+    {
+        var repo = SeedRepo("stale-lock-after-marker");
+        RunGit(repo, "checkout -q -b develop");
+        var provider = Provider(repo);
+        var first = provider.Resolve(repo, "develop");
+        Assert.True(first.Success, first.Error);
+
+        var gitDir = IntegrationWorktreeProvider.WorktreeGitDirectory(first.Path!)!;
+        var markerPath = Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker);
+        File.WriteAllText(markerPath, DateTimeOffset.UtcNow.AddHours(-100).ToString("O"));
+        File.SetLastWriteTimeUtc(markerPath, DateTime.UtcNow.AddHours(-100));
+        var lockPath = Path.Combine(gitDir, "index.lock");
+        File.WriteAllBytes(lockPath, []);
+        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddHours(-92));
+
+        var second = provider.Resolve(repo, "develop");
+
+        Assert.True(second.Success, second.Error);
+        Assert.Equal(IntegrationWorktreeAction.Reuse, second.Action);
+        Assert.False(File.Exists(lockPath));
+    }
+
+    /// <summary>
     /// A crashed integration leaves a conflicted merge in the worktree. The next
     /// integration must not inherit it: git would refuse to switch while the
     /// index is half-resolved.
@@ -201,7 +231,13 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
         return new IntegrationWorktreeProvider(
             git,
             NullLogger<IntegrationWorktreeProvider>.Instance,
-            Path.Combine(_tempDir, "fallback"));
+            Path.Combine(_tempDir, "fallback"),
+            staleLocks: new GitStaleLockGuard(probe: new NoGitOwnerProbe()));
+    }
+
+    private sealed class NoGitOwnerProbe : IGitLockOwnerProbe
+    {
+        public GitLockOwnership Probe(GitLockScope scope) => GitLockOwnership.None;
     }
 
     private string SeedRepo(string name)

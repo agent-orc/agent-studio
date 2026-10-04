@@ -112,6 +112,10 @@ advance the ref.
 - **Moving a project.** The slot is derived from the repository path, so a moved
   or renamed project simply gets a new slot on its next integration. The old
   directory is stale and can be removed as above.
+- **Stale locks.** Before every reset the slot clears an index or ref lock that
+  is older than 10 minutes and held by no git process, so a merge that died
+  mid-write cannot block the slot for days. See
+  [stale-git-lock](../common-problems/stale-git-lock/README.md) (AGT-3000).
 - **When preparation fails** (read-only parent, no writable temp, a repository
   without a commit), the merge step fails visibly with the reason. Integration
   never falls back to the developer checkout.

@@ -1386,7 +1386,12 @@ operator changes cause the step to fail before its writer runs.
   `failure_fingerprint` values on distinct cards, and a one-hour lane drain
   window that alarms when at least two cards have waited for 15 minutes with
   zero exits. Environmental retries of one card count once for the cross-card
-  fingerprint sequence. Alarms append as `alert` / `pipeline-health` rows in
+  fingerprint sequence. `WorkspaceEvidenceWorker` also reports a workspace
+  evidence flush that has kept failing for more than 15 minutes
+  (`evidence-flush-stalled`, raised for every project whose watch path lives in
+  that repository and cleared by the next successful flush; see
+  [stale-git-lock](../../operations/common-problems/stale-git-lock/README.md)).
+  Alarms append as `alert` / `pipeline-health` rows in
   the orchestrator feed; `GET /api/projects/{projectName}/pipeline-health`
   supplies the compact Pipeline page block with the active gate, global
   fingerprint streak, and completed/hour for each observed lane. This is
@@ -1747,7 +1752,8 @@ new fact even when its operator-facing summary is unchanged.
   screenshots when the user-facing view changes.
 - Pipeline health changes need `PipelineHealthNightReplayTests`, the
   `pipeline-health-block` component spec, and the mocked night-alarm screenshot
-  in `pipeline-page-evidence.spec.ts`.
+  in `pipeline-page-evidence.spec.ts`; the evidence-flush alarm has
+  `EvidenceFlushStallAlarmTests` and `pipeline-health-evidence-flush.spec.ts`.
 - Failure-class and requeue changes need `RunFailureClassifierTests` (the
   September-6 incident replay plus the classifier's fact-before-text
   ordering), `ReviewGradingPolicyTests` (the AGT-2706 concerns-vs-block
