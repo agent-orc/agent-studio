@@ -52,10 +52,10 @@ async function installRoutes(page: Page): Promise<void> {
     const url = new URL(route.request().url());
     const normalizedPath = decodeURIComponent(url.pathname).replace(/\/+$/, '');
 
-    if (url.pathname === '/api/auth/status') {
+    if (url.pathname === '/api/v1/studio/auth/status') {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/tasks/grouped') {
+    if (url.pathname === '/api/v1/studio/board') {
       return json(route, {
         backlog: [],
         preparation: [],
@@ -111,7 +111,8 @@ async function installRoutes(page: Page): Promise<void> {
         error: null,
       });
     }
-    if ([`/api/tasks/${JOB_ID}`, `/api/tasks/${TASK_KEY}`].includes(normalizedPath)) {
+    const detailId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(normalizedPath)?.[1];
+    if (detailId && [JOB_ID, TASK_KEY].includes(detailId)) {
       return json(route, {
         info: task,
         promptMarkdown: 'Task key copy fixture.',
@@ -132,7 +133,7 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.pathname.startsWith('/api/clients')) {
       return json(route, [{ id: 'local-default', displayName: 'Local', kind: 'agent-instance' }]);
     }
-    if (url.pathname === '/api/runner/status') return json(route, { projects: {} });
+    if (url.pathname === '/api/v1/studio/runner/status') return json(route, { projects: {} });
     if (url.pathname === '/api/environment') {
       return json(route, { isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } });
     }

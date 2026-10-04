@@ -108,13 +108,13 @@ async function applyPreDeliveryCardLayout(page: Page): Promise<void> {
 async function installMocks(page: Page): Promise<void> {
   await page.route('**/healthz', route => route.fulfill({ status: 200, body: 'Healthy' }));
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/watch-paths', route => json(route, [
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'workspace-dossier-demo',
     displayName: 'Dossier evidence',
     sortOrder: 0,
@@ -134,7 +134,7 @@ async function installMocks(page: Page): Promise<void> {
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
-  await page.route('**/api/runner/status**', route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-11T10:00:00Z', snapshots: [], ttlSeconds: 600,
   }));
@@ -148,7 +148,7 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/tasks/archive**', route => json(route, {
     items: [], total: 0, offset: 0, limit: 50,
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, EMPTY_GROUPED));
+  await page.route('**/api/v1/studio/board**', route => json(route, EMPTY_GROUPED));
   await page.route('**/api/tasks', route => json(route, []));
   await page.route(/\/api\/projects\/[^/]+\/workbenches(?:\?.*)?$/, route => {
     const projectItems = items.filter(item => item.projectName === PROJECT).map(item => item.workbench);

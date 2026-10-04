@@ -212,16 +212,16 @@ async function installRoutes(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }),
     }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-11T00:00:00Z', snapshots: [] }) }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
 
   // Per-job detail (broad) — matches either fixture id; must precede the narrower
   // sub-routes below in priority (registered later wins in Playwright).
-  await page.route(/\/api\/tasks\/(GAVEUP|NEEDSREVIEW)-fixture(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/(GAVEUP|NEEDSREVIEW)-fixture(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(buildDetail(kindFromUrl(route.request().url()))) }));
   await page.route(/\/api\/tasks\/[^/]+\/pipeline(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));

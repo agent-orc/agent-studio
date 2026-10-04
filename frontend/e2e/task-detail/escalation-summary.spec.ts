@@ -271,7 +271,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
 
   // Shell boot dependencies.
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -289,15 +289,15 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
       contentType: 'application/json',
       body: JSON.stringify({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }),
     }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-09T20:00:00Z', snapshots: [] }) }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
 
   // Detail (broad) — must be registered before the narrower sub-routes below.
-  await page.route(new RegExp(`/api/tasks/${JOB_ID}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 
   // The Overview tab polls `/api/tasks/{id}/pipeline`; answer the real shape

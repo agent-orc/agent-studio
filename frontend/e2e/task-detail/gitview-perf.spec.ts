@@ -80,10 +80,10 @@ async function installRoutes(page: Page, counters: Counters): Promise<void> {
 
   await page.route('**/api/**', (r) => { r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => { /* ignore late fulfill */ }); });
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ preparation: [], orchestratorPrep: [], needsHumanReview: [], ready: [], progress: [], failedPickup: [], autoReview: [], humanReview: [], completed: [], archive: [] }) }));
+  await page.route(/\/api\/v1\/studio\/board/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ preparation: [], orchestratorPrep: [], needsHumanReview: [], ready: [], progress: [], failedPickup: [], autoReview: [], humanReview: [], completed: [], archive: [] }) }));
   await page.route('**/api/watch-paths**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]) }));
-  await page.route('**/api/workspaces**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/projects**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/environment**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }) }));
   await page.route('**/api/clients', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/cli/usage**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
@@ -92,7 +92,7 @@ async function installRoutes(page: Page, counters: Counters): Promise<void> {
   // `.find of undefined`, popping a full-screen error-dialog overlay that
   // eats the hover/click pointer events this spec relies on.
   await page.route('**/api/cli/quota**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ttlSeconds: 600, snapshots: [] }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } }) }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } }) }));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/output(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/runs(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [] }) }));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/session-events(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ events: [], sessionChain: [] }) }));
@@ -118,7 +118,7 @@ async function installRoutes(page: Page, counters: Counters): Promise<void> {
   });
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/commits/[^/]+/files`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sha: COMMIT.sha, files: COMMIT.files.map((p) => ({ status: 'M', path: p, added: 4, removed: 1 })) }) }));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/commit(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ commit: COMMIT, files: COMMIT.files.map((p) => ({ status: 'M', path: p, added: 4, removed: 1 })) }) }));
-  await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
 }
 
 /**
