@@ -80,8 +80,10 @@ public sealed class ProjectPipelineCostService
                 if (rec != null)
                 {
                     sources.Add("pipeline-execution-log");
-                    records.Add(rec);
-                    records.AddRange(rec.PreviousAttempts);
+                    var corrected = OpenAiUsageHistoryRepair
+                        .RepairPipeline(rec, projectName, task.Id).Record;
+                    records.Add(corrected);
+                    records.AddRange(corrected.PreviousAttempts);
                 }
                 else if (File.Exists(Path.Combine(task.FolderPath, PipelineExecutionLog.FileName)))
                 {

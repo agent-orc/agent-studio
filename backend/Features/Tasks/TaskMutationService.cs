@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Runner;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Tasks;
 
@@ -447,9 +448,9 @@ public class TaskMutationService
     }
 
     /// <summary>
-    /// Replaces one remote attempt's token rows while preserving receipts from
-    /// earlier attempts. The attempt-scoped participant id makes completion
-    /// replay idempotent and keeps continuation costs visible.
+    /// Replaces one remote attempt's token rows while preserving distinct
+    /// receipts from earlier attempts. Frame identity makes replay idempotent
+    /// even when a completion is delivered under a new attempt generation.
     /// </summary>
     public bool SetRemoteTokenSummaryOnFolder(
         string folderPath,
@@ -478,8 +479,10 @@ public class TaskMutationService
                     ParticipantId = participant,
                 }))
                 .OrderBy(entry => entry.Ts)
+                .DistinctBy(entry => TokenUsageIdentity.From(folderPath, entry))
                 .ToList();
             if (entries.Count == 0) return false;
+            if (persisted is not null && persisted.Entries.SequenceEqual(entries)) return true;
 
             var summary = new TaskTokenSummary
             {

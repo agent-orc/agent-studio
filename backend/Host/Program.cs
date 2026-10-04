@@ -421,6 +421,7 @@ builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenReceiptDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -1360,6 +1361,15 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
+}
+
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.TokenReceiptDuplicateRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("TokenReceiptDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

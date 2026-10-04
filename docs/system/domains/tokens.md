@@ -181,9 +181,9 @@ receipt writer at remote completion:
   task-card token chips. It retains per-call timestamps, participants, models,
   and token dimensions.
 - `RemoteTokenReceiptService` parses only the matching fenced session window,
-  preserving input, output, cache-read, and cache-creation categories. Attempt-
-  scoped participant ids make completion replay idempotent and prevent a later
-  continuation from counting an earlier attempt twice.
+  preserving input, output, cache-read, and cache-creation categories. Usage
+  frame identity makes completion replay idempotent across attempt generations;
+  attempt-scoped participant ids still identify the producing continuation.
 - The observed provider model is authoritative for each receipt and for
   pricing. The card pin never overwrites it. A differing pin is retained as
   `pinnedModel`, the receipt sets `modelMismatch`, and the task summary sets
@@ -199,6 +199,25 @@ receipt writer at remote completion:
 - `freshness.status`, `freshness.asOf`, `freshness.warning`, and
   `freshness.sources` make source health part of the API contract. A read
   failure produces partial or unavailable data rather than a silent zero.
+
+## Duplicate remote completion receipts (AGT-3012)
+
+Remote completion can be replayed after a review or continuation. A replay of
+the same usage frame now leaves the durable task receipt unchanged. A second
+frame with a different timestamp or token counts is appended. Bus token writes
+with a run id also reject an identical run, step, and usage fingerprint before
+the JSONL append.
+
+Historical bus rows are immutable. Bus-backed readers collapse rows with the
+same run id, step participant, timestamp, model, and token dimensions. Durable
+task receipts are also deduplicated before project summary, expensive-job,
+pipeline-cost, and runner token-summary folds. The one-time
+`TokenReceiptDuplicateRepair` rewrites duplicate task receipts through the task
+mutation service and records per-project collapsed entries and tokens in
+`.metadata/migrations/token-receipt-duplicates-v1.json`. The report includes
+before and after token and list-price totals for 2026-09-29 and AGT-3004. A completed report
+is the restart marker; failures leave no marker and are retried. Legacy Codex
+cache-read normalization runs before deduplication and pricing.
 
 ## The five duplicated aggregators
 

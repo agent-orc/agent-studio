@@ -36,6 +36,7 @@ public sealed class AgentMessageBusStore
 
     private readonly ConcurrentDictionary<ProjectionKey, Projection> _projections = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<ProjectionKey, ConcurrentDictionary<BusTokenReceiptKey, byte>> _tokenReceipts = new();
 
     public static JsonSerializerOptions SerializerOptions => JsonOptions;
 
@@ -48,7 +49,9 @@ public sealed class AgentMessageBusStore
 
     public void InvalidateProjection(string workspaceRoot, string? project)
     {
-        _projections.TryRemove(new ProjectionKey(workspaceRoot, project), out _);
+        var key = new ProjectionKey(workspaceRoot, project);
+        _projections.TryRemove(key, out _);
+        _tokenReceipts.TryRemove(key, out _);
     }
 
     /// <summary>
@@ -90,13 +93,39 @@ public sealed class AgentMessageBusStore
 
         var sem = _fileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync(ct).ConfigureAwait(false);
+        ConcurrentDictionary<BusTokenReceiptKey, byte>? receiptKeys = null;
+        BusTokenReceiptKey? receiptKey = null;
         try
         {
+            // Completion replay can mint a new bus message id for the same
+            // usage frame. Check under the day-file lock before appending so
+            // both the file and the live projection remain idempotent.
+            if (BusTokenReceiptKey.From(message) is { } fingerprint)
+            {
+                var projectionKey = new ProjectionKey(workspaceRoot, message.Project);
+                receiptKeys = _tokenReceipts.GetOrAdd(projectionKey, _ =>
+                {
+                    var existing = new ConcurrentDictionary<BusTokenReceiptKey, byte>();
+                    foreach (var prior in GetOrLoad(workspaceRoot, message.Project, ct).Snapshot())
+                    {
+                        if (BusTokenReceiptKey.From(prior) is { } priorKey)
+                            existing.TryAdd(priorKey, 0);
+                    }
+                    return existing;
+                });
+                if (!receiptKeys.TryAdd(fingerprint, 0)) return;
+                receiptKey = fingerprint;
+            }
             await using var stream = new FileStream(
                 path, FileMode.Append, FileAccess.Write, FileShare.Read,
                 bufferSize: 4096, useAsync: true);
             await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
             await stream.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (receiptKey is { } fingerprint) receiptKeys?.TryRemove(fingerprint, out _);
+            throw;
         }
         finally
         {
@@ -116,6 +145,22 @@ public sealed class AgentMessageBusStore
         {
             try { sink(workspaceRoot, message); }
             catch (Exception __ex) { SilentCatch.Note(__ex, "AgentMessageBusStore: observers are best-effort"); /* observers are best-effort */ }
+        }
+    }
+
+    private readonly record struct BusTokenReceiptKey(
+        string RunId, string? JobId, string? Topic, string Participant,
+        long TimestampTicks, string? Model, long Input, long Output,
+        long CacheRead, long CacheWrite)
+    {
+        public static BusTokenReceiptKey? From(AgentMessage message)
+        {
+            if (message.Kind != "token-usage" || string.IsNullOrWhiteSpace(message.RunId)
+                || message.Tokens is not { } usage) return null;
+            return new BusTokenReceiptKey(message.RunId, message.JobId, message.Topic,
+                message.ParticipantId, message.CreatedAt.ToUniversalTime().Ticks,
+                usage.Model, usage.Input, usage.Output, usage.CacheRead ?? 0,
+                usage.CacheWrite ?? 0);
         }
     }
 

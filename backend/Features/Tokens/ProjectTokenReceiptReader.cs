@@ -63,7 +63,10 @@ public sealed class ProjectTokenReceiptReader
                         continue;
                     }
 
-                    var normalized = NormalizeSummary(summary);
+                    // Repair legacy OpenAI input semantics before any reader
+                    // prices or deduplicates the call dimensions.
+                    var corrected = OpenAiUsageHistoryRepair.RepairSummary(summary, watchPath, jobId).Summary;
+                    var normalized = NormalizeSummary(corrected, jobId);
                     summaries[jobId] = normalized;
                     if (normalized.TotalTokens > 0 && normalized.Entries.Count == 0)
                     {
@@ -98,11 +101,12 @@ public sealed class ProjectTokenReceiptReader
         IReadOnlyList<OrchestratorLogEntry> historical,
         IReadOnlyList<OrchestratorLogEntry> receipts)
     {
-        var remainingHistoricalKeys = new Dictionary<TokenEntryKey, int>();
+        receipts = TokenUsageIdentity.Distinct(receipts);
+        var remainingHistoricalKeys = new Dictionary<TokenUsageIdentity, int>();
         foreach (var entry in historical)
         {
             if (entry.TokenUsage is null) continue;
-            var key = TokenEntryKey.From(entry);
+            var key = TokenUsageIdentity.From(entry);
             remainingHistoricalKeys.TryGetValue(key, out var count);
             remainingHistoricalKeys[key] = count + 1;
         }
@@ -113,7 +117,7 @@ public sealed class ProjectTokenReceiptReader
         {
             if (receipt.TokenUsage is not null)
             {
-                var key = TokenEntryKey.From(receipt);
+                var key = TokenUsageIdentity.From(receipt);
                 if (remainingHistoricalKeys.TryGetValue(key, out var count) && count > 0)
                 {
                     remainingHistoricalKeys[key] = count - 1;
@@ -125,12 +129,56 @@ public sealed class ProjectTokenReceiptReader
         return merged.OrderBy(entry => entry.Ts).ToList();
     }
 
-    private static TaskTokenSummary NormalizeSummary(TaskTokenSummary summary)
+    internal static TaskTokenSummary NormalizeSummary(TaskTokenSummary summary, string jobId)
     {
-        var entries = (summary.Entries ?? [])
+        var sourceEntries = (summary.Entries ?? [])
             .Where(call => call.Ts != default)
             .OrderBy(call => call.Ts)
             .ToList();
+        var seen = new HashSet<TokenUsageIdentity>();
+        var entries = sourceEntries
+            .Where(call => seen.Add(TokenUsageIdentity.From(jobId, call)))
+            .ToList();
+        if (entries.Count != sourceEntries.Count)
+        {
+            // Preserve totals that were never represented by call rows. The
+            // duplicate part of the stored aggregate is discarded, while a
+            // genuine legacy residual remains visible as one synthetic call.
+            var duplicateResidualInput = Math.Max(0, summary.InputTokens - sourceEntries.Sum(call => call.InputTokens))
+                + Math.Max(0, summary.TotalTokens - summary.InputTokens - summary.OutputTokens
+                    - summary.CacheReadTokens - summary.CacheCreationTokens);
+            var duplicateResidualOutput = Math.Max(0, summary.OutputTokens - sourceEntries.Sum(call => call.OutputTokens));
+            var duplicateResidualCacheRead = Math.Max(0, summary.CacheReadTokens - sourceEntries.Sum(call => call.CacheReadTokens));
+            var duplicateResidualCacheCreation = Math.Max(0, summary.CacheCreationTokens - sourceEntries.Sum(call => call.CacheCreationTokens));
+            if (duplicateResidualInput + duplicateResidualOutput
+                + duplicateResidualCacheRead + duplicateResidualCacheCreation > 0
+                && (summary.LastUpdate ?? entries.LastOrDefault()?.Ts) is { } at)
+            {
+                entries.Add(new TaskTokenCall
+                {
+                    Ts = at,
+                    Model = summary.LastModel,
+                    ParticipantId = "agent:task-receipt",
+                    InputTokens = duplicateResidualInput,
+                    OutputTokens = duplicateResidualOutput,
+                    CacheReadTokens = duplicateResidualCacheRead,
+                    CacheCreationTokens = duplicateResidualCacheCreation,
+                    ModelPriced = summary.AllModelsPriced,
+                });
+            }
+            return summary with
+            {
+                Calls = entries.Count,
+                InputTokens = entries.Sum(call => call.InputTokens),
+                OutputTokens = entries.Sum(call => call.OutputTokens),
+                CacheReadTokens = entries.Sum(call => call.CacheReadTokens),
+                CacheCreationTokens = entries.Sum(call => call.CacheCreationTokens),
+                TotalTokens = entries.Sum(call => call.InputTokens + call.OutputTokens
+                    + call.CacheReadTokens + call.CacheCreationTokens),
+                EstimatedApiCostUsd = entries.Sum(call => call.EstimatedApiCostUsd),
+                Entries = entries,
+            };
+        }
         var entryInput = entries.Sum(call => call.InputTokens);
         var entryOutput = entries.Sum(call => call.OutputTokens);
         var entryCacheRead = entries.Sum(call => call.CacheReadTokens);
@@ -241,26 +289,6 @@ public sealed class ProjectTokenReceiptReader
         return value > int.MaxValue ? int.MaxValue : (int)value;
     }
 
-    private readonly record struct TokenEntryKey(
-        string JobId,
-        long TimestampTicks,
-        int Input,
-        int Output,
-        int CacheRead,
-        int CacheCreation)
-    {
-        public static TokenEntryKey From(OrchestratorLogEntry entry)
-        {
-            var usage = entry.TokenUsage!;
-            return new TokenEntryKey(
-                entry.JobId ?? string.Empty,
-                entry.Ts.ToUniversalTime().Ticks,
-                usage.InputTokens,
-                usage.OutputTokens,
-                usage.CacheReadTokens,
-                usage.CacheCreationTokens);
-        }
-    }
 }
 
 public sealed record ProjectTokenReceiptReadResult(

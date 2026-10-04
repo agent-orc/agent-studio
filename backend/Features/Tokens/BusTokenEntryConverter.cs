@@ -71,7 +71,7 @@ internal static class BusTokenEntryConverter
             ParticipantId: participant,
             Kind: "token-usage"));
         var entries = new List<OrchestratorLogEntry>(messages.Count);
-        foreach (var m in messages)
+        foreach (var m in DistinctMessages(messages))
         {
             entries.Add(ToEntry(m, includeParticipant: false));
         }
@@ -95,11 +95,30 @@ internal static class BusTokenEntryConverter
         var messages = store.Query(workspaceRoot, projectName, new AgentMessageQuery(
             Kind: "token-usage"));
         var entries = new List<OrchestratorLogEntry>(messages.Count);
-        foreach (var m in messages)
+        foreach (var m in DistinctMessages(messages))
         {
             entries.Add(ToEntry(m));
         }
         return entries;
+    }
+
+    private static IEnumerable<AgentMessage> DistinctMessages(IEnumerable<AgentMessage> messages)
+    {
+        var seen = new HashSet<(string?, string?, string, string?, long, string, long, long, long, long)>();
+        foreach (var message in messages)
+        {
+            if (message.Tokens is null)
+            {
+                yield return message;
+                continue;
+            }
+            var usage = StoredUsageNormalization.Normalize(message.Tokens);
+            var key = (message.JobId, message.RunId, message.ParticipantId, message.Topic,
+                message.CreatedAt.ToUniversalTime().Ticks,
+                ModelMetadataRegistry.NormalizeId(usage.Model), usage.Input, usage.Output,
+                usage.CacheRead ?? 0, usage.CacheWrite ?? 0);
+            if (seen.Add(key)) yield return message;
+        }
     }
 
     private static int SafeInt(long value)
