@@ -197,7 +197,9 @@ describe('TaskColumnComponent (smoke)', () => {
         modeSource: 'circuit-breaker',
         breakerState: 'cooldown',
         breakerReason: 'rate-limit or transient CLI quota failure',
-        breakerCooldownUntil: '2026-05-27T15:20:00Z'
+        // Local 15:20: the tooltip renders the local date, and 15:20Z is
+        // already 28 May east of UTC+8.
+        breakerCooldownUntil: new Date(2026, 4, 27, 15, 20).toISOString()
       })
     });
 

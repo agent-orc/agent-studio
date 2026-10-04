@@ -1,4 +1,5 @@
 using Xunit;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -27,16 +28,5 @@ public sealed class LegacyIntegrationBackfillRemovalTests
     }
 
     private static string RepoRoot()
-    {
-        var current = AppContext.BaseDirectory;
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current, "agent-taskboard.sln")))
-                return current;
-            current = Path.GetDirectoryName(current);
-        }
-
-        throw new InvalidOperationException(
-            "agent-taskboard.sln not found above the test base directory.");
-    }
+        => RepositoryRoot.Find();
 }

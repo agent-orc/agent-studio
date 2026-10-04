@@ -171,8 +171,9 @@ RUNNER_GIT_REMOTE=https://github.com/ORG/REPO.git
 RUNNER_GIT_PUSH_REMOTE=git@github-agent-studio:ORG/REPO.git
 # Seeds a newly registered host and remains the fallback for an older server.
 RUNNER_MAX_PARALLELISM=2
-# Optional repository-specific requirements:
-RUNNER_REQUIRED_CAPABILITIES=toolchain:dotnet,toolchain:node,toolchain:playwright
+# Optional additive requirements. Toolchains found on PATH are probed and
+# registered automatically (AGT-2987); list only keys the probe cannot see:
+# RUNNER_REQUIRED_CAPABILITIES=toolchain:custom
 ```
 
 A review or gate host that should take Compose-render gate steps

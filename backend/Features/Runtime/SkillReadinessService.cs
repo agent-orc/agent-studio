@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Runtime;
 
@@ -467,57 +468,57 @@ public class SkillReadinessService
         var title = $"{verb} Agent Software Studio skills lookup section";
 
         var sb = new StringBuilder();
-        sb.AppendLine($"# {title}");
-        sb.AppendLine();
-        sb.AppendLine("## Why");
-        sb.AppendLine();
-        sb.AppendLine("This watched project should expose a small skill lookup section so direct CLI work in Codex, Claude Code, Copilot, or Gemini can find the same standard skills the orchestrator attaches during managed task runs. The contract is documented in `docs/concepts/skills-architecture.md` (in the Agent Software Studio repo).");
-        sb.AppendLine();
-        sb.AppendLine("## Current state");
-        sb.AppendLine();
-        sb.AppendLine($"- Status: **{report.Status.ToString().ToLowerInvariant()}**");
-        sb.AppendLine($"- Summary: {report.Summary}");
+        sb.AppendLf($"# {title}");
+        sb.AppendLf();
+        sb.AppendLf("## Why");
+        sb.AppendLf();
+        sb.AppendLf("This watched project should expose a small skill lookup section so direct CLI work in Codex, Claude Code, Copilot, or Gemini can find the same standard skills the orchestrator attaches during managed task runs. The contract is documented in `docs/concepts/skills-architecture.md` (in the Agent Software Studio repo).");
+        sb.AppendLf();
+        sb.AppendLf("## Current state");
+        sb.AppendLf();
+        sb.AppendLf($"- Status: **{report.Status.ToString().ToLowerInvariant()}**");
+        sb.AppendLf($"- Summary: {report.Summary}");
         if (!string.IsNullOrEmpty(report.MatchedFile))
         {
-            sb.AppendLine($"- Section located in: `{report.MatchedFile}`");
+            sb.AppendLf($"- Section located in: `{report.MatchedFile}`");
         }
         if (!string.IsNullOrEmpty(report.Heading))
         {
-            sb.AppendLine($"- Heading found: `{report.Heading}`");
+            sb.AppendLf($"- Heading found: `{report.Heading}`");
         }
         if (report.MissingPhrases.Count > 0)
         {
-            sb.AppendLine($"- Missing expected phrases: {string.Join(", ", report.MissingPhrases.Select(p => "`" + p + "`"))}");
+            sb.AppendLf($"- Missing expected phrases: {string.Join(", ", report.MissingPhrases.Select(p => "`" + p + "`"))}");
         }
-        sb.AppendLine();
-        sb.AppendLine("## What to do");
-        sb.AppendLine();
-        sb.AppendLine("Edit this project's `README.md` (or `AGENTS.md` if that is where agent rules already live) and add or update an `## Agent Software Studio Skills` section that follows this naive shape:");
-        sb.AppendLine();
-        sb.AppendLine("```markdown");
-        sb.AppendLine("## Agent Software Studio Skills");
-        sb.AppendLine();
-        sb.AppendLine("This project is managed by Agent Software Studio (the task processor).");
-        sb.AppendLine();
-        sb.AppendLine("Core task lifecycle rules live in the task processor and are applied during managed task runs.");
-        sb.AppendLine();
-        sb.AppendLine("When working directly in a CLI, use these skill references:");
-        sb.AppendLine();
-        sb.AppendLine("- Standard skills: `<task-processor-root>/.agents/skills/<skill-name>/SKILL.md`");
-        sb.AppendLine("- Project skills: `<task-processor-root>/.agents/projects/<project-key>/skills/<skill-name>/SKILL.md`");
-        sb.AppendLine();
-        sb.AppendLine("Do not move `.orchestrator` job folders or edit task state manually.");
-        sb.AppendLine("```");
-        sb.AppendLine();
-        sb.AppendLine("Replace the placeholder paths with the concrete skill names that apply to this project. Do not invent skills that do not exist in the task processor's `.agents/` tree.");
-        sb.AppendLine();
-        sb.AppendLine("## Definition of done");
-        sb.AppendLine();
-        sb.AppendLine("- A heading whose text contains \"skill\" exists in `README.md` or `AGENTS.md`.");
-        sb.AppendLine("- The section mentions standard skills, project skills, the task processor, and the `.agents/skills/` path.");
-        sb.AppendLine("- No queue state, lifecycle field, or job folder is changed by this task.");
-        sb.AppendLine();
-        sb.AppendLine("End the run with `[[TASK_DONE]]` once the section is in place.");
+        sb.AppendLf();
+        sb.AppendLf("## What to do");
+        sb.AppendLf();
+        sb.AppendLf("Edit this project's `README.md` (or `AGENTS.md` if that is where agent rules already live) and add or update an `## Agent Software Studio Skills` section that follows this naive shape:");
+        sb.AppendLf();
+        sb.AppendLf("```markdown");
+        sb.AppendLf("## Agent Software Studio Skills");
+        sb.AppendLf();
+        sb.AppendLf("This project is managed by Agent Software Studio (the task processor).");
+        sb.AppendLf();
+        sb.AppendLf("Core task lifecycle rules live in the task processor and are applied during managed task runs.");
+        sb.AppendLf();
+        sb.AppendLf("When working directly in a CLI, use these skill references:");
+        sb.AppendLf();
+        sb.AppendLf("- Standard skills: `<task-processor-root>/.agents/skills/<skill-name>/SKILL.md`");
+        sb.AppendLf("- Project skills: `<task-processor-root>/.agents/projects/<project-key>/skills/<skill-name>/SKILL.md`");
+        sb.AppendLf();
+        sb.AppendLf("Do not move `.orchestrator` job folders or edit task state manually.");
+        sb.AppendLf("```");
+        sb.AppendLf();
+        sb.AppendLf("Replace the placeholder paths with the concrete skill names that apply to this project. Do not invent skills that do not exist in the task processor's `.agents/` tree.");
+        sb.AppendLf();
+        sb.AppendLf("## Definition of done");
+        sb.AppendLf();
+        sb.AppendLf("- A heading whose text contains \"skill\" exists in `README.md` or `AGENTS.md`.");
+        sb.AppendLf("- The section mentions standard skills, project skills, the task processor, and the `.agents/skills/` path.");
+        sb.AppendLf("- No queue state, lifecycle field, or job folder is changed by this task.");
+        sb.AppendLf();
+        sb.AppendLf("End the run with `[[TASK_DONE]]` once the section is in place.");
 
         return (title, sb.ToString());
     }

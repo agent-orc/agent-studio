@@ -9,6 +9,9 @@ namespace OrchestratorEngine.Tests;
 
 public sealed class GateDispatchRestartTests
 {
+    // clock-independent: the mocked gate API and dispatch policy use these as data.
+    private static readonly DateTime FixtureUtc = new(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc);
+
     [Fact]
     public async Task New_engine_instance_replays_the_same_immutable_gate_subject()
     {
@@ -18,7 +21,7 @@ public sealed class GateDispatchRestartTests
             new ReviewPlanDto(
                 [new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", "dotnet test"],
                     WorkingSubdir: "backend")],
-                ["build-tests"]), DateTime.UtcNow);
+                ["build-tests"]), FixtureUtc);
         var requests = new List<CreateGateSubjectRequest>();
         var handler = new GateApiHandler(source, requests);
         var options = new EngineOptions
@@ -28,7 +31,7 @@ public sealed class GateDispatchRestartTests
             RemotePostBuildTestEnabled = true,
             PollSeconds = 1,
         };
-        var stageReadyAt = DateTime.UtcNow;
+        var stageReadyAt = FixtureUtc;
         var run = new OrchestrationRunDto("run-1", "project-1", "task-1", 7,
             "leased", OrchestrationStage.GateDispatch,
             """{"reviewSubjectId":"review-1","gates":[]}""", 0,
@@ -69,7 +72,7 @@ public sealed class GateDispatchRestartTests
                     new ReviewCommandDto("compose-render-1", "build-tests", "sh",
                         ["-lc", "bash scripts/scenario.test.sh"]),
                 ],
-                ["build-tests"]), DateTime.UtcNow);
+                ["build-tests"]), FixtureUtc);
         var requests = new List<CreateGateSubjectRequest>();
         var options = new EngineOptions
         {
@@ -81,7 +84,7 @@ public sealed class GateDispatchRestartTests
         var run = new OrchestrationRunDto("run-1", "project-1", "task-1", 7,
             "leased", OrchestrationStage.GateDispatch,
             """{"reviewSubjectId":"review-1","gates":[]}""", 0,
-            DateTime.UtcNow.AddHours(-2), DateTime.UtcNow, null, []);
+            FixtureUtc.AddHours(-2), FixtureUtc, null, []);
 
         using var client = Client(new GateApiHandler(source, requests));
         await new GateDispatchLoop(client, options).ExecuteAsync(run, default);
@@ -118,11 +121,11 @@ public sealed class GateDispatchRestartTests
                     submitted.RepositoryId, submitted.RepositoryUrl, submitted.ExpectedSha,
                     submitted.ResultRef, submitted.SourceBundleArtifactId, submitted.SourceBundleSha256,
                     submitted.PlanHash, submitted.PolicyHash, submitted.PipelineDefinitionVersion,
-                    submitted.TestSelectionAuditDigest, submitted.Plan, DateTime.UtcNow,
+                    submitted.TestSelectionAuditDigest, submitted.Plan, FixtureUtc,
                     submitted.DispatchDeadline, submitted.MaxAttempts);
                 var attempt = new GateAttempt("attempt-1", "gate-1", 1, GateStates.Passed,
                     "gate-host", "host-1", null, GateStates.Passed,
-                    DateTime.UtcNow, DateTime.UtcNow, DateTime.UtcNow, DateTime.UtcNow, 1, null);
+                    FixtureUtc, FixtureUtc, FixtureUtc, FixtureUtc, 1, null);
                 return Json(new GateStatus(subject, [attempt], null, 0, null,
                     GateStates.Passed, 1, null, submitted.ExpectedSha, GateStates.Passed, true));
             }
