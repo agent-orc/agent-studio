@@ -104,7 +104,8 @@ public sealed class MergeIntoDevelopRunnerFailureCodeTests : IDisposable
             FencingToken = staleRun.LastFence,
             ResultRef = "runner/agent-runner-01/AGT-STALE",
             IntegrationBranch = "develop",
-            CompletedAtUtc = DateTimeOffset.UtcNow,
+            // Staleness here is decided by attempt identity, not completion time.
+            CompletedAtUtc = DateTimeOffset.UnixEpoch,
         });
         var logger = new RecordingLogger<MergeIntoDevelopRunner>();
         var runner = new MergeIntoDevelopRunner(git, log, logger, attemptAuthority: authority);

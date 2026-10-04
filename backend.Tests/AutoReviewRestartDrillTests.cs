@@ -985,8 +985,9 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal(PostProcessingCardStatus.Deferred, classified.Status);
         Assert.Equal(PostProcessingCardResult.AwaitingDeliveryIntegration, classified.Reason);
 
+        // The direct resume path does not inspect the request's queue timestamp.
         var request = new AutoReviewPostProcessingRequest(
-            Project, card.Id, _watchPath, DateTime.UtcNow, "deferral-retry", Attempt: 1);
+            Project, card.Id, _watchPath, DateTime.UnixEpoch, "deferral-retry", Attempt: 1);
         var settledOutcome = await restarted.Worker.ResumeDeliveryIfOwedAsync(
             request, classified, CancellationToken.None);
 
