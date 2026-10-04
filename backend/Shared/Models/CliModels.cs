@@ -192,8 +192,8 @@ public static class ModelIds
     /// <summary>Onboarded OpenAI flagship of the gpt-6 generation. Unlike the
     /// gpt-5.6 family this one IS a registry entry, so the picker can show it
     /// as a disabled, explained option when the installed codex-cli does not
-    /// offer it yet (AGT-2707). It is not the product default; that stays with
-    /// <see cref="Gpt56Sol"/> detection / the <see cref="Gpt55"/> baseline.</summary>
+    /// offer it yet (AGT-2707). The Codex default prefers GPT-6 Sol when
+    /// discovery offers it, then GPT-5.6 Sol and GPT-5.5.</summary>
     public const string Gpt6Astra = "gpt-6-astra";
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt6Luna = "gpt-6-luna";
@@ -529,10 +529,8 @@ public static class ModelMetadataRegistry
 
     public static string? DefaultForCli(string? cliType)
     {
-        // Codex follows the installed CLI: once discovery detects a newer top
-        // model (gpt-5.6-*), it is published here and becomes the product
-        // default everywhere Gpt55 was drawn (task creation, cli-type switch,
-        // client-default materialization). Null => static gpt-5.5 baseline.
+        // Codex discovery publishes the first available fleet preference:
+        // GPT-6 Sol, GPT-5.6 Sol, then the static GPT-5.5 baseline.
         if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex
             && _detectedCodexDefaultId is { Length: > 0 } detected)
             return detected;
@@ -808,6 +806,15 @@ public static class ModelMetadataRegistry
         var match = levels.FirstOrDefault(level =>
             string.Equals(level, requested?.Trim(), StringComparison.OrdinalIgnoreCase));
         if (match != null) return match;
+
+        // Preserve the highest practical effort for an old ultra pin when a
+        // newly selected model exposes xhigh but no ultra rung.
+        if (string.Equals(requested?.Trim(), "ultra", StringComparison.OrdinalIgnoreCase))
+        {
+            var xhigh = levels.FirstOrDefault(level =>
+                string.Equals(level, "xhigh", StringComparison.OrdinalIgnoreCase));
+            if (xhigh != null) return xhigh;
+        }
 
         // Out-of-ladder request: land on the model's own default rather than
         // the product top-of-ladder, so a stale or mistyped level never

@@ -262,6 +262,7 @@
         levelTestId="task-card-thinking-level" />
       <app-model-migration-badge
         [model]="job().model"
+        [thinkingLevel]="job().thinkingLevel ?? null"
         [explicit]="job().modelExplicit === true"
         [jobId]="job().id"
         [watchPath]="job().watchPath"

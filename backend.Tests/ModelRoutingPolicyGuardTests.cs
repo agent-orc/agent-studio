@@ -31,6 +31,8 @@ public sealed class ModelRoutingPolicyGuardTests
             GptModel("gpt-5.6-luna", "medium"),
             GptModel("gpt-5.6-sol", "low", "medium", "high", "xhigh"),
             GptModel("gpt-5.6-terra", "medium"),
+            GptModel("gpt-6-luna", "low", "medium", "high", "xhigh", "max"),
+            GptModel("gpt-6-sol", "low", "medium", "high", "xhigh", "max", "ultra"),
         ],
     };
 
@@ -85,15 +87,15 @@ public sealed class ModelRoutingPolicyGuardTests
     }
 
     [Fact]
-    public void Feature_recommendations_keep_the_existing_terra_tier_for_both_clis()
+    public void Feature_recommendations_use_the_Gpt6_Sol_prior()
     {
         var registry = new ModelRoutingPolicyRegistry();
         var codex = registry.Recommend(TaskTypes.Feature, GptCatalogue, economyMode: false);
         var claude = registry.Recommend(TaskTypes.Feature, ClaudeCatalogue, economyMode: false);
 
-        Assert.Equal("terra-medium", codex.Tier);
-        Assert.Equal(ModelIds.Gpt56Terra, codex.Model);
-        Assert.Equal("terra-medium", claude.Tier);
+        Assert.Equal("sol-medium", codex.Tier);
+        Assert.Equal(ModelIds.Gpt6Sol, codex.Model);
+        Assert.Equal("sol-medium", claude.Tier);
         Assert.Equal(ModelIds.ClaudeSonnet5, claude.Model);
     }
 

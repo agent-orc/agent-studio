@@ -16,6 +16,16 @@ function model(id: string, overrides: Partial<CliModelInfo> = {}): CliModelInfo 
 }
 
 describe('orderModelCatalog', () => {
+  it('keeps GPT-6 Sol ahead of Luna when Sol is the fleet default', () => {
+    const ordered = orderModelCatalog([
+      model('gpt-5.6-sol'),
+      model('gpt-6-luna'),
+      model('gpt-6-sol', { isDefault: true }),
+    ]);
+    expect(ordered.map((item) => item.id)).toEqual([
+      'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol',
+    ]);
+  });
   it('sorts leading family generations first and older generations newest-first', () => {
     const ordered = orderModelCatalog([
       model('claude-opus-4-7'),

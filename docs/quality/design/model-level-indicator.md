@@ -27,6 +27,7 @@ Neither state changes card height.
 | Match | Code examples | Shared foreground token |
 |---|---|---|
 | `gpt-*-sol` | `SOL` | `--studio-model-sol` |
+| `gpt-*-luna` | `LUN` | `--studio-model-openai` |
 | `gpt-*-ter` | `TER` | `--studio-model-ter` |
 | Claude Opus | `OP4.8` | `--studio-model-opus` |
 | Claude Sonnet | `SON5`, `SON4.6` | `--studio-model-sonnet` |
@@ -56,6 +57,9 @@ themes provide different pigment values through
 The effective level wins over configured and default values. When it differs
 from the client default, strengthen the level segment while retaining the same
 family hue. The tooltip explains configured/default differences.
+When live discovery does not offer a pinned `ultra` level but does offer
+`xhigh`, show `xh*` and explain the mapping in the tooltip. A model that offers
+`ultra`, including GPT-6 Sol, keeps `u` without a mapping marker.
 
 ## Tooltip and accessibility
 

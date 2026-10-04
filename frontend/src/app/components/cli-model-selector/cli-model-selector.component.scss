@@ -160,6 +160,13 @@
   font-size: 10px;
   font-weight: 400;
 }
+.model-picker__pill-price {
+  margin-left: auto;
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .model-picker__pill-note {
   max-width: 55%;
   overflow: hidden;

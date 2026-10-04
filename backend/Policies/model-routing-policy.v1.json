@@ -1,11 +1,11 @@
 {
-  "version": "2026-09-25",
+  "version": "2026-10-04",
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "tiers": [
     {
       "id": "luna-medium",
       "rank": 0,
-      "model": "gpt-5.6-luna",
+      "model": "gpt-6-luna",
       "thinkingLevel": "medium",
       "estimatedSavingsPercent": 65,
       "vendorOverrides": {
@@ -15,7 +15,7 @@
     {
       "id": "sonnet-low",
       "rank": 1,
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6-sol",
       "thinkingLevel": "low",
       "estimatedSavingsPercent": 50,
       "vendorOverrides": {
@@ -35,7 +35,7 @@
     {
       "id": "sol-medium",
       "rank": 3,
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6-sol",
       "thinkingLevel": "medium",
       "estimatedSavingsPercent": 0,
       "vendorOverrides": {
@@ -45,7 +45,7 @@
     {
       "id": "sol-xhigh",
       "rank": 4,
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6-sol",
       "thinkingLevel": "xhigh",
       "estimatedSavingsPercent": 0,
       "vendorOverrides": {
@@ -59,12 +59,12 @@
       "score": 15
     },
     "feature": {
-      "tier": "terra-medium",
+      "tier": "sol-medium",
       "economyFloorTier": "sonnet-low",
       "score": 25
     },
     "bug": {
-      "tier": "terra-medium",
+      "tier": "sol-medium",
       "hardFloorTier": "terra-medium",
       "score": 49
     }

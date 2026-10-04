@@ -10,6 +10,7 @@ export function normalizeThinkingLevel(
   const levels = model?.thinkingLevels ?? [];
   if (levels.length === 0) return null;
   if (requested && levels.includes(requested)) return requested;
+  if (requested === 'ultra' && levels.includes('xhigh')) return 'xhigh';
   return model?.defaultThinkingLevel ?? levels[0] ?? null;
 }
 

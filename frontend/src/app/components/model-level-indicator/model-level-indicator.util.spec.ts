@@ -4,6 +4,7 @@ import { buildModelLevelPresentation } from './model-level-indicator.util';
 describe('buildModelLevelPresentation', () => {
   it.each([
     ['gpt-5.6-sol', 'ultra', 'sol', 'SOL', 'u'],
+    ['gpt-6-luna', 'medium', 'luna', 'LUN', 'm'],
     ['gpt-5.6-ter', 'xhigh', 'ter', 'TER', 'xh'],
     ['claude-opus-4-8', 'high', 'opus', 'OP4.8', 'h'],
     ['claude-sonnet-5', 'medium', 'sonnet', 'SON5', 'm'],

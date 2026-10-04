@@ -13,6 +13,7 @@ import {
   untracked,
   viewChild,
 } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import type { BetterCandidateNote, CliType } from '../../models/task.model';
 import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
@@ -33,6 +34,16 @@ interface CliOption {
   id: CliType;
   label: string;
   icon: string;
+}
+
+interface ModelPriceBasis {
+  inputPerMillion: number;
+  cacheReadPerMillion: number;
+  outputPerMillion: number;
+}
+
+interface ModelPriceResponse {
+  items: { model: string; estimate: { modelKnown: boolean; priceBasis: ModelPriceBasis | null } }[];
 }
 
 /**
@@ -84,6 +95,7 @@ export class CliModelSelectorComponent {
 
   private readonly modalStack = inject(ModalStackService);
   private readonly catalogStore = inject(CliCatalogStore);
+  private readonly http = inject(HttpClient);
   private readonly destroyRef = inject(DestroyRef);
   private modalStackDispose: (() => void) | null = null;
 
@@ -94,6 +106,8 @@ export class CliModelSelectorComponent {
   readonly draftModel = signal('');
   readonly draftThinkingLevel = signal<string | null>(null);
   readonly draftModels = signal<readonly CliModelInfo[]>([]);
+  private readonly prices = signal<ReadonlyMap<string, ModelPriceBasis>>(new Map());
+  private readonly requestedPrices = new Set<string>();
   private readonly draftModelPinned = signal(true);
 
   readonly cliOptions = computed<readonly CliOption[]>(() =>
@@ -124,6 +138,14 @@ export class CliModelSelectorComponent {
   readonly draftThinkingLevels = computed(
     () => this.draftSelectedModel()?.thinkingLevels ?? [],
   );
+  readonly levelMappingNote = computed(() => {
+    const pinned = this.thinkingLevel();
+    const model = this.draftSelectedModel();
+    if (pinned !== 'ultra' || !model || model.id !== this.model()) return null;
+    return !model.thinkingLevels?.includes('ultra') && model.thinkingLevels?.includes('xhigh')
+      ? 'Pinned ultra is unavailable for this model. Runs use xhigh; applying this selection saves xhigh.'
+      : null;
+  });
   readonly effectiveDisabledReason = computed(() => {
     if (!this.disabled()) return null;
     return this.disabledReason() ?? 'Stop the run first to change the model.';
@@ -255,7 +277,9 @@ export class CliModelSelectorComponent {
     this.draftModelPinned.set(true);
     this.draftModels.set(this.effectiveModels());
     this.draftThinkingLevel.set(
-      normalizeThinkingLevel(this.draftModels(), currentModel, this.thinkingLevel()),
+      this.draftModels().length > 0
+        ? normalizeThinkingLevel(this.draftModels(), currentModel, this.thinkingLevel())
+        : this.thinkingLevel(),
     );
     this.pickerOpen.set(true);
     const cli = this.cliType();
@@ -370,6 +394,7 @@ export class CliModelSelectorComponent {
   private applyCatalog(models: readonly CliModelInfo[]): void {
     const selectable = models;
     this.draftModels.set(selectable);
+    this.loadPrices(selectable);
     const current = this.draftModel();
     const stillValid = current === '' || selectable.some((model) => model.id === current);
     if (this.draftModelPinned() && stillValid) {
@@ -382,6 +407,31 @@ export class CliModelSelectorComponent {
       ?? selectable.find((model) => model.available !== false);
     this.draftModel.set(defaultModel?.id ?? '');
     this.draftThinkingLevel.set(defaultModel?.defaultThinkingLevel ?? null);
+  }
+
+  priceLabel(modelId: string): string | null {
+    const price = this.prices().get(modelId);
+    return price ? `$${price.inputPerMillion} in · $${price.cacheReadPerMillion} cached · $${price.outputPerMillion} out / MTok` : null;
+  }
+
+  private loadPrices(models: readonly CliModelInfo[]): void {
+    const ids = models.map((model) => model.id).filter((id) => !this.requestedPrices.has(id)).slice(0, 100);
+    if (ids.length === 0) return;
+    ids.forEach((id) => this.requestedPrices.add(id));
+    this.http.post<ModelPriceResponse>('/api/token-pricing/calculate', {
+      items: ids.map((model) => ({ model, inputTokens: 0, outputTokens: 0,
+        cacheReadTokens: 0, cacheWriteTokens: 0 })),
+    }).subscribe({
+      next: (response) => {
+        const next = new Map(this.prices());
+        for (const item of response.items) {
+          if (item.estimate.modelKnown && item.estimate.priceBasis)
+            next.set(item.model, item.estimate.priceBasis);
+        }
+        this.prices.set(next);
+      },
+      error: () => ids.forEach((id) => this.requestedPrices.delete(id)),
+    });
   }
 
   private badgeText(

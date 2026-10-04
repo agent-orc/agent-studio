@@ -20,6 +20,7 @@ import {
   type ModelMigrationEntry,
 } from '../../features/cli/model-migrations';
 import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRef } from '../../services/overlay-portal.service';
+import { CliCatalogStore } from '../../features/cli';
 
 /**
  * AGT-2716 — the "model update available" affordance for a surface pinned to
@@ -63,9 +64,11 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
   private readonly notifications = inject(NotificationService);
   private readonly tasks = inject(TaskService);
   private readonly overlayPortal = inject(OverlayPortalService);
+  private readonly catalogs = inject(CliCatalogStore);
 
   /** The current explicitly-pinned model id to check against the catalog. */
   readonly model = input<string | null>(null);
+  readonly thinkingLevel = input<string | null>(null);
   /** Gate: only an explicit pin is eligible for an offer (default true for
    *  surfaces that always resolve to an explicit override, e.g. pipeline steps). */
   readonly explicit = input(true);
@@ -88,6 +91,14 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
 
   readonly proposal = computed<ModelMigrationEntry | null>(() =>
     this.explicit() ? this.migrations.proposalFor(this.model()) : null);
+  readonly levelMappingNote = computed(() => {
+    const proposal = this.proposal();
+    if (!proposal || this.thinkingLevel() !== 'ultra') return null;
+    const target = this.catalogs.modelsFor('codex').find((entry) => entry.id === proposal.to);
+    return target?.thinkingLevels?.includes('xhigh') && !target.thinkingLevels.includes('ultra')
+      ? 'Pinned ultra is unavailable on the proposed model. Applying uses xhigh.'
+      : null;
+  });
 
   readonly isPending = computed(() => (this.jobId() ? this.selfPending() : this.pending()));
 
@@ -152,6 +163,25 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
       error: () => {
         this.selfPending.set(false);
         this.notifications.error('Could not apply the model migration.');
+      },
+    });
+  }
+
+  onApplyProject(event: Event): void {
+    event.stopPropagation();
+    const proposal = this.proposal();
+    const watchPath = this.watchPath();
+    if (!proposal || !watchPath || this.isPending()) return;
+    this.selfPending.set(true);
+    this.tasks.applyProjectModelMigration(watchPath, proposal.from, proposal.to).subscribe({
+      next: ({ applied }) => {
+        this.selfPending.set(false);
+        this.close();
+        this.notifications.success(`Updated ${applied} pinned model${applied === 1 ? '' : 's'} in this project.`);
+      },
+      error: () => {
+        this.selfPending.set(false);
+        this.notifications.error('Could not apply the project model migration.');
       },
     });
   }

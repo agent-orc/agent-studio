@@ -52,6 +52,24 @@ public class TokenPricingTests
         Assert.Equal(expectedPrice.OutputPerMTok, c.PriceBasis.OutputPerMillion);
     }
     [Fact]
+    public void Estimate_Gpt6Sol_CachedInputIsBilledOnlyAtCacheRate()
+    {
+        var at = new DateTime(2026, 10, 4, 0, 0, 0, DateTimeKind.Utc);
+        var cost = _provider.Estimate(ModelIds.Gpt6Sol, 1_000_000, 1_000_000,
+            1_000_000, 0, at);
+
+        Assert.True(cost.ModelKnown);
+        Assert.Equal(2m, cost.InputUsd);
+        Assert.Equal(0.2m, cost.CacheReadUsd);
+        Assert.Equal(10m, cost.OutputUsd);
+        Assert.Equal(12.2m, cost.Total);
+        var pickerBasis = _provider.Estimate(ModelIds.Gpt6Sol, 0, 0, 0, 0, at).PriceBasis;
+        Assert.NotNull(pickerBasis);
+        Assert.Equal(2m, pickerBasis.InputPerMillion);
+        Assert.Equal(0.2m, pickerBasis.CacheReadPerMillion);
+        Assert.Equal(10m, pickerBasis.OutputPerMillion);
+    }
+    [Fact]
     public void Estimate_OpusPrices_MatchAnthropicListed()
     {
         // Opus 4.7: $5/M input, $25/M output. 1M input + 200K output =

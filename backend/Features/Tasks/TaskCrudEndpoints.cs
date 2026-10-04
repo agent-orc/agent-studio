@@ -996,6 +996,27 @@ public static class TaskCrudEndpoints
             return success ? Results.Ok() : Results.NotFound();
         });
 
+        // A project-wide migration is an explicit operator action. Only active
+        // cards with an exact explicit pin to this catalogue source are changed.
+        group.MapPost("/model-migrations/apply-project", (
+            string? project, string? watchPath, ApplyProjectModelMigrationRequest req,
+            TaskScannerService scanner, TaskMutationService mutations,
+            AgentStudio.Pipeline.ModelMigrationCatalogRegistry migrations,
+            AgentStudio.Registry.ProjectRegistry projects, HttpContext context) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (string.IsNullOrWhiteSpace(watchPath))
+                return Results.BadRequest(new { error = "A valid project is required." });
+            var entry = migrations.FindMigration(req.FromModel);
+            if (entry is null || !string.Equals(entry.To, req.ToModel, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "The requested model migration is not in the catalogue." });
+            var jobs = SelectProjectMigrationCandidates(
+                ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects),
+                watchPath, entry.From);
+            var applied = jobs.Count(job => mutations.SetJobModel(job.Id, entry.To, watchPath));
+            return Results.Ok(new { applied, fromModel = entry.From, toModel = entry.To });
+        });
+
         group.MapPut("/{jobId}/thinking-level", (string jobId, string? project, string? watchPath, SetJobThinkingLevelRequest req, TaskMutationService mutations, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -1347,6 +1368,15 @@ public static class TaskCrudEndpoints
         return Results.BadRequest($"Invalid state. Allowed: {string.Join(", ", TaskStates.All)}");
     }
 
+    internal static List<TaskInfo> SelectProjectMigrationCandidates(
+        IEnumerable<TaskInfo> jobs, string watchPath, string fromModel)
+        => jobs.Where(job => WatchPathComparison.PathsEqual(job.WatchPath, watchPath)
+                && job.ModelExplicit
+                && job.State != TaskStates.Progress
+                && job.State != TaskStates.AutoReview
+                && string.Equals(job.Model, fromModel, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
     /// <summary>
     /// Surfaces the background Git-index freshness stamp on a response whose
     /// body shape is a bare array (<c>GET /api/tasks</c>) or otherwise not
@@ -1361,6 +1391,8 @@ public static class TaskCrudEndpoints
         context.Response.Headers["X-Git-State-Stale"] = freshness.Stale ? "true" : "false";
     }
 }
+
+public sealed record ApplyProjectModelMigrationRequest(string FromModel, string ToModel);
 
 /// <summary>
 /// AGT-2069 — body for <c>POST /api/tasks/{id}/planning-closure</c>.

@@ -73,6 +73,10 @@ export function orderModelCatalog(models: readonly CliModelInfo[]): readonly Cli
       if (left.parsed !== null && right.parsed !== null) {
         const generation = compareGeneration(right.parsed.generation, left.parsed.generation);
         if (generation !== 0) return generation;
+        if (left.parsed.family === 'gpt' && right.parsed.family === 'gpt') {
+          const defaultRank = Number(!left.model.isDefault) - Number(!right.model.isDefault);
+          if (defaultRank !== 0) return defaultRank;
+        }
         const family = left.parsed.family.localeCompare(right.parsed.family);
         if (family !== 0) return family;
       } else if (left.parsed !== null || right.parsed !== null) {

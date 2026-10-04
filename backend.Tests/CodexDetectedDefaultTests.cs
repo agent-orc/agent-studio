@@ -150,6 +150,25 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     }
 
     [Fact]
+    public void DefaultForCli_Codex_UsesGpt6SolAndItsDiscoveredUltraLadder()
+    {
+        ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt6Sol);
+        ModelMetadataRegistry.SetDetectedCodexLadders(
+        [
+            new CliModelInfo { Id = ModelIds.Gpt6Sol,
+                ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"],
+                DefaultThinkingLevel = "medium" },
+            new CliModelInfo { Id = ModelIds.Gpt6Luna,
+                ThinkingLevels = ["low", "medium", "high", "xhigh", "max"],
+                DefaultThinkingLevel = "medium" },
+        ]);
+
+        Assert.Equal(ModelIds.Gpt6Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal("ultra", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Sol, "ultra"));
+        Assert.Equal("xhigh", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Luna, "ultra"));
+    }
+
+    [Fact]
     public void DetectedDefault_DoesNotLeakToOtherVendors()
     {
         ModelMetadataRegistry.SetDetectedCodexDefault(ModelIds.Gpt56Sol);

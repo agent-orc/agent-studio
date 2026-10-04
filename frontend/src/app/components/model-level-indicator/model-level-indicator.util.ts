@@ -1,5 +1,6 @@
 export type ModelFamily =
   | 'sol'
+  | 'luna'
   | 'ter'
   | 'opus'
   | 'sonnet'
@@ -58,8 +59,8 @@ export function buildModelLevelPresentation(
   const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-([a-z][a-z0-9-]*))?/i.exec(normalized);
   if (gpt) {
     const [, version, suffix = ''] = gpt;
-    if (suffix === 'sol' || suffix === 'ter') {
-      return { family: suffix, modelCode: suffix.toUpperCase(), levelCode };
+    if (suffix === 'sol' || suffix === 'ter' || suffix === 'luna') {
+      return { family: suffix, modelCode: suffix === 'luna' ? 'LUN' : suffix.toUpperCase(), levelCode };
     }
     if (suffix === 'codex') {
       return { family: 'openai', modelCode: `COD${version}`, levelCode };

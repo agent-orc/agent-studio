@@ -73,6 +73,7 @@
               levelTestId="detail-thinking-level" />
             <app-model-migration-badge
               [model]="info().model"
+              [thinkingLevel]="info().thinkingLevel ?? null"
               [explicit]="info().modelExplicit === true"
               [jobId]="info().id"
               [watchPath]="info().watchPath"

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { Subject, of, throwError } from 'rxjs';
 import { CliModelSelectorComponent } from './cli-model-selector.component';
 import type { CliModelInfo } from '../../features/cli';
@@ -51,6 +53,7 @@ describe('CliModelSelectorComponent', () => {
       imports: [CliModelSelectorComponent],
       providers: [
         provideZonelessChangeDetection(),
+        provideHttpClient(), provideHttpClientTesting(),
         { provide: CliCatalogStore, useValue: store },
         { provide: ModalStackService, useValue: modalStack.service },
       ],
@@ -92,6 +95,37 @@ describe('CliModelSelectorComponent', () => {
     expect(sol).toBeTruthy();
     expect(sol!.label).toBe('GPT-5.6-Sol');
     expect(sol!.thinkingLevels).toContain('ultra');
+  });
+
+  it('orders GPT-6 first, shows TokenEconomy prices, and explains an unsupported ultra pin', async () => {
+    const models: CliModelInfo[] = [
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false,
+        thinkingLevels: ['medium', 'xhigh', 'ultra'] },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', multiplier: null, vendor: 'openai', isDefault: false,
+        thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'medium' },
+      { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true,
+        thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
+    ];
+    const store = createStoreMock();
+    store.modelsFor.mockReturnValue(models);
+    store.ensure.mockReturnValue(of(models));
+    const { fixture, component } = await create({ cliType: 'codex', model: 'gpt-6-luna', thinkingLevel: 'ultra' }, store);
+    openPicker(fixture);
+    await fixture.whenStable();
+
+    expect(component.currentModels().map((m) => m.id)).toEqual(['gpt-6-sol', 'gpt-6-luna']);
+    expect(component.draftThinkingLevel()).toBe('xhigh');
+    expect(document.querySelector('[data-testid="cli-model-selector-picker-level-mapping"]')?.textContent)
+      .toContain('Pinned ultra is unavailable');
+
+    const request = TestBed.inject(HttpTestingController).expectOne('/api/token-pricing/calculate');
+    expect(request.request.body.items.map((item: { model: string }) => item.model))
+      .toEqual(expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna']));
+    request.flush({ items: [{ model: 'gpt-6-sol', estimate: { modelKnown: true,
+      priceBasis: { inputPerMillion: 2, cacheReadPerMillion: 0.2, outputPerMillion: 10 } } }] });
+    fixture.detectChanges();
+    expect(document.querySelector('[data-testid="cli-model-selector-picker-price-gpt-6-sol"]')?.textContent)
+      .toContain('$2 in · $0.2 cached · $10 out / MTok');
   });
 
   it('shows benchmark candidates beside the current selection without changing the draft route', async () => {

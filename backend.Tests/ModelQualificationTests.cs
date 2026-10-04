@@ -14,6 +14,8 @@ public sealed class ModelQualificationTests
             Model("gpt-5.6-sol", "medium", "high", "xhigh"),
             Model("gpt-5.6-terra", "medium"),
             Model("gpt-5.6-luna", "medium"),
+            Model("gpt-6-sol", "low", "medium", "high", "xhigh", "max", "ultra"),
+            Model("gpt-6-luna", "low", "medium", "high", "xhigh", "max"),
         ],
     };
 
@@ -25,13 +27,13 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Add a bounded settings panel.", Catalogue, []);
 
-        Assert.Equal("2026-09-25", result.PolicyVersion);
-        Assert.Equal("terra-medium", result.PolicyTier);
-        Assert.Equal("gpt-5.6-terra", result.RecommendedModel);
+        Assert.Equal("2026-10-04", result.PolicyVersion);
+        Assert.Equal("sol-medium", result.PolicyTier);
+        Assert.Equal("gpt-6-sol", result.RecommendedModel);
         Assert.Equal("medium", result.RecommendedThinkingLevel);
         Assert.Equal(result.RecommendedModel, result.SelectedModel);
         Assert.Equal("policy", result.SelectionSource);
-        Assert.Contains("feature defaults to terra-medium", result.Reason);
+        Assert.Contains("feature defaults to sol-medium", result.Reason);
     }
 
     [Fact]
@@ -44,8 +46,8 @@ public sealed class ModelQualificationTests
 
         Assert.True(result.EconomyMode);
         Assert.True(result.EconomyDowngraded);
-        Assert.Equal("sonnet-low", result.PolicyTier);
-        Assert.Equal("gpt-5.6-sol", result.SelectedModel);
+        Assert.Equal("terra-medium", result.PolicyTier);
+        Assert.Equal("gpt-5.6-terra", result.SelectedModel);
         Assert.Equal("policy-economy", result.SelectionSource);
     }
 
@@ -57,7 +59,7 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Investigate an intermittent rendering failure.", Catalogue, []);
 
-        Assert.False(result.EconomyDowngraded);
+        Assert.True(result.EconomyDowngraded);
         Assert.Equal("terra-medium", result.PolicyTier);
         Assert.Equal("terra-medium", result.CorrectnessFloorTier);
         Assert.Equal("gpt-5.6-terra", result.SelectedModel);
@@ -78,7 +80,7 @@ public sealed class ModelQualificationTests
         Assert.False(result.EconomyDowngraded);
         Assert.Equal("sol-xhigh", result.PolicyTier);
         Assert.Equal("sol-xhigh", result.CorrectnessFloorTier);
-        Assert.Equal("gpt-5.6-sol", result.SelectedModel);
+        Assert.Equal("gpt-6-sol", result.SelectedModel);
         Assert.Equal("xhigh", result.SelectedThinkingLevel);
     }
 
@@ -94,7 +96,7 @@ public sealed class ModelQualificationTests
 
         var result = service.Qualify(task, "Polish CSS spacing.", Catalogue, []);
 
-        Assert.Equal("gpt-5.6-luna", result.RecommendedModel);
+        Assert.Equal("gpt-6-luna", result.RecommendedModel);
         Assert.Equal("gpt-5.6-sol", result.SelectedModel);
         Assert.Equal("xhigh", result.SelectedThinkingLevel);
         Assert.Equal("task-override", result.SelectionSource);

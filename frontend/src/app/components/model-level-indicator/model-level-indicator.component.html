@@ -2,7 +2,7 @@
       [class]="'model-level model-level--' + presentation().family"
       [class.model-level--default]="isDefault()"
       [class.model-level--fallback]="source() === 'fallback'"
-      [cacTooltip]="tooltip()"
+      [cacTooltip]="effectiveTooltip()"
       [attr.data-testid]="testId()"
       [attr.data-model-family]="presentation().family"
       [attr.data-model-code]="presentation().modelCode"
@@ -16,8 +16,9 @@
           [class.model-level__thinking--override]="thinkingLevelOverride()"
           [class.model-level__thinking--missing]="!presentation().levelCode"
           [attr.data-testid]="levelTestId()"
-          [attr.data-thinking-level]="thinkingLevel()"
+          [attr.data-thinking-level]="effectiveLevel()"
+          [attr.data-level-mapping]="mappedLevel() ? 'ultra-to-xhigh' : null"
           [attr.data-thinking-level-override]="thinkingLevelOverride()"
-          aria-hidden="true">{{ presentation().levelCode ?? '?' }}</span>
+          aria-hidden="true">{{ presentation().levelCode ?? '?' }}@if (mappedLevel()) {*}</span>
   }
 </span>

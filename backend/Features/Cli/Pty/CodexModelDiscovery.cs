@@ -321,7 +321,7 @@ public sealed class CodexModelDiscovery
     /// <summary>
     /// Registry-backed static catalog used when the codex CLI cannot be queried
     /// and no cache exists (task item 1's "fall back to today's static list").
-    /// Mirrors <c>ClaudeModelDiscovery.FallbackCatalog</c>. Contains no gpt-5.6:
+    /// Mirrors <c>ClaudeModelDiscovery.FallbackCatalog</c>. Contains no available GPT-6 Sol or gpt-5.6:
     /// <c>gpt-5.6-sol</c> has no registry entry at all, and the onboarded
     /// <c>gpt-5.6-terra</c> / <c>gpt-5.6-luna</c> entries carry an
     /// <c>Available:false</c> baseline (AGT-2707 round 2), so this static list
@@ -345,29 +345,20 @@ public sealed class CodexModelDiscovery
         };
     }
 
-    private static bool IsGpt56(string? id)
-        => id != null && id.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase);
-
     /// <summary>
-    /// Derive the Codex product default from a live/cached catalog: as soon as
-    /// the installed CLI lists a gpt-5.6-* model, that becomes the default
-    /// (following the CLI's own active model when it is already a gpt-5.6, else
-    /// the highest-priority gpt-5.6 in the list). Returns null when no gpt-5.6
-    /// is present so the caller keeps the static gpt-5.5 baseline (AGT-2025).
+    /// Prefer GPT-6 Sol when discovery offers it, then GPT-5.6 Sol. The
+    /// registry supplies GPT-5.5 when neither is available. Other discovered
+    /// models, including GPT-6.1 Sol, are not implicit fleet defaults.
     /// </summary>
     internal static string? PickDetectedDefault(CliModelCatalog cat)
     {
         var models = cat.Models;
         if (models == null || models.Count == 0) return null;
-
-        // Follow the CLI's own default when it already points at a gpt-5.6 model.
-        // Merged-in registry entries are unavailable and can never be the default.
-        var flagged = models.FirstOrDefault(m => m.Available && m.IsDefault && IsGpt56(m.Id));
-        if (flagged != null) return flagged.Id;
-
-        // Otherwise: the models are priority-ordered, so the first gpt-5.6 is the
-        // highest-priority one the CLI advertises.
-        return models.FirstOrDefault(m => m.Available && IsGpt56(m.Id))?.Id;
+        if (models.Any(m => m.Available && string.Equals(m.Id, ModelIds.Gpt6Sol, StringComparison.OrdinalIgnoreCase)))
+            return ModelIds.Gpt6Sol;
+        if (models.Any(m => m.Available && string.Equals(m.Id, ModelIds.Gpt56Sol, StringComparison.OrdinalIgnoreCase)))
+            return ModelIds.Gpt56Sol;
+        return null;
     }
 
     /// <summary>

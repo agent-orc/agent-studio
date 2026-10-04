@@ -122,6 +122,9 @@
               (keydown)="onModelPillKeydown(modelOption.id, $event)"
               (click)="onModelPillClick(modelOption.id)">
               <span class="model-picker__pill-label">{{ modelOption.label || modelOption.id }}</span>
+              @if (priceLabel(modelOption.id); as price) {
+                <span class="model-picker__pill-price" [attr.data-testid]="pickerTestidPrefix() + '-price-' + modelOption.id">{{ price }}</span>
+              }
               @if (modelOption.isDefault) {
                 <span class="model-picker__pill-hint">default</span>
               } @else if (modelAvailabilityNote(modelOption); as unavailableNote) {
@@ -156,6 +159,9 @@
                 <span class="model-picker__pill-label">
                   {{ modelOption.label || modelOption.id }}
                 </span>
+                @if (priceLabel(modelOption.id); as price) {
+                  <span class="model-picker__pill-price">{{ price }}</span>
+                }
                 <span class="model-picker__pill-note">{{ olderModelNote(modelOption) }}</span>
               </button>
             }
@@ -175,6 +181,9 @@
     @if (draftThinkingLevels().length > 0) {
       <section class="model-picker__section">
         <div class="model-picker__section-label">Level</div>
+        @if (levelMappingNote(); as note) {
+          <p class="model-picker__hint" [attr.data-testid]="pickerTestidPrefix() + '-level-mapping'">{{ note }}</p>
+        }
         <div
           class="model-picker__pills"
           role="radiogroup"

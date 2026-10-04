@@ -360,15 +360,32 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void PickDetectedDefault_FollowsTheCliFlaggedDefault_WhenItIsGpt56()
+    public void PickDetectedDefault_PrefersSolOverCliFlaggedTerra()
     {
-        // config.toml pins gpt-5.6-terra even though sol ranks first: respect it.
+        // A CLI config pin to Terra does not change the fleet default.
         var cat = Catalog(
             Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-5.6-terra", isDefault: true),
             Model("gpt-5.5", isDefault: false));
 
-        Assert.Equal("gpt-5.6-terra", CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Equal("gpt-5.6-sol", CodexModelDiscovery.PickDetectedDefault(cat));
+    }
+
+    [Fact]
+    public void PickDetectedDefault_PrefersGpt6Sol_AndDoesNotPromoteUncataloguedGpt61()
+    {
+        var cat = Catalog(
+            Model("gpt-6.1-sol", isDefault: true),
+            Model("gpt-5.6-sol", isDefault: false),
+            Model("gpt-6-sol", isDefault: false));
+
+        Assert.Equal(ModelIds.Gpt6Sol, CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Equal(ModelIds.Gpt56Sol, CodexModelDiscovery.PickDetectedDefault(Catalog(
+            Model("gpt-6.1-sol", isDefault: true),
+            Model("gpt-5.6-sol", isDefault: false))));
+        Assert.Null(CodexModelDiscovery.PickDetectedDefault(Catalog(
+            Model("gpt-6.1-sol", isDefault: true),
+            Model("gpt-5.5", isDefault: false))));
     }
 
     [Fact]

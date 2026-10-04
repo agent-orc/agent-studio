@@ -1870,6 +1870,14 @@ export class TaskService {
     );
   }
 
+  applyProjectModelMigration(watchPath: string, fromModel: string, toModel: string) {
+    return this.http.post<{ applied: number; fromModel: string; toModel: string }>(
+      `${this.baseUrl}/tasks/model-migrations/apply-project`,
+      { fromModel, toModel },
+      this.withWatchPath(watchPath),
+    );
+  }
+
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
