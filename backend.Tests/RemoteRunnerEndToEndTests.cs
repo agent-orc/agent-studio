@@ -8,6 +8,7 @@ using System.Net.Http.Json;
 using System.Net;
 using System.Diagnostics;
 using AgentStudio.TestSupport;
+using AgentStudio.Pipeline;
 
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -3247,7 +3248,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? repositoryPath = null,
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
-        Func<DateTime>? authorityNow = null) =>
+        Func<DateTime>? authorityNow = null,
+        Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3277,12 +3279,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     }
                     cfg.AddInMemoryCollection(values);
                 });
-                if (writer is not null || summaryOneShot is not null || authorityNow is not null)
+                if (writer is not null || summaryOneShot is not null || authorityNow is not null
+                    || causeWaitReleaseFactory is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
                         if (writer is not null)
                             services.AddSingleton<IAtomicJsonFileWriter>(writer);
+                        if (causeWaitReleaseFactory is not null)
+                            services.AddSingleton(causeWaitReleaseFactory);
                         if (summaryOneShot is not null)
                         {
                             services.AddSingleton(
@@ -3446,7 +3451,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
     private ReviewAttemptDto SeedReviewAttempt(
         IServiceProvider services,
-        bool includeResultEnvelope)
+        bool includeResultEnvelope,
+        string taskKey = TaskKey)
     {
         const string resultSha = "589c462f589c462f589c462f589c462f589c462f";
         const string baseSha = "4136f00d4136f00d4136f00d4136f00d4136f00d";
@@ -3454,7 +3460,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var repositoryId = Contract.RepositoryIdentityContract.FromUrl(repositoryUrl)!;
         var authority = services.GetRequiredService<AttemptAuthorityService>();
         var run = authority.AcquireRun(
-            TaskKey,
+            taskKey,
             repositoryId,
             null,
             RunnerId,
@@ -3485,7 +3491,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         });
         Assert.True(settled.Accepted);
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            TaskKey,
+            taskKey,
             repositoryId,
             resultSha,
             run.AttemptId,
@@ -5779,11 +5785,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     /// retry instead of minting it inline, the card timeline names the retry
     /// number, the budget, and the reason, no successor exists before the
     /// backoff elapses, and once it does the successor reuses the exact same
-    /// immutable ReviewSubject (same SHA, same commands - nothing rebuilt)
-    /// rather than a freshly built plan.
+    /// immutable delivery subject while rebuilding the commands from current
+    /// project settings for every infrastructure classification.
     /// </summary>
-    [Fact]
-    public async Task Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move()
+    [Theory]
+    [InlineData("AspectTimeout")]
+    [InlineData("PreparationFailed")]
+    [InlineData("BaselineUnavailable")]
+    public async Task Monolith_v1_review_plane_rebuilds_the_retry_plan_from_current_settings(
+        string classification)
     {
         const string reviewRunnerId = "review-runner-aspect-timeout";
         const string reviewInstance = "review-aspect-timeout-host:4243";
@@ -5815,7 +5825,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 reviewRunnerId,
                 reviewInstance,
                 "review-aspect-timeout-1",
-                "AspectTimeout",
+                classification,
                 "Review aspect 'aspect-code-quality' was killed on its timeout, not its toolchain."),
             CancellationToken.None);
 
@@ -5835,7 +5845,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             scheduled.GetProperty("details").GetProperty("retryBudget").GetString());
         var summary = scheduled.GetProperty("summary").GetString()!;
         Assert.Contains("review infrastructure retry 1/3 scheduled in 1m", summary, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("AspectTimeout", summary, StringComparison.Ordinal);
+        Assert.Contains(classification, summary, StringComparison.Ordinal);
         Assert.Contains("killed on its timeout", summary, StringComparison.Ordinal);
 
         // No successor exists yet: the card would still sit unattended without
@@ -5846,9 +5856,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         now = now.AddSeconds(59);
         Assert.Equal(0, scheduler.RunOnce());
 
-        // Past the backoff: the scheduler mints the successor on its own,
-        // reusing the identical ReviewSubject (AspectTimeout never requires a
-        // plan rebuild, unlike PreparationFailed).
+        // A changed model route must reach the very next attempt for every
+        // infrastructure classification, including a withdrawn model.
+        factory.Services.GetRequiredService<ProjectSettingsService>().SetPipelineStep(
+            ProjectName, "aspect-code-quality", new PipelineStepSetting { Model = "review-model-updated" });
+        // Past the backoff: the scheduler mints the successor on its own.
         now = now.AddSeconds(2);
         Assert.Equal(1, scheduler.RunOnce());
 
@@ -5859,12 +5871,10 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(subjectId, successor.Subject.SubjectId);
         Assert.Equal(claim.Subject.ExpectedResultSha, successor.Subject.ExpectedResultSha);
         Assert.Equal(AttemptLifecycleState.Pending, successor.State);
+        Assert.Contains(successor.Subject.Plan!.Commands, command =>
+            command.StepId == "aspect-code-quality" && command.Model == "review-model-updated");
 
-        var reclaimed = await reviewClient.ClaimReviewAsync(
-            new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
-            CancellationToken.None);
-        Assert.Equal("claimed", reclaimed.Status);
-        Assert.Equal(successor.AttemptId, reclaimed.Attempt!.AttemptId);
+        Assert.Empty(factory.Services.GetRequiredService<CauseBreakerService>().List(openOnly: true));
     }
 
     private void SetCardIntegrationBranch(string state, string integrationBranch)
@@ -5893,6 +5903,302 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .Select(line => JsonDocument.Parse(line).RootElement.Clone())
             .ToList();
+    }
+
+    [Fact]
+    public void Cause_breaker_rechecks_pending_review_after_project_is_enabled()
+    {
+        const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
+        SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
+        SeedTask(TaskStates.AutoReview, nextTaskKey, "Pending affected review", "Build and verify.");
+        // The intervention service creates the cause card in flat storage.
+        // Seed both affected cards there too, so the scanner keeps them in
+        // its snapshot after the cause card is created.
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
+        var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, nextTaskKey), nextTaskFolder);
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var next = Assert.IsType<TaskInfo>(scanner.FindJob(nextTaskKey, _watchPath));
+        Assert.Equal(TaskStates.AutoReview, next.State);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var settings = factory.Services.GetRequiredService<ProjectSettingsService>();
+        var first = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(first, TaskKey, $"rva-{number}", fingerprint, evidence, evidence.StderrTail);
+        Assert.Equal(first.ProjectName, next.ProjectName);
+        Assert.NotNull(scanner.FindJob(nextTaskKey, _watchPath));
+
+        settings.SetCauseBreaker(ProjectName, false, 3, 2, 24);
+        Assert.DoesNotContain(nextTaskKey, breaker.HoldPendingReviews());
+        Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
+
+        settings.SetCauseBreaker(ProjectName, true, 3, 2, 24);
+        Assert.True(breaker.IsEnabled(ProjectName));
+        Assert.Contains(nextTaskKey, breaker.HoldPendingReviews());
+        Assert.NotNull(CauseWaitMarker.TryRead(nextTaskFolder));
+    }
+
+    [Fact]
+    public void Cause_breaker_opens_once_parks_claims_and_closes_on_green_probe()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var lifecycle = factory.Services.GetRequiredService<ReviewAttemptTaskLifecycleService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var firstClaim = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var firstReview = Assert.IsType<ReviewAttemptDto>(firstClaim.ReviewAttempt);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(firstReview.AttemptId, firstReview.LastFence,
+                firstReview.AuthorityEpoch, "seed-infrastructure-failure"),
+            firstReview.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "PreparationFailed", "npm ci: command not found")).Status);
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found", EvidencePointers: ["logs/review-1.json"]);
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            "npm ci: command not found", 127, "tool:npm");
+
+        Assert.Equal(CauseBreakerAction.Retry,
+            breaker.Observe(task, TaskKey, "rva-1", fingerprint,
+                evidence with { EvidencePointers = ["logs/review-1.json"] }, evidence.StderrTail).Decision.Action);
+        Assert.Equal(1, breaker.Observe(task, TaskKey, "rva-1", fingerprint, evidence,
+            evidence.StderrTail).Decision.Attempts);
+        Assert.Equal(CauseBreakerAction.Retry,
+            breaker.Observe(task, TaskKey, "rva-2", fingerprint,
+                evidence with { EvidencePointers = ["logs/review-2.json"] }, evidence.StderrTail).Decision.Action);
+        var opened = breaker.Observe(task, TaskKey, "rva-3", fingerprint,
+            evidence with { EvidencePointers = ["logs/review-3.json"] }, evidence.StderrTail);
+        Assert.Equal(CauseBreakerAction.Open, opened.Decision.Action);
+        Assert.True(opened.Parked);
+        Assert.Equal(3, opened.Intervention!.Intervention.EvidencePointers.Count);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Equal(1, opened.Breaker.Opens);
+        Assert.NotNull(scanner.FindJob(opened.Breaker.CauseTaskId!, opened.Breaker.CauseWatchPath));
+
+        var waitingEvents = ReadTimeline(TaskStates.AutoReview).Count(entry =>
+            entry.GetProperty("kind").GetString() == TimelineEventKinds.CauseBreakerWaiting);
+        Assert.Equal(CauseBreakerAction.Wait,
+            breaker.Observe(task, TaskKey, "rva-4", fingerprint, evidence, evidence.StderrTail).Decision.Action);
+        Assert.Equal(waitingEvents, ReadTimeline(TaskStates.AutoReview).Count(entry =>
+            entry.GetProperty("kind").GetString() == TimelineEventKinds.CauseBreakerWaiting));
+        Assert.Equal(opened.Breaker.CauseTaskId, Assert.Single(breaker.List()).CauseTaskId);
+
+        var held = breaker.HoldPendingReviews();
+        Assert.Contains(TaskKey, held);
+        Assert.Equal(AttemptWriteStatus.NotFound,
+            lifecycle.ClaimNextReview("executor", "host", "host:1", 120, heldTaskKeys: held).Status);
+        Assert.Null(breaker.ObserveGreen(TaskKey, firstReview.AttemptId));
+        Assert.True(Assert.Single(breaker.List()).IsOpen);
+        Assert.True(Directory.Exists(task.FolderPath));
+        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure,
+            authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.Outcome);
+        var waiting = Assert.Single(Assert.Single(breaker.List(openOnly: true)).Waiting);
+        var rescanned = scanner.ScanJobFolder(waiting.FolderPath!,
+            new WatchPathEntry { Name = task.ProjectName, Path = waiting.WatchPath! },
+            TaskStates.AutoReview);
+        Assert.NotNull(rescanned);
+        Assert.Equal(TaskStates.AutoReview, rescanned.State);
+
+        var probe = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.Equal(TaskKey, probe.ProbeTaskKey);
+        Assert.False(string.IsNullOrWhiteSpace(probe.ProbeAttemptId));
+        Assert.NotEqual(firstReview.AttemptId, probe.ProbeAttemptId);
+        Assert.Null(breaker.ObserveGreen(TaskKey, "unrelated-passing-attempt"));
+        Assert.True(Assert.Single(breaker.List()).IsOpen);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+
+        // A product-red probe must free its reservation and return to the
+        // visible wait. Its successor is a new review of the same subject,
+        // since product failures are not infrastructure retry predecessors.
+        var claimedProbe = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var firstProbeReview = Assert.IsType<ReviewAttemptDto>(claimedProbe.ReviewAttempt);
+        Assert.Equal(probe.ProbeAttemptId, firstProbeReview.AttemptId);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(firstProbeReview.AttemptId, firstProbeReview.LastFence,
+                firstProbeReview.AuthorityEpoch, "product-red-probe"),
+            firstProbeReview.Subject.ExpectedResultSha, ReviewTerminalOutcome.ProductFailure,
+            null, "product finding")).Status);
+        Assert.False(breaker.ObserveProbeFailure(task, TaskKey, firstReview.AttemptId, "ProductFailure"));
+        Assert.True(breaker.ObserveProbeFailure(task, TaskKey, firstProbeReview.AttemptId, "ProductFailure"));
+        Assert.Null(Assert.Single(breaker.List()).ProbeAttemptId);
+        Assert.False(CauseWaitMarker.TryRead(task.FolderPath)!.Probe);
+        Assert.True(Assert.Single(breaker.List()).IsOpen);
+
+        var secondProbe = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.NotEqual(firstProbeReview.AttemptId, secondProbe.ProbeAttemptId);
+        var claimedSecondProbe = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var secondProbeReview = Assert.IsType<ReviewAttemptDto>(claimedSecondProbe.ReviewAttempt);
+        Assert.Equal(secondProbe.ProbeAttemptId, secondProbeReview.AttemptId);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(secondProbeReview.AttemptId, secondProbeReview.LastFence,
+                secondProbeReview.AuthorityEpoch, "excluded-infrastructure-probe"),
+            secondProbeReview.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "AspectTimeout", "malformed aspect exhausted")).Status);
+        Assert.True(breaker.ObserveProbeFailure(task, TaskKey, secondProbeReview.AttemptId, "ReviewInfra"));
+        Assert.False(CauseWaitMarker.TryRead(task.FolderPath)!.Probe);
+        var thirdProbe = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.NotEqual(secondProbeReview.AttemptId, thirdProbe.ProbeAttemptId);
+        Assert.Null(breaker.ObserveGreen(TaskKey, secondProbeReview.AttemptId));
+        Assert.NotNull(breaker.ObserveGreen(TaskKey, thirdProbe.ProbeAttemptId!));
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.False(Assert.Single(breaker.List()).IsOpen);
+    }
+
+    [Fact]
+    public void Cause_breaker_closes_when_its_cause_card_is_integrated()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"rva-{number}", fingerprint, evidence, evidence.StderrTail);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        var cause = scanner.FindJob(opened.CauseTaskId!, opened.CauseWatchPath)!;
+        var causeFile = Path.Combine(cause.FolderPath, "task.json");
+        var causeJson = JsonNode.Parse(File.ReadAllText(causeFile))!;
+        causeJson["state"] = TaskStates.Completed;
+        File.WriteAllText(causeFile, causeJson.ToJsonString());
+        var integratedFolder = Path.Combine(cause.WatchPath, TaskStates.Completed, Path.GetFileName(cause.FolderPath));
+        Directory.Move(cause.FolderPath, integratedFolder);
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        Assert.Equal(TaskStates.Completed,
+            scanner.FindJob(opened.CauseKey!, opened.CauseWatchPath)!.State);
+
+        Assert.Equal(1, breaker.Sweep());
+        Assert.False(Assert.Single(breaker.List()).IsOpen);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+    }
+
+    [Fact]
+    public void Cause_breaker_keeps_wait_until_failed_successor_creation_can_be_retried()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        using var factory = BuildFactory(causeWaitReleaseFactory: services =>
+            new FailOnceCauseWaitRelease(new SchedulerCauseWaitRelease(
+                services.GetRequiredService<AttemptAuthorityService>(),
+                services.GetRequiredService<ReviewInfrastructureRetryScheduler>(),
+                services.GetRequiredService<ILogger<SchedulerCauseWaitRelease>>() )));
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claim = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var review = Assert.IsType<ReviewAttemptDto>(claim.ReviewAttempt);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, "seed-infrastructure-failure"),
+            review.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "PreparationFailed", "npm ci: command not found")).Status);
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"rva-{number}", fingerprint, evidence, evidence.StderrTail);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        var cause = scanner.FindJob(opened.CauseTaskId!, opened.CauseWatchPath)!;
+        var causeJson = JsonNode.Parse(File.ReadAllText(Path.Combine(cause.FolderPath, "task.json")))!;
+        causeJson["state"] = TaskStates.Completed;
+        File.WriteAllText(Path.Combine(cause.FolderPath, "task.json"), causeJson.ToJsonString());
+        Directory.Move(cause.FolderPath,
+            Path.Combine(cause.WatchPath, TaskStates.Completed, Path.GetFileName(cause.FolderPath)));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.True(Assert.Single(breaker.List(openOnly: true)).Waiting.Any());
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Contains(TaskKey, breaker.HoldPendingReviews());
+        Assert.Equal(1, breaker.Sweep());
+        Assert.False(Assert.Single(breaker.List()).IsOpen);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        var successor = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId;
+        Assert.NotNull(successor);
+        Assert.NotEqual(review.AttemptId, successor);
+        var replayed = new SchedulerCauseWaitRelease(authority,
+            factory.Services.GetRequiredService<ReviewInfrastructureRetryScheduler>(),
+            factory.Services.GetRequiredService<ILogger<SchedulerCauseWaitRelease>>())
+            .Release(task, $"cause-breaker-release:{fingerprint.Value}:{opened.Opens}");
+        Assert.Equal(successor, replayed);
+    }
+
+    private sealed class FailOnceCauseWaitRelease(ICauseWaitRelease inner) : ICauseWaitRelease
+    {
+        private bool _failed;
+
+        public string? Release(TaskInfo task, string deliveryKey)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                return null;
+            }
+            return inner.Release(task, deliveryKey);
+        }
+    }
+
+    [Theory]
+    [InlineData("withdrawn-review-model", 59, 12)]
+    [InlineData("repeated-preparation-failure", 411, 411)]
+    public void Cause_breaker_E1_window_replay_creates_one_real_cause_card(
+        string windowName, int historicalAttempts, int extractedAttempts)
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated review infrastructure failure", "Build and verify.");
+        using var factory = BuildFactory();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        using var replay = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory, "Fixtures", "cause-breaker", "e1-attempts.json")));
+        var window = replay.RootElement.GetProperty("windows").EnumerateArray()
+            .Single(item => item.GetProperty("name").GetString() == windowName);
+        Assert.Equal(historicalAttempts, window.GetProperty("historicalAttemptCount").GetInt32());
+        var observations = window.GetProperty("observations").EnumerateArray().ToArray();
+        Assert.Equal(extractedAttempts, observations.Length);
+        var attempts = 0;
+
+        foreach (var observation in observations)
+        {
+            if (observation.GetProperty("outcome").GetString() != "infrastructureFailure") continue;
+            var failureClass = observation.GetProperty("failureClassification").GetString()!;
+            var text = observation.GetProperty("terminalReason").GetString()!;
+            var exitCode = observation.GetProperty("exitCode").GetInt32();
+            var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", failureClass, text, exitCode,
+                observation.GetProperty("toolchain").GetString());
+            var evidencePath = observation.GetProperty("evidencePath").GetString()!;
+            var evidence = new FailureCommandEvidence(failureClass, "ReviewInfra", exitCode,
+                StderrTail: text, EvidencePointers: [evidencePath]);
+            var outcome = breaker.Observe(task, TaskKey,
+                observation.GetProperty("attemptId").GetString()!, fingerprint, evidence, text);
+            attempts++;
+            if (outcome.Decision.Action == CauseBreakerAction.Open) break;
+        }
+
+        Assert.Equal(3, attempts);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        Assert.Equal(3, opened.Observations.Count);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Single(scanner.ScanAllAutomationJobs(), card =>
+            card.Title.StartsWith("Intervention:", StringComparison.Ordinal));
     }
 
     [Fact]
