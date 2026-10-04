@@ -108,10 +108,25 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     // Thirty keyboard switches between the two tasks. Each waits for the
     // rich pane, so every step is a real switch away from a loaded task.
     const switches: number[] = [];
+    const richSwitches: number[] = [];
     for (let index = 0; index < 30; index++) {
       const before = await coreReadyCount(page);
+      const beforeRich = await page.evaluate(() => performance.getEntriesByName('local-switch-rich').length);
       const hash = await page.evaluate(() => location.hash);
       const key = await stepToOtherTask(page);
+      const target = ids[(index + 1) % 2];
+      // Observe the rich pane from the same keydown as core-ready. Mark the
+      // next animation frame after its DOM appears, so the paired delta
+      // measures the local gain from progressive rendering.
+      await page.evaluate(({ previous, nextTitle }) => document.addEventListener('keydown', () => {
+        const watch = () => {
+          const rich = document.querySelector('[data-testid="studio-task"] app-job-detail');
+          if (location.hash !== previous && rich?.textContent?.includes(nextTitle)) {
+            requestAnimationFrame(() => performance.mark('local-switch-rich'));
+          } else requestAnimationFrame(watch);
+        };
+        requestAnimationFrame(watch);
+      }, { capture: true, once: true }), { previous: hash, nextTitle: target });
       await page.evaluate(() => document.addEventListener('keydown',
         () => performance.mark('local-switch-start'), { capture: true, once: true }));
       await page.keyboard.press(key);
@@ -121,6 +136,13 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       switches.push(await page.evaluate(() => {
         const start = performance.getEntriesByName('local-switch-start').at(-1)!;
         const ready = performance.getEntriesByName('task-core-ready').at(-1)!;
+        return ready.startTime - start.startTime;
+      }));
+      await page.waitForFunction(count => performance.getEntriesByName('local-switch-rich').length > count,
+        beforeRich, { polling: 'raf', timeout: 15_000 });
+      richSwitches.push(await page.evaluate(() => {
+        const start = performance.getEntriesByName('local-switch-start').at(-1)!;
+        const ready = performance.getEntriesByName('local-switch-rich').at(-1)!;
         return ready.startTime - start.startTime;
       }));
       await expect(page.getByTestId('task-core'), refusedTaskReads.join('\n')).toHaveCount(0, { timeout: 15_000 });
@@ -149,6 +171,8 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     }, { taskIds: ids, handle: project });
 
     const cachedSwitch = summary(switches);
+    const richSwitch = summary(richSwitches);
+    const observedCoreLead = summary(richSwitches.map((rich, index) => rich - switches[index]));
     const coreRead = summary(reads.core);
     const legacyRead = summary(reads.legacy);
     const report = {
@@ -157,9 +181,11 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       coldOpenMs: Math.round(coldOpenMs * 10) / 10,
       coldOpenFirstView: firstView,
       switchToCoreReady: cachedSwitch,
+      switchToRichReady: richSwitch,
+      observedCoreLead,
       coreRead,
       legacyDetailRead: legacyRead,
-      comparisonScope: 'The legacy values are separate same-backend endpoint reads, not old UI switches. Do not subtract their percentiles from core-ready to claim end-to-end savings.',
+      comparisonScope: 'Observed core lead pairs two paint milestones of the same real keyboard switches and is the local end-to-end gain from progressive rendering. Legacy values are separate same-backend endpoint reads, not old UI switches, so their percentiles are not subtracted from core-ready.',
       budgetMs: 100,
       budgetMetOnThisHost: cachedSwitch.p95Ms <= 100,
     };
@@ -176,9 +202,9 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       if (resultsDir) await page.screenshot({ path: path.join(resultsDir, name), fullPage: false });
     };
     await setTheme(page, 'dark');
-    await shot('task-core-local-rich-dark--real.png');
+    await shot('task-core-local-rich-dark.png');
     await setTheme(page, 'light');
-    await shot('task-core-local-rich-light--real.png');
+    await shot('task-core-local-rich-light.png');
 
     // Genuine core screenshots in both themes while the next documents wait.
     const documentGate = new Promise<void>(resolve => { releaseDocuments = resolve; });
@@ -197,9 +223,9 @@ test('measures local end-to-end core switches against the legacy detail wait', a
       await expect(page.getByTestId(`task-core-${id}`)).toBeVisible();
 
     await setTheme(page, 'light');
-    await shot('task-core-local-core-light--real.png');
+    await shot('task-core-local-core-light.png');
     await setTheme(page, 'dark');
-    await shot('task-core-local-core-dark--real.png');
+    await shot('task-core-local-core-dark.png');
     releaseDocuments!();
     if (process.env.PERF_WORKSTATION_GATE === '1')
       expect(cachedSwitch.p95Ms, 'workstation switch to core-ready p95').toBeLessThanOrEqual(100);

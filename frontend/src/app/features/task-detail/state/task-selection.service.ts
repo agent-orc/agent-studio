@@ -471,12 +471,15 @@ export class TaskSelectionService {
             accept(core);
         },
         error: error => {
-          if (token !== this.openDetailToken || this.selectedCore()) return;
+          if (token !== this.openDetailToken) return;
           if (opts.onNotFound && httpStatus(error) === 404) {
+            this.prefetch.invalidate(info.id);
             opts.onNotFound();
             return;
           }
           if (this.revokeSelection(error, info.id)) return;
+          // Keep a painted cached core for transient read errors only.
+          if (this.selectedCore()) return;
           this.detailLoading.set(false);
           this.failDetailLoad(error, info.key || info.id, retry);
         },
@@ -1138,6 +1141,8 @@ export class TaskSelectionService {
     legacyJobId: string | null, legacyWatchPath: string | null, rewriteUrl: boolean): void {
     this.cancelRequests();
     this.selectedCore.set(null);
+    this.selected.set(null);
+    this.detailPreview.set(null);
     this.detailLoading.set(true);
     const request = (taskReference
       ? this.withDetailTimeout(this.jobService.getDetail(taskReference))

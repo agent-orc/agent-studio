@@ -784,4 +784,40 @@ describe('TaskSelectionService · stable task URLs', () => {
     retry.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '1' });
     expect(selection.selected()).toBe(rich);
   });
+
+  it('revokes a painted cached task when core revalidation denies access', async () => {
+    TestBed.inject(TaskDetailPrefetchService)
+      .storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    await paintRich(info);
+    expect(selection.selected()?.info.id).toBe(info.id);
+
+    revalidation.flush({ error: 'forbidden' }, { status: 403, statusText: 'Forbidden' });
+
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.selected()).toBeNull();
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.detailLoadError()).not.toBeNull();
+    expect(TestBed.inject(TaskDetailPrefetchService).takeCore(info.id, 'Agent Studio')).toBeNull();
+  });
+
+  it('resolves a painted cached public URL on the server after an inferred-project 404', () => {
+    registry({ id: 'PROJ-001', shortCode: null, storageLocation: info.watchPath });
+    history.replaceState(null, '', '/#/tasks/human-readable-slug');
+    TestBed.inject(TaskDetailPrefetchService)
+      .storeCore(coreFor(info, 'PROJ-001') as unknown as TaskCore, 'PROJ-001');
+
+    selection.restoreFromUrl();
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ error: 'missing' }, { status: 404, statusText: 'Not Found' });
+
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.detailPreview()).toBeNull();
+    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
+    expect(selection.selected()?.info.id).toBe(info.id);
+    expect(selection.detailLoadError()).toBeNull();
+  });
 });
