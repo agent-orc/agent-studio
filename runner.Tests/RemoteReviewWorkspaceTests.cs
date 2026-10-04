@@ -97,9 +97,15 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [Fact]
     public void Review_flaky_trait_index_reads_xunit_class_and_method_traits()
     {
-        var repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        // The index reads built test assemblies below a `bin` directory. Root it
+        // at the build tree that holds this assembly: `bin/Debug/net10.0` under
+        // the project by default, `bin/<project>/debug` under an ArtifactsPath.
+        var buildRoot = Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        while (buildRoot is not null && !string.Equals(buildRoot.Name, "bin", StringComparison.OrdinalIgnoreCase))
+            buildRoot = buildRoot.Parent;
+        Assert.NotNull(buildRoot?.Parent);
 
-        var index = ReviewFlakyTestIndex.Discover(repositoryRoot);
+        var index = ReviewFlakyTestIndex.Discover(buildRoot.Parent!.FullName);
 
         Assert.True(index.Contains(
             "AgentRunner.Tests.RemoteTaskRunnerRestartTests.Restarted_runner_follows_fake_job_and_delivers_completion_without_a_zombie_lease"));

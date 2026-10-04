@@ -115,7 +115,11 @@ services:
   agent-host-distributed${suffix}:${runner_build_labels}
     volumes:
       - $fixture:/fixtures
-      - secrets:/run/agent-studio-secrets:ro
+      - type: volume
+        source: secrets
+        target: /run/agent-studio-secrets
+        read_only: true
+        volume: {subpath: runner}
     environment:
       RUNNER_SERVER_URL: http://task-server${suffix}:5071
       RUNNER_ID: distributed-runner
@@ -158,7 +162,7 @@ test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
     "http://127.0.0.1:${STUDIO_UI_PORT}/api/projects")" = 404
 curl --fail --silent --show-error --dump-header - --output /dev/null "http://127.0.0.1:${STUDIO_UI_PORT}/api/v1/protocol" \
     | grep -qi '^X-Studio-Backend: studio-bff'
-studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio_token)"
+studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio/studio_token)"
 review_registration_deadline=$((SECONDS + 30))
 until curl --fail --silent --show-error \
     -H "Authorization: Bearer $studio_token" -H 'X-Task-Protocol-Version: 2' \
@@ -170,28 +174,28 @@ until curl --fail --silent --show-error \
     }
     sleep 1
 done
-secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio/studio_token | cut -d' ' -f1)"
 # Rotate while the Runner is idle, then prove its new credential can claim and
 # finish a task. No bearer value is copied through the host shell or logs.
 if [ "$mode" = dev ]; then rotate_mode=(--dev); else rotate_mode=(); fi
-old_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
-old_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
+old_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner/runner_token | cut -d' ' -f1)"
+old_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner/review_runner_token | cut -d' ' -f1)"
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" runner "${rotate_mode[@]}"
-new_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner_token | cut -d' ' -f1)"
+new_runner_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/runner/runner_token | cut -d' ' -f1)"
 test "$old_runner_sha" != "$new_runner_sha"
-test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/runner_token)" = 600
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/runner/runner_token)" = 600
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" review-runner "${rotate_mode[@]}"
-new_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner_token | cut -d' ' -f1)"
+new_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner/review_runner_token | cut -d' ' -f1)"
 test "$old_review_sha" != "$new_review_sha"
-test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/review_runner_token)" = 600
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/review_runner/review_runner_token)" = 600
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" studio "${rotate_mode[@]}"
-new_studio_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+new_studio_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio/studio_token | cut -d' ' -f1)"
 test "$secret_sha" != "$new_studio_sha"
-test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/studio_token)" = 600
-studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio_token)"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/studio/studio_token)" = 600
+studio_token="$("${compose[@]}" exec -T "task-server${suffix}" cat /run/agent-studio-secrets/studio/studio_token)"
 workspace="$(call POST /api/v1/workspaces -d '{"name":"Compose smoke"}')"
 workspace_id="$(jq -r '.workspaceId' <<<"$workspace")"
 project_json="$(call POST /api/v1/projects -d "$(jq -n --arg ws "$workspace_id" '{workspaceId:$ws,name:"Agent Studio",taskKeyPrefix:"SMK"}')")"
@@ -213,7 +217,7 @@ jq -e '.id // .backupId' "$fixture/backup.json" >/dev/null
 # Restart the control plane to prove persistent credentials and task data.
 restart_services=("task-server${suffix}" "orchestrator-engine${suffix}" "studio-bff${suffix}" "orchestrator-api${suffix}" "web${suffix}")
 "${compose[@]}" "${profiles[@]}" up "${build[@]}" --wait "${restart_services[@]}"
-new_secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio_token | cut -d' ' -f1)"
+new_secret_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio/studio_token | cut -d' ' -f1)"
 test "$new_secret_sha" = "$new_studio_sha"
 history="$(call GET "/api/v1/projects/$project_id/tasks/$task_key/history")"
 test "$(jq -r '.task.taskKey' <<<"$history")" = "$task_key"
