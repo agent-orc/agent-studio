@@ -51,14 +51,14 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: false, user: null }));
-  await page.route('**/api/tasks/grouped', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: false, user: null }));
+  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/cli/quota', json({ ttlMs: 600_000, snapshots: [] }));
   await page.route('**/api/clients', json([]));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
-  await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/workspaces*', json([]));
   await page.route('**/api/v1/management/status', json(MANAGEMENT_STATUS));
   await page.route('**/api/v1/management/commands', async route => {
     const request = route.request().postDataJSON() as { kind: string; dryRun: boolean };
@@ -147,8 +147,8 @@ test.describe('Task Server settings section', () => {
   });
 
   test('networked management 401 returns the operator to a concrete sign-in entry', async ({ page }) => {
-    await page.unroute('**/api/auth/status');
-    await page.route('**/api/auth/status', route => route.fulfill({
+    await page.unroute('**/api/v1/studio/auth/status');
+    await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({

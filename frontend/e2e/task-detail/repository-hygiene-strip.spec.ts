@@ -170,7 +170,7 @@ async function installFixtureRoutes(
   // backend is offline by default per AGENTS.md "Dev backend lifecycle").
   await page.route('**/api/tasks', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -202,7 +202,7 @@ async function installFixtureRoutes(
   // hygiene "Accepted task work uncommitted" warning only fires on the
   // runner's active job. Tests that exercise the warning must mark the
   // fixture job active here; the default keeps the project idle.
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -232,7 +232,7 @@ async function installFixtureRoutes(
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/git/hygiene(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: jobHygiene }));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: detail }));
 }
 

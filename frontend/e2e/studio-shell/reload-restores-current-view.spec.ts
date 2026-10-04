@@ -83,10 +83,11 @@ async function stubApi(page: Page, opts: { resolveDetail?: boolean } = {}): Prom
     const url = route.request().url();
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-    // The task-detail GET is `/api/tasks/<id>?watchPath=...`; match it before
-    // the bare-list rule below (which requires `/api/tasks` to be followed by
-    // `?` or end-of-string and so never matches the `/<id>` form).
-    if (url.includes(`/api/tasks/${TASK_ID}`)) {
+    // The task-detail GET is `/api/v1/projects/<project>/tasks/<id>?watchPath=...`;
+    // match it before the bare-list rule below (which requires `/api/tasks` to
+    // be followed by `?` or end-of-string and so never matches the `/<id>` form).
+    if (url.includes(`/api/tasks/${TASK_ID}`)
+      || new RegExp(`/api/v1/projects/[^/]+/tasks/${TASK_ID}(\\?|$)`).test(url)) {
       // Tests 1 & 2 (`resolveDetail: false`) assert only on the `?job=` param
       // and the active tab. `openDetailByTaskKey` writes `?job=` *synchronously*
       // before this fetch, the active tab comes from the persisted localStorage
@@ -102,8 +103,8 @@ async function stubApi(page: Page, opts: { resolveDetail?: boolean } = {}): Prom
       if (!resolveDetail) return; // leave the request hanging (no fulfill)
       return json(TASK_DETAIL);
     }
-    if (url.includes('/api/tasks/grouped')) return json(EMPTY_GROUPED);
-    if (url.includes('/api/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/v1/studio/board')) return json(EMPTY_GROUPED);
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
     if (url.includes('/api/watch-paths')) {
       return json([{ name: WATCH_PATH, path: WATCH_PATH }]);

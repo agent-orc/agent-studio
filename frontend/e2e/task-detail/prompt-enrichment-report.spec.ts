@@ -198,7 +198,7 @@ function detail() {
 async function installRoutes(page: Page): Promise<void> {
   const encodedId = encodeURIComponent(JOB_ID);
   await page.route('**/api/**', (route) => route.fulfill(json([])));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill(
       json({
         profile: 'local',
@@ -208,7 +208,7 @@ async function installRoutes(page: Page): Promise<void> {
       }),
     ),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill(
       json({
         backlog: [],
@@ -229,7 +229,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill(json([{ name: 'Agent Taskboard', path: WATCH_PATH, rootPath: WATCH_PATH }])),
   );
-  await page.route('**/api/runner/status**', (route) => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status**', (route) => route.fulfill(json({ projects: {} })));
   await page.route('**/api/projects/*/cli-modes', (route) =>
     route.fulfill(
       json({
@@ -265,7 +265,7 @@ async function installRoutes(page: Page): Promise<void> {
       }),
     ),
   );
-  await page.route(`**/api/tasks/${encodedId}?**`, (route) => route.fulfill(json(detail())));
+  await page.route(`**/api/v1/projects/*/tasks/${encodedId}?**`, (route) => route.fulfill(json(detail())));
 }
 
 for (const theme of ['light', 'dark'] as const) {

@@ -36,17 +36,17 @@ function json(route: Route, body: unknown) {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => {
     const url = route.request().url();
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.includes('/api/tasks/grouped')) {
+    if (url.includes('/api/v1/studio/board')) {
       return json(route, {
         backlog: [], preparation: [followUp], orchestratorPrep: [], ready: [], progress: [],
         failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [],
         escalated: [origin], completed: [], archive: [],
       });
     }
-    if (/\/api\/tasks\/follow-up(?:\?|$)/.test(url)) {
+    if (/\/api\/v1\/projects\/[^/]+\/tasks\/follow-up(?:\?|$)/.test(url)) {
       return json(route, {
         info: followUp,
         promptMarkdown: '# Orchestrator failure intervention',
@@ -59,7 +59,7 @@ async function installRoutes(page: Page): Promise<void> {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]);
     }
     if (url.includes('/api/environment')) return json(route, { isDev: false, devTools: {} });
-    if (url.includes('/api/runner/status')) return json(route, { projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/clients')) return json(route, []);
     if (url.includes('/api/tasks/reference-status')) return json(route, []);
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0 });

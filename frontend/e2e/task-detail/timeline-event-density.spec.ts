@@ -195,7 +195,7 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
     const url = new URL(request.url());
     const pathname = url.pathname;
 
-    if (pathname === '/api/auth/status') {
+    if (pathname === '/api/v1/studio/auth/status') {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (/\/api\/cli\/[^/]+\/models$/.test(pathname)) {
@@ -204,11 +204,12 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
     if (pathname === '/api/watch-paths') {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
-    if (pathname === '/api/tasks/grouped') {
+    if (pathname === '/api/v1/studio/board') {
       return json(route, EMPTY_GROUPED);
     }
     if (pathname === '/api/tasks/archive') return json(route, { items: [], total: 0 });
-    if (pathname === `/api/tasks/${TASK_KEY}` || pathname === `/api/tasks/${TASK_ID}`) {
+    const detailMatch = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(pathname);
+    if (detailMatch && (detailMatch[1] === TASK_KEY || detailMatch[1] === TASK_ID)) {
       return json(route, TASK_DETAIL);
     }
     if (/\/api\/tasks\/[^/]+\/timeline$/.test(pathname)) return json(route, [activeEvent()]);
@@ -221,7 +222,7 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
         runs: [],
       });
     }
-    if (pathname === '/api/runner/status') {
+    if (pathname === '/api/v1/studio/runner/status') {
       return json(route, {
         projects: {
           [PROJECT]: {
@@ -247,10 +248,10 @@ async function stubApp(page: Page, activeEvent: () => (typeof EVENTS)[number]): 
         devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
       });
     }
-    if (pathname === '/api/workspaces') {
+    if (pathname === '/api/v1/workspaces') {
       return json(route, []);
     }
-    if (pathname === '/api/tasks' || pathname === '/api/projects') return json(route, []);
+    if (pathname === '/api/tasks' || pathname === '/api/v1/projects') return json(route, []);
     if (pathname === '/api/tags' || pathname === '/api/clients'
       || pathname === '/api/clients/' || pathname === '/api/agent-rules'
       || pathname === '/api/epics' || pathname === '/api/git/summary') {

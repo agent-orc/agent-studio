@@ -34,10 +34,10 @@ async function installRoutes(page: Page): Promise<void> {
     at: '2026-09-11T14:44:00.000Z', ttlSeconds: 600, snapshots: [],
   }));
   await page.route('**/api/cli/usage**', route => json(route, { sessions: [] }));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
     codeNotComplete: [], review: [], autoReview: [], humanReview: [], escalated: [], completed: [], archive: [],
   }));
@@ -48,8 +48,8 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
-  await page.route(new RegExp(`/api/tasks/${JOB_ID}(\\?|$)`), route => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route => json(route, {
     info: {
       id: JOB_ID,
       taskKey: `${WATCH_PATH}::${JOB_ID}`,

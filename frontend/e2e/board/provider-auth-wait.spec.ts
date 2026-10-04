@@ -44,9 +44,9 @@ async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'
 
   await page.route('**/api/**', route => {
     const url = route.request().url();
-    if (url.includes('/api/auth/status')) return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    if (url.includes('/api/v1/studio/auth/status')) return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0, offset: 0, limit: 50 });
-    if (url.includes('/api/tasks/grouped')) return json(route, grouped);
+    if (url.includes('/api/v1/studio/board')) return json(route, grouped);
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(route, [task]);
     if (url.includes('/api/watch-paths')) return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     if (url.includes('/api/v1/management/links')) return json(route, [{
@@ -71,7 +71,7 @@ async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'
       id: 'agent-runner-01', displayName: 'runner-berlin', kind: 'service',
       registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
     }]);
-    if (url.includes('/api/runner/status')) return json(route, { projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/environment')) return json(route, { isDev: false, devTools: {} });
     if (url.includes('/api/cli/quota')) return json(route, { at: now.toISOString(), ttlSeconds: 600, snapshots: [] });
     if (url.includes('/api/cli/usage')) return json(route, { at: now.toISOString(), sessions: [] });
