@@ -1,4 +1,7 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, output } from '@angular/core';
+import { TaskPipelinePollService } from '../../../polling/services/task-pipeline-poll.service';
+import type { PipelineStepExecution } from '../../../task-pipeline';
+import { formatTokenCostDisplay } from '../../../tokens';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import {
   AspectFindingsListComponent,
@@ -56,6 +59,35 @@ import {
 export class TaskTimelinePaneComponent {
   private readonly poll = inject(TaskTimelinePollService);
   private readonly runPoll = inject(RunTimelinePollService, { optional: true });
+  private readonly pipelinePoll = inject(TaskPipelinePollService, { optional: true });
+  readonly documentRequested = output<string>();
+
+  private readonly stepExecutions = computed(() => {
+    const record = this.pipelinePoll?.pipeline()?.execution;
+    if (!record) return [] as PipelineStepExecution[];
+    return [record, ...(record.previousAttempts ?? [])].flatMap(run =>
+      run.occurrences?.length ? run.occurrences : run.steps.filter(step => step.completedAt));
+  });
+
+  stepMeasurement(event: TaskTimelineEvent): PipelineStepExecution | null {
+    const id = event.details?.['pipelineStepId'] || event.details?.['step']
+      || (this.isVerdictKind(event.kind) ? 'post-orchestrator-decision' : null);
+    if (!id) return null;
+    const candidates = this.stepExecutions().filter(step => step.stepId.toLowerCase() === id.toLowerCase());
+    if (!candidates.length) return null;
+    const at = Date.parse(event.ts);
+    return candidates.reduce((best, step) =>
+      Math.abs(Date.parse(step.completedAt ?? step.startedAt ?? event.ts) - at)
+        < Math.abs(Date.parse(best.completedAt ?? best.startedAt ?? event.ts) - at) ? step : best);
+  }
+
+  stepPrice(step: PipelineStepExecution): string {
+    if (step.costStatus === 'deterministic-zero') return '$0.00';
+    if (step.costStatus === 'unmeasured' || step.costStatus === 'missing-model') return 'unmeasured';
+    const tokens = step.inputTokens + step.outputTokens + step.cacheReadTokens + step.cacheCreationTokens;
+    return formatTokenCostDisplay({ costUsd: step.estimatedCostUsd ?? 0, totalTokens: tokens,
+      unpricedRuns: step.costStatus === 'unpriced' ? 1 : 0 });
+  }
 
   /** Raw ledger rows, oldest first (the story reads forward). */
   readonly events = this.poll.events;

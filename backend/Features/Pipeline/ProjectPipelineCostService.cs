@@ -28,16 +28,19 @@ public sealed class ProjectPipelineCostService
     private readonly TaskScannerService _scanner;
     private readonly PipelineExecutionLog _log;
     private readonly ProjectTokenReceiptReader _receipts;
+    private readonly BusBackedProjectTokenUsageReader? _tokenReader;
     private readonly ConcurrentDictionary<string, (DateTime At, ProjectPipelineCostTimeline Value)> _cache = new();
 
     public ProjectPipelineCostService(
         TaskScannerService scanner,
         PipelineExecutionLog log,
-        ProjectTokenReceiptReader receipts)
+        ProjectTokenReceiptReader receipts,
+        BusBackedProjectTokenUsageReader? tokenReader = null)
     {
         _scanner = scanner;
         _log = log;
         _receipts = receipts;
+        _tokenReader = tokenReader;
     }
 
     /// <summary>
@@ -58,30 +61,38 @@ public sealed class ProjectPipelineCostService
         }
 
         var records = new List<PipelineExecutionRecord>();
+        var occurrenceRecords = new List<PipelineExecutionRecord>();
         var warnings = new List<string>();
         var sources = new List<string>();
         var receiptRead = _receipts.Read(watchPath);
         if (receiptRead.SourceAvailable) sources.Add("task-token-receipts");
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
-        var receiptJobIds = receiptRead.Entries
+        var tokenEntries = _tokenReader is null
+            ? receiptRead.Entries
+            : _tokenReader.LoadSnapshot(projectName, watchPath).Entries;
+        var receiptJobIds = tokenEntries
             .Where(entry => !string.IsNullOrWhiteSpace(entry.JobId))
             .Select(entry => entry.JobId!)
             .ToHashSet(StringComparer.Ordinal);
 
-        records.AddRange(BuildReceiptRecords(projectName, receiptRead.Entries));
+        records.AddRange(BuildReceiptRecords(projectName, tokenEntries));
         if (!string.IsNullOrWhiteSpace(watchPath))
         {
             foreach (var task in _scanner.ScanAllAutomationJobsWithArchive())
             {
                 if (!string.Equals(task.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase)) continue;
                 if (string.IsNullOrWhiteSpace(task.FolderPath)) continue;
-                if (receiptJobIds.Contains(task.Id)) continue;
                 var rec = _log.Read(task.FolderPath);
                 if (rec != null)
                 {
-                    sources.Add("pipeline-execution-log");
-                    records.Add(rec);
-                    records.AddRange(rec.PreviousAttempts);
+                    occurrenceRecords.Add(rec);
+                    occurrenceRecords.AddRange(rec.PreviousAttempts);
+                    if (!receiptJobIds.Contains(task.Id))
+                    {
+                        sources.Add("pipeline-execution-log");
+                        records.Add(rec);
+                        records.AddRange(rec.PreviousAttempts);
+                    }
                 }
                 else if (File.Exists(Path.Combine(task.FolderPath, PipelineExecutionLog.FileName)))
                 {
@@ -90,7 +101,15 @@ public sealed class ProjectPipelineCostService
             }
         }
 
-        var timeline = BuildFromRecords(projectName, records, d, nowUtc);
+        // Older tasks can have durable receipts without an execution log.
+        // Count those receipt calls when no step history is available.
+        var jobsWithStepHistory = occurrenceRecords.Select(record => record.JobId)
+            .ToHashSet(StringComparer.Ordinal);
+        occurrenceRecords.AddRange(records.Where(record => record.PipelineId == "task-token-receipt"
+            && !jobsWithStepHistory.Contains(record.JobId)));
+
+        var timeline = BuildFromRecords(projectName, records, d, nowUtc,
+            occurrenceRecords.Count > 0 ? occurrenceRecords : null);
         var distinctWarnings = warnings.Distinct(StringComparer.Ordinal).ToList();
         var freshness = timeline.Freshness with
         {
@@ -116,7 +135,8 @@ public sealed class ProjectPipelineCostService
         string projectName,
         IReadOnlyList<PipelineExecutionRecord> records,
         int days,
-        DateTime? nowUtc = null)
+        DateTime? nowUtc = null,
+        IReadOnlyList<PipelineExecutionRecord>? occurrenceRecords = null)
     {
         var d = ResolveDays(days);
         var now = (nowUtc ?? DateTime.UtcNow).ToUniversalTime();
@@ -214,6 +234,18 @@ public sealed class ProjectPipelineCostService
         // Per-step rollup over the whole window, most-expensive first so the
         // panel can surface the priciest steps at a glance. Tie-break on the
         // step id for a stable order on equal spend.
+        var occurrenceCounts = CountOccurrences(occurrenceRecords ?? records, startDay, endDay.AddDays(1));
+        foreach (var (id, count) in occurrenceCounts)
+        {
+            if (!perStep.TryGetValue(id, out var existing))
+            {
+                var definition = PipelineCatalogue.FindStep(id);
+                existing = new StepAcc { Kind = definition?.Kind ?? StepKind.Tool };
+                perStep[id] = existing;
+            }
+            existing.Occurrences = count.Total;
+            existing.UnmeasuredOccurrences = count.Unmeasured;
+        }
         var steps = perStep
             .Select(kv => new PipelineStepCostSeries(
                 StepId: kv.Key,
@@ -222,7 +254,9 @@ public sealed class ProjectPipelineCostService
                 TotalCostUsd: Round(kv.Value.Cost),
                 AnyModelUnknown: kv.Value.AnyUnknown,
                 UnpricedRuns: kv.Value.UnpricedRuns.Count,
-                PricingGaps: kv.Value.PricingGaps.Build()))
+                PricingGaps: kv.Value.PricingGaps.Build(),
+                Occurrences: kv.Value.Occurrences,
+                UnmeasuredOccurrences: kv.Value.UnmeasuredOccurrences))
             .OrderByDescending(s => s.TotalTokens)
             .ThenBy(s => s.StepId, StringComparer.Ordinal)
             .ToList();
@@ -244,12 +278,40 @@ public sealed class ProjectPipelineCostService
             UnpricedRuns: grandUnpricedRuns.Count,
             PricingGaps: grandPricingGaps.Build(),
             TaskCount: contributingTasks.Count,
-            HasData: grandTokens > 0,
+            HasData: grandTokens > 0 || occurrenceCounts.Count > 0,
             FetchedAt: DateTime.UtcNow.ToString("o"),
             Freshness: new ProjectTokenDataFreshness
             {
                 AsOf = asOf?.ToString("o"),
-            });
+            },
+            DecidingCostUsd: Round(series.Where(kind => kind.Kind != "core").Sum(kind => kind.TotalCostUsd)),
+            CoreCostUsd: Round(series.Where(kind => kind.Kind == "core").Sum(kind => kind.TotalCostUsd)),
+            DecidingUnpricedRuns: series.Where(kind => kind.Kind != "core").Sum(kind => kind.UnpricedRuns),
+            CoreUnpricedRuns: series.Where(kind => kind.Kind == "core").Sum(kind => kind.UnpricedRuns),
+            UnmeasuredDecisionExecutions: perStep.Values.Where(step => step.Kind != StepKind.Core)
+                .Sum(step => step.UnmeasuredOccurrences));
+    }
+
+    private static Dictionary<string, (int Total, int Unmeasured)> CountOccurrences(
+        IReadOnlyList<PipelineExecutionRecord> records, DateTime from, DateTime until)
+    {
+        var counts = new Dictionary<string, (int Total, int Unmeasured)>(StringComparer.Ordinal);
+        foreach (var record in records)
+        {
+            var rows = record.Occurrences.Count > 0
+                ? record.Occurrences
+                : record.Steps.Where(step => step.Status is PipelineStepStatus.Passed or PipelineStepStatus.Failed
+                    or PipelineStepStatus.NotApplicable).ToList();
+            foreach (var step in rows)
+            {
+                var at = (step.CompletedAt ?? step.StartedAt ?? record.CompletedAt ?? record.StartedAt).ToUniversalTime();
+                if (at < from || at >= until) continue;
+                var count = counts.GetValueOrDefault(step.StepId);
+                counts[step.StepId] = (count.Total + 1, count.Unmeasured
+                    + (step.CostStatus is "unmeasured" or "missing-model" ? 1 : 0));
+            }
+        }
+        return counts;
     }
 
     internal static IReadOnlyList<PipelineExecutionRecord> BuildReceiptRecords(
@@ -264,12 +326,15 @@ public sealed class ProjectPipelineCostService
             if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
                 continue;
 
-            var kind = TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)
+            var kind = PipelineCatalogue.FindStep(entry.PipelineStepId)?.Kind
+                ?? (TokenModelDisplay.IsOrchestratorParticipant(entry.ParticipantId)
                 ? StepKind.Orchestrator
                 : TokenModelDisplay.IsSupportingParticipant(entry.ParticipantId)
                     ? StepKind.Aspect
-                    : StepKind.Core;
-            var stepId = kind switch
+                    : StepKind.Core);
+            var stepId = !string.IsNullOrWhiteSpace(entry.PipelineStepId)
+                ? entry.PipelineStepId!
+                : kind switch
             {
                 StepKind.Orchestrator => "task-receipt-orchestrator",
                 StepKind.Aspect => "task-receipt-supporting",
@@ -405,6 +470,8 @@ public sealed class ProjectPipelineCostService
     private sealed class StepAcc
     {
         public StepKind Kind;
+        public int Occurrences;
+        public int UnmeasuredOccurrences;
         public long Tokens;
         public decimal Cost;
         public bool AnyUnknown;
@@ -465,7 +532,12 @@ public sealed record ProjectPipelineCostTimeline(
     int TaskCount,
     bool HasData,
     string FetchedAt,
-    ProjectTokenDataFreshness Freshness);
+    ProjectTokenDataFreshness Freshness,
+    decimal DecidingCostUsd = 0m,
+    decimal CoreCostUsd = 0m,
+    int DecidingUnpricedRuns = 0,
+    int CoreUnpricedRuns = 0,
+    int UnmeasuredDecisionExecutions = 0);
 
 public sealed record PipelineDayCostCell(
     string Day,
@@ -490,7 +562,9 @@ public sealed record PipelineStepCostSeries(
     decimal TotalCostUsd,
     bool AnyModelUnknown,
     int UnpricedRuns,
-    IReadOnlyList<PipelinePricingGap> PricingGaps);
+    IReadOnlyList<PipelinePricingGap> PricingGaps,
+    int Occurrences = 0,
+    int UnmeasuredOccurrences = 0);
 
 /// <summary>
 /// One step-kind's series over the window. <see cref="Kind"/> is the

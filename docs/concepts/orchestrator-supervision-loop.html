@@ -578,11 +578,12 @@
   . artifact=log-slice:cli-output.log#L3187 . replyTo=adv-01J9...</code></pre>
 
     <h3>The <code>decidedByModel</code> gap</h3>
-    <p>Today decision messages carry NO model field; only token messages do
-       (<code>EmitTokenUsageRichAsync</code> includes <code>tokens.model</code>, but
-       <code>EmitOrchestratorChatAsync</code> does not). The fix is to add <code>payload.decidedByModel</code> to
-       <code>EmitOrchestratorChatAsync</code> so the feed shows WHICH supervisor made the call. This is essential once
-       parallel orchestrators run (Section 6), because otherwise two loops are indistinguishable in the feed.</p>
+    <p>AGT-3015 added <code>payload.decidedByModel</code> to
+       <code>EmitOrchestratorChatAsync</code>. It reads the model from the recorded
+       pipeline decision step. Deterministic decisions carry a null model and
+       an explicit zero-cost step execution. This attribution matters when
+       parallel orchestrators run (Section 6), because it identifies which
+       model made a recorded decision.</p>
 
     <h3>Dead-loop visibility and operator controls</h3>
     <ul>

@@ -45,18 +45,21 @@ public sealed class AgentMessageBusBridge
     private readonly IConfiguration _config;
     private readonly ILogger<AgentMessageBusBridge> _logger;
     private readonly TimeProvider _time;
+    private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
     private int _participantsSeeded;
 
     public AgentMessageBusBridge(
         AgentMessageBusStore store,
         IConfiguration config,
         ILogger<AgentMessageBusBridge> logger,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        AgentStudio.Pipeline.PipelineExecutionLog? pipelineLog = null)
     {
         _store = store;
         _config = config;
         _logger = logger;
         _time = time ?? TimeProvider.System;
+        _pipelineLog = pipelineLog;
     }
 
     /// <summary>
@@ -148,6 +151,13 @@ public sealed class AgentMessageBusBridge
             _                                         => "Info"
         };
         var topic = kind.ToBusTopic();
+        var decidedByModel = _pipelineLog?.Read(info.FolderPath)?.Steps
+            .Where(step => step.StepId == AgentStudio.Pipeline.PipelineCatalogue.OrchestratorDecisionStepId
+                && step.Status is (PipelineStepStatus.Passed
+                    or PipelineStepStatus.Failed)
+                && !string.IsNullOrWhiteSpace(step.Model))
+            .OrderByDescending(step => step.CompletedAt)
+            .FirstOrDefault()?.Model;
 
         var msg = NewMessage(
             participantId: ParticipantOrchestratorFor(info.ProjectName),
@@ -159,6 +169,15 @@ public sealed class AgentMessageBusBridge
             topic: topic,
             summary: TruncateSummary(text),
             body: text,
+            payload: new
+            {
+                suspicion = (string?)null,
+                decision = kind.ToTag(),
+                confidence = (double?)null,
+                reason = text,
+                evidenceRef = "logs/cli-output.log",
+                decidedByModel,
+            },
             artifacts: new[] { LogSliceArtifact(info) },
             tags: new[] { "orchestrator-chat", topic });
 
@@ -699,7 +718,7 @@ public sealed class AgentMessageBusBridge
     /// the token summary service; the bus carries one event per recorded
     /// usage so the timeline shows which turn was expensive.
     /// </summary>
-    public Task EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default)
+    public Task EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default, string? pipelineStepId = null)
     {
         if (usage == null) return Task.CompletedTask;
         var input  = (long)usage.InputTokens;
@@ -727,6 +746,7 @@ public sealed class AgentMessageBusBridge
             topic: topic ?? "orchestrator-turn",
             summary: TruncateSummary($"tokens: in={input} out={output} model={usage.Model ?? "?"}"),
             createdAt: createdAt,
+            payload: string.IsNullOrWhiteSpace(pipelineStepId) ? null : new { pipelineStepId },
             tokens: tokens,
             tags: new[] { "token-usage" });
         return EmitAsync(msg, ct);

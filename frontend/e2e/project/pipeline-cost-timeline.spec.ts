@@ -62,6 +62,14 @@ function fakePipelineCost(project: string) {
     kinds,
     totalTokens,
     totalCostUsd,
+    decidingCostUsd: kinds.filter(kind => kind.kind !== 'core').reduce((sum, kind) => sum + kind.totalCostUsd, 0),
+    coreCostUsd: kinds[0].totalCostUsd,
+    decidingUnpricedRuns: 0,
+    coreUnpricedRuns: 0,
+    steps: [
+      { stepId: 'core-agent-run', kind: 'core', totalTokens: kinds[0].totalTokens, totalCostUsd: kinds[0].totalCostUsd, anyModelUnknown: false, occurrences: 5 },
+      { stepId: 'post-orchestrator-decision', kind: 'orchestrator', totalTokens: 5000, totalCostUsd: 0.03, anyModelUnknown: false, occurrences: 7 },
+    ],
     anyModelUnknown: false,
     taskCount: 5,
     hasData: true,
@@ -147,6 +155,8 @@ test('token usage: pipeline cost-by-step-kind section renders legend + stacked t
   await expect(section).toBeVisible();
   // Data path, not the empty hint.
   await expect(page.getByTestId('pipeline-cost-empty')).toHaveCount(0);
+  await expect(page.getByTestId('pipeline-decision-vs-core')).toContainText('Deciding');
+  await expect(page.getByTestId('pipeline-step-occurrences')).toContainText('post-orchestrator-decision · 7 runs');
 
   const legend = page.getByTestId('pipeline-cost-legend');
   await expect(legend).toBeVisible();
@@ -156,11 +166,10 @@ test('token usage: pipeline cost-by-step-kind section renders legend + stacked t
   await expect(page.getByTestId('pipeline-cost-total')).toBeVisible();
 
   // One stacked column per day in the window.
-  const cols = page.locator('[data-testid="pipeline-cost-bars"] .tup__pl-col');
+  const cols = page.getByTestId('pipeline-cost-bars').getByRole('listitem');
   await expect(cols).toHaveCount(DAYS.length);
   // The busiest day carries multiple stacked segments.
-  await expect(page.locator('[data-testid="pipeline-cost-bars"] .tup__pl-col').last()
-    .locator('.tup__pl-seg')).toHaveCount(3);
+  await expect(cols.last().getByTestId('pipeline-cost-segment')).toHaveCount(3);
 
   await section.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SCREENSHOT_DIR, '01-pipeline-cost-trend.png'), fullPage: true });

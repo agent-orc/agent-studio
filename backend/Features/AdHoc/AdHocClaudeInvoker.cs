@@ -90,7 +90,11 @@ public static class AdHocClaudeInvoker
         long durationMs,
         bool ok,
         string? project = null,
-        string? jobId = null)
+        string? jobId = null,
+        string? stepId = null,
+        string? jobFolderPath = null,
+        string? thinkingLevel = null,
+        string? modelSource = null)
     {
         if (recorder == null) return;
         recorder.Record(new AdHocUsageRecord
@@ -105,7 +109,11 @@ public static class AdHocClaudeInvoker
             DurationMs = durationMs,
             Ok = ok,
             Project = string.IsNullOrWhiteSpace(project) ? null : project,
-            JobId = string.IsNullOrWhiteSpace(jobId) ? null : jobId
+            JobId = string.IsNullOrWhiteSpace(jobId) ? null : jobId,
+            StepId = stepId,
+            JobFolderPath = jobFolderPath,
+            ThinkingLevel = thinkingLevel,
+            ModelSource = modelSource,
         });
     }
 

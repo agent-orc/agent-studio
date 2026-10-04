@@ -553,6 +553,50 @@ async function expandPipelineSections(page: Page) {
   }
 }
 
+test('decision transition shows model, occurrences, price and evidence in pipeline and timeline', async ({ page }) => {
+  await page.setViewportSize({ width: 1350, height: 950 });
+  await page.addInitScript(() => {
+    localStorage.setItem('taskboard.panesVisible', JSON.stringify({ prompt: true, protocol: false, git: false }));
+  });
+  await installFixtureRoutes(page);
+  const fixture = pipelineWithSixRunsAndPartialUsage();
+  const decision = fixture.execution.steps.find(step => step.stepId === 'post-orchestrator-decision')!;
+  Object.assign(decision, {
+    model: 'claude-haiku-4-5', thinkingLevel: 'high', modelSource: 'project',
+    durationMs: 1500, inputTokens: 800, outputTokens: 200,
+    costStatus: 'priced', estimatedCostUsd: 0.0123,
+    evidenceRef: 'decision.md',
+  });
+  fixture.cost.steps.push(costStep('post-orchestrator-decision', 'orchestrator', 'claude-haiku-4-5', 1000, 0.0123));
+  Object.assign(fixture.cost, {
+    decidingCostUsd: 0.0123, coreCostUsd: 0.75,
+    decidingUnpricedSteps: 0, coreUnpricedSteps: 0,
+  });
+  const id = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.route(new RegExp(`/api/tasks/${id}/pipeline(\\?|$)`), route =>
+    route.fulfill(json({ ...fixture, occurrenceCounts: { 'post-orchestrator-decision': 3 } })));
+  await page.route(new RegExp(`/api/tasks/${id}/timeline(\\?|$)`), route => route.fulfill(json([{
+    ts: decision.completedAt, kind: 'orchestrator_verdict_accepted', actor: 'orchestrator',
+    summary: 'Accepted after review', details: { step: 'post-orchestrator-decision' },
+  }])));
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await expect(page.getByTestId('overview-pipeline')).toBeVisible();
+  await expandPipelineSections(page);
+  const transition = page.getByTestId('overview-pipeline-transition').filter({ hasText: 'Final verdict' });
+  await expect(transition).toContainText('claude-haiku-4-5 · project');
+  await expect(transition).toContainText('$0.01');
+  await expect(transition).toContainText('3 runs');
+  await expect(transition.getByRole('button', { name: 'Open evidence for Final verdict' })).toBeVisible();
+  await expect(page.getByTestId('overview-pipeline-decision-cost')).toContainText('Deciding');
+  await savePipelineShot(page, 'pipeline-decision-transitions-light.png');
+  await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
+  await savePipelineShot(page, 'pipeline-decision-transitions-dark.png');
+  await page.getByTestId('prompt-tab-timeline').click();
+  await expect(page.getByTestId('timeline-step-measurement')).toContainText('claude-haiku-4-5');
+  const target = RESULTS_DIR ? join(RESULTS_DIR, 'pipeline-decision-timeline-dark.png') : join('test-results', 'pipeline-decision-timeline-dark.png');
+  await page.getByTestId('timeline-tab').screenshot({ path: target });
+});
+
 test('missing historical prices never render as zero and mixed totals stay explicit', async ({ page }) => {
   await page.addInitScript(() => {
     try {

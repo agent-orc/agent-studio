@@ -45,6 +45,21 @@
       </span>
     </div>
 
+    <div class="trend__decision-total" data-testid="pipeline-decision-vs-core">
+      Deciding {{ total.unmeasuredDecisionExecutions && !total.decidingCostUsd && !total.decidingUnpricedRuns ? 'unmeasured' : costDisplay(total.decidingCostUsd ?? 0, total.totalTokens, total.decidingUnpricedRuns ?? 0) }}
+      · Agent runs {{ costDisplay(total.coreCostUsd ?? 0, total.totalTokens, total.coreUnpricedRuns ?? 0) }}
+      @if (total.decidingUnpricedRuns) { · {{ total.decidingUnpricedRuns }} unpriced decision runs }
+      @if (total.unmeasuredDecisionExecutions) { · {{ total.unmeasuredDecisionExecutions }} unmeasured decisions }
+    </div>
+    <div class="trend__steps" data-testid="pipeline-step-occurrences">
+      @for (step of total.steps; track step.stepId) {
+        <span class="trend__step" [attr.data-step-id]="step.stepId">
+          {{ step.stepId }} · {{ step.occurrences ?? 0 }} runs · {{ step.unmeasuredOccurrences && !step.totalTokens ? 'unmeasured' : costDisplay(step.totalCostUsd, step.totalTokens, step.unpricedRuns ?? 0) }}
+          @if (step.unmeasuredOccurrences) { · {{ step.unmeasuredOccurrences }} unmeasured }
+        </span>
+      }
+    </div>
+
     <div class="trend__bars" role="list" data-testid="pipeline-cost-bars">
       @for (column of stackColumns(); track column.day) {
         <div class="trend__column" role="listitem" [attr.data-day]="column.day"
@@ -52,6 +67,7 @@
           <div class="trend__stack" [style.height.%]="column.heightPct">
             @for (segment of column.segments; track segment.kind) {
               <span class="trend__segment" [class]="'trend__segment trend__segment--' + segment.kind"
+                    data-testid="pipeline-cost-segment"
                     [attr.data-kind]="segment.kind" [style.height.%]="segment.pctOfColumn"></span>
             }
           </div>

@@ -28,6 +28,28 @@
 > for token calls whose latest route-admission boundary carried a better Token
 > Economy benchmark candidate.
 
+## Pipeline decision cost attribution (AGT-3015)
+
+Task-scoped one-shot calls carry `pipelineStepId` through the existing token
+bus and durable task receipt projection. `pipeline-execution.json` records the
+executed model, thinking level, resolution source, four token dimensions,
+price state, estimated cost, and terminal occurrences for each step. A priced
+zero is reserved for deterministic executions. A model call with unavailable
+usage stays unmeasured; a terminal model-capable step without an executed
+model is marked `missing-model`. A call whose model has no historical
+catalogue price stays unpriced. None of these states is reported as a
+zero-dollar model call.
+
+The task pipeline endpoint returns occurrence counts across recorded rounds
+and epochs, plus decision versus core-run cost. The project pipeline-cost
+endpoint groups receipt calls by their attributed step and kind, reads the
+execution file for occurrence counts, and reports the unpriced share next to
+the priced subtotal. Historical receipts without an execution file count
+receipt calls as the available occurrence proxy. Historical receipts without
+a step id retain their participant-based kind fallback. The Codex cache double-count repair and
+duplicate receipt entries are separate known distortions of historical
+figures; this attribution change does not rewrite them.
+
 ## Provider input and cache semantics
 
 The canonical stored dimensions always mean:

@@ -46,6 +46,10 @@ internal static class BusTokenEntryConverter
             Summary = m.Summary ?? string.Empty,
             JobId = m.JobId,
             ParticipantId = includeParticipant ? m.ParticipantId : null,
+            PipelineStepId = m.Payload is { } payload
+                && payload.ValueKind == System.Text.Json.JsonValueKind.Object
+                && payload.TryGetProperty("pipelineStepId", out var stepId)
+                ? stepId.GetString() : null,
             TokenUsage = usage,
         };
     }

@@ -180,6 +180,7 @@ public sealed class ProjectTokenReceiptReader
                 ParticipantId = string.IsNullOrWhiteSpace(call.ParticipantId)
                     ? "agent:task-receipt"
                     : call.ParticipantId,
+                PipelineStepId = call.PipelineStepId,
                 TokenUsage = new OrchestratorTokenUsage
                 {
                     // Historical receipts persisted the display label (e.g.

@@ -52,6 +52,14 @@
             @if (eventSummary(event); as summary) {
               <p class="tl-item__summary" data-testid="timeline-event-summary">{{ summary }}</p>
             }
+            @if (stepMeasurement(event); as step) {
+              <div class="tl-item__measurement" data-testid="timeline-step-measurement">
+                <span>{{ step.stepId }} → {{ step.verdict || step.status }}</span>
+                <span>{{ step.model || (step.costStatus === 'deterministic-zero' ? 'Deterministic' : 'Model unrecorded') }}@if (step.thinkingLevel) { · {{ step.thinkingLevel }} }</span>
+                <span>{{ (step.durationMs / 1000).toFixed(1) }}s · {{ stepPrice(step) }}</span>
+                @if (step.evidenceRef; as artefact) { <button type="button" (click)="documentRequested.emit(artefact)">Evidence</button> }
+              </div>
+            }
             @if (isSteeringEvent(event.kind)) {
               @if (steeringInfo(event); as steer) {
                 <!-- Structured steering block (Epic ASS-776): the toned row

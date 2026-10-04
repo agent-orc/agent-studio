@@ -131,7 +131,9 @@ public sealed class CodeReviewStepService
         }
 
         AdHocClaudeInvoker.Record(_usage, UsageSource, request.Model, callUsage,
-            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId);
+            sw.ElapsedMilliseconds, ok, project: request.Project, jobId: request.JobId,
+            stepId: promptStepId, jobFolderPath: request.JobFolderPath,
+            thinkingLevel: request.ThinkingLevel);
 
         CodeReviewGrade? grade = null;
         IReadOnlyList<string> findings = Array.Empty<string>();

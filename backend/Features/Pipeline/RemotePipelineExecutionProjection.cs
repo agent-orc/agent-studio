@@ -187,6 +187,7 @@ internal static class RemotePipelineExecutionProjection
                 Attempt = attempt,
                 Model = task.Model,
                 ThinkingLevel = task.ThinkingLevel,
+                ModelSource = task.ModelExplicit ? "job" : "policy",
                 Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
                 StartedAt = startedAt,
                 CompletedAt = completedAt,

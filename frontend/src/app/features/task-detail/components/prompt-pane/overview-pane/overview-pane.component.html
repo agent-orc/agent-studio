@@ -5,7 +5,6 @@
     [nowMs]="now()"
     (titleSaved)="titleSaved.emit()"
     (referencesChanged)="referencesChanged.emit()" />
-
   <!-- Compact status + agent block -->
   <section class="ov-section studio-measure studio-measure--tabular" data-testid="overview-status">
     <h3 class="ov-section__title">Status + Agent</h3>
@@ -24,7 +23,6 @@
           <span class="ov-dim">({{ formatAbsoluteTime(job().createdAt) }})</span>
         </span>
       </div>
-
       <div class="ov-row ov-row--agent" data-testid="overview-agent">
         <span class="ov-label">Agent</span>
         <span class="ov-value ov-agent-combo">
@@ -48,7 +46,6 @@
           }
         </span>
       </div>
-
       <div class="ov-row">
         <span class="ov-label">Owner</span>
         <span class="ov-value">
@@ -64,11 +61,9 @@
       </div>
     </div>
   </section>
-
   <div class="studio-measure studio-measure--tabular">
     <app-references-section [info]="job()" (changed)="referencesChanged.emit()" />
   </div>
-
   <!-- Pipeline block: ordered steps with status, usage, and cost. Configuration of
        which steps run and on which model lives in project Settings; this
        block is the read-only "what ran, on which model, what did it cost"
@@ -438,6 +433,9 @@
               }
             </button>
           </div>
+          @if ((row.kind === 'orchestrator' || row.kind === 'aspect' || row.kind === 'drift' || row.kind === 'analysis') && (row.occurrences ?? 0) > 0 && row.status !== 'pending' && row.status !== 'running') {
+            <app-pipeline-transition [row]="row" [artefact]="resultForRow(row)?.fileName || row.evidenceRef || null" (documentRequested)="documentRequested.emit($event)" />
+          }
             }
             }
           </div>
@@ -464,6 +462,9 @@
             }
           </button>
         </div>
+        @if (pipelinePoll.pipeline()?.cost; as measured) {
+          <div class="ov-pl-decision-cost" data-testid="overview-pipeline-decision-cost">Deciding {{ measured.unmeasuredDecisionSteps && !measured.decidingCostUsd && !measured.decidingUnpricedSteps ? 'unmeasured' : costDisplay(measured.decidingCostUsd ?? 0, measured.totalTokens, measured.decidingUnpricedSteps ?? 0) }} · Agent runs {{ costDisplay(measured.coreCostUsd ?? 0, measured.totalTokens, measured.coreUnpricedSteps ?? 0) }} @if (measured.decidingUnpricedSteps) { · {{ measured.decidingUnpricedSteps }} unpriced decision steps } @if (measured.unmeasuredDecisionSteps) { · {{ measured.unmeasuredDecisionSteps }} unmeasured decisions }</div>
+        }
       }
 
       }

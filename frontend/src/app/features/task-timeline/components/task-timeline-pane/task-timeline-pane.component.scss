@@ -1,5 +1,26 @@
 :host { display: block; }
 
+.tl-item__measurement {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 6px;
+  background: var(--studio-bg-hover);
+  color: var(--studio-fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-item__measurement button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--studio-accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .tl {
   padding: 8px 16px 16px;
   display: flex;

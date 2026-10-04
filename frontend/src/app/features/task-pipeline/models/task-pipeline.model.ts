@@ -58,6 +58,11 @@ export interface PipelineStepExecution {
   recommendedThinkingLevel?: string | null;
   /** Effective route source: policy, policy-economy, or task-override. */
   selectionSource?: string | null;
+  modelSource?: string | null;
+  estimatedCostUsd?: number | null;
+  modelPriced?: boolean | null;
+  costStatus?: 'priced' | 'unpriced' | 'unmeasured' | 'missing-model' | 'deterministic-zero' | null;
+  usageCallCount?: number;
   estimatedSavingsPercent?: number | null;
   status: PipelineStepStatus;
   startedAt?: string | null;
@@ -114,6 +119,7 @@ export interface PipelineExecutionRecord {
   startedAt: string;
   completedAt?: string | null;
   steps: PipelineStepExecution[];
+  occurrences?: PipelineStepExecution[];
   /**
    * 1-based run counter. A re-run / re-issue starts a fresh record and
    * increments this; anything above 1 means the pipeline was restarted, so
@@ -173,6 +179,11 @@ export interface PipelineCostSummary {
   anyModelUnknown: boolean;
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
+  decidingCostUsd?: number;
+  coreCostUsd?: number;
+  decidingUnpricedSteps?: number;
+  coreUnpricedSteps?: number;
+  unmeasuredDecisionSteps?: number;
 }
 
 /**
@@ -444,6 +455,7 @@ export interface TaskPipelineResponse {
   pipeline: TaskPipeline;
   execution: PipelineExecutionRecord | null;
   cost: PipelineCostSummary;
+  occurrenceCounts?: Record<string, number>;
   /**
    * Per-model tokens grouped per run plus a grand total over all runs.
    * Optional so older fixtures / responses without it still type-check;

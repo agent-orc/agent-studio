@@ -277,7 +277,10 @@ public sealed class ClaudeOneShot : ICliOneShot
             (long)result.Duration.TotalMilliseconds,
             ok: result.Ok,
             project: request.Project,
-            jobId: request.JobId);
+            jobId: request.JobId,
+            stepId: request.StepId,
+            jobFolderPath: request.JobFolderPath,
+            thinkingLevel: result.EffectiveThinkingLevel ?? request.ThinkingLevel);
     }
 
     /// <summary>

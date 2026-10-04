@@ -193,6 +193,11 @@ See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
 - `backend/Features/Pipeline/PipelineCatalogue.cs`: standard, report-only,
   concept, and UI pipeline definitions, step ids, default ordering, step run
   modes, and display names.
+- `backend/Features/Pipeline/PipelineExecutionLog.cs`: step execution telemetry
+  keeps terminal occurrence history within each pipeline epoch and preserves
+  model-call measurements when the verdict writer closes a step. Task and
+  project pipeline views show decision transitions with model, duration,
+  estimated cost, price state, occurrence count, and evidence link.
 - `backend/Features/Pipeline/QualityAnalysis/`: the Quality Studio in-process
   package adapter, repository-owned activation policy, canonical finding
   projection, and the first executable Angular named-rule pass.

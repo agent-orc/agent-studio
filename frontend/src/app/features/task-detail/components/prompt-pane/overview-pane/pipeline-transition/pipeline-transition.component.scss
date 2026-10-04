@@ -1,0 +1,24 @@
+:host { display: block; }
+
+.transition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--studio-spacing-1) var(--studio-spacing-2);
+  padding: var(--studio-spacing-1) var(--studio-spacing-2);
+  background: var(--studio-surface-muted);
+  color: var(--studio-fg-muted);
+  font-size: 0.68rem;
+}
+
+.transition__decision { color: var(--studio-fg); font-weight: 600; }
+.transition__metrics { font-variant-numeric: tabular-nums; }
+.transition button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--studio-accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

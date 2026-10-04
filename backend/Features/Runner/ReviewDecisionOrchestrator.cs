@@ -343,6 +343,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             Timeout = timeout,
             Source = AgentStudio.Shared.AdHocUsageSources.ReviewDecision,
+            ThinkingLevel = ReviewDecisionThinkingLevel(project, cliType, model),
             RecordUsage = false,
             Project = project,
             JobId = task.Id,
@@ -358,6 +359,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
         return AgentStudio.Cli.CliOneShotCompatibility.ToClaudeResultEnvelope(result, model);
     }
+
+    private string? ReviewDecisionThinkingLevel(string project, string cliType, string model)
+        => PipelineStepConfigResolver.ResolveThinkingLevel(
+            _projectSettings?.Get(project), PipelineCatalogue.OrchestratorDecisionStepId,
+            NormalizeReviewCliType(cliType), model);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -1313,7 +1319,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 sw.ElapsedMilliseconds,
                 ok: true,
                 project: entry.Name,
-                jobId: pending.Job.Id);
+                jobId: pending.Job.Id,
+                stepId: PipelineCatalogue.OrchestratorDecisionStepId,
+                jobFolderPath: pending.Job.FolderPath,
+                thinkingLevel: ReviewDecisionThinkingLevel(entry.Name, cliBinary, model));
             response = parsedText;
             RecordRateLimitedCall();
         }
@@ -1689,7 +1698,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     sw.ElapsedMilliseconds,
                     ok: true,
                     project: entry.Name,
-                    jobId: pending.Job.Id);
+                    jobId: pending.Job.Id,
+                    stepId: PipelineCatalogue.OrchestratorDecisionStepId,
+                    jobFolderPath: pending.Job.FolderPath,
+                    thinkingLevel: ReviewDecisionThinkingLevel(entry.Name, cliBinary, model));
                 RecordRateLimitedCall();
 
                 var verdict = ReviewDecisionParsing.ParseDecision(response);
@@ -4697,6 +4709,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = 0,
             Verdict = verdict,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+            CostStatus = "deterministic-zero",
         });
     }
 
@@ -4852,6 +4865,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ThinkingLevel = report.ThinkingLevel,
                 Verdict = gradeToken,
                 VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
+                EvidenceRef = report.FileName,
             });
 
             WritePostProcessingOutcome(job, PostProcessingOutcomes.FindingsAdded,
@@ -5375,6 +5389,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = 0,
             Verdict = verdict,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+            CostStatus = "deterministic-zero",
         });
     }
 

@@ -1,0 +1,8 @@
+<div class="transition" data-testid="overview-pipeline-transition" [attr.data-step-id]="row().id">
+  <span class="transition__decision">After {{ row().label }} → {{ row().verdict || statusLabel(row().status) }}</span>
+  <span>{{ row().model || 'Deterministic' }}@if (row().modelSource) { · {{ row().modelSource }} }</span>
+  <span class="transition__metrics">{{ duration(row().durationMs) }} · {{ price(row()) }} · {{ row().occurrences ?? 0 }} run{{ row().occurrences === 1 ? '' : 's' }}</span>
+  @if (artefact(); as file) {
+    <button type="button" (click)="documentRequested.emit(file)" [attr.aria-label]="'Open evidence for ' + row().label">Evidence</button>
+  }
+</div>

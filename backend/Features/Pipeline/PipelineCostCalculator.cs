@@ -55,7 +55,12 @@ public sealed record PipelineCostSummary(
     decimal TotalCostUsd,
     bool AnyModelUnknown,
     int UnpricedRuns,
-    IReadOnlyList<PipelinePricingGap> PricingGaps);
+    IReadOnlyList<PipelinePricingGap> PricingGaps,
+    decimal DecidingCostUsd = 0m,
+    decimal CoreCostUsd = 0m,
+    int DecidingUnpricedSteps = 0,
+    int CoreUnpricedSteps = 0,
+    int UnmeasuredDecisionSteps = 0);
 
 /// <summary>
 /// Token + cost rollup for a single model, summed across the steps that ran
@@ -196,7 +201,7 @@ public static class PipelineCostCalculator
             totalCost += est.Total;
         }
 
-        return new PipelineCostSummary(
+        return WithDecisionRollup(new PipelineCostSummary(
             steps,
             totalInput,
             totalOutput,
@@ -210,7 +215,7 @@ public static class PipelineCostCalculator
             Round(totalCost),
             anyUnknown,
             anyUnknown ? 1 : 0,
-            MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true));
+            MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true)), record);
     }
 
     /// <summary>
@@ -232,7 +237,7 @@ public static class PipelineCostCalculator
                 ? CostFromLedger(step, calls)
                 : step)
             .ToList();
-        return new PipelineCostSummary(
+        return WithDecisionRollup(new PipelineCostSummary(
             steps,
             steps.Sum(step => step.InputTokens),
             steps.Sum(step => step.OutputTokens),
@@ -246,7 +251,23 @@ public static class PipelineCostCalculator
             Round(steps.Sum(step => step.CostUsd)),
             steps.Any(step => step.TotalTokens > 0 && !step.ModelKnown),
             steps.Any(step => step.TotalTokens > 0 && !step.ModelKnown) ? 1 : 0,
-            MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true));
+            MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true)), record);
+    }
+
+    private static PipelineCostSummary WithDecisionRollup(
+        PipelineCostSummary summary, PipelineExecutionRecord? record)
+    {
+        var deciding = summary.Steps.Where(step => step.Kind != StepKind.Core).ToList();
+        var core = summary.Steps.Where(step => step.Kind == StepKind.Core).ToList();
+        return summary with
+        {
+            DecidingCostUsd = Round(deciding.Sum(step => step.CostUsd)),
+            CoreCostUsd = Round(core.Sum(step => step.CostUsd)),
+            DecidingUnpricedSteps = deciding.Count(step => step.TotalTokens > 0 && !step.ModelKnown),
+            CoreUnpricedSteps = core.Count(step => step.TotalTokens > 0 && !step.ModelKnown),
+            UnmeasuredDecisionSteps = record?.Steps.Count(step => step.Kind != StepKind.Core
+                && step.CostStatus is ("unmeasured" or "missing-model")) ?? 0,
+        };
     }
 
     private static PipelineStepCost CostFromLedger(

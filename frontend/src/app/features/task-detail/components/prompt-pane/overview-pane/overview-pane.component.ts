@@ -81,14 +81,9 @@ import { distinctStepVerdict, reviewRoundStatus } from './pipeline-status-verdic
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
 import { PipelineAspectResultComponent } from './pipeline-aspect-result/pipeline-aspect-result.component';
-import {
-  type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm,
-} from './pipeline-row.vm';
-import {
-  FINAL_VERDICT_STEP_ID,
-  buildStepExplanation,
-  pipelinePhaseForKind,
-} from './pipeline-step-explanations.util';
+import { PipelineTransitionComponent } from './pipeline-transition/pipeline-transition.component';
+import { type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm } from './pipeline-row.vm';
+import { FINAL_VERDICT_STEP_ID, buildStepExplanation, pipelinePhaseForKind } from './pipeline-step-explanations.util';
 import {
   buildConcernTooltip,
   buildAspectStatusTooltip,
@@ -101,7 +96,7 @@ import {
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineTransitionComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -363,6 +358,10 @@ export class OverviewPaneComponent {
           : null,
         model,
         thinkingLevel,
+        modelSource: e?.modelSource ?? cfg?.modelSource ?? null,
+        evidenceRef: e?.evidenceRef ?? null,
+        costStatus: e?.costStatus ?? null,
+        occurrences: res.occurrenceCounts?.[step.id] ?? (e?.completedAt ? 1 : 0),
         cliType,
         modelIsResolved,
         modelTooltip,

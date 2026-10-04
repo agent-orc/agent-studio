@@ -51,6 +51,10 @@ export interface PipelineRowVm {
   remoteReviewDetail: string | null;
   model: string | null;
   thinkingLevel: string | null;
+  modelSource?: string | null;
+  evidenceRef?: string | null;
+  costStatus?: string | null;
+  occurrences?: number;
   cliType: CliType | null;
   /**
    * Whether {@link model} is the pre-run resolved effective model (no run has

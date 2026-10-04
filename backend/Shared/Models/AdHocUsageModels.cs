@@ -42,6 +42,11 @@ public sealed record AdHocUsageRecord
 
     /// <summary>Optional job id (when the call was tied to a specific job folder).</summary>
     public string? JobId { get; init; }
+    /// <summary>Pipeline attribution for a task-scoped one-shot call.</summary>
+    public string? StepId { get; init; }
+    public string? JobFolderPath { get; init; }
+    public string? ThinkingLevel { get; init; }
+    public string? ModelSource { get; init; }
 }
 
 /// <summary>

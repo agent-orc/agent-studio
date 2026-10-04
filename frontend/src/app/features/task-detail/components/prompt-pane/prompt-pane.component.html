@@ -114,7 +114,7 @@
       }
 
       @case ('timeline') {
-        <app-task-timeline-pane />
+        <app-task-timeline-pane (documentRequested)="openDocument($event)" />
       }
 
       @case ('evidence') {

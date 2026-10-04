@@ -194,6 +194,8 @@ public sealed record PipelineExecutionRecord
     public DateTime StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
     public List<PipelineStepExecution> Steps { get; init; } = [];
+    /// <summary>Terminal executions in this epoch, including repeated rounds of the same step.</summary>
+    public List<PipelineStepExecution> Occurrences { get; init; } = [];
 
     /// <summary>
     /// 1-based run counter for this job. A pipeline re-run / re-issue starts a
@@ -245,6 +247,16 @@ public sealed record PipelineStepExecution
     public string? RecommendedThinkingLevel { get; init; }
     /// <summary>Where the effective selection came from: policy, policy-economy, or task-override.</summary>
     public string? SelectionSource { get; init; }
+    /// <summary>Effective model resolution path at execution time.</summary>
+    public string? ModelSource { get; init; }
+    /// <summary>Historical list-price estimate; null means usage or price is unavailable.</summary>
+    public decimal? EstimatedCostUsd { get; init; }
+    /// <summary>Null until measured; false means the model has no catalogue price.</summary>
+    public bool? ModelPriced { get; init; }
+    /// <summary>Explicitly distinguishes deterministic zero from an unmeasured model call.</summary>
+    public string? CostStatus { get; init; }
+    /// <summary>Number of measured model calls attributed to this execution.</summary>
+    public int UsageCallCount { get; init; }
     /// <summary>Heuristic saving versus the live catalogue's top rung.</summary>
     public int? EstimatedSavingsPercent { get; init; }
     public PipelineStepStatus Status { get; init; } = PipelineStepStatus.Pending;

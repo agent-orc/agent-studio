@@ -69,6 +69,16 @@ public static class TaskPipelineEndpoints
             var tokensByModel = PipelineCostCalculator.SummarizeByModel(
                 record, sessionEvents, taskTokens);
             var execution = AspectConcernReader.Enrich(record, info.FolderPath);
+            var occurrenceCounts = new[] { execution }
+                .Concat(execution?.PreviousAttempts ?? [])
+                .Where(run => run is not null)
+                .SelectMany(run => run!.Occurrences.Count > 0
+                    ? run.Occurrences
+                    : run.Steps.Where(step => step.Status is PipelineStepStatus.Passed
+                        or PipelineStepStatus.Failed
+                        or PipelineStepStatus.NotApplicable))
+                .GroupBy(step => step.StepId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
 
             var resultFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var aspectEvidence = new Dictionary<string, object[]>(StringComparer.OrdinalIgnoreCase);
@@ -155,6 +165,7 @@ public static class TaskPipelineEndpoints
                 pipeline,
                 execution,
                 cost,
+                occurrenceCounts,
                 tokensByModel,
                 config,
                 resultFiles,

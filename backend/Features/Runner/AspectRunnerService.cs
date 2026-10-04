@@ -630,7 +630,9 @@ public sealed class AspectRunnerService
             var durationMs = sw.ElapsedMilliseconds;
             var parsed = AdHocClaudeInvoker.ParseOrFallback(rawResponse, model);
             AdHocClaudeInvoker.Record(_usage, AdHocUsageSources.ReviewDecision, model, parsed.Usage,
-                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId);
+                durationMs, ok: true, project: inputs.Project, jobId: inputs.JobId,
+                stepId: $"aspect-{def.Id}", jobFolderPath: inputs.JobFolderPath,
+                thinkingLevel: thinkingLevel);
             return (parsed.Text, true, parsed.Usage, durationMs);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -265,7 +265,8 @@ public sealed class CodexOneShot : ICliOneShot
         {
             AdHocClaudeInvoker.Record(_usage, request.Source ?? AdHocUsageSources.ReviewDecision,
                 request.Model, result.Usage, (long)result.Duration.TotalMilliseconds, result.Ok,
-                request.Project, request.JobId);
+                request.Project, request.JobId, request.StepId, request.JobFolderPath,
+                result.EffectiveThinkingLevel ?? request.ThinkingLevel);
         }
         return result;
     }

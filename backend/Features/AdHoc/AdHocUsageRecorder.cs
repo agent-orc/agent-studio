@@ -45,16 +45,22 @@ public sealed class AdHocUsageRecorder
     private readonly ILogger<AdHocUsageRecorder> _logger;
     private readonly IConfiguration _configuration;
     private readonly AgentMessageBusBridge? _bus;
+    private readonly AgentStudio.Pipeline.PipelineExecutionLog? _pipelineLog;
+    private readonly ProjectSettingsService? _projectSettings;
     private readonly object _writeLock = new();
 
     public AdHocUsageRecorder(
         ILogger<AdHocUsageRecorder> logger,
         IConfiguration configuration,
-        AgentMessageBusBridge? bus = null)
+        AgentMessageBusBridge? bus = null,
+        AgentStudio.Pipeline.PipelineExecutionLog? pipelineLog = null,
+        ProjectSettingsService? projectSettings = null)
     {
         _logger = logger;
         _configuration = configuration;
         _bus = bus;
+        _pipelineLog = pipelineLog;
+        _projectSettings = projectSettings;
     }
 
     /// <summary>
@@ -97,6 +103,20 @@ public sealed class AdHocUsageRecorder
                 "adhoc-usage-recorded source={Source} model={Model} input={Input} output={Output} durationMs={Duration}",
                 record.Source, record.Model, record.InputTokens, record.OutputTokens, record.DurationMs);
 
+            if (!string.IsNullOrWhiteSpace(record.StepId)
+                && !string.IsNullOrWhiteSpace(record.JobFolderPath))
+            {
+                var definition = AgentStudio.Pipeline.PipelineCatalogue.FindStep(record.StepId);
+                var resolved = definition is null || string.IsNullOrWhiteSpace(record.Project)
+                    ? null
+                    : AgentStudio.Pipeline.PipelineStepModelDefaults.Resolve(
+                        _projectSettings?.Get(record.Project!), definition);
+                var source = record.ModelSource ?? (resolved is not null
+                    && string.Equals(resolved.Model, record.Model, StringComparison.OrdinalIgnoreCase)
+                        ? resolved.Source : "client-default");
+                _pipelineLog?.RecordUsage(record.JobFolderPath!, record.StepId!, record with { ModelSource = source });
+            }
+
             // Mirror onto the bus so token aggregation has a single source of
             // truth. Fire-and-forget by design (the bus is observability;
             // failures must not block the canonical write path). When tokens
@@ -107,6 +127,7 @@ public sealed class AdHocUsageRecorder
                 var usage = new OrchestratorTokenUsage
                 {
                     Model = record.Model,
+                    ThinkingLevel = record.ThinkingLevel,
                     InputTokens = (int)record.InputTokens,
                     OutputTokens = (int)record.OutputTokens,
                     CacheReadTokens = (int)record.CacheReadTokens,
@@ -118,12 +139,17 @@ public sealed class AdHocUsageRecorder
                 // optional project / jobId stay on the message body for
                 // drill-down without affecting workspace-wide aggregation.
                 _ = _bus.EmitTokenUsageAsync(
-                    project: null,
+                    project: !string.IsNullOrWhiteSpace(record.StepId) ? record.Project : null,
                     jobId: string.IsNullOrWhiteSpace(record.JobId) ? null : record.JobId,
-                    participantId: "support:adhoc",
+                    participantId: !string.IsNullOrWhiteSpace(record.StepId)
+                        && record.Project is { Length: > 0 }
+                        && AgentStudio.Pipeline.PipelineCatalogue.FindStep(record.StepId!)?.Kind == StepKind.Orchestrator
+                            ? AgentMessageBusBridge.ParticipantOrchestratorFor(record.Project)
+                            : "support:adhoc",
                     topic: string.IsNullOrWhiteSpace(record.Source) ? AdHocUsageSources.Unknown : record.Source,
                     usage: usage,
-                    createdAt: record.Ts == default ? null : DateTime.SpecifyKind(record.Ts, DateTimeKind.Utc));
+                    createdAt: record.Ts == default ? null : DateTime.SpecifyKind(record.Ts, DateTimeKind.Utc),
+                    pipelineStepId: record.StepId);
             }
             return true;
         }

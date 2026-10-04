@@ -62,6 +62,33 @@ public sealed class AgentMessageBusBridgeTests : IDisposable
         Assert.Contains("stuck loop", emitted.Body);
         Assert.NotNull(emitted.Artifacts);
         Assert.Contains(emitted.Artifacts!, a => a.Kind == "log-slice");
+        Assert.True(emitted.Payload?.TryGetProperty("decidedByModel", out _) == true);
+    }
+
+    [Fact]
+    public async Task DecisionPayloadIncludesRecordedDecidingModel()
+    {
+        var info = NewJobInfo();
+        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        log.Begin(info.FolderPath, PipelineCatalogue.Standard, info.ProjectName, info.Id);
+        var now = DateTime.UtcNow;
+        log.RecordStep(info.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.OrchestratorDecisionStepId,
+            Kind = StepKind.Orchestrator,
+            Model = "claude-haiku-4-5",
+            Status = PipelineStepStatus.Passed,
+            StartedAt = now,
+            CompletedAt = now,
+            Verdict = "accept",
+        });
+        var bridge = new AgentMessageBusBridge(_store,
+            new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["TaskRepository"] = _workspace }).Build(),
+            NullLogger<AgentMessageBusBridge>.Instance, pipelineLog: log);
+        await bridge.EmitOrchestratorChatAsync(info, OrchestratorMessageKind.Decision, "accepted");
+        var payload = Assert.Single(_store.Recent(_workspace, info.ProjectName, 10)).Payload;
+        Assert.Equal("claude-haiku-4-5", payload?.GetProperty("decidedByModel").GetString());
     }
 
     [Theory]

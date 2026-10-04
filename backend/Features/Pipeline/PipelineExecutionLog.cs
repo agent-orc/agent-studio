@@ -303,6 +303,35 @@ public sealed class PipelineExecutionLog
             {
                 if (!replaced && string.Equals(existing.StepId, stepResult.StepId, StringComparison.OrdinalIgnoreCase))
                 {
+                    if (stepResult.Status == PipelineStepStatus.Running && stepResult.Kind != StepKind.Core)
+                    {
+                        // A repeated review round starts a fresh measurement, not
+                        // an extension of the previous round's token total.
+                        stepResult = stepResult with { CostStatus = "unmeasured" };
+                    }
+                    else if (existing.Status is not (PipelineStepStatus.Passed or PipelineStepStatus.Failed
+                        or PipelineStepStatus.NotApplicable or PipelineStepStatus.Skipped)
+                        && existing.UsageCallCount > 0 && stepResult.UsageCallCount == 0)
+                    {
+                        // One-shot calls arrive before the terminal verdict. Keep
+                        // their measured receipt when the verdict writer supplies
+                        // only the decision fields.
+                        stepResult = stepResult with
+                        {
+                            Model = existing.Model,
+                            ThinkingLevel = existing.ThinkingLevel ?? stepResult.ThinkingLevel,
+                            ModelSource = existing.ModelSource ?? stepResult.ModelSource,
+                            InputTokens = existing.InputTokens,
+                            OutputTokens = existing.OutputTokens,
+                            CacheReadTokens = existing.CacheReadTokens,
+                            CacheCreationTokens = existing.CacheCreationTokens,
+                            EstimatedCostUsd = existing.EstimatedCostUsd,
+                            ModelPriced = existing.ModelPriced,
+                            CostStatus = existing.CostStatus,
+                            UsageCallCount = existing.UsageCallCount,
+                            TokenUsageSource = existing.TokenUsageSource,
+                        };
+                    }
                     updatedSteps.Add(stepResult);
                     replaced = true;
                 }
@@ -313,8 +342,117 @@ public sealed class PipelineExecutionLog
             }
             if (!replaced) updatedSteps.Add(stepResult);
 
-            WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
+            if (stepResult.Status is PipelineStepStatus.Passed or PipelineStepStatus.Failed
+                or PipelineStepStatus.NotApplicable)
+            {
+                stepResult = MeasureTerminal(stepResult, current.StartedAt);
+                var index = updatedSteps.FindIndex(step =>
+                    string.Equals(step.StepId, stepResult.StepId, StringComparison.OrdinalIgnoreCase));
+                updatedSteps[index] = stepResult;
+                var occurrences = new List<PipelineStepExecution>(current.Occurrences);
+                var replayIndex = occurrences.FindLastIndex(item =>
+                    string.Equals(item.StepId, stepResult.StepId, StringComparison.OrdinalIgnoreCase)
+                    && item.StartedAt == stepResult.StartedAt
+                    && item.CompletedAt == stepResult.CompletedAt);
+                if (replayIndex >= 0) occurrences[replayIndex] = stepResult;
+                else occurrences.Add(stepResult);
+                WriteAtomic(jobFolderPath, current with { Steps = updatedSteps, Occurrences = occurrences });
+            }
+            else
+            {
+                WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
+            }
         }
+    }
+
+    /// <summary>Attach one existing ad-hoc token receipt to its pipeline step.</summary>
+    public void RecordUsage(string jobFolderPath, string stepId, AdHocUsageRecord call)
+    {
+        if (string.IsNullOrWhiteSpace(call.Model))
+            throw new ArgumentException("An LLM step usage receipt requires the executed model.", nameof(call));
+        var lockObj = _locks.GetOrAdd(NormalizeKey(jobFolderPath), _ => new object());
+        lock (lockObj)
+        {
+            var current = TryRead(jobFolderPath);
+            if (current is null) return;
+            var steps = new List<PipelineStepExecution>(current.Steps);
+            var index = steps.FindIndex(step => string.Equals(step.StepId, stepId, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return;
+            var previous = steps[index];
+            if (previous.Status is PipelineStepStatus.Passed or PipelineStepStatus.Failed
+                or PipelineStepStatus.Skipped or PipelineStepStatus.NotApplicable)
+            {
+                previous = previous with
+                {
+                    Status = PipelineStepStatus.Running,
+                    StartedAt = call.Ts,
+                    CompletedAt = null,
+                    InputTokens = 0,
+                    OutputTokens = 0,
+                    CacheReadTokens = 0,
+                    CacheCreationTokens = 0,
+                    EstimatedCostUsd = null,
+                    ModelPriced = null,
+                    CostStatus = "unmeasured",
+                    UsageCallCount = 0,
+                };
+            }
+            var input = previous.InputTokens + call.InputTokens;
+            var output = previous.OutputTokens + call.OutputTokens;
+            var cacheRead = previous.CacheReadTokens + call.CacheReadTokens;
+            var cacheCreation = previous.CacheCreationTokens + call.CacheCreationTokens;
+            var price = TokenPricing.Estimate(call.Model, call.InputTokens, call.OutputTokens,
+                call.CacheReadTokens, call.CacheCreationTokens, call.Ts);
+            var measuredTokens = input + output + cacheRead + cacheCreation;
+            steps[index] = previous with
+            {
+                Model = call.Model,
+                ThinkingLevel = call.ThinkingLevel ?? previous.ThinkingLevel,
+                ModelSource = call.ModelSource ?? previous.ModelSource,
+                InputTokens = input,
+                OutputTokens = output,
+                CacheReadTokens = cacheRead,
+                CacheCreationTokens = cacheCreation,
+                UsageCallCount = previous.UsageCallCount + 1,
+                ModelPriced = measuredTokens > 0 ? price.ModelKnown && previous.ModelPriced != false : null,
+                EstimatedCostUsd = measuredTokens > 0 && price.ModelKnown && previous.ModelPriced != false
+                    ? (previous.EstimatedCostUsd ?? 0m) + price.Total : null,
+                CostStatus = measuredTokens == 0 ? "unmeasured" : price.ModelKnown && previous.ModelPriced != false
+                    ? "priced" : "unpriced",
+                TokenUsageSource = "Ad-hoc token receipt",
+            };
+            WriteAtomic(jobFolderPath, current with { Steps = steps });
+        }
+    }
+
+    private static PipelineStepExecution MeasureTerminal(PipelineStepExecution step, DateTime at)
+    {
+        step = step with { EvidenceRef = step.EvidenceRef ?? FileName };
+        if (step.ModelPriced.HasValue || step.CostStatus is "unpriced" or "priced") return step;
+        var tokens = step.InputTokens + step.OutputTokens + step.CacheReadTokens + step.CacheCreationTokens;
+        if (tokens == 0 && step.CostStatus == "deterministic-zero")
+            return step with { ModelPriced = true, EstimatedCostUsd = 0m };
+        if (tokens > 0)
+        {
+            var price = TokenPricing.Estimate(step.Model, step.InputTokens, step.OutputTokens,
+                step.CacheReadTokens, step.CacheCreationTokens, step.CompletedAt ?? at);
+            return step with
+            {
+                ModelPriced = price.ModelKnown,
+                EstimatedCostUsd = price.ModelKnown ? price.Total : null,
+                CostStatus = price.ModelKnown ? "priced" : "unpriced",
+            };
+        }
+        if (!string.IsNullOrWhiteSpace(step.Model))
+            return step with { CostStatus = "unmeasured" };
+        var definition = PipelineCatalogue.FindStep(step.StepId);
+        if (step.ExecutionLocation != "carried-over"
+            && (step.Kind is StepKind.Core or StepKind.Aspect or StepKind.Drift
+                || definition is not null && PipelineStepModelDefaults.UsesModel(definition)))
+        {
+            return step with { CostStatus = "missing-model" };
+        }
+        return step with { ModelPriced = true, EstimatedCostUsd = 0m, CostStatus = "deterministic-zero" };
     }
 
     /// <summary>

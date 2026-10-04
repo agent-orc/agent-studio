@@ -136,6 +136,8 @@ public record OrchestratorLogEntry
     /// leave this null and keep their historical job-title categorisation.
     /// </summary>
     public string? ParticipantId { get; init; }
+    /// <summary>Pipeline step attributed by the original token receipt.</summary>
+    public string? PipelineStepId { get; init; }
 
     /// <summary>
     /// Token usage for this orchestrator action, when the orchestrator

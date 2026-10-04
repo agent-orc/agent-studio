@@ -164,6 +164,8 @@ export interface PipelineStepCostSeries {
   anyModelUnknown: boolean;
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
+  occurrences?: number;
+  unmeasuredOccurrences?: number;
 }
 
 export interface ProjectPipelineCostTimeline {
@@ -175,6 +177,11 @@ export interface ProjectPipelineCostTimeline {
   steps: PipelineStepCostSeries[];
   totalTokens: number;
   totalCostUsd: number;
+  decidingCostUsd?: number;
+  coreCostUsd?: number;
+  decidingUnpricedRuns?: number;
+  coreUnpricedRuns?: number;
+  unmeasuredDecisionExecutions?: number;
   anyModelUnknown: boolean;
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
