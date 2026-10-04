@@ -41,7 +41,7 @@
       "title": "Auto-review",
       "level": "smoke",
       "description": "The real review executor materializes and checks the completed coding run, reports and cleans up. After Pass, a supervised fixture publisher fast-forwards canonical main to the reviewed SHA and verifies the remote ref.",
-      "expectedOutcome": "The same task reaches 5-human-review and the canonical fixture ref equals the reviewed SHA while Studio BFF remains stopped in Compose."
+      "expectedOutcome": "The same task reaches 5-human-review and the canonical fixture ref equals the reviewed SHA while Studio BFF remains stopped in Compose. After reopening, Studio BFF returns the same authoritative task, run, artifact and review outcome."
     },
     {
       "id": "orchestrator-chat-turn",
@@ -54,15 +54,15 @@
       "id": "backup",
       "title": "Backup",
       "level": "full",
-      "description": "Create a management backup of the running Task Server's store.",
-      "expectedOutcome": "POST /api/v1/management/backups returns a backup id, path, and SHA-256 file digest."
+      "description": "Create and verify a full backup set of the running Task Server's store and cold payloads.",
+      "expectedOutcome": "POST /api/v1/management/backups/full returns a set digest and its verification succeeds."
     },
     {
       "id": "restore-into-empty-store",
-      "title": "Restore into an empty store, inventory hash equality",
+      "title": "Restore full set into an empty store and compare inventory",
       "level": "full",
-      "description": "Start a second Task Server instance against a fresh, empty data directory, place the backup file where it expects one, put it in Maintenance mode, and restore.",
-      "expectedOutcome": "POST /api/v1/management/restore reports the restored file's SHA-256 equal to the source backup's SHA-256 (inventory hash equality)."
+      "description": "Start a second Task Server instance against a fresh, empty data directory, transfer the verified full backup set, put it in Maintenance mode, and restore.",
+      "expectedOutcome": "The restored full set verifies to the source set digest; task identity/state, run id/fence/result SHA, artifact id/digest and review outcome match the source, while the separately retained canonical Git ref remains at the reviewed SHA."
     }
   ],
   "knownGaps": [

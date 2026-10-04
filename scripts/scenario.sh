@@ -20,12 +20,11 @@ Targets:
            one-box boot/health checks. --level full starts the
            Task Server and Studio BFF plus the scenario's
            fake-CLI runner image, then drives the same typed steps as inproc.
-  remote   Runs only the non-destructive management-plane steps (bootstrap a
+  remote   At smoke level, runs the management-plane steps (bootstrap a
            scenario principal, create a scenario project/task, take a backup,
            archive the task) against an already-deployed Task Server.
-           Requires --remote-url and --remote-token. Does not drive a
-           coding/review run: that needs a runner already attached to that
-           deployment, which this script does not provision.
+           Requires --remote-url and --remote-token. Full level fails closed
+           until detached coding, review and fenced publication are wired.
 
 Levels:
   smoke    The first six steps in testsupport/scenario/steps.json (bootstrap
@@ -144,7 +143,7 @@ compose_full_diagnostics() {
         printf 'Compose service status\n'
         "${compose[@]}" ps --all || true
         printf '\nCompose service logs\n'
-        "${compose[@]}" logs --no-color || true
+        "${compose[@]}" logs --no-color --tail 250 || true
     } >"$diagnostics" 2>&1
     cat "$diagnostics" >&2 || true
 
@@ -374,7 +373,27 @@ run_remote() {
         exit 2
     fi
     if [ "$level" = "full" ]; then
-        echo "scenario: --target remote only runs the non-destructive management-plane steps regardless of --level; see docs/operations/testing/deployment-scenario.md." >&2
+        cat >"$report_dir/scenario-remote-full.junit.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite name="deployment-regression-scenario.remote.full" tests="1" failures="1" skipped="0">
+  <testcase classname="deployment-regression-scenario.remote" name="detached-delivery-acceptance">
+    <failure message="Remote full acceptance is unavailable: detached IntegrationAttempt, fenced Git publication and push-intent reconciliation are not wired into this scenario."/>
+  </testcase>
+</testsuite>
+EOF
+        cat >"$report_dir/scenario-remote-full.md" <<'EOF'
+# Deployment regression scenario: remote / full
+
+**Result: FAILED**
+
+The remote target currently drives management smoke only. Detached coding,
+library review, exact candidate verification, fenced canonical Git publication,
+push-intent reconciliation and recovery must run under Task Server authority
+before this target can pass. The supervised Compose fixture publisher does not
+satisfy this acceptance contract. See `docs/operations/testing/deployment-scenario.md`.
+EOF
+        echo "scenario: remote full acceptance is unavailable; see $report_dir/scenario-remote-full.md" >&2
+        return 1
     fi
     REPORT_DIR="$report_dir" "$repo_root/scripts/scenario-remote-smoke.sh" "$remote_url" "$remote_token"
 }

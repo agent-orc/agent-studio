@@ -32,10 +32,10 @@ deeper release gate.
 | 3 | Create task | smoke | The seeded workspace/project/task exist in `2-ready`. |
 | 4 | Claim task | smoke | The runner claims the task under a fenced lease. |
 | 5 | Run with the fake CLI | smoke | The runner drives a fake coding CLI that runs the fixture's known-passing and known-failing checks, commits, and pushes; the task reaches `4-auto-review`. |
-| 6 | Auto-review | smoke | The real review executor checks out the coding run's exact SHA, executes its checks, reports, and cleans up; a supervised fixture publisher verifies that SHA at canonical `main`; the queued orchestration run is settled; the task reaches `5-human-review`. |
+| 6 | Auto-review | smoke | The real review executor checks out the coding run's exact SHA, executes its checks, reports, and cleans up; a supervised fixture publisher verifies that SHA at canonical `main`; the queued orchestration run is settled; the task reaches `5-human-review`. In Compose, Studio BFF reopens and reads the same task, run, artifact and review facts from Task Server. |
 | 7 | Orchestrator chat turn with context receipt | full | A chat turn round-trips with a persisted context receipt (token budget, sources). |
-| 8 | Backup | full | `POST /api/v1/management/backups` returns a file digest. |
-| 9 | Restore into an empty store, inventory hash equality | full | A second, empty Task Server instance restores that backup and reports the same SHA-256 (the most direct "before vs. after" equality check the store exposes today; see "Known gaps"). |
+| 8 | Full backup | full | `POST /api/v1/management/backups/full` creates a complete set, and the verify API checks its set digest. |
+| 9 | Restore into an empty store, inventory equality | full | A second, empty Task Server instance restores the transferred full set in Maintenance mode. The set verifies again; task identity/state, run id/fence/result SHA, artifact id/digest and review outcome equal the source. The separately retained canonical Git ref still equals the reviewed SHA. This is not an external Git origin restore. |
 
 ### Connector negative matrix (full, `inproc`)
 
@@ -105,13 +105,16 @@ scripts/scenario.sh --target remote --level smoke --remote-url https://... --rem
   bind-mounted fixture run as the invoking UID/GID with a user-owned,
   mode-0600 scenario token, so cleanup does not require root or leave
   root-owned test data behind.
-- **`remote`** runs only the non-destructive management-plane steps
+- **`remote`** at `--level smoke` runs only the non-destructive management-plane steps
   (bootstrap a principal, create a scenario project/task, back up, archive
   the task) against an already-deployed Task Server, for the control-plane
   and cutover cards. It needs `--remote-url` and `--remote-token`, cleans up
   by archiving its own task, and does not drive a coding/review run. That
   needs a runner already attached to that deployment, which this script does
-  not provision.
+  not provision. `--level full` must fail until the accepted remote
+  IntegrationAttempt, publication fence and durable push-intent contracts are
+  installed and an actual detached rehearsal drives them. A management smoke
+  report or the supervised fixture publisher cannot certify Shape 3.
 
 ## Determinism
 
@@ -230,12 +233,44 @@ forward and pushes with an expected-old-SHA lease to the disposable origin's
 canonical `refs/heads/main`. It independently reads the remote ref back.
 `canary-publication.json` joins coding run, review subject, review attempt,
 reviewed SHA and published SHA. The Compose BFF remains stopped through review
-and publication. No product repository or production branch is published.
+and publication. `studio-reconnect.json` records the Task Server versus BFF
+readback after it reopens. No product repository or production branch is
+published.
 
 This is a bounded supervised installation canary, not an implementation of the
 autonomous publication authority. I08 still owns detached automatic publication
 and recovery acceptance across the full deployment ladder. Source-build,
 published-image, N-1 and supported desktop/VM results remain separate evidence.
+
+## Detached Shape 3 acceptance (I08)
+
+The disposable acceptance deployment needs one remote Task Server and Engine,
+one workstation runner, one other runner, and a Studio observer attached through
+its own edge. Use the approved private HTTPS route and separate service
+identities. Drain the workstation runner, close Studio, and power off its
+execution host before admitting the fixture coding attempt. Keep the
+control-plane box free of project execution capacity unless it was explicitly
+enrolled as a runner. AGT-2737 owns any production authority transfer; this
+rehearsal uses a disposable origin and cannot authorize production cutover.
+
+The remote `full` target remains red until one run records all of the following
+through Task Server authority:
+
+| Check | Required proof |
+|---|---|
+| Detached delivery | One coding run on the other runner, library review and gate receipts, an exact verified integration candidate, and a canonical remote ref read back at the published SHA while Studio and the workstation host are absent. The Engine steers from Task Server facts. |
+| Git authority | Durable IntegrationAttempt, current project ref-mutation grant at the Git transaction, non-force expected-old-to-exact-new update, and durable push intent. A stale or expired publisher must be rejected at the Git boundary. One project ref owner includes operator, release and Batch Gate requests. |
+| Recovery | Inject authority outage, runner host loss, lease expiry and a successful push with lost acknowledgement. Reconcile from Task Server and remote Git facts with bounded time and count; no second coding run or publication for the same intent. |
+| Restore and fallback | Transfer a verified full recovery set to an empty target, compare identities, task/review/evidence inventory and remote refs, then rehearse a deliberate sole-writer fallback. Record elapsed time, old-writer closure and new-writer admission. Never run both authorities. |
+| Reattachment | Reopen Studio and compare its task, review, integration, publication and recovery read models with Task Server records. Save browser screenshots for both themes with URL, UTC timestamp, task key and source ref recorded beside each image. |
+
+Keep the evidence small: the scenario report, bounded runtime excerpts, audit and
+attempt identifiers, review/gate receipts, `git ls-remote` before/after lines,
+backup set digest, restore inventory comparison, and screenshot provenance.
+Do not copy traces, videos, credentials or full raw logs into task results.
+The current Compose canary proves only a subset: its publisher is supervised,
+its runner roles share a machine, and it does not inject the remote publication
+failure matrix. A passing Compose result is not a passing Shape 3 result.
 
 ## Known gaps
 

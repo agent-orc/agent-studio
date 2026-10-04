@@ -257,4 +257,14 @@ grep -F 'failures="1"' "$failure_report/scenario-compose-full.junit.xml"
 grep -F 'scenario-compose-full.compose.log' "$failure_report/scenario-compose-full.md"
 grep -F 'compose --project-name scenario-contract-failure' "$fake_state/calls"
 
+remote_report="$test_root/remote-full-report"
+if "$repo_root/scripts/scenario.sh" --target remote --level full \
+    --remote-url https://example.invalid --remote-token fixture-token \
+    --report-dir "$remote_report"; then
+    printf 'Remote full acceptance unexpectedly passed without detached publication.\n' >&2
+    exit 1
+fi
+grep -F 'failures="1"' "$remote_report/scenario-remote-full.junit.xml"
+grep -F 'fenced canonical Git publication' "$remote_report/scenario-remote-full.md"
+
 printf 'Scenario Compose startup contract tests passed.\n'

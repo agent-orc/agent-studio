@@ -53,8 +53,11 @@ public sealed partial class ScenarioContext : IDisposable
     private ProjectDto _project = null!;
     private TaskDto _task = null!;
     private RunDto _codingRun = null!;
-    private BackupResult _backupResult = null!;
-    private string _backupLocalPath = "";
+    private FullBackupSummaryDto _fullBackup = null!;
+    private string _fullBackupLocalPath = "";
+    private TaskHistoryDto _backupHistory = null!;
+    private ReviewAttemptDto _backupReview = null!;
+    private string _canonicalShaAtBackup = "";
 
     private bool IsCompose => string.Equals(_target, "compose", StringComparison.Ordinal);
 
@@ -404,14 +407,46 @@ public sealed partial class ScenarioContext : IDisposable
 
         await WaitForTaskStateAsync(
             _serverClient, reviewTask.ProjectId, reviewTask.TaskKey, "5-human-review", _runner!, TimeSpan.FromSeconds(20));
+        var authoritativeHistory = await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
+            $"/api/v1/projects/{reviewTask.ProjectId}/tasks/{reviewTask.TaskKey}/history");
+        Assert.NotNull(authoritativeHistory);
         if (IsCompose)
         {
             await RunDockerComposeAsync("start", "studio-bff");
             var binding = (await RunDockerComposeAsync("port", "studio-bff", "5072")).Trim();
             _studioBffUrl = $"http://127.0.0.1:{binding[(binding.LastIndexOf(':') + 1)..]}";
             await WaitForHttpAsync(_studioBffUrl + "/healthz", _server);
+            using var observer = new HttpClient { BaseAddress = new Uri(_studioBffUrl) };
+            var observedHistory = await observer.GetFromJsonAsync<TaskHistoryDto>(
+                $"/api/v1/projects/{reviewTask.ProjectId}/tasks/{reviewTask.TaskKey}/history");
+            Assert.NotNull(observedHistory);
+            Assert.Equal(authoritativeHistory.Task, observedHistory.Task);
+            Assert.Equal(authoritativeHistory.Runs.Select(run => (run.RunId, run.Fence, run.ResultSha)),
+                observedHistory.Runs.Select(run => (run.RunId, run.Fence, run.ResultSha)));
+            Assert.Equal(authoritativeHistory.Artifacts.Select(artifact => (artifact.ArtifactId, artifact.Sha256)),
+                observedHistory.Artifacts.Select(artifact => (artifact.ArtifactId, artifact.Sha256)));
+            var observedReview = await observer.GetFromJsonAsync<ReviewAttemptDto>(
+                $"/api/v1/reviews/attempts/{reviewed.AttemptId}");
+            Assert.Equal(reviewed, observedReview);
+            if (Environment.GetEnvironmentVariable("SCENARIO_REPORT_DIR") is { Length: > 0 } reportDirectory)
+            {
+                Directory.CreateDirectory(reportDirectory);
+                await File.WriteAllTextAsync(Path.Combine(reportDirectory, "studio-reconnect.json"),
+                    JsonSerializer.Serialize(new
+                    {
+                        taskId = observedHistory.Task.TaskId,
+                        taskState = observedHistory.Task.State,
+                        runId = reviewRun.RunId,
+                        resultSha = reviewRun.ResultSha,
+                        reviewAttempt = observedReview!.AttemptId,
+                        reviewOutcome = observedReview.Outcome,
+                        authority = _serverUrl,
+                        observer = _studioBffUrl,
+                        equalToAuthority = true,
+                    }, new JsonSerializerOptions { WriteIndented = true }));
+            }
         }
-        return $"subject {subject.SubjectId} reviewed coding run {reviewRun.RunId}; review={reviewed.AttemptId} Pass; provider={LiveProviderReview}; canonical=refs/heads/main sha={reviewRun.ResultSha}; supervised publication verified while Studio was detached";
+        return $"subject {subject.SubjectId} reviewed coding run {reviewRun.RunId}; review={reviewed.AttemptId} Pass; provider={LiveProviderReview}; canonical=refs/heads/main sha={reviewRun.ResultSha}; supervised publication verified while Studio was detached; reopened Studio read agrees with Task Server={IsCompose}";
     }
 
     private async Task SettleOrchestrationAsync(TaskDto task)
@@ -521,25 +556,42 @@ public sealed partial class ScenarioContext : IDisposable
 
     private async Task<string?> BackupAsync()
     {
-        var response = await _serverClient.PostAsJsonAsync("/api/v1/management/backups", new BackupRequest("scenario"));
-        _backupResult = await ReadAsync<BackupResult>(response);
-        Assert.Equal(64, _backupResult.Sha256.Length);
+        _backupHistory = (await _serverClient.GetFromJsonAsync<TaskHistoryDto>(
+            $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history"))!;
+        Assert.NotNull(_backupHistory);
+        var audits = await _serverClient.GetFromJsonAsync<List<AuditRecordDto>>(
+            "/api/v1/management/audit");
+        var reviewAudit = Assert.Single(audits!, row => row.Action == "review.reported");
+        _backupReview = (await _serverClient.GetFromJsonAsync<ReviewAttemptDto>(
+            $"/api/v1/reviews/attempts/{reviewAudit.TargetId}"))!;
+        Assert.NotNull(_backupReview);
+        _canonicalShaAtBackup = (await GitOutputAsync(_root, "ls-remote", _bareRepositoryPath,
+            "refs/heads/main")).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0];
+        Assert.Equal(_codingRun.ResultSha, _canonicalShaAtBackup);
+        _fullBackup = await ReadAsync<FullBackupSummaryDto>(
+            await _serverClient.PostAsJsonAsync("/api/v1/management/backups/full", new { }));
+        Assert.Equal(64, _fullBackup.SetSha256.Length);
+        var verified = await ReadAsync<VerifyFullBackupResult>(
+            await _serverClient.PostAsJsonAsync(
+                $"/api/v1/management/backups/full/{_fullBackup.Id}/verify", new { }));
+        Assert.True(verified.Verified);
+        Assert.Equal(_fullBackup.SetSha256, verified.Summary.SetSha256);
         if (IsCompose)
         {
             var copyDirectory = NewTempDirectory();
-            _backupLocalPath = Path.Combine(copyDirectory, Path.GetFileName(_backupResult.Path));
+            _fullBackupLocalPath = Path.Combine(copyDirectory, _fullBackup.Id);
             await RunAsync(
                 "docker",
-                ComposeArguments("cp", $"task-server:{_backupResult.Path}", _backupLocalPath),
+                ComposeArguments("cp", $"task-server:/var/lib/agent-orchestrator/backup/full/{_fullBackup.Id}",
+                    _fullBackupLocalPath),
                 _root);
-            Assert.True(File.Exists(_backupLocalPath));
         }
         else
         {
-            Assert.True(File.Exists(_backupResult.Path));
-            _backupLocalPath = _backupResult.Path;
+            _fullBackupLocalPath = Path.Combine(_dataDirectory, "backups", "full", _fullBackup.Id);
         }
-        return $"backup {_backupResult.BackupId} sha256={_backupResult.Sha256[..12]}...";
+        Assert.True(File.Exists(Path.Combine(_fullBackupLocalPath, "complete.json")));
+        return $"verified full backup {_fullBackup.Id} setSha256={_fullBackup.SetSha256[..12]}...";
     }
 
     private async Task<string?> RestoreIntoEmptyStoreAsync()
@@ -558,9 +610,7 @@ public sealed partial class ScenarioContext : IDisposable
         await WaitForHttpAsync(targetUrl + "/readyz", target);
         using var targetClient = ProtocolClient(targetUrl);
 
-        var backupsDirectory = Path.Combine(targetData, "backups");
-        Directory.CreateDirectory(backupsDirectory);
-        File.Copy(_backupResult.Path, Path.Combine(backupsDirectory, Path.GetFileName(_backupResult.Path)));
+        CopyFullBackupTo(targetData, "backups");
 
         var modeResponse = await targetClient.PutAsJsonAsync(
             "/api/v1/management/mode",
@@ -568,21 +618,18 @@ public sealed partial class ScenarioContext : IDisposable
         modeResponse.EnsureSuccessStatusCode();
 
         var restoreResponse = await targetClient.PostAsJsonAsync(
-            "/api/v1/management/restore",
-            new RestoreRequest(_backupResult.BackupId));
-        var restore = await ReadAsync<RestoreResult>(restoreResponse);
+            $"/api/v1/management/backups/full/{_fullBackup.Id}/restore", new { });
+        var restore = await ReadAsync<RestoreFullBackupResult>(restoreResponse);
         Assert.True(restore.Restored, restore.Message);
-        Assert.Equal(_backupResult.Sha256, restore.Sha256);
-        return $"restored into empty store; inventory hash equal ({restore.Sha256[..12]}...)";
+        await AssertRestoredInventoryAsync(targetClient);
+        return $"restored full set into empty store; task, run and artifact inventory equal (setSha256={_fullBackup.SetSha256[..12]}...)";
     }
 
     private async Task<string?> RestoreComposeBackupAsync()
     {
         const string restoreToken = "scenario-restore-studio-token-00000000000000000000";
         var targetData = NewTempDirectory();
-        var backupsDirectory = Path.Combine(targetData, "backup");
-        Directory.CreateDirectory(backupsDirectory);
-        File.Copy(_backupLocalPath, Path.Combine(backupsDirectory, Path.GetFileName(_backupLocalPath)));
+        CopyFullBackupTo(targetData, "backup");
 
         var port = FreePort();
         var targetUrl = $"http://127.0.0.1:{port}";
@@ -613,12 +660,52 @@ public sealed partial class ScenarioContext : IDisposable
         modeResponse.EnsureSuccessStatusCode();
 
         var restoreResponse = await targetClient.PostAsJsonAsync(
-            "/api/v1/management/restore",
-            new RestoreRequest(_backupResult.BackupId));
-        var restore = await ReadAsync<RestoreResult>(restoreResponse);
+            $"/api/v1/management/backups/full/{_fullBackup.Id}/restore", new { });
+        var restore = await ReadAsync<RestoreFullBackupResult>(restoreResponse);
         Assert.True(restore.Restored, restore.Message);
-        Assert.Equal(_backupResult.Sha256, restore.Sha256);
-        return $"restored through a second Task Server container; inventory hash equal ({restore.Sha256[..12]}...)";
+        // Restore also replaces the principal store. Reconnect with the source
+        // installation's Studio credential rather than the empty target's
+        // temporary bootstrap credential.
+        using var restoredClient = ProtocolClient(targetUrl, RequiredEnvironment("SCENARIO_TARGET_TOKEN"));
+        await AssertRestoredInventoryAsync(restoredClient);
+        return $"restored full set through a second Task Server container; task, run and artifact inventory equal (setSha256={_fullBackup.SetSha256[..12]}...)";
+    }
+
+    private void CopyFullBackupTo(string targetData, string backupDirectory)
+    {
+        var destination = Path.Combine(targetData, backupDirectory, "full", _fullBackup.Id);
+        Directory.CreateDirectory(destination);
+        foreach (var source in Directory.EnumerateFiles(_fullBackupLocalPath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(_fullBackupLocalPath, source);
+            var target = Path.Combine(destination, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(source, target);
+        }
+    }
+
+    private async Task AssertRestoredInventoryAsync(HttpClient targetClient)
+    {
+        var verified = await ReadAsync<VerifyFullBackupResult>(
+            await targetClient.PostAsJsonAsync(
+                $"/api/v1/management/backups/full/{_fullBackup.Id}/verify", new { }));
+        Assert.True(verified.Verified);
+        Assert.Equal(_fullBackup.SetSha256, verified.Summary.SetSha256);
+        var restored = await targetClient.GetFromJsonAsync<TaskHistoryDto>(
+            $"/api/v1/projects/{_project.ProjectId}/tasks/{_task.TaskKey}/history");
+        Assert.NotNull(restored);
+        Assert.Equal(_backupHistory.Task.TaskId, restored.Task.TaskId);
+        Assert.Equal(_backupHistory.Task.State, restored.Task.State);
+        Assert.Equal(_backupHistory.Runs.Select(run => (run.RunId, run.Fence, run.ResultSha)),
+            restored.Runs.Select(run => (run.RunId, run.Fence, run.ResultSha)));
+        Assert.Equal(_backupHistory.Artifacts.Select(artifact => (artifact.ArtifactId, artifact.Sha256)),
+            restored.Artifacts.Select(artifact => (artifact.ArtifactId, artifact.Sha256)));
+        var restoredReview = await targetClient.GetFromJsonAsync<ReviewAttemptDto>(
+            $"/api/v1/reviews/attempts/{_backupReview.AttemptId}");
+        Assert.Equal(_backupReview, restoredReview);
+        var canonicalSha = (await GitOutputAsync(_root, "ls-remote", _bareRepositoryPath,
+            "refs/heads/main")).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0];
+        Assert.Equal(_canonicalShaAtBackup, canonicalSha);
     }
 
     private async Task<string> CreateFakeCodingCliAsync(string directory)
