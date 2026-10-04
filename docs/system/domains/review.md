@@ -1,12 +1,37 @@
 # Review Domain Map
 
-Version: 2026-09-27
+Version: 2026-10-04
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Lifetime review budget
+
+Each card carries `review-round-budget.json`, an attempt-id deduped count of
+delivered local and Remote Review rounds. The count survives operator requeues,
+`/continue`, and evidence epoch changes. Existing cards seed it from their
+review artifacts. Project settings expose `maxDeliveredReviewRounds` (default
+4) and `maxAutoReissueAttempts` (default 2) through
+`PUT /api/projects/{projectName}/review-round-budgets`; both limits are lifetime
+per card. The task detail shows the delivered round count, limit, and aspect
+that spent the budget. Operator automation uses the same counter.
+
+An aspect's consecutive block streak keys on its aspect id, independent of the
+finding summary or epoch. After two prior consecutive blocks, or when the
+lifetime round or reissue budget is spent, a further non-build aspect block is
+recorded as `concerns`. One linked follow-up card carries all open findings;
+`references.raisedFollowUps` points to it from the delivery. The card has one
+review-budget follow-up; later degraded rounds append their findings to it.
+The delivery then follows the ordinary acceptance
+and integration rules. A build/test failure or tests-and-evidence block is
+never degraded; deterministic gates continue to own those failures.
+For Remote Review, the accepted settlement journal carries the original
+blocking verdicts and budget decision. Restart reconciliation restores the
+round ledger and linked follow-up before it resumes delivery integration.
 
 ## Concern fix and scoped re-review contract
 
 `ReviewFollowUpPolicy` is the plane-neutral decision used by local aspect review
-and Remote Review. A blocking verdict keeps the review-finding route. A real,
+and Remote Review. A blocking verdict uses the review-finding route while its
+lifetime budget remains available. A real,
 actionable `concerns` verdict gets one automatic coding round by default; the
 project setting `maxReviewConcernRounds` sets the bound and `0` disables it.
 Set these project controls with `PUT /api/projects/{projectName}/review-follow-up`.
@@ -26,7 +51,7 @@ updated project settings, where the concern limit is named
 }
 ```
 
-`review-concern-round.json` is the single per-card review-driven round ledger.
+`review-concern-round.json` is the per-card concern-fix round ledger.
 It records both concern and blocking-finding context, while only concern rounds
 consume the configured concern budget. The UI reports `concern round 1 of 1
 used`. A second concerns result is parked in Human Review with the remaining

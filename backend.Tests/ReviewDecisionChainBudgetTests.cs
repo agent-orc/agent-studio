@@ -3,10 +3,9 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Locks the per-attempt-epoch reissue budget (AGT-1935 / AGT-2260):
+/// Locks the lifetime reissue budget:
 /// <see cref="ReviewDecisionOrchestrator.CountReissuesInCurrentChain"/> counts the
-/// reissues recorded in the latest operator-owned attempt epoch. Automated
-/// verdicts do not replenish the budget; an explicit OperatorRequeue does.
+/// reissues recorded for the card across operator-owned attempt epochs.
 /// </summary>
 public class ReviewDecisionChainBudgetTests
 {
@@ -76,7 +75,7 @@ public class ReviewDecisionChainBudgetTests
     }
 
     [Fact]
-    public void OperatorRequeue_OpensFreshEpoch()
+    public void OperatorRequeue_DoesNotReplenishBudget()
     {
         var records = new[]
         {
@@ -86,7 +85,7 @@ public class ReviewDecisionChainBudgetTests
             Rec(ReviewDecisionKind.OperatorRequeue, epoch: 1),
             Rec(ReviewDecisionKind.Reissue, epoch: 1),
         };
-        Assert.Equal(1, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, Job));
+        Assert.Equal(3, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, Job));
     }
 
     [Fact]
@@ -160,13 +159,13 @@ public class ReviewDecisionChainBudgetTests
 }
 
 /// <summary>
-/// End-to-end coverage of the per-attempt-epoch reissue budget through
+/// End-to-end coverage of the lifetime reissue budget through
 /// the REAL on-disk decision journal: records are appended with
 /// <see cref="ReviewDecisionLog.Append"/> and counted back with
 /// <see cref="ReviewDecisionOrchestrator.CountReissuesInCurrentChain"/> over
 /// <see cref="ReviewDecisionLog.ReadAll"/> - the exact composition the private
 /// production <c>CountPriorReissues(workspace, project, jobId)</c> performs. This
-/// proves the operator epoch boundary survives the JSONL round-trip
+/// proves the operator epoch boundary cannot reset the count after a JSONL round-trip
 /// (including the <see cref="ReviewDecisionKind"/> string-enum converter), which
 /// the in-memory unit cases above do not exercise. It runs fully isolated in a
 /// temp workspace - no live backend or integration host is required - which is the
@@ -213,7 +212,7 @@ public sealed class ReviewDecisionChainBudgetJournalTests : IDisposable
         => Assert.Equal(0, CurrentChainReissues());
 
     [Fact]
-    public void PersistedOperatorRequeueStartsFreshEpoch()
+    public void PersistedOperatorRequeueKeepsLifetimeBudget()
     {
         Append(ReviewDecisionKind.Reissue, 1);
         Append(ReviewDecisionKind.Reissue, 2);
@@ -221,7 +220,7 @@ public sealed class ReviewDecisionChainBudgetJournalTests : IDisposable
         Append(ReviewDecisionKind.OperatorRequeue, 4, epoch: 1);
         Append(ReviewDecisionKind.Reissue, 5, epoch: 1);
 
-        Assert.Equal(1, CurrentChainReissues());
+        Assert.Equal(3, CurrentChainReissues());
     }
 
     [Fact]

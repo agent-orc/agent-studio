@@ -1,5 +1,12 @@
 # Filesystem Contract
 
+`review-round-budget.json` is an optional card-folder sidecar. It records one
+entry per delivered review attempt with its blocking aspect ids, any aspects
+degraded to concerns, the aspect that spent the lifetime budget, and the
+linked follow-up key. Entries are deduped by attempt id and move with the card
+between lanes. Missing legacy files seed from existing review artifacts when
+the next round is delivered; an operator epoch does not clear this file.
+
 ## Where Jobs Live
 
 For every newly onboarded project, task metadata and evidence live in the

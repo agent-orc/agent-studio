@@ -38,6 +38,15 @@
     (generateCommitMessage)="generateCommitMessage()"
     (addCommit)="addCommitFromMenu()" />
 
+  @if (detail().info.reviewProjection?.roundBudget; as budget) {
+    @if (budget.delivered > 0) {
+      <div class="detail__review-budget" data-testid="task-detail-review-round-budget">
+        Review round {{ budget.delivered }} of {{ budget.maximum }}
+        @if (budget.spentBy) { · {{ budget.spentBy }} spent the budget }
+      </div>
+    }
+  }
+
   <app-archived-task-notice
     [taskId]="detail().info.id"
     [lane]="detail().info.state"
