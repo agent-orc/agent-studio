@@ -38,7 +38,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     private readonly string _origin;
     private readonly ScriptedGate _gate = new();
     private readonly ErrorLog _errors = new();
-    private DateTimeOffset _clock = DateTimeOffset.UtcNow;
+    private DateTimeOffset _clock = new(2026, 9, 27, 10, 0, 0, TimeSpan.Zero);
 
     public BatchGatePilotServiceTests()
     {
@@ -177,6 +177,54 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         }
         Assert.Empty(store.ListPending());
         Assert.True(pilot.Report(ProjectName).CorrectnessFloorMet);
+    }
+
+    [Fact]
+    public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PUBLISH-RECOVER", "docs/publish-recover.md");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        string? blockedPath = null;
+        _gate.Batch = request =>
+        {
+            var manifest = Assert.Single(store.ListManifests());
+            blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
+            Directory.CreateDirectory(blockedPath);
+            return Green(request.ExpectedSha);
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var closed = Assert.Single(store.ListManifests());
+        Assert.NotEqual(closed.BaseSha, RemoteTip());
+        Assert.Null(store.ReadPublication(closed.BatchId));
+        var publishing = AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
+        Assert.NotNull(publishing.BatchRunId);
+        Assert.True(publishing.RefMutationFence!.Value > 0);
+        AssertLane(member.Key, TaskStates.AutoReview);
+
+        Directory.Delete(blockedPath!);
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 1);
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        var publication = store.ReadPublication(closed.BatchId);
+        Assert.NotNull(publication);
+        Assert.Equal(publishing.RefMutationFence!.Value, publication.RefMutationFence);
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        AssertPhase(store, closed.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.NotNull(store.TryReadMember(closed.BatchId, member.Key, publication.BatchRunId));
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListPending());
     }
 
     [Fact]
@@ -419,10 +467,10 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         // The report request times out on the client while the gate runs and
         // the client retries the same settled report.
         var first = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
-            DateTimeOffset.UtcNow, CancellationToken.None);
+            _clock, CancellationToken.None);
         await WaitForAsync(() => _gate.FallbackRuns == 1);
         var retry = pilot.RunEmergencyFallbackAsync(task, passed.ReviewAttempt!, source,
-            DateTimeOffset.UtcNow, CancellationToken.None);
+            _clock, CancellationToken.None);
         release.SetResult();
         await Task.WhenAll(first, retry);
 
@@ -549,14 +597,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
             id = key, title = key, state = TaskStates.AutoReview, order = 1, agent = "claude",
-            kind = TaskKinds.Task, enteredLaneAt = DateTime.UtcNow,
+            kind = TaskKinds.Task, enteredLaneAt = _clock.UtcDateTime,
             commits = new[]
             {
                 new
                 {
                     sha = resultSha, shortSha = resultSha[..9], message = key,
                     repository = RepositoryId, branch = "agent-studio/results/" + key,
-                    runAttemptId = run.AttemptId, resultSha, at = DateTime.UtcNow,
+                    runAttemptId = run.AttemptId, resultSha, at = _clock.UtcDateTime,
                 },
             },
         }));
@@ -566,7 +614,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         {
             TaskKey = key, RunAttemptId = run.AttemptId, AttemptChainId = "chain-" + key,
             Project = ProjectName, Repository = RepositoryId, ResultSha = resultSha,
-            ImmutableResultRef = resultRef, CompletedAtUtc = DateTimeOffset.UtcNow,
+            ImmutableResultRef = resultRef, CompletedAtUtc = _clock,
         });
         var plan = new Contract.ReviewPlanDto(
             [new Contract.ReviewCommandDto("aspect-requirement-fit", "requirement-fit", "claude", [],
@@ -590,7 +638,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.True(passed.Accepted, passed.Message);
         var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(key, _watchPath)!;
         factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(task,
-            passed.ReviewAttempt!, authority.GetRun(run.AttemptId)!, DateTimeOffset.UtcNow);
+            passed.ReviewAttempt!, authority.GetRun(run.AttemptId)!, _clock);
         return new SeededMember(key, run.AttemptId, reviewId, resultSha);
     }
 
@@ -655,10 +703,11 @@ public sealed class BatchGatePilotServiceTests : IDisposable
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(30);
+        var elapsed = Stopwatch.StartNew();
         while (!condition())
         {
-            Assert.True(DateTime.UtcNow < deadline, "The pilot did not reach the awaited phase.");
+            Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(30),
+                "The pilot did not reach the awaited phase.");
             await Task.Delay(50);
         }
     }
@@ -741,6 +790,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                 services.RemoveAll<RefMutationLeaseService>();
                 services.AddSingleton(new RefMutationLeaseService(
                     Path.Combine(_workspace, "ref-mutation-leases")));
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(new PilotTimeProvider(() => _clock));
                 services.AddSingleton<ILoggerProvider>(_errors);
                 services.RemoveAll<IBuildTestGateRunner>();
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
@@ -750,6 +801,11 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                 services.Remove(tick);
             });
         });
+
+    private sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now();
+    }
 
     private static string Git(string cwd, params string[] args)
     {

@@ -11,6 +11,8 @@ namespace AgentStudio.Tests;
 
 public sealed class BatchGateReviewPlanTests
 {
+    private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
+
     [Fact]
     public void DocumentationOnlyResultDefersBuildTestsButKeepsModelReview()
     {
@@ -45,7 +47,7 @@ public sealed class BatchGateReviewPlanTests
             {
                 TaskKey = "task", RunAttemptId = "run", AttemptChainId = "chain",
                 Project = "project", Repository = "repo", ResultSha = resultSha,
-                ImmutableResultRef = resultRef, CompletedAtUtc = DateTimeOffset.UtcNow,
+                ImmutableResultRef = resultRef, CompletedAtUtc = Now,
             });
             File.WriteAllText(Path.Combine(folder, "prompt.md"), "Document the pilot.\n");
             var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
@@ -83,7 +85,7 @@ public sealed class BatchGateReviewPlanTests
                 TaskKey = "task", RunAttemptId = "run-code", AttemptChainId = "chain-code",
                 Project = "project", Repository = "repo", ResultSha = codeSha,
                 ImmutableResultRef = "refs/heads/agent-studio/results/code-task",
-                CompletedAtUtc = DateTimeOffset.UtcNow,
+                CompletedAtUtc = Now,
             });
             var codePlan = builder.Build(task, repo,
                 new ProjectSettings { BatchGate = new(Enabled: true) }, "develop");

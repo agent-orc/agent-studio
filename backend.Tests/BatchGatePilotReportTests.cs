@@ -12,7 +12,7 @@ public sealed class BatchGatePilotReportTests
         try
         {
             var store = new BatchGateStore(root);
-            var now = DateTimeOffset.UtcNow;
+            var now = DateTimeOffset.UnixEpoch.AddDays(20_000);
             var sha = new string('a', 40);
             var scope = new BatchGateScope("project", "repo", "develop", "full", "digest", "v1");
             var members = Enumerable.Range(0, 4).Select(index => new BatchGateSubject(

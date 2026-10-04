@@ -7,7 +7,8 @@ namespace AgentStudio.Pipeline;
 public sealed record BatchGateState(
     string BatchId, string MembershipDigest, BatchPhase Phase,
     string? CandidateSha, long CoordinatorFence, DateTimeOffset RecordedAtUtc,
-    string? Reason = null);
+    string? Reason = null, string? BatchRunId = null,
+    long? RefMutationFence = null);
 
 public sealed record BatchGateRunRecord(
     string BatchRunId, string BatchId, string MembershipDigest, string BaseSha,

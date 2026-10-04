@@ -8,7 +8,7 @@ public sealed class BatchGatePublicationPolicyTests
     private const string Base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Candidate = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static readonly BatchGateScope Scope = new("p", "r", "develop", "full", "digest", "v1");
-    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+    private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
     private static BatchGateSubject Member() => new(
         "task", "p", "r", "develop", "full", "digest", "v1",
         "refs/heads/agent-studio/results/one", Base, "run-1", 1, 1, Base,

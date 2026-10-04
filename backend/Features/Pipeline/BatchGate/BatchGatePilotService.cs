@@ -25,6 +25,7 @@ public sealed class BatchGatePilotService
     private readonly RemoteDeliveryIntegrationCoordinator _directIntegration;
     private readonly ILogger<BatchGatePilotService> _logger;
     private readonly ILoadThrottleGate? _load;
+    private readonly TimeProvider _time;
     private readonly SemaphoreSlim _tick = new(1, 1);
     private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
 
@@ -40,7 +41,7 @@ public sealed class BatchGatePilotService
         HumanReviewEscalation reviewJournal,
         RemoteDeliveryIntegrationCoordinator directIntegration,
         ILogger<BatchGatePilotService> logger,
-        ILoadThrottleGate? load = null)
+        ILoadThrottleGate? load = null, TimeProvider? timeProvider = null)
     {
         _store = store;
         _leases = leases;
@@ -56,6 +57,7 @@ public sealed class BatchGatePilotService
         _directIntegration = directIntegration;
         _logger = logger;
         _load = load;
+        _time = timeProvider ?? TimeProvider.System;
     }
 
     public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
@@ -129,7 +131,7 @@ public sealed class BatchGatePilotService
         // result or current generation may have changed before settlement.
         return new BatchGatePendingRecord(
             review.AttemptId, subject, repo, task.WatchPath, task.FolderPath,
-            project.IntegrationStrategy, PipelineTypes.Resolve(task), DateTimeOffset.UtcNow);
+            project.IntegrationStrategy, PipelineTypes.Resolve(task), _time.GetUtcNow());
     }
 
     public BatchGatePilotSnapshot Report(string project)
@@ -225,7 +227,7 @@ public sealed class BatchGatePilotService
                     first.RepositoryPath, scope.IntegrationBranch, ct);
                 if (baseSha is null) continue;
                 var formed = BatchGatePolicy.Form(current.Select(item => item.Subject),
-                    scope, baseSha, options, DateTimeOffset.UtcNow,
+                    scope, baseSha, options, _time.GetUtcNow(),
                     _authority.ListPendingReviewAttempts().Count,
                     _load?.Current.Throttle == true);
                 if (formed.UsePerTaskGate)
@@ -335,25 +337,103 @@ public sealed class BatchGatePilotService
         {
             ct.ThrowIfCancellationRequested();
             var publication = _store.ReadPublication(manifest.BatchId);
-            if (publication is null) continue;
             var phase = _store.LatestState(manifest.BatchId).Phase;
             if (phase is not (BatchPhase.Publishing or BatchPhase.Published)) continue;
+            if (phase == BatchPhase.Publishing)
+            {
+                var pendingRepo = waiting.FirstOrDefault(item =>
+                    manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
+                        && member.RunAttempt == item.Subject.RunAttempt));
+                if (pendingRepo is null) continue;
+                BatchCoordinatorLease? lease;
+                try { lease = _leases.TryAcquire(manifest.Scope, "batch-publication-recovery"); }
+                catch (IOException) { continue; }
+                if (lease is null) continue;
+                try
+                {
+                    using var refLease = await _refLeases.AcquireAsync(
+                        manifest.Scope.Project, pendingRepo.RepositoryPath,
+                        manifest.Scope.IntegrationBranch, ct).ConfigureAwait(false);
+                    if (!_leases.IsCurrent(lease)
+                        || !RefMutationLeaseService.IsCurrent(refLease)) continue;
+                    if (publication is null)
+                    {
+                        var state = _store.LatestState(manifest.BatchId);
+                        var remote = _git.FetchBatchIntegrationTip(pendingRepo.RepositoryPath,
+                            manifest.Scope.IntegrationBranch, ct);
+                        if (remote is null) continue;
+                        if (!string.Equals(remote, state.CandidateSha,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            State(manifest, BatchPhase.Abandoned, state.CandidateSha,
+                                lease.Fence, "publication interrupted before verification; reconstruct on current base");
+                            ReturnToPending(manifest);
+                            continue;
+                        }
+                        // The remote itself is the missing publication proof.
+                        // Only a passing recorded run for this closed subject
+                        // may be attributed to that exact remote SHA.
+                        var matching = _store.ListRuns(manifest.BatchId)
+                            .Where(run => run.CandidateSha == state.CandidateSha
+                                && (state.BatchRunId is null
+                                    || run.BatchRunId == state.BatchRunId)
+                                && run.CoordinatorFence == state.CoordinatorFence
+                                && run.MembershipDigest == manifest.MembershipDigest
+                                && run.BaseSha == manifest.BaseSha
+                                && run.GateProfileDigest == manifest.Scope.GateProfileDigest
+                                && _store.ReadVerdict(manifest.BatchId, run.BatchRunId) is { } verdict
+                                && verdict.Outcome == "pass"
+                                && verdict.MembershipDigest == manifest.MembershipDigest
+                                && verdict.TestedCandidateSha == run.CandidateSha
+                                && verdict.GateProfileDigest == run.GateProfileDigest
+                                && verdict.EvidencePath == run.EvidencePath
+                                && File.Exists(run.EvidencePath))
+                            .ToArray();
+                        if (matching.Length != 1)
+                        {
+                            State(manifest, BatchPhase.Paused, state.CandidateSha,
+                                lease.Fence, "batch-gate-evidence-missing");
+                            continue;
+                        }
+                        var recoveredRun = matching[0];
+                        if (!_leases.IsCurrent(lease)
+                            || !RefMutationLeaseService.IsCurrent(refLease)) continue;
+                        publication = new BatchGatePublication(
+                            manifest.BatchId, manifest.MembershipDigest,
+                            recoveredRun.BatchRunId, manifest.BaseSha,
+                            recoveredRun.CandidateSha, remote,
+                            recoveredRun.CoordinatorFence,
+                            state.RefMutationFence ?? refLease.Fence,
+                            _time.GetUtcNow());
+                        _store.RecordPublication(publication);
+                    }
+                    var publishedRun = _store.ReadRun(
+                        manifest.BatchId, publication.BatchRunId);
+                    if (publication.MembershipDigest != manifest.MembershipDigest
+                        || publication.PreTipSha != manifest.BaseSha
+                        || publication.TestedCandidateSha != publishedRun.CandidateSha
+                        || publication.VerifiedRemoteSha != publishedRun.CandidateSha
+                        || _store.ReadVerdict(manifest.BatchId,
+                            publishedRun.BatchRunId)?.Outcome != "pass")
+                        throw new InvalidDataException("batch-gate-evidence-missing");
+                    if (!_leases.IsCurrent(lease)
+                        || !RefMutationLeaseService.IsCurrent(refLease)) continue;
+                    var local = _git.FastForwardIntegrationBranch(
+                        pendingRepo.RepositoryPath, manifest.Scope.IntegrationBranch,
+                        publication.TestedCandidateSha);
+                    if (!local.Success) continue;
+                    State(manifest, BatchPhase.Published,
+                        publication.TestedCandidateSha, lease.Fence,
+                        "resumed verified publication");
+                }
+                finally { _leases.Release(lease); }
+            }
+            if (publication is null) continue;
             var run = _store.ReadRun(manifest.BatchId, publication.BatchRunId);
             if (publication.TestedCandidateSha != run.CandidateSha
                 || publication.VerifiedRemoteSha != run.CandidateSha
                 || _store.ReadVerdict(manifest.BatchId, run.BatchRunId)?.Outcome != "pass")
                 throw new InvalidDataException("batch-gate-evidence-missing");
-            if (phase == BatchPhase.Publishing)
-            {
-                var pendingRepo = waiting.FirstOrDefault(item =>
-                    manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey));
-                if (pendingRepo is null) continue;
-                var local = _git.FastForwardIntegrationBranch(pendingRepo.RepositoryPath,
-                    manifest.Scope.IntegrationBranch, run.CandidateSha);
-                if (!local.Success) continue;
-                State(manifest, BatchPhase.Published, run.CandidateSha,
-                    publication.CoordinatorFence, "resumed verified publication");
-            }
             foreach (var member in manifest.Members)
             {
                 var pending = waiting.FirstOrDefault(item =>
@@ -462,7 +542,7 @@ public sealed class BatchGatePilotService
                 _store.RecordReplay(new BatchGateReplayRecord(
                     manifest.BatchId, manifest.MembershipDigest, key,
                     pending[key].Subject.ResultSha, assembly.CandidateSha, null,
-                    [], [], "cascade-deferred", DateTimeOffset.UtcNow));
+                    [], [], "cascade-deferred", _time.GetUtcNow()));
                 var task = _scanner.FindJob(key, pending[key].WatchPath);
                 if (task is not null)
                     BatchGateOwnershipStore.Write(task.FolderPath,
@@ -553,7 +633,8 @@ public sealed class BatchGatePilotService
             // Only the heartbeat cancels this batch on its own: the coordinator
             // lease is gone, so the batch may not publish. A verified remote
             // publication keeps its phase for the next tick's recovery.
-            if (_store.ReadPublication(manifest.BatchId) is null)
+            if (_store.ReadPublication(manifest.BatchId) is null
+                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
             {
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence,
                     "coordinator lease lost during the gate");
@@ -565,7 +646,8 @@ public sealed class BatchGatePilotService
             _logger.LogError(ex, "batch-gate-failed batch={BatchId}", manifest.BatchId);
             // A verified remote publication is durable. Keep its phase so the
             // next tick can finish local attribution and lane release.
-            if (_store.ReadPublication(manifest.BatchId) is null)
+            if (_store.ReadPublication(manifest.BatchId) is null
+                && _store.LatestState(manifest.BatchId).Phase != BatchPhase.Publishing)
                 State(manifest, BatchPhase.Paused, null, lease.Fence, ex.GetType().Name);
         }
         finally
@@ -646,7 +728,8 @@ public sealed class BatchGatePilotService
                 }
                 return;
             }
-            State(manifest, BatchPhase.Publishing, assembly.CandidateSha, lease.Fence);
+            State(manifest, BatchPhase.Publishing, assembly.CandidateSha,
+                lease.Fence, runId: run.BatchRunId, refFence: refLease.Fence);
             if (!_leases.IsCurrent(lease) || !RefMutationLeaseService.IsCurrent(refLease))
             {
                 State(manifest, BatchPhase.Abandoned, assembly.CandidateSha,
@@ -673,7 +756,7 @@ public sealed class BatchGatePilotService
             _store.RecordPublication(new BatchGatePublication(
                 manifest.BatchId, manifest.MembershipDigest, run.BatchRunId,
                 manifest.BaseSha, assembly.CandidateSha, published.Sha,
-                lease.Fence, refLease.Fence, DateTimeOffset.UtcNow));
+                lease.Fence, refLease.Fence, _time.GetUtcNow()));
             // Local ref follows the verified remote object. Acceptance still
             // checks ancestry and the batch record before Completed.
             var local = _git.FastForwardIntegrationBranch(repo,
@@ -708,7 +791,7 @@ public sealed class BatchGatePilotService
                     failedManifest.BaseSha, failedManifest.Scope, subset);
                 var diagnostic = new BatchGateManifest(
                     Guid.NewGuid().ToString("N"), failedManifest.Scope,
-                    failedManifest.BaseSha, digest, DateTimeOffset.UtcNow,
+                    failedManifest.BaseSha, digest, _time.GetUtcNow(),
                     subset.ToArray(), [], subset.Select(item => item.TaskKey).ToArray(),
                     failedManifest.BatchId);
                 _store.CloseManifest(diagnostic);
@@ -805,14 +888,14 @@ public sealed class BatchGatePilotService
             Guid.NewGuid().ToString("N"), manifest.BatchId,
             manifest.MembershipDigest, manifest.BaseSha, sha,
             manifest.Scope.GateProfile, manifest.Scope.GateProfileDigest,
-            Environment.MachineName, fence, commands, DateTimeOffset.UtcNow,
+            Environment.MachineName, fence, commands, _time.GetUtcNow(),
             Path.Combine(_store.BatchDirectory(manifest.BatchId), "gate-evidence.jsonl"));
     }
 
     private async Task<BuildTestGateResult> RunGateAsync(BatchGateRunRecord run,
         string repo, CancellationToken ct, Func<bool>? stillCurrent = null)
     {
-        var started = DateTimeOffset.UtcNow;
+        var started = _time.GetUtcNow();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var gateTask = _gate.RunAsync(new BuildTestGateRequest(
                 repo, run.CandidateSha, "batch-gate")
@@ -855,7 +938,7 @@ public sealed class BatchGatePilotService
             project,
             run.BatchId, run.BatchRunId, result.TestedSha ?? run.CandidateSha,
             result.Verdict.ToString(), Environment.MachineName, started,
-            DateTimeOffset.UtcNow, result.GateQueueWaitMs, overloadMinutes,
+            _time.GetUtcNow(), result.GateQueueWaitMs, overloadMinutes,
             run.EvidencePath));
         return result;
     }
@@ -867,7 +950,7 @@ public sealed class BatchGatePilotService
             run.BatchRunId, run.BatchId, run.MembershipDigest,
             gate.TestedSha ?? run.CandidateSha, run.GateProfileDigest,
             classification is "pass" or "flaky-quarantined-pass" ? "pass" : "fail", classification,
-            run.EvidencePath, DateTimeOffset.UtcNow);
+            run.EvidencePath, _time.GetUtcNow());
         _store.RecordVerdict(verdict);
         return verdict;
     }
@@ -888,7 +971,7 @@ public sealed class BatchGatePilotService
             subject.ResultSha, replay.Replacements.Select(item => item.RebasedSha).ToArray(),
             manifest.BatchId, manifest.MembershipDigest, manifest.BaseSha,
             run.CandidateSha, run.GateProfileDigest, run.BatchRunId,
-            "pass", run.EvidencePath, DateTimeOffset.UtcNow);
+            "pass", run.EvidencePath, _time.GetUtcNow());
         if (_store.TryReadMember(manifest.BatchId, subject.TaskKey, run.BatchRunId) is null)
             _store.RecordMember(record);
         if (!_store.CanRelease(subject, manifest.BatchId, run.BatchRunId))
@@ -931,7 +1014,7 @@ public sealed class BatchGatePilotService
         {
             Id = $"batch-gate:{manifest.BatchId}:{run.BatchRunId}:{replay.TaskKey}",
             Classification = IntegrationRecordClasses.IntegratedVerified,
-            RecordedAtUtc = DateTime.UtcNow,
+            RecordedAtUtc = _time.GetUtcNow().UtcDateTime,
             IntegrationBranch = manifest.Scope.IntegrationBranch,
             CommitShas = shas,
             Evidence = $"Batch {manifest.BatchId}, run {run.BatchRunId}, "
@@ -1000,7 +1083,7 @@ public sealed class BatchGatePilotService
             BatchGateOwnershipStore.Write(task.FolderPath,
                 new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
                     FallbackGateActive: true));
-            var started = DateTimeOffset.UtcNow;
+            var started = _time.GetUtcNow();
             var gate = await _gate.RunAsync(new BuildTestGateRequest(
                     pending.RepositoryPath, pending.Subject.ResultSha, "batch-fallback")
                 {
@@ -1019,7 +1102,7 @@ public sealed class BatchGatePilotService
                     pending.Subject.Project, null, null,
                     gate.TestedSha ?? pending.Subject.ResultSha,
                     gate.Verdict.ToString(), Environment.MachineName,
-                    started, DateTimeOffset.UtcNow, gate.GateQueueWaitMs, 0, evidence));
+                    started, _time.GetUtcNow(), gate.GateQueueWaitMs, 0, evidence));
             if (gate.Verdict != BuildTestGateVerdict.Ok
                 || !string.Equals(gate.TestedSha, pending.Subject.ResultSha,
                     StringComparison.OrdinalIgnoreCase))
@@ -1114,9 +1197,11 @@ public sealed class BatchGatePilotService
     }
 
     private void State(BatchGateManifest manifest, BatchPhase phase,
-        string? sha, long fence, string? reason = null)
+        string? sha, long fence, string? reason = null,
+        string? runId = null, long? refFence = null)
         => _store.AppendState(new BatchGateState(manifest.BatchId,
-            manifest.MembershipDigest, phase, sha, fence, DateTimeOffset.UtcNow, reason));
+            manifest.MembershipDigest, phase, sha, fence, _time.GetUtcNow(),
+            reason, runId, refFence));
 
     private static BatchGateScope Scope(BatchGateSubject subject)
         => new(subject.Project, subject.Repository,

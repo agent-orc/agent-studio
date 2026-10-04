@@ -13,7 +13,7 @@ public sealed class BatchGateLeaseServiceTests
         var scope = new BatchGateScope("p", "r", "develop", "full", "digest", "v1");
         try
         {
-            var leases = new BatchGateLeaseService(root, () => now);
+            var leases = new BatchGateLeaseService(root, now: () => now);
             var first = leases.TryAcquire(scope, "host-a")!;
             Assert.True(leases.IsCurrent(first));
             Assert.Null(leases.TryAcquire(scope, "host-b"));

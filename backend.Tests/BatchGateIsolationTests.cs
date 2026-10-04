@@ -6,7 +6,7 @@ namespace AgentStudio.Tests;
 public sealed class BatchGateIsolationTests
 {
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+    private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
     private static BatchGateSubject Member(int index) => new(
         $"task-{index}", "project", "repo", "develop", "full", "digest", "v1",
         "refs/heads/agent-studio/results/one", Sha, "run-1", 1, 1, Sha,

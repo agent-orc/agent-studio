@@ -6,6 +6,8 @@ namespace AgentStudio.Tests;
 
 public sealed class BatchGateLaneReleaseTests
 {
+    private static readonly DateTimeOffset Now = DateTimeOffset.UnixEpoch.AddDays(20_000);
+
     [Fact]
     public void PendingOrMissingBatchRecordBlocksLaneRelease()
     {
@@ -18,7 +20,7 @@ public sealed class BatchGateLaneReleaseTests
                 "refs/heads/agent-studio/results/task", new string('a', 40),
                 "run", 1, 1, new string('a', 40),
                 true, true, true, true, false, null, true,
-                DateTimeOffset.UtcNow, 1);
+                Now, 1);
             var projection = new AttemptAuthorityProjection("task", 1,
                 null, null, null, [], [], false);
             Assert.Equal("batch-gate-evidence-missing",
@@ -47,14 +49,14 @@ public sealed class BatchGateLaneReleaseTests
                 "refs/heads/agent-studio/results/task", new string('a', 40),
                 "old-run", 1, 1, new string('a', 40),
                 true, true, true, true, false, null, true,
-                DateTimeOffset.UtcNow, 1);
+                Now, 1);
             var oldMarker = new BatchGateOwnership("old-review", subject);
             BatchGateOwnershipStore.Write(root, oldMarker);
             var reviewSubject = new ReviewSubjectDto("subject", "repo", new string('b', 40),
-                "new-run", "requirements", "policy", [], DateTime.UtcNow);
+                "new-run", "requirements", "policy", [], Now.UtcDateTime);
             var newReview = new ReviewAttemptDto("new-review", "task", "repo", "new-run",
                 null, reviewSubject, AttemptLifecycleState.Completed, null, 2, 2,
-                DateTime.UtcNow, DateTime.UtcNow, ReviewTerminalOutcome.Pass,
+                Now.UtcDateTime, Now.UtcDateTime, ReviewTerminalOutcome.Pass,
                 null, new string('b', 40), null, []);
             var projection = new AttemptAuthorityProjection("task", 2, null,
                 reviewSubject, newReview, [], [newReview], false);

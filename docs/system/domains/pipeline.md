@@ -96,9 +96,15 @@ rechecked against their durable fences immediately before the push. When the
 coordinator heartbeat loses its lease while the suite runs, the gate stops,
 the batch is recorded `Abandoned` with `coordinator lease lost during the gate`,
 and its members return to the pending queue; other scopes in the same tick
-continue. The worker verifies
-the remote SHA before recording publication. The pilot publishes only a tested
-fast-forward candidate; it does not synthesize a merge commit after the gate.
+continue. The worker verifies the remote SHA before recording publication. If
+it stops after that remote advance and before the publication record, the
+`Publishing` state retains the selected
+run ID and ref-mutation fence. The next tick holds both leases, confirms
+the remote still resolves to the tested SHA and matches that passing durable run,
+then records publication and releases the members. If the remote differs, it
+returns the members for reconstruction on the current base. The pilot publishes
+only a tested fast-forward candidate; it does not synthesize a merge commit
+after the gate.
 Each admitted member receives an
 append-only batch-gate record. The card-local ownership marker makes both
 Human Review entry and Completed acceptance fail closed on missing or stale
