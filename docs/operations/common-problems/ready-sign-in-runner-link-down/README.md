@@ -19,36 +19,32 @@ related-adrs: []
 ChatGPT login. Both runner services were actually restarting with exit code 4
 because `http://127.0.0.1:15031` refused the Task Server connection.
 
-**Why.** The Windows `AgentRunner-TunnelKeeper` Scheduled Task was disabled.
-There was no `ssh.exe` reverse forward and no listener on the runner's port
-15031. The UI mapped every unknown provider-auth badge to sign-in guidance,
-even though an unknown badge meant that no fresh runner probe had arrived.
+**Why.** On 2026-09-06, the Windows `AgentRunner-TunnelKeeper` Scheduled Task
+was disabled. There was no `ssh.exe` reverse forward and no listener on the
+runner's port 15031. The UI mapped every unknown provider-auth badge to sign-in
+guidance, even though an unknown badge meant that no fresh runner probe had
+arrived. The Task Server's `LinkSupervisor` took ownership of this route on
+2026-09-25; the keeper remains disabled.
 
-**Diagnosis.** Check Execution Hosts first. A stale or down runner link names
-the last capability snapshot time and reports the Studio-side keeper cause. On
-the runner, confirm both services and the tunnel endpoint:
+**Diagnosis.** Check Execution Hosts and
+`GET /api/v1/management/links` first. The link resource supplies `state`,
+`lastHeartbeatAt`, `lastProbe`, and `lastError`. Check the operator feed for
+timestamped `link_down` and `link_up` transitions. On the runner, confirm both
+services and the tunnel endpoint:
 
 ```bash
 systemctl status agent-runner.service agent-runner-review.service
 curl -fsS http://127.0.0.1:15031/healthz
 ```
 
-On Windows, verify the keeper and reverse-forward process:
-
-```powershell
-Get-ScheduledTask -TaskName AgentRunner-TunnelKeeper
-Get-CimInstance Win32_Process -Filter "Name = 'ssh.exe'" | Select-Object ProcessId, CommandLine
-```
-
-**Recovery.** Use **Reconnect** in Execution Hosts. It enables and starts the
-configured keeper task without handling credentials. The runner services heal
-after the listener returns and the next capability advertisement changes the
-link to connected. If Reconnect fails, inspect the keeper log tail shown in the
-host details and follow
+**Recovery.** Use **Reconnect** in Execution Hosts. It asks the configured
+link supervisor to replace the route without handling credentials. The runner
+services heal after the listener returns and the next capability advertisement
+changes the resource to `up`. If Reconnect fails, inspect `lastError` and the
+link log under `<TaskRepository>/.logs/runner-links/`, then follow
 [Remote runner: persistent connection](../../setup/remote-runner-persistent-connection.md).
 
 **Fixed behavior.** Sign-in text now requires two explicit logout probes.
 Unknown or stale auth state reports runner/link unreachability. Execution Hosts
-shows connected, stale, or down snapshot state and supervises the Windows
-keeper. The registration script preserves the battery, start-when-available,
-and logon-trigger hardening.
+reads the link resource for state and recovery controls. The Windows keeper
+scripts remain a documented emergency path only.

@@ -358,6 +358,7 @@ public sealed class RemoteReviewDaemon
 
             var nextCapabilityAdvertisement = DateTime.UtcNow.AddMinutes(1);
             var admissionClosed = false;
+            var emptyClaimWarning = new ReviewClaimEmptyWarning();
             int? announcedSlotCeiling = null;
             var nextRetentionSweep = DateTime.MinValue;
             var consecutiveFaults = 0;
@@ -562,6 +563,8 @@ public sealed class RemoteReviewDaemon
                             // shutdown must not hide a successfully minted fence.
                             CancellationToken.None);
                         observedServer = true;
+                        if (emptyClaimWarning.Next(claim, DateTime.UtcNow) is { } warning)
+                            _log(warning);
                         if (string.Equals(claim.Status, "claimed", StringComparison.OrdinalIgnoreCase))
                         {
                             if (active.Any(slot => string.Equals(

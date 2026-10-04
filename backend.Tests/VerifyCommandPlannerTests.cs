@@ -4,6 +4,7 @@ using AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 using Xunit.Abstractions;
+using AgentStudio.TestSupport;
 
 namespace AgentStudio.Tests;
 
@@ -500,16 +501,7 @@ public sealed class VerifyCommandPlannerTests : IDisposable
     }
 
     private static string? FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "agent-taskboard.sln")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-        return null;
-    }
+        => RepositoryRoot.TryFind();
 
     private static void AssertCommand(
         VerifyCommand cmd, VerifyEcosystem ecosystem, VerifyCommandKind kind, string subdir, string command)

@@ -55,18 +55,48 @@ public static class BuiltProcessLauncher
         IReadOnlyDictionary<string, string?>? environment,
         params string[] arguments)
     {
-        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name ?? "Debug";
-        var assembly = Path.Combine(repositoryRoot, projectDirectory, "bin", configuration, "net10.0", assemblyName);
-        if (!File.Exists(assembly))
-            throw new FileNotFoundException(
-                $"Built component was not found. Build the solution before running this harness: {assembly}",
-                assembly);
+        var candidates = BuiltAssemblyCandidates(repositoryRoot, projectDirectory, assemblyName);
+        var assembly = candidates.FirstOrDefault(File.Exists)
+            ?? throw new FileNotFoundException(
+                "Built component was not found. Build the solution before running this harness: "
+                + string.Join(" or ", candidates),
+                candidates[0]);
 
         return StartProcess(
             "dotnet",
             new[] { assembly }.Concat(arguments).ToArray(),
             repositoryRoot,
             environment);
+    }
+
+    /// <summary>
+    /// Where the build put a sibling component, for both output layouts: the
+    /// classic <c>&lt;project&gt;/bin/&lt;Config&gt;/net10.0/</c> and the artifacts layout
+    /// <c>&lt;ArtifactsPath&gt;/bin/&lt;ProjectName&gt;/&lt;config&gt;/</c> that
+    /// <c>dotnet test -p:ArtifactsPath=...</c> (the documented isolation recipe on a
+    /// host with a running backend) produces. The layout is read from where the
+    /// running test assembly itself was built.
+    /// </summary>
+    private static IReadOnlyList<string> BuiltAssemblyCandidates(
+        string repositoryRoot,
+        string projectDirectory,
+        string assemblyName)
+    {
+        var testOutput = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var candidates = new List<string>();
+        if (testOutput.Parent?.Parent is { Name: "bin" } artifactsBin
+            && !testOutput.Name.StartsWith("net", StringComparison.OrdinalIgnoreCase))
+        {
+            var projectFile = Directory.Exists(Path.Combine(repositoryRoot, projectDirectory))
+                ? Directory.EnumerateFiles(Path.Combine(repositoryRoot, projectDirectory), "*.csproj").FirstOrDefault()
+                : null;
+            if (projectFile is not null)
+                candidates.Add(Path.Combine(
+                    artifactsBin.FullName, Path.GetFileNameWithoutExtension(projectFile), testOutput.Name, assemblyName));
+        }
+        var configuration = testOutput.Parent?.Name ?? "Debug";
+        candidates.Add(Path.Combine(repositoryRoot, projectDirectory, "bin", configuration, "net10.0", assemblyName));
+        return candidates;
     }
 
     /// <summary>Runs a short-lived command to completion (e.g. a `git` step seeding a fixture) and throws with captured output on a non-zero exit.</summary>
