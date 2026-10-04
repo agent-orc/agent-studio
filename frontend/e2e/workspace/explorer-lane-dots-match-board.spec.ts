@@ -78,17 +78,17 @@ async function installRoutes(page: Page): Promise<void> {
     const json = (body: unknown) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),
     });
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.includes('/api/tasks/grouped')) return json(feed());
+    if (url.includes('/api/v1/studio/board')) return json(feed());
     if (url.includes('/api/tasks/archive')) return json({ items: [], total: 0, offset: 0, limit: 50 });
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(Object.values(feed()).flat());
     if (url.includes('/api/watch-paths')) {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]);
     }
-    if (new URL(url).pathname === '/api/projects') return json([project]);
-    if (url.includes('/api/workspaces')) {
+    if (new URL(url).pathname === '/api/v1/projects') return json([project]);
+    if (url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) {
       return json([{
         id: 'ws-te', displayName: 'Economy', sortOrder: 0, isDefault: true, color: null,
         createdAt: '2026-08-23T08:00:00Z', projects: [project],
@@ -97,7 +97,7 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/environment')) return json({ isDev: false, devTools: {} });
     if (url.includes('/api/cli/usage')) return json({ at: '2026-08-23T08:00:00Z', sessions: [] });
     if (url.includes('/api/cli/quota')) return json({ at: '2026-08-23T08:00:00Z', ttlSeconds: 600, snapshots: [] });
-    if (url.includes('/api/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     return json([]);
   });
 }

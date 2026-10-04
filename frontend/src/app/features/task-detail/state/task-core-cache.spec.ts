@@ -50,7 +50,7 @@ function makeCore(projectId: string, id: string, overrides: Partial<TaskCore> = 
 const coreRequest = (project: string, id: string) => (request: HttpRequest<unknown>) =>
   request.url === `/api/tasks/${id}/core` && request.params.get('project') === project;
 const anyCore = (request: HttpRequest<unknown>) => request.url.endsWith('/core');
-const grouped = (request: HttpRequest<unknown>) => request.url === '/api/tasks/grouped';
+const grouped = (request: HttpRequest<unknown>) => request.url === '/api/v1/studio/board';
 
 /**
  * AGT-2956 core cache invariants: one shared bounded store keyed by project
@@ -100,7 +100,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
 
   function flushReconnectResync(): void {
     http.expectOne(grouped).flush({});
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
   }
 
   it('coalesces concurrent reads and serves a visited core without a request', () => {
@@ -205,7 +205,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     hub.handlers?.gitStateChanged?.({ gitStateAt: '2026-09-28T12:00:00Z' } as never);
     tasks.refresh(true);
     http.expectOne(grouped).flush({ humanReview: [info], gitStateAt: null, stale: false });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(true);
     expect(cache.isCoreCurrent('PROJ-A', 'b')).toBe(true);
@@ -229,11 +229,44 @@ describe('TaskDetailPrefetchService · task core cache', () => {
       { ...row('pins'), model: 'opus', modelExplicit: true },
       row('unchanged'),
     ], gitStateAt: null, stale: false });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     expect(cache.isCoreCurrent('PROJ-A', 'runtime')).toBe(false);
     expect(cache.isCoreCurrent('PROJ-A', 'pins')).toBe(false);
     expect(cache.isCoreCurrent('PROJ-A', 'unchanged')).toBe(true);
+  });
+
+  it('a grouped snapshot supersedes in-flight cores when runtime or pins changed', () => {
+    const row = (id: string) => ({
+      id, taskKey: `C:/PROJ-A::${id}`, state: '5-human-review', title: id, order: 0,
+      projectName: 'PROJ-A', model: null, execution: null,
+    });
+    tasks.refresh(true);
+    http.expectOne(grouped).flush({ humanReview: [row('runtime'), row('pins'), row('unchanged')] });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
+
+    for (const id of ['runtime', 'pins', 'unchanged']) read('PROJ-A', id);
+    const flights = ['runtime', 'pins', 'unchanged'].map(id => http.expectOne(coreRequest('PROJ-A', id)));
+    tasks.refresh(true);
+    http.expectOne(grouped).flush({ humanReview: [
+      { ...row('runtime'), execution: { status: 'running' } },
+      { ...row('pins'), model: 'opus', modelExplicit: true },
+      row('unchanged'),
+    ] });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
+
+    for (const [i, id] of ['runtime', 'pins', 'unchanged'].entries()) {
+      flights[i].flush(makeCore('PROJ-A', id));
+    }
+    expect(results.map(result => result.state)).toEqual(['stale', 'stale', 'ready']);
+    expect(cache.isCoreCurrent('PROJ-A', 'runtime')).toBe(false);
+    expect(cache.isCoreCurrent('PROJ-A', 'pins')).toBe(false);
+    expect(cache.isCoreCurrent('PROJ-A', 'unchanged')).toBe(true);
+    read('PROJ-A', 'runtime');
+    http.expectOne(coreRequest('PROJ-A', 'runtime')).flush(makeCore('PROJ-A', 'runtime', {
+      runtime: { location: 'none', leaseState: 'none', executionStatus: 'running' },
+    }));
+    expect(cache.isCoreCurrent('PROJ-A', 'runtime')).toBe(true);
   });
 
   it('a pushed row invalidates only its own core and patches its lane', () => {
@@ -256,7 +289,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     read('PROJ-A', 'a');
     http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
     tasks.moveJob('a', '2-ready', 'C:/PROJ-A').subscribe();
-    http.expectOne((r) => r.url === '/api/tasks/a/move').flush({});
+    http.expectOne((r) => r.url === '/api/v1/projects/-/tasks/a/move').flush({});
     expect(cache.peekCore('PROJ-A', 'a')?.lane).toBe('2-ready');
     expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(false);
   });
@@ -268,7 +301,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     http.expectOne(coreRequest('PROJ-B', 'fix-login')).flush(makeCore('PROJ-B', 'fix-login'));
 
     tasks.moveJob('fix-login', '2-ready').subscribe();
-    http.expectOne((r) => r.url === '/api/tasks/fix-login/move').flush({});
+    http.expectOne((r) => r.url === '/api/v1/projects/-/tasks/fix-login/move').flush({});
 
     for (const project of ['PROJ-A', 'PROJ-B']) {
       expect(cache.peekCore(project, 'fix-login')?.lane).toBe('5-human-review');
@@ -290,7 +323,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     read('PROJ-A', 'a');
     http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
     cache.prefetch('a', 'C:/PROJ-A');
-    http.expectOne((r) => r.url === '/api/tasks/a').flush({ info: { id: 'a', taskKey: 'C:/PROJ-A::a' } });
+    http.expectOne((r) => r.url === '/api/v1/projects/-/tasks/a').flush({ info: { id: 'a', taskKey: 'C:/PROJ-A::a' } });
 
     hub.handlers?.jobDeleted?.({ id: 'a', watchPath: 'C:/PROJ-A' });
 
@@ -425,7 +458,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     ] as TaskInfo[]);
 
     tasks.deleteJob('fix-login').subscribe();
-    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/tasks/fix-login').flush(null);
+    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/v1/projects/-/tasks/fix-login').flush(null);
 
     for (const project of ['PROJ-A', 'PROJ-B']) {
       expect(cache.peekCore(project, 'fix-login')).not.toBeNull();
@@ -441,7 +474,7 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     tasks.jobs.set([{ id: 'fix-login', taskKey: 'C:/PROJ-A::fix-login', watchPath: 'C:/PROJ-A' }] as TaskInfo[]);
 
     tasks.deleteJob('fix-login').subscribe();
-    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/tasks/fix-login').flush(null);
+    http.expectOne((r) => r.method === 'DELETE' && r.url === '/api/v1/projects/-/tasks/fix-login').flush(null);
 
     expect(cache.peekCore('PROJ-A', 'fix-login')).toBeNull();
     expect(cache.isCoreCurrent('PROJ-B', 'fix-login')).toBe(true);

@@ -228,7 +228,9 @@ task core cache for `GET /api/tasks/{id}/core` (see
   `gitStateChanged`, sidecar generations and an unchanged grouped snapshot
   leave every core current. A grouped snapshot that changes a task's lane,
   runtime or persisted pins marks only that core stale, even when title and
-  order are unchanged. Reconnect and bulk changes mark all cores stale without
+  order are unchanged. In-flight core reads capture those board facts at
+  request start; a changed grouped snapshot supersedes the reply even when no
+  core was cached yet. Reconnect and bulk changes mark all cores stale without
   discarding them.
 - **Eviction for correctness.** A delete (push or own reply), a `404` and a
   project leaving the visible registry evict immediately, including a reply

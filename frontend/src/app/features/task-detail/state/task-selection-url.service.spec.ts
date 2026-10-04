@@ -65,7 +65,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.restoreFromUrl();
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'));
     expect(request.request.params.has('watchPath')).toBe(false);
     request.flush(detail);
 
@@ -83,7 +83,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.restoreFromUrl();
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     expect(request.request.params.get('watchPath')).toBe('C:\\private\\project');
     request.flush(detail);
 
@@ -97,7 +97,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetail(info);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     expect(request.request.params.has('watchPath')).toBe(false);
     expect(request.request.params.get('project')).toBe('Agent Studio');
     request.flush(detail);
@@ -133,7 +133,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
     expect(push).toHaveBeenCalled();
     expect(location.hash).toBe('#/tasks/AGT-2125');
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125'))
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125'))
       .flush({ info: nextInfo } as TaskDetail);
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(1);
@@ -141,7 +141,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     history.replaceState(firstState, '', firstUrl);
     window.dispatchEvent(new PopStateEvent('popstate', { state: firstState }));
     const archivedInfo = { ...info, state: '7-archive' } as TaskInfo;
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'))
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'))
       .flush({ info: archivedInfo } as TaskDetail);
 
     expect(selection.selected()?.info).toMatchObject({ key: 'AGT-2124', state: '7-archive' });
@@ -159,7 +159,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   it('clears the browser-history reconciliation marker when another task is selected', () => {
     history.replaceState(null, '', '/#/tasks/AGT-2124');
     selection.restoreFromUrl(true);
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
 
     const nextInfo = {
       ...info,
@@ -180,7 +180,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()).toBeNull();
     expect(selection.detailLoading()).toBe(true);
 
-    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
     expect(selection.selected()).toEqual(detail);
     expect(selection.detailPreview()).toBeNull();
     expect(selection.detailLoading()).toBe(false);
@@ -190,7 +190,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     vi.useFakeTimers();
     try {
       selection.openDetail(info);
-      const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+      const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
 
       await vi.advanceTimersByTimeAsync(15_000);
 
@@ -211,7 +211,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     expect(request.request.params.get('project')).toBe('Agent Studio');
     expect(request.request.params.has('watchPath')).toBe(false);
     request.flush({ info: staleInfo } as TaskDetail);
@@ -234,7 +234,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     expect(request.request.params.get('project')).toBe('PROJ-001');
     expect(request.request.params.has('watchPath')).toBe(false);
     request.flush(detail);
@@ -244,14 +244,14 @@ describe('TaskSelectionService · stable task URLs', () => {
     tasks.jobs.set([info]);
 
     selection.openDetailByTaskKey(info.taskKey);
-    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'))
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'))
       .flush({ title: 'Temporary failure' }, { status: 503, statusText: 'Unavailable' });
 
     expect(selection.detailLoading()).toBe(false);
     expect(selection.detailLoadError()?.taskLabel).toBe('AGT-2124');
 
     selection.retryDetailLoad();
-    const retry = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const retry = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     retry.flush(detail);
 
     expect(selection.detailLoadError()).toBeNull();

@@ -52,11 +52,12 @@ class JobsHubClientStub {
   stop(): void { return undefined; }
 }
 
-const grouped = (r: HttpRequest<unknown>) => r.url === '/api/tasks/grouped';
+const grouped = (r: HttpRequest<unknown>) => r.url === '/api/v1/studio/board';
 const anyCore = (r: HttpRequest<unknown>) => r.url.endsWith('/core');
 const core = (project: string, id: string) => (r: HttpRequest<unknown>) =>
   r.url === `/api/tasks/${id}/core` && r.params.get('project') === project;
-const detail = (id: string) => (r: HttpRequest<unknown>) => r.url === `/api/tasks/${id}`;
+const detail = (id: string) => (r: HttpRequest<unknown>) =>
+  r.url.startsWith('/api/v1/projects/') && r.url.endsWith(`/tasks/${id}`);
 
 function task(project: 'Alpha' | 'Beta', id: string, order: number): TaskInfo {
   const watchPath = `C:/${project}`;
@@ -321,7 +322,7 @@ describe('TaskSelectionService · board record reuse', () => {
     hub.handlers?.reconnected?.();
     // Reconnect is an actual invalidation: the board resync still runs.
     http.expectOne(grouped).flush({ humanReview: [...lane, betaTwin], gitStateAt: null, stale: false });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
     expect(selection.selectedCore()).toMatchObject({ state: 'stale', core: { id: 'a' } });
     const revalidate = http.expectOne(core('PROJ-A', 'a'));
     expect(revalidate.request.headers.get('If-None-Match')).toBe('"core-a"');
@@ -340,7 +341,7 @@ describe('TaskSelectionService · board record reuse', () => {
     tasks.refresh(true);
     http.expectOne(grouped).flush({ humanReview: [{ ...lane[0], model: 'opus' }, ...lane.slice(1), betaTwin],
       gitStateAt: null, stale: false });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     const revalidate = http.expectOne(core('PROJ-A', 'a'));
     expect(revalidate.request.headers.get('If-None-Match')).toBe('"core-a1"');

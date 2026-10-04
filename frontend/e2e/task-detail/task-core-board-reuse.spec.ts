@@ -90,15 +90,15 @@ async function installRoutes(page: Page): Promise<Traffic> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
-  await page.route('**/api/auth/status', route => route.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
-  await page.route('**/api/tasks/grouped**', route => {
+  await page.route('**/api/v1/studio/board**', route => {
     traffic.grouped.push({ at: Date.now() });
     return route.fulfill(json({ ...lanes, gitStateAt: null, stale: false }));
   });
   await page.route('**/api/tasks/archive**', route => route.fulfill(json({ items: [], total: 0, offset: 0, limit: 50 })));
-  await page.route('**/api/workspaces**', route => route.fulfill(json([{
+  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{
     id: 'WS-REUSE', displayName: 'Fixtures', sortOrder: 0, isDefault: true, color: null, createdAt: '2026-09-28T08:00:00Z',
     projects: [REUSE, TWIN].map((p, i) => ({
       id: p.id, displayName: p.name, shortCode: p.short, workspaceId: 'WS-REUSE', color: null, cliDefault: null,
@@ -112,7 +112,7 @@ async function installRoutes(page: Page): Promise<Traffic> {
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', sessions: [] })));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', ttlSeconds: 600, snapshots: [] })));
   await page.route(/\/workbenches(\?|$)/, route => route.fulfill(json({ items: [] })));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
   await page.route(/\/api\/tasks\/[^/?]+\/runs(\?|$)/, route => route.fulfill(json({ runs: [] })));
   await page.route(/\/api\/tasks\/[^/?]+\/session-events(\?|$)/, route => route.fulfill(json({ events: [], sessionChain: [] })));
   await page.route(/\/api\/tasks\/[^/?]+\/pipeline(\?|$)/, route => route.fulfill(json({
@@ -132,11 +132,11 @@ async function installRoutes(page: Page): Promise<Traffic> {
     inFlight.set(key, concurrent - 1);
     await route.fulfill({ ...json(core(project, id)), headers: { ETag: `"core-${key}"` } }).catch(() => undefined);
   });
-  await page.route(/\/api\/tasks\/task-\d+(\?|$)/, async route => {
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/task-\d+(\?|$)/, async route => {
     const url = new URL(route.request().url());
-    const id = url.pathname.split('/')[3];
+    const id = url.pathname.split('/').at(-1)!;
     await new Promise(resolve => setTimeout(resolve, DETAIL_DELAY_MS));
-    await route.fulfill(json(detail(projectOf(url.searchParams.get('project')), id))).catch(() => undefined);
+    await route.fulfill(json(detail(projectOf(url.searchParams.get('project') ?? url.pathname.split('/')[4]), id))).catch(() => undefined);
   });
   return traffic;
 }
@@ -315,7 +315,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     // Hold task-10's full detail so only the board record and the core can paint.
     let releaseDetail: () => void = () => undefined;
     const held = new Promise<void>(resolve => { releaseDetail = resolve; });
-    await page.route(/\/api\/tasks\/task-10(\?|$)/, async route => {
+    await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/task-10(\?|$)/, async route => {
       await held;
       await route.fulfill({
         status: 200, contentType: 'application/json', body: JSON.stringify(detail(REUSE, 'task-10')),

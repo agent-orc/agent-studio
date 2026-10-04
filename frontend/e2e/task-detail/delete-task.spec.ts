@@ -109,7 +109,7 @@ test.describe('Delete task', () => {
     await expect(confirmDialog).toBeVisible({ timeout: 5_000 });
     const deleteResponse = page.waitForResponse(resp =>
       resp.request().method() === 'DELETE'
-      && resp.url().includes(`/api/tasks/${encodeURIComponent(job.id)}`)
+      && resp.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(job.id)}`)
     );
     await page.getByTestId('confirm-dialog-confirm').click();
     await expect((await deleteResponse).ok()).toBeTruthy();

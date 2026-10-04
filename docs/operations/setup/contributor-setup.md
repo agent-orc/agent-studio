@@ -92,6 +92,43 @@ Each of those commands verifies its own outcome rather than reporting one, becau
 
 The sweep is scoped to one checkout and one port: a sibling checkout's backend, and a `dotnet test` run from your own checkout, are never touched. `bash tools/api-restart-selfcheck.sh` proves all of this in about a minute without needing a .NET build; add `--live <checkout>` to prove it against a running backend instead.
 
+
+### Start a remotely built backend without a local build
+
+A machine reserved for orchestration can run a published backend with the same
+process ownership and restart checks:
+
+```sh
+API_REQUIRE_PREBUILT=1 \
+API_PREBUILT_DIR=backend/bin/remote-publish/<commit> ./api.sh restart
+```
+
+The deployer installs the complete published directory beneath this checkout's
+`backend/bin/`, verifies its transport checksum, and supplies a `RELEASE-SHA`
+file containing the full source commit. Required nonempty runtime files are
+`OrchestratorApi.dll`, `OrchestratorApi.deps.json`, and
+`OrchestratorApi.runtimeconfig.json`. The launcher resolves symlinks, rejects
+paths outside that location, and requires `RELEASE-SHA` to equal checkout `HEAD`.
+An included `build-manifest.json` must identify the same commit. Explicit
+`Release__BuildManifestPath` or `ATP_BUILD_MANIFEST` overrides are validated too;
+a missing override or a different commit refuses startup.
+
+This mode runs `dotnet OrchestratorApi.dll` with the checkout's `backend/`
+working directory and content root, preserving local configuration and relative
+paths. It never falls back to restore or build. `API_REQUIRE_PREBUILT=1` also
+refuses an unset `API_PREBUILT_DIR`, so an omitted artifact cannot silently
+reactivate source builds. Failures are named `api-prebuilt-required`,
+`api-prebuilt-invalid`, or `api-prebuilt-sha-mismatch`. Restart validates the
+replacement before stopping the current process. Node.js validates the metadata;
+the backend itself needs the matching .NET runtime.
+
+Run build, publish, and the [shell contract tests](../../../scripts/api-prebuilt-start.test.sh)
+on the remote build host. The source-build mode remains available only when
+neither prebuilt variable requires an artifact. Outer launchers must persist
+`API_REQUIRE_PREBUILT=1` and pass the tested artifact on every start. An older
+updater that invokes `npm install`, `ng serve`, or an unconditional `dotnet run`
+does not satisfy a remote-only build policy.
+
 ### 2.5 Start the frontend
 
 ```sh

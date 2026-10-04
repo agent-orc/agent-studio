@@ -33,6 +33,8 @@ interface CoreFlight {
    * on an exact `taskKey` match, so the same slug in another project is safe.
    */
   taskKey: string;
+  /** Board facts at request start, used to reject a reply overtaken by a grouped refresh. */
+  boardSignature: string | null;
   subject: ReplaySubject<TaskCoreResult>;
   subscription: Subscription | null;
   /** Lookahead flights are cancellable until a foreground read joins them. */
@@ -296,10 +298,12 @@ export class TaskDetailPrefetchService {
   private startCoreRequest(
     key: string, project: string, id: string, taskKey: string, lookahead: boolean,
   ): CoreFlight {
+    const boardRow = this.jobService.jobs().find((job) => job.taskKey === taskKey);
     const flight: CoreFlight = {
       project,
       id,
       taskKey,
+      boardSignature: boardRow ? this.boardCoreSignature(boardRow) : null,
       subject: new ReplaySubject<TaskCoreResult>(1),
       subscription: null,
       lookahead,
@@ -495,6 +499,23 @@ export class TaskDetailPrefetchService {
       || (info.executionLocation?.lastHeartbeat ?? null) !== (runtime.heartbeatAt ?? null);
   }
 
+  /** Only facts that a grouped refresh can use to supersede a core read. */
+  private boardCoreSignature(info: TaskInfo): string {
+    return JSON.stringify([
+      info.state, info.title, info.order,
+      info.archiveState ?? null, info.enteredLaneAt ?? null,
+      info.released ?? false, info.pendingIntent != null,
+      info.model ?? null, info.modelExplicit ?? false,
+      info.thinkingLevel ?? null, info.thinkingLevelExplicit ?? false,
+      info.cliType ?? null, info.contextMode ?? null, info.useOwnSession ?? null,
+      info.allowWebAccess ?? false, info.noBranchExpected ?? false,
+      info.execution?.status ?? null, info.runActivity ?? null,
+      info.executionLocation?.executionKind ?? 'none',
+      info.executionLocation?.runnerId ?? null,
+      info.executionLocation?.lastHeartbeat ?? null,
+    ]);
+  }
+
   private onTaskEvent(event: TaskStoreEvent): void {
     switch (event.kind) {
       case 'upserted': {
@@ -537,8 +558,14 @@ export class TaskDetailPrefetchService {
         this.coreInvalidatedSubject.next(null);
         return;
       case 'snapshot': {
-        if (this.cores.size === 0) return;
+        if (this.cores.size === 0 && this.coreFlights.size === 0) return;
         const board = new Map(this.jobService.jobs().map((job) => [job.taskKey, job]));
+        for (const [key, flight] of [...this.coreFlights]) {
+          const info = board.get(flight.taskKey);
+          if (info && flight.boardSignature !== this.boardCoreSignature(info)) {
+            this.markCoreStale(key);
+          }
+        }
         // Invalidation can synchronously make selection touch and reinsert a
         // core for recency. Iterate a fixed list so it is visited only once.
         for (const [key, entry] of [...this.cores]) {

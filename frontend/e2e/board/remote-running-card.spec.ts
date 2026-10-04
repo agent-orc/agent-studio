@@ -92,7 +92,7 @@ const GROUPED = {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -103,7 +103,7 @@ async function installRoutes(page: Page): Promise<void> {
         user: null,
       }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED) }));
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({
@@ -113,7 +113,7 @@ async function installRoutes(page: Page): Promise<void> {
     }));
   await page.route('**/api/environment**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ isDev: false, devTools: {} }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

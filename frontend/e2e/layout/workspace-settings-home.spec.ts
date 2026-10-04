@@ -37,14 +37,14 @@ async function stubBackgroundApis(page: Page) {
   const json = (body: unknown) => async (route: import('@playwright/test').Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
-  await page.route('**/api/auth/status', json({
+  await page.route('**/api/v1/studio/auth/status', json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/tasks/grouped', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
     projects: 2, orchestratorEntries: 21, orchestratorLlmCalls: 21,
     totalInputTokens: 510000, totalOutputTokens: 94000, totalCacheReadTokens: 180000, totalCacheCreationTokens: 22000,
@@ -127,7 +127,7 @@ async function stubBackgroundApis(page: Page) {
   }));
   await page.route('**/api/workspace/tokens/expensive-jobs*', json({ jobs: [] }));
   await page.route('**/api/workspace/screenshots*', json({ windowHours: 72, projectFilter: null, screenshots: [] }));
-  await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/workspaces*', json([]));
   await page.route('**/api/cli/working-memory*', json({ available: false, root: null, capturedAt: new Date().toISOString(), entries: [] }));
   await page.route('**/api/cli/sessions*', json({ sessions: [] }));
   await page.route('**/api/cli/models*', json({ types: [] }));
