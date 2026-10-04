@@ -63,7 +63,8 @@ public static class GitChildProcessRegistry
 /// working directory inside the repository, or when the OS process list shows
 /// a git process tied to the repository: on Linux by <c>/proc/&lt;pid&gt;/cwd</c>
 /// or command line, on Windows by a <c>git*.exe</c> whose command line names the
-/// path. A process list that cannot be read yields <see cref="GitLockOwnership.Unknown"/>.
+/// path. A process whose working directory cannot be read and whose command
+/// line does not identify this repository leaves ownership unknown.
 /// </summary>
 public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
 {
@@ -91,8 +92,13 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
 
         var processes = _inventory();
         if (processes is null) return GitLockOwnership.Unknown;
-        return processes.Any(process => IsTiedTo(process, paths))
-            ? GitLockOwnership.Owned
+        if (processes.Any(process => IsTiedTo(process, paths)))
+            return GitLockOwnership.Owned;
+        // Win32_Process does not expose cwd. `git add` started inside this
+        // repository can have no repository path in its command line, so an
+        // unmatched process without cwd cannot prove the lock is unowned.
+        return processes.Any(process => process.WorkingDirectory is null)
+            ? GitLockOwnership.Unknown
             : GitLockOwnership.None;
     }
 

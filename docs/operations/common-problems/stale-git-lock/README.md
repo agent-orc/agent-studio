@@ -64,9 +64,11 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
    repository, or an OS process: on Linux any `git*` process whose
    `/proc/<pid>/cwd` or command line points into the repository, on Windows any
    `git*.exe` whose command line names the path.
-3. **Older, and the process list or a still-present Linux `/proc` entry cannot
-   be read**: keep it. The unreadable process may be the lock owner; absence is
-   never guessed. The Windows process query also returns unknown after 15
+3. **Older, and the process list, a still-present Linux `/proc` entry, or a
+   git process's working directory cannot be read**: keep it. An external
+   Windows `git.exe add` may hold the lock without naming the repository in
+   its command line; unresolved ownership is never guessed. The Windows
+   process query also returns unknown after 15
    seconds, including when its output pipe stays open. An entry proven to have
    exited during the Linux scan is skipped.
 4. **Older, and no git process holds it**: confirm the lock is still the same file seen before the process check, then delete it and log
@@ -130,8 +132,7 @@ rm <git-dir>/index.lock
 The next flush commits everything that was pending: evidence batches stage the
 whole project folders, so nothing written during the stall is lost.
 
-**Limits.** On Windows a git process is only recognised by its command line or
-as a child of this server; an external `git.exe` started without the path on
-its command line (plain `cwd`) is invisible to the probe. The 10-minute age
-threshold is what protects it: git holds an index lock for seconds, not
-minutes.
+**Limits.** Windows does not expose another process's working directory in
+the process inventory. When a running `git.exe` has no repository path in its
+command line, the server keeps the lock because ownership is unknown. After
+that process exits, the next write can clear an aged lock.

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -16,6 +17,7 @@ namespace AgentStudio.Tests;
 public sealed class GitStaleLockGuardTests : IDisposable
 {
     private readonly string _root;
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero));
 
     public GitStaleLockGuardTests()
     {
@@ -103,7 +105,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         {
             File.Delete(lockPath);
             File.WriteAllText(lockPath, "new git writer");
-            File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow - TimeSpan.FromHours(1));
+            File.SetLastWriteTimeUtc(lockPath, _time.GetUtcNow().UtcDateTime - TimeSpan.FromHours(1));
         });
 
         var result = Guard(replacement).EnsureWritable(repo);
@@ -277,7 +279,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["GitStaleLocks:ThresholdMinutes"] = "2" })
             .Build();
-        var guard = new GitStaleLockGuard(config, null, new FixedProbe(GitLockOwnership.None), null, _ => { });
+        var guard = new GitStaleLockGuard(config, null, new FixedProbe(GitLockOwnership.None), _time, _ => { });
 
         guard.EnsureWritable(repo);
 
@@ -426,6 +428,24 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Fact]
+    public void Windows_git_process_without_a_repository_path_keeps_a_stale_lock()
+    {
+        var repo = SeedRepo("windows-unresolved-owner");
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.FromHours(1));
+        var inventory = GitProcessLockOwnerProbe.ParseWindowsInventory(
+            "{\"ProcessId\":4243,\"Name\":\"git.exe\",\"CommandLine\":\"git.exe add -A\"}");
+        var probe = new GitProcessLockOwnerProbe(() => [], () => inventory);
+
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!));
+        var result = Guard(probe).EnsureWritable(repo);
+
+        Assert.True(File.Exists(lockPath));
+        Assert.Empty(result.Cleared);
+        Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
+    }
+
+    [Fact]
     public void Process_inventory_times_out_when_stdout_remains_open()
     {
         var start = ShellProcess(OperatingSystem.IsWindows()
@@ -496,9 +516,9 @@ public sealed class GitStaleLockGuardTests : IDisposable
             // not in GitChildProcessRegistry: only the /proc inventory can see
             // it - the path for an external or orphaned git process.
             var probe = new GitProcessLockOwnerProbe();
-            var deadline = DateTime.UtcNow.AddSeconds(5);
+            var clock = Stopwatch.StartNew();
             var ownership = probe.Probe(scope);
-            while (ownership != GitLockOwnership.Owned && DateTime.UtcNow < deadline)
+            while (ownership != GitLockOwnership.Owned && clock.Elapsed < TimeSpan.FromSeconds(5))
             {
                 Thread.Sleep(50);
                 ownership = probe.Probe(scope);
@@ -525,17 +545,17 @@ public sealed class GitStaleLockGuardTests : IDisposable
 
     // ---- helpers ------------------------------------------------------------
 
-    private static GitStaleLockGuard Guard(
+    private GitStaleLockGuard Guard(
         IGitLockOwnerProbe probe,
         ILogger<GitStaleLockGuard>? logger = null,
         List<TimeSpan>? waits = null)
-        => new(configuration: null, logger, probe, time: null, wait: span => waits?.Add(span));
+        => new(configuration: null, logger, probe, time: _time, wait: span => waits?.Add(span));
 
-    private static void PlantLock(string path, TimeSpan age)
+    private void PlantLock(string path, TimeSpan age)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, []);
-        File.SetLastWriteTimeUtc(path, DateTime.UtcNow - age);
+        File.SetLastWriteTimeUtc(path, _time.GetUtcNow().UtcDateTime - age);
     }
 
     private string SeedRepo(string name)

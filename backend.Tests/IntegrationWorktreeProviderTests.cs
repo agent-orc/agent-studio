@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -17,6 +18,7 @@ namespace AgentStudio.Tests;
 public sealed class IntegrationWorktreeProviderTests : IDisposable
 {
     private readonly string _tempDir;
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero));
 
     public IntegrationWorktreeProviderTests()
     {
@@ -106,9 +108,9 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
             : Path.GetFullPath(Path.Combine(first.Path!, pointer));
         var lockPath = Path.Combine(gitDir, "index.lock");
         File.WriteAllText(lockPath, "orphaned reset");
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-2));
+        File.SetLastWriteTimeUtc(lockPath, _time.GetUtcNow().UtcDateTime.AddMinutes(-2));
         File.WriteAllText(Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker),
-            DateTimeOffset.UtcNow.ToString("O"));
+            _time.GetUtcNow().ToString("O"));
 
         var second = provider.Resolve(repo, "develop");
 
@@ -136,11 +138,11 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
 
         var gitDir = IntegrationWorktreeProvider.WorktreeGitDirectory(first.Path!)!;
         var markerPath = Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker);
-        File.WriteAllText(markerPath, DateTimeOffset.UtcNow.AddHours(-100).ToString("O"));
-        File.SetLastWriteTimeUtc(markerPath, DateTime.UtcNow.AddHours(-100));
+        File.WriteAllText(markerPath, _time.GetUtcNow().AddHours(-100).ToString("O"));
+        File.SetLastWriteTimeUtc(markerPath, _time.GetUtcNow().UtcDateTime.AddHours(-100));
         var lockPath = Path.Combine(gitDir, "index.lock");
         File.WriteAllBytes(lockPath, []);
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddHours(-92));
+        File.SetLastWriteTimeUtc(lockPath, _time.GetUtcNow().UtcDateTime.AddHours(-92));
 
         var second = provider.Resolve(repo, "develop");
 
@@ -232,7 +234,7 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
             git,
             NullLogger<IntegrationWorktreeProvider>.Instance,
             Path.Combine(_tempDir, "fallback"),
-            staleLocks: new GitStaleLockGuard(probe: new NoGitOwnerProbe()));
+            staleLocks: new GitStaleLockGuard(probe: new NoGitOwnerProbe(), time: _time));
     }
 
     private sealed class NoGitOwnerProbe : IGitLockOwnerProbe

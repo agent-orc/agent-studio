@@ -111,7 +111,7 @@ public sealed class EvidenceFlushStallAlarmTests
         try
         {
             var (service, orchestratorLog) = HealthService(watchPath);
-            var now = DateTime.UtcNow;
+            var now = new FakeTimeProvider(new DateTimeOffset(T0)).GetUtcNow().UtcDateTime;
             var stall = new EvidenceFlushStall(workspace, LockError, now.AddMinutes(-16), now, 9);
 
             service.EvidenceFlushStalled(stall);
@@ -159,7 +159,7 @@ public sealed class EvidenceFlushStallAlarmTests
         try
         {
             var (service, orchestratorLog) = HealthService(watchPath);
-            var now = DateTime.UtcNow;
+            var now = new FakeTimeProvider(new DateTimeOffset(T0)).GetUtcNow().UtcDateTime;
 
             service.EvidenceFlushStalled(new EvidenceFlushStall(workspace + "-elsewhere", LockError, now.AddMinutes(-20), now, 4));
 
