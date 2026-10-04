@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
@@ -15,7 +15,17 @@ import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.compon
  * clobber the manually-seeded `activeProject`.
  */
 describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
-  beforeEach(() => sessionStorage.removeItem('atp.studio.orchestratorOpen.v1'));
+  beforeEach(() => {
+    sessionStorage.removeItem('atp.studio.orchestratorOpen.v1');
+    // The waiting child polls while a send is pending. Keep its interval under
+    // test control so a slow CI worker cannot create a request at verify().
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  });
+
+  afterEach(() => {
+    TestBed.resetTestingModule();
+    vi.useRealTimers();
+  });
 
   async function makeFixture() {
     await TestBed.configureTestingModule({

@@ -35,9 +35,13 @@ SOURCE_DATE_EPOCH=1 "$repo_root/scripts/release/package-release.sh" \
     sha256sum -c SHA256SUMS
     tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
         | grep -q 'agent-orchestrator-1.2.3-linux-x64/update.sh'
+    tar -tzf agent-orchestrator-1.2.3-linux-x64.tar.gz \
+        | grep -q 'agent-orchestrator-1.2.3-linux-x64/host_secret_transport.py'
     tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/osx-arm64/agent-host'
+    tar -tzf agent-host-1.2.3.tar.gz | grep -q 'agent-host-1.2.3/host_secret_transport.py'
     tar -tzf agent-studio-1.2.3.tar.gz | grep -q 'agent-studio-1.2.3/browser/index.html'
     tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/docker-compose.yml'
+    tar -tzf agent-studio-compose-1.2.3.tar.gz | grep -q 'agent-studio-compose-1.2.3/deploy/host_secret_transport.py'
 )
 compose_root="$test_root/compose-extract"
 install -d -m 0755 "$compose_root"

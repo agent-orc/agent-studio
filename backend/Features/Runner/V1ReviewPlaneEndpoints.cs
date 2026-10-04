@@ -333,14 +333,16 @@ public static class V1ReviewPlaneEndpoints
             ILoggerFactory loggerFactory,
             QuotaAdmissionService quotaAdmission,
             QuotaAdmissionRecorder quotaAdmissionRecorder,
+            ReviewClaimUnclaimableLog unclaimableLog,
             CancellationToken ct) =>
         {
             if (!RunnerMatches(context, runnerId)
                 || !string.Equals(runnerId, request.ExecutorId, StringComparison.Ordinal))
                 return Results.Unauthorized();
             if (request.AvailableSlots <= 0)
-                return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty", Message: "Review executor has no available slot."));
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.NoAvailableSlot,
+                    "Review executor has no available slot."));
             if (!registry.TryGetReviewExecutor(runnerId, request.InstanceId, out var executor))
                 return Results.Conflict(new Contract.ApiError(
                     "review-executor-not-registered",
@@ -359,10 +361,10 @@ public static class V1ReviewPlaneEndpoints
             // restarted daemon), so no operator action is needed to resume - but a
             // routine capability advertisement does not cut the drain short.
             if (registry.TryGetCapabilityPause(runnerId, out var pause))
-                return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty",
-                    Message: $"Review executor is paused until {pause.CooldownUntil:O} after a "
-                             + $"{pause.Classification} failure of {pause.CapabilityKey}: {pause.Reason}"));
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.ExecutorPaused,
+                    $"Review executor is paused until {pause.CooldownUntil:O} after a "
+                    + $"{pause.Classification} failure of {pause.CapabilityKey}: {pause.Reason}"));
 
             // Card state owns admission. Revoke stale terminal-card attempts
             // before the legacy-envelope sweep can classify them as an
@@ -401,8 +403,17 @@ public static class V1ReviewPlaneEndpoints
                 request.RequestedTtlSeconds,
                 executor.Capabilities);
             if (claimed.Status == AttemptWriteStatus.NotFound)
-                return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty", Message: "No current immutable ReviewAttempt is queued."));
+            {
+                // AGT-2987: an empty queue and a queue this executor cannot
+                // serve used to read the same. Name the unclaimable attempts
+                // and the capability keys they need instead.
+                var unclaimable = authority.ListUnclaimableReviews(executor.Capabilities);
+                unclaimableLog.Record(runnerId, unclaimable);
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(
+                    unclaimable,
+                    Contract.ReviewClaimEmptyReasons.QueueEmpty,
+                    "No current immutable ReviewAttempt is queued."));
+            }
             if (!claimed.Accepted || claimed.ReviewAttempt is null)
                 return AttemptError(claimed);
 
@@ -421,8 +432,19 @@ public static class V1ReviewPlaneEndpoints
                     return Results.Conflict(new Contract.ApiError(
                         "review-capability-defer-failed",
                         "The claim could not be relinquished after capability admission failed."));
-                return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty", Message: "Review executor lacks a required library-step capability."));
+                Contract.ReviewUnclaimableAttemptDto[] unclaimable =
+                [
+                    new(
+                        review.AttemptId,
+                        review.TaskKey,
+                        review.CreatedAt,
+                        Contract.ReviewLibraryStepPolicy.MissingCapabilities(subject.Plan, executor.Capabilities)),
+                ];
+                unclaimableLog.Record(runnerId, unclaimable);
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(
+                    unclaimable,
+                    Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                    "Review executor lacks a required library-step capability."));
             }
             CorrectOutdatedIntegrationBranch(
                 subjectTask,
@@ -453,9 +475,9 @@ public static class V1ReviewPlaneEndpoints
                         "review-quota-defer-failed",
                         "Review quota admission deferred the claim, but its lease could not be relinquished."));
                 }
-                return Results.Ok(new Contract.ReviewClaimResponse(
-                    "empty",
-                    Message: quotaDeferredReason));
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                    Contract.ReviewClaimEmptyReasons.QuotaDeferred,
+                    quotaDeferredReason));
             }
             var lease = ToLease(authority, review);
             return Results.Ok(new Contract.ReviewClaimResponse(

@@ -117,10 +117,13 @@ describe('OrchestratorFeedComponent · decision override buttons', () => {
   });
 
   it('keeps interleaved projects in one newest-first day stream with a project chip per entry', async () => {
+    // Day groups follow the local calendar day, so the entries are built in
+    // local time; UTC morning instants fall on two local days west of UTC-10.
+    const localMay14 = (hour: number) => new Date(2026, 4, 14, hour).toISOString();
     const { fixture } = await setup([
-      { ...decisionEntry, ts: '2026-05-14T09:00:00Z', summary: 'Old Agent Studio event', project: 'Agent Studio' },
-      { ...decisionEntry, ts: '2026-05-14T11:00:00Z', summary: 'Newest Runbook event', project: 'Runbook' },
-      { ...decisionEntry, ts: '2026-05-14T10:00:00Z', summary: 'Middle Agent Studio event', project: 'Agent Studio' },
+      { ...decisionEntry, ts: localMay14(9), summary: 'Old Agent Studio event', project: 'Agent Studio' },
+      { ...decisionEntry, ts: localMay14(11), summary: 'Newest Runbook event', project: 'Runbook' },
+      { ...decisionEntry, ts: localMay14(10), summary: 'Middle Agent Studio event', project: 'Agent Studio' },
     ]);
     fixture.detectChanges();
 
