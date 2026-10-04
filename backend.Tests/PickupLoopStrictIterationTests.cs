@@ -1075,7 +1075,8 @@ public sealed class PickupLoopStrictIterationTests : IDisposable
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
             timeline: new TimelineLog(NullLogger<TimelineLog>.Instance),
             projectUrls: projectUrls,
-            projectUrlPortInspector: projectUrlPortInspector);
+            projectUrlPortInspector: projectUrlPortInspector,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
     }
 
     private sealed class FixedPortInspector(int expectedPort, int pid, string processName)

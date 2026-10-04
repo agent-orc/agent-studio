@@ -7,6 +7,7 @@ namespace AgentStudio.Runner;
 public sealed record BuildCommandResult(int ExitCode, string Output)
 {
     public bool Succeeded => ExitCode == 0;
+    public string? FailureCode { get; init; }
 }
 
 /// <summary>
@@ -68,7 +69,10 @@ public sealed class ProcessBuildCommandRunner : IBuildCommandRunner
 }
 
 /// <summary>Outcome of a full validation dry-run.</summary>
-public sealed record DryRunValidationResult(bool Green, string Status, string Summary, string? FailedCommand);
+public sealed record DryRunValidationResult(bool Green, string Status, string Summary, string? FailedCommand)
+{
+    public string? FailureCode { get; init; }
+}
 
 /// <summary>Resolves local validation only to a real project source workspace.</summary>
 public static class BuildProfileValidationWorkspace
@@ -152,7 +156,10 @@ public sealed class BuildProfileValidationService
                 _settings.MarkBuildProfileValidationFailed(projectName, error);
                 _logger.LogWarning("Build-profile validation FAILED for {Project} after {Elapsed}ms: {Error}",
                     projectName, sw.ElapsedMilliseconds, error);
-                return new DryRunValidationResult(false, BuildProfileStatuses.ValidationFailed, error, step.Command);
+                return new DryRunValidationResult(false, BuildProfileStatuses.ValidationFailed, error, step.Command)
+                {
+                    FailureCode = result.FailureCode
+                };
             }
         }
 

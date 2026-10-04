@@ -177,6 +177,69 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         Assert.True(Directory.Exists(folder));
     }
 
+    [Fact]
+    public void WriteJson_StreamsBeforeTheDocumentHasBeenFullyEnumerated()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        IAtomicJsonFileWriter writer = new AtomicJsonFileWriter();
+        var observedStreaming = false;
+        IEnumerable<int> Values()
+        {
+            for (var value = 0; value < 100_000; value++)
+            {
+                if (value == 90_000)
+                {
+                    var temporary = Assert.Single(Directory.GetFiles(_dir, "state.json.*.tmp"));
+                    Assert.True(new FileInfo(temporary).Length > 0);
+                    observedStreaming = true;
+                }
+                yield return value;
+            }
+        }
+
+        writer.WriteJson(path, new { values = Values() });
+
+        Assert.True(observedStreaming);
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal(100_000, document.RootElement.GetProperty("values").GetArrayLength());
+        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void WriteJson_SerializationFailure_PreservesDurableStateAndRemovesTempFile()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        IAtomicJsonFileWriter writer = new AtomicJsonFileWriter();
+        const string durable = "{\"version\":1}";
+        writer.Write(path, durable);
+        IEnumerable<int> Values()
+        {
+            for (var value = 0; value < 10_000; value++) yield return value;
+            throw new InvalidOperationException("serialization failed");
+        }
+
+        Assert.Throws<InvalidOperationException>(() => writer.WriteJson(path, new { values = Values() }));
+
+        Assert.Equal(durable, File.ReadAllText(path));
+        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void WriteJson_CreatesParentDirectoriesAndPreservesSerializerOptions()
+    {
+        var path = Path.Combine(_dir, "nested", "state.json");
+        IAtomicJsonFileWriter writer = new AtomicJsonFileWriter();
+        writer.WriteJson(path, new { Version = 2 }, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+        });
+
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal(2, document.RootElement.GetProperty("version").GetInt32());
+        Assert.Equal(["state.json"], Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
     private static bool IsSharingViolation(IOException exception)
     {
         if (exception is FileNotFoundException or DirectoryNotFoundException) return false;
