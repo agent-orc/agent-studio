@@ -67,7 +67,7 @@ async function waitForTaskIndexed(id: string, watchPath: string): Promise<void> 
 function trackMoveRequests(page: import('@playwright/test').Page): { count: () => number } {
   let moves = 0;
   page.on('request', req => {
-    if (req.method() === 'POST' && /\/api\/tasks\/[^/]+\/move/.test(req.url())) moves += 1;
+    if (req.method() === 'POST' && /\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+\/move/.test(req.url())) moves += 1;
   });
   return { count: () => moves };
 }

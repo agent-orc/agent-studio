@@ -18,15 +18,16 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests
 {
     [Fact]
-    public void Inventory_is_the_approved_99_local_and_309_proxy_surface()
+    public void Inventory_is_the_approved_108_local_and_325_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(408, inventory.Operations.Count);
-        Assert.Equal(99, inventory.DevSeatOperations.Count);
-        Assert.Equal(309, inventory.TaskServerOperations.Count);
-        Assert.Equal(1, inventory.TaskServerOperations.Count(operation => operation.Method == "WS"));
+        Assert.Equal(433, inventory.Operations.Count);
+        Assert.Equal(108, inventory.DevSeatOperations.Count);
+        Assert.Equal(325, inventory.TaskServerOperations.Count);
+        var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
+        Assert.Equal("/hubs/v1/studio", hub.Path);
     }
 
     [Fact]
@@ -51,8 +52,8 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(408, metadata.Length);
-        Assert.Equal(99, endpoints
+        Assert.Equal(433, metadata.Length);
+        Assert.Equal(108, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
             .Select(item => new ConnectorRouteKey(item.Method, ConnectorRouteKey.NormalizePath(item.Path)))
@@ -113,7 +114,7 @@ public sealed class ConnectorProfileTests
         }
 
         Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
-        Assert.Equal(309, forwarded);
+        Assert.Equal(325, forwarded);
     }
 
     [Fact]
@@ -156,10 +157,10 @@ public sealed class ConnectorProfileTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/environment")).StatusCode);
         var csrf = await CsrfAsync(client);
 
-        using (var missingCsrf = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, null))
+        using (var missingCsrf = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, null))
             Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(missingCsrf)).StatusCode);
 
-        using var accepted = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var accepted = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(accepted)).StatusCode);
     }
 
@@ -181,7 +182,7 @@ public sealed class ConnectorProfileTests
         await using var connector = ConnectorUnderTest.Boot(transport);
         var csrf = await CsrfAsync(connector.Client);
 
-        using var request = Mutation(HttpMethod.Post, "/api/projects", origin, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/v1/projects", origin, csrf);
         using var response = await connector.Client.SendAsync(request);
 
         Assert.Equal(expected, response.StatusCode);
@@ -202,9 +203,9 @@ public sealed class ConnectorProfileTests
             Settings: new Dictionary<string, string?> { ["Connector:StudioOrigins:0"] = "http://127.0.0.1:4200" }));
         var csrf = await CsrfAsync(connector.Client, "http://127.0.0.1:4200");
 
-        using (var configured = Mutation(HttpMethod.Post, "/api/projects", "http://127.0.0.1:4200", csrf))
+        using (var configured = Mutation(HttpMethod.Post, "/api/v1/projects", "http://127.0.0.1:4200", csrf))
             Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(configured)).StatusCode);
-        using (var defaultOrigin = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+        using (var defaultOrigin = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
             Assert.Equal(HttpStatusCode.Forbidden, (await connector.Client.SendAsync(defaultOrigin)).StatusCode);
     }
 
@@ -221,20 +222,20 @@ public sealed class ConnectorProfileTests
         var tokenB = ReadCookie(sessionB, ConnectorSessionStore.CsrfCookieName);
 
         // Session A's token presented by browser B, which holds its own session.
-        using (var crossSession = Mutation(HttpMethod.Post, "/api/projects", origin, tokenA))
+        using (var crossSession = Mutation(HttpMethod.Post, "/api/v1/projects", origin, tokenA))
         {
             using var response = await browserB.SendAsync(crossSession);
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             Assert.Equal(ConnectorRequestPolicy.CsrfRejected, await CodeAsync(response));
         }
         // Header token that does not match the session's cookie token.
-        using (var forgedHeader = Mutation(HttpMethod.Post, "/api/projects", origin, new string('0', 64)))
+        using (var forgedHeader = Mutation(HttpMethod.Post, "/api/v1/projects", origin, new string('0', 64)))
             Assert.Equal(HttpStatusCode.Forbidden, (await browserB.SendAsync(forgedHeader)).StatusCode);
 
         // After logout, the same cookie and token no longer authorize anything.
         using (var logout = Mutation(HttpMethod.Delete, "/connector/session", origin, tokenB))
             Assert.Equal(HttpStatusCode.NoContent, (await browserB.SendAsync(logout)).StatusCode);
-        using (var afterLogout = Mutation(HttpMethod.Post, "/api/projects", origin, tokenB))
+        using (var afterLogout = Mutation(HttpMethod.Post, "/api/v1/projects", origin, tokenB))
         {
             afterLogout.Headers.Add("Cookie", $"{ConnectorSessionStore.SessionCookieName}={cookieB}; {ConnectorSessionStore.CsrfCookieName}={tokenB}");
             using var raw = connector.NewCookielessBrowser();
@@ -245,7 +246,7 @@ public sealed class ConnectorProfileTests
 
         // An upstream switch ends every session, so A's still-valid pair dies too.
         connector.Services.GetRequiredService<ConnectorSessionStore>().RotateAll();
-        using (var afterRotation = Mutation(HttpMethod.Post, "/api/projects", origin, tokenA))
+        using (var afterRotation = Mutation(HttpMethod.Post, "/api/v1/projects", origin, tokenA))
             Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(afterRotation)).StatusCode);
 
         Assert.Empty(transport.ProxiedRequests);
@@ -273,16 +274,16 @@ public sealed class ConnectorProfileTests
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
 
-        using var read = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
+        using var read = new HttpRequestMessage(HttpMethod.Get, "/api/v1/studio/board");
         read.Headers.Add("Sec-Fetch-Site", "same-origin");
         using var response = await connector.Client.SendAsync(read);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var csrf = ReadCookie(response, ConnectorSessionStore.CsrfCookieName);
 
-        using var mutation = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var mutation = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(mutation)).StatusCode);
 
-        using var crossSite = new HttpRequestMessage(HttpMethod.Get, "/api/tasks/grouped");
+        using var crossSite = new HttpRequestMessage(HttpMethod.Get, "/api/v1/studio/board");
         crossSite.Headers.Add("Sec-Fetch-Site", "cross-site");
         using var fresh = connector.NewBrowser();
         Assert.Equal(HttpStatusCode.Unauthorized, (await fresh.SendAsync(crossSite)).StatusCode);
@@ -294,25 +295,25 @@ public sealed class ConnectorProfileTests
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
 
-        using (var noSession = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        using (var noSession = new HttpRequestMessage(HttpMethod.Post, "/hubs/v1/studio/negotiate?negotiateVersion=1"))
         {
             noSession.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
             Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(noSession)).StatusCode);
         }
 
         await CsrfAsync(connector.Client);
-        using (var foreign = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        using (var foreign = new HttpRequestMessage(HttpMethod.Post, "/hubs/v1/studio/negotiate?negotiateVersion=1"))
         {
             foreign.Headers.Add("Origin", "http://evil.example");
             Assert.Equal(HttpStatusCode.Forbidden, (await connector.Client.SendAsync(foreign)).StatusCode);
         }
-        using (var negotiate = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs/negotiate?negotiateVersion=1"))
+        using (var negotiate = new HttpRequestMessage(HttpMethod.Post, "/hubs/v1/studio/negotiate?negotiateVersion=1"))
         {
             negotiate.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
             Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(negotiate)).StatusCode);
         }
         // Any other hub POST (a long-polling send) is a mutation and needs CSRF.
-        using (var send = new HttpRequestMessage(HttpMethod.Post, "/hubs/jobs?id=connection"))
+        using (var send = new HttpRequestMessage(HttpMethod.Post, "/hubs/v1/studio?id=connection"))
         {
             send.Headers.Add("Origin", ConnectorOptions.DefaultStudioOrigin);
             send.Content = new StringContent("{}");
@@ -329,7 +330,7 @@ public sealed class ConnectorProfileTests
         await using var connector = ConnectorUnderTest.Boot(transport);
         var csrf = await CsrfAsync(connector.Client);
 
-        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "browser-token");
         request.Headers.Add("X-Forwarded-For", "203.0.113.7");
         request.Headers.Add(TaskServerProtocol.HeaderName, "999");
@@ -355,7 +356,7 @@ public sealed class ConnectorProfileTests
         await using var connector = ConnectorUnderTest.Boot(transport);
         var csrf = await CsrfAsync(connector.Client);
 
-        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
         Assert.Equal("1", Assert.Single(transport.ProxiedRequests).Protocol);
     }
@@ -363,19 +364,16 @@ public sealed class ConnectorProfileTests
     [Fact]
     public async Task Core_attach_task_lifecycle_routes_forward_with_the_unscoped_project_token()
     {
-        // /api/tasks/{taskId}/move carries only a task id: the frontend does
-        // not yet send a project id or "project" query for this core-attach
-        // mutation. The connector has no task-to-project lookup of its own
-        // (it is a mechanical path translator, not a Task Server client), so
-        // it must forward using the reserved unscoped-project token rather
-        // than failing the request.
+        // The Studio sends a task-only lifecycle mutation on its versioned
+        // route with the reserved unscoped-project token (AGT-2983); the
+        // connector forwards that path to the Task Server unchanged.
         var transport = new RecordingTransport();
         await using var connector = ConnectorUnderTest.Boot(transport);
         var csrf = await CsrfAsync(connector.Client);
 
         using var request = Mutation(
             HttpMethod.Post,
-            "/api/tasks/tsk_core-attach-demo/move",
+            $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move",
             ConnectorOptions.DefaultStudioOrigin,
             csrf,
             new { targetState = "2-ready" });
@@ -385,6 +383,53 @@ public sealed class ConnectorProfileTests
         Assert.Equal(
             $"/api/v1/projects/{ConnectorProxy.UnscopedProjectToken}/tasks/tsk_core-attach-demo/move",
             observed.Path);
+    }
+
+    [Theory]
+    [InlineData("GET", "/api/v1/studio/board")]
+    [InlineData("GET", "/api/v1/studio/auth/status")]
+    [InlineData("GET", "/api/v1/projects/Agent%20Studio/tasks/AGT-1")]
+    [InlineData("POST", "/api/v1/studio/orchestrator/sessions/workbench:PROJ/wb-1/turns")]
+    [InlineData("GET", "/api/v1/studio/orchestrator/context/global")]
+    [InlineData("POST", "/api/v1/studio/orchestrator/context/global/refresh")]
+    [InlineData("GET", "/api/v1/studio/orchestrator/context/project:Agent%20Studio")]
+    [InlineData("POST", "/api/v1/studio/orchestrator/context/project:Agent%20Studio/refresh")]
+    [InlineData("GET", "/api/v1/studio/orchestrator/context/task:Agent%20Studio/AGT-1")]
+    [InlineData("POST", "/api/v1/studio/orchestrator/context/task:Agent%20Studio/AGT-1/refresh")]
+    [InlineData("POST", "/hubs/v1/studio/negotiate")]
+    public async Task Versioned_core_attach_paths_forward_to_the_task_server_unchanged(string method, string path)
+    {
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(new HttpMethod(method), path, ConnectorOptions.DefaultStudioOrigin, csrf, new { prompt = "test" });
+        if (method == "GET") request.Content = null;
+
+        Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(request)).StatusCode);
+        var observed = Assert.Single(transport.ProxiedRequests);
+        Assert.Equal(new Uri("http://host" + path).AbsolutePath, observed.Path);
+    }
+
+    [Theory]
+    [InlineData("GET", "/api/orchestrator/context/workbench:PROJ/AGT-W1")]
+    [InlineData("POST", "/api/orchestrator/context/workbench:PROJ/AGT-W1/refresh")]
+    public async Task Dossier_context_digest_is_answered_by_the_local_dev_seat_not_the_task_server(string method, string path)
+    {
+        // The Task Server has no Dossier descriptors; the connector serves the
+        // Dossier digest from the local OrchestratorApi handler (AGT-2983).
+        var transport = new RecordingTransport();
+        await using var connector = ConnectorUnderTest.Boot(transport);
+        var csrf = await CsrfAsync(connector.Client);
+
+        using var request = Mutation(new HttpMethod(method), path, ConnectorOptions.DefaultStudioOrigin, csrf);
+        if (method == "GET") request.Content = null;
+
+        using var response = await connector.Client.SendAsync(request);
+        Assert.Empty(transport.ProxiedRequests);
+        // The local handler answered: an unknown Dossier, not an unmapped route.
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Contains("Unknown Dossier 'AGT-W1'", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -404,7 +449,7 @@ public sealed class ConnectorProfileTests
             Settings: new Dictionary<string, string?> { ["Connector:CredentialRefreshSeconds"] = "300" }));
         var csrf = await CsrfAsync(connector.Client);
 
-        using (var before = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+        using (var before = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
             Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(before)).StatusCode);
 
         // Overlap-and-prove rotation: the operator stores the new credential,
@@ -412,9 +457,9 @@ public sealed class ConnectorProfileTests
         // has not elapsed, so only the upstream 401 makes the connector re-read.
         credentials.Rotate("studio-secret-v2");
         revoked = true;
-        using (var stale = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+        using (var stale = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
             Assert.Equal(HttpStatusCode.Unauthorized, (await connector.Client.SendAsync(stale)).StatusCode);
-        using (var after = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
+        using (var after = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf))
             Assert.Equal(HttpStatusCode.OK, (await connector.Client.SendAsync(after)).StatusCode);
 
         Assert.Equal(
@@ -449,7 +494,7 @@ public sealed class ConnectorProfileTests
         await using var connector = ConnectorUnderTest.Boot(transport);
         var csrf = await CsrfAsync(connector.Client);
 
-        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         using var response = await connector.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -473,7 +518,7 @@ public sealed class ConnectorProfileTests
         await using var connector = ConnectorUnderTest.Boot(new ConnectorTestSetup(transport, new MutableCredentialSource(null)));
         var csrf = await CsrfAsync(connector.Client);
 
-        using var request = Mutation(HttpMethod.Post, "/api/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
+        using var request = Mutation(HttpMethod.Post, "/api/v1/projects", ConnectorOptions.DefaultStudioOrigin, csrf);
         using var response = await connector.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);

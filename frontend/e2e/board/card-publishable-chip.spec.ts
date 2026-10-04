@@ -58,7 +58,7 @@ const GROUPED_PAYLOAD = {
 async function installRoutes(page: Page) {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => undefined));
-  await page.route('**/api/tasks/grouped**', r => r.fulfill(json(GROUPED_PAYLOAD)));
+  await page.route('**/api/v1/studio/board**', r => r.fulfill(json(GROUPED_PAYLOAD)));
   await page.route(/\/api\/tasks(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }])));
   await page.route('**/api/git/summary**', r => r.fulfill(json([])));
@@ -66,7 +66,7 @@ async function installRoutes(page: Page) {
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
   await page.route('**/api/agent-rules**', r => r.fulfill(json([])));
   await page.route('**/api/clients', r => r.fulfill(json([])));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } })));
   await page.route('**/api/tags', r => r.fulfill(json([])));
 }
 

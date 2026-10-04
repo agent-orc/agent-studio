@@ -61,19 +61,19 @@ test('keeps start, settings, live output, and stop in the embed in both themes',
     const json = (body: unknown, status = 200) => route.fulfill({
       status, contentType: 'application/json', body: JSON.stringify(body),
     });
-    if (pathname === '/api/auth/status') return json({
+    if (pathname === '/api/v1/studio/auth/status') return json({
       profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
     });
     if (pathname === '/api/watch-paths') return json([{
       name: PROJECT_NAME, path: '/mock/tasks/embed', rootPath: '/mock/repo/embed',
     }]);
-    if (pathname === '/api/workspaces') return json([{
+    if (pathname === '/api/v1/workspaces') return json([{
       id: 'ws-embed', displayName: 'Product', sortOrder: 0, isDefault: true,
       color: null, createdAt: '2026-07-13T20:00:00Z', projects: [project],
     }]);
-    if (pathname === '/api/projects') return json([project]);
+    if (pathname === '/api/v1/projects') return json([project]);
     if (pathname === '/api/tasks' || pathname === '/api/tags') return json([]);
-    if (pathname === '/api/tasks/grouped') return json({
+    if (pathname === '/api/v1/studio/board') return json({
       backlog: [], preparation: [], ready: [openTasks[0]], progress: [], autoReview: [],
       humanReview: [openTasks[1]], completed: [previewTask('QST-12', '6-completed')], archive: [],
     });

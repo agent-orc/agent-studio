@@ -120,9 +120,10 @@ async function mockEpicDetail(page: Page, epicId: string, watchPath: string, onR
     statusMarkdown: null,
     log: [],
   });
-  await page.route(`**/api/tasks/${encodeURIComponent(epicId)}**`, (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(epicId)}**`, (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname !== `/api/tasks/${encodeURIComponent(epicId)}`) {
+    if (!/^\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+$/.test(url.pathname)
+      || !url.pathname.endsWith(`/tasks/${encodeURIComponent(epicId)}`)) {
       return route.fallback();
     }
     onRequest(url);
