@@ -186,11 +186,11 @@ async function stubBackgroundApis(page: Page) {
   const empty = (body: unknown) => async (route: import('@playwright/test').Route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
-  await page.route('**/api/auth/status', empty({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/studio/auth/status', empty({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/tasks', empty([]));
-  await page.route('**/api/tasks/grouped', empty({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board', empty({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', empty([]));
-  await page.route('**/api/runner/status', empty({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', empty({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', empty({
     projects: 0, orchestratorEntries: 0, orchestratorLlmCalls: 0,
     totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,

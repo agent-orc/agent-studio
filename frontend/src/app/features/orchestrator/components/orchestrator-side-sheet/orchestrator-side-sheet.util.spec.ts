@@ -32,7 +32,7 @@ describe('orchestrator-side-sheet.util', () => {
   describe('resolveAttachmentUrl', () => {
     it('routes a chat-attachments path through the per-project GET endpoint', () => {
       expect(resolveAttachmentUrl('demo', 'chat-attachments/shot.png')).toBe(
-        '/api/runner/demo/orchestrator-chat/attachments/shot.png',
+        '/api/v1/studio/runner/demo/orchestrator-chat/attachments/shot.png',
       );
     });
 
@@ -199,7 +199,7 @@ describe('orchestrator-side-sheet.util', () => {
       expect(events[4]).toMatchObject({
         kind: 'artifact.image',
         caption: 'reply shot',
-        url: '/api/runner/Agent%20Studio/orchestrator-chat/attachments/reply%20image.png',
+        url: '/api/v1/studio/runner/Agent%20Studio/orchestrator-chat/attachments/reply%20image.png',
       });
       expect(events.every(event => event.rawRange.source === 'project:Agent Studio')).toBe(true);
     });

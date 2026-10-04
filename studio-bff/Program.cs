@@ -33,11 +33,15 @@ builder.Services.AddHttpClient("task-server", client =>
 })
 .ConfigurePrimaryHttpMessageHandler(() =>
 {
+    // UseCookies = false: the pooled handler is shared by every Studio caller,
+    // so a cookie jar would capture one user's Task Server session cookie
+    // (ts-studio-session) and replay it for everyone else.
     var expectedFingerprint = builder.Configuration["TaskServer:TlsServerCertificateSha256"]?.Trim();
     if (string.IsNullOrWhiteSpace(expectedFingerprint))
-        return new HttpClientHandler();
+        return new HttpClientHandler { UseCookies = false };
     return new HttpClientHandler
     {
+        UseCookies = false,
         ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
             certificate is not null
             && (errors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors) == 0
