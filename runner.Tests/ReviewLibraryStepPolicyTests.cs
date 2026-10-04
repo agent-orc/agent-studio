@@ -52,6 +52,41 @@ public sealed class ReviewLibraryStepPolicyTests
             }, SubjectSha));
     }
 
+    [Fact]
+    public void Missing_capabilities_name_exactly_the_keys_a_host_lacks()
+    {
+        var sealedPlan = ReviewLibraryStepPolicy.Seal(Plan(), SubjectSha);
+        var step = sealedPlan.Commands[0].LibraryStep!;
+        var host = step.RequiredCapabilities.ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(ReviewLibraryStepPolicy.MissingCapabilities(sealedPlan, host));
+        Assert.Equal(
+            ["review:library-step:v2"],
+            ReviewLibraryStepPolicy.MissingCapabilities(sealedPlan with { LibraryVersion = 2 }, host));
+        host.Remove(CapabilityProtocol.DotNet);
+        Assert.Equal([CapabilityProtocol.DotNet], ReviewLibraryStepPolicy.MissingCapabilities(sealedPlan, host));
+    }
+
+    [Theory]
+    [InlineData("dotnet test", "toolchain:dotnet")]
+    [InlineData("npm ci", "toolchain:node")]
+    [InlineData("npx playwright test", "toolchain:playwright")]
+    public void Every_toolchain_key_the_policy_emits_comes_from_the_published_table(string command, string key)
+    {
+        var sealedPlan = ReviewLibraryStepPolicy.Seal(
+            new ReviewPlanDto(
+                [new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", command])],
+                ["build-tests"],
+                LibraryVersion: ReviewLibraryStepPolicy.Version),
+            SubjectSha);
+        var emitted = ReviewLibraryStepPolicy.RequiredCapabilities(sealedPlan)
+            .Where(item => item.StartsWith("toolchain:", StringComparison.Ordinal));
+
+        Assert.Contains(key, emitted);
+        Assert.All(emitted, item => Assert.Contains(
+            ReviewLibraryStepPolicy.ToolchainRequirements, requirement => requirement.Key == item));
+    }
+
     private static ReviewPlanDto Plan()
         => new(
             [new ReviewCommandDto("verify-1", "build-tests", "sh", ["-lc", "dotnet test"],

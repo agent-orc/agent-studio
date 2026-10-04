@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using AgentStudio.Prompts;
 
 namespace AgentStudio.Orchestrator;
 
@@ -406,21 +407,21 @@ public sealed class OrchestratorContextDigestService
     internal static string RenderDigest(OrchestratorContextDigestData data)
     {
         var sb = new StringBuilder(2_048);
-        sb.AppendLine("=== APPLICATION READ DIGEST ===");
-        sb.AppendLine($"context: {data.Context.Value}");
-        sb.AppendLine($"capturedAtUtc: {Iso(data.CapturedAt)}");
+        sb.AppendLf("=== APPLICATION READ DIGEST ===");
+        sb.AppendLf($"context: {data.Context.Value}");
+        sb.AppendLf($"capturedAtUtc: {Iso(data.CapturedAt)}");
 
-        sb.AppendLine("component ownership and delivery routes:");
-        if (data.OwnershipMappings == null || data.OwnershipMappings.Count == 0) sb.AppendLine("- no shared-component mapping in this scope; explicit project ownership applies unless the affected component is unresolved");
+        sb.AppendLf("component ownership and delivery routes:");
+        if (data.OwnershipMappings == null || data.OwnershipMappings.Count == 0) sb.AppendLf("- no shared-component mapping in this scope; explicit project ownership applies unless the affected component is unresolved");
         foreach (var route in data.OwnershipMappings ?? [])
         {
-            sb.AppendLine($"- {route.Component}: owner={route.PrimaryProjectId}/{route.ProjectShortCode}; package={route.PackageOrModule ?? "(none)"}; consumers={string.Join(",", route.ConsumerProjectIds)}; artifact={route.ReleaseArtifact ?? "(none)"}; prefix={route.AllowedTicketPrefix}; confidence={route.Confidence:0.00}; mapping={route.MappingId}@v{route.Version}");
+            sb.AppendLf($"- {route.Component}: owner={route.PrimaryProjectId}/{route.ProjectShortCode}; package={route.PackageOrModule ?? "(none)"}; consumers={string.Join(",", route.ConsumerProjectIds)}; artifact={route.ReleaseArtifact ?? "(none)"}; prefix={route.AllowedTicketPrefix}; confidence={route.Confidence:0.00}; mapping={route.MappingId}@v{route.Version}");
         }
 
-        sb.AppendLine("lanes:");
+        sb.AppendLf("lanes:");
         if (data.Lanes.Count == 0)
         {
-            sb.AppendLine("- none");
+            sb.AppendLf("- none");
         }
         else
         {
@@ -432,34 +433,34 @@ public sealed class OrchestratorContextDigestService
                 var runner = string.IsNullOrWhiteSpace(project.RunnerMode)
                     ? "runner=unavailable"
                     : $"runner={project.RunnerMode}, slots={project.OccupiedSlots}/{project.MaxParallelism}";
-                sb.AppendLine($"- {project.Project}: total={project.Total}; {counts}; {runner}");
+                sb.AppendLf($"- {project.Project}: total={project.Total}; {counts}; {runner}");
             }
         }
 
         if (data.FocusTask != null)
         {
-            sb.AppendLine("task focus:");
-            sb.AppendLine($"- {data.FocusTask.Project}/{data.FocusTask.TaskKey}: {Compact(data.FocusTask.Title, 120)}; lane={data.FocusTask.State}; phase={data.FocusTask.Phase ?? "default"}; lastActivity={Iso(data.FocusTask.LastActivity)}");
+            sb.AppendLf("task focus:");
+            sb.AppendLf($"- {data.FocusTask.Project}/{data.FocusTask.TaskKey}: {Compact(data.FocusTask.Title, 120)}; lane={data.FocusTask.State}; phase={data.FocusTask.Phase ?? "default"}; lastActivity={Iso(data.FocusTask.LastActivity)}");
         }
 
-        sb.AppendLine($"board pulse (latest {TransitionLimit}):");
-        if (data.Transitions.Count == 0) sb.AppendLine("- none recorded");
+        sb.AppendLf($"board pulse (latest {TransitionLimit}):");
+        if (data.Transitions.Count == 0) sb.AppendLf("- none recorded");
         foreach (var row in data.Transitions.Take(TransitionLimit))
         {
-            sb.AppendLine($"- {Iso(row.At)} {row.Project}/{row.TaskKey}: {row.From ?? "?"} -> {row.To ?? "?"} ({row.Actor})");
+            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.TaskKey}: {row.From ?? "?"} -> {row.To ?? "?"} ({row.Actor})");
         }
 
-        sb.AppendLine($"progress runs (up to {RunLimit}):");
-        if (data.Runs.Count == 0) sb.AppendLine("- none");
+        sb.AppendLf($"progress runs (up to {RunLimit}):");
+        if (data.Runs.Count == 0) sb.AppendLf("- none");
         foreach (var row in data.Runs.Take(RunLimit))
         {
             var cli = string.IsNullOrWhiteSpace(row.CliType) ? "cli=?" : $"cli={row.CliType}";
             var model = string.IsNullOrWhiteSpace(row.Model) ? "" : $", model={row.Model}";
-            sb.AppendLine($"- {row.Project}/{row.TaskKey}: {row.Runtime}; phase={row.Phase}; {cli}{model}; {Compact(row.Title, 100)}");
+            sb.AppendLf($"- {row.Project}/{row.TaskKey}: {row.Runtime}; phase={row.Phase}; {cli}{model}; {Compact(row.Title, 100)}");
         }
 
-        sb.AppendLine("quota (cached unless this digest was explicitly refreshed):");
-        if (data.Quota.Snapshots.Count == 0) sb.AppendLine("- unavailable");
+        sb.AppendLf("quota (cached unless this digest was explicitly refreshed):");
+        if (data.Quota.Snapshots.Count == 0) sb.AppendLf("- unavailable");
         foreach (var snapshot in data.Quota.Snapshots.OrderBy(item => item.CliType, StringComparer.OrdinalIgnoreCase))
         {
             var flags = snapshot.Suspicious
@@ -467,7 +468,7 @@ public sealed class OrchestratorContextDigestService
                 : string.IsNullOrWhiteSpace(snapshot.Error) ? "" : $" error={Compact(snapshot.Error, 80)}";
             if (snapshot.Windows.Count == 0)
             {
-                sb.AppendLine($"- {snapshot.CliType}: no windows; fetched={Iso(snapshot.FetchedAt)}{flags}");
+                sb.AppendLf($"- {snapshot.CliType}: no windows; fetched={Iso(snapshot.FetchedAt)}{flags}");
                 continue;
             }
             var windows = snapshot.Windows.Take(QuotaWindowLimit).Select(window =>
@@ -480,21 +481,21 @@ public sealed class OrchestratorContextDigestService
                 var reset = window.ResetAt is { } resetAt ? $", reset={Iso(resetAt)}" : "";
                 return $"{Compact(window.Label, 40)}={usage}{reset}";
             });
-            sb.AppendLine($"- {snapshot.CliType}: {string.Join("; ", windows)}; fetched={Iso(snapshot.FetchedAt)}{flags}");
+            sb.AppendLf($"- {snapshot.CliType}: {string.Join("; ", windows)}; fetched={Iso(snapshot.FetchedAt)}{flags}");
         }
 
-        sb.AppendLine("publish targets:");
-        if (data.Publish.Count == 0) sb.AppendLine("- unavailable");
+        sb.AppendLf("publish targets:");
+        if (data.Publish.Count == 0) sb.AppendLf("- unavailable");
         foreach (var project in data.Publish)
         {
             if (!project.IsRepo)
             {
-                sb.AppendLine($"- {project.Project}: unavailable ({Compact(project.Error, 100)})");
+                sb.AppendLf($"- {project.Project}: unavailable ({Compact(project.Error, 100)})");
                 continue;
             }
             if (project.Targets.Count == 0)
             {
-                sb.AppendLine($"- {project.Project}: none derived");
+                sb.AppendLf($"- {project.Project}: none derived");
                 continue;
             }
             var targets = project.Targets.Select(target =>
@@ -505,21 +506,21 @@ public sealed class OrchestratorContextDigestService
                 var version = string.IsNullOrWhiteSpace(target.CurrentVersion) ? "" : $" v{target.CurrentVersion}";
                 return $"{target.Label}{version} {pending}";
             });
-            sb.AppendLine($"- {project.Project}: {string.Join("; ", targets)}");
+            sb.AppendLf($"- {project.Project}: {string.Join("; ", targets)}");
         }
 
         var health = data.Watcher;
-        sb.AppendLine("health:");
-        sb.AppendLine($"- healthz=ok; watcher={(health.Healthy ? "healthy" : "degraded")}; handles={health.ActiveWatcherCount}/{health.ConfiguredPathCount}; lastEvent={Iso(health.LastEventAt)}{(string.IsNullOrWhiteSpace(health.LastError) ? "" : $"; error={Compact(health.LastError, 100)}")}");
+        sb.AppendLf("health:");
+        sb.AppendLf($"- healthz=ok; watcher={(health.Healthy ? "healthy" : "degraded")}; handles={health.ActiveWatcherCount}/{health.ConfiguredPathCount}; lastEvent={Iso(health.LastEventAt)}{(string.IsNullOrWhiteSpace(health.LastError) ? "" : $"; error={Compact(health.LastError, 100)}")}");
 
-        sb.AppendLine($"decision journal (latest {DecisionLimit}):");
-        if (data.Decisions.Count == 0) sb.AppendLine("- none");
+        sb.AppendLf($"decision journal (latest {DecisionLimit}):");
+        if (data.Decisions.Count == 0) sb.AppendLf("- none");
         foreach (var row in data.Decisions.Take(DecisionLimit))
         {
-            sb.AppendLine($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}");
+            sb.AppendLf($"- {Iso(row.At)} {row.Project}/{row.JobId}: {row.Kind}; {row.Reason}");
         }
 
-        sb.AppendLine("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
+        sb.AppendLf("Use this digest as current read-only application state. Ask for a refresh when cached quota may be stale. Do not infer operational authority from this context.");
         sb.Append("=== END APPLICATION READ DIGEST ===");
         return sb.ToString();
     }
