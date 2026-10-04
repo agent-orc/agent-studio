@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using AgentStudio.Runner;
+using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -71,6 +72,60 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_workspace, recursive: true); } catch { /* best-effort */ }
+    }
+
+    [Fact]
+    public async Task Pending_member_uses_current_gate_profile_when_the_project_profile_changes()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PROFILE", "docs/profile.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var oldDigest = Assert.Single(store.ListPending()).Subject.GateProfileDigest;
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBuildProfile(ProjectName, new BuildProfile { BuildCmds = ["cd ."] });
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.NotEqual(oldDigest, manifest.Scope.GateProfileDigest);
+        Assert.Equal(manifest.Scope.GateProfileDigest,
+            Assert.Single(manifest.Members).GateProfileDigest);
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Pending_member_uses_current_platform_version_after_an_upgrade()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-VERSION", "docs/version.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        var path = Path.Combine(Path.GetDirectoryName(store.BatchDirectory("unused"))!,
+            "pending", pending.ReviewAttemptId + ".json");
+        File.WriteAllText(path, JsonSerializer.Serialize(pending with
+        {
+            Subject = pending.Subject with { PlatformVersion = "previous-version" },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.NotEqual("previous-version", manifest.Scope.PlatformVersion);
+        Assert.Equal(manifest.Scope.PlatformVersion,
+            Assert.Single(manifest.Members).PlatformVersion);
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
     }
 
     [Fact]
