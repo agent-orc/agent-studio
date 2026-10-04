@@ -196,6 +196,37 @@ public sealed class RunnerHostRecordTests
         Assert.Contains(migrated.Errors, error => error.Contains("CODING_SLOTS must match"));
     }
 
+    [Theory]
+    [InlineData("coding", "invalid")]
+    [InlineData("review", "")]
+    public void Migration_refuses_an_explicit_invalid_role_slot_count(string role, string value)
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var file = role == "coding" ? "runner.env" : "review.env";
+        var original = role == "coding" ? "2" : "1";
+        var changed = files[file].Replace($"RUNNER_MAX_PARALLELISM={original}",
+            $"RUNNER_MAX_PARALLELISM={value}", StringComparison.Ordinal);
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            file == "runner.env" ? changed : files["runner.env"],
+            file == "review.env" ? changed : files["review.env"],
+            files["profile.conf"], "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains($"{role} RUNNER_MAX_PARALLELISM"));
+    }
+
+    [Fact]
+    public void Migration_uses_legacy_default_only_when_role_slot_count_is_absent()
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var coding = files["runner.env"].Replace("RUNNER_MAX_PARALLELISM=2\n", "", StringComparison.Ordinal);
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            coding, files["review.env"], files["profile.conf"], "linux");
+
+        Assert.Empty(migrated.Errors);
+        Assert.Equal(2, migrated.Record!.Envelope.CodingSlots);
+    }
+
     [Fact]
     public void Migration_refuses_disagreeing_or_shared_host_facts()
     {

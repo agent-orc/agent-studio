@@ -312,9 +312,12 @@ or omit `--runner-env` only for a review-only host. Omit `--profile` only when
 there is no existing resource profile to import. A missing `RUNNER_HOSTNAME` is
 pinned to the current machine name. Migration preserves `HOST_TOTAL_SLOTS` from
 an existing profile, including a shared ceiling below the sum of the role caps;
-an invalid ceiling or a profile role cap that conflicts with a role file is refused. Without that key, the envelope starts at the
-sum of today's role slots. Review the imported resource
-values, then use `--host-record` on the normal onboarding controller. The
+an invalid ceiling or a profile role cap that conflicts with a role file is
+refused. Without that key, the envelope starts at the sum of today's role
+slots. The legacy default of two role slots applies only when
+`RUNNER_MAX_PARALLELISM` is absent from a role file. An explicit value that is
+not an integer stops migration before a record is written. Review the imported
+resource values, then use `--host-record` on the normal onboarding controller. The
 controller replaces the old `runner.env`, `review.env` (one role at a time)
 and `profile.conf` from the record. Legacy onboarding without `--host-record`
 continues to import unit resource drop-ins into the existing profile.

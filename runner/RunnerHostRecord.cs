@@ -207,7 +207,19 @@ public static class RunnerHostRecordPolicy
             if (string.IsNullOrWhiteSpace(token)) errors.Add($"{role} RUNNER_AUTH_TOKEN_FILE is missing; enrol a role principal first.");
             roles.Add(new RunnerHostRoleRecord(role, principal ?? string.Empty, token ?? string.Empty,
                 values.GetValueOrDefault("RUNNER_CLIENT_ID"), values.GetValueOrDefault("RUNNER_NAME")));
-            slots[role] = int.TryParse(values.GetValueOrDefault("RUNNER_MAX_PARALLELISM"), out var own) ? own : 2;
+            if (!values.TryGetValue("RUNNER_MAX_PARALLELISM", out var declaredOwn))
+            {
+                slots[role] = 2; // Legacy role files without a slot setting used this default.
+            }
+            else if (int.TryParse(declaredOwn, out var own))
+            {
+                slots[role] = own;
+            }
+            else
+            {
+                errors.Add($"{role} RUNNER_MAX_PARALLELISM must be an integer; found '{declaredOwn}'.");
+                slots[role] = 0; // No record is emitted when an explicit value is invalid.
+            }
             var otherKey = role == HostRoles.Coding ? "RUNNER_HOST_REVIEW_SLOTS" : "RUNNER_HOST_CODING_SLOTS";
             var otherRole = role == HostRoles.Coding ? HostRoles.Review : HostRoles.Coding;
             if (int.TryParse(values.GetValueOrDefault(otherKey), out var declaredOther)
