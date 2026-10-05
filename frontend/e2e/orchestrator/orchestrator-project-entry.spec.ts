@@ -129,7 +129,7 @@ async function installRoutes(
     const url = new URL(request.url());
     const path = decodeURIComponent(url.pathname);
 
-    if (path === '/api/auth/status') {
+    if (path === '/api/v1/studio/auth/status') {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (path === '/api/watch-paths') {
@@ -147,7 +147,7 @@ async function installRoutes(
         },
       ]);
     }
-    if (path === '/api/workspaces') {
+    if (path === '/api/v1/workspaces') {
       return json(route, [{
         id: 'WS-ENTRY',
         displayName: 'Entry workspace',
@@ -156,22 +156,23 @@ async function installRoutes(
         projects: [workspaceProject(ALPHA), workspaceProject(BETA)],
       }]);
     }
-    if (path === '/api/tasks/grouped') return json(route, GROUPED_WITH_TASK);
+    if (path === '/api/v1/studio/board') return json(route, GROUPED_WITH_TASK);
     if (path === '/api/tasks/archive') return json(route, { items: [], total: 0, offset: 0, limit: 50, hasMore: false });
-    if (path === `/api/tasks/${TASK.key}` || path === `/api/tasks/${TASK.id}`) return json(route, taskDetail());
-    if (path === '/api/tasks' || path === '/api/projects') return json(route, []);
-    if (path === '/api/runner/status') return json(route, { projects: {} });
+    const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(path)?.[1];
+    if (detailTaskId === TASK.key || detailTaskId === TASK.id) return json(route, taskDetail());
+    if (path === '/api/tasks' || path === '/api/v1/projects') return json(route, []);
+    if (path === '/api/v1/studio/runner/status') return json(route, { projects: {} });
     if (path === '/api/auto-review/status') {
       return json(route, {
         lastTickAt: null, accept: 0, reissue: 0, escalate: 0, aspectsRun: 0,
         pending: 0, currentJob: null, currentProject: null, activeJobs: [],
       });
     }
-    if (path === '/api/orchestrator/sessions') return json(route, { sessions: contextSessions() });
+    if (path === '/api/v1/studio/orchestrator/sessions') return json(route, { sessions: contextSessions() });
     if (path === '/api/runner/orchestrator-feed') return json(route, { entries: [] });
     if (/\/api\/projects\/[^/]+\/workbenches$/.test(path)) return json(route, { items: [] });
-    if (path.startsWith('/api/orchestrator/context/')) {
-      const contextKey = path.slice('/api/orchestrator/context/'.length);
+    if (path.startsWith('/api/v1/studio/orchestrator/context/')) {
+      const contextKey = path.slice('/api/v1/studio/orchestrator/context/'.length);
       return json(route, {
         contextKey,
         capturedAt: '2026-08-10T12:00:00Z',

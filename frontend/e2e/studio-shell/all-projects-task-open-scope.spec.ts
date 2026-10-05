@@ -109,29 +109,30 @@ async function stubTwoProjectWorkspace(page: Page): Promise<void> {
       body: JSON.stringify(body),
     });
 
-    if (url.pathname === '/api/auth/status') {
+    if (url.pathname === '/api/v1/studio/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/workspaces') return json([]);
-    if (url.pathname === '/api/projects') return json([]);
+    if (url.pathname === '/api/v1/workspaces') return json([]);
+    if (url.pathname === '/api/v1/projects') return json([]);
     if (url.pathname === '/api/watch-paths') {
       return json([
         { name: ALPHA, path: ALPHA_PATH, rootPath: ALPHA_PATH },
         { name: BETA, path: BETA_PATH, rootPath: BETA_PATH },
       ]);
     }
-    if (url.pathname === '/api/tasks/grouped') {
+    if (url.pathname === '/api/v1/studio/board') {
       return json({ ...EMPTY_GROUPED, ready: [ALPHA_TASK, BETA_TASK] });
     }
     if (url.pathname === '/api/tasks/archive') return json({ items: [], total: 0 });
     if (url.pathname === '/api/tasks') return json([ALPHA_TASK, BETA_TASK]);
-    if (url.pathname === `/api/tasks/${ALPHA_TASK_ID}` || url.pathname === '/api/tasks/AGT-9001') {
+    const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (detailTaskId === ALPHA_TASK_ID || detailTaskId === 'AGT-9001') {
       return json(detailFor(ALPHA_TASK));
     }
-    if (url.pathname === `/api/tasks/${BETA_TASK_ID}` || url.pathname === '/api/tasks/AGT-9002') {
+    if (detailTaskId === BETA_TASK_ID || detailTaskId === 'AGT-9002') {
       return json(detailFor(BETA_TASK));
     }
-    if (url.pathname === '/api/runner/status') return json({ projects: {} });
+    if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/epics') return json([]);
     if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
     if (url.pathname === '/api/tags' || url.pathname.startsWith('/api/clients')) return json([]);

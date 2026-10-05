@@ -70,11 +70,11 @@ const EMPTY_GROUPED = {
 async function installRoutes(page: Page): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => { /* late */ }));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, r => r.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: REPO_PATH, rootPath: REPO_PATH, repositoryPath: REPO_PATH }])));
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/clients', r => r.fulfill(json([])));
   await page.route('**/api/git/summary**', r => r.fulfill(json([])));
   // The snapshot under test - publishTargets folded in.
@@ -104,7 +104,7 @@ async function installRoutes(page: Page): Promise<void> {
     drift: { available: true, reason: null, overallGrade: 'Fresh', areas: [], counts: { fresh: 0, aging: 0, stale: 0, graded: 0 } },
     critical: { available: true, reason: null, count: 0, overallGrade: 'none', items: [] },
   })));
-  await page.route('**/api/workspaces', r => r.fulfill(json([{
+  await page.route('**/api/v1/workspaces', r => r.fulfill(json([{
     id: 'ws', displayName: 'Workspace', projects: [{
       id: 'PROJ-1', displayName: PROJECT, workspaceId: 'ws', storageLocation: REPO_PATH,
       sortOrder: 0, archived: false, urls: [],

@@ -27,6 +27,47 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     // defeat a plain recursive delete on Windows.
     public void Dispose() => TestTempRoot.TryDelete(_workspaceRoot);
 
+    [Theory]
+    [InlineData("manual", TaskModes.Coding)]
+    [InlineData("continue", TaskModes.Coding)]
+    [InlineData("auto", TaskModes.Coding)]
+    [InlineData("manual", TaskModes.Concept)]
+    public async Task DefaultAdmission_RejectsCodingBeforePreparationOrLaneMutation(string entryPoint, string taskMode)
+    {
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "remote-only");
+        var taskPath = Path.Combine(_watchPath, TaskStates.Ready, "remote-only", "task.json");
+        var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(taskPath))!;
+        task["mode"] = taskMode;
+        File.WriteAllText(taskPath, task.ToJsonString());
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli, allowLocalCoding: false);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "remote-only");
+        var originalTask = File.ReadAllText(Path.Combine(readyFolder, "task.json"));
+
+        if (entryPoint == "auto")
+        {
+            runner.SetMode("auto-continuous");
+            await runner.TickAsync(CancellationToken.None);
+        }
+        else
+        {
+            var outcome = entryPoint == "manual"
+                ? await runner.StartJobManualAsync("remote-only", CancellationToken.None)
+                : await runner.ContinueJobAsync("remote-only", "continue", null, CancellationToken.None);
+            Assert.Equal(RunRejectReason.RemoteExecutionRequired, outcome.Rejection?.Reason);
+            Assert.Contains(RemoteExecutionRequirement.Code, outcome.Rejection!.Message);
+        }
+
+        Assert.False(cli.StartCalled);
+        Assert.True(Directory.Exists(readyFolder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "remote-only")));
+        Assert.Equal(originalTask, File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        Assert.False(File.Exists(Path.Combine(readyFolder, PickupLockFile.LockFileName)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, ".git", "worktrees")));
+        Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+    }
+
     [Fact]
     public async Task AutoPickupSpawnFailure_RevertsReady_RemovesLock_AndFreesSlot()
     {
@@ -381,7 +422,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         string? executionEngine = null,
         ProviderLimitRegistry? providerLimits = null,
         IReadOnlyList<IQuotaProbe>? quotaProbes = null,
-        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null)
+        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null,
+        bool allowLocalCoding = true)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -467,7 +509,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             pickupLockOwner: pickupLockOwner,
             timeline: timeline,
             providerLimits: providerLimits,
-            dispatchRejections: dispatchRejections);
+            dispatchRejections: dispatchRejections,
+            localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)

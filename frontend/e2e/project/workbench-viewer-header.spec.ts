@@ -187,7 +187,7 @@ async function installMocks(
   };
   await page.route('**/healthz', (route) => route.fulfill({ status: 200, body: 'Healthy' }));
   await page.route('**/api/**', (route) => json(route, []));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     json(route, {
       profile: 'local',
       bootstrapRequired: false,
@@ -205,7 +205,7 @@ async function installMocks(
       },
     ]),
   );
-  await page.route('**/api/workspaces**', (route) =>
+  await page.route('**/api/v1/workspaces**', (route) =>
     json(route, [
       {
         id: 'ws-viewer-evidence',
@@ -233,7 +233,7 @@ async function installMocks(
       devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
     }),
   );
-  await page.route('**/api/runner/status**', (route) => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', (route) => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', (route) =>
     json(route, {
       at: '2026-08-09T10:00:00Z',
@@ -269,7 +269,7 @@ async function installMocks(
       limit: 50,
     }),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     json(route, {
       ...EMPTY_GROUPED,
       progress: [primaryTask],

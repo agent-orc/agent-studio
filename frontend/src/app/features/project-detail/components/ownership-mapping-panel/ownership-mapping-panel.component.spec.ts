@@ -13,7 +13,7 @@ describe('OwnershipMappingPanelComponent', () => {
     const fixture = TestBed.createComponent(OwnershipMappingPanelComponent);
     fixture.componentRef.setInput('projectName', 'Coding Agent Chat');
     fixture.detectChanges();
-    http.expectOne('/api/workspaces?includeArchived=true').flush([{ id: 'ws', projects: [{
+    http.expectOne('/api/v1/workspaces?includeArchived=true').flush([{ id: 'ws', projects: [{
       id: 'PROJ-003', displayName: 'Coding Agent Chat', shortCode: 'CAC', ownershipMappings: [mapping()],
     }] }]);
     fixture.detectChanges();

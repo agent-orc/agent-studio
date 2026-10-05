@@ -45,16 +45,16 @@ async function boot(page: Page, theme: Theme = 'dark'): Promise<void> {
     const json = (body: unknown) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),
     });
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.includes('/api/tasks/grouped')) return json(EMPTY_GROUPED);
-    if (url.includes('/api/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/v1/studio/board')) return json(EMPTY_GROUPED);
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
     if (url.includes('/api/watch-paths')) {
       return json(PROJECTS.map((name, i) => ({ name, path: `/mock/project-${i + 1}` })));
     }
-    if (url.includes('/api/workspaces')) return json([]);
+    if (url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) return json([]);
     return route.continue();
   });
   // Seed once only: a reload must read what the app persisted, not this seed.

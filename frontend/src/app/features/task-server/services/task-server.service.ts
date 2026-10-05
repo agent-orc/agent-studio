@@ -163,7 +163,8 @@ export class TaskServerService {
     if (error instanceof HttpErrorResponse) {
       const apiMessage = typeof error.error?.message === 'string' ? error.error.message : null;
       const loginUrl = typeof error.error?.loginUrl === 'string' ? error.error.loginUrl : null;
-      const networked = this.auth.status()?.profile === 'networked' || loginUrl === '/api/auth/login';
+      const networked = this.auth.status()?.profile === 'networked'
+        || loginUrl === '/api/auth/login' || loginUrl === '/api/v1/studio/auth/login';
       if (error.status === 401 && networked) {
         return {
           reason: apiMessage ?? 'Sign in with an owner or operator account to manage the Task Server.',
