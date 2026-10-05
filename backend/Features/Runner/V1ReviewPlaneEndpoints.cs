@@ -649,6 +649,10 @@ public static class V1ReviewPlaneEndpoints
                 return error!;
             var currentReview = current!;
             var authoritativeLease = currentReview.Lease!;
+            // AGT-3016: an executor that still reads verdict markers out of
+            // command output must not downgrade a command that exited 0.
+            request = Contract.ReviewCommandVerdictPolicy.NormalizeReport(
+                request, currentReview.Subject.Plan);
             request = Contract.ReviewVerdictCitationPolicy.NormalizeReport(
                 request,
                 currentReview.Subject.Plan?.Commands

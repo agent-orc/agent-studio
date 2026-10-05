@@ -421,7 +421,25 @@ steer the pipeline in this policy version.
   `post-merge-into-develop` mutation boundary. A settled immutable Result
   Envelope whose Remote Review is `Pass` enters the queue when build/test is
   passed or explicitly not applicable. A frozen plan that requires build/test
-  cannot omit that verdict. The report endpoint awaits the result before moving
+  cannot omit that verdict.
+  **Rule: command steps are judged by exit status; verdict markers come only
+  from aspect replies (AGT-3016).** A tool step (`verify-N`, `compose-render-N`)
+  yields `CommandPassed` or `CommandFailed` from its exit code. A failed step
+  can also yield a baseline-compared verdict. Its output never reaches the
+  `[[ASPECT_VERDICT: ...]]` parser, because a test log can quote a sentinel
+  from test data. The AGT-2954 and AGT-2996 `AspectRunnerTests` output did
+  that, and a green `dotnet test` became a `concerns` row marked
+  "malformed: duplicate-key". The runner enforces the rule in
+  `RemoteReviewWorkspace.ParseVerdict`. The report endpoint then applies
+  `ReviewCommandVerdictPolicy.NormalizeReport`
+  (`contracts/TaskServer.Contracts/ReviewCommandVerdictPolicy.cs`) before
+  grading. That repairs reports from released agent-hosts that still read
+  markers out of command output. Any marker-derived verdict on a tool-only
+  aspect (`RemoteAspectVerdict...`, `review:unparseable`, or `malformed:`) is
+  replaced by its step's exit-status verdict, so a malformed marker in the
+  output of a command that exited 0 never refuses this gate. Aspects with an
+  agent command keep their verdicts, and the malformed-reply handling of
+  real aspect replies is unchanged. The report endpoint awaits the result before moving
   Auto Review to Human Review. This is the canonical path for every Remote
   coding project; it is not limited to AGT, a specific executor, or a project
   feature flag. `RemoteExecutionEnabled` controls dispatch only and does not
