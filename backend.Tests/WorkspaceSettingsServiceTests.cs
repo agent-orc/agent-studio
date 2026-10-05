@@ -38,6 +38,17 @@ public sealed class WorkspaceSettingsServiceTests : IDisposable
         Assert.Null(s.OrchestratorModel);
         Assert.Null(s.OrchestratorThinkingLevel);
         Assert.Null(s.AutonomyLevel);
+        Assert.True(s.ChatMetadataEnabled ?? true);
+    }
+
+    [Fact]
+    public void ChatMetadataSetting_PersistsAndCanReturnToDefault()
+    {
+        var svc = Build();
+        svc.SetChatMetadataEnabled("ws-default", false);
+        Assert.False(Build().Get("ws-default").ChatMetadataEnabled);
+        svc.SetChatMetadataEnabled("ws-default", null);
+        Assert.True(Build().Get("ws-default").ChatMetadataEnabled ?? true);
     }
 
     [Fact]

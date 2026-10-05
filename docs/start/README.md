@@ -27,6 +27,7 @@ Use this page as the first stop when you need the right document quickly.
 | [mockups/](../concepts/mockups/) | Locked design references and click-dummies (under `concepts/`). |
 | [assets/](../assets) | Image assets referenced by documentation pages. |
 | [proposals/](../concepts/proposals/README.md) | Dated improvement proposals with durable approval status and implementation-card references. |
+| [docs-drift-audit-2026-09-29/](../docs-drift-audit-2026-09-29/index.html) | Documentation drift audit and its evidence inventory. |
 
 ## Code-Vertrag (`app/`)
 

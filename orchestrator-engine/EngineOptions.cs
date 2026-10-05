@@ -7,6 +7,7 @@ public sealed class EngineOptions
     public required string ServerUrl { get; init; }
     public required string ClientId { get; init; }
     public string? ClientCredential { get; init; }
+    public string? ClientCredentialFile { get; init; }
     public bool AllowInsecureHttp { get; init; }
     public int ReviewConcurrency { get; init; } = 4;
     public int CouncilConcurrency { get; init; } = 4;
@@ -48,15 +49,7 @@ public sealed class EngineOptions
             throw new ArgumentException("Configure only one of CLIENT_CREDENTIAL or CLIENT_CREDENTIAL_FILE.");
         if (!string.IsNullOrWhiteSpace(credentialFile))
         {
-            if (!File.Exists(credentialFile))
-                throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {credentialFile}");
-            if (!OperatingSystem.IsWindows())
-            {
-                var mode = File.GetUnixFileMode(credentialFile);
-                if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0)
-                    throw new ArgumentException("CLIENT_CREDENTIAL_FILE must be owner-readable only.");
-            }
-            credential = File.ReadAllText(credentialFile).Trim();
+            credential = ReadCredentialFile(credentialFile);
         }
         if (!isLoopback && string.IsNullOrWhiteSpace(credential))
             throw new ArgumentException("CLIENT_CREDENTIAL is required for a non-loopback SERVER_URL.");
@@ -66,6 +59,7 @@ public sealed class EngineOptions
             ServerUrl = serverUrl,
             ClientId = Required(value, "CLIENT_ID"),
             ClientCredential = string.IsNullOrWhiteSpace(credential) ? null : credential,
+            ClientCredentialFile = string.IsNullOrWhiteSpace(credentialFile) ? null : credentialFile,
             AllowInsecureHttp = allowInsecureHttp,
             ReviewConcurrency = Cap(value, "REVIEW_CONCURRENCY", 4),
             CouncilConcurrency = Cap(value, "COUNCIL_CONCURRENCY", 4),
@@ -77,6 +71,22 @@ public sealed class EngineOptions
             HealthPort = EngineHealthProbe.ResolvePort(value),
             RemotePostBuildTestEnabled = OptIn(value("REMOTE_POST_BUILD_TEST_GATE_ENABLED")),
         };
+    }
+
+    internal static string ReadCredentialFile(string path)
+    {
+        if (!File.Exists(path))
+            throw new ArgumentException($"CLIENT_CREDENTIAL_FILE does not exist: {path}");
+        if (!OperatingSystem.IsWindows())
+        {
+            var mode = File.GetUnixFileMode(path);
+            if ((mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite)) != 0)
+                throw new ArgumentException("CLIENT_CREDENTIAL_FILE must be owner-readable only.");
+        }
+        var credential = File.ReadAllText(path).Trim();
+        if (credential.Length == 0)
+            throw new ArgumentException("CLIENT_CREDENTIAL_FILE is empty.");
+        return credential;
     }
 
     private static string Required(Func<string, string?> value, string key)
