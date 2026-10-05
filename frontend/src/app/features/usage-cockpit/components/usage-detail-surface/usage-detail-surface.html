@@ -1,0 +1,25 @@
+<dialog #dialog
+        class="usage-surface"
+        [id]="surfaceId()"
+        [attr.data-mode]="mode()"
+        [attr.aria-labelledby]="surfaceId() + '-title'"
+        data-testid="usage-detail-surface"
+        (cancel)="onCancel($event)">
+  <header class="usage-surface__head">
+    <h2 class="usage-surface__title" [id]="surfaceId() + '-title'">{{ title() }}</h2>
+    <button type="button"
+            class="usage-surface__close"
+            aria-label="Close usage detail"
+            data-testid="usage-detail-close"
+            (click)="requestClose()">
+      <app-studio-icon name="close" [size]="14" />
+    </button>
+  </header>
+  <div class="usage-surface__body">
+    @if (snapshot(); as s) {
+      @if (focus(); as f) {
+        <app-usage-detail-panel [snapshot]="s" [focus]="f" [now]="now()" [idPrefix]="surfaceId()" />
+      }
+    }
+  </div>
+</dialog>

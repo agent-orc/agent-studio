@@ -20,14 +20,21 @@
   </aside>
 
   <div class="token-usage__page">
+  @if (ledgerScopeLabel(); as scope) {
+    <p class="token-usage__scope" data-testid="token-usage-ledger-scope">Opened from usage. {{ scope }}</p>
+  }
+  @if (page() !== 'workspace' && ledgerScope()) {
+    <app-workspace-token-timeline [scope]="ledgerScope()" />
+  }
   @if (page() === 'workspace') {
     <header class="token-usage__page-head">
       <span class="token-usage__eyebrow">Workspace level</span>
       <h2>Workspace and project usage</h2>
-      <p>Recorded token events across this workspace. Project filters change every visible total below.</p>
+      <p>{{ ledgerScope() ? 'Token events in the selected workspace and calendar range.' : 'Recorded token events across this workspace. Project filters change every visible total below.' }}</p>
     </header>
-    <app-workspace-token-timeline />
+    <app-workspace-token-timeline [scope]="ledgerScope()" />
 
+  @if (!ledgerScope()) {
   <section class="token-usage__detail" data-testid="token-usage-detail">
     <header class="token-usage__detail-head">
       <h3>Workspace detail</h3>
@@ -47,7 +54,9 @@
       (refreshOne)="refreshOne($event)"
       (openProjectSettings)="openProjectSettings.emit($event)" />
   </section>
+  }
   } @else {
+    @if (!ledgerScope()) {
     <app-cli-window-analysis
       [cliType]="cliPage()"
       [quotaRows]="usage.quotaRows()"
@@ -57,6 +66,7 @@
       [timeline7d]="usage.timeline7d()"
       [refreshing]="usage.refreshing()[cliPage()]"
       (refresh)="usage.refreshOne(cliPage())" />
+    }
   }
   </div>
 </section>

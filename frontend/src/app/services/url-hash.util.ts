@@ -29,6 +29,16 @@
  * percent-encoded by the caller so they cannot contain a raw `&`.
  */
 
+/** Keys shared by usage-detail links and the settings token-ledger route. */
+export const LEDGER_SCOPE_KEYS = {
+  workspace: 'ledger-workspace',
+  range: 'ledger-range',
+  from: 'ledger-from',
+  to: 'ledger-to',
+  project: 'ledger-project',
+  zone: 'ledger-zone',
+} as const;
+
 /** Split a `#a&b&c` hash (or '') into its non-empty segments. */
 export function hashSegments(hash: string): string[] {
   return (hash || '')
