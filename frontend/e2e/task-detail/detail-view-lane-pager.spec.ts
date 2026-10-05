@@ -271,7 +271,7 @@ test.describe('Detail view - lane pager', () => {
       // the next job in the iteration).
       const moveResponse = page.waitForResponse(resp =>
         resp.request().method() === 'POST'
-        && resp.url().includes(`/api/tasks/${encodeURIComponent(order[3])}/move`)
+        && resp.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(order[3])}/move`)
       , { timeout: 30_000 });
       // Lane moves now live in the ⋯ overflow context menu, not the lane
       // dropdown (the dropdown only pages through lanes). 0-backlog offers
@@ -329,7 +329,7 @@ test.describe('Detail view - lane pager', () => {
       await expect(confirmDialog).toBeVisible({ timeout: 5_000 });
       const deleteResponse = page.waitForResponse(resp =>
         resp.request().method() === 'DELETE'
-        && resp.url().includes(`/api/tasks/${encodeURIComponent(order[3])}`)
+        && resp.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(order[3])}`)
       , { timeout: 30_000 });
       await page.getByTestId('confirm-dialog-confirm').click();
       await deleteResponse;
@@ -375,7 +375,7 @@ test.describe('Detail view - lane pager', () => {
         await expect(page).toHaveURL(new RegExp(`job=${encodeURIComponent(movingId)}`), { timeout: 20_000 });
         const moveResp = page.waitForResponse(resp =>
           resp.request().method() === 'POST'
-          && resp.url().includes(`/api/tasks/${encodeURIComponent(movingId)}/move`)
+          && resp.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(movingId)}/move`)
         , { timeout: 30_000 });
         await page.getByTestId('triage-overflow-btn').click();
         await page.getByTestId('triage-overflow-item-move-to-completed').click();

@@ -115,6 +115,9 @@ public sealed class TokenAggregationService : ITokenAggregator
     public TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null)
         => _busTimeline.Build(projects, windowHours, bucketMinutes, nowUtc);
 
+    public TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes)
+        => _busTimeline.BuildRange(projects, fromUtc, toUtc, bucketMinutes);
+
     public AdHocUsageAggregate AdHocAggregate(DateTime? since = null)
         => _busAdHoc.Aggregate(since);
 

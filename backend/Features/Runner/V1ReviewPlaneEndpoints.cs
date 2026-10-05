@@ -1445,7 +1445,7 @@ public static class V1ReviewPlaneEndpoints
                         // is what a successor still refuses.
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
-                        integrationParkReason = integrated.AutomaticRecoveryDetail;
+                        integrationParkReason = RemoteDeliveryParkReason.For(integrated);
                     }
                     else
                     {

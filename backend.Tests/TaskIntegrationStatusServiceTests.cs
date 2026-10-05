@@ -1030,6 +1030,48 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.DoesNotContain("review-subject", status.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// AGT-2995: an Error the merge runner recorded with a typed code reaches
+    /// the card as that code plus the recorded reason, never as a bare
+    /// "not yet integrated" pending card.
+    /// </summary>
+    [Theory]
+    [InlineData(AcceptedIntegrationFailureCodes.WorktreeUnavailable, "No integration worktree could be prepared for this project.")]
+    [InlineData(AcceptedIntegrationFailureCodes.BranchSyncFailed, "Integration branch 'develop' diverged from origin.")]
+    [InlineData(AcceptedIntegrationFailureCodes.LineageBlocked, "main is not an ancestor of develop.")]
+    [InlineData(AcceptedIntegrationFailureCodes.StaleAttempt, "Review subject RunAttempt 'old' is stale; current RunAttempt is 'new'.")]
+    public void BuildLookup_RecordedTypedError_ExposesCodeAndDetail(string code, string reason)
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/typed-error");
+        File.WriteAllText(Path.Combine(repo, "typed-error.txt"), "wip");
+        Commit(repo, "feat: typed error");
+        var anchor = RunGit(repo, "rev-parse task/typed-error").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("typed-error-" + code, "AGT-2995", project, repo, log,
+            commits: [Commit(anchor)], prov: Prov(branch: "task/typed-error"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "error",
+            Reason = reason,
+            FailureCode = code,
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.NotEqual(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(code, status.Failure?.Code);
+        Assert.Equal(reason, status.Failure?.Reason);
+        Assert.Equal(reason, status.Detail);
+    }
+
     [Fact]
     public void BuildLookup_MergePassedButPushBlocked_IsConflictSkippedNotPending()
     {
@@ -1371,6 +1413,73 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
             scanner.FindJob(card.Id, watchPath)?.State);
         if (!allowed)
             Assert.Contains("Reintegrate and review the current delivery.", outcome.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_ManyCards_ReadsOriginOncePerRepository(bool hasOrigin)
+    {
+        var repo = SeedDevelopMainRepo();
+        if (hasOrigin)
+            Assert.Equal(0, RunGit(repo, "remote add origin https://example.invalid/shared.git").Code);
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var jobs = Enumerable.Range(0, 180)
+            .Select(index => Job("origin-batch-" + index, "AGT-" + index, project, repo, log,
+                commits: [Commit(anchor)]))
+            .ToArray();
+
+        // Prime ancestry/root caches so the only required spawn in another
+        // unchanged projection is the fresh origin lookup, independent of cards.
+        service.BuildLookup([jobs[0]]);
+        using var telemetry = GitProcessTelemetry.BeginRequest(
+            "origin-batch-regression", NullLogger.Instance, includeNested: true);
+        var lookup = service.BuildLookup(jobs);
+
+        Assert.Equal(jobs.Length, lookup.Count);
+        Assert.All(lookup.Values, status => Assert.Equal(IntegrationStatuses.Integrated, status.Status));
+        Assert.Equal(1, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_NextProjectionObservesOriginAddChangeAndRemoval()
+    {
+        var repo = SeedDevelopMainRepo();
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("origin-change", "AGT-ORIGIN", project, repo, log, commits: [Commit(anchor)]);
+        string ProjectedRepository() => Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository;
+
+        Assert.Equal("repository", ProjectedRepository());
+        Assert.Equal(0, RunGit(repo, "remote add origin https://example.invalid/first.git").Code);
+        Assert.Equal("first", ProjectedRepository());
+        Assert.Equal(0, RunGit(repo, "remote set-url origin https://example.invalid/other.git").Code);
+        Assert.Equal("other", ProjectedRepository());
+        Assert.Equal(0, RunGit(repo, "remote remove origin").Code);
+        Assert.Equal("repository", ProjectedRepository());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_NextProjectionObservesIncludedOriginConfiguration()
+    {
+        var repo = SeedDevelopMainRepo();
+        var included = Path.Combine(_tempDir, "included-origin.config");
+        File.WriteAllText(included, "[remote \"origin\"]\n\turl = https://example.invalid/first.git\n");
+        Assert.Equal(0, RunGit(repo, $"config include.path \"{included}\"").Code);
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var service = BuildService(repo, out var project, out var log);
+        var job = Job("included-origin", "AGT-INCLUDE", project, repo, log, commits: [Commit(anchor)]);
+        string ProjectedRepository() => Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository;
+
+        Assert.Equal("first", ProjectedRepository());
+        // The repository config and refs do not change. A cache based only on
+        // their timestamps would miss this external Git configuration update.
+        File.WriteAllText(included, "[remote \"origin\"]\n\turl = https://example.invalid/other.git\n");
+        Assert.Equal("other", ProjectedRepository());
     }
 
     // --- helpers -----------------------------------------------------------

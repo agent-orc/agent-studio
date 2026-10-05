@@ -223,7 +223,7 @@ function taskDetail() {
 
 async function installRoutes(page: Page, projected: () => boolean) {
   await page.route('**/api/**', (route) => route.fulfill(json([])));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill(
       json({
         profile: 'local',
@@ -233,7 +233,7 @@ async function installRoutes(page: Page, projected: () => boolean) {
       }),
     ),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill(
       json({
         preparation: [],
@@ -260,7 +260,7 @@ async function installRoutes(page: Page, projected: () => boolean) {
       ]),
     ),
   );
-  await page.route('**/api/runner/status**', (route) => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status**', (route) => route.fulfill(json({ projects: {} })));
   await page.route('**/api/environment**', (route) =>
     route.fulfill(
       json({
@@ -323,7 +323,7 @@ async function installRoutes(page: Page, projected: () => boolean) {
   await page.route(new RegExp(`/api/tasks/${id}/screenshots(\\?|$)`), (route) =>
     route.fulfill(json([])),
   );
-  await page.route(new RegExp(`/api/tasks/${id}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${id}(\\?|$)`), (route) =>
     route.fulfill(json(taskDetail())),
   );
 }

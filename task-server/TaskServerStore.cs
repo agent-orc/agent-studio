@@ -38,7 +38,8 @@ public sealed partial class TaskServerStore
     // provider capability observation fields.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 25;
+    // 27 adds authenticated per-consumer rotation delivery.
+    public const int CurrentSchemaVersion = 27;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -49,6 +50,19 @@ public sealed partial class TaskServerStore
     /// with an actual project.
     /// </summary>
     public const string UnscopedProjectToken = "-";
+
+    /// <summary>
+    /// Resolves the task routes' <c>{projectId}</c> segment to a project id.
+    /// Studio addresses a project by name, the same identity the orchestrator
+    /// chat and context routes accept through <c>RequireProjectAsync</c>; an
+    /// exact id match still wins over a name match.
+    /// </summary>
+    private const string ProjectIdentityToIdSql = """
+        (SELECT id FROM projects
+          WHERE id = $project OR name = $project COLLATE NOCASE
+          ORDER BY CASE WHEN id = $project THEN 0 ELSE 1 END
+          LIMIT 1)
+        """;
 
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
@@ -355,10 +369,10 @@ public sealed partial class TaskServerStore
                 FROM tasks
                WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks
-               WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+               WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, ("$project", projectId), ("$identity", taskIdentity));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -3982,6 +3996,49 @@ public sealed partial class TaskServerStore
             """, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
         await ApplyOperationsPrincipalMigrationAsync(connection, ct);
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS principal_rotations(
+                operation_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL REFERENCES principals(principal_id),
+                credential_id TEXT NOT NULL REFERENCES principal_credentials(credential_id),
+                previous_ids_json TEXT NOT NULL,
+                previous_generation TEXT,
+                consumers_json TEXT NOT NULL,
+                acknowledged_json TEXT NOT NULL,
+                acknowledged_at_json TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                overlap_seconds INTEGER NOT NULL,
+                issued_at TEXT NOT NULL,
+                deadline_at TEXT NOT NULL,
+                delivered_at TEXT,
+                delivered_consumers_json TEXT NOT NULL DEFAULT '[]',
+                retired_at TEXT,
+                recovery_closed_at TEXT,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_principal_rotations_principal
+                ON principal_rotations(principal_id, retired_at);
+            CREATE INDEX IF NOT EXISTS ix_principal_rotations_credential
+                ON principal_rotations(credential_id, retired_at);
+            CREATE TABLE IF NOT EXISTS principal_rotation_proofs(
+                credential_id TEXT NOT NULL REFERENCES principal_credentials(credential_id),
+                consumer_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                PRIMARY KEY(credential_id, consumer_id, scope)
+            );
+            """, ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "previous_generation", "TEXT", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "acknowledged_at_json", "TEXT NOT NULL DEFAULT '{}'", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "actor_id", "TEXT NOT NULL DEFAULT ''", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "revoked_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "delivered_consumers_json", "TEXT NOT NULL DEFAULT '[]'", ct);
+        await ExecuteAsync(connection, """
+            UPDATE principal_rotations
+               SET delivered_consumers_json = json_array(json_extract(consumers_json, '$[0].ConsumerId'))
+             WHERE delivered_at IS NOT NULL AND delivered_consumers_json = '[]'
+               AND json_array_length(consumers_json) = 1;
+            """, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 
@@ -4581,9 +4638,9 @@ public sealed partial class TaskServerStore
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
-                FROM tasks WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+                FROM tasks WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, transaction, ("$project", projectId), ("$identity", identity));
         await using var reader = await command.ExecuteReaderAsync(ct);

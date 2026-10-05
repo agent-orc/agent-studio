@@ -261,7 +261,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
     private sealed class UnexpectedLocalRunner : OrchestratorRunner
     {
         public UnexpectedLocalRunner()
-            : base(null!, NullLogger<OrchestratorRunner>.Instance)
+            : base(NullLogger<OrchestratorRunner>.Instance)
         {
         }
 
@@ -284,7 +284,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
     private sealed class FallbackLocalRunner : OrchestratorRunner
     {
         public FallbackLocalRunner()
-            : base(null!, NullLogger<OrchestratorRunner>.Instance) { }
+            : base(NullLogger<OrchestratorRunner>.Instance) { }
 
         public bool WasCalled { get; private set; }
 

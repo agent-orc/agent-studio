@@ -56,7 +56,7 @@ Operators can read `GET /api/projects/{projectName}/gate-result-cache` for the
 same-SHA re-test rate: repeated SHA executions divided by executions in the
 latest 4,096 execution window. Cache hits are counted separately. `DELETE` on
 the same endpoint invalidates that project's verdicts and measurement window.
-These metrics measure local exact-subject gate requests; they do not estimate
+These metrics measure the exact-subject gate runner on its execution host; they do not estimate
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
@@ -137,6 +137,64 @@ Trigger paths (`ComposeRenderGatePolicy.IsTrigger`, repository-relative):
   on a Linux host for exactly this tree, so the step is not repeated. The
   selection audit says so. Without such coverage, the Windows gate host
   returns the routing verdict.
+
+## Remote execution of backend gates (4 October 2026)
+
+The backend binds `IBuildTestGateRunner` to `RemoteBuildTestGateRunner`.
+Integration, promotion, and post-review callers retain their gate mode, exact
+commit, changed paths, build profile, test level, and budgets. Their build,
+preparation, test, and lint commands execute only on the configured Linux host.
+An absent or invalid remote configuration, unreachable worker, cancelled
+transport, or mismatched result returns a typed infrastructure failure. There
+is no local build/test fallback. Explicit `mode=off` still skips its step.
+
+The orchestrator also rejects local coding and concept admission before worktree creation,
+repository preparation, or CLI spawn. Onboarding build-profile validation has
+no remote protocol yet and returns `failureCode=remote-execution-required`
+without starting its install/build commands. The standalone SCSS post-step
+currently returns the same typed infrastructure wait for an applicable frontend.
+That wait keeps the card in Auto Review and uses bounded queue deferral; it must
+never be accepted as green or consume a code reissue, including in warn mode.
+Explicitly disabled or inapplicable lint still skips. Test fixtures that simulate
+local coding must inject their test-only admission policy explicitly.
+
+This is a bounded emergency SSH transport, not the canonical Task Server gate
+pilot. The pilot currently accepts only a fenced run's result SHA, whereas the
+integration gate must verify the newly created merge commit and promotion has
+its own candidate. The temporary bridge does not mint run authority, relax
+fences, or publish a new source ref. The existing backend merge, rollback and
+publication owner remains in place; only verification executes remotely. The
+Task Server gate protocol remains the target for admission of these subjects.
+
+Operator configuration uses `RemoteGate:SshHost` and an absolute
+`RemoteGate:WorkerPath` pointing to a release-pinned `OrchestratorApi.dll` on
+the remote host. Environment variables use double underscores, for example
+`RemoteGate__SshHost` and `RemoteGate__WorkerPath`. Optional
+`RemoteGate:Root` defaults to `/var/tmp/agentstudio-remote-gates`;
+`RemoteGate:ProcessorCount` defaults to 2. SSH must already have a trusted host
+key and noninteractive credentials. Host-key checking and batch mode are
+mandatory. The worker is invoked explicitly with
+`--remote-build-test-gate-worker <request.json>` before the API host is created;
+it starts no listener or backend background loops and refuses Windows.
+
+Transport creates a private bare repository and bundle from the requested
+commit, computes SHA-256, and transfers that bundle and immutable request into
+a generated GUID directory. It changes no source-checkout or public ref. The
+worker verifies the bundle digest, creates its private repository, and invokes
+the existing `BuildTestGateRunner`. Exact-SHA worktrees, machine locking,
+preparation, deterministic command selection, full promotion coverage,
+flaky-test handling, cache identities and structured evidence remain owned by
+that runner. The response must match the invocation, bundle, gate id and exact
+tested SHA before a passing verdict can be consumed.
+
+Every transfer and process has a deadline. The worker observes cancellation
+markers and SIGTERM; an independent remote `timeout` bounds a lost connection.
+A disconnected caller cannot attest immediate remote cleanup, so its gate
+fails closed and never starts a replacement locally. Only the generated
+transport directory is eligible for cleanup. A completed response is written
+after gate and source-repository cleanup; otherwise the directory is retained
+with a cancellation marker for diagnosis. The remote machine lock continues
+to serialize gates, including a worker still completing bounded cleanup.
 
 ## Key Code
 
@@ -1265,7 +1323,9 @@ operator changes cause the step to fail before its writer runs.
   `delivery-attribution-ambiguous` and starts one bounded automatic steer round
   before Human Review. Task-key or review-subject validation failures stay
   visible but do not offer an unrelated rebase action. The raw pipeline reason
-  and timeline event remain the detailed evidence.
+  and timeline event remain the detailed evidence. Every merge `Error` names a
+  typed code (AGT-2995); the code table and the Error sites are in
+  [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.

@@ -385,8 +385,6 @@ public sealed class SalvageRetentionSweeperTests : IDisposable
         WorkDir = _workDir,
         StateDir = _state,
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
         SalvageDir = _salvage,
         SalvageRetentionMode = mode,
         SalvageSweepHours = sweepHours,
