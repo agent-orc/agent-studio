@@ -5,7 +5,9 @@
 # While the wrapped gate command runs, this helper throttles both units with a
 # runtime CPUQuota, waits a bounded time for a hot host to cool down, measures
 # the load at gate start and end, and restores the recorded quotas on every
-# exit path: success, failure, and INT/TERM/HUP. The gate runs in its own
+# exit path: success, failure, and INT/TERM/HUP. A stop signal the launcher
+# left ignored (nohup, a non-interactive '&') cannot be trapped; the helper logs
+# and records it and keeps the other paths (AGT-3014). The gate runs in its own
 # process group; on a signal the whole group is stopped (TERM, then KILL after
 # a grace period) before the quotas are restored.
 #
@@ -114,7 +116,33 @@ gate_window_quota_percent() {
   }'
 }
 
+# Prints the stop signals (HUP INT TERM) set in a /proc/<pid>/status SigIgn
+# mask, space separated, empty when none is ignored. Bash cannot trap a signal
+# that was ignored when the shell started: nohup hands its tree an ignored HUP,
+# and a non-interactive "cmd &" starts cmd with INT and QUIT ignored (AGT-3014).
+gate_window_ignored_stop_signals() {
+  local mask=$1 ignored=() signal
+  [[ "$mask" =~ ^[0-9a-fA-F]+$ ]] || return 0
+  # Signals 1-32 live in the low eight hex digits; skip the 64-bit overflow.
+  ((${#mask} <= 8)) || mask=${mask: -8}
+  for signal in HUP:1 INT:2 TERM:15; do
+    (((16#$mask >> (${signal#*:} - 1)) & 1)) && ignored+=("${signal%:*}")
+  done
+  printf '%s\n' "${ignored[*]}"
+}
+
 # --- Host effects ------------------------------------------------------------
+
+# Prints this shell's SigIgn mask, empty when /proc is unavailable. Reads
+# /proc/$$ with a builtin: an external reader would report its own mask.
+gate_window_read_sigign() {
+  local key value
+  [[ -r "/proc/$$/status" ]] || return 0
+  while read -r key value; do
+    [[ "$key" == SigIgn: ]] && { printf '%s\n' "$value"; return 0; }
+  done < "/proc/$$/status"
+  return 0
+}
 
 gate_window_read_load() {
   local first _
@@ -221,8 +249,17 @@ main() {
     }
   done
 
+  # An ignored-at-entry stop signal makes its trap below a silent no-op. Name
+  # it instead of failing the gate: the other stop signals still work.
+  local ignored_signals ignored_signal
+  ignored_signals=$(gate_window_ignored_stop_signals "$(gate_window_read_sigign)")
+
   : > "$record_file"
   record_value window-mode-requested "$mode"
+  record_value signals-ignored-at-entry "${ignored_signals:-none}"
+  for ignored_signal in $ignored_signals; do
+    gate_window_log "SIG$ignored_signal was ignored when this process tree started (nohup or a background '&' launch); a $ignored_signal-triggered stop is unavailable, the other stop signals still stop the gate and restore the quotas"
+  done
   record_value cpu-count "$cores"
   record_value reserved-cores "$reserved"
   record_value load-threshold "$(gate_load_threshold "$cores" "$factor")"

@@ -117,6 +117,7 @@ public class TokenPricingTests
     [Fact]
     public void Estimate_Gpt5CodexBeforeFirstPublishedPrice_IsExplicitlyUnknown()
     {
+        Assert.True(TokenPricing.Catalog.ContainsKey("gpt-5-codex"));
         var firstPrice = TokenPricing.Catalog["gpt-5-codex"].History.Min(p => p.ValidFrom);
         var c = _provider.Estimate("gpt-5-codex", 1_000_000, 100_000, 1_000_000, 1_000_000,
             firstPrice.AddTicks(-1));

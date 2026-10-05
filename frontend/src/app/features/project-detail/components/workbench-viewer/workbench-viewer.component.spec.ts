@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { of } from 'rxjs';
+import { EMPTY, of } from 'rxjs';
 import type { WorkbenchDocument } from '../../../../models/project-docs.model';
 import {
   ISOLATED_HTML_LINK_MESSAGE,
@@ -134,7 +134,7 @@ describe('WorkbenchViewerComponent', () => {
         provideHttpClientTesting(),
         {
           provide: TaskService,
-          useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn() },
+          useValue: { getReferenceStatuses: () => of([]), refresh: vi.fn(), taskEvents: EMPTY },
         },
       ],
     }).compileComponents();
