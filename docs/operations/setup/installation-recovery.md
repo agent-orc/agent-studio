@@ -133,7 +133,9 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 6. **Re-enrol affected clients deliberately.**
    `task-server recovery reenrol --principal <id> --credential-out <file>`
    revokes that principal's old credentials and writes one fresh credential to
-   an owner-only file while the target is in Maintenance. Re-enrol every client
+   an owner-only file while the target is in Maintenance. The file is created
+   with mode `0600` and flushed before the rotation commits; if it cannot be
+   written, the rotation rolls back and the old credential stays valid. Re-enrol every client
    reported as `client-credentials-lost`, then deliver each credential through
    its protected token file. Reconnect one host at a time. Re-enrol runners
    after `fence-hosts`, because the fence revokes every runner credential
