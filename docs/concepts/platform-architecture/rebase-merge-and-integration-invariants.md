@@ -161,7 +161,7 @@ step only runs when the previous one reported an actual textual conflict:
 | `Conflict` | Merge conflicted, aborted, conflicted files reported | No |
 | `GateFailed` | Merge succeeded, pre-develop build gate went red, branch rolled back | No |
 | `AgentRoundRequired` | Preservation impossible and mapping ambiguous, caller must start a bounded steer round | No |
-| `Error` | Precondition or Git failure | No |
+| `Error` | Precondition or Git failure; always carries a typed `failureCode` (see below) | No |
 
 `MergeIntoIntegrationOutcomePolicy.IsSuccessfulIntegration` is the single
 predicate that decides whether a push is enqueued and whether acceptance may
@@ -187,11 +187,60 @@ eligibility and operator copy cannot drift. Its matrix is pinned directly by
 | reason contains `no stable key for review-subject validation` | `review-subject-task-key-unavailable` | Task key unavailable | No |
 | reason mentions `review subject` or `review-subject` | `review-subject-invalid` | Review subject invalid | No |
 | `no-branch` | `no-task-branch` | No task branch | No |
+| persisted `repository-root-unavailable` | `repository-root-unavailable` | Repository unavailable | No |
+| persisted `stale-attempt` | `stale-attempt` | Stale attempt | No |
+| persisted `worktree-unavailable` | `worktree-unavailable` | Integration worktree unavailable | No |
+| persisted `branch-sync-failed` | `branch-sync-failed` | Branch sync failed | No |
+| persisted `lineage-blocked` | `lineage-blocked` | Lineage blocked | No |
+| persisted `rebase-attribution-failed` | `rebase-attribution-failed` | Rebase attribution failed | No |
+| persisted `integration-ref-unresolved` | `integration-ref-unresolved` | Integration ref unresolved | No |
+| persisted `gate-unavailable` | `gate-unavailable` | Gate unavailable | No |
 | anything else on a failed step | `integration-error` | Integration failed | No |
 
 A persisted code always wins over inference. A step that is neither `Failed`
 nor `no-branch` classifies to null, so a passed step can never render a failure
-chip.
+chip. Inference also reads `is not a fast-forward of` and `moved after the
+pre-main test run` as `source-needs-rebase`.
+
+### Typed codes of an `Error` outcome (AGT-2995)
+
+Every `MergeIntoIntegrationOutcome.Error` names its cause in
+`MergeIntoIntegrationResult.FailureCode`. `MergeIntoDevelopRunner` persists it
+as the step's `failureCode`, and the single exit log line carries it:
+
+```text
+merge-into-develop project=<p> job=<id> delivery=<ref> integration=<branch> strategy=<s> outcome=Error failureCode=<code> reason=<one line>
+```
+
+| Error site | `failureCode` |
+|---|---|
+| The watch path resolves to no repository root | `repository-root-unavailable` |
+| The review subject is not the current settled run attempt | `stale-attempt` (a task-key lookup failure keeps `review-subject-task-key-unavailable`) |
+| No integration worktree slot can be prepared | `worktree-unavailable` |
+| The integration branch cannot be synchronized with origin (diverged, fetch or fast-forward failure) | `branch-sync-failed` |
+| `main` is not an ancestor of `develop`, so the release line cannot advance | `lineage-blocked` |
+| A mechanical rebase merged but its attribution could not be persisted; the merge was rolled back | `rebase-attribution-failed` |
+| The release source is not rebased onto `main` | `source-needs-rebase` |
+| An exact branch, tip, or merge-result SHA cannot be resolved | `integration-ref-unresolved` |
+| The mandatory pre-main gate is not wired | `gate-unavailable` |
+| The pre-main full suite blocked the fast-forward | `build-gate-failed` |
+| A Remote delivery has no valid fenced result SHA | `review-subject-invalid` |
+| A Git primitive reports prose only, or the run threw | inferred from the reason, otherwise `integration-error` |
+
+The card's `integration.failure` projects the code, its label, and the recorded
+reason (`integration.detail`). The Human Review park after an immediate Remote
+integration reads `integration: <code>` (for example
+`integration: source-needs-rebase`) instead of the lane ledger's bare
+`review-verdict: Error`; a spent automatic recovery budget keeps its own
+wording.
+
+An operator move out of that park invalidates the stale verdict. A delivery
+whose settlement sidecar already reached `LaneSettled` and that is back in
+`4-auto-review` still unmerged is decided `StartIntegration`
+(`operator-reentry-reintegration`) by `AutoReviewResumePolicy`: the integration
+decision runs again and the coordinator does not hand back its completed replay
+of the old result. A move to `2-ready` invalidates the review subject, so the
+next delivery settles a fresh sidecar.
 
 Three further pure policies complete the lifecycle decision surface:
 

@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-09-28</td>
+          <td><code>QS-106</code><br><span class="small">stale-integration-verdict-park (fix <code>AGT-2995</code>)</span></td>
+          <td>No CLI crashed. The immediate integration returned <code>Error</code> after <code>main</code> moved; the log said only <code>outcome=Error</code> and the card read <code>integration: pending</code>, "not yet integrated", parked as <code>review-verdict: Error</code>. When the operator moved the card back to <span class="lane">4-auto-review</span>, deferred post-processing resumed with <code>action=CompleteTransition reason=awaiting-integration-completion integration=Error</code> and parked it again.</td>
+          <td>Merge-runner <code>Error</code> results carried no typed code, and the resume policy read a <code>LaneSettled</code> settlement sidecar as "only the transition is owed", replaying the stale verdict.</td>
+          <td><span class="pill human">re-parked</span> in <span class="lane">5-human-review</span> for eight hours; only a fresh delivery escaped. Now every <code>Error</code> names a <code>failureCode</code> in the log line, the pipeline step, and the park reason (<code>integration: source-needs-rebase</code>), and a <code>LaneSettled</code> card back in Auto Review re-runs the integration decision (<code>operator-reentry-reintegration</code>).</td>
+        </tr>
+        <tr>
           <td>2026-09-27</td>
           <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>
           <td>No reviewer crashed. A product block mentioning "infra crash" or "no parseable verdict" was reproduced as a review-infrastructure decision.</td>

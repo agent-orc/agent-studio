@@ -183,6 +183,7 @@
         @case ('tokens') {
           <app-token-usage-section
             [page]="overlays.tokenUsagePage()"
+            [ledgerScope]="overlays.tokenLedgerScope()"
             (pageChange)="overlays.selectTokenUsagePage($event)"
             (openProjectSettings)="openProjectSettings.emit($event)" />
         }
