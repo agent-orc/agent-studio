@@ -22,6 +22,27 @@ hint. A different fingerprint starts a new count; an operator move from
 Escalated to Ready resets the spent budget. Execution Hosts lists parked cards
 and their fingerprints. The activity record is emitted once on escalation.
 
+The typed release travels on the existing lease-release request: the durable
+Task Server's `POST /api/v1/runs/{runId}/lease/release` (`LeaseReleaseRequest`)
+and the legacy `POST /api/runner/lease/release` (`RunLeaseReleaseRequest`).
+`Outcome` selects the route. These three exact values count against the budget:
+
+| `Outcome` | Sent when |
+| --- | --- |
+| `runner-environment-preparation-failed` | Repository or worktree preparation failed after its retries, including a failed cleanup salvage during preparation. |
+| `runner-salvage-failed` | The prelaunch worktree salvage failed before an agent process started. |
+| `runner-results-handling-failed` | Preparing or repairing the task results directory failed before launch. |
+
+Any other `Outcome` keeps its previous meaning; on the durable Task Server it
+also clears the card's recorded infrastructure failure. `Detail` is an optional single-line diagnostic: the
+runner sends the error message plus `worktree=<path>` and `host=<runner host>`
+where known. The server replaces line breaks with spaces, trims it, and keeps
+the first 1000 characters. That text is the stored `lastError`, and the failure
+fingerprint is the first 16 hex characters of the SHA-256 of
+`<outcome>:<detail>` in lower case. Without `Detail`, the server uses `Outcome`
+(durable Task Server) or a fixed "failed without a diagnostic" text (legacy
+API) instead. Two failures count as identical only when both values match.
+
 Execution Hosts reads `GET /api/v1/management/runner-infrastructure-failures`.
 The response is a JSON array of parked infrastructure failures. Each entry has
 `taskKey` (card key), `attempts` (consecutive identical failures),
