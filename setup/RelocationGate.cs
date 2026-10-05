@@ -33,13 +33,25 @@ internal static class RelocationGate
         if (source.Phase is not (InstallationManifest.PhaseComplete or InstallationManifest.PhaseAwaitingAcceptance)
             || source.InstallationId != restored.InstallationId
             || source.ReleaseVersion != restored.ReleaseVersion
-            || restored.Phase != source.Phase
             || !source.Principals.Order(StringComparer.Ordinal).SequenceEqual(
                 restored.Principals.Order(StringComparer.Ordinal), StringComparer.Ordinal)
             || source.ProjectOrigin != restored.ProjectOrigin)
             throw new InvalidDataException("Restored installation identity, release, principals or project origin differ from the frozen source.");
-        return new RelocationProof(restored, await VerifyRecoverySetAsync(recoverySetPath, source.InstallationId));
+        var proof = new RelocationProof(restored, await VerifyRecoverySetAsync(recoverySetPath, source.InstallationId));
+        if (restored.Phase != source.Phase && !AcceptedAfterRelocation(source, proof))
+            throw new InvalidDataException("Restored installation phase differs from the frozen source.");
+        return proof;
     }
+
+    /// <summary>
+    /// 'accept' moves a relocated authority from awaiting-acceptance to
+    /// complete. That is the only phase change a same-set retry may see, and
+    /// only when the destination already records this verified recovery set.
+    /// </summary>
+    private static bool AcceptedAfterRelocation(InstallationManifest source, RelocationProof proof)
+        => source.Phase == InstallationManifest.PhaseAwaitingAcceptance
+           && proof.Restored.Phase == InstallationManifest.PhaseComplete
+           && AlreadyRelocated(proof);
 
     /// <summary>
     /// Recomputes every file hash and the set hash of a full backup set, then

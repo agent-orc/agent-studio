@@ -7,6 +7,8 @@ using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
 
+// clock-independent: lastSeenAt and the manifest dates are recorded data; acceptance only checks presence, never age.
+
 [Collection(InstallerProcessStateCollection.Name)]
 public sealed class AcceptanceJourneyTests : IDisposable
 {

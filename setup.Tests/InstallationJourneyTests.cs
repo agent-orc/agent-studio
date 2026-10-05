@@ -614,6 +614,46 @@ public sealed class InstallationJourneyTests
     }
 
     [Fact]
+    public async Task Relocation_retry_after_acceptance_is_recognised_for_the_same_set()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var pending = Manifest("1.2.0", InstallationManifest.PhaseAwaitingAcceptance);
+            var sourcePath = Path.Combine(root, "source.json");
+            await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(pending));
+            var set = Path.Combine(root, "backup-1");
+            Directory.CreateDirectory(set);
+            await File.WriteAllTextAsync(Path.Combine(set, "snapshot.db"), "snapshot");
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("snapshot")));
+            var setHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes($"snapshot.db:8:{hash.ToLowerInvariant()}\n")));
+            await File.WriteAllTextAsync(Path.Combine(set, "inventory.json"),
+                $$"""{"setSha256":"{{setHash}}","files":[{"relativePath":"snapshot.db","size":8,"sha256":"{{hash}}"}]}""");
+            await File.WriteAllTextAsync(Path.Combine(set, "complete.json"), $$"""{"setSha256":"{{setHash}}"}""");
+            await File.WriteAllTextAsync(set + ".rehearsal.json",
+                $$"""{"backupId":"backup-1","setSha256":"{{setHash}}","installationId":"inst_original","verified":true,"restoredIntoEmptyTarget":true}""");
+            var destination = Path.Combine(root, "destination");
+            var accepted = RelocationGate.RelocatedManifest(pending, "docker", setHash)
+                with { Phase = InstallationManifest.PhaseComplete };
+
+            await ManifestStore.WriteAsync(destination, accepted);
+            var proof = await RelocationGate.VerifyAsync(sourcePath, set, destination, true);
+            Assert.True(RelocationGate.AlreadyRelocated(proof));
+            Assert.Equal(InstallationManifest.PhaseComplete, proof.Restored.Phase);
+
+            await ManifestStore.WriteAsync(destination, accepted with { RelocatedFromSet = null });
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, true));
+            await ManifestStore.WriteAsync(destination, accepted with { RelocatedFromSet = "other-set" });
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                RelocationGate.VerifyAsync(sourcePath, set, destination, true));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Relocation_verifies_target_before_restoring_with_management_token()
     {
         var token = Path.GetTempFileName();

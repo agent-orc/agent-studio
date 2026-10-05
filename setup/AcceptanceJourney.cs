@@ -184,10 +184,9 @@ internal static class AcceptanceJourney
         IReadOnlyDictionary<string, string> environment, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var start = OperatingSystem.IsWindows()
-            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", command } }
-            : new ProcessStartInfo("sh") { ArgumentList = { "-c", command } };
+            ? new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/s", "/c", command }, CreateNoWindow = true }
+            : new ProcessStartInfo("sh") { ArgumentList = { "-c", command }, CreateNoWindow = true };
         start.UseShellExecute = false;
-        start.CreateNoWindow = true;
         foreach (var (name, value) in environment)
             start.Environment[name] = value;
         using var process = Process.Start(start)
