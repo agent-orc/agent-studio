@@ -391,7 +391,6 @@ builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();
 builder.Services.AddSingleton<ProjectChatMigration>();
 builder.Services.AddSingleton<OrchestratorRunner>(sp => new OrchestratorRunner(
-    sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredService<ILogger<OrchestratorRunner>>(),
     sp.GetService<CliUsageParserRegistry>(),
     sp.GetService<ICliModelRegistry>(),

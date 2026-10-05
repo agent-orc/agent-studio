@@ -29,9 +29,17 @@ public partial class GenericCliExecutionService
     /// </summary>
     internal Action<Process>? CarAfterSpawnForTest { get; set; }
 
-    private bool SupportsCarExecution
-        => string.Equals(CliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Maps Studio's persisted CLI type to the CAR descriptor that launches it.
+    /// Studio keeps <c>gemini</c> as the persisted identity of Antigravity
+    /// (<c>agentapi</c>), while CAR 0.7.0 registers <c>agentapi</c> as its
+    /// <c>antigravity</c> descriptor and reserves <c>gemini</c> for the
+    /// deprecated Gemini CLI. Claude and Codex share one name on both sides.
+    /// </summary>
+    internal static string CarCliTypeFor(string studioCliType)
+        => string.Equals(studioCliType, CliTypes.Gemini, StringComparison.OrdinalIgnoreCase)
+            ? CliTypes.Antigravity
+            : studioCliType;
 
     private async Task<(CliExecution? Execution, string? Error)> StartCarAsync(
         string jobId,
@@ -107,6 +115,7 @@ public partial class GenericCliExecutionService
             ? BuiltInCliBehaviors.BuildSystemPromptPrefix(OperatingSystem.IsWindows()) + prompt
             : prompt;
 
+        var carCliType = CarCliTypeFor(CliType);
         var carLogPaths = new StudioCarLogPathProvider(this);
         var rulesPath = string.Equals(CliType, CliTypes.Claude, StringComparison.OrdinalIgnoreCase)
             ? BuiltInCliBehaviors.ResolveAgentRulesPath(this)
@@ -118,6 +127,9 @@ public partial class GenericCliExecutionService
                 ? GetCliPath()
                 : null,
             CodexPath = string.Equals(CliType, CliTypes.Codex, StringComparison.OrdinalIgnoreCase)
+                ? GetCliPath()
+                : null,
+            AntigravityPath = string.Equals(carCliType, CliTypes.Antigravity, StringComparison.OrdinalIgnoreCase)
                 ? GetCliPath()
                 : null,
             // CAR-A: keep large prompts out of argv and process listings. CAR
@@ -172,7 +184,7 @@ public partial class GenericCliExecutionService
         var options = baseOptions with { Spawner = processSpawner };
 
         var runner = new CliRunner(options, _logger, carLogPaths);
-        var driver = runner.Get(CliType);
+        var driver = runner.Get(carCliType);
         var bridge = new CarCallbackBridge(this, driver, jobKey);
         bridge.Subscribe();
 
