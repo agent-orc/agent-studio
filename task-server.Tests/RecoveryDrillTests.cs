@@ -208,6 +208,168 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Equal(TaskServerMode.Maintenance, target.Mode);
     }
 
+    [Theory]
+    [InlineData("other-set")]
+    [InlineData("rewritten-manifest-and-receipt")]
+    public async Task Resume_rejects_a_copy_that_is_not_the_set_the_target_was_restored_from(string change)
+    {
+        using var temp = new TempDirectory("recovery-copy-binding");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+        var (before, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(before.Allowed, string.Join("; ", before.Blockers.Select(item => item.Code)));
+
+        if (change == "other-set")
+        {
+            // Another valid, self-consistent recovery set of the same installation replaces the restored one.
+            drill.Clock.Advance(TimeSpan.FromMinutes(1));
+            var source = Workflow(drill.Source, drill.SourceDirectory, drill.Clock);
+            var other = await source.CaptureAsync(new RecoveryCustodyDeclaration("inst_drill"), "drill", default);
+            var otherCopy = await source.CopyAsync(other.DataSet.BackupId, Path.Combine(temp.Path, "offhost-other"), default);
+            Directory.Delete(drill.CopyRoot, recursive: true);
+            CopyDirectory(otherCopy.Destination, drill.CopyRoot);
+        }
+        else
+        {
+            // The manifest drops its Git refs and the copy receipt is rewritten to match, so the copy is
+            // self-consistent; only the restore receipt still knows which manifest was restored.
+            var manifestPath = Path.Combine(drill.CopyRoot, RecoveryWorkflow.ManifestFile);
+            var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!;
+            manifest["repositories"] = new JsonArray();
+            await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+            var receiptPath = Path.Combine(drill.CopyRoot, RecoveryWorkflow.CopyReceiptFile);
+            var copyReceipt = JsonNode.Parse(await File.ReadAllTextAsync(receiptPath))!;
+            copyReceipt["manifestSha256"] = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(manifestPath)));
+            await File.WriteAllTextAsync(receiptPath, copyReceipt.ToJsonString());
+        }
+
+        var verification = await workflow.VerifyCopyAsync(drill.CopyRoot, null, true, default);
+        Assert.True(verification.Report.RestoreAllowed, string.Join("; ", verification.Report.Findings.Select(item => item.Code)));
+        var (decision, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        Assert.Contains(decision.Blockers, item => item.Code == "recovery-copy-mismatch");
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+    }
+
+    [Fact]
+    public async Task Resume_rechecks_restored_cold_evidence_instead_of_trusting_the_receipt()
+    {
+        using var temp = new TempDirectory("recovery-live-recheck");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        var restored = await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.True(restored.Restored, restored.Message);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+
+        var cold = restored.Receipt!.Comparisons.Single(item => item.Subject.StartsWith("cold ", StringComparison.Ordinal));
+        var archived = Path.Combine(Options(targetDirectory).ResolveRetentionArchivePath(),
+            cold.Subject["cold cold/".Length..].Replace('/', Path.DirectorySeparatorChar));
+        await File.AppendAllTextAsync(archived, "changed after restore\n");
+
+        var (decision, _) = await workflow.ResumeAsync(true, false, false, null, "drill", default);
+        var blocker = Assert.Single(decision.Blockers);
+        Assert.Equal("identity-comparison-failed", blocker.Code);
+        Assert.Equal(cold.Subject, blocker.Subject);
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+    }
+
+    [Fact]
+    public async Task Restore_refuses_a_copy_that_changes_after_verification_and_leaves_the_target_empty()
+    {
+        using var temp = new TempDirectory("recovery-copy-race");
+        var drill = await CaptureAsync(temp.Path);
+        var member = Path.Combine(drill.CopyRoot, RecoveryWorkflow.SetDirectory, "export", "tasks.jsonl");
+        var original = await File.ReadAllBytesAsync(member);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+
+        // The Git probe runs after the inventory was hashed, so it stands in for a writer touching the copy.
+        var racing = new RecoveryWorkflow(Store(targetDirectory, drill.Clock), Options(targetDirectory),
+            new MutatingProbe(new OriginRefProbe(Http), () => File.AppendAllText(member, "{}\n")), drill.Clock);
+        var result = await racing.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.False(result.Restored);
+        Assert.Null(result.Receipt);
+        Assert.Contains(result.Report.Findings, item =>
+            item.Code == "set-changed-during-restore" && item.Severity == RecoveryFindingSeverity.BlocksRestore);
+        Assert.False(Directory.Exists(targetDirectory) && Directory.EnumerateFiles(targetDirectory, "*", SearchOption.AllDirectories).Any());
+
+        await File.WriteAllBytesAsync(member, original);
+        var retried = await Workflow(Store(targetDirectory, drill.Clock), targetDirectory, drill.Clock)
+            .RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.True(retried.Restored, retried.Message);
+    }
+
+    [Theory]
+    [InlineData("manifest-json", "manifest-unreadable")]
+    [InlineData("manifest-section", "manifest-unreadable")]
+    [InlineData("inventory-json", "corrupted-hash")]
+    public async Task Malformed_set_metadata_is_a_finding_not_a_crash(string fault, string expectedFinding)
+    {
+        using var temp = new TempDirectory("recovery-malformed");
+        var drill = await CaptureAsync(temp.Path);
+        var manifestPath = Path.Combine(drill.CopyRoot, RecoveryWorkflow.ManifestFile);
+        switch (fault)
+        {
+            case "manifest-json":
+                await File.WriteAllTextAsync(manifestPath, "{\"schema\":\"agent-studio.recovery-manifest/v1\",");
+                break;
+            case "manifest-section":
+                var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!.AsObject();
+                manifest.Remove("dataSet");
+                await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString());
+                break;
+            case "inventory-json":
+                await File.WriteAllTextAsync(Path.Combine(drill.CopyRoot, RecoveryWorkflow.SetDirectory, "inventory.json"), "not json");
+                break;
+        }
+
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var workflow = Workflow(Store(targetDirectory, drill.Clock), targetDirectory, drill.Clock);
+        var verification = await workflow.VerifyCopyAsync(drill.CopyRoot, null, true, default);
+        Assert.Contains(verification.Report.Findings, item =>
+            item.Code == expectedFinding && item.Severity == RecoveryFindingSeverity.BlocksRestore);
+        var result = await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default);
+        Assert.False(result.Restored);
+        Assert.False(Directory.Exists(targetDirectory) && Directory.EnumerateFiles(targetDirectory, "*", SearchOption.AllDirectories).Any());
+    }
+
+    [Fact]
+    public async Task Service_client_reenrolled_before_fencing_counts_as_reconciled()
+    {
+        using var temp = new TempDirectory("recovery-reenrol-order");
+        var drill = await CaptureAsync(temp.Path, includeLostStudio: true);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        var reenrolled = await workflow.ReenrolClientAsync("studio:recovery", "drill", default);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(reenrolled.Credential, default));
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => $"{item.Code}:{item.Subject}")));
+    }
+
     [Fact]
     public async Task Empty_target_rebuilds_from_the_retained_set_and_resumes_behind_the_gate()
     {
@@ -502,6 +664,32 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Empty(receipt.Warnings);
         return new Drill(source, sourceDirectory, clock, project.ProjectId, manifest.DataSet.BackupId, receipt.Destination, origin,
             runner.Credential, manifest.Identities.TaskCount, studio?.Credential);
+    }
+
+    /// <summary>Runs a side effect on the first probe, after verification hashed the set.</summary>
+    private sealed class MutatingProbe(IRecoveryGitProbe inner, Action onFirstProbe) : IRecoveryGitProbe
+    {
+        private bool _done;
+
+        public Task<IReadOnlyDictionary<string, string>?> ListRemoteAsync(string origin, CancellationToken ct)
+        {
+            if (!_done)
+            {
+                _done = true;
+                onFirstProbe();
+            }
+            return inner.ListRemoteAsync(origin, ct);
+        }
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var destination = Path.Combine(target, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(file, destination);
+        }
     }
 
     private static RecoveryWorkflow Workflow(TaskServerStore store, string directory, TimeProvider clock)

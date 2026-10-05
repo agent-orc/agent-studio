@@ -56,7 +56,8 @@ public sealed record RecoveryCheckFacts(
     bool OffHostCopyReceiptPresent,
     bool CopyReceiptRequired,
     bool CopyReceiptValid,
-    bool ManifestDigestMatches);
+    bool ManifestDigestMatches,
+    bool ManifestReadable = true);
 
 /// <summary>
 /// Pure verification policy for a recovery set. Every failure maps to one stable code and specific
@@ -71,6 +72,9 @@ public static class RecoveryCheckPolicy
         if (!facts.ManifestPresent)
             findings.Add(new("manifest-missing", RecoveryFindingSeverity.BlocksRestore, "recovery-manifest.json",
                 "The copy has no recovery manifest, so identities, origins and credential custody cannot be checked. Copy the set again with `task-server recovery copy`, which carries the manifest."));
+        else if (!facts.ManifestReadable)
+            findings.Add(new("manifest-unreadable", RecoveryFindingSeverity.BlocksRestore, "recovery-manifest.json",
+                "The recovery manifest is not valid JSON or lacks required sections. Discard this copy and verify another off-host copy of the same set; do not repair the manifest by hand."));
         else if (!string.Equals(facts.ManifestSchema, RecoveryManifest.CurrentSchema, StringComparison.Ordinal))
             findings.Add(new("manifest-unsupported", RecoveryFindingSeverity.BlocksRestore, facts.ManifestSchema ?? "(none)",
                 $"This release reads {RecoveryManifest.CurrentSchema}. Use the release that captured the set to verify and restore it."));
@@ -174,6 +178,33 @@ public static class RecoveryCheckPolicy
                     : $"Host {obligation.RunnerId} still held {obligation.Backlog} unacknowledged outbox record(s) in state '{obligation.State}'. Keep that host's outbox and worktree. After restore, let it drain against the restored authority, which accepts or rejects each record under fencing. Never delete it as cache."));
 
         return new RecoveryCheckReport(findings);
+    }
+
+    /// <summary>
+    /// Binds a freshly verified copy to the set a restore receipt names. Resume re-verifies the copy at
+    /// <c>CopyDirectory</c>; that copy must be the same manifest, backup and set the target was restored from,
+    /// or its refs and custody say nothing about the restored target.
+    /// </summary>
+    public static RecoveryFinding? BindToRestore(
+        string receiptManifestId, string receiptBackupId, string receiptSetSha256, string? receiptManifestSha256,
+        RecoveryManifest? manifest, string? manifestSha256, string copyDirectory)
+    {
+        var differences = new List<string>();
+        if (manifest is null) differences.Add("manifest unreadable");
+        else
+        {
+            if (!string.Equals(manifest.ManifestId, receiptManifestId, StringComparison.Ordinal)) differences.Add("manifest id");
+            if (!string.Equals(manifest.DataSet.BackupId, receiptBackupId, StringComparison.Ordinal)) differences.Add("backup id");
+            if (!string.Equals(manifest.DataSet.SetSha256, receiptSetSha256, StringComparison.OrdinalIgnoreCase)) differences.Add("set digest");
+        }
+        if (receiptManifestSha256 is null || manifestSha256 is null
+            || !string.Equals(receiptManifestSha256, manifestSha256, StringComparison.OrdinalIgnoreCase))
+            differences.Add("manifest digest");
+        return differences.Count == 0
+            ? null
+            : new RecoveryFinding("recovery-copy-mismatch", RecoveryFindingSeverity.BlocksResume,
+                $"{copyDirectory} ({string.Join(", ", differences)})",
+                "The copy at the receipt's copy directory is not the recovery set this target was restored from. Put the verified off-host copy of the restored set back at that path and run the resume check again. A different set's refs and custody prove nothing about this target.");
     }
 
     private static string Short(string sha) => sha.Length > 12 ? sha[..12] : sha;

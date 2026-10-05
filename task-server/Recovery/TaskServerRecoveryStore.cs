@@ -40,7 +40,10 @@ public sealed partial class TaskServerStore
         return await ReadRecoveryFactsAsync(connection, setRoot: null, ct);
     }
 
+    /// <param name="fencedAt">Runner credentials issued before this instant are stale (hosts fenced, else restore).</param>
+    /// <param name="restoredAt">A client is reconciled by a credential issued after this restore instant.</param>
     internal async Task<RecoveryResumeFacts> ReadRecoveryResumeFactsAsync(
+        DateTime fencedAt,
         DateTime restoredAt,
         bool restoredFromRecoverySet,
         bool oldWriterClosed,
@@ -63,16 +66,17 @@ public sealed partial class TaskServerStore
              WHERE p.kind = 'runner' AND p.revoked_at IS NULL
                AND EXISTS (SELECT 1 FROM principal_credentials c
                             WHERE c.principal_id = p.principal_id AND c.revoked_at IS NULL
-                              AND c.created_at < $restored
+                              AND c.created_at < $fenced
                               AND (c.expires_at IS NULL OR c.expires_at > $now))
              ORDER BY p.principal_id;
-            """, ("$restored", Iso(restoredAt)), ("$now", Iso(UtcNow))))
+            """, ("$fenced", Iso(fencedAt)), ("$now", Iso(UtcNow))))
         await using (var reader = await command.ExecuteReaderAsync(ct))
             while (await reader.ReadAsync(ct)) stale.Add(reader.GetString(0));
 
         // A lost client is reconciled only after a fresh credential exists and every pre-restore
         // credential is revoked or expired. This covers runner re-enrolment and deliberate rotation
-        // of other service principals without treating fencing alone as proof of reconnection.
+        // of other service principals without treating fencing alone as proof of reconnection. A runner
+        // re-enrolled before fencing loses that credential to the fence, so it is not reconciled.
         var reconciledClients = new List<string>();
         await using (var command = Command(connection, """
             SELECT p.principal_id

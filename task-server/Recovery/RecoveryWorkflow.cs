@@ -126,13 +126,15 @@ public sealed record RecoveryRestoreReceipt(
     DateTime? HostsFencedAt = null,
     int? FencedCredentials = null,
     DateTime? ResumedAt = null,
-    double? MeasuredRecoveryTimeSeconds = null)
+    double? MeasuredRecoveryTimeSeconds = null,
+    string? ManifestSha256 = null)
 {
     public const string FileName = "recovery-restore-receipt.json";
     public const string CurrentSchema = "agent-studio.recovery-restore-receipt/v1";
 }
 
-public sealed record RecoveryVerifyResult(RecoveryManifest? Manifest, RecoveryCheckReport Report);
+/// <param name="ManifestSha256">Digest of the exact manifest bytes that were parsed and checked.</param>
+public sealed record RecoveryVerifyResult(RecoveryManifest? Manifest, RecoveryCheckReport Report, string? ManifestSha256 = null);
 
 public sealed record RecoveryRestoreResult(bool Restored, RecoveryRestoreReceipt? Receipt, RecoveryCheckReport Report, string Message);
 
@@ -264,7 +266,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var manifest = verified.Manifest!;
         var receipt = new RecoveryCopyReceipt(
             "agent-studio.recovery-copy-receipt/v1", backupId, manifest.ManifestId, manifest.DataSet.SetSha256,
-            await HashFileAsync(Path.Combine(destination, ManifestFile), ct), UtcNow, destination,
+            verified.ManifestSha256!, UtcNow, destination,
             manifest.DataSet.FileCount, manifest.DataSet.TotalBytes, warnings);
         await File.WriteAllTextAsync(Path.Combine(destination, CopyReceiptFile),
             JsonSerializer.Serialize(receipt, RecoveryJson.Options) + Environment.NewLine, ct);
@@ -280,12 +282,30 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var manifestPath = Path.Combine(copyRoot, ManifestFile);
         RecoveryManifest? manifest = null;
         string? manifestSchema = null;
+        string? manifestSha = null;
+        var manifestReadable = true;
         if (File.Exists(manifestPath))
         {
-            var text = await File.ReadAllTextAsync(manifestPath, ct);
-            manifestSchema = JsonDocument.Parse(text).RootElement.TryGetProperty("schema", out var schema) ? schema.GetString() : null;
-            if (manifestSchema == RecoveryManifest.CurrentSchema)
-                manifest = JsonSerializer.Deserialize<RecoveryManifest>(text, RecoveryJson.Options);
+            // Hash and parse the same bytes, so the digest bound to a receipt is the manifest that was checked.
+            var bytes = await File.ReadAllBytesAsync(manifestPath, ct);
+            manifestSha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            try
+            {
+                var root = JsonDocument.Parse(bytes).RootElement;
+                manifestSchema = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("schema", out var schema)
+                                 && schema.ValueKind == JsonValueKind.String
+                    ? schema.GetString()
+                    : null;
+                if (manifestSchema == RecoveryManifest.CurrentSchema)
+                {
+                    manifest = JsonSerializer.Deserialize<RecoveryManifest>(bytes, RecoveryJson.Options);
+                    if (!IsStructurallyComplete(manifest)) (manifest, manifestReadable) = (null, false);
+                }
+            }
+            catch (JsonException)
+            {
+                manifestReadable = false;
+            }
         }
 
         var receiptPath = Path.Combine(copyRoot, CopyReceiptFile);
@@ -305,9 +325,8 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                     && string.Equals(receipt.SetSha256, manifest.DataSet.SetSha256, StringComparison.OrdinalIgnoreCase)
                     && receipt.FileCount == manifest.DataSet.FileCount
                     && receipt.TotalBytes == manifest.DataSet.TotalBytes;
-                manifestDigestMatches = receipt is not null && File.Exists(manifestPath)
-                    && string.Equals(receipt.ManifestSha256, await HashFileAsync(manifestPath, ct),
-                        StringComparison.OrdinalIgnoreCase);
+                manifestDigestMatches = receipt is not null && manifestSha is not null
+                    && string.Equals(receipt.ManifestSha256, manifestSha, StringComparison.OrdinalIgnoreCase);
             }
             catch (JsonException)
             {
@@ -323,24 +342,45 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var missingCold = new List<string>();
         if (File.Exists(completePath) && File.Exists(inventoryPath))
         {
-            completeSha = JsonDocument.Parse(await File.ReadAllTextAsync(completePath, ct)).RootElement.GetProperty("setSha256").GetString();
-            var inventory = JsonDocument.Parse(await File.ReadAllTextAsync(inventoryPath, ct)).RootElement;
-            inventorySha = inventory.GetProperty("setSha256").GetString();
-            var recorded = inventory.GetProperty("files").EnumerateArray()
-                .Select(item => (Path: item.GetProperty("relativePath").GetString()!, Size: item.GetProperty("size").GetInt64(),
-                    Sha: item.GetProperty("sha256").GetString()!))
-                .ToList();
+            List<(string Path, long Size, string Sha)> recorded;
+            try
+            {
+                completeSha = JsonDocument.Parse(await File.ReadAllTextAsync(completePath, ct)).RootElement.GetProperty("setSha256").GetString();
+            }
+            catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException)
+            {
+                completeSha = null;
+                changed.Add("complete.json");
+            }
+            try
+            {
+                var inventory = JsonDocument.Parse(await File.ReadAllTextAsync(inventoryPath, ct)).RootElement;
+                inventorySha = inventory.GetProperty("setSha256").GetString();
+                recorded = inventory.GetProperty("files").EnumerateArray()
+                    .Select(item => (Path: item.GetProperty("relativePath").GetString()!, Size: item.GetProperty("size").GetInt64(),
+                        Sha: item.GetProperty("sha256").GetString()!))
+                    .ToList();
+            }
+            catch (Exception exception) when (exception is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+            {
+                // An unreadable inventory is a corrupted set member, not a crash of the verifier.
+                inventorySha = null;
+                recorded = [];
+                changed.Add("inventory.json");
+            }
             var actual = await InventoryAsync(setRoot, ct);
             actualSha = SetHash(actual);
             var actualByPath = actual.ToDictionary(item => item.Path, StringComparer.Ordinal);
             foreach (var entry in recorded)
                 if (!actualByPath.TryGetValue(entry.Path, out var found) || found.Sha != entry.Sha || found.Size != entry.Size)
                     changed.Add(entry.Path);
-            changed.AddRange(actual.Select(item => item.Path).Except(recorded.Select(item => item.Path), StringComparer.Ordinal));
+            if (inventorySha is not null)
+                changed.AddRange(actual.Select(item => item.Path).Except(recorded.Select(item => item.Path), StringComparer.Ordinal));
             foreach (var cold in manifest?.ColdEvidence.Payloads ?? [])
                 if (!actualByPath.TryGetValue(cold.RelativePath, out var found) || found.Sha != cold.Sha256)
                     missingCold.Add(cold.RelativePath);
-            if (manifest is not null && !string.Equals(manifest.DataSet.SetSha256, inventorySha, StringComparison.OrdinalIgnoreCase))
+            if (manifest is not null && inventorySha is not null
+                && !string.Equals(manifest.DataSet.SetSha256, inventorySha, StringComparison.OrdinalIgnoreCase))
                 changed.Add(ManifestFile);
         }
 
@@ -417,8 +457,9 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             receiptPresent,
             requireCopyReceipt,
             receiptValid,
-            manifestDigestMatches);
-        return new RecoveryVerifyResult(manifest, RecoveryCheckPolicy.Evaluate(facts));
+            manifestDigestMatches,
+            manifestReadable);
+        return new RecoveryVerifyResult(manifest, RecoveryCheckPolicy.Evaluate(facts), manifestSha);
     }
 
     /// <summary>
@@ -439,30 +480,27 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             return new RecoveryRestoreResult(false, null, verified.Report, "Recovery set failed verification; the target was not changed.");
         var manifest = verified.Manifest;
 
-        CopyTree(Path.Combine(copyRoot, SetDirectory), Path.Combine(options.ResolveFullBackupDirectory(), manifest.DataSet.BackupId));
+        // The copy is read twice: once to verify, once to place it. Bind the placed set to the manifest before
+        // the store opens, so a copy that changed in between never reaches the target.
+        var placedSet = Path.Combine(options.ResolveFullBackupDirectory(), manifest.DataSet.BackupId);
+        CopyTree(Path.Combine(copyRoot, SetDirectory), placedSet);
+        var placedSha = SetHash(await InventoryAsync(placedSet, ct));
+        if (!string.Equals(placedSha, manifest.DataSet.SetSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            Directory.Delete(placedSet, recursive: true);
+            var report = new RecoveryCheckReport([.. verified.Report.Findings, new RecoveryFinding(
+                "set-changed-during-restore", RecoveryFindingSeverity.BlocksRestore, $"placed set digest {placedSha}",
+                "The copied set changed after it was verified, so the placed set no longer matches the manifest. The target was left empty. Protect the off-host copy from writers, verify it again and restore.")]);
+            return new RecoveryRestoreResult(false, null, report, "Recovery set changed after verification; the target was left empty.");
+        }
+
         await store.InitializeForBackupAsync(ct);
         await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "recovery restore to empty target"), actorId, ct);
         var restored = await new FullBackupManagementService(store).RestoreAsync(manifest.DataSet.BackupId, actorId, ct);
         if (!restored.Restored)
             return new RecoveryRestoreResult(false, null, verified.Report, restored.Message);
 
-        var live = await store.ReadLiveRecoveryFactsAsync(ct);
-        var comparisons = new List<RecoveryIdentityComparison>
-        {
-            Compare("server id", manifest.Identities.ServerId, live.ServerId),
-            Compare("schema version", manifest.Store.SchemaVersion.ToString(), live.SchemaVersion.ToString()),
-            Compare("task count", manifest.Identities.TaskCount.ToString(), live.TaskCount.ToString()),
-            Compare("task identity digest", manifest.Identities.TaskIdentitySha256, live.TaskIdentitySha256),
-            Compare("workspaces", Join(manifest.Identities.Workspaces.Select(item => item.WorkspaceId)), Join(live.Workspaces.Select(item => item.WorkspaceId))),
-            Compare("projects", Join(manifest.Identities.Projects.Select(item => $"{item.ProjectId}:{item.TaskKeyPrefix}:{item.TaskCount}")),
-                Join(live.Projects.Select(item => $"{item.ProjectId}:{item.TaskKeyPrefix}:{item.TaskCount}"))),
-        };
-        var archiveRoot = options.ResolveRetentionArchivePath();
-        foreach (var cold in manifest.ColdEvidence.Payloads)
-        {
-            var path = Path.Combine(archiveRoot, cold.RelativePath["cold/".Length..].Replace('/', Path.DirectorySeparatorChar));
-            comparisons.Add(Compare($"cold {cold.RelativePath}", cold.Sha256, File.Exists(path) ? await HashFileAsync(path, ct) : "missing"));
-        }
+        var comparisons = await CompareWithLiveAsync(manifest, ct);
 
         stopwatch.Stop();
         var completed = UtcNow;
@@ -481,7 +519,8 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             lossAt is null ? null : Math.Round((lossAt.Value - manifest.CapturedAt).TotalSeconds, 3),
             comparisons,
             verified.Report.Findings,
-            Path.GetFullPath(copyRoot));
+            Path.GetFullPath(copyRoot),
+            ManifestSha256: verified.ManifestSha256);
         await WriteReceiptAsync(receipt, ct);
         await store.AuditRecoveryAsync(actorId, "recovery.restored", manifest.ManifestId,
             new { manifest.DataSet.BackupId, mismatches = comparisons.Count(item => !item.Matches) }, ct);
@@ -523,23 +562,39 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         bool oldWriterClosed, bool obligationsRetained, bool checkOnly, string? secretBundleOverride, string actorId, CancellationToken ct)
     {
         var receipt = await ReadReceiptAsync(ct);
-        IReadOnlyList<RecoveryFinding> findings = receipt?.Findings ?? [];
+        IReadOnlyList<RecoveryFinding> findings = [];
+        IReadOnlyList<RecoveryIdentityComparison> fresh = [];
         if (receipt is not null)
         {
-            findings = Directory.Exists(receipt.CopyDirectory)
-                ? (await VerifyCopyAsync(receipt.CopyDirectory, secretBundleOverride, probeGit: true, ct)).Report.Findings
-                : [new RecoveryFinding("recovery-copy-unavailable", RecoveryFindingSeverity.BlocksResume,
+            // Every piece of evidence the gate relies on is re-read now: the copy, its binding to this
+            // restore, its Git refs and custody, and the target's identities against that manifest.
+            if (!Directory.Exists(receipt.CopyDirectory))
+                findings = [new RecoveryFinding("recovery-copy-unavailable", RecoveryFindingSeverity.BlocksResume,
                     receipt.CopyDirectory,
                     "The copied recovery set is unavailable. Restore access to the verified off-host copy and run the resume check again so its inventory and Git refs can be verified afresh.")];
+            else
+            {
+                var verified = await VerifyCopyAsync(receipt.CopyDirectory, secretBundleOverride, probeGit: true, ct);
+                var binding = RecoveryCheckPolicy.BindToRestore(receipt.ManifestId, receipt.BackupId, receipt.SetSha256,
+                    receipt.ManifestSha256, verified.Manifest, verified.ManifestSha256, receipt.CopyDirectory);
+                findings = binding is null ? verified.Report.Findings : [.. verified.Report.Findings, binding];
+                if (binding is null) fresh = await CompareWithLiveAsync(verified.Manifest!, ct);
+            }
         }
         var facts = await store.ReadRecoveryResumeFactsAsync(
             receipt?.HostsFencedAt ?? receipt?.RestoreCompletedAt ?? DateTime.MaxValue,
+            receipt?.RestoreCompletedAt ?? DateTime.MaxValue,
             receipt is not null, oldWriterClosed, obligationsRetained, findings, ct);
+        var failed = (receipt?.Comparisons ?? []).Concat(fresh)
+            .Where(item => !item.Matches || !string.Equals(item.Expected, item.Actual, StringComparison.Ordinal))
+            .Select(item => item.Subject)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         facts = facts with
         {
-            IdentityComparisonsPassed = receipt?.Comparisons is { Count: > 0 } comparisons
-                                        && comparisons.All(item => item.Matches &&
-                                            string.Equals(item.Expected, item.Actual, StringComparison.Ordinal)),
+            // Both the restore-time comparisons and a fresh recheck must exist and match.
+            IdentityComparisonsPassed = receipt?.Comparisons is { Count: > 0 } && fresh.Count > 0 && failed.Count == 0,
+            FailedIdentitySubjects = failed,
         };
         var decision = RecoveryResumePolicy.Decide(facts);
         if (!decision.Allowed || checkOnly || receipt is null) return (decision, receipt);
@@ -556,6 +611,37 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         return (decision, receipt);
     }
 
+    /// <summary>Compares the live target with a manifest: identities, task set and restored cold evidence.</summary>
+    private async Task<List<RecoveryIdentityComparison>> CompareWithLiveAsync(RecoveryManifest manifest, CancellationToken ct)
+    {
+        var live = await store.ReadLiveRecoveryFactsAsync(ct);
+        var comparisons = new List<RecoveryIdentityComparison>
+        {
+            Compare("server id", manifest.Identities.ServerId, live.ServerId),
+            Compare("schema version", manifest.Store.SchemaVersion.ToString(), live.SchemaVersion.ToString()),
+            Compare("task count", manifest.Identities.TaskCount.ToString(), live.TaskCount.ToString()),
+            Compare("task identity digest", manifest.Identities.TaskIdentitySha256, live.TaskIdentitySha256),
+            Compare("workspaces", Join(manifest.Identities.Workspaces.Select(item => item.WorkspaceId)), Join(live.Workspaces.Select(item => item.WorkspaceId))),
+            Compare("projects", Join(manifest.Identities.Projects.Select(item => $"{item.ProjectId}:{item.TaskKeyPrefix}:{item.TaskCount}")),
+                Join(live.Projects.Select(item => $"{item.ProjectId}:{item.TaskKeyPrefix}:{item.TaskCount}"))),
+        };
+        var archiveRoot = options.ResolveRetentionArchivePath();
+        foreach (var cold in manifest.ColdEvidence.Payloads)
+        {
+            var path = Path.Combine(archiveRoot, cold.RelativePath["cold/".Length..].Replace('/', Path.DirectorySeparatorChar));
+            comparisons.Add(Compare($"cold {cold.RelativePath}", cold.Sha256, File.Exists(path) ? await HashFileAsync(path, ct) : "missing"));
+        }
+        return comparisons;
+    }
+
+    private static bool IsStructurallyComplete(RecoveryManifest? manifest)
+        => manifest is { ManifestId: not null, Store: not null, Identities.Workspaces: not null, Identities.Projects: not null,
+               DataSet.BackupId: not null, DataSet.SetSha256: not null, ColdEvidence.Payloads: not null,
+               Repositories: not null, SecretCustody.Clients: not null, PendingHostObligations: not null }
+           && manifest.Repositories.All(item => item is { RepositoryId: not null, SampledRefs: not null })
+           && manifest.ColdEvidence.Payloads.All(item => item is { RelativePath: not null, Sha256: not null }
+                                                          && item.RelativePath.StartsWith("cold/", StringComparison.Ordinal));
+
     private async Task WriteReceiptAsync(RecoveryRestoreReceipt receipt, CancellationToken ct)
         => await File.WriteAllTextAsync(Path.Combine(store.DataDirectory, RecoveryRestoreReceipt.FileName),
             JsonSerializer.Serialize(receipt, RecoveryJson.Options) + Environment.NewLine, ct);
@@ -567,7 +653,8 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
 
     private static void RequireEmptyTarget(string path, string label)
     {
-        if (Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any())
+        // A skeleton of empty directories (for example one left by a refused restore) still counts as empty.
+        if (Directory.Exists(path) && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Any())
             throw new IOException($"Restore target {label} '{path}' is not empty. Recovery restores only onto an empty target.");
     }
 

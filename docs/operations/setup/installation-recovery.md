@@ -122,8 +122,11 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    The command refuses non-empty data, backup or archive directories. It
    verifies first, then uses the full backup restore service, and compares the
    server id, schema, task count, task identity digest, workspaces, projects
-   and every cold payload digest. It writes `recovery-restore-receipt.json`
-   in the data directory. The target stays in `Maintenance`.
+   and every cold payload digest. Before the store opens, it re-hashes the set
+   it placed on the target against the manifest's set digest. A copy that
+   changed after verification is refused and the target is left empty. It
+   writes `recovery-restore-receipt.json` in the data directory, including the
+   manifest digest it restored from. The target stays in `Maintenance`.
 5. **Fence stale hosts.** `task-server recovery fence-hosts` revokes every
    runner credential issued before the restore. A host still holding the old
    authority's credential is rejected at authentication.
@@ -132,13 +135,19 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    revokes that principal's old credentials and writes one fresh credential to
    an owner-only file while the target is in Maintenance. Re-enrol every client
    reported as `client-credentials-lost`, then deliver each credential through
-   its protected token file. Reconnect one host at a time.
+   its protected token file. Reconnect one host at a time. Re-enrol runners
+   after `fence-hosts`, because the fence revokes every runner credential
+   issued before it. Other clients may be re-enrolled before or after it.
 7. **Resume.** Run `task-server recovery resume --check-only` until no blocker
    remains, then
    `task-server recovery resume --old-writer-closed [--obligations-retained]`.
-   The gate requires all of the following:
+   The gate re-reads its evidence on every run instead of trusting the
+   receipt. It requires all of the following:
    - a recovery restore receipt;
-   - every recorded restore identity and cold evidence comparison passed;
+   - the copy named in the receipt still verifies and is the restored set: the
+     same manifest id, backup id, set digest and manifest digest;
+   - every recorded restore identity and cold evidence comparison passed, and
+     a fresh comparison of the live target with that manifest passes too;
    - `Maintenance` mode;
    - no `active` or `process-unknown` attempt;
    - the attestation that the previous authority is stopped (one writer);
@@ -161,7 +170,10 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
 | `missing-cold-payload` | Restore refused | Copy the payload from another verified copy with the same set digest, or capture again while the source archive still holds it. |
 | `schema-mismatch` | Restore refused | Install the release named in the guidance on the empty target, restore, verify, and only then upgrade. |
 | `copy-receipt-missing` / `copy-receipt-invalid` / `manifest-digest-mismatch` | Restore refused; resume blocked | Use another verified off-host copy or copy again from the live authority. A missing or changed receipt cannot establish which manifest was verified. Do not edit the manifest or receipt. |
-| `identity-comparison-failed` | Resume blocked | Read the failed comparisons in `recovery-restore-receipt.json`; restore a verified set to a new empty target. Do not override the receipt. |
+| `manifest-unreadable` | Restore refused | The manifest is not valid JSON or lacks required sections. Discard the copy and verify another off-host copy of the same set. Never repair the manifest by hand. |
+| `set-changed-during-restore` | Restore refused; target left empty | The copy changed between verification and placement on the target. Stop every writer on the off-host copy, verify it again and restore. |
+| `identity-comparison-failed` | Resume blocked | The blocker names the failed subjects, from the restore receipt or from the fresh recheck at resume (for example a cold payload changed after restore). Restore a verified set to a new empty target. Do not override the receipt. |
+| `recovery-copy-mismatch` | Resume blocked | The copy at the receipt's copy directory is a different set, or its manifest changed (even with a rewritten copy receipt). Put the verified copy of the restored set back at that path and check again. |
 | `recovery-copy-unavailable` | Resume blocked | Restore access to the verified off-host copy named in the restore receipt. Resume checks its inventory and Git refs again; the findings saved at restore time are insufficient. |
 | `manifest-missing` / `manifest-unsupported` | Restore refused | Copy again with `recovery copy`, or use the release that captured the set. |
 | `git-origin-unavailable` | Resume blocked | Restore network access or the origin credential, or declare a verified mirror. Stay in `Maintenance` until the refs verify. |
@@ -185,9 +197,19 @@ completed canary, the identity comparisons and
 the tasks lost after capture. `RecoveryDrillTests` in `task-server.Tests` runs
 the full sequence in process. It covers cold evidence, a bare Git origin with
 sampled refs, credential fencing, obsolete-replay rejection, re-enrolment and
-a completed canary run with an immutable result handoff. It also injects each fault in the table above, and asserts
+a completed canary run with an immutable result handoff. It also injects each fault in the table above (including a
+copy replaced by another set, a manifest rewritten together with its copy receipt, a copy changed during restore and a
+cold payload changed after restore), and asserts
 that production state is unchanged and that a refused restore leaves the
 target empty.
+
+The latest retained CLI drill report is
+[recovery-drill-report-2026-10-05.json](./recovery-drill-report-2026-10-05.json):
+a 6.006-second measured recovery point, 11.437 seconds from simulated loss to a
+completed canary with a published result ref, a 2.724-second restore, six
+passing identity comparisons and one task (`DRL-4`) written after capture and
+absent after restore. It is a one-host rehearsal measurement, not a production
+objective.
 
 Report recovery objectives only from such measurements. The 300-second backup
 timer in [control-plane-docker.md](./control-plane-docker.md#backup-and-restore)

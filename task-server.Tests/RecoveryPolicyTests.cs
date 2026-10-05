@@ -36,6 +36,7 @@ public sealed class RecoveryPolicyTests
         { "copy-receipt-missing", facts => facts with { OffHostCopyReceiptPresent = false }, RecoveryFindingSeverity.BlocksRestore },
         { "copy-receipt-invalid", facts => facts with { CopyReceiptValid = false }, RecoveryFindingSeverity.BlocksRestore },
         { "manifest-digest-mismatch", facts => facts with { ManifestDigestMatches = false }, RecoveryFindingSeverity.BlocksRestore },
+        { "manifest-unreadable", facts => facts with { ManifestReadable = false, ManifestSchema = null }, RecoveryFindingSeverity.BlocksRestore },
     };
 
     [Fact]
@@ -142,6 +143,61 @@ public sealed class RecoveryPolicyTests
             ],
         });
         Assert.Equal("studio:b", Assert.Single(decision.Blockers).Subject);
+    }
+}
+
+public sealed class RecoveryRestoreBindingTests
+{
+    private static readonly RecoveryManifest Manifest = new(
+        RecoveryManifest.CurrentSchema, "rcv_a", DateTime.UnixEpoch, null,
+        new(RecoveryStoreTypes.TaskServerSqlite, "1.0.0", "sha", 24),
+        new("srv", [], [], 0, "digest"),
+        new("database-snapshot", "a", "set-a", "complete.json", "inventory.json", 1, 1),
+        new(0, []), [], [], [], new(null, null, null, null, []), [], []);
+
+    public static TheoryData<string, string, string, string?, bool, string?, string> Bindings => new()
+    {
+        { "same set", "rcv_a", "a", "manifest-a", true, "manifest-a", "" },
+        { "other manifest id", "rcv_b", "a", "manifest-a", true, "manifest-a", "manifest id" },
+        { "other backup", "rcv_a", "b", "manifest-a", true, "manifest-a", "backup id" },
+        { "other set digest", "rcv_a", "a", "manifest-a", true, "manifest-a", "set digest" },
+        { "rewritten manifest", "rcv_a", "a", "manifest-a", true, "manifest-forged", "manifest digest" },
+        { "receipt without digest", "rcv_a", "a", null, true, "manifest-a", "manifest digest" },
+        { "unreadable manifest", "rcv_a", "a", "manifest-a", false, null, "manifest unreadable" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Bindings))]
+    public void Resume_binds_the_verified_copy_to_the_restored_set(
+        string _, string receiptManifestId, string receiptBackupId, string? receiptManifestSha, bool manifestReadable,
+        string? copyManifestSha, string expectedDifference)
+    {
+        var receiptSet = expectedDifference == "set digest" ? "set-b" : "set-a";
+        var finding = RecoveryCheckPolicy.BindToRestore(receiptManifestId, receiptBackupId, receiptSet, receiptManifestSha,
+            manifestReadable ? Manifest : null, copyManifestSha, "/copy");
+        if (expectedDifference.Length == 0)
+        {
+            Assert.Null(finding);
+            return;
+        }
+        Assert.NotNull(finding);
+        Assert.Equal("recovery-copy-mismatch", finding.Code);
+        Assert.Equal(RecoveryFindingSeverity.BlocksResume, finding.Severity);
+        Assert.Contains(expectedDifference, finding.Subject, StringComparison.Ordinal);
+        Assert.Contains(RecoveryResumePolicy.Decide(new RecoveryResumeFacts(
+            TaskServerMode.Maintenance, true, 0, true, [], [], false, [finding], true)).Blockers,
+            item => item.Code == "recovery-copy-mismatch");
+    }
+
+    [Fact]
+    public void Failed_identity_recheck_names_the_failed_subjects()
+    {
+        var decision = RecoveryResumePolicy.Decide(new RecoveryResumeFacts(
+            TaskServerMode.Maintenance, true, 0, true, [], [], false, [], false,
+            FailedIdentitySubjects: ["cold cold/a.zip"]));
+        var blocker = Assert.Single(decision.Blockers);
+        Assert.Equal("identity-comparison-failed", blocker.Code);
+        Assert.Equal("cold cold/a.zip", blocker.Subject);
     }
 }
 
