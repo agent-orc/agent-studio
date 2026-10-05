@@ -79,7 +79,7 @@ describe('WorkbenchDecisionStore', () => {
     }));
     confirm.flush(result('pending'));
     const steer = http.expectOne(
-      '/api/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
+      '/api/v1/studio/orchestrator/sessions/workbench:Agent%20Studio/AGT-W48/turns');
     expect(steer.request.body).toEqual({
       prompt: 'Revise the Dossier.\nMove the total higher.',
       cliType: 'codex', model: 'gpt-5.6-sol', thinkingLevel: 'high',

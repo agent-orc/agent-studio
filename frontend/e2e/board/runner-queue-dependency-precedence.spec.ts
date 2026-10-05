@@ -91,12 +91,12 @@ async function installRoutes(page: Page, state: QueueFixtureState): Promise<void
   const now = new Date().toISOString();
   const freshUntil = new Date(Date.now() + 5 * 60_000).toISOString();
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route(/\/api\/tasks(\?|$)/, route => json(route, tasks(state)));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: tasks(state),
     progress: [], failedPickup: [], codeNotComplete: [], autoReview: [],
     review: [], humanReview: [], escalated: [], completed: [], archive: [],
@@ -140,7 +140,7 @@ async function installRoutes(page: Page, state: QueueFixtureState): Promise<void
     }],
     telemetry: null,
   }]));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, {
     projects: {
       [PROJECT]: {
         projectName: PROJECT,

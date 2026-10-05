@@ -113,7 +113,7 @@ test.describe('Git pane — large-diff gutter must not escape the scroll contain
       // Worktree-isolation rule: the working-tree view only renders for the
       // runner's currently-active job. Forge the runner status so the
       // detail view treats our fixture job as the active one.
-      await page.route('**/api/runner/status', async (route) => {
+      await page.route('**/api/v1/studio/runner/status', async (route) => {
         const upstream = await route.fetch();
         const status = await upstream.json();
         await route.fulfill({
@@ -262,7 +262,7 @@ test.describe('Git pane — large-diff gutter must not escape the scroll contain
     });
 
     try {
-      await page.route('**/api/runner/status', async (route) => {
+      await page.route('**/api/v1/studio/runner/status', async (route) => {
         const upstream = await route.fetch();
         const status = await upstream.json();
         await route.fulfill({

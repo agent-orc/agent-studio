@@ -190,14 +190,14 @@ function detail(card: Record<string, unknown>): Record<string, unknown> {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
   for (const card of CARDS) {
-    await page.route(new RegExp(`/api/tasks/${card.id}(\\?|$)`), route => json(route, detail(card)));
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${card.id}(\\?|$)`), route => json(route, detail(card)));
   }
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route(/\/api\/tasks(\?|$)/, route => json(route, CARDS));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: CARDS,
     progress: [], failedPickup: [], codeNotComplete: [], autoReview: [],
     review: [], humanReview: [], escalated: [], completed: [], archive: [],
@@ -208,7 +208,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/environment**', route => json(route, {
     isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, {
     projects: {
       [PROJECT]: {
         projectName: PROJECT,

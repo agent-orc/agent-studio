@@ -178,7 +178,7 @@ async function installRoutes(page: Page, state: string, mock: MockState): Promis
   await page.route('**/api/**', (route) => {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => {});
   });
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -218,7 +218,7 @@ async function installRoutes(page: Page, state: string, mock: MockState): Promis
   await page.route('**/api/cli/usage**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }),
   );
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -275,7 +275,7 @@ async function installRoutes(page: Page, state: string, mock: MockState): Promis
       body: JSON.stringify({ stepId, pipelineSteps: {} }),
     });
   });
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }),
   );
 }

@@ -394,20 +394,6 @@ public class ProjectRunner
         return location == ExecutionLocations.Local ? null : location;
     }
 
-    private string ResolveCliExecutionEngine()
-    {
-        var resolution = _orchestratorDefaults?.ResolveCliExecutionEngine(ProjectName)
-            ?? AgentStudio.Registry.OrchestratorSettingsResolver.ResolveCliExecutionEngine(
-                _projectSettings.Get(ProjectName),
-                workspace: null);
-        _logger.LogInformation(
-            "[taskboard] CLI execution engine for {Project}: {ExecutionEngine} ({Source})",
-            ProjectName,
-            resolution.ExecutionEngine,
-            resolution.Source);
-        return resolution.ExecutionEngine;
-    }
-
     // Continuous decision review: while a job sits in 3-progress, we scan
     // its live output buffer every tick for an unresolved interruptive
     // sentinel ([[TASK_NEEDS_INPUT]] / [[TASK_BLOCKED]]). The latch is
@@ -435,6 +421,8 @@ public class ProjectRunner
     /// mode. Restoration via <see cref="RestoreMode"/> does NOT fire this event.
     /// </summary>
     public event Action<string, string>? OnModePersist;
+
+    private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
 
     public ProjectRunner(
         string projectName,
@@ -486,7 +474,8 @@ public class ProjectRunner
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
-        LocalRunClaimAdapter? localRunClaims = null)
+        LocalRunClaimAdapter? localRunClaims = null,
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -527,6 +516,7 @@ public class ProjectRunner
         _pickupLock = pickupLock;
         _pickupLockOwner = pickupLockOwner;
         _localRunClaims = localRunClaims;
+        _localCodingAdmission = localCodingAdmission;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -2160,7 +2150,6 @@ public class ProjectRunner
             var resolverJobKey = $"{GetJobKey(info.Id)}:conflict-resolution";
             var permissionMode = _projectSettings.ResolveCliMode(ProjectName, resolverCliType).Mode;
             var contextMode = _projectSettings.ResolveContextMode(ProjectName, resolverCliType, info.ContextMode).Mode;
-            var executionEngine = ResolveCliExecutionEngine();
             var prompt = BuildConflictResolutionPrompt(info, run, workBranch, conflict);
             var (execution, error) = await resolver.StartAsync(
                 $"{info.Id}-conflict-resolution",
@@ -2174,7 +2163,6 @@ public class ProjectRunner
                 jobFolderPath: info.FolderPath,
                 permissionMode: permissionMode,
                 contextMode: contextMode,
-                executionEngine: executionEngine,
                 ct: CancellationToken.None);
 
             if (execution == null)
@@ -2478,6 +2466,11 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
+            if (WorktreeRunPolicy.RequiresWorktree(info.Mode, EpicRunPolicy.IsPlanningRun(info.Kind, intent))
+                && _localCodingAdmission?.AllowsLocalCoding != true)
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.RemoteExecutionRequired,
+                    RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message));
             admissionInfo = info;
 
             // Part 2 will submit human feedback through the ordinary Continue
@@ -3259,7 +3252,6 @@ public class ProjectRunner
                 isWorktreeRun, activeRunForSpawn?.WorktreeReused == true, runWorkingDir, sessionBirthCwd);
             var effSessionToResume = canResumeSession ? plan.SessionToResume : null;
             var effResumeFlag = canResumeSession && plan.ResumeFlag;
-            var executionEngine = ResolveCliExecutionEngine();
             var admittedSessionReason = plan.EventReason;
             if (isWorktreeRun && !canResumeSession && plan.ResumeFlag)
             {
@@ -3276,7 +3268,6 @@ public class ProjectRunner
                 jobFolderPath: info.FolderPath,
                 permissionMode: permissionMode,
                 contextMode: contextMode,
-                executionEngine: executionEngine,
                 environment: activeRunForSpawn?.Preparation?.Environment,
                 ct: ct);
 

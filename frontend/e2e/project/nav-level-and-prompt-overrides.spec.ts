@@ -44,16 +44,16 @@ test('prompt overrides are explicit and filterable in both themes', async ({ pag
   ] };
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
-    if (url.pathname === '/api/auth/status') return route.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+    if (url.pathname === '/api/v1/studio/auth/status') return route.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
     if (url.pathname === '/api/crash-recovery/pending') return route.fulfill(json({ pending: [] }));
     if (url.pathname === '/api/environment') return route.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } }));
-    if (url.pathname === '/api/runner/status') return route.fulfill(json({ projects: {} }));
+    if (url.pathname === '/api/v1/studio/runner/status') return route.fulfill(json({ projects: {} }));
     if (url.pathname === '/api/projects/settings') return route.fulfill(json({}));
     if (url.pathname === '/api/cli/quota') return route.fulfill(json({ at: '2026-07-10T00:00:00Z', ttlSeconds: 600, snapshots: [] }));
     if (url.pathname === '/api/cli/usage') return route.fulfill(json({ at: '2026-07-10T00:00:00Z', sessions: [] }));
     if (url.pathname === '/api/tasks/archive') return route.fulfill(json({ items: [], total: 0 }));
-    if (url.pathname === '/api/workspaces') return route.fulfill(json(workspaces));
-    if (url.pathname === '/api/tasks/grouped') return route.fulfill(json(grouped));
+    if (url.pathname === '/api/v1/workspaces') return route.fulfill(json(workspaces));
+    if (url.pathname === '/api/v1/studio/board') return route.fulfill(json(grouped));
     if (url.pathname === '/api/watch-paths') return route.fulfill(json([{ name: PROJECT, path: 'C:/fixtures/project', rootPath: 'C:/fixtures/project', repositoryPath: 'C:/fixtures/project' }]));
     if (url.pathname === '/api/admin/prompts/coverage') return route.fulfill(json({ items: [], totalSites: 2, coveredSites: 2, pendingSites: 0 }));
     if (url.pathname === '/api/admin/prompts') return route.fulfill(json(promptCatalog));

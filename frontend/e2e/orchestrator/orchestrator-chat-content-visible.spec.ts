@@ -66,7 +66,7 @@ async function stubOrchestratorChat(page: Page): Promise<void> {
   await page.route('**/api/watch-paths', route => route.fulfill({
     json: [{ name: 'chat-visible', path: '/tmp/chat-visible', rootPath: '/tmp/chat-visible' }],
   }));
-  await page.route('**/api/workspaces', route => route.fulfill({
+  await page.route('**/api/v1/workspaces', route => route.fulfill({
     json: [{
       id: 'workspace-chat-visible',
       displayName: 'Chat fixture',

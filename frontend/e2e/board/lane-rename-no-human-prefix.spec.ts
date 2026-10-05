@@ -92,7 +92,7 @@ async function installBoardMocks(page: Page): Promise<void> {
   // stub above answers /api/auth/status, the app shows the sign-in card, and
   // every board assertion below fails on a missing element rather than on a
   // wrong heading.
-  await page.route('**/api/auth/status', async (route) => {
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) });
   });
@@ -103,10 +103,10 @@ async function installBoardMocks(page: Page): Promise<void> {
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) });
   });
-  await page.route('**/api/tasks/grouped', async (route) => {
+  await page.route('**/api/v1/studio/board', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) });
   });
-  await page.route('**/api/runner/status', async (route) => {
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ projects: { [FIXTURE_PROJECT]: { projectName: FIXTURE_PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } }) });
   });

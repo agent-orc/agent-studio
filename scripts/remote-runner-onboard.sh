@@ -544,9 +544,9 @@ else
   printf 'RUNNER_ROLE=%s\n' "$role"
   # A pinned host id keeps the enrolled identity across restarts and renames.
   [[ -z "$host_id" ]] || printf 'RUNNER_HOSTNAME=%s\n' "$host_id"
-  printf 'RUNNER_CLI_BIN=/usr/local/bin/claude\n'
-  printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
+  printf 'RUNNER_CLI_TYPE=claude\n'
   printf 'RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude\n'
+  printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
   [[ "$service_auth" == 1 ]] && printf 'RUNNER_AUTH_TOKEN_FILE=%s\n' "$auth_token_file"
   printf 'RUNNER_GIT_REMOTE=%s\n' "$git_remote"
   [[ -z "$git_push_remote" ]] || printf 'RUNNER_GIT_PUSH_REMOTE=%s\n' "$git_push_remote"

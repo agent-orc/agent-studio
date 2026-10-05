@@ -22,7 +22,7 @@ async function openEmptyState(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify(body),
     });
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (url.includes('/api/runner/queue-starvation')) {
@@ -53,17 +53,17 @@ async function openEmptyState(page: Page): Promise<void> {
         }],
       });
     }
-    if (url.includes('/api/tasks/grouped')) return json(EMPTY_GROUPED);
+    if (url.includes('/api/v1/studio/board')) return json(EMPTY_GROUPED);
     if (url.includes('/api/tasks/archive')) {
       return json({ items: [], total: 0, offset: 0, limit: 50, hasMore: false });
     }
-    if (url.includes('/api/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (url.includes('/api/runner/orchestrator-feed')) {
       return json({ entries: [], generatedAtUtc: '2026-08-10T09:00:00Z' });
     }
-    if (requestPath === '/api/orchestrator/sessions') return json({ sessions: [] });
-    if (requestPath.startsWith('/api/orchestrator/context/')) {
-      const contextKey = requestPath.slice('/api/orchestrator/context/'.length);
+    if (requestPath === '/api/v1/studio/orchestrator/sessions') return json({ sessions: [] });
+    if (requestPath.startsWith('/api/v1/studio/orchestrator/context/')) {
+      const contextKey = requestPath.slice('/api/v1/studio/orchestrator/context/'.length);
       return json({
         contextKey,
         capturedAt: '2026-08-10T09:00:00Z',
@@ -96,7 +96,7 @@ async function openEmptyState(page: Page): Promise<void> {
     }
     if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
     if (url.includes('/api/crash-recovery/pending')) return json({ pending: [] });
-    if (requestPath === '/api/workspaces' || requestPath === '/api/projects') return json([]);
+    if (requestPath === '/api/v1/workspaces' || requestPath === '/api/v1/projects') return json([]);
     if (requestPath === '/api/environment' || requestPath === '/api/projects/settings') return json({});
     if (/^\/api\/clients\/[^/]+\/defaults$/.test(requestPath)) return json({});
     if (requestPath === '/api/tags'

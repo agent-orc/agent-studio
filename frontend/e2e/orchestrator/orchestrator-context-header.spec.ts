@@ -114,7 +114,7 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
 
-  await page.route('**/api/auth/status', async (route) => {
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
     await fulfillKnownGet(
       route,
       { profile: 'local', bootstrapRequired: false, authenticated: false },
@@ -122,17 +122,17 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
     );
   });
 
-  const emptyArrayEndpoints = /\/api\/(?:cli\/(?:claude|codex|gemini)\/models|clients\/?|crash-recovery\/pending|git\/summary|tags|workspaces)(?:\?.*)?$/;
+  const emptyArrayEndpoints = /\/api\/(?:cli\/(?:claude|codex|gemini)\/models|clients\/?|crash-recovery\/pending|git\/summary|tags|v1\/workspaces)(?:\?.*)?$/;
   await page.route(emptyArrayEndpoints, async (route) => {
     await fulfillKnownGet(route, [], unexpectedRequests);
   });
   await page.route(/\/api\/(?:environment|clients\/[^/]+\/defaults|projects\/settings)(?:\?.*)?$/, async (route) => {
     await fulfillKnownGet(route, {}, unexpectedRequests);
   });
-  await page.route(/\/api\/orchestrator\/sessions(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/orchestrator\/sessions(?:\?.*)?$/, async (route) => {
     await fulfillKnownGet(route, { sessions: [] }, unexpectedRequests);
   });
-  await page.route(/\/api\/runner\/status(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/runner\/status(?:\?.*)?$/, async (route) => {
     await fulfillKnownGet(route, { projects: {} }, unexpectedRequests);
   });
   await page.route(/\/api\/runner\/orchestrator-feed$/, async (route) => {
@@ -167,7 +167,7 @@ async function stubBoardBootstrap(page: Page): Promise<string[]> {
   await page.route(/\/api\/v1\/management\/remote-hosts$/, async (route) => {
     await fulfillKnownGet(route, [], unexpectedRequests);
   });
-  await page.route(/\/api\/projects$/, async (route) => {
+  await page.route(/\/api\/v1\/projects$/, async (route) => {
     await fulfillKnownGet(route, [], unexpectedRequests);
   });
   await page.route(/\/api\/cli\/quota(?:\?.*)?$/, async (route) => {
@@ -220,7 +220,7 @@ async function stubWorkspace(
     );
   });
 
-  await page.route(new RegExp(`/api/orchestrator/context/project:${encodeURIComponent(project)}$`), async (route) => {
+  await page.route(new RegExp(`/api/v1/studio/orchestrator/context/project:${encodeURIComponent(project)}$`), async (route) => {
     await fulfillKnownGet(
       route,
       {
@@ -241,7 +241,7 @@ async function stubWorkspace(
     await fulfillKnownGet(route, flatTasks, unexpectedRequests);
   });
 
-  await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/board(?:\?.*)?$/, async (route) => {
     const empty = {
       backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
       failedPickup: [], autoReview: [], humanReview: [], review: [], completed: [], archive: [],
@@ -269,10 +269,10 @@ async function stubWorkspace(
     // pending so unrelated detail-pane subresources cannot open an error
     // dialog over this focused composer regression.
     await page.route(
-      new RegExp(`/api/tasks/${RUNNING_TASK_ID}(?:\\?.*)?$`),
+      new RegExp(`/api/v1/projects/[^/]+/tasks/${RUNNING_TASK_ID}(?:\\?.*)?$`),
       async () => new Promise<void>(() => undefined),
     );
-    await page.route(new RegExp(`/api/orchestrator/context/task:${PROJECT}/AGT-1916$`), async (route) => {
+    await page.route(new RegExp(`/api/v1/studio/orchestrator/context/task:${PROJECT}/AGT-1916$`), async (route) => {
       await fulfillKnownGet(route, {
         contextKey: `task:${PROJECT}/AGT-1916`,
         capturedAt: '2026-07-11T10:00:00Z',
@@ -301,7 +301,7 @@ async function stubLongWorkbench(page: Page): Promise<string[]> {
     }, unexpectedRequests);
   });
   await page.route(
-    new RegExp(`/api/orchestrator/context/project:${encodedProject}$`),
+    new RegExp(`/api/v1/studio/orchestrator/context/project:${encodedProject}$`),
     async (route) => {
       await fulfillKnownGet(route, {
         contextKey: `project:${LONG_CONTEXT_PROJECT}`,
