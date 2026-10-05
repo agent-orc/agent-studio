@@ -145,16 +145,50 @@ public sealed class AutoReviewResumePolicyTests
         Assert.Equal(AutoReviewResumePolicy.Reasons.DeliveryGateFailed, decision.Reason);
     }
 
-    [Theory]
-    [InlineData(RemoteDeliverySettlementStage.IntegrationSettled)]
-    [InlineData(RemoteDeliverySettlementStage.LaneSettled)]
-    public void An_integration_that_already_returned_only_owes_the_transition(
-        RemoteDeliverySettlementStage stage)
+    [Fact]
+    public void An_integration_that_already_returned_only_owes_the_transition()
     {
-        var decision = Decide(stage: stage);
+        // The restart window between the integration result and the lane
+        // move: the recorded result is the current one.
+        var decision = Decide(stage: RemoteDeliverySettlementStage.IntegrationSettled);
 
         Assert.Equal(AutoReviewResumeAction.CompleteTransition, decision.Action);
         Assert.Equal(PostProcessingCardResult.AwaitingIntegrationCompletion, decision.Reason);
+    }
+
+    [Fact]
+    public void An_operator_move_out_of_the_park_reruns_the_integration_decision()
+    {
+        // AGT-2995 / QS-106: the card already left Auto Review once (the lane
+        // settled with an integration Error), and an operator moved it back.
+        // Completing the old transition would only re-apply the stale park.
+        var decision = Decide(stage: RemoteDeliverySettlementStage.LaneSettled);
+
+        Assert.Equal(AutoReviewResumeAction.StartIntegration, decision.Action);
+        Assert.Equal(AutoReviewResumePolicy.Reasons.OperatorReentry, decision.Reason);
+        Assert.Equal(
+            PostProcessingCardResult.AwaitingDeliveryIntegration,
+            AutoReviewResumePolicy.ClassifyPostProcessingWait(decision));
+    }
+
+    [Fact]
+    public void An_operator_move_of_an_already_merged_delivery_only_owes_the_transition()
+    {
+        var decision = Decide(deliveryMerged: true, stage: RemoteDeliverySettlementStage.LaneSettled);
+
+        Assert.Equal(AutoReviewResumeAction.CompleteTransition, decision.Action);
+        Assert.Equal(PostProcessingCardResult.AwaitingIntegrationCompletion, decision.Reason);
+    }
+
+    [Fact]
+    public void An_operator_move_of_a_refused_delivery_keeps_the_gate_verdict()
+    {
+        // The delivery gate is a review verdict, not an integration verdict;
+        // moving the card does not change what the review found.
+        var decision = Decide(stage: RemoteDeliverySettlementStage.LaneSettled, shouldIntegrate: false);
+
+        Assert.Equal(AutoReviewResumeAction.CompleteTransition, decision.Action);
+        Assert.Equal(AutoReviewResumePolicy.Reasons.DeliveryGateFailed, decision.Reason);
     }
 
     [Theory]

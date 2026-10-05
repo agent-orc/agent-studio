@@ -1,6 +1,6 @@
 # Pipeline Domain Map
 
-Version: 2026-09-19
+Version: 2026-09-29
 Status: System-of-record map for task-processing pipeline changes.
 
 Use this when a change touches pre/core/post steps, pipeline catalog entries,
@@ -1405,7 +1405,9 @@ operator changes cause the step to fail before its writer runs.
   `delivery-attribution-ambiguous` and starts one bounded automatic steer round
   before Human Review. Task-key or review-subject validation failures stay
   visible but do not offer an unrelated rebase action. The raw pipeline reason
-  and timeline event remain the detailed evidence.
+  and timeline event remain the detailed evidence. Every merge `Error` names a
+  typed code (AGT-2995); the code table and the Error sites are in
+  [rebase-merge-and-integration-invariants.md](../../concepts/platform-architecture/rebase-merge-and-integration-invariants.md#typed-codes-of-an-error-outcome-agt-2995).
 - `post-orchestrator-review` is an early completeness gate. It must never render
   as a final verdict.
 - `post-orchestrator-decision` is the single final orchestrator verdict.
@@ -1787,7 +1789,9 @@ whose `task.integration` said `integrated`. Two defects met.
   (`backend/Features/Tasks/Acceptance/AcceptanceRailAttemptPolicy.cs`) is a
   pure fingerprint over the facts the rail acted on: lane and lane-entry
   instant, the Git-derived status with its SHA, delivery ref, detail, failure
-  code and signature, and the action those facts produced. The rail remembers
+  code and signature, and the action those facts produced. The facts are
+  length-prefixed (`CanonicalFields`, AGT-2989), never delimiter-joined, so free
+  text containing a separator cannot alias another attempt. The rail remembers
   the fingerprint of every refused attempt and skips the card until a new fact
   changes it - a push that lands the delivery, a new delivery, an operator
   move, or a different failure classification. Suppressed cards are counted in

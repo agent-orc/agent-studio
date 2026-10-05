@@ -30,6 +30,14 @@
 
 ## Provider input and cache semantics
 
+Chat replies are a separate `chat-turn` source in the workspace token ledger.
+The turn stores normalized input, cache read, output, and optional reasoning
+tokens, plus the historical TokenEconomy cost, currency, and catalogue version.
+The usage cockpit exposes chat turns per host and project with active and heavy
+counts, CPU percent where sampled, cumulative tokens, and cost beside coding
+slots. The remote work broker owns remote heavy admission and its snapshot;
+the local chat tracker supplies the workstation row with no CPU sample.
+
 The canonical stored dimensions always mean:
 
 - `input` / `inputTokens`: uncached input, priced at the normal input rate.

@@ -83,6 +83,45 @@ public sealed class ProjectChatStoreAndIndexTests : IDisposable
     }
 
     [Fact]
+    public void Serializer_PersistsOptionalMetadataJsonAndKeepsLegacyTurnsReadable()
+    {
+        var metadata = new AgentStudio.Runner.ChatTurnMetadata
+        {
+            Model = "gpt-6-astra",
+            ProviderThreadId = "thread-1",
+            InputTokens = 12,
+            CachedInputTokens = 3,
+            Cost = 0.001m,
+            Currency = "USD",
+            Capabilities = new AgentStudio.Runner.ChatTurnMetadataCapabilities(
+                Tokens: true, Cost: true, ProviderThreadId: true),
+        };
+        var turn = new ProjectChatTurn
+        {
+            TurnId = "metadata-1",
+            Author = ProjectChatTurnAuthors.Orchestrator,
+            Kind = ProjectChatTurnKinds.Turn,
+            Ts = new DateTime(2026, 9, 26, 9, 0, 0, DateTimeKind.Utc),
+            Metadata = metadata,
+            Body = "Reply",
+        };
+
+        var serialized = ProjectChatTurnSerializer.Serialize(turn);
+        var encoded = serialized.Split('\n').Single(line => line.StartsWith("metadataJson: ", StringComparison.Ordinal))[14..];
+        var rawJson = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+        Assert.Contains("\"ProviderThreadId\":\"thread-1\"", rawJson, StringComparison.Ordinal);
+        Assert.Contains("\"Capabilities\"", rawJson, StringComparison.Ordinal);
+        Assert.Equal(metadata, ProjectChatTurnSerializer.Parse(serialized)?.Metadata);
+
+        var legacy = ProjectChatTurnSerializer.Serialize(turn with { Metadata = null });
+        Assert.Null(ProjectChatTurnSerializer.Parse(legacy)?.Metadata);
+        var corrupt = serialized.Replace(encoded, "invalid-base64", StringComparison.Ordinal);
+        var parsedCorrupt = ProjectChatTurnSerializer.Parse(corrupt);
+        Assert.Null(parsedCorrupt?.Metadata);
+        Assert.Contains("Reply", parsedCorrupt?.Body);
+    }
+
+    [Fact]
     public void Serializer_RejectsMissingFrontmatter()
     {
         Assert.Null(ProjectChatTurnSerializer.Parse(""));
