@@ -129,7 +129,7 @@ const DETAIL = {
 async function installRoutes(page: Page): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  await page.route('**/hubs/jobs/negotiate**', (route) =>
+  await page.route('**/hubs/v1/studio/negotiate**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -141,7 +141,7 @@ async function installRoutes(page: Page): Promise<void> {
       }),
     }),
   );
-  await page.routeWebSocket('**/hubs/jobs**', (socket) => {
+  await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
     socket.onMessage((message) => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
@@ -151,14 +151,14 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined),
   );
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
     }),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -189,7 +189,7 @@ async function installRoutes(page: Page): Promise<void> {
       body: JSON.stringify({ at: '2026-07-10T00:00:00Z', ttlSeconds: 600, snapshots: [] }),
     }),
   );
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -210,7 +210,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route(new RegExp(`/api/tasks/${idEsc}/screenshots(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DETAIL) }),
   );
 }

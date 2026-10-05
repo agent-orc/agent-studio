@@ -122,14 +122,14 @@ async function openSideSheetForProject(page: Page): Promise<string> {
 test.describe('Project chat fix - silent drop, sluggishness, parallel use', () => {
   test('shows queued runner reason and interactive usage while a reply waits', async ({ page }) => {
     await installFrontendOverride(page);
-    await page.route('**/api/auth/status', route => route.fulfill({ json: {
+    await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
       profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
     } }));
     await page.route('**/api/watch-paths', route => route.fulfill({ json: [{
       name: 'Chat fixture', path: '/tmp/chat-fixture', rootPath: '/tmp/chat-fixture',
       repositoryPath: '/tmp/chat-fixture',
     }] }));
-    await page.route('**/api/workspaces', route => route.fulfill({ json: [{
+    await page.route('**/api/v1/workspaces', route => route.fulfill({ json: [{
       id: 'workspace-chat-fixture', displayName: 'Chat fixture', sortOrder: 0,
       isDefault: true, projects: [{
         id: 'Chat fixture', displayName: 'Chat fixture', shortCode: 'CF',
@@ -137,13 +137,13 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
         archived: false, urls: [],
       }],
     }] }));
-    await page.route(/\/api\/tasks\/grouped(?:\?|$)/, route => route.fulfill({ json: {
+    await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, route => route.fulfill({ json: {
       preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
     } }));
     await page.route(/\/api\/tasks\/archive(?:\?|$)/, route => route.fulfill({ json: {
       items: [], total: 0, offset: 0, limit: 50, hasMore: false,
     } }));
-    await page.route('**/api/runner/status', route =>
+    await page.route('**/api/v1/studio/runner/status', route =>
       route.fulfill({ json: { projects: {} } }));
     await page.route(/\/api\/cli\/codex\/models(?:\?|$)/, route => route.fulfill({ json: {
       source: 'test', models: [{
@@ -216,7 +216,7 @@ test.describe('Project chat fix - silent drop, sluggishness, parallel use', () =
         hostname: 'agent-runner-01', backendName: 'task-server', isRemote: true,
         leaseId: `lease-${index}`, fencingToken: 1, acquiredAt: now },
     }));
-    await page.route(/\/api\/tasks\/grouped(?:\?|$)/, route => route.fulfill({ json: {
+    await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, route => route.fulfill({ json: {
       preparation: [], ready: [], progress: coding, review: [], completed: [], archive: [],
     } }));
     await page.route('**/api/clients', route => route.fulfill({ json: [

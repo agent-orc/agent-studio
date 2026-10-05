@@ -12,6 +12,52 @@ release yet.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-04
+
+Catch-up release after the operations week: 189 commits on develop since 0.9.4
+(27 September), 43 cards completed through the work-package gates. The token
+ledger prices GPT-6 Sol again, the Stable catalogue moves to TokenEconomy 0.3.5.
+
+### Added
+
+- Agent Studio consumes TokenEconomy 0.3.5: registry entries, CLI floors, provider-rejection fallbacks and migration proposals for claude-opus-5-5, gpt-6-sol and gpt-6-luna; the ledger prices GPT-6 Sol and Luna runs (AGT-2892).
+- Installer: one executable for Windows and Linux that installs Agent Studio on Docker or as native services (AGT-2738).
+- Operations Server backchannel beside the Task Server (AGT-2907).
+- Decision cards: kind 'decision' with structured options, decide and reopen API and computed blocking (AGT-2927); badge with decider, project header count and card detail with options (AGT-2928).
+- Review concerns get one automatic fix round; every run records who triggered it and why (AGT-2887).
+- Escalation view: parked operator session with legible contrast and an on-demand excerpt of the run's model and prompt (AGT-2902).
+- Connector security for a remotely attached Studio: Credential Manager, Origin and CSRF checks (AGT-2984).
+- Flaky quarantine with expiry, and guard tests as the first gate step (AGT-2918).
+- Run budget per card: adaptive run timeout and continuation instead of 90-minute timeout escalations (AGT-2998).
+- Diagnosis contract: every gate and review failure is classified by experiment before it charges a card (AGT-2916).
+- Credential registry and effective-source monitoring (AGT-2971), deployment secret transport and WireGuard renewal (AGT-2977), installation upgrade and rollback ownership (AGT-2947), connectivity manifest with a single link owner (AGT-2945), one-box profile (AGT-2942).
+- Work is routed to capable host classes with bounded admission (AGT-2939).
+- Workspace usage projection and shared usage chips (AGT-2960, AGT-2961).
+
+### Changed
+
+- Integrated-only human review: admission guard, accept confirmation, guarded archive, self-healing integration (AGT-2920).
+- The card's Result summarises the task, not the last round (AGT-2880).
+- Remote stop requests are durable and attempt scoped (AGT-2935); review settlement continuation is persisted before acknowledgement (AGT-2936).
+- Operator workstations use the runner-host contract (AGT-2940).
+- Gate economics: review reuse and impact selection shorten the full-suite merge gate (AGT-2997); the per-project delivery queue no longer waits behind agent rounds and one gate slot (AGT-2994).
+- Deterministic bounce rail for the first recoverable conflict-skipped round (AGT-2919).
+- Bounded task core served from the index (AGT-2953); persistent recovery overlays removed from task navigation (AGT-2959).
+- Link migration: the running forward is adopted and AgentRunner-TunnelKeeper retired after the seven-day soak (AGT-2764); tunnel loss and fenced recovery rehearsed for coding and review (AGT-2937).
+- Documentation drift audit: every page under docs/system and docs/operations verified against the current code (AGT-3004); Dossier review round 2 synthesised into AGT-W53 (AGT-2900).
+
+### Fixed
+
+- Merge gate on Windows: cmd.exe no longer destroys the quoted dotnet test logger arguments (AGT-2912).
+- An oversized result upload (HTTP 413) no longer discards a finished remote delivery (AGT-2915).
+- Frontend unit suite is green on a de-DE Windows workstation (AGT-2980); the red side-sheet pin spec baseline on develop (AGT-3007).
+- The card gate renders the scenario Compose stack so overlay drift is caught before the promotion train (AGT-2981); the train's scenario smoke tolerates a loaded runner host (AGT-2982).
+- Review lane silent for 24 h: library-v1 plans no longer require toolchain capabilities the executor never registers (AGT-2987).
+- Test-suite audit: time bombs, clock dependencies, line-ending and platform assumptions removed from the test suites (AGT-3003).
+- Acceptance-rail correctness findings from the Quality Studio review (AGT-2990).
+- Security hygiene wave: vulnerable runtime dependencies, secret-scan baseline, bounded whole-file reads (AGT-2991).
+- Stable hotfixes from 4 October, merged back from main (88bee6805..c076d2da9): backend build and test gates run only on the remote Linux worker and fail closed without it; integration status reads each Git origin once per projection instead of once per card (180 to 2-13 Git spawns per index run); deployment smoke budgets the worker cleanup before run.completed; board review reads no longer depend on authority persistence.
+
 ## [0.9.4] - 2026-09-27
 
 Hotfix release. With 0.9.3 the production runner's every completion was

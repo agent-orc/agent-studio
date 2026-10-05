@@ -16,22 +16,22 @@ test('project failure continuation setting persists in both themes', async ({ pa
     pickupMode: 'manual', executionLocation: 'local', integrationBranch: 'develop',
   });
   await page.route('**/api/**', route => route.fulfill({ json: [] }));
-  await page.route('**/hubs/jobs/negotiate**', route => route.fulfill({ json: {
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
     connectionId: 'mock-jobs-connection', connectionToken: 'mock-jobs-connection',
     negotiateVersion: 1,
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
   } }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (String(message).includes('"protocol"')) socket.send('{}\x1e');
     });
   });
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, route => route.fulfill({ json: {
+  await page.route(/\/api\/v1\/studio\/board/, route => route.fulfill({ json: {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [],
     humanReview: [], completed: [], archive: [],
   } }));
-  await page.route('**/api/auth/status', route => route.fulfill({ json: {
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   } }));
   await page.route('**/api/watch-paths**', route => route.fulfill({ json: [
@@ -41,7 +41,7 @@ test('project failure continuation setting persists in both themes', async ({ pa
   await page.route('**/api/projects/continuation-demo/execution', route => route.fulfill({ json: { valid: true, issues: [], source: 'subject-commit' } }));
   await page.route('**/api/projects/settings', route => route.fulfill({ json: { [project]: settings() } }));
   await page.route('**/api/projects/continuation-demo/snapshot', route => route.fulfill({ json: { settings: settings() } }));
-  await page.route('**/api/runner/status**', route => route.fulfill({ json: { projects: {} } }));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({ json: { projects: {} } }));
   await page.route('**/api/cli/usage**', route => route.fulfill({ json: { items: [] } }));
   await page.route('**/api/cli/quota**', route => route.fulfill({ json: { snapshots: [] } }));
   await page.route('**/api/projects/continuation-demo/automatic-failure-continuations', async route => {

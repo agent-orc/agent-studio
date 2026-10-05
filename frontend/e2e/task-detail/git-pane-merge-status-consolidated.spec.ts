@@ -112,7 +112,7 @@ function provenanceView() {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', (route) => json(route, []));
   await page.route('**/api/tasks', (route) => json(route, []));
-  await page.route('**/api/tasks/grouped**', (route) => json(route, {
+  await page.route('**/api/v1/studio/board**', (route) => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], completed: [], archive: [],
@@ -129,7 +129,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/cli/quota**', (route) => json(route, { at: '2026-07-08T00:00:00Z', snapshots: [] }));
   await page.route('**/api/git/summary**', (route) => json(route, []));
   await page.route(/\/api\/git\/hygiene(\?|$)/, (route) => json(route, {}));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) => json(route, {
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   }));
 
@@ -144,7 +144,7 @@ async function installRoutes(page: Page): Promise<void> {
   }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/commit/diff(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'text/plain', body: 'diff --git a/x b/x\n+++ b/x\n+task commit diff' }));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail()));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail()));
 }
 
 const RESULTS_DIR = process.env.JOB_RESULTS_DIR ?? '';

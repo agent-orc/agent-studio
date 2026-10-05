@@ -63,10 +63,10 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   const escapedId = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
     codeNotComplete: [], review: [], autoReview: [], humanReview: [taskInfo(current)],
     escalated: [], completed: [], archive: [],
@@ -76,7 +76,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   ]));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/projects/settings**', route => json(route, {}));
-  await page.route('**/api/workspaces**', route => json(route, []));
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, []));
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
@@ -90,7 +90,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, {
     entries: [], generatedAtUtc: '2026-08-09T18:30:00.000Z',
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route(new RegExp(`/api/tasks/${escapedId}/output(\\?|$)`), route => json(route, []));
   await page.route(new RegExp(`/api/tasks/${escapedId}/runs(\\?|$)`), route => json(route, { runs: [] }));
   await page.route(new RegExp(`/api/tasks/${escapedId}/session-events(\\?|$)`), route => json(route, {
@@ -105,7 +105,7 @@ async function installRoutes(page: Page): Promise<{ mutationBodies: unknown[] }>
     cost: null,
     config: {},
   }));
-  await page.route(new RegExp(`/api/tasks/${escapedId}(\\?|$)`), route => json(route, detail(current)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${escapedId}(\\?|$)`), route => json(route, detail(current)));
   await page.route(new RegExp(`/api/tasks/${escapedId}/concept-dossier(\\?|$)`), async route => {
     mutationBodies.push(await route.request().postDataJSON());
     current = {

@@ -7,7 +7,7 @@ const screenshotDir = path.resolve(__dirname, '..', '..', '..', 'results', 'secu
 test('networked Studio gates the workspace behind same-origin login', async ({ page }) => {
   mkdirSync(screenshotDir, { recursive: true });
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
-  await page.route('**/api/auth/login', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/login', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -15,12 +15,12 @@ test('networked Studio gates the workspace behind same-origin login', async ({ p
       user: { id: 'usr_owner', username: 'owner', displayName: 'Owner', role: 'owner', projects: [], disabled: false, mustChangePassword: false },
     }),
   }));
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ profile: 'networked', bootstrapRequired: false, authenticated: false, user: null }),
   }));
-  await page.route('**/api/auth/logout', route => route.fulfill({ status: 204, body: '' }));
+  await page.route('**/api/v1/studio/auth/logout', route => route.fulfill({ status: 204, body: '' }));
 
   await page.goto('/');
   await expect(page.getByTestId('auth-gate')).toBeVisible();

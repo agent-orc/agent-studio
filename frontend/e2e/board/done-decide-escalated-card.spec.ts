@@ -89,13 +89,13 @@ async function installRoutes(page: Page) {
   await page.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
 
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
   await page.route(/\/api\/tasks(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(ALL_JOBS) }));
@@ -120,7 +120,7 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/clients', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/tags', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));

@@ -131,7 +131,7 @@ test.describe('Task detail Activity chat is message-only', () => {
   test('Ctrl+Enter and Cmd+Enter send default Continue without configuration overrides', async ({ page }) => {
     const id = await createTask(`simple-chat-keyboard-${Date.now()}`);
     const bodies: Record<string, unknown>[] = [];
-    await page.route(`**/api/tasks/${encodeURIComponent(id)}/continue?**`, async (route) => {
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(id)}/continue?**`, async (route) => {
       bodies.push(route.request().postDataJSON() as Record<string, unknown>);
       await route.fulfill({
         status: 200,
@@ -185,14 +185,14 @@ test.describe('Task detail Activity chat is message-only', () => {
     const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const operations: string[] = [];
     let releaseStop: (() => void) | undefined;
-    await page.route(new RegExp(`/api/tasks/${escapedId}(?:\\?.*)?$`), (route) =>
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${escapedId}(?:\\?.*)?$`), (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
-    await page.route(`**/api/tasks/${encodeURIComponent(id)}/stop?**`, async (route) => {
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(id)}/stop?**`, async (route) => {
       operations.push(`stop:${new URL(route.request().url()).searchParams.get('reason')}`);
       await new Promise<void>((resolve) => { releaseStop = resolve; });
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     });
-    await page.route(`**/api/tasks/${encodeURIComponent(id)}/continue?**`, async (route) => {
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(id)}/continue?**`, async (route) => {
       operations.push(`continue:${route.request().postDataJSON().mode}`);
       await route.fulfill({
         status: 200,
@@ -223,7 +223,7 @@ test.describe('Task detail Activity chat is message-only', () => {
 
   test('queued response is understandable without another action strip', async ({ page }) => {
     const id = await createTask(`simple-chat-queued-${Date.now()}`);
-    await page.route(`**/api/tasks/${encodeURIComponent(id)}/continue?**`, (route) =>
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(id)}/continue?**`, (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -243,7 +243,7 @@ test.describe('Task detail Activity chat is message-only', () => {
 
   test('failed response restores the draft and explains retry', async ({ page }) => {
     const id = await createTask(`simple-chat-error-${Date.now()}`);
-    await page.route(`**/api/tasks/${encodeURIComponent(id)}/continue?**`, (route) =>
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(id)}/continue?**`, (route) =>
       route.fulfill({
         status: 503,
         contentType: 'application/json',
