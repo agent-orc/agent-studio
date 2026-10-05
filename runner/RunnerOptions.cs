@@ -43,6 +43,7 @@ public sealed class RunnerOptions
 
     /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>
     public string? AuthToken { get; init; }
+    public string? AuthTokenFile { get; init; }
 
     /// <summary>
     /// Explicit opt-in (<c>RUNNER_ALLOW_INSECURE_HTTP=1|true</c>) that allows a
@@ -404,6 +405,7 @@ public sealed class RunnerOptions
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
             AuthToken = authToken.Length > 0 ? authToken : null,
+            AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,
             TlsServerCertificateSha256 = Val(
                 "tls-certificate-sha256",
                 "RUNNER_TLS_CERTIFICATE_SHA256").Trim() is { Length: > 0 } certificateSha
@@ -537,7 +539,7 @@ public sealed class RunnerOptions
         return (options, string.IsNullOrWhiteSpace(taskKey) ? null : taskKey.Trim(), once, help);
     }
 
-    private static string ReadAuthTokenFile(string path)
+    internal static string ReadAuthTokenFile(string path)
     {
         if (!File.Exists(path)) throw new ArgumentException($"RUNNER_AUTH_TOKEN_FILE does not exist: {path}");
         if (!OperatingSystem.IsWindows())

@@ -1,6 +1,6 @@
 # Token pricing
 
-> **Status (2026-09-08):** Live on exactly pinned `TokenEconomy` 0.3.3,
+> **Status (2026-09-27):** Live on exactly pinned `TokenEconomy` 0.3.5,
 > including historical prices for the GPT-5.6 family, the GPT-5.5 family
 > (GPT-5.5, GPT-5.5 Pro, the GPT-5.5 Cyber preview), and the Claude 5 /
 > Sonnet 4.6 family. Studio contains no model rates.
@@ -14,7 +14,7 @@ in `backend/Features/Runner/TokenEconomyPriceProvider.cs` adapts
 
 The adapter is exposed through `ITokenPriceProvider`; the active
 `TokenPricing.Provider` configuration selects `TokenEconomyPriceProvider`, the
-package-specific implementation from the exactly pinned `TokenEconomy` 0.3.3
+package-specific implementation from the exactly pinned `TokenEconomy` 0.3.5
 dependency. Aggregators and frontend contracts do not depend on the provider
 package directly.
 

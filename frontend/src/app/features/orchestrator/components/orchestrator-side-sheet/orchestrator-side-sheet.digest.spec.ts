@@ -25,6 +25,20 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     return TestBed.createComponent(OrchestratorSideSheetComponent);
   }
 
+  // AGT-2970: the chat usage header reads the project's chat-metadata default.
+  // Whether the header has rendered yet depends on scheduling, so flush any
+  // pending read without requiring one. A read for an earlier project can only
+  // remain as a request the header cancelled on the project switch.
+  function flushChatMetadataDefault(http: HttpTestingController, project: string) {
+    const current = `/api/projects/${encodeURIComponent(project)}/chat-metadata`;
+    const requests = http.match(request => /^\/api\/projects\/[^/]+\/chat-metadata$/.test(request.url));
+    for (const request of requests) {
+      expect(request.request.method).toBe('GET');
+      if (request.request.url !== current) expect(request.cancelled).toBe(true);
+      else if (!request.cancelled) request.flush({ chatMetadataEnabled: true });
+    }
+  }
+
   function digest(contextKey: string, text = 'lanes: ready=2'): OrchestratorContextDigest {
     return {
       contextKey,
@@ -104,6 +118,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
 
     expect(component.contextDigestState.digest()?.digest).toBe('lanes: progress=1');
     expect(component.contextDigestState.error()).toBeNull();
+    flushChatMetadataDefault(http, 'Agent Studio');
     http.verify();
     fixture.destroy();
   });
@@ -176,6 +191,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     background.flush(digest('project:demo-project', 'older background digest'));
 
     expect(component.contextDigestState.digest()?.digest).toBe('new forced digest');
+    flushChatMetadataDefault(http, 'demo-project');
     http.verify();
     fixture.destroy();
   });
@@ -200,6 +216,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     expect(component.contextDigestState.scopeLabel()).toBe('Global context');
     expect(fixture.nativeElement.querySelector('[data-testid="orchestrator-global-chat-empty"]'))
       .toBeTruthy();
+    flushChatMetadataDefault(http, 'previous-project');
     http.verify();
     fixture.destroy();
   });
@@ -252,6 +269,7 @@ describe('OrchestratorSideSheetComponent · ORCH-1 context digest', () => {
     reconciliation.flush({ project: 'Agent Studio', turns: [] });
     activityReconciliation.flush({ sessions: [] });
 
+    flushChatMetadataDefault(http, 'Agent Studio');
     http.verify();
     fixture.destroy();
   });
