@@ -1,6 +1,6 @@
 # Installation connectivity manifest and single link owner
 
-Delivery of Dossier AGT-W63 item I04 (`docs/deployment-story/index.html`, links
+Delivery of Dossier AGT-W63 item I04 (`docs/operations/deployment-story/index.html`, links
 table, D4, B2 and C6). Implemented option: **D4 A**, private HTTPS as the target
 and supervised reverse SSH as a bounded transition (operator decision of
 26 September 2026).
