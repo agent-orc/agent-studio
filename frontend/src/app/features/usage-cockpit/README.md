@@ -59,7 +59,8 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   phone composition (weekly only, no visible `USD`); abbreviate the provider
   and drop the wordmark; drop the visible WK / Today labels. Values are never
   cut. Hidden chips are removed, so they leave the focus order; focus on a
-  chip that collapses moves to Details (or More on phone).
+  chip that collapses moves to Details (or More on phone). Focus on a hidden
+  navigation control moves to More, where that destination remains available.
 - Hosts mark optional inline controls with `data-nav-inline-from="tablet"` or
   `"desktop"` and pass the same destinations in `navItems`.
 - Slot counters, models and weekly cost never appear in the strip.
@@ -80,3 +81,8 @@ header with a stand-in navigation row. `e2e/mockups/usage-header.spec.ts`
 checks row heights, coarse targets, whole-value fit at 320 px, long values and
 200% zoom, the More menu, focus order and focus restoration. Build first with
 `npm run build:mockup:usage-header`.
+Set `JOB_RESULTS_DIR` to the absolute task results directory when running the
+spec. It writes durable `--mocked.png` screenshots to its `usage-header/`
+subdirectory; a checkout-relative `results/` directory is not collected by
+the runner. The fixture uses production components and synthetic data, with
+no backend dependency.

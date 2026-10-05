@@ -400,6 +400,10 @@ test.describe('@mockup header usage cockpit: keyboard and focus', () => {
     await expect(page.getByTestId('cockpit-header-more')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('[data-testid^="cockpit-header-more-menu-item-"]').first()).toHaveText('Switch theme');
+    await page.screenshot({
+      path: path.join(RESULTS_DIR, 'focus-navigation-to-more-1024--mocked.png'),
+      clip: { x: 0, y: 0, width: 1024, height: 300 },
+    });
     await page.keyboard.press('Escape');
 
     await page.getByTestId('nav-chat').focus();
