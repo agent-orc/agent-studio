@@ -547,6 +547,7 @@ builder.Services.AddSingleton<AdaptiveReviewParallelismAdvisor>();
 builder.Services.AddSingleton<CodingYieldAdvisor>();
 builder.Services.AddSingleton<ReviewInfrastructureRetryScheduler>();
 builder.Services.AddSingleton<ICauseWaitRelease, SchedulerCauseWaitRelease>();
+builder.Services.AddSingleton<ICauseWaitMarkerStore, FileCauseWaitMarkerStore>();
 builder.Services.AddSingleton<CauseBreakerService>();
 builder.Services.AddSingleton<CauseBreakerHostedService>();
 // AGT-2826: the release this process runs is the reference every execution host

@@ -2778,8 +2778,9 @@
             "Waiting for &lt;key&gt;", and are skipped by the review claim; a pending review whose plan calls the broken model
             route is held before it runs. Every review retry is planned from current project settings. The breaker closes
             when the cause card reaches <span class="lane">6-completed</span> or the exact attempt released as a probe passes, and releases each
-            waiting card by admitting its pending review or planning a fresh successor to a terminal review. A failed successor creation keeps the card waiting until a later
-            sweep releases it, so closure does not discard its wait. Replay of both incidents: at most three attempts and one cause card.
+            waiting card by admitting its pending review or planning a fresh successor to a terminal review. A failed successor creation or marker delete keeps the card waiting until a later
+            sweep finishes its release, so closure does not discard its wait; the sweep also rewrites a missing marker
+            and releases a marker that no open breaker accounts for. Replay of both incidents: at most three attempts and one cause card.
             New terminal: waiting on the cause card, not escalated.
           </td>
         </tr>

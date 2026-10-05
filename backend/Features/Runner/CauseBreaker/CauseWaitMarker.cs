@@ -29,9 +29,10 @@ public static class CauseWaitMarker
         WriteIndented = true,
     };
 
-    public static void Write(string jobFolder, CauseWaitRecord marker, ILogger? logger = null)
+    /// <summary>Returns false when the marker could not be persisted; the caller decides what that leaves held.</summary>
+    public static bool Write(string jobFolder, CauseWaitRecord marker, ILogger? logger = null)
     {
-        if (string.IsNullOrWhiteSpace(jobFolder)) return;
+        if (string.IsNullOrWhiteSpace(jobFolder)) return false;
         try
         {
             Directory.CreateDirectory(jobFolder);
@@ -39,10 +40,12 @@ public static class CauseWaitMarker
             var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(marker, Options));
             File.Move(temp, path, overwrite: true);
+            return true;
         }
         catch (Exception ex)
         {
             logger?.LogWarning(ex, "Failed to persist cause wait marker in {Folder}", jobFolder);
+            return false;
         }
     }
 
@@ -62,15 +65,18 @@ public static class CauseWaitMarker
         }
     }
 
+    /// <summary>
+    /// Returns true when no marker remains (deleted or never written), false
+    /// when the delete failed and the card would still read as waiting.
+    /// </summary>
     public static bool Clear(string jobFolder, ILogger? logger = null)
     {
         if (string.IsNullOrWhiteSpace(jobFolder)) return false;
         try
         {
             var path = Path.Combine(jobFolder, FileName);
-            if (!File.Exists(path)) return false;
-            File.Delete(path);
-            return true;
+            if (File.Exists(path)) File.Delete(path);
+            return !File.Exists(path);
         }
         catch (Exception ex)
         {
@@ -87,4 +93,23 @@ public static class CauseWaitMarker
             marker.FailureClass,
             marker.Since,
             marker.Reason);
+}
+
+/// <summary>
+/// The breaker's write side of <see cref="CauseWaitMarker"/>. Every mutation
+/// reports whether it reached disk, so a failed write or delete keeps the
+/// breaker's durable wait instead of diverging from the marker.
+/// </summary>
+public interface ICauseWaitMarkerStore
+{
+    CauseWaitRecord? TryRead(string jobFolder);
+    bool Write(string jobFolder, CauseWaitRecord marker);
+    bool Clear(string jobFolder);
+}
+
+public sealed class FileCauseWaitMarkerStore(ILogger<FileCauseWaitMarkerStore> logger) : ICauseWaitMarkerStore
+{
+    public CauseWaitRecord? TryRead(string jobFolder) => CauseWaitMarker.TryRead(jobFolder, logger);
+    public bool Write(string jobFolder, CauseWaitRecord marker) => CauseWaitMarker.Write(jobFolder, marker, logger);
+    public bool Clear(string jobFolder) => CauseWaitMarker.Clear(jobFolder, logger);
 }

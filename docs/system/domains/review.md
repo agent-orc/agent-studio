@@ -324,7 +324,16 @@ older review on the same waiting card does not close it. A card whose existing r
 pending resumes that attempt; a terminal review gets one freshly planned successor.
 If successor creation fails, the card keeps its visible wait
 and the hosted sweep retries the release; the breaker closes only after every
-waiting card is released. A red probe, including a product finding or an exhausted
+waiting card is released. The same holds when its `cause-wait.json` cannot be
+deleted: the card stays in the fleet store flagged as released, so the claim
+admits its successor, no second successor is planned, and the sweep retries the
+delete. Once a breaker has a close reason it holds no new pending reviews. Each
+sweep also reconciles the fleet store and the markers: a held card whose marker
+write failed gets it rewritten, and a waiting marker no open breaker accounts
+for is adopted by the open breaker with the same fingerprint or released like a
+closed one. An unreadable store fails the call instead of being replaced by an
+empty one; a corrupt store is kept as `cause-breakers.json.corrupt-<time>` and
+the sweep releases the cards it parked. A red probe, including a product finding or an exhausted
 aspect retry, returns the card to its visible wait and clears the probe
 reservation. A later explicit probe creates a new attempt from current settings.
 With the breaker disabled for a project, the opt-in

@@ -3245,7 +3245,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
         Func<DateTime>? authorityNow = null,
-        Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null) =>
+        Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null,
+        ICauseWaitMarkerStore? causeWaitMarkers = null) =>
         new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -3276,7 +3277,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     cfg.AddInMemoryCollection(values);
                 });
                 if (writer is not null || summaryOneShot is not null || authorityNow is not null
-                    || causeWaitReleaseFactory is not null)
+                    || causeWaitReleaseFactory is not null || causeWaitMarkers is not null)
                 {
                     b.ConfigureTestServices(services =>
                     {
@@ -3284,6 +3285,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                             services.AddSingleton<IAtomicJsonFileWriter>(writer);
                         if (causeWaitReleaseFactory is not null)
                             services.AddSingleton(causeWaitReleaseFactory);
+                        if (causeWaitMarkers is not null)
+                            services.AddSingleton(causeWaitMarkers);
                         if (summaryOneShot is not null)
                         {
                             services.AddSingleton(
@@ -6147,6 +6150,280 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                 return null;
             }
             return inner.Release(task, deliveryKey);
+        }
+    }
+
+    /// <summary>Delegates to the file store and fails the next N writes or deletes.</summary>
+    private sealed class FlakyCauseWaitMarkerStore : ICauseWaitMarkerStore
+    {
+        private readonly FileCauseWaitMarkerStore _inner = new(NullLogger<FileCauseWaitMarkerStore>.Instance);
+
+        public int FailWrites { get; set; }
+
+        public int FailClears { get; set; }
+
+        public CauseWaitRecord? TryRead(string jobFolder) => _inner.TryRead(jobFolder);
+
+        public bool Write(string jobFolder, CauseWaitRecord marker)
+        {
+            if (FailWrites > 0)
+            {
+                FailWrites--;
+                return false;
+            }
+            return _inner.Write(jobFolder, marker);
+        }
+
+        public bool Clear(string jobFolder)
+        {
+            if (FailClears > 0)
+            {
+                FailClears--;
+                return false;
+            }
+            return _inner.Clear(jobFolder);
+        }
+    }
+
+    private static ReviewAttemptDto SettleClaimedReviewAsPreparationFailure(AttemptAuthorityService authority)
+    {
+        var claim = authority.ClaimNextReview("review-worker", "review-host", "review-instance", 120);
+        var review = Assert.IsType<ReviewAttemptDto>(claim.ReviewAttempt);
+        Assert.Equal(AttemptWriteStatus.Accepted, authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, "seed-infrastructure-failure"),
+            review.Subject.ExpectedResultSha, ReviewTerminalOutcome.InfrastructureFailure,
+            "PreparationFailed", "npm ci: command not found")).Status);
+        return review;
+    }
+
+    private static CauseFingerprint OpenPreparationBreaker(CauseBreakerService breaker, TaskInfo task)
+    {
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        var fingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            evidence.StderrTail, 127, "tool:npm");
+        for (var number = 1; number <= 3; number++)
+            breaker.Observe(task, TaskKey, $"rva-{number}", fingerprint, evidence, evidence.StderrTail);
+        return fingerprint;
+    }
+
+    private static void IntegrateCauseCard(IServiceProvider services, CauseBreakerRecord opened)
+    {
+        var scanner = services.GetRequiredService<TaskScannerService>();
+        var cause = scanner.FindJob(opened.CauseTaskId!, opened.CauseWatchPath)!;
+        var causeJson = JsonNode.Parse(File.ReadAllText(Path.Combine(cause.FolderPath, "task.json")))!;
+        causeJson["state"] = TaskStates.Completed;
+        File.WriteAllText(Path.Combine(cause.FolderPath, "task.json"), causeJson.ToJsonString());
+        // Lane storage carries the state in the folder; flat storage in task.json.
+        if (Path.GetFileName(Path.GetDirectoryName(cause.FolderPath)) == cause.State)
+            Directory.Move(cause.FolderPath,
+                Path.Combine(cause.WatchPath, TaskStates.Completed, Path.GetFileName(cause.FolderPath)));
+        services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+    }
+
+    [Fact]
+    public void Cause_breaker_keeps_wait_when_marker_delete_fails_and_plans_exactly_one_successor()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        var markers = new FlakyCauseWaitMarkerStore();
+        using var factory = BuildFactory(causeWaitMarkers: markers);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var review = SettleClaimedReviewAsPreparationFailure(authority);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        OpenPreparationBreaker(breaker, task);
+        IntegrateCauseCard(factory.Services, Assert.Single(breaker.List(openOnly: true)));
+
+        markers.FailClears = 1;
+        Assert.Equal(0, breaker.Sweep());
+        var closing = Assert.Single(breaker.List(openOnly: true));
+        Assert.True(Assert.Single(closing.Waiting).Released);
+        Assert.NotNull(CauseWaitMarker.TryRead(task.FolderPath));
+        var successor = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId;
+        Assert.NotNull(successor);
+        Assert.NotEqual(review.AttemptId, successor);
+        // The successor is already planned, so the claim admits it while the
+        // stale marker waits for its delete to be retried.
+        Assert.DoesNotContain(TaskKey, breaker.HoldPendingReviews());
+
+        Assert.Equal(1, breaker.Sweep());
+        Assert.False(Assert.Single(breaker.List()).IsOpen);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Equal(successor, authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId);
+        Assert.Single(ReadTimeline(TaskStates.AutoReview), entry =>
+            entry.GetProperty("kind").GetString() == TimelineEventKinds.CauseBreakerReleased);
+    }
+
+    [Fact]
+    public void Cause_breaker_parks_card_when_marker_write_fails_and_sweep_rewrites_the_marker()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        var markers = new FlakyCauseWaitMarkerStore { FailWrites = 1 };
+        using var factory = BuildFactory(causeWaitMarkers: markers);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var fingerprint = OpenPreparationBreaker(breaker, task);
+
+        Assert.Equal(0, markers.FailWrites);
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.Contains(TaskKey, breaker.HoldPendingReviews());
+
+        Assert.Equal(0, breaker.Sweep());
+        var marker = Assert.IsType<CauseWaitRecord>(CauseWaitMarker.TryRead(task.FolderPath));
+        Assert.False(marker.Probe);
+        Assert.Equal(fingerprint.Value, marker.Fingerprint);
+        Assert.Equal(Assert.Single(breaker.List(openOnly: true)).CauseKey, marker.CauseKey);
+    }
+
+    [Fact]
+    public void Cause_breaker_sweep_releases_a_wait_marker_no_breaker_accounts_for()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Orphaned wait", "Build and verify.");
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var review = SettleClaimedReviewAsPreparationFailure(authority);
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        // A marker whose breaker is gone (a delete that failed before this
+        // fix, or a store lost to corruption) withholds every retry.
+        Assert.True(CauseWaitMarker.Write(task.FolderPath, new CauseWaitRecord
+        {
+            CauseKey = "AGT-GONE",
+            Fingerprint = "fp-without-breaker",
+            FailureClass = "PreparationFailed",
+        }));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.Null(CauseWaitMarker.TryRead(task.FolderPath));
+        var successor = authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId;
+        Assert.NotNull(successor);
+        Assert.NotEqual(review.AttemptId, successor);
+        Assert.Contains(ReadTimeline(TaskStates.AutoReview), entry =>
+            entry.GetProperty("kind").GetString() == TimelineEventKinds.CauseBreakerReleased);
+        Assert.Empty(breaker.List());
+    }
+
+    [Fact]
+    public void Cause_breaker_sweep_adopts_a_wait_marker_of_its_open_cause()
+    {
+        const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
+        SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
+        SeedTask(TaskStates.AutoReview, nextTaskKey, "Second affected review", "Build and verify.");
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
+        var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, nextTaskKey), nextTaskFolder);
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var fingerprint = OpenPreparationBreaker(breaker, scanner.FindJob(TaskKey, _watchPath)!);
+        var opened = Assert.Single(breaker.List(openOnly: true));
+        Assert.DoesNotContain(opened.Waiting, card => card.TaskKey == nextTaskKey);
+        Assert.True(CauseWaitMarker.Write(nextTaskFolder, new CauseWaitRecord
+        {
+            CauseKey = opened.CauseKey!,
+            Fingerprint = fingerprint.Value,
+            FailureClass = opened.FailureClass,
+        }));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        Assert.Equal(0, breaker.Sweep());
+        Assert.Contains(Assert.Single(breaker.List(openOnly: true)).Waiting, card => card.TaskKey == nextTaskKey);
+        Assert.Contains(Assert.Single(breaker.List(openOnly: true)).Waiting, card => card.TaskKey == nextTaskKey);
+        Assert.NotNull(CauseWaitMarker.TryRead(nextTaskFolder));
+        Assert.Contains(nextTaskKey, breaker.HoldPendingReviews());
+    }
+
+    [Fact]
+    public void Cause_breaker_resolved_breaker_does_not_hold_new_pending_reviews()
+    {
+        const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
+        SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
+        SeedTask(TaskStates.AutoReview, nextTaskKey, "Pending review after the fix", "Build and verify.");
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
+        var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, nextTaskKey), nextTaskFolder);
+        using var factory = BuildFactory(causeWaitReleaseFactory: _ => new NeverCauseWaitRelease());
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        OpenPreparationBreaker(breaker,
+            factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!);
+        IntegrateCauseCard(factory.Services, Assert.Single(breaker.List(openOnly: true)));
+
+        // The first card's release keeps failing, so the breaker stays open
+        // with its close reason; the cause itself is fixed.
+        Assert.Equal(0, breaker.Sweep());
+        Assert.NotNull(Assert.Single(breaker.List(openOnly: true)).CloseReason);
+        var held = breaker.HoldPendingReviews();
+        Assert.Contains(TaskKey, held);
+        Assert.DoesNotContain(nextTaskKey, held);
+        Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
+    }
+
+    private sealed class NeverCauseWaitRelease : ICauseWaitRelease
+    {
+        public string? Release(TaskInfo task, string deliveryKey) => null;
+    }
+
+    [Fact]
+    public void Cause_breaker_probe_skips_a_card_whose_probe_marker_cannot_be_written()
+    {
+        SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");
+        var markers = new FlakyCauseWaitMarkerStore();
+        using var factory = BuildFactory(causeWaitMarkers: markers);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var review = SettleClaimedReviewAsPreparationFailure(authority);
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>().FindJob(TaskKey, _watchPath)!;
+        var fingerprint = OpenPreparationBreaker(breaker, task);
+
+        markers.FailWrites = 1;
+        var skipped = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.Null(skipped.ProbeTaskKey);
+        Assert.False(CauseWaitMarker.TryRead(task.FolderPath)!.Probe);
+        Assert.Equal(review.AttemptId, authority.GetTaskProjection(TaskKey).CurrentReviewAttempt?.AttemptId);
+        Assert.Contains(TaskKey, breaker.HoldPendingReviews());
+
+        var probe = breaker.RequestProbe(fingerprint.Value)!;
+        Assert.Equal(TaskKey, probe.ProbeTaskKey);
+        Assert.True(CauseWaitMarker.TryRead(task.FolderPath)!.Probe);
+    }
+
+    [Fact]
+    public void Cause_breaker_preserves_a_corrupt_store_and_never_overwrites_an_unreadable_one()
+    {
+        var storePath = Path.Combine(_workspace, CauseBreakerService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(storePath)!);
+        File.WriteAllText(storePath, "{ not json");
+        using (var factory = BuildFactory())
+        {
+            Assert.Empty(factory.Services.GetRequiredService<CauseBreakerService>().List());
+            var quarantined = Assert.Single(Directory.GetFiles(
+                Path.GetDirectoryName(storePath)!, Path.GetFileName(storePath) + ".corrupt-*"));
+            Assert.Equal("{ not json", File.ReadAllText(quarantined));
+        }
+
+        File.WriteAllText(storePath, """[{"fingerprint":"fp-open","state":"open"}]""");
+        using (var factory = BuildFactory())
+        {
+            var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+            using (new FileStream(storePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Throws<InvalidOperationException>(() => breaker.Sweep());
+            }
+            Assert.Equal("fp-open", Assert.Single(breaker.List(openOnly: true)).Fingerprint);
         }
     }
 

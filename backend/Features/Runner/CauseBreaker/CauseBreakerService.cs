@@ -18,10 +18,14 @@ public sealed record CauseBreakerObservation(
     DateTime At,
     IReadOnlyList<string> EvidencePointers);
 
-/// <summary>One card parked behind the cause card.</summary>
+/// <summary>
+/// One card parked behind the cause card. <see cref="Released"/> marks a card
+/// whose release already happened while its marker could not be deleted: it
+/// is no longer held, and a later close only retries the delete.
+/// </summary>
 public sealed record CauseBreakerWaitingCard(
     string TaskKey, DateTime Since, string? FolderPath = null, string? WatchPath = null,
-    string? Project = null);
+    string? Project = null, bool Released = false);
 
 /// <summary>The fleet-wide breaker of one cause fingerprint.</summary>
 public sealed record CauseBreakerRecord
@@ -92,6 +96,7 @@ public sealed class CauseBreakerService
     private readonly AttemptAuthorityService _authority;
     private readonly TimelineLog _timeline;
     private readonly ICauseWaitRelease _release;
+    private readonly ICauseWaitMarkerStore _markers;
     private readonly ILogger<CauseBreakerService> _logger;
     private readonly TimeProvider _time;
     private List<CauseBreakerRecord>? _records;
@@ -106,9 +111,11 @@ public sealed class CauseBreakerService
         AttemptAuthorityService authority,
         TimelineLog timeline,
         ICauseWaitRelease release,
+        ICauseWaitMarkerStore markers,
         ILogger<CauseBreakerService> logger,
         TimeProvider? time = null)
     {
+        _markers = markers;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
         _settings = settings;
@@ -333,13 +340,17 @@ public sealed class CauseBreakerService
         if (!IsEnabled(task.ProjectName)) return false;
         var records = Records();
         if (records.Any(item => item.IsOpen
-                && (Same(item.ProbeTaskKey, taskKey) || item.Waiting.Any(card => Same(card.TaskKey, taskKey)))))
+                && (Same(item.ProbeTaskKey, taskKey)
+                    || item.Waiting.Any(card => !card.Released && Same(card.TaskKey, taskKey)))))
             return !records.Any(item => Same(item.ProbeTaskKey, taskKey));
 
         var toolchains = (plan?.Commands ?? [])
             .Select(command => CauseFingerprintPolicy.Toolchain(command, null))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var record = records.FirstOrDefault(item => item.IsOpen && Applies(item, task, toolchains));
+        // A breaker with a close reason is resolved and only finishing its
+        // releases; it must not park new work behind the fixed cause.
+        var record = records.FirstOrDefault(item => item.IsOpen && item.CloseReason is null
+            && Applies(item, task, toolchains));
         if (record is null) return false;
 
         var now = _time.GetUtcNow().UtcDateTime;
@@ -373,6 +384,7 @@ public sealed class CauseBreakerService
         => Records()
             .Where(item => item.IsOpen)
             .SelectMany(item => item.Waiting
+                .Where(card => !card.Released)
                 .Select(card => card.TaskKey)
                 .Where(key => !Same(key, item.ProbeTaskKey)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -461,10 +473,87 @@ public sealed class CauseBreakerService
                 var updated = CloseLocked(records, record, reason, exceptTaskKey: null);
                 if (!updated.IsOpen) closed++;
             }
-            if (records.Any(item => item.IsOpen && item.CloseReason is not null) || closed > 0)
+            var reconciled = ReconcileMarkersLocked(records);
+            if (records.Any(item => item.IsOpen && item.CloseReason is not null) || closed > 0 || reconciled)
                 Persist(records);
             return closed;
         }
+    }
+
+    /// <summary>
+    /// The fleet store decides who is held; the per-card marker is what the
+    /// board and the retry scheduler read. A failed marker write, a failed
+    /// delete or a crash between the two can split them. Repair both
+    /// directions: rewrite a held card's missing or stale marker, and adopt or
+    /// release a waiting marker that no open breaker accounts for, which would
+    /// otherwise withhold that card's retries with nothing left to release it.
+    /// </summary>
+    private bool ReconcileMarkersLocked(List<CauseBreakerRecord> records)
+    {
+        var changed = false;
+        foreach (var record in records.Where(item => item.IsOpen).ToArray())
+        {
+            foreach (var waiting in record.Waiting.Where(card => !card.Released))
+            {
+                var folder = ResolveWaitingTask(record, waiting)?.FolderPath ?? waiting.FolderPath;
+                if (folder is null || !Directory.Exists(folder)) continue;
+                var probe = Same(waiting.TaskKey, record.ProbeTaskKey);
+                var marker = _markers.TryRead(folder);
+                if (marker is not null && marker.Probe == probe
+                    && Same(marker.Fingerprint, record.Fingerprint) && Same(marker.CauseKey, record.CauseKey))
+                    continue;
+                if (_markers.Write(folder, Marker(record, waiting.Since, probe)))
+                    _logger.LogWarning(
+                        "cause-breaker-marker-repaired fingerprint={Fingerprint} cause={CauseKey} task={TaskKey} probe={Probe}",
+                        record.Fingerprint, record.CauseKey, waiting.TaskKey, probe);
+            }
+        }
+
+        var accounted = records
+            .Where(item => item.IsOpen)
+            .SelectMany(item => item.Waiting.Select(card => card.TaskKey))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in _scanner.ScanAllAutomationJobs().Where(item => item.CauseWait is not null))
+        {
+            var keys = new[] { task.Key, task.TaskKey, task.Id }
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Select(key => key!)
+                .ToArray();
+            if (keys.Length == 0 || keys.Any(accounted.Contains)) continue;
+            // The board index can lag a release; decide on the marker on disk.
+            var marker = _markers.TryRead(task.FolderPath);
+            if (marker is null || marker.Probe) continue;
+            var taskKey = AuthorityKey(keys);
+            var owner = records.FirstOrDefault(item => item.IsOpen && item.CloseReason is null
+                && Same(item.Fingerprint, marker.Fingerprint));
+            if (owner is not null)
+            {
+                Upsert(records, owner with { Waiting = [.. owner.Waiting,
+                    new CauseBreakerWaitingCard(taskKey, marker.Since, task.FolderPath, task.WatchPath, task.ProjectName)] });
+                accounted.Add(taskKey);
+                changed = true;
+                _logger.LogWarning(
+                    "cause-breaker-marker-adopted fingerprint={Fingerprint} cause={CauseKey} task={TaskKey}",
+                    owner.Fingerprint, owner.CauseKey, taskKey);
+                continue;
+            }
+
+            var needsSuccessor = string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase);
+            var released = needsSuccessor && !string.IsNullOrWhiteSpace(
+                _release.Release(task, $"cause-breaker-release:{marker.Fingerprint}:orphan"));
+            if ((needsSuccessor && !released) || !_markers.Clear(task.FolderPath))
+            {
+                _logger.LogWarning(
+                    "cause-breaker-release-deferred fingerprint={Fingerprint} cause={CauseKey} task={TaskKey} orphan=true",
+                    marker.Fingerprint, marker.CauseKey, taskKey);
+                continue;
+            }
+            AppendReleased(task.FolderPath, marker.CauseKey, marker.Fingerprint, "orphaned-marker", released);
+            _logger.LogWarning(
+                "cause-breaker-marker-orphan-released fingerprint={Fingerprint} cause={CauseKey} task={TaskKey} released={Released}",
+                marker.Fingerprint, marker.CauseKey, taskKey, released);
+        }
+        return changed;
     }
 
     /// <summary>
@@ -482,14 +571,18 @@ public sealed class CauseBreakerService
                 return record;
             foreach (var waiting in record.Waiting.OrderBy(item => item.Since))
             {
+                if (waiting.Released) continue;
                 var task = ResolveWaitingTask(record, waiting);
                 if (task is null) continue;
-                var marker = CauseWaitMarker.TryRead(task.FolderPath, _logger);
-                if (marker is not null) CauseWaitMarker.Write(task.FolderPath, marker with { Probe = true }, _logger);
+                // A probe whose marker still reads "waiting" would be shown
+                // and withheld as parked while it runs; try the next card. A
+                // failed restore below is repaired by the next sweep.
+                var marker = _markers.TryRead(task.FolderPath) ?? Marker(record, waiting.Since, probe: false);
+                if (!_markers.Write(task.FolderPath, marker with { Probe = true })) continue;
                 var probeAttemptId = _release.Release(task, $"cause-breaker-probe:{record.Fingerprint}:{record.Opens}");
                 if (string.IsNullOrWhiteSpace(probeAttemptId))
                 {
-                    if (marker is not null) CauseWaitMarker.Write(task.FolderPath, marker, _logger);
+                    _markers.Write(task.FolderPath, marker with { Probe = false });
                     continue;
                 }
                 record = record with { ProbeTaskKey = waiting.TaskKey, ProbeAttemptId = probeAttemptId };
@@ -511,20 +604,16 @@ public sealed class CauseBreakerService
         CauseBreakerDecision decision,
         DateTime now)
     {
-        var reason = $"waiting for {record.CauseKey}: {record.FailureClass} on {record.Toolchain}";
-        var marker = CauseWaitMarker.TryRead(task.FolderPath, _logger);
+        var marker = _markers.TryRead(task.FolderPath);
         var alreadyWaiting = marker is { Probe: false }
             && Same(marker.Fingerprint, record.Fingerprint)
             && Same(marker.CauseKey, record.CauseKey);
-        if (!alreadyWaiting)
-            CauseWaitMarker.Write(task.FolderPath, new CauseWaitRecord
-            {
-                CauseKey = record.CauseKey ?? string.Empty,
-                Fingerprint = record.Fingerprint,
-                FailureClass = record.FailureClass,
-                Since = now,
-                Reason = reason,
-            }, _logger);
+        // The fleet store below is what holds the card at claim time, so a
+        // failed marker write still parks it; the sweep rewrites the marker.
+        if (!alreadyWaiting && !_markers.Write(task.FolderPath, Marker(record, now, probe: false)))
+            _logger.LogWarning(
+                "cause-breaker-marker-write-failed fingerprint={Fingerprint} cause={CauseKey} task={TaskKey}",
+                record.Fingerprint, record.CauseKey, taskKey);
 
         // A pending bounded-backoff retry would spend another attempt on a
         // cause that is now owned by the cause card.
@@ -532,6 +621,10 @@ public sealed class CauseBreakerService
         if (current is not null && _authority.HasScheduledReviewInfrastructureRetry(current.AttemptId))
             _authority.ClearScheduledReviewInfrastructureRetry(current.AttemptId);
 
+        // A card whose release is only waiting on a marker delete is parked
+        // again from scratch: its next close must plan a fresh attempt.
+        var waitingCards = record.Waiting.Where(item => !(item.Released && Same(item.TaskKey, taskKey))).ToList();
+        record = record with { Waiting = waitingCards };
         if (alreadyWaiting)
             return record.Waiting.Any(item => Same(item.TaskKey, taskKey))
                 ? record
@@ -579,8 +672,9 @@ public sealed class CauseBreakerService
                 continue;
             }
             // The probe card already has its green review; every other card
-            // gets one fresh attempt planned from current settings.
-            var needsSuccessor = !Same(waiting.TaskKey, exceptTaskKey)
+            // gets one fresh attempt planned from current settings, once.
+            var needsSuccessor = !waiting.Released
+                && !Same(waiting.TaskKey, exceptTaskKey)
                 && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase);
             var released = needsSuccessor && !string.IsNullOrWhiteSpace(
                 _release.Release(task, $"cause-breaker-release:{record.Fingerprint}:{record.Opens}"));
@@ -594,17 +688,21 @@ public sealed class CauseBreakerService
                     record.Fingerprint, record.CauseKey, waiting.TaskKey);
                 continue;
             }
-            CauseWaitMarker.Clear(folderPath, _logger);
-            _timeline.Append(folderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
-                $"{record.CauseKey} resolved the cause ({closeReason}); "
-                + (released ? "a fresh review attempt was planned." : "no new review attempt was needed."),
-                details: new Dictionary<string, string>
-                {
-                    ["causeKey"] = record.CauseKey ?? string.Empty,
-                    ["fingerprint"] = record.Fingerprint,
-                    ["closeReason"] = closeReason,
-                    ["released"] = released.ToString().ToLowerInvariant(),
-                });
+            if (!_markers.Clear(folderPath))
+            {
+                // A marker left behind keeps the card withheld by the retry
+                // scheduler and shown as waiting. Keep the durable wait so the
+                // sweep retries the delete; Released stops the retry from
+                // planning a second successor and lets the claim admit the
+                // one just planned.
+                stillWaiting.Add(waiting with { Released = true });
+                _logger.LogWarning(
+                    "cause-breaker-release-deferred fingerprint={Fingerprint} cause={CauseKey} task={TaskKey} reason=marker-clear-failed",
+                    record.Fingerprint, record.CauseKey, waiting.TaskKey);
+                continue;
+            }
+            AppendReleased(folderPath, record.CauseKey, record.Fingerprint, closeReason,
+                released || waiting.Released);
         }
         var closed = record with
         {
@@ -642,6 +740,38 @@ public sealed class CauseBreakerService
             new WatchPathEntry { Name = project ?? string.Empty, Path = waiting.WatchPath },
             TaskStates.AutoReview);
     }
+
+    /// <summary>
+    /// The claim gate matches the review authority's task key, which may be
+    /// the stable key or the scanner identity depending on when the attempt
+    /// was minted.
+    /// </summary>
+    private string AuthorityKey(IReadOnlyList<string> keys)
+        => keys.Select(key => _authority.GetTaskProjection(key).CurrentReviewAttempt?.TaskKey)
+            .FirstOrDefault(key => !string.IsNullOrWhiteSpace(key))
+            ?? keys[0];
+
+    private static CauseWaitRecord Marker(CauseBreakerRecord record, DateTime since, bool probe) => new()
+    {
+        CauseKey = record.CauseKey ?? string.Empty,
+        Fingerprint = record.Fingerprint,
+        FailureClass = record.FailureClass,
+        Since = since,
+        Reason = $"waiting for {record.CauseKey}: {record.FailureClass} on {record.Toolchain}",
+        Probe = probe,
+    };
+
+    private void AppendReleased(string folderPath, string? causeKey, string fingerprint, string closeReason, bool released)
+        => _timeline.Append(folderPath, TimelineEventKinds.CauseBreakerReleased, TimelineActors.System,
+            $"{causeKey} resolved the cause ({closeReason}); "
+            + (released ? "a fresh review attempt was planned." : "no new review attempt was needed."),
+            details: new Dictionary<string, string>
+            {
+                ["causeKey"] = causeKey ?? string.Empty,
+                ["fingerprint"] = fingerprint,
+                ["closeReason"] = closeReason,
+                ["released"] = released.ToString().ToLowerInvariant(),
+            });
 
     private void LogObservation(
         string taskKey,
@@ -691,17 +821,33 @@ public sealed class CauseBreakerService
     private List<CauseBreakerRecord> Records()
     {
         if (_records is not null) return _records;
-        _records = [];
-        if (_path is null || !File.Exists(_path)) return _records;
+        if (_path is null || !File.Exists(_path)) return _records = [];
+        string text;
         try
         {
-            _records = JsonSerializer.Deserialize<List<CauseBreakerRecord>>(File.ReadAllText(_path), Json) ?? [];
+            text = File.ReadAllText(_path);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            // Starting empty here would persist an empty store over open
+            // breakers on the next write. Fail this call and read again later.
             _logger.LogWarning(ex, "cause-breaker store read failed at {Path}", _path);
+            throw new InvalidOperationException($"Cause-breaker store at {_path} is unreadable.", ex);
         }
-        return _records;
+        try
+        {
+            return _records = JsonSerializer.Deserialize<List<CauseBreakerRecord>>(text, Json) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            // A corrupt store cannot be repaired by rereading. Keep it as
+            // evidence and start empty; the sweep releases the cards whose
+            // markers no breaker accounts for.
+            var quarantine = $"{_path}.corrupt-{_time.GetUtcNow().UtcDateTime:yyyyMMddTHHmmssZ}";
+            File.Copy(_path, quarantine, overwrite: true);
+            _logger.LogError(ex, "cause-breaker store corrupt at {Path}; preserved as {Quarantine}", _path, quarantine);
+            return _records = [];
+        }
     }
 
     private void Persist(List<CauseBreakerRecord> records)
