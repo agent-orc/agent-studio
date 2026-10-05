@@ -773,6 +773,35 @@ describe('TaskSelectionService · stable task URLs', () => {
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
   });
 
+  it('ignores the superseded document batch while conflict recovery re-reads documents', async () => {
+    const documents = (req: HttpRequest<unknown>) => req.url.endsWith('/details/documents');
+    const core = (req: HttpRequest<unknown>) => req.url.endsWith('/human-readable-slug/core');
+    selection.openDetail(info);
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    await loading('documents');
+    const [oldPrompt, oldStatus] = http.match(documents);
+    oldPrompt.flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+    // The unchanged refresh starts a replacement batch while the old status read is open.
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    const replacement = http.match(documents);
+    expect(replacement).toHaveLength(2);
+
+    // A late completion of the old batch must neither paint nor settle the section.
+    if (!oldStatus.cancelled) oldStatus.flush(documentReply(info, 'status'));
+    expect(oldStatus.cancelled).toBe(true);
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    expect(selection.selected()).toBeNull();
+
+    for (const request of replacement)
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    expect(selection.selected()?.statusMarkdown).toBe('status markdown');
+    (await nextRequest(req => req.url.endsWith('/details/usage')))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
   it('lets an evidence request supersede a plain review read in flight', async () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))

@@ -230,6 +230,9 @@ export class TaskSelectionService {
   private conflictReloads = 0;
   /** The in-flight review read, so an evidence request can supersede a plain one. */
   private reviewRequest: { subscription: Subscription; evidence: boolean } | null = null;
+  /** The current document batch; a replacement batch supersedes and cancels the previous one. */
+  private documentBatch = 0;
+  private documentRequests: Subscription[] = [];
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
   private expandedTab: string | null = null;
@@ -601,11 +604,17 @@ export class TaskSelectionService {
     const core = this.selectedCore();
     const project = this.activeProject;
     if (!core || !project) return;
+    // Conflict recovery and Retry can start a batch while an older one is
+    // open; only the newest batch may paint or settle the section.
+    for (const request of this.documentRequests) request.unsubscribe();
+    this.documentRequests = [];
+    const batch = ++this.documentBatch;
+    const current = () => batch === this.documentBatch && this.isCurrent(token, core);
     this.setResourceState('documents', 'loading', null);
     const docs: Partial<Record<'prompt' | 'status', TaskDocumentData>> = {};
     let pending = 2;
     const finish = () => {
-      if (--pending !== 0 || !this.isCurrent(token, core)) return;
+      if (--pending !== 0 || !current()) return;
       // The painted core stays; the rich view waits for the warm index.
       if (this.resourceStates().documents.phase === 'warming') {
         this.retryWhenWarm(token, core, 'documents', () => this.loadInitialDocuments(token));
@@ -627,7 +636,7 @@ export class TaskSelectionService {
       // Usage and the expanded tab's resource are requested only after the
       // rich view has a paint opportunity.
       afterNextPaint(() => {
-        if (!this.isCurrent(token, core)) return;
+        if (!current()) return;
         this.loadResource('usage');
         this.loadResourcesForTab(this.expandedTab);
       });
@@ -638,7 +647,7 @@ export class TaskSelectionService {
           timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
         ).subscribe({
         next: reply => {
-          if (this.isCurrent(token, core)) {
+          if (current()) {
             if (indexWarming(reply)) this.setResourceState('documents', 'warming', reply.reason);
             else if (!this.resourceMatches(reply, core)) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
@@ -650,7 +659,7 @@ export class TaskSelectionService {
           finish();
         },
         error: error => {
-          if (this.isCurrent(token, core) && !this.revokeSelection(error, core.id)) {
+          if (current() && !this.revokeSelection(error, core.id)) {
             if (httpStatus(error) === 409) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
               this.refreshCoreAfterConflict(token, core);
@@ -660,6 +669,7 @@ export class TaskSelectionService {
         },
       });
       this.activeRequests.push(request);
+      this.documentRequests.push(request);
     }
   }
 
