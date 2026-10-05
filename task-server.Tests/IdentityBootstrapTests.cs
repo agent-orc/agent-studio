@@ -293,12 +293,22 @@ public sealed class IdentityBootstrapTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/v1/enrolments/exchange",
             new ExchangeEnrolmentRequest(engine.EnrolmentCode, installationId))).StatusCode);
 
-        // Rotation is explicit and the old secret stops working after the overlap.
-        var rotated = await (await ownerClient.PostAsJsonAsync("/api/v1/management/principals/runner:host-a/rotate",
-            new RotatePrincipalRequest(0))).Content.ReadFromJsonAsync<IssuedPrincipalCredential>();
+        // Rotation is explicit; the old secret stops working once the host has
+        // received and acknowledged the new one.
+        var rotation = await ownerClient.PostAsJsonAsync("/api/v1/management/principals/runner:host-a/rotate",
+            new RotatePrincipalRequest(1, "host-a-rotation",
+                [new PrincipalRotationConsumer("host-a", TaskServerScopes.TasksRead)]));
+        Assert.True(rotation.IsSuccessStatusCode, await rotation.Content.ReadAsStringAsync());
+        var rotated = await rotation.Content.ReadFromJsonAsync<IssuedPrincipalCredential>();
+        using var rotatedClient = Client(factory, rotated!.Credential);
+        (await rotatedClient.PostAsync("/api/v1/principal-rotations/host-a-rotation/delivered", null))
+            .EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync("/api/v1/workspaces")).StatusCode);
+        (await rotatedClient.PostAsJsonAsync("/api/v1/principal-rotations/host-a-rotation/ack",
+            new PrincipalRotationAcknowledgement("host-a"))).EnsureSuccessStatusCode();
         clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(HttpStatusCode.Unauthorized, (await hostAClient.GetAsync("/api/v1/workspaces")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await Client(factory, rotated!.Credential).GetAsync("/api/v1/workspaces")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await rotatedClient.GetAsync("/api/v1/workspaces")).StatusCode);
 
         // Loss of host A: revoke only its identity; host C keeps working.
         Assert.Equal(HttpStatusCode.OK, (await ownerClient.PostAsync(
