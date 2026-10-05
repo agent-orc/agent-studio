@@ -194,6 +194,38 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Verdict_marker_quoted_in_green_command_output_does_not_judge_the_command()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        // AGT-3016: `dotnet test` prints AspectRunnerTests theory cases that
+        // carry literal sentinels. The command exited 0, so it passes.
+        const string testLog =
+            "  Passed AgentStudio.Tests.AspectRunnerTests.ParseVerdict(output: \"[[ASPECT_VERDICT: status=concerns; summary=needs wor\"···, expectedStatus: Concerns, expectedSummary: \"needs work\") [< 1 ms]\n"
+            + "  Passed AgentStudio.Tests.AspectRunnerTests.PassAspect_JsonTwin_HasNullTag [2 ms]\n"
+            + "  Passed AgentStudio.Tests.AspectRunnerTests.Duplicate(output: \"[[ASPECT_VERDICT: status=concerns; summary=needs work; summary=again]]\") [< 1 ms]\n";
+        var quoted = Assert.IsType<AspectVerdictMarker>(AspectVerdictMarkerParser.ParseLast(testLog));
+        Assert.Equal("concerns", quoted.Status);
+        Assert.Equal([AspectVerdictMarkerParser.DuplicateKey], quoted.Malformed);
+        var logPath = Path.Combine(_root, "aspect-runner-tests.log");
+        await File.WriteAllTextAsync(logPath, testLog);
+        var sha = await SeedOriginAsync();
+        var (workspace, _) = Workspace(
+            "attempt-quoted-marker", sha,
+            [new ReviewCommandDto("verify-3", "build-tests", PosixShell.RequirePath(), ["-c", $"cat '{logPath}'"])],
+            24024);
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal(0, Assert.Single(evidence.Commands).ExitCode);
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("pass", verdict.Status);
+        Assert.Equal(ReviewCommandVerdictPolicy.CommandPassed, verdict.Classification);
+        Assert.Equal("command:verify-3", verdict.EvidenceChecked);
+        Assert.Equal("Pass", evidence.Outcome);
+    }
+
+    [Fact]
     public async Task Agent_aspect_runs_read_only_on_remote_host_and_reports_attributed_evidence()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -246,6 +278,48 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             artifact.Sha256 == executed.StdoutSha256 && artifact.ContentBase64 is not null);
         Assert.Equal("pass", Assert.Single(evidence.Verdicts).Status);
         Assert.False(evidence.Workspace.DirtyAfter);
+    }
+
+    [Fact]
+    public async Task Malformed_marker_in_an_aspect_reply_still_judges_the_aspect()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var sha = await SeedOriginAsync();
+        var fakeCodex = Path.Combine(_root, "fake-codex-malformed.sh");
+        await File.WriteAllTextAsync(fakeCodex, """
+            #!/bin/sh
+            printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=concerns; summary=needs work; summary=again; evidence_checked=README.md; missing=none]]"}}'
+            printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":21,"output_tokens":8,"cached_input_tokens":5}}'
+            """);
+        File.SetUnixFileMode(
+            fakeCodex,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = new ReviewCommandDto(
+            "aspect-code-quality",
+            "code-quality",
+            "codex",
+            [],
+            TimeoutSeconds: 30,
+            ExecutionKind: ReviewCommandKinds.AgentAspect,
+            Prompt: "Inspect the exact result and return the required aspect sentinel.",
+            CliType: CliSelection.CodexCli,
+            Model: "gpt-5.4-mini",
+            ThinkingLevel: "high");
+        var (workspace, _) = Workspace(
+            "attempt-agent-malformed",
+            sha,
+            [command],
+            24130,
+            integrationRef: "refs/heads/main",
+            codexCliBin: fakeCodex);
+
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        var verdict = Assert.Single(evidence.Verdicts);
+        Assert.Equal("concerns", verdict.Status);
+        Assert.Equal("RemoteAspectVerdict; malformed: duplicate-key", verdict.Classification);
+        Assert.Equal("needs work Detail: summary=again", verdict.Summary);
     }
 
     [Fact]
