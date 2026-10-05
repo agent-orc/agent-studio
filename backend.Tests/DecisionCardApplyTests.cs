@@ -515,6 +515,90 @@ public sealed class DecisionCardApplyTests : IDisposable
     }
 
     [Fact]
+    public async Task Decide_WhenLinkedCardMoveIsRefused_RecordsFailedApply_ThenSameChoiceFinishesTheMove()
+    {
+        var h = Build();
+        var implId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release gate", WatchPath = _watchPath, TargetState = TaskStates.Preparation,
+            PromptMarkdown = "# Stable release gate\n\nImplement the release contract.\n",
+        })!;
+        var impl = h.Scanner.FindJob(implId, _watchPath)!;
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(impl.Key!),
+        })!;
+        var decisionKey = h.Scanner.FindJob(decisionId, _watchPath)!.Key!;
+        // A second open decision holds the card, so the move to Ready is refused.
+        var otherId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Release channel", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision() with { Question = "Which release channel?" },
+        })!;
+        var otherKey = h.Scanner.FindJob(otherId, _watchPath)!.Key!;
+        h.Mutations.SetTaskReferences(implId,
+            new TaskReferences { DependsOn = [new TaskDependencyReference(otherKey)] }, _watchPath);
+
+        Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "Keep installs reproducible." }, "alice")).Status);
+
+        var held = h.Scanner.FindJob(implId, _watchPath)!;
+        Assert.Equal(TaskStates.Preparation, held.State);
+        var first = h.Scanner.FindJob(decisionId, _watchPath)!.Decision!.History[^1];
+        Assert.Equal(DecisionApplyOutcomes.Failed, first.ApplyOutcome);
+        Assert.Empty(first.AppliedTaskKeys);
+
+        Assert.Equal(DecisionCardStatus.Success, (await h.Decisions.DecideAsync(otherId, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "Stable only." }, "alice")).Status);
+        var resumed = await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "Keep installs reproducible." }, "alice");
+
+        Assert.Equal(DecisionCardStatus.Success, resumed.Status);
+        var moved = h.Scanner.FindJob(implId, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, moved.State);
+        Assert.Equal(1, CountOf(File.ReadAllText(Path.Combine(moved.FolderPath, "prompt.md")),
+            $"## Decision {decisionKey}:"));
+        var decision = h.Scanner.FindJob(decisionId, _watchPath)!.Decision!;
+        Assert.Single(decision.History, entry => entry.Status == DecisionStatuses.Decided);
+        Assert.Equal(DecisionApplyOutcomes.LinkedCards, decision.History[^1].ApplyOutcome);
+        Assert.Equal([impl.Key!], decision.History[^1].AppliedTaskKeys);
+    }
+
+    [Fact]
+    public void Sweep_RepairsDependencyEdge_ThatAFailedBlockedRequestLeftBehind()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var originId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Blocked release card", WatchPath = _watchPath, TargetState = TaskStates.Escalated,
+        })!;
+        var origin = h.Scanner.FindJob(originId, _watchPath)!;
+        var originJson = Path.Combine(origin.FolderPath, "task.json");
+        writer.ShouldFail = (path, _) => string.Equals(path, originJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(h.Requests.Request(new DecisionCardRequest
+        {
+            Title = "Decision: Blocked release card", WatchPath = _watchPath,
+            Content = LockFileDecision(), BlockedCard = origin,
+        }));
+        var orphan = Assert.Single(h.Scanner.ScanAllJobs(), card => TaskKinds.IsDecision(card.Kind));
+        Assert.Empty(h.Scanner.FindJob(originId, _watchPath)!.References.DependsOn);
+
+        // No further Blocked request comes for an escalated card; the sweep retries the edge.
+        var clock = new FakeTimeProvider(new DateTimeOffset(orphan.CreatedAt.ToUniversalTime()));
+        h.Reminders(clock).Sweep();
+        Assert.Empty(h.Scanner.FindJob(originId, _watchPath)!.References.DependsOn);
+
+        writer.ShouldFail = null;
+        h.Reminders(clock).Sweep();
+
+        Assert.Contains(h.Scanner.FindJob(originId, _watchPath)!.References.DependsOn, edge => edge.Key == orphan.Key);
+        Assert.Equal(MoveJobStatus.Failure, h.States.MoveJob(originId, TaskStates.Ready, _watchPath).Status);
+        Assert.Single(h.Scanner.ScanAllJobs(), card => TaskKinds.IsDecision(card.Kind));
+    }
+
+    [Fact]
     public void SetTaskReferences_FailedWrite_ReturnsFalse()
     {
         var writer = new ControllableAtomicJsonFileWriter();
@@ -944,6 +1028,6 @@ public sealed class DecisionCardApplyTests : IDisposable
         var requests = new DecisionCardRequests(scanner, mutations, NullLogger<DecisionCardRequests>.Instance);
         return new Harness(scanner, mutations, decisions, requests, promotion, states, activityFeed,
             clock => new DecisionReminderSweep(scanner, mutations, records, activityFeed, timeline,
-                NullLogger<DecisionReminderSweep>.Instance, clock));
+                NullLogger<DecisionReminderSweep>.Instance, clock, requests));
     }
 }

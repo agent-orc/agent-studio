@@ -67,6 +67,11 @@ public sealed class DecisionApplyService
     {
         var applied = new List<string>();
         var notes = new List<string>();
+        // A linked card counts as applied only once every step it needs has
+        // landed. An unfinished step fails the apply, which leaves the same
+        // choice retryable: the block is marker-idempotent and the move is
+        // planned again from the card's current lane.
+        var unfinished = false;
         foreach (var step in plan.LinkedCards)
         {
             var card = cards[step.Key];
@@ -81,20 +86,26 @@ public sealed class DecisionApplyService
                     DecisionPromptBlock.Append(prompt, block, marker, key), card.WatchPath))
             {
                 notes.Add($"{step.Key}: the decision block could not be written.");
+                unfinished = true;
                 continue;
             }
+            if (step.Action == DecisionLinkedCardAction.AppendAndMove)
+            {
+                var move = await _transitions.MoveAsync(card.Id, TaskStates.Ready, card.WatchPath, ct,
+                    cause: TimelineActors.Human(decided.DecidedBy ?? DecisionDeciders.Operator),
+                    reason: $"Decision {key} applied");
+                if (move.Status != MoveJobStatus.Success)
+                {
+                    notes.Add($"{step.Key}: decision block added, but the move to {TaskStates.Ready} was refused: {move.Message}");
+                    unfinished = true;
+                    continue;
+                }
+            }
             applied.Add(card.Key ?? card.Id);
-            if (step.Action != DecisionLinkedCardAction.AppendAndMove) continue;
-
-            var move = await _transitions.MoveAsync(card.Id, TaskStates.Ready, card.WatchPath, ct,
-                cause: TimelineActors.Human(decided.DecidedBy ?? DecisionDeciders.Operator),
-                reason: $"Decision {key} applied");
-            if (move.Status != MoveJobStatus.Success)
-                notes.Add($"{step.Key}: decision block added, but the move to {TaskStates.Ready} was refused: {move.Message}");
         }
         _logger.LogInformation("decision-applied decision={Key} outcome=linked cards={Cards}",
             key, string.Join(",", applied));
-        return new(applied.Count == 0 ? DecisionApplyOutcomes.Failed : DecisionApplyOutcomes.LinkedCards,
+        return new(unfinished || applied.Count == 0 ? DecisionApplyOutcomes.Failed : DecisionApplyOutcomes.LinkedCards,
             applied, notes);
     }
 

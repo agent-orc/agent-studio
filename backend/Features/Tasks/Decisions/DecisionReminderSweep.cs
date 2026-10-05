@@ -23,11 +23,13 @@ public sealed class DecisionReminderSweep
     private readonly TimelineLog _timeline;
     private readonly ILogger<DecisionReminderSweep> _logger;
     private readonly TimeProvider _clock;
+    private readonly DecisionCardRequests? _requests;
 
     public DecisionReminderSweep(TaskScannerService scanner, TaskMutationService mutations,
         DecisionRecordService records, OrchestratorLog activityFeed, TimelineLog timeline,
-        ILogger<DecisionReminderSweep> logger, TimeProvider? clock = null)
+        ILogger<DecisionReminderSweep> logger, TimeProvider? clock = null, DecisionCardRequests? requests = null)
     {
+        _requests = requests;
         _scanner = scanner;
         _mutations = mutations;
         _records = records;
@@ -41,6 +43,10 @@ public sealed class DecisionReminderSweep
     {
         var now = _clock.GetUtcNow().UtcDateTime;
         var cards = _scanner.ScanAllAutomationJobs();
+        // The same slow pass retries the dependsOn edges a failed decision
+        // request left behind (see DecisionCardRequests.RepairLinks).
+        if (_requests is not null && _requests.RepairLinks(cards, ct).Count > 0)
+            cards = _scanner.ScanAllAutomationJobs();
         var reminders = new List<DecisionReminder>();
         foreach (var card in cards)
         {

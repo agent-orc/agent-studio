@@ -121,6 +121,44 @@ public sealed class DecisionCardRequests
         }
     }
 
+    /// <summary>
+    /// Retries the links a failed request left behind. A request that created
+    /// its decision card but could not write the blocked card's
+    /// <c>dependsOn</c> edge returned null, and the Blocked outcome has already
+    /// moved that card to the escalated lane, so no later request comes for it.
+    /// For every open decision this writes the missing edge of each escalated
+    /// card it names as both dependant and apply target. Returns the repaired
+    /// blocked card keys; a write that fails again is retried on the next sweep.
+    /// </summary>
+    public IReadOnlyList<string> RepairLinks(IReadOnlyList<TaskInfo> cards, CancellationToken ct = default)
+    {
+        var repaired = new List<string>();
+        foreach (var decisionCard in cards)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!TaskKinds.IsDecision(decisionCard.Kind) || decisionCard.Decision is not { } decision
+                || !DecisionStatuses.IsOpen(decision.Status)) continue;
+            var decisionKey = decisionCard.Key ?? decisionCard.Id;
+            foreach (var blocked in cards)
+            {
+                var blockedKey = blocked.Key ?? blocked.Id;
+                if (blocked.State != TaskStates.Escalated
+                    || !string.Equals(blocked.WatchPath, decisionCard.WatchPath, StringComparison.OrdinalIgnoreCase)
+                    || !Names(decision.Dependants, blockedKey) || !Names(decision.AppliesTo, blockedKey)
+                    || (blocked.References?.DependsOn ?? []).Any(edge =>
+                        string.Equals(edge.Key, decisionKey, StringComparison.OrdinalIgnoreCase))) continue;
+                if (Attach(decisionCard, blocked))
+                {
+                    _logger.LogInformation("decision-card-link-repaired key={Key} blocked={Blocked}", decisionKey, blockedKey);
+                    repaired.Add(blockedKey);
+                }
+                else
+                    _logger.LogWarning("decision-card-request-link-failed key={Key} blocked={Blocked}", decisionKey, blockedKey);
+            }
+        }
+        return repaired;
+    }
+
     /// <summary>Adds the blocked card's <c>dependsOn</c> edge to the decision unless it exists; false when the write failed.</summary>
     private bool EnsureDependsOn(TaskInfo blocked, string decisionKey)
     {

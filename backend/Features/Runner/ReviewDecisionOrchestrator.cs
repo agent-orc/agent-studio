@@ -1988,6 +1988,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             if (result is not null)
                 _chatLog.AppendSupervisor(escalated, "escalate",
                     $"Orchestrator raised decision card {result.Key} for the fork this run stopped at.");
+            else
+            {
+                // A decision card whose dependsOn edge could not be written
+                // still names this card; the decision sweep retries the edge.
+                _logger.LogWarning(
+                    "ReviewDecisionOrchestrator: decision card request for BLOCKED fork on {JobId} did not complete; the decision sweep retries the link",
+                    current.Id);
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    "Orchestrator could not finish the decision card for the fork this run stopped at; the decision sweep retries the missing link.");
+            }
             return result;
         }
         catch (Exception ex)

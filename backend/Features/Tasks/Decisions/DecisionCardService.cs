@@ -61,11 +61,12 @@ public sealed class DecisionCardService
         if (!DecisionCardPolicy.MayDecide(card.Decision, decidedBy, actorRole))
             return new(DecisionCardStatus.Forbidden, Message: "This decision is assigned to another client or role.");
         // A choice can have reached the completed lane while its apply outcome
-        // could not be persisted. Repeating that same choice resumes the apply
-        // step without recording a second decision cycle.
+        // could not be persisted, or with an apply step that failed part-way
+        // (a refused move, an unwritten block). Repeating that same choice
+        // resumes the apply step without recording a second decision cycle.
         if (card.State == TaskStates.Completed
             && card.Decision is { Status: DecisionStatuses.Decided } recorded
-            && recorded.History.LastOrDefault() is { ApplyOutcome: null }
+            && recorded.History.LastOrDefault() is { ApplyOutcome: null or DecisionApplyOutcomes.Failed }
             && string.Equals(recorded.ChosenOptionId, req?.OptionId?.Trim(), StringComparison.OrdinalIgnoreCase))
             return await ApplyAsync(card, recorded, recorded.DecidedBy ?? decidedBy, ct);
         var errors = DecisionCardPolicy.ValidateChoice(card.Decision, req?.OptionId, req?.Rationale);
