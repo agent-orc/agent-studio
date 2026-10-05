@@ -141,7 +141,7 @@ async function installRoutes(page: Page): Promise<Harness> {
   const releaseWrites: { jobId: string; released: boolean }[] = [];
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/watch-paths**', route => json(route, [
@@ -149,7 +149,7 @@ async function installRoutes(page: Page): Promise<Harness> {
   ]));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   // Object-shaped reads the shell dereferences eagerly. The `[]` catch-all
   // above would make them throw and raise the dev error overlay, which then
   // intercepts every click in this spec.
@@ -157,7 +157,7 @@ async function installRoutes(page: Page): Promise<Harness> {
   await page.route('**/api/projects/*/workbenches**', route => json(route, {
     projectName: PROJECT, includesHistory: true, count: 0, items: [],
   }));
-  await page.route('**/api/workspaces**', route => json(route, []));
+  await page.route('**/api/v1/workspaces**', route => json(route, []));
   await page.route('**/api/clients', route => json(route, [
     { id: 'local-default', displayName: 'Local', kind: 'agent-instance' },
   ]));
@@ -181,7 +181,7 @@ async function installRoutes(page: Page): Promise<Harness> {
     }));
   }
   await page.route(/\/api\/tasks(\?|$)/, route => json(route, [dependent(released), bystander()]));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [],
     ready: [dependent(released), bystander()],
     progress: [], failedPickup: [], codeNotComplete: [], autoReview: [], review: [],
@@ -194,9 +194,9 @@ async function installRoutes(page: Page): Promise<Harness> {
   await page.route(new RegExp(`/api/tasks/${DEPENDENT_ID}/dependents(\\?|$)`),
     route => json(route, []));
 
-  await page.route(new RegExp(`/api/tasks/${DEPENDENT_ID}(\\?|$)`),
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${DEPENDENT_ID}(\\?|$)`),
     route => json(route, detail(dependent(released))));
-  await page.route(new RegExp(`/api/tasks/${TARGET_ID}(\\?|$)`),
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${TARGET_ID}(\\?|$)`),
     route => json(route, detail(target(released))));
 
   await page.route(/\/api\/tasks\/[^/]+\/release(\?|$)/, async route => {

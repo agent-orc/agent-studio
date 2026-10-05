@@ -133,7 +133,7 @@ test.describe('Accept-to-next-task is instant', () => {
 
       // Watch the move POST so the test proves it actually goes out.
       const movePromise = page.waitForResponse(
-        r => r.url().includes(`/api/tasks/${encodeURIComponent(jobs[0].id)}/move`),
+        r => r.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(jobs[0].id)}/move`),
         { timeout: 10_000 },
       );
 
@@ -255,12 +255,12 @@ test.describe('Accept-to-next-task is instant', () => {
       const detailGets = new Set<string>();
       page.on('response', resp => {
         const url = resp.url();
-        const match = url.match(/\/api\/tasks\/([^/?]+)(\?|$)/);
+        const match = url.match(/\/api\/v1\/projects\/[^/]+\/tasks\/([^/?]+)(\?|$)/);
         if (!match) return;
         if (resp.request().method() !== 'GET') return;
         // Filter out subresource endpoints like /api/tasks/{id}/output.
         if (url.includes('/output') || url.includes('/runs') || url.includes('/screenshots')) return;
-        if (url.includes('/api/tasks/grouped')) return;
+        if (url.includes('/api/v1/studio/board')) return;
         detailGets.add(decodeURIComponent(match[1]));
       });
 

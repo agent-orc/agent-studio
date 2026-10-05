@@ -123,7 +123,7 @@ public static class ConnectorAttachPolicy
             return Refuse(
                 ConnectorAttachFailureCodes.HubPathMismatch,
                 $"Task Server {serverVersion} serves the Studio hub at {response.HubPath ?? "no path"}, " +
-                $"but this connector forwards /hubs/jobs to {expectedHubPath}. Install matching releases.",
+                $"but this connector forwards the Studio hub to {expectedHubPath}. Install matching releases.",
                 serverVersion);
         }
 

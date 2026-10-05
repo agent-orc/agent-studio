@@ -15,7 +15,7 @@ const extras = [
   ['POST', '/api/clients/{clientId}/revive', 'frontend/src/app/features/remote-hosts/services/remote-hosts.service.ts:359'],
   ['GET', '/api/projects/{project}/proposals/evidence/{path*}', 'frontend/src/app/features/project-detail/components/project-proposals-panel/project-proposals-panel.component.ts:140'],
   ['GET', '/api/projects/{project}/wiki/assets/{path*}', 'frontend/src/app/services/project-docs.service.ts:237'],
-  ['GET', '/api/runner/{project}/orchestrator-chat/attachments/{fileName}', 'frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.util.ts:314'],
+  ['GET', '/api/v1/studio/runner/{project}/orchestrator-chat/attachments/{fileName}', 'frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.util.ts:314'],
   ['GET', '/api/tasks/{taskId}/attachments/{fileName}', 'frontend/src/app/features/task-detail/components/protocol-pane/protocol-image-resolver.ts:34'],
   ['GET', '/api/tasks/{taskId}/results/{path*}', 'frontend/src/app/features/task-detail/components/task-artifact-links/task-artifact-link.ts:47'],
   ['GET', '/api/tasks/{taskId}/screenshot', 'frontend/src/app/features/task-detail/components/protocol-pane/protocol-image-resolver.ts:44'],
@@ -40,6 +40,7 @@ export function canonicalPath(input) {
     .replaceAll('{task}', '{taskId}')
     .replaceAll('{projectName}', '{project}')
     .replaceAll('{projId}', '{projectId}')
+    .replaceAll('{UNSCOPED_TASK_PROJECT}', '{projectId}')
     .replaceAll('{current.clientId}', '{clientId}')
     .replaceAll('{host.clientId}', '{clientId}')
     .replaceAll('{CLIENT_ID}', '{clientId}')
@@ -104,8 +105,12 @@ const queryKeys = new Map(Object.entries({
   'GET /api/search': ['q', 'domains', 'limit'],
   'GET /api/projects': ['includeArchived'],
   'GET /api/workspaces': ['includeArchived'],
+  'GET /api/v1/projects': ['includeArchived'],
+  'GET /api/v1/workspaces': ['includeArchived'],
   'GET /api/tasks/archive': ['project', 'watchPath', 'offset', 'limit', 'search'],
   'GET /api/tasks/{taskId}': ['project', 'watchPath'],
+  'GET /api/v1/projects/{projectId}/tasks/{taskId}': ['project', 'watchPath'],
+  'GET /api/v1/studio/board': ['includeLegacyReviewLane'],
   'GET /api/epics': ['includeFixtures', 'status', 'project'],
   'GET /api/epics/completed/count': ['includeFixtures', 'project'],
   'GET /api/projects/pipeline-catalogue': ['projectName', 'pipelineType'],
@@ -147,6 +152,10 @@ function inferredQueryKeys(method, routePath) {
   const add = (key) => { if (!keys.includes(key)) keys.push(key); };
   if (/^\/api\/tasks\/\{taskId\}\//.test(routePath)
       && !routePath.includes('/attachments/{fileName}')) add('watchPath');
+  // The versioned task routes (AGT-2983) keep the legacy watch-path query so
+  // OrchestratorApi can still resolve a task the Studio addresses as "-".
+  if (/^\/api\/v1\/projects\/\{projectId\}\/tasks\/\{taskId\}(?:$|\/)/.test(routePath)) add('watchPath');
+  if (routePath === '/api/v1/projects/{projectId}/tasks/{taskId}/stop') add('reason');
   if (/\/tasks\/\{taskId\}\/(git\/diff|git\/file|commit\/diff|commits\/.*\/(diff|file)|commits\/diff)$/.test(routePath)) add('path');
   if (/\/tasks\/\{taskId\}\/(?:files|checkout)\/\{path\*\}/.test(routePath)) {
     // The checkout route fixes scope=code server-side (TaskFilesEndpoints.cs);
@@ -176,6 +185,8 @@ function classification(routePath, method) {
     /^\/api\/projects\/\{project\}\/(?:wiki|architecture|graph|steering|style-guides|build-profile)(?:\/|$)/,
     /^\/api\/projects\/\{project\}\/security(?:\/files|\/meta|$)/,
     /^\/api\/(?:workbenches|projects\/\{project\}\/workbenches)(?:\/|$)/,
+    // A Dossier context digest composes the local Dossier descriptors (AGT-2983).
+    /^\/api\/orchestrator\/context\/workbench:/,
     /^\/api\/tasks\/\{taskId\}\/(?:git|commit|commits|provenance|open-in-vscode|checkout)(?:\/|$)/,
   ];
   if (devSeat.some((pattern) => pattern.test(routePath))) return 'dev-seat';
@@ -195,9 +206,10 @@ function classification(routePath, method) {
 // carried a hand-maintained allowlist of four such paths here, which fell
 // behind as later cards (AGT-2756, AGT-2757, AGT-2758) moved many more
 // frontend calls onto /api/v1/ without anyone updating the list, silently
-// misclassifying already-migrated routes as must-add.
+// misclassifying already-migrated routes as must-add. The versioned Studio
+// hub (/hubs/v1/studio, AGT-2983) counts the same way.
 function isExistingV1(routePath) {
-  return routePath.startsWith('/api/v1/');
+  return routePath.startsWith('/api/v1/') || routePath.startsWith('/hubs/v1/');
 }
 
 function targetRoute(method, routePath, routeClass) {
@@ -377,8 +389,8 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
     schemaVersion: 1,
     id: 'studio-route-ownership-2026-09-15',
     title: 'Studio route ownership inventory',
-    updatedAt: '2026-09-15',
-    sourceTaskKeys: ['AGT-2731', 'AGT-2754', 'AGT-2756', 'AGT-2757', 'AGT-2758', 'AGT-2835'],
+    updatedAt: '2026-09-28',
+    sourceTaskKeys: ['AGT-2731', 'AGT-2754', 'AGT-2756', 'AGT-2757', 'AGT-2758', 'AGT-2835', 'AGT-2983'],
     countingUnit: 'A route is one distinct frontend method plus normalized path template. Query combinations are variants on that route, not additional routes. WS and SSE transports are counted once each.',
     scope: {
       frontend: 'frontend/src/app/**/*.ts excluding *.spec.ts; HttpClient, Fetch upload, EventSource, URL-producing media helpers, and SignalR.',
@@ -391,7 +403,7 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
       frontendHubOperations: frontendRoutes.filter((route) => route.path.startsWith('/hubs')).length,
       byClassification: countsByClass,
       orchestratorApiMapGroups: orchestratorApiGroups.length,
-      frontendV1Operations: frontendRoutes.filter((route) => route.path.startsWith('/api/v1/')).length,
+      frontendV1Operations: frontendRoutes.filter((route) => isExistingV1(route.path)).length,
       frontendV1OperationsExistingInStandaloneTaskServer: frontendRoutes.filter((route) => route.v1Status === 'exists').length,
       d4bRoutesToAdd: moveRoutes.length,
     },

@@ -31,8 +31,8 @@ async function bootStudio(page: Page): Promise<void> {
     const url = route.request().url();
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-    if (url.includes('/api/tasks/grouped')) return json(EMPTY_GROUPED);
-    if (url.includes('/api/runner/status')) return json({ projects: {} });
+    if (url.includes('/api/v1/studio/board')) return json(EMPTY_GROUPED);
+    if (url.includes('/api/v1/studio/runner/status')) return json({ projects: {} });
     if (/\/api\/tasks(\?|$)/.test(url)) return json([]);
     if (url.includes('/api/watch-paths')) return json([]);
     return route.continue();

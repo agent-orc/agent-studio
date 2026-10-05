@@ -24,12 +24,12 @@ async function mockApp(page: Page): Promise<void> {
     return route.fulfill(json([])).catch(() => undefined);
   });
   await page.route('**/api/watch-paths**', route => route.fulfill(json([{ name: PROJECT, path: STORAGE, rootPath: 'C:/repo/cac' }])));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill(json({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
     review: [], autoReview: [], humanReview: [], completed: [], archive: [],
   })));
   await page.route('**/api/environment**', route => route.fulfill(json({ isDev: false, devTools: {} })));
-  await page.route('**/api/runner/status**', route => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill(json({ projects: {} })));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ sessions: [] })));
   await page.route('**/api/projects/*/snapshot**', route => route.fulfill(json({
@@ -50,7 +50,7 @@ async function mockApp(page: Page): Promise<void> {
     drift: { available: true, reason: null, overallGrade: 'Fresh', areas: [], counts: { fresh: 0, aging: 0, stale: 0, graded: 0 } },
     critical: { available: true, reason: null, count: 0, overallGrade: 'none', items: [] },
   })));
-  await page.route('**/api/workspaces**', route => route.fulfill(json([{
+  await page.route('**/api/v1/workspaces**', route => route.fulfill(json([{
     id: 'ws', displayName: 'Workspace', projects: [{
       sourceType: 'local-folder', id: 'PROJ-003', displayName: PROJECT, shortCode: 'CAC', workspaceId: 'ws',
       color: null, cliDefault: null, modelDefault: null, sortOrder: 0, storageLocation: STORAGE,

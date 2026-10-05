@@ -29,10 +29,10 @@ async function json(route: Route, body: unknown): Promise<void> {
 async function installRoutes(page: Page): Promise<void> {
   // Register the broad fallback first; Playwright gives later routes priority.
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'WS-LINKS',
     displayName: 'Link Workspace',
     sortOrder: 0,
@@ -44,12 +44,12 @@ async function installRoutes(page: Page): Promise<void> {
     path: project.storageLocation,
     rootPath: project.rootPath,
   }]));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], review: [], completed: [], archive: [],
   }));
-  await page.route(/\/api\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
   await page.route(/\/api\/projects\/[^/]+\/snapshot(?:\?|$)/, route => json(route, {
     project: PROJECT_NAME,
     capturedAt: '2026-07-22T12:00:00Z',

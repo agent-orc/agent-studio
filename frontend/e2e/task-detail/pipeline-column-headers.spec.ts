@@ -256,14 +256,14 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
       .catch(() => { /* a more specific route already handled the request */ });
   });
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
     }),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -310,7 +310,7 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
       body: JSON.stringify({ projectName: PROJECT, includesHistory: true, count: 0, items: [] }),
     }),
   );
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -348,7 +348,7 @@ async function installRoutes(page: Page, state: string, pipelineBody: () => unkn
       body: JSON.stringify(pipelineBody()),
     }),
   );
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }),
   );
 }

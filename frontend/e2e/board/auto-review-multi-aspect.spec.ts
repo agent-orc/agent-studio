@@ -90,14 +90,14 @@ async function installMocks(
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    if (p === '/api/auth/status') {
+    if (p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
       });
     }
-    if (p === '/api/tasks/grouped' || p === '/api/tasks/grouped') {
+    if (p === '/api/v1/studio/board') {
       const body = {
         backlog: jobs.filter((j) => j.state === '0-backlog'),
         preparation: jobs.filter((j) => j.state === '1-preparation'),
@@ -160,7 +160,7 @@ async function installMocks(
         { name: 'stub-project', path: 'C:/stub', rootPath: 'C:/stub' }
       ]) });
     }
-    if (p === '/api/workspaces') {
+    if (p === '/api/v1/workspaces') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -197,7 +197,7 @@ async function installMocks(
     if (p === '/api/projects/settings') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) });
     }
-    if (p === '/api/orchestrator/sessions') {
+    if (p === '/api/v1/studio/orchestrator/sessions') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -223,7 +223,7 @@ async function installMocks(
     if (p === '/api/cli/usage') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: new Date().toISOString(), sections: [] }) });
     }
-    if (p.startsWith('/api/runner')) {
+    if (p.startsWith('/api/runner') || p.startsWith('/api/v1/studio/runner')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });

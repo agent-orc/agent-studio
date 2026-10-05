@@ -76,13 +76,13 @@ function contracts() {
 
 async function stub(page: Page) {
   const weeklyReset = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString();
-  await page.route('**/api/auth/status', json({
+  await page.route('**/api/v1/studio/auth/status', json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/tasks/grouped*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board*', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/token-summary-aggregate*', json({
     projects: 0, orchestratorEntries: 0, orchestratorLlmCalls: 0,
     totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
@@ -160,7 +160,7 @@ async function stub(page: Page) {
   await page.route('**/api/clients', json([]));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
   await page.route('**/api/admin/prompts', json({ overrideDirectory: 'stub', items: [] }));
-  await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/workspaces*', json([]));
 }
 
 async function openHome(page: Page) {

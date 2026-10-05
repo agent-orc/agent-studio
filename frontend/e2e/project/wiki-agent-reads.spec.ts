@@ -13,13 +13,13 @@ const READS = {
 
 async function mockWiki(page: import('@playwright/test').Page): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-  await page.route('**/api/auth/status', route => route.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
   await page.route('**/api/watch-paths', route => route.fulfill(json([
     { name: 'demo', path: '/throwaway/tasks', rootPath: '/throwaway/repo' },
   ])));
-  await page.route('**/api/workspaces', route => route.fulfill(json([{
+  await page.route('**/api/v1/workspaces', route => route.fulfill(json([{
     id: 'workspace-demo',
     displayName: 'Workspace',
     sortOrder: 0,
