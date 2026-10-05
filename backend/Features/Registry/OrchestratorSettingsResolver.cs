@@ -3,18 +3,14 @@ namespace AgentStudio.Registry;
 /// <summary>
 /// AGT-1812 — the single place that resolves an orchestrator setting through the
 /// settings hierarchy introduced by the workspace-defaults migration:
-/// <c>process rollback → project override → workspace default → platform
-/// constant default</c>.
+/// <c>project override → workspace default → platform constant default</c>.
 ///
 /// <para>Mirrors the shape of <see cref="AgentStudio.Pipeline.PipelineStepConfigResolver"/>
 /// and returns a resolution record carrying the winning value plus its source
-/// and every candidate tier. The three-argument execution-engine overload is
-/// the pure precedence function; its runtime overload captures the process
-/// environment first.</para>
+/// and every candidate tier.</para>
 ///
 /// <para>Only genuinely workspace-shaped knobs resolve here: the orchestrator
-/// model, its thinking level, the ADR-0026 autonomy level, and the temporary
-/// local CLI execution-engine rollout. Process-wide supervisor lifecycle flags
+/// model, its thinking level, and the ADR-0026 autonomy level. Process-wide supervisor lifecycle flags
 /// are deliberately out of scope (see <see cref="WorkspaceSettings"/>).</para>
 /// </summary>
 public static class OrchestratorSettingsResolver
@@ -37,14 +33,6 @@ public static class OrchestratorSettingsResolver
         int? ProjectOverride,
         int? WorkspaceDefault,
         int PlatformDefault);
-
-    public sealed record CliExecutionEngineResolution(
-        string ExecutionEngine,
-        string Source,
-        string? EnvironmentOverride,
-        string? ProjectOverride,
-        string? WorkspaceDefault,
-        string PlatformDefault);
 
     /// <summary>
     /// Resolves the effective orchestrator model. First non-blank of
@@ -82,49 +70,6 @@ public static class OrchestratorSettingsResolver
     /// </summary>
     public static string? ResolveThinkingLevelOverride(ProjectSettings? project, WorkspaceSettings? workspace)
         => Trim(project?.OrchestratorThinkingLevel) ?? Trim(workspace?.OrchestratorThinkingLevel);
-
-    /// <summary>
-    /// Resolves the local CLI execution-engine rollout. The process-wide
-    /// rollback selector wins over the persisted project -> workspace ->
-    /// platform-default chain so an operator can revert every local launch
-    /// without first rewriting stored settings. Invalid values fail loud rather
-    /// than silently selecting a different process path.
-    /// </summary>
-    public static CliExecutionEngineResolution ResolveCliExecutionEngine(
-        ProjectSettings? project,
-        WorkspaceSettings? workspace)
-        => ResolveCliExecutionEngine(
-            project,
-            workspace,
-            CliExecutionEngines.ReadEnvironmentOverride());
-
-    /// <summary>
-    /// Pure overload used by precedence tests and callers that already captured
-    /// the process environment at their configuration boundary.
-    /// </summary>
-    public static CliExecutionEngineResolution ResolveCliExecutionEngine(
-        ProjectSettings? project,
-        WorkspaceSettings? workspace,
-        string? environmentOverride)
-    {
-        var environment = CliExecutionEngines.NormalizeOverride(environmentOverride);
-        var p = CliExecutionEngines.NormalizeOverride(project?.CliExecutionEngine);
-        var w = CliExecutionEngines.NormalizeOverride(workspace?.CliExecutionEngine);
-
-        if (environment is not null)
-            return new(environment, SourceEnvironment, environment, p, w, CliExecutionEngines.Default);
-        if (p is not null)
-            return new(p, SourceProject, null, p, w, CliExecutionEngines.Default);
-        if (w is not null)
-            return new(w, SourceWorkspace, null, null, w, CliExecutionEngines.Default);
-        return new(
-            CliExecutionEngines.Default,
-            SourceDefault,
-            null,
-            null,
-            null,
-            CliExecutionEngines.Default);
-    }
 
     /// <summary>
     /// Resolves the effective autonomy level. First non-null of project override,
@@ -194,14 +139,6 @@ public sealed class OrchestratorDefaultsProvider
     /// <summary>Effective thinking-level override for a project (project → workspace), or null.</summary>
     public string? ResolveThinkingLevelOverride(string projectName)
         => OrchestratorSettingsResolver.ResolveThinkingLevelOverride(
-            _projectSettings.Get(projectName), WorkspaceForProject(projectName));
-
-    /// <summary>
-    /// Effective local CLI execution engine for a project, including the
-    /// process-wide rollback selector and winning source for observability.
-    /// </summary>
-    public OrchestratorSettingsResolver.CliExecutionEngineResolution ResolveCliExecutionEngine(string projectName)
-        => OrchestratorSettingsResolver.ResolveCliExecutionEngine(
             _projectSettings.Get(projectName), WorkspaceForProject(projectName));
 
     /// <summary>Effective autonomy level for a project (project → workspace → platform default).</summary>

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TestSupport;
+using AgentStudio.TestSupport.Scenario;
 using Xunit;
 using static AgentStudio.TestSupport.BuiltProcessLauncher;
 using static AgentStudio.TestSupport.ProcessWaiters;
@@ -259,7 +260,8 @@ public sealed partial class ScenarioContext : IDisposable
                 {
                     ["RUNNER_AUTH_TOKEN"] = _runnerCredential,
                     ["RUNNER_HEARTBEAT_SECONDS"] = "5",
-                    ["RUNNER_RUN_TIMEOUT_SECONDS"] = "45",
+                    ["RUNNER_RUN_TIMEOUT_SECONDS"] = ScenarioExecutionBudgets.CodingRunTimeoutSeconds
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["SCENARIO_RELEASE_FILE"] = _fakeCliReleaseFile,
                 },
                 "--poll",
@@ -270,7 +272,7 @@ public sealed partial class ScenarioContext : IDisposable
                 "--git-remote", _bareRepositoryPath,
                 "--branch", _fixture.Repository.DefaultBranch,
                 "--workdir", runnerWork,
-                "--cli", _fakeCliPath,
+                "--claude-cli", _fakeCliPath,
                 "--ttl", "15",
                 "--max-parallelism", "1",
                 "--poll-seconds", "1");
@@ -325,8 +327,8 @@ public sealed partial class ScenarioContext : IDisposable
             await Assert.ThrowsAnyAsync<Exception>(() => probe.GetAsync(_studioBffUrl + "/healthz"));
         }
         await File.WriteAllTextAsync(_fakeCliReleaseFile, "continue");
-        // The fixture CLI has a 45-second budget; allow its fenced handoff to finish too.
-        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!, TimeSpan.FromSeconds(60));
+        await WaitForAuditCountAsync(_serverClient, "run.completed", 1, _runner!,
+            ScenarioExecutionBudgets.CodingCompletionTimeout);
         await WaitForTaskStateAsync(
             _serverClient, _project.ProjectId, _task.TaskKey, "4-auto-review", _runner!, TimeSpan.FromSeconds(20));
 

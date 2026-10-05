@@ -31,8 +31,7 @@ public sealed class CliProcessReaperTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             "/bin/sh",
             ["-c", "sleep 300 & wait"],
-            workingDirectory: workspace,
-            isolateProcessGroup: true);
+            workingDirectory: workspace);
         for (var attempt = 0;
              attempt < 100 && WorktreeProcessReaper.FindByCwd(workspace).Count == 0;
              attempt++)
@@ -97,8 +96,7 @@ public sealed class CliProcessReaperTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             "/bin/sh",
             ["-c", "sleep 300 & wait"],
-            workingDirectory: workspace,
-            isolateProcessGroup: true);
+            workingDirectory: workspace);
         for (var attempt = 0;
              attempt < 100 && WorktreeProcessReaper.FindByCwd(workspace).Count == 0;
              attempt++)
@@ -198,8 +196,7 @@ public sealed class CliProcessReaperTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             "/bin/sh",
             ["-c", "sleep 300 & wait"],
-            workingDirectory: deletedCwd,
-            isolateProcessGroup: true);
+            workingDirectory: deletedCwd);
         for (var attempt = 0;
              attempt < 100 && WorktreeProcessReaper.FindByCwd(deletedCwd).Count == 0;
              attempt++)
@@ -238,8 +235,7 @@ public sealed class CliProcessReaperTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             claudeBin,
             ["300"],
-            workingDirectory: workspace,
-            isolateProcessGroup: true);
+            workingDirectory: workspace);
         await WaitForCommAsync(workspace, "claude");
 
         var reaped = CliOrphanSweep.Sweep([root], TimeSpan.Zero, logs.Add, [owned]);
