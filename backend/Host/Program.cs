@@ -386,12 +386,12 @@ builder.Services.AddSingleton<OrchestratorContextDigestService>();
 builder.Services.AddSingleton<OrchestratorTaskPromptContextComposer>();
 builder.Services.AddSingleton<OrchestratorWorkbenchPromptContextComposer>();
 builder.Services.AddSingleton<RemoteChatWorkBroker>();
+builder.Services.AddSingleton<LocalChatUsageTracker>();
 builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();
 builder.Services.AddSingleton<ProjectChatMigration>();
 builder.Services.AddSingleton<OrchestratorRunner>(sp => new OrchestratorRunner(
-    sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredService<ILogger<OrchestratorRunner>>(),
     sp.GetService<CliUsageParserRegistry>(),
     sp.GetService<ICliModelRegistry>(),
@@ -994,6 +994,7 @@ builder.Services.AddSingleton<IQuotaProbe, ClaudeQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
+builder.Services.AddSingleton<QuotaHistoryStore>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();

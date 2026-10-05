@@ -1,5 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
 import { routeSegmentOf, withRouteSegment } from '../../../services/url-hash.util';
+import { ledgerScopeFromHash, type UsageLedgerScope } from '../../usage-cockpit';
 
 /**
  * Sections of the single, consolidated Workspace-settings view.
@@ -69,6 +70,7 @@ export class WorkspaceOverlaysService {
   /** The active section inside the view. */
   readonly section = signal<WorkspaceSettingsSection>('overview');
   readonly tokenUsagePage = signal<WorkspaceTokenUsagePage>('workspace');
+  readonly tokenLedgerScope = signal<UsageLedgerScope | null>(null);
 
   /**
    * Back-compat read signals. Each loose overlay is now a section of the one
@@ -180,6 +182,7 @@ export class WorkspaceOverlaysService {
    * as `filters=...` neither hide the deep link nor get disturbed by it.
    */
   syncFromHash(): void {
+    this.tokenLedgerScope.set(ledgerScopeFromHash(window.location.hash));
     const route = routeSegmentOf(window.location.hash) ?? '';
     const section = this.sectionForRoute(route);
     if (section) {

@@ -714,7 +714,7 @@ public sealed partial class TaskServerStoreTests
             new ContinuationIntentRequest(1, "upgraded-round", task.Version,
                 "Keep going", null, null, null, "continue", "operator"), "operator", default);
         Assert.Equal(1, receipt.Round);
-        Assert.Equal(26, upgraded.Status().SchemaVersion);
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
     }
 
     [Fact]

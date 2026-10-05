@@ -3,6 +3,7 @@
         class="usage-cost-chip"
         data-testid="usage-cost-chip"
         [attr.data-state]="v.state"
+        [attr.data-usage-trigger]="controls() ? 'cost' : null"
         aria-haspopup="dialog"
         [attr.aria-expanded]="expanded()"
         [attr.aria-controls]="controls()"

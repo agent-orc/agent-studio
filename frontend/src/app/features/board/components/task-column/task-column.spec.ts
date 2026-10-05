@@ -45,7 +45,7 @@ describe('TaskColumnComponent (smoke)', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
-  it('Ready header counts pullable cards and names held stalled cards separately', async () => {
+  it('Ready header counts all visible cards and names held stalled cards separately', async () => {
     await TestBed.configureTestingModule({
       imports: [TaskColumnComponent],
       providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
@@ -60,10 +60,10 @@ describe('TaskColumnComponent (smoke)', () => {
     ]);
     fixture.detectChanges();
 
-    expect(fixture.componentInstance.headerCount()).toBe(1);
+    expect(fixture.componentInstance.headerCount()).toBe(3);
     expect(fixture.componentInstance.stalledCount()).toBe(2);
     expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="lane-count-2-ready"]')?.textContent)
-      .toContain('1');
+      .toContain('3');
   });
 
   // ─────────────────────────────────────────────────────────────────────
@@ -534,7 +534,7 @@ describe('TaskColumnComponent archive lane (ASS-1727)', () => {
     const host = fixture.nativeElement as HTMLElement;
     expect(host.querySelector('[data-testid="archive-row"]')).toBeTruthy();
     expect(host.textContent ?? '').toContain('Archived One');
-    // The header count reflects the unpaged total, not the empty jobs() input.
+    // The header count reflects rendered archive rows, not the empty jobs() input.
     expect(host.querySelector('.column__count')?.textContent?.trim()).toBe('1');
     httpMock.verify();
   });

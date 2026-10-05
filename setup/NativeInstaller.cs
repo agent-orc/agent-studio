@@ -19,10 +19,9 @@ internal sealed record HostConfiguration(
     string ExecutionUser,
     string ExecutionGroup,
     string HomeDirectory,
-    string CliPath,
+    string CliType,
     string? ClaudePath,
     string? CodexPath,
-    string CliArguments,
     string? GitRemote,
     string? GitPushRemote,
     int MaxParallelism);
@@ -395,8 +394,9 @@ internal sealed class NativeInstaller(
             $"RUNNER_WORKDIR={EnvironmentValue(workRoot)}",
             $"RUNNER_STATE_DIR={EnvironmentValue(stateRoot)}",
             $"RUNNER_MAX_PARALLELISM={configuration.MaxParallelism}",
-            $"RUNNER_CLI_BIN={EnvironmentValue(configuration.CliPath)}",
-            $"RUNNER_CLI_ARGS={EnvironmentValue(configuration.CliArguments)}",
+            // AGT-2373: the runner derives argv through CodingAgentRunner and
+            // rejects the removed RUNNER_CLI_BIN / RUNNER_CLI_ARGS at startup.
+            $"RUNNER_CLI_TYPE={EnvironmentValue(configuration.CliType)}",
         };
         if (configuration.ClaudePath is not null)
             lines.Add($"RUNNER_CLAUDE_CLI_BIN={EnvironmentValue(configuration.ClaudePath)}");

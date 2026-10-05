@@ -96,6 +96,10 @@ CLI execution tests.
   await CLI startup or PTY parsing. Failed refreshes retain the last good
   values and expose `probeFailedAt`, `cliVersion`, and the probe error so the UI
   can show an attributable stale marker.
+- `GET /api/cli/quota/history` (AGT-3001) is also store-only: it reads the
+  14-day `QuotaHistoryStore` series that `QuotaService` appends after each
+  trusted probe, and its rate and 100 % forecast come from the pure
+  `QuotaForecastPolicy`. See [quota forecast](../../app/help/quota-forecast.md).
 - Claude and Codex version changes are checked after startup and periodically.
   Keep the structured `CLI version changed` log line when editing version or
   self-heal behavior.

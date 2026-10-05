@@ -327,7 +327,6 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
         private readonly string _error;
 
         public PipeClosedRunner(string error) : base(
-            claude: null!,
             logger: NullLogger<OrchestratorRunner>.Instance,
             parsers: null,
             modelRegistry: null,
@@ -372,7 +371,6 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
         private readonly Exception _exception;
 
         public ThrowingRunner(Exception exception) : base(
-            claude: null!,
             logger: NullLogger<OrchestratorRunner>.Instance,
             parsers: null,
             modelRegistry: null,
