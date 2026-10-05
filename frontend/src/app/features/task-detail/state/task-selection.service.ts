@@ -47,6 +47,11 @@ function indexWarming(reply: { reason: string | null }): boolean {
   return reply.reason === 'task-index-warming';
 }
 
+/** Public references resolve case-insensitively on the server (`AGT-12` = `agt-12`). */
+function sameReference(a: string | null | undefined, b: string | null | undefined): boolean {
+  return !!a && !!b && a.toLowerCase() === b.toLowerCase();
+}
+
 /** Run `work` after the browser had one frame to paint the current state. */
 function afterNextPaint(work: () => void): void {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(work, 0));
@@ -221,6 +226,10 @@ export class TaskSelectionService {
   readonly resourceStates = signal<ResourceStates>(idleResources());
   private activeRequests: Subscription[] = [];
   private coreRefreshInFlight = false;
+  /** Same-generation resource reloads after a conflict; bounded so a persistent mismatch cannot loop. */
+  private conflictReloads = 0;
+  /** The in-flight review read, so an evidence request can supersede a plain one. */
+  private reviewRequest: { subscription: Subscription; evidence: boolean } | null = null;
   private activeProject: string | null = null;
   private activeAttempt: string | null = null;
   private expandedTab: string | null = null;
@@ -444,11 +453,12 @@ export class TaskSelectionService {
     this.activeProject = project;
     this.activeAttempt = null;
     this.resourceStates.set(idleResources());
-    const accept = (core: TaskCore) => {
-      if (token !== this.openDetailToken || core.state === 'warming') return;
-      if (core.id !== info.id && core.key !== info.id) return;
-      if (info.taskKey && core.taskKey !== info.taskKey) return;
+    const accept = (core: TaskCore): boolean => {
+      if (token !== this.openDetailToken || core.state === 'warming') return false;
+      if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)) return false;
+      if (info.taskKey && core.taskKey !== info.taskKey) return false;
       this.acceptCore(core, info, project, token, opts);
+      return true;
     };
     const cached = this.prefetch.takeCore(info.id, project);
     if (cached) accept(cached);
@@ -467,8 +477,18 @@ export class TaskSelectionService {
             }, TaskSelectionService.WARMING_RETRY_MS);
             return;
           }
-          if (!cached || cached.coreVersion !== core.coreVersion || cached.runtimeVersion !== core.runtimeVersion)
-            accept(core);
+          if (cached && cached.coreVersion === core.coreVersion && cached.runtimeVersion === core.runtimeVersion)
+            return;
+          if (accept(core) || this.selectedCore()) return;
+          // The server answered for another task than the reference names.
+          // Never leave the route loading without an outcome.
+          if (opts.onNotFound) {
+            this.prefetch.invalidate(info.id);
+            opts.onNotFound();
+            return;
+          }
+          this.detailLoading.set(false);
+          this.failDetailLoad({ status: 404 }, info.key || info.id, retry);
         },
         error: error => {
           if (token !== this.openDetailToken) return;
@@ -515,9 +535,20 @@ export class TaskSelectionService {
       perfMeasure('job-select-to-rendered', 'job-select-click', 'job-select-rendered');
     }
     if (!generationChanged) return;
+    this.conflictReloads = 0;
     this.resourceStates.set(idleResources());
     // Give the bounded core a paint opportunity before requesting documents.
     afterNextPaint(() => { if (this.isCurrent(token, core)) this.loadInitialDocuments(token); });
+  }
+
+  /** Re-read every section a generation conflict left stale, for the current core. */
+  private reloadConflictedResources(token: number): void {
+    const states = this.resourceStates();
+    for (const name of Object.keys(states) as ResourceName[]) {
+      if (states[name].phase !== 'stale' || states[name].reason !== 'core-generation-changed') continue;
+      if (name === 'documents') this.loadInitialDocuments(token);
+      else this.loadResource(name, name === 'review' && this.expandedTab === 'evidence');
+    }
   }
 
   /** A 409 rejects the resource generation; fetch core before any resource retry. */
@@ -540,7 +571,12 @@ export class TaskSelectionService {
         }
         if (fresh.id !== core.id || fresh.taskKey !== core.taskKey
           || fresh.projectId !== project) return;
+        const sameGeneration = fresh.coreVersion === core.coreVersion
+          && fresh.runtime.attemptId === core.runtime.attemptId;
         this.acceptCore(fresh, info, project, token);
+        // An unchanged generation resets nothing in acceptCore, so the
+        // conflicted sections would stay stale. Re-read them once.
+        if (sameGeneration && this.conflictReloads++ === 0) this.reloadConflictedResources(token);
       },
       error: error => {
         this.coreRefreshInFlight = false;
@@ -635,7 +671,14 @@ export class TaskSelectionService {
   loadResource(name: Exclude<ResourceName, 'documents'>, evidence = false): void {
     const core = this.selectedCore();
     const project = this.activeProject;
-    if (!core || !project || this.resourceStates()[name].phase === 'loading') return;
+    if (!core || !project) return;
+    if (this.resourceStates()[name].phase === 'loading') {
+      // Evidence is a superset of the plain review read: replace that read
+      // instead of dropping the evidence request behind it.
+      const review = this.reviewRequest;
+      if (name !== 'review' || !evidence || !review || review.evidence || review.subscription.closed) return;
+      review.subscription.unsubscribe();
+    }
     const token = this.openDetailToken;
     this.setResourceState(name, 'loading', null);
     const request = this.jobService.getDetailResource<TaskUsageData | TaskReviewData | TaskHistoryData | TaskGitData>(
@@ -696,6 +739,7 @@ export class TaskSelectionService {
       },
     });
     this.activeRequests.push(request);
+    if (name === 'review') this.reviewRequest = { subscription: request, evidence };
   }
 
   /**
@@ -731,6 +775,8 @@ export class TaskSelectionService {
   retryResource(name: ResourceName): void {
     if (this.resourceStates()[name].reason === 'core-generation-changed') {
       const core = this.selectedCore();
+      // An explicit retry may re-read once more after an unchanged refresh.
+      this.conflictReloads = 0;
       if (core) this.refreshCoreAfterConflict(this.openDetailToken, core);
     } else if (name === 'documents') this.retryDocuments();
     else this.loadResource(name, name === 'review' && this.expandedTab === 'evidence');

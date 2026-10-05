@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, type HttpRequest } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from '../../../models/task.model';
@@ -10,7 +10,7 @@ import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService } from './lane-pager.service';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
-import type { TaskCore } from '../../../models/task-core.model';
+import type { ResourceName, TaskCore } from '../../../models/task-core.model';
 
 describe('TaskSelectionService · stable task URLs', () => {
   let selection: TaskSelectionService;
@@ -71,7 +71,28 @@ describe('TaskSelectionService · stable task URLs', () => {
   const registry = (...entries: { id: string; shortCode: string | null; storageLocation: string }[]) =>
     projects.setWorkspaces(([{ projects: entries.map(entry => ({ ...entry,
       displayName: entry.id })) }]) as unknown as RegistryWorkspaceListItem[]);
-  const afterPaint = () => new Promise(resolve => setTimeout(resolve, 40));
+  /**
+   * Settle the service's post-paint work (one animation frame, then a
+   * macrotask) before asserting that nothing was requested. jsdom runs frame
+   * callbacks in registration order, so work queued before this call has run
+   * when it resolves; a fixed sleep raced that work on a stalled host.
+   */
+  const afterPaint = async () => {
+    await Promise.resolve();
+    await new Promise<void>(resolve => typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(() => setTimeout(resolve, 0)) : setTimeout(resolve, 0));
+  };
+  /** Block the event loop the way a CPU-starved review host does. */
+  const stallHost = (ms: number) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) { /* busy host */ }
+  };
+  /** Wait until a resource read is in flight, however late the host schedules it. */
+  const loading = (resource: ResourceName) => vi.waitFor(
+    () => expect(selection.resourceStates()[resource].phase).toBe('loading'), { timeout: 5000 });
+  /** Wait for exactly one matching request instead of sleeping past a retry timer. */
+  const nextRequest = (match: (req: HttpRequest<unknown>) => boolean) =>
+    vi.waitFor(() => http.expectOne(match), { timeout: 5000 });
   const documentReply = (task: TaskInfo, name: string, coreVersion = '1') => ({
     id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
     coreVersion, resource: 'documents', version: 'v1', computedAt: null, state: 'ready',
@@ -85,12 +106,12 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
   /** Land both documents after the core paint, then usage (and history) after the rich paint. */
   const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
-    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'));
+    await loading('documents');
     const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
     expect(documents).toHaveLength(2);
     for (const request of documents)
       request.flush(documentReply(task, request.request.params.get('name')!, opts.coreVersion));
-    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'));
+    await loading('usage');
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
     if (opts.history) {
@@ -121,6 +142,39 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selectedCore()?.key).toBe('AGT-2124');
     expect(`${location.pathname}${location.search}${location.hash}`)
       .toBe('/studio?view=git#/tasks/AGT-2124');
+  });
+
+  it('accepts a public URL typed in another case than the canonical key', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    history.replaceState(null, '', '/#/tasks/agt-2124');
+
+    selection.restoreFromUrl();
+
+    // The server resolves references case-insensitively and answers with the canonical key.
+    http.expectOne(req => req.url.endsWith('/api/tasks/agt-2124/core')).flush(coreFor(info));
+    expect(selection.selectedCore()?.key).toBe('AGT-2124');
+    expect(selection.detailLoading()).toBe(false);
+    expect(selection.detailLoadError()).toBeNull();
+  });
+
+  it('resolves a public URL on the server when its core names another task', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+    const other = { ...info, id: 'other-task', key: 'AGT-9', taskKey: 'C:\\private\\project::other-task' } as TaskInfo;
+
+    selection.restoreFromUrl();
+
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(other));
+    expect(selection.selectedCore()).toBeNull();
+    // Never a silent spinner: the reference goes to server-side resolution.
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'))
+      .flush(detail);
+    expect(selection.selected()?.info.id).toBe(info.id);
+    expect(selection.detailLoading()).toBe(false);
   });
 
   it('accepts a legacy locator once and replaces it with the stable key', () => {
@@ -484,7 +538,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush(coreFor(info, 'Agent Studio'));
     const warming = { state: 'warming', reason: 'task-index-warming', jobId: info.id, projectId: 'Agent Studio' };
-    await afterPaint();
+    await loading('documents');
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(warming, { status: 202, statusText: 'Accepted' });
 
@@ -495,7 +549,6 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectNone(req => req.url.endsWith('/details/usage'));
 
     // One warming retry later the rich view paints as usual.
-    await new Promise(resolve => setTimeout(resolve, 650));
     await paintRich(info);
     expect(selection.resourceStates().documents.phase).toBe('ready');
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
@@ -505,8 +558,7 @@ describe('TaskSelectionService · stable task URLs', () => {
       .flush(warming, { status: 202, statusText: 'Accepted' });
     expect(selection.resourceStates().review).toEqual({ phase: 'warming', reason: 'task-index-warming' });
     expect(selection.selectedCore()?.id).toBe(info.id);
-    await new Promise(resolve => setTimeout(resolve, 650));
-    http.expectOne(req => req.url.endsWith('/details/review'))
+    (await nextRequest(req => req.url.endsWith('/details/review')))
       .flush({ error: 'offline' }, { status: 503, statusText: 'Unavailable' });
     expect(selection.resourceStates().review.phase).toBe('error');
   });
@@ -634,23 +686,38 @@ describe('TaskSelectionService · stable task URLs', () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: generation });
-    await afterPaint();
+    await loading('documents');
     const documents = http.match(req => req.url.endsWith('/details/documents'));
     expect(documents.map(request => request.request.params.get('generation'))).toEqual([generation, generation]);
     for (const request of documents)
       request.flush(documentReply(info, request.request.params.get('name')!, generation));
     expect(selection.resourceStates().documents.phase).toBe('ready');
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
-    await afterPaint();
+    await loading('usage');
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('settles post-paint work before a negative assertion even when the host stalls', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    // A stall past the old 40 ms sleep let that sleep resolve before the
+    // queued document reads, so `expectNone` checks passed vacuously.
+    const settled = afterPaint();
+    stallHost(80);
+    await settled;
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    await paintRich(info);
   });
 
   it('marks an enrichment reply for another core generation stale instead of applying it', async () => {
     selection.openDetail(info);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush(coreFor(info, 'Agent Studio'));
-    await afterPaint();
+    // Review hosts stall; a fixed sleep then read the requests before they were sent.
+    stallHost(80);
+    await loading('documents');
     const [prompt, status] = http.match(req => req.url.endsWith('/details/documents'));
     prompt.flush(documentReply(info, 'prompt', '2'));
     status.flush(documentReply(info, 'status', '2'));
@@ -660,14 +727,74 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectNone(req => req.url.endsWith('/details/usage'));
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
       .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
-    await afterPaint();
+    stallHost(80);
+    await loading('documents');
     const documents = http.match(req => req.url.endsWith('/details/documents'));
     expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
     for (const request of documents)
       request.flush(documentReply(info, request.request.params.get('name')!, '2'));
-    await afterPaint();
+    stallHost(80);
+    await loading('usage');
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('re-reads a conflicted section once when the refreshed core keeps its generation', async () => {
+    const conflict = { status: 409, statusText: 'Conflict' };
+    const documents = (req: HttpRequest<unknown>) => req.url.endsWith('/details/documents');
+    const core = (req: HttpRequest<unknown>) => req.url.endsWith('/human-readable-slug/core');
+    selection.openDetail(info);
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    await loading('documents');
+    let [prompt, status] = http.match(documents);
+    prompt.flush({ error: 'stale core' }, conflict);
+    status.flush(documentReply(info, 'status'));
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+
+    // The generation flipped back before the refresh: same core, so re-read.
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    [prompt, status] = http.match(documents);
+    expect([prompt, status].map(request => request.request.params.get('generation'))).toEqual(['1', '1']);
+
+    // A persistent mismatch stays stale with Retry instead of looping.
+    prompt.flush({ error: 'stale core' }, conflict);
+    status.flush(documentReply(info, 'status'));
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    http.expectNone(documents);
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+
+    selection.retryResource('documents');
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    for (const request of http.match(documents))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    (await nextRequest(req => req.url.endsWith('/details/usage')))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('lets an evidence request supersede a plain review read in flight', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await paintRich(info);
+
+    selection.loadResourcesForTab('code-review');
+    const plain = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(plain.request.params.get('evidence')).not.toBe('true');
+    selection.loadResourcesForTab('evidence');
+
+    expect(plain.cancelled).toBe(true);
+    const withEvidence = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(withEvidence.request.params.get('evidence')).toBe('true');
+    const evidence = [{ path: 'results/core-light.png' }];
+    withEvidence.flush({
+      id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence },
+    });
+    expect(selection.selected()?.reviewEvidence).toEqual(evidence);
+    expect(selection.resourceStates().review.phase).toBe('ready');
   });
 
   it('refreshes core after a resource 409 before requesting the new generation', async () => {
@@ -776,8 +903,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.detailPreview()).toBeNull();
     expect(selection.detailLoading()).toBe(false);
 
-    await new Promise(resolve => setTimeout(resolve, 650));
-    const retry = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    const retry = await nextRequest(req => req.url.endsWith('/human-readable-slug/core'));
     expect(selection.selected()).toBe(rich);
     expect(selection.selectedCore()?.id).toBe(info.id);
     expect(selection.detailPreview()).toBeNull();
