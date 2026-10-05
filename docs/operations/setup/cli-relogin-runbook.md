@@ -38,7 +38,9 @@ status data remains unknown.
 
 The real check uses the configured CLI selection and the CAR execution route,
 read-only, in an isolated probe context and an empty scratch repository. It
-has a 30-second deadline, one in-flight check per provider, a daily
+has one 30-second deadline that spans the real request, the official
+incident lookup and the independent-host comparison wait; evidence the
+deadline cuts off remains unknown. It allows one in-flight check per provider, a daily
 48-request ceiling, and a 30-minute maximum interval after a successful real
 check. When that ceiling passes and the request budget is exhausted, the
 outcome becomes `indeterminate`; the original real-success time is retained.
