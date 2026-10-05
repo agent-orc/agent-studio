@@ -102,6 +102,79 @@ public sealed class AcceptedIntegrationFailurePolicyTests
         Assert.False(string.IsNullOrWhiteSpace(failure.Reason));
     }
 
+    /// <summary>
+    /// AGT-2995: every typed Error code the merge runner persists survives the
+    /// round trip through the pipeline step unchanged, carries its own label,
+    /// and keeps the recorded reason as the card detail.
+    /// </summary>
+    [Theory]
+    [InlineData(AcceptedIntegrationFailureCodes.RepositoryRootUnavailable)]
+    [InlineData(AcceptedIntegrationFailureCodes.StaleAttempt)]
+    [InlineData(AcceptedIntegrationFailureCodes.WorktreeUnavailable)]
+    [InlineData(AcceptedIntegrationFailureCodes.BranchSyncFailed)]
+    [InlineData(AcceptedIntegrationFailureCodes.LineageBlocked)]
+    [InlineData(AcceptedIntegrationFailureCodes.RebaseAttributionFailed)]
+    [InlineData(AcceptedIntegrationFailureCodes.IntegrationRefUnresolved)]
+    [InlineData(AcceptedIntegrationFailureCodes.GateUnavailable)]
+    public void Classify_PersistedErrorCode_IsKeptWithItsOwnLabelAndReason(string code)
+    {
+        const string reason = "The exact diagnostic the runner recorded.";
+
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "error",
+            reason,
+            verdictSummary: null,
+            persistedCode: code);
+
+        Assert.NotNull(failure);
+        Assert.Equal(code, failure.Code);
+        Assert.NotEqual("Integration failed", failure.Label);
+        Assert.Equal(reason, failure.Reason);
+        Assert.False(failure.RebaseRecoveryAvailable);
+    }
+
+    [Theory]
+    [InlineData("Release source 'origin/task' is not a fast-forward of 'main'.")]
+    [InlineData("Source or target branch moved after the pre-main test run; release merge was not attempted.")]
+    public void InferErrorCode_ReadsAMovedReleaseLineAsSourceNeedsRebase(string reason)
+    {
+        Assert.Equal(
+            AcceptedIntegrationFailureCodes.SourceNeedsRebase,
+            AcceptedIntegrationFailurePolicy.InferErrorCode(reason));
+    }
+
+    [Fact]
+    public void FailureCodeFor_AnErrorWithoutCode_FallsBackToTheInferredCode()
+    {
+        var legacy = MergeIntoIntegrationResult.Of(
+            MergeIntoIntegrationOutcome.Error,
+            error: "Release source 'x' must be rebased onto 'main' before the full-suite gate.");
+        var typed = MergeIntoIntegrationResult.Failed(
+            AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+            "The integration worktree is unavailable.");
+
+        Assert.Equal(AcceptedIntegrationFailureCodes.SourceNeedsRebase, AcceptedIntegrationFailureCodes.For(legacy));
+        Assert.Equal(AcceptedIntegrationFailureCodes.WorktreeUnavailable, AcceptedIntegrationFailureCodes.For(typed));
+        Assert.Null(AcceptedIntegrationFailureCodes.For(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged)));
+        Assert.Null(AcceptedIntegrationFailureCodes.For(
+            MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.PushedForReview)));
+    }
+
+    [Fact]
+    public void ParkReason_ForAnError_ReadsTheCodeNotTheBareOutcome()
+    {
+        var failed = MergeIntoIntegrationResult.Failed(
+            AcceptedIntegrationFailureCodes.SourceNeedsRebase,
+            "Release source must be rebased onto 'main'.");
+
+        Assert.Equal("integration: source-needs-rebase", RemoteDeliveryParkReason.For(failed));
+        Assert.Equal(
+            "automatic recovery budget used: 2/2",
+            RemoteDeliveryParkReason.For(failed with { AutomaticRecoveryDetail = "automatic recovery budget used: 2/2" }));
+        Assert.Null(RemoteDeliveryParkReason.For(MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged)));
+    }
+
     [Fact]
     public void Classify_PassedStep_HasNoFailure()
     {
