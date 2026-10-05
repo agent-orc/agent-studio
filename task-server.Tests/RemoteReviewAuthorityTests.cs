@@ -1716,8 +1716,10 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
     }
 
-    [Fact]
-    public async Task Baseline_evidence_treats_a_nonreproduced_review_flaky_failure_as_quarantine_not_product_failure()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Flake_grade_requires_passing_same_tree_repeat_and_counts_unproven_items(bool passingRepeat)
     {
         using var temp = new TempDirectory();
         var store = Store(temp.Path);
@@ -1758,14 +1760,34 @@ public sealed partial class RemoteReviewAuthorityTests
             ],
         };
 
+        if (passingRepeat)
+            request = request with
+            {
+                Commands = request.Commands.Concat(request.Commands.Select(command => command with
+                {
+                    Phase = "clean-repeat", WorkspaceRole = "clean-repeat", FlakyQuarantinedFailures = [],
+                })).ToArray(),
+            };
+
         var report = await store.ReportReviewAsync(
             claim.Attempt!.AttemptId,
             request,
             "review-a",
             default);
 
-        Assert.Equal("Pass", report.Outcome);
-        Assert.False(report.RetryScheduled);
+        Assert.Equal(passingRepeat ? "Pass" : "ReviewInfra", report.Outcome);
+        Assert.Equal(!passingRepeat, report.RetryScheduled);
+        var history = await store.ReadFailureFingerprintsAsync(
+            FailureItemFingerprint.Compute(["Product.ProcessTiming"]));
+        if (passingRepeat) Assert.Empty(history);
+        else
+        {
+            Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
+            Assert.Equal(1, Assert.Single(history).Count);
+            await store.ReportReviewAsync(claim.Attempt!.AttemptId, request, "review-a", default);
+            Assert.Equal(1, Assert.Single(await store.ReadFailureFingerprintsAsync(
+                FailureItemFingerprint.Compute(["Product.ProcessTiming"]))).Count);
+        }
     }
 
     [Fact]

@@ -147,8 +147,10 @@ public sealed class GateFailureRouterTests : IDisposable
     public async Task ProductClass_StartsFixRound_WithFailingItemAndReason()
     {
         string? startedPrompt = null;
+        var started = 0;
         var stack = Build((_, prompt, _) =>
         {
+            started++;
             startedPrompt = prompt;
             return Task.CompletedTask;
         });
@@ -162,6 +164,11 @@ public sealed class GateFailureRouterTests : IDisposable
         Assert.Contains("AutoPushStrategyTests.CompletedPushWorker_PushesQueuedCommitToMain", startedPrompt);
         Assert.Contains("The merge gate failed on", startedPrompt, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(GateFailureRouteAction.FixRound, GateFailureRouter.ReadReceipt(card.FolderPath)!.Route!.Action);
+        var subject = ReviewSubjectStore.Read(card.FolderPath)!;
+        Assert.Contains(subject.ResultSha, startedPrompt);
+        Assert.Contains(subject.ResultRef!, startedPrompt);
+        await stack.Reconciler.RunOnceAsync();
+        Assert.Equal(1, started);
         Assert.Contains(stack.Timeline.ReadAll(card.FolderPath), entry =>
             entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
             && entry.Details?.GetValueOrDefault("source") == GateFailureRouter.FixRoundSource);
@@ -181,6 +188,42 @@ public sealed class GateFailureRouterTests : IDisposable
         Assert.Equal(TaskStates.AutoReview, card.State);
         Assert.Null(card.ParkedBlocker);
         Assert.Null(GateFailureRouter.ReadReceipt(card.FolderPath));
+
+        // Recovery must do the failed action, not replay a false success receipt.
+        var recovered = Build();
+        await recovered.Reconciler.RunOnceAsync();
+        var cause = Assert.Single(recovered.Interventions.List(_watchPath));
+        card = Card(recovered, id);
+        Assert.Equal(cause.FollowUpKey, GateFailureRouter.ReadReceipt(card.FolderPath)!.CauseKey);
+        Assert.Contains(cause.FollowUpKey, card.References.BlockedBy);
+    }
+
+    [Fact]
+    public async Task Legacy_attach_receipt_without_cause_is_retried()
+    {
+        var stack = Build(withoutInterventions: true);
+        var id = SeedRedGate(stack, "legacy receipt", "integration-branch.derived-from-AGT-2752.log",
+            TaskStates.AutoReview);
+        var card = Card(stack, id);
+        var receipt = new GateFailureTriageReceipt
+        {
+            LogName = "pre-develop-build-gate-1.log",
+            DeliverySha = ReviewSubjectStore.Read(card.FolderPath)!.ResultSha,
+            Triage = GateFailureTriagePolicy.Classify(
+                GateFailureTriagePolicyTests.Fixture("integration-branch.derived-from-AGT-2752.log")),
+            Route = new GateFailureRoute(GateFailureRouteAction.AttachToCause,
+                GateFailureParkCategories.SharedCause, "integration-branch-cause"),
+        };
+        File.WriteAllText(Path.Combine(card.FolderPath, "post-steps", GateFailureTriageReceipt.FileName),
+            JsonSerializer.Serialize(receipt, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var recovered = Build();
+        await recovered.Reconciler.RunOnceAsync();
+
+        var cause = Assert.Single(recovered.Interventions.List(_watchPath));
+        card = Card(recovered, id);
+        Assert.Equal(cause.FollowUpKey, GateFailureRouter.ReadReceipt(card.FolderPath)!.CauseKey);
+        Assert.Contains(cause.FollowUpKey, card.References.BlockedBy);
     }
 
     [Fact]

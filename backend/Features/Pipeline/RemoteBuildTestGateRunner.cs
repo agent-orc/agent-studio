@@ -68,8 +68,14 @@ public sealed class RemoteBuildTestGateRunner(
                     return Failure(request, BuildTestGateFailureKind.MissingSource,
                         "Remote gate evidence does not prove the requested commit and gate.");
                 if (attempt < MaxTransportAttempts && result.Verdict == BuildTestGateVerdict.Fail
-                    && GateFailureTriagePolicy.ContainsTransportMarker(result.Reason + "\n" + result.Output))
+                    && GateFailureTriagePolicy.ContainsTransportMarker(result.Reason + "\n" + result.Output)
+                    && GateFailureTriagePolicy.FailingItems(result.Output).Count == 0)
+                {
+                    logger.LogWarning(
+                        "remote_gate_transport_retry gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
+                        request.GateId, request.ExpectedSha, attempt);
                     continue;
+                }
                 return result with { Repository = request.RepositoryPath };
             }
             catch (OperationCanceledException)

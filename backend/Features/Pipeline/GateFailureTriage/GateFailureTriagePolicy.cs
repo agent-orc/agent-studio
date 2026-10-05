@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
@@ -221,10 +219,7 @@ public static partial class GateFailureTriagePolicy
 
     /// <summary>Identity of a set of failing items, independent of class, card, host, and timing.</summary>
     public static string ItemFingerprint(IReadOnlyList<string> items)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", items.Order(StringComparer.Ordinal))));
-        return "gate-items:" + Convert.ToHexString(bytes).ToLowerInvariant()[..16];
-    }
+        => FailureItemFingerprint.Compute(items);
 
     private static GateFailureTriage Product(IReadOnlyList<string> items, IReadOnlyList<string> markers)
         => new(

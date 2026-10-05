@@ -271,9 +271,11 @@ public static class GateEnvironmentRetryPolicy
     /// same delivery SHA rather than sent through a new review.
     /// </summary>
     public static bool IsGateEnvironmentFailure(TaskIntegrationStatus? integration)
-        => integration?.Failure?.Code is
+        => (integration?.Failure?.Code is
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure
-            or AcceptedIntegrationFailureCodes.GateInterrupted;
+            or AcceptedIntegrationFailureCodes.GateInterrupted)
+            && !GateFailureTriagePolicy.ContainsTransportMarker(
+                integration.Failure.Reason + "\n" + integration.Failure.EvidenceExcerpt);
 
     /// <summary>
     /// Operator-facing parked reason. Named after the environment failure it

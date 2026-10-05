@@ -446,7 +446,7 @@ the pure `GateFailureTriagePolicy` assigns one class:
 
 | Class | Decided by | Route |
 |---|---|---|
-| `environment` | `Worker exited unexpectedly`, `JavaScript heap out of memory`, `violated gate-run budget` / `budget=gate-run`, `ECONNRESET`, `ETIMEDOUT`, `unable to access`, `Could not resolve host`, a gate-typed toolchain failure, an interrupted gate, or an AGT-2916 clean repeat that passed on the same tree | Stays in Auto Review; the durable step becomes `gate-environment-failure` and the bounded gate-environment ladder replays the integration with the passed review |
+| `environment` | `Worker exited unexpectedly`, `JavaScript heap out of memory`, `violated gate-run budget` / `budget=gate-run`, `ECONNRESET`, `ETIMEDOUT`, `unable to access`, `Could not resolve host`, a gate-typed toolchain failure, an interrupted gate, or an AGT-2916 clean repeat that passed on the same tree | Transport retries the same exact-subject gate at most three times. Other environment failures stay in Auto Review while the bounded gate-environment ladder replays integration with the passed review |
 | `product` | Failing test or build-error names, no environment marker | One fix round per delivery SHA, whose prompt carries the failing items and the reason line |
 | `integration-branch` | AGT-2916 diagnosis `baseline=red` | Opens or joins the cause card for the fingerprint; the card waits on it |
 | `undecidable` | No gate log, a green newest log, conflicting markers (an environment marker and failing items), or a flake label without a re-run | Parks with `[gate-undecidable]`, stating the missing evidence |
@@ -468,7 +468,17 @@ creates a shared cause.
 **No silent flake label.** A gate may call a failure flaky only when it re-ran
 the same item on the same tree and the re-run passed (`retryPerformed=true`).
 A flake label without that re-run is `undecidable`, and its items are still
-fingerprinted and counted.
+fingerprinted and counted. Review report admission uses
+`ReviewFlakeEvidencePolicy` through the shared diagnosis policy on both the
+Task Server and monolith paths. A retry flag or an item disappearing from
+failed retry output is insufficient: the evidence must include a successful
+clean repeat of the same command and arguments, commit, and tree. Unsupported
+command or reviewer flake claims become `unclassified-first-occurrence`
+(the diagnosis contract's undecidable result), with the missing proof stated.
+Named items from unsupported command claims enter the existing fingerprint
+store under the same item identity as gate triage. The review executor only
+quarantines marked items after a successful repeat; its original failed
+observation remains in the existing diagnosis history.
 
 **Fallbacks.** Each automatic route is bounded, and when it runs out the card
 parks with a typed category rather than `operator-decision`:
@@ -477,7 +487,17 @@ disabled) and `gate-product` (fix round spent, disabled, or unable to start).
 Only `gate-undecidable` asks a person to judge the failure. The gate itself is
 unchanged, and a failed delivery is never accepted. The last routing per gate
 log is kept in `post-steps/gate-triage.json`, so a reconciler tick repeats a
-side effect at most once per log.
+side effect at most once per log. Cause-card creation must succeed before an
+`AttachToCause` receipt is saved. A failed creation leaves the card in place
+for the next reconciler sweep, and a legacy receipt without a cause key is
+retried rather than treated as completed.
+
+Transport failures are retried by `RemoteBuildTestGateRunner` at most three
+times against the identical gate request and exact commit, before the delivery
+router sees a terminal result. A failure naming product test items is not
+retried merely because its output also contains network text. Transport
+exhaustion is excluded from integration replay and retains a typed environment
+blocker; it never starts an agent fix round or accepts the failed gate.
 
 ## Integration-branch gate health (AGT-2819)
 
