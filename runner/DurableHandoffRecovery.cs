@@ -219,7 +219,17 @@ public sealed class DurableHandoffRecovery
         try
         {
             await ReplayPendingArtifactReportAsync(outbox, ct);
-            artifactPartial = await TransferArtifactsBeforeSettlementAsync(outbox, manifest, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            artifactPartial = true;
+            _log(
+                $"artifact-report replay remained non-fatal run={outbox.Authority.RunId} "
+                + $"artifacts=partial error={ex.Message}");
+        }
+        try
+        {
+            artifactPartial |= await TransferArtifactsBeforeSettlementAsync(outbox, manifest, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
