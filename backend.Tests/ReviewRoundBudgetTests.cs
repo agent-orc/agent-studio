@@ -101,6 +101,18 @@ public sealed class ReviewRoundBudgetTests
     }
 
     [Fact]
+    public void ZeroAutomaticReissueAllowance_KeepsFirstBlockForEscalation()
+    {
+        var decision = ReviewRoundBudgetPolicy.Decide(
+            ReviewRoundBudgetLedger.Empty, "r1", ["requirement-fit"],
+            maximumRounds: 4, consecutiveBlockRounds: 2,
+            priorAutomaticReissues: 0, maximumAutomaticReissues: 0);
+
+        Assert.False(decision.Degrade);
+        Assert.Equal(1, decision.RoundNumber);
+    }
+
+    [Fact]
     public void AcceptedAttempt_IsChargedOnceAndFollowUpLinkIsStableAcrossReplay()
     {
         var folder = Path.Combine(Path.GetTempPath(), "review-budget-" + Guid.NewGuid().ToString("N"));

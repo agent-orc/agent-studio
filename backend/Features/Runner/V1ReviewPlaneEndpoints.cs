@@ -31,6 +31,12 @@ internal static class ReviewRestartOutcomePolicy
 public static class V1ReviewPlaneEndpoints
 {
     private const string LoggerName = "AgentStudio.Runner.V1ReviewPlaneEndpoints";
+    internal static int CountPriorAutomaticReissues(string? workspace, string project, string taskId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspace);
+        return ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+            ReviewDecisionLog.ReadAll(workspace, project), taskId);
+    }
     private static readonly ConcurrentDictionary<string, object> ReviewBudgetFollowUpGates =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -759,9 +765,8 @@ public static class V1ReviewPlaneEndpoints
                     .Select(verdict => verdict.Aspect),
                 settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds,
                 ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
-                roundSeed.Rounds.Count(round => round.AttemptId != attemptId
-                    && round.BlockingAspects.Any()
-                    && !round.BlockingAspects.Contains("build-tests", StringComparer.OrdinalIgnoreCase)),
+                CountPriorAutomaticReissues(
+                    configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
                 settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
                     ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2));
             var shouldDegrade = outcome == ReviewTerminalOutcome.ProductFailure && roundBudget.Degrade;

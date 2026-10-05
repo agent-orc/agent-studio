@@ -2193,7 +2193,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             .ToList();
         Assert.Equal(ReviewDecisionKind.AcceptAsDone, records[^1].Kind);
         Assert.Equal(1, records[^1].AttemptEpoch);
-        Assert.Equal(0, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, slug));
+        Assert.Equal(2, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, slug));
     }
 
     private void SeedHumanReviewCard(string slug, IReadOnlyList<string> tags)

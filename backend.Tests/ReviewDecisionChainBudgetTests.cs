@@ -35,6 +35,43 @@ public class ReviewDecisionChainBudgetTests
             Array.Empty<ReviewDecisionRecord>(), Job));
 
     [Fact]
+    public void RemoteBudget_UsesRecordedReissuesRatherThanEarlierBlocks()
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), "remote-reissue-budget-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var history = new ReviewRoundBudgetLedger([
+                new DeliveredReviewRound("r1", ["code-quality"], []),
+                new DeliveredReviewRound("r2", ["documentation-impact"], []),
+            ]);
+            ReviewDecisionLog.Append(workspace, Rec(ReviewDecisionKind.OperatorRequeue, epoch: 1));
+            ReviewDecisionLog.Append(workspace, Rec(ReviewDecisionKind.Reissue, jobId: Other));
+
+            var actualReissues = V1ReviewPlaneEndpoints.CountPriorAutomaticReissues(workspace, "demo", Job);
+            var unspent = ReviewRoundBudgetPolicy.Decide(history, "r3", ["requirement-fit"],
+                maximumRounds: 4, consecutiveBlockRounds: 2,
+                priorAutomaticReissues: actualReissues, maximumAutomaticReissues: 2);
+
+            Assert.Equal(0, actualReissues);
+            Assert.False(unspent.Degrade);
+
+            ReviewDecisionLog.Append(workspace, Rec(ReviewDecisionKind.Reissue, epoch: 1));
+            ReviewDecisionLog.Append(workspace, Rec(ReviewDecisionKind.Reissue, epoch: 2));
+            actualReissues = V1ReviewPlaneEndpoints.CountPriorAutomaticReissues(workspace, "demo", Job);
+            var spent = ReviewRoundBudgetPolicy.Decide(history, "r3", ["requirement-fit"],
+                maximumRounds: 4, consecutiveBlockRounds: 2,
+                priorAutomaticReissues: actualReissues, maximumAutomaticReissues: 2);
+
+            Assert.Equal(2, actualReissues);
+            Assert.Equal(["requirement-fit"], spent.DegradedAspects);
+        }
+        finally
+        {
+            if (Directory.Exists(workspace)) Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    [Fact]
     public void OnlyReissues_CountsAll_LikeLifetimeTotal()
     {
         // No chain-ender in between: per-chain count == the old lifetime total, so
@@ -191,7 +228,7 @@ public sealed class ReviewDecisionChainBudgetJournalTests : IDisposable
         string jobId = Job,
         int? epoch = null)
         => ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
-            CreatedAt: new DateTime(2026, 1, 1, 0, minute, 0, DateTimeKind.Utc),
+            CreatedAt: DateTime.UnixEpoch.AddMinutes(minute),
             JobId: jobId,
             Project: Project,
             Kind: kind,

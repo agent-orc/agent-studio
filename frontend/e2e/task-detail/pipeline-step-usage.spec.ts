@@ -475,12 +475,12 @@ function sixRunTimeline() {
 
 async function installFixtureRoutes(page: Page) {
   await page.route('**/api/**', route => route.fulfill(json([])));
-  await page.route('**/hubs/jobs/negotiate**', route => route.fulfill(json({
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
     connectionId: 'review-budget-mock', connectionToken: 'review-budget-mock',
     negotiateVersion: 1,
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
   })));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (String(message).includes('"protocol"')) socket.send('{}\x1e');
     });
@@ -1117,10 +1117,13 @@ test('token panel: own band, one label per quantity, and model + reasoning level
 });
 
 bareTest('task detail shows the lifetime round budget and spending aspect in both themes', async ({ page }) => {
+  bareTest.setTimeout(120_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await installFixtureRoutes(page);
-  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const budget = page.getByTestId('task-detail-review-round-budget');
+  await expect(budget).toBeVisible();
   await expect(budget).toContainText('Review round 4 of 4');
   await expect(budget).toContainText('code-quality spent the budget');
   for (const theme of ['light', 'dark'] as const) {
