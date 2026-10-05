@@ -425,8 +425,7 @@ public sealed class RemoteReviewExecutorTests : IDisposable
         ReviewWorkDir = _reviewRoot,
         StateDir = Path.Combine(_reviewRoot, "state"),
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
         TtlSeconds = 120,
         HeartbeatSeconds = heartbeatSeconds,
     };

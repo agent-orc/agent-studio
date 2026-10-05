@@ -27,8 +27,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, client, logs.Add);
         var lease = new RunLeaseInfoDto(
             "QS-42", "runner-test", "runner-test", "test-host", 123, "test",
@@ -68,8 +67,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             WorkstationRepositoryRoots = [new WorkstationRepositoryRoot("local", allowed)],
             WorkDir = Path.Combine(_workDir, "work"),
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, client, logs.Add);
         var lease = new RunLeaseInfoDto(
             "QS-43", "runner-test", "runner-test", "test-host", 123, "test",
@@ -103,8 +101,7 @@ public sealed class RemoteTaskRunnerClaimGuardTests : IDisposable
             WorkstationRequiredTools = ["absent-workstation-tool-2940"],
             WorkDir = Path.Combine(_workDir, "work"),
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, client, logs.Add);
         var lease = new RunLeaseInfoDto(
             "QS-44", "runner-test", "runner-test", "test-host", 123, "test",

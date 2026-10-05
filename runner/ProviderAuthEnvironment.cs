@@ -14,8 +14,8 @@ internal static class ProviderAuthEnvironment
         name = ClaudeCodeOAuthToken;
         value = string.Empty;
         if (!string.Equals(
-                AgentCliProcess.NormalizeCliType(cliType),
-                AgentCliProcess.ClaudeCli,
+                CliSelection.NormalizeCliType(cliType),
+                CliSelection.ClaudeCli,
                 StringComparison.Ordinal))
             return false;
 
