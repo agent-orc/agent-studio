@@ -126,7 +126,7 @@ public static class ConnectorRouteSurface
         }
 
         var hub = inventory.TaskServerOperations.Single(operation => operation.Method == "WS");
-        foreach (var pattern in new[] { "/hubs/jobs", "/hubs/jobs/{**path}" })
+        foreach (var pattern in new[] { hub.Path, hub.Path.TrimEnd('/') + "/{**path}" })
         {
             app.MapMethods(pattern, [HttpMethods.Get, HttpMethods.Post, HttpMethods.Delete, HttpMethods.Options],
                     (HttpContext context, ConnectorProxy proxy) => proxy.ForwardHubAsync(context, hub))

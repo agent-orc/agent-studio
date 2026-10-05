@@ -31,7 +31,7 @@ describe('ModelMigrationBadgeComponent', () => {
       setJobModel: vi.fn().mockReturnValue(of({})),
       applyProjectModelMigration: vi.fn().mockReturnValue(of({ from: 'gpt-5.6-sol', to: 'gpt-6-sol', updatedTaskIds: ['a', 'b'], failedTaskIds: [] })),
     };
-    const notifications = { success: vi.fn(), error: vi.fn() };
+    const notifications = { success: vi.fn(), warning: vi.fn(), info: vi.fn(), error: vi.fn() };
     await TestBed.configureTestingModule({
       imports: [ModelMigrationBadgeComponent],
       providers: [
@@ -94,6 +94,27 @@ describe('ModelMigrationBadgeComponent', () => {
     expect(tasks.applyProjectModelMigration).toHaveBeenCalledWith('Studio', 'gpt-5.6-sol');
     expect(notifications.success).toHaveBeenLastCalledWith('Model updated to gpt-6-sol on 2 cards.');
     fixture.detectChanges();
+  });
+
+  it('reports failed project updates without claiming the migration succeeded', async () => {
+    const { component, tasks, notifications } = await create({
+      model: 'gpt-5.6-sol', explicit: true, jobId: 'job-1', project: 'Studio',
+    });
+    const event = new MouseEvent('click');
+
+    tasks.applyProjectModelMigration.mockReturnValue(of({
+      from: 'gpt-5.6-sol', to: 'gpt-6-sol', updatedTaskIds: [], failedTaskIds: ['AGT-1'],
+    }));
+    component.onApplyProject(event);
+    expect(notifications.error).toHaveBeenCalledWith('0 cards updated to gpt-6-sol; 1 failed (AGT-1).');
+    expect(notifications.success).not.toHaveBeenCalled();
+
+    tasks.applyProjectModelMigration.mockReturnValue(of({
+      from: 'gpt-5.6-sol', to: 'gpt-6-sol', updatedTaskIds: ['AGT-2'], failedTaskIds: ['AGT-3'],
+    }));
+    component.onApplyProject(event);
+    expect(notifications.warning).toHaveBeenCalledWith('1 card updated to gpt-6-sol; 1 failed (AGT-3).');
+    expect(notifications.success).not.toHaveBeenCalled();
   });
 
   it('renders nothing for a non-explicit card', async () => {

@@ -135,14 +135,14 @@ async function installHubRoutes(page: Page): Promise<void> {
 
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => { /* late */ }));
   await page.route('**/api/runner/orchestrator-feed**', r => r.fulfill(json({ entries: [], generatedAtUtc: '2026-07-31T00:00:00Z' })));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, r => r.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: REPO_PATH, rootPath: REPO_PATH, repositoryPath: REPO_PATH }])));
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/clients', r => r.fulfill(json([])));
   await page.route('**/api/cli/usage**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', r => r.fulfill(json({ ttlSeconds: 600, snapshots: [] })));
@@ -230,19 +230,19 @@ async function installPaneRoutes(page: Page): Promise<void> {
 
   await page.route('**/api/**', r => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => { /* late */ }));
   await page.route('**/api/runner/orchestrator-feed**', r => r.fulfill(json({ entries: [], generatedAtUtc: '2026-07-31T00:00:00Z' })));
-  await page.route('**/api/auth/status', r => r.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, r => r.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }])));
-  await page.route('**/api/workspaces**', r => r.fulfill(json([])));
-  await page.route('**/api/projects**', r => r.fulfill(json([])));
+  await page.route('**/api/v1/workspaces**', r => r.fulfill(json([])));
+  await page.route('**/api/v1/projects**', r => r.fulfill(json([])));
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
   await page.route('**/api/clients', r => r.fulfill(json([])));
   await page.route('**/api/cli/usage**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/cli/quota**', r => r.fulfill(json({ items: [] })));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({
     projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } },
   })));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/output(\\?|$)`), r => r.fulfill(json([])));
@@ -272,7 +272,7 @@ async function installPaneRoutes(page: Page): Promise<void> {
   });
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/commits/(?:[0-9a-f]+/)?files`), r => r.fulfill(json({ sha: PANE_COMMIT.sha, files: COMMIT_FILES })));
   await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}/commit(\\?|$)`), r => r.fulfill(json({ commit: PANE_COMMIT, files: COMMIT_FILES })));
-  await page.route(new RegExp(`/api/(?:jobs|tasks)/${idEsc}(\\?|$)`), r => r.fulfill(json(detail)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), r => r.fulfill(json(detail)));
 }
 
 /* --------------------------------------------------------------------- */

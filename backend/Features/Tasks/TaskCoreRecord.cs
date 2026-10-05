@@ -109,15 +109,29 @@ public sealed record TaskCoreRecord
     /// <summary>Recompute graph-derived facts from resident task facts, without opening sidecars.</summary>
     public TaskCoreRecord WithDependencies(TaskInfo info, WaitsOnStatus? waitsOn)
     {
+        var blocked = waitsOn?.Blocked == true;
+        var state = info.References.DependsOn.Count > 0 && waitsOn is null ? "warming" : "ready";
+        var dependencies = waitsOn?.Items.Take(16).Select(item => new TaskCoreDependency(
+            Limit(item.Key, 80)!, item.Resolved, item.Fulfilled,
+            item.ReleaseGate, item.WaitingForRelease, item.Unsatisfiable)).ToArray() ?? [];
+        var dependsOn = info.References.DependsOn.Take(16).Select(edge => Limit(edge.Key, 80)!).ToArray();
+        var blockedBy = info.References.BlockedBy.Take(16).Select(key => Limit(key, 80)!).ToArray();
+        // A single sidecar update republishes the graph for every resident task.
+        // Preserve unchanged records instead of serializing and hashing the
+        // entire workspace again for each CLI flush or timeline append.
+        if (Version != 0 && DependencyBlocked == blocked && DependencyState == state
+            && Dependencies.SequenceEqual(dependencies)
+            && DependsOn.SequenceEqual(dependsOn)
+            && BlockedBy.SequenceEqual(blockedBy))
+            return this;
+
         var record = this with
         {
-            DependencyBlocked = waitsOn?.Blocked == true,
-            DependencyState = info.References.DependsOn.Count > 0 && waitsOn is null ? "warming" : "ready",
-            Dependencies = waitsOn?.Items.Take(16).Select(item => new TaskCoreDependency(
-                Limit(item.Key, 80)!, item.Resolved, item.Fulfilled,
-                item.ReleaseGate, item.WaitingForRelease, item.Unsatisfiable)).ToArray() ?? [],
-            DependsOn = info.References.DependsOn.Take(16).Select(edge => Limit(edge.Key, 80)!).ToArray(),
-            BlockedBy = info.References.BlockedBy.Take(16).Select(key => Limit(key, 80)!).ToArray(),
+            DependencyBlocked = blocked,
+            DependencyState = state,
+            Dependencies = dependencies,
+            DependsOn = dependsOn,
+            BlockedBy = blockedBy,
             Version = 0,
         };
         // Hash every published field. Unchanged facts retain the same validator.
@@ -128,15 +142,17 @@ public sealed record TaskCoreRecord
     internal static string? Limit(string? value, int maxBytes)
     {
         if (value is null) return null;
-        var builder = new StringBuilder();
+        if (value.Length <= maxBytes && Encoding.UTF8.GetByteCount(value) <= maxBytes)
+            return value;
+        var length = 0;
         var bytes = 0;
         foreach (var rune in value.EnumerateRunes())
         {
             if (bytes + rune.Utf8SequenceLength > maxBytes) break;
-            builder.Append(rune.ToString());
+            length += rune.Utf16SequenceLength;
             bytes += rune.Utf8SequenceLength;
         }
-        return builder.ToString();
+        return value[..length];
     }
 }
 
@@ -193,6 +209,7 @@ public sealed record TaskCoreTimeline(string State, IReadOnlyList<TaskCoreEvent>
     long OriginalBytes, string? Hash, string? Cursor)
 {
     public static readonly TaskCoreTimeline Missing = new("missing", [], 0, null, null);
+    private static readonly JsonSerializerOptions ReadOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static TaskCoreTimeline Read(string path)
     {
@@ -210,8 +227,7 @@ public sealed record TaskCoreTimeline(string State, IReadOnlyList<TaskCoreEvent>
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 try
                 {
-                    var evt = JsonSerializer.Deserialize<TimelineEvent>(line, new JsonSerializerOptions
-                    { PropertyNameCaseInsensitive = true });
+                    var evt = JsonSerializer.Deserialize<TimelineEvent>(line, ReadOptions);
                     if (evt is null) continue;
                     recent.Enqueue(new TaskCoreEvent(sequence, evt.Ts,
                         TaskCoreRecord.Limit(evt.Kind, 32)!, TaskCoreRecord.Limit(evt.Actor, 32)!,

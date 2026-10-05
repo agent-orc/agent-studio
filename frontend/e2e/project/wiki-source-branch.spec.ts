@@ -41,20 +41,20 @@ test.beforeEach(async ({ page }) => {
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   settingsUpdate = null;
   releaseSettingsUpdate = undefined;
-  await page.route('**/hubs/jobs/negotiate**', route => route.fulfill({ json: {
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
     connectionId: 'wiki-source-branch-e2e',
     connectionToken: 'wiki-source-branch-e2e',
     negotiateVersion: 1,
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   } }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
   });
   await page.route('**/api/**', async route => {
     const endpoint = new URL(route.request().url()).pathname;
-    if (endpoint === '/api/auth/status') {
+    if (endpoint === '/api/v1/studio/auth/status') {
       return route.fulfill({ json: {
         profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
       } });
@@ -71,7 +71,7 @@ test.beforeEach(async ({ page }) => {
     if (endpoint === '/api/watch-paths') {
       return route.fulfill({ json: [{ name: 'Demo', path: '/tmp/demo/jobs', rootPath: '/tmp/demo' }] });
     }
-    if (endpoint === '/api/tasks/grouped') {
+    if (endpoint === '/api/v1/studio/board') {
       return route.fulfill({ json: {
         backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
         failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
@@ -81,7 +81,7 @@ test.beforeEach(async ({ page }) => {
     if (endpoint === '/api/tasks/archive') {
       return route.fulfill({ json: { items: [], total: 0, offset: 0, limit: 50 } });
     }
-    if (endpoint === '/api/runner/status') return route.fulfill({ json: { projects: {} } });
+    if (endpoint === '/api/v1/studio/runner/status') return route.fulfill({ json: { projects: {} } });
     if (endpoint === '/api/cli/quota') {
       return route.fulfill({ json: {
         at: '2026-07-12T03:00:00Z', ttlSeconds: 600, snapshots: [],
@@ -92,7 +92,7 @@ test.beforeEach(async ({ page }) => {
     if (endpoint === '/api/tags' || endpoint === '/api/clients' || endpoint === '/api/clients/') {
       return route.fulfill({ json: [] });
     }
-    if (endpoint === '/api/workspaces') {
+    if (endpoint === '/api/v1/workspaces') {
       return route.fulfill({ json: [{
         id: 'ws-default', displayName: 'Workspace', sortOrder: 0, isDefault: true,
         color: null, createdAt: '2026-07-12T00:00:00Z', projects: [{

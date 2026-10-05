@@ -180,21 +180,21 @@ async function json(route: Route, body: unknown): Promise<void> {
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'WS-CYC', displayName: 'Cycle Workspace', sortOrder: 0, isDefault: true, projects: [project],
   }]));
   await page.route('**/api/watch-paths**', route => json(route, [{
     name: PROJECT_NAME, path: project.storageLocation, rootPath: project.rootPath,
   }]));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], autoReview: [], humanReview: [],
     escalated: [], review: [], completed: [], archive: [],
   }));
-  await page.route(/\/api\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-23T12:00:00Z', ttlSeconds: 600, snapshots: [],
   }));

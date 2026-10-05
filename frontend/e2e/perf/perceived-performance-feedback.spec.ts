@@ -47,12 +47,12 @@ async function baseRoutes(page: Page): Promise<void> {
   await page.route('**/api/tasks/archive**', route => json(route, {
     items: [], total: 0, offset: 0, limit: 50,
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route(/\/api\/tasks\/[^/]+\/provenance(\?|$)/, route => json(route, {
     landedState: 'merged-to-develop', ladder: { mergedToIntegration: true, releasedToRelease: false }, commits: [],
   }));
-  await page.route(new RegExp(`/api/tasks/${FIRST_ID}(\\?|$)`), route => json(route, detail(FIRST_ID)));
-  await page.route(new RegExp(`/api/tasks/${NEXT_ID}(\\?|$)`), route => json(route, detail(NEXT_ID)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${FIRST_ID}(\\?|$)`), route => json(route, detail(FIRST_ID)));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${NEXT_ID}(\\?|$)`), route => json(route, detail(NEXT_ID)));
 }
 
 for (const theme of ['light', 'dark'] as Theme[]) {
@@ -67,7 +67,7 @@ for (const theme of ['light', 'dark'] as Theme[]) {
       await boardGate;
       await json(route, [task(FIRST_ID, 1), task(NEXT_ID, 2)]);
     });
-    await page.route('**/api/tasks/grouped**', async route => {
+    await page.route('**/api/v1/studio/board**', async route => {
       await boardGate;
       await json(route, grouped());
     });
@@ -92,7 +92,7 @@ test('Accept paints immediately and offers Undo while persistence is still pendi
   await page.route('**/api/tasks', route => json(route, [task(FIRST_ID, 1), task(NEXT_ID, 2)]));
   let groupedReady!: () => void;
   const groupedLoaded = new Promise<void>(resolve => { groupedReady = resolve; });
-  await page.route('**/api/tasks/grouped**', async route => {
+  await page.route('**/api/v1/studio/board**', async route => {
     await json(route, grouped());
     groupedReady();
   });
@@ -100,7 +100,7 @@ test('Accept paints immediately and offers Undo while persistence is still pendi
   let releaseMove!: () => void;
   let moveIntercepted = false;
   const moveGate = new Promise<void>(resolve => { releaseMove = resolve; });
-  await page.route(`**/api/tasks/${FIRST_ID}/move**`, async route => {
+  await page.route(`**/api/v1/projects/*/tasks/${FIRST_ID}/move**`, async route => {
     moveIntercepted = true;
     await moveGate;
     await json(route, {});

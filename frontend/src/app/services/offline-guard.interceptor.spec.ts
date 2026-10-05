@@ -65,6 +65,17 @@ describe('offlineGuardInterceptor', () => {
     expect(ok).toBe(true);
   });
 
+  it('lets the read-only TokenEconomy price lookup through while offline', () => {
+    const { http, httpMock } = configure(true);
+    let ok = false;
+
+    http.post('/api/token-pricing/calculate', { items: [{ model: 'gpt-6-sol' }] })
+      .subscribe({ next: () => (ok = true) });
+    httpMock.expectOne('/api/token-pricing/calculate').flush({ items: [] });
+
+    expect(ok).toBe(true);
+  });
+
   it('lets mutating requests through when online', () => {
     const { http, httpMock } = configure(false);
     let ok = false;

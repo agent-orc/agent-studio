@@ -57,30 +57,30 @@ async function installRoutes(
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, EMPTY_GROUPED));
+  await page.route('**/api/v1/studio/board**', route => json(route, EMPTY_GROUPED));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0 }));
   await page.route('**/api/watch-paths**', route => json(route, [{
     name: 'Pointer Project', path: 'C:/fixtures/Pointer Project',
     rootPath: 'C:/fixtures/Pointer Project', repositoryPath: 'C:/fixtures/Pointer Project',
   }]));
-  await page.route('**/api/workspaces**', route => json(route, workspaces));
-  await page.route('**/api/projects', route => json(route, registryProjects));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route('**/api/v1/workspaces**', route => json(route, workspaces));
+  await page.route('**/api/v1/projects', route => json(route, registryProjects));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/environment**', route => json(route, {
     isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
   await page.route('**/api/cli/usage**', route => json(route, { at: '2026-07-23T00:00:00Z', sessions: [] }));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-07-23T00:00:00Z', ttlSeconds: 600, snapshots: [] }));
-  await page.route('**/hubs/jobs/negotiate**', route => json(route, {
+  await page.route('**/hubs/v1/studio/negotiate**', route => json(route, {
     negotiateVersion: 1,
     connectionId: 'project-move-inputs',
     connectionToken: 'project-move-inputs',
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (typeof message === 'string' && message.includes('"protocol"')) {
         socket.send('{}\u001e');

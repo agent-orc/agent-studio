@@ -198,6 +198,19 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
         this.selfPending.set(false);
         this.close();
         const count = result.updatedTaskIds.length;
+        const failed = result.failedTaskIds;
+        if (failed.length > 0) {
+          const shown = failed.slice(0, 3).join(', ');
+          const remaining = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+          const message = `${count} card${count === 1 ? '' : 's'} updated to ${proposal.to}; ${failed.length} failed (${shown}${remaining}).`;
+          if (count === 0) this.notifications.error(message);
+          else this.notifications.warning(message);
+          return;
+        }
+        if (count === 0) {
+          this.notifications.info('No eligible cards remain for this model migration.');
+          return;
+        }
         this.notifications.success(`Model updated to ${proposal.to} on ${count} card${count === 1 ? '' : 's'}.`);
       },
       error: () => {

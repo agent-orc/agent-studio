@@ -158,31 +158,31 @@ const LIFECYCLE = {
 async function installRoutes(page: Page): Promise<Fixture> {
   const fx: Fixture = { decision: pendingDecision(), decisionState: '1-preparation', decideBodies: [] };
 
-  // No backend runs: answer the jobs hub handshake so the shell stays online.
+  // No backend runs: answer the Studio hub handshake so the shell stays online.
   await page.route('**/update/status', route => json(route, { phase: 'idle', isRunning: false, behindBy: 0 }));
-  await page.route('**/hubs/jobs/negotiate**', route => json(route, {
+  await page.route('**/hubs/v1/studio/negotiate**', route => json(route, {
     connectionId: 'decision-cards-e2e',
     connectionToken: 'decision-cards-e2e',
     negotiateVersion: 1,
     availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
   }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
   });
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: false, user: null,
   }));
   await page.route('**/api/crash-recovery/pending', route => json(route, { pending: [] }));
-  await page.route('**/api/tasks/grouped**', route => json(route, grouped(fx)));
+  await page.route('**/api/v1/studio/board**', route => json(route, grouped(fx)));
   await page.route('**/api/watch-paths**', route => json(route, [
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/projects/settings**', route => json(route, {}));
-  await page.route(/\/api\/workspaces(\?|$)/, route => json(route, [{
+  await page.route(/\/api\/v1\/workspaces(\?|$)/, route => json(route, [{
     id: 'ws-default', displayName: 'Default', sortOrder: 0, isDefault: true, color: null,
     createdAt: '2026-09-01T00:00:00Z',
     projects: [{
@@ -205,7 +205,7 @@ async function installRoutes(page: Page): Promise<Fixture> {
   await page.route('**/api/runner/orchestrator-feed**', route => json(route, {
     entries: [], generatedAtUtc: '2026-09-13T09:30:00.000Z',
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
 
   for (const id of [DECISION_ID, DEPENDANT_ID]) {
     await page.route(new RegExp(`/api/tasks/${id}/output(\\?|$)`), route => json(route, []));
@@ -218,8 +218,8 @@ async function installRoutes(page: Page): Promise<Fixture> {
       execution: null, cost: null, config: {},
     }));
   }
-  await page.route(new RegExp(`/api/tasks/${DECISION_ID}(\\?|$)`), route => json(route, detail(decisionCard(fx))));
-  await page.route(new RegExp(`/api/tasks/${DEPENDANT_ID}(\\?|$)`), route => json(route, detail(dependantCard(fx))));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${DECISION_ID}(\\?|$)`), route => json(route, detail(decisionCard(fx))));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${DEPENDANT_ID}(\\?|$)`), route => json(route, detail(dependantCard(fx))));
   await page.route(new RegExp(`/api/tasks/${DECISION_ID}/decision(\\?|$)`), async route => {
     const body = route.request().postDataJSON() as { optionId: string; rationale: string };
     fx.decideBodies.push(body);

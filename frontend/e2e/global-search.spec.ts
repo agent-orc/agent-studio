@@ -41,7 +41,7 @@ const BOARD_TASK = {
 test('palette shows task results and repository progress before repository results land', async ({ page }) => {
   // The board snapshot is what the task group matches against with no round
   // trip at all, so one card is enough to prove the ordering.
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({
     contentType: 'application/json',
     // Every lane, not just the populated one: board consumers iterate the
     // whole grouped payload and a missing lane throws.
@@ -128,7 +128,7 @@ const DOSSIER_STREAM_BODY = [
 
 test('palette groups Dossier and Wiki results and keyboard navigation opens the exact Dossier', async ({ page, devBackend }) => {
   void devBackend;
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
   }));

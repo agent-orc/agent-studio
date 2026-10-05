@@ -169,7 +169,7 @@ async function installRoutes(page: import('@playwright/test').Page, N: number) {
   // (watch-paths, tags, clients, environment, runner status, snapshot)
   // fall through to the dev backend and use real defaults so the page
   // boots cleanly.
-  await page.route(/\/api\/tasks\/grouped/, async route => route.fulfill({ json: grouped }));
+  await page.route(/\/api\/v1\/studio\/board/, async route => route.fulfill({ json: grouped }));
   await page.route(/\/api\/tasks(\?|$)/, async route => route.fulfill({ json: jobs }));
 
   // All other endpoints (watch-paths, tags, clients, environment,
@@ -394,7 +394,7 @@ async function installDetailRoutes(page: import('@playwright/test').Page, chatLi
   };
 
   // Board: one card, makes click target obvious.
-  await page.route(/\/api\/tasks\/grouped/, async route => route.fulfill({ json: grouped }));
+  await page.route(/\/api\/v1\/studio\/board/, async route => route.fulfill({ json: grouped }));
   await page.route(/\/api\/tasks(\?|$)/, async route => route.fulfill({ json: [detailJob] }));
 
   // JobDetail.
@@ -409,7 +409,7 @@ async function installDetailRoutes(page: import('@playwright/test').Page, chatLi
     summaryState: null,
     reviewEvidence: [],
   };
-  await page.route(new RegExp(`/api/tasks/${DETAIL_JOB_ID}(\\?|$)`), async route =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${DETAIL_JOB_ID}(\\?|$)`), async route =>
     route.fulfill({ json: detail }));
 
   // Output buffer that activity-log-view actually reads.
@@ -482,7 +482,7 @@ test.describe('Frontend stress: detail page (long chat + 10-file diff)', () => {
       await page.waitForTimeout(200);
       const t0 = Date.now();
       const responsePromise = page.waitForResponse(
-        r => r.url().includes(`/api/tasks/${DETAIL_JOB_ID}?`) || r.url().includes(`/api/tasks/${DETAIL_JOB_ID}`),
+        r => new RegExp(`/api/v1/projects/[^/]+/tasks/${DETAIL_JOB_ID}(\\?|$)`).test(r.url()) || r.url().includes(`/api/tasks/${DETAIL_JOB_ID}`),
         { timeout: 10_000 }
       );
       await card.click();

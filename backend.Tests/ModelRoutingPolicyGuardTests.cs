@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: policy version dates are catalogue identities, never compared with current time.
+
 /// <summary>
 /// AGT-2808: economy mode must never route bug/feature cards onto a Haiku-class
 /// model via the positional catalogue fallback, and Recommend() must never
@@ -13,7 +15,7 @@ public sealed class ModelRoutingPolicyGuardTests
     private static readonly CliModelCatalog ClaudeCatalogue = new()
     {
         Source = "test-claude",
-        FetchedAt = DateTime.UtcNow,
+        FetchedAt = DateTime.UnixEpoch,
         Models =
         [
             ClaudeModel("claude-haiku-4-5", "medium"),
@@ -25,7 +27,7 @@ public sealed class ModelRoutingPolicyGuardTests
     private static readonly CliModelCatalog GptCatalogue = new()
     {
         Source = "test-gpt",
-        FetchedAt = DateTime.UtcNow,
+        FetchedAt = DateTime.UnixEpoch,
         Models =
         [
             GptModel("gpt-6-sol", "low", "medium", "high", "xhigh", "max", "ultra"),
@@ -40,7 +42,7 @@ public sealed class ModelRoutingPolicyGuardTests
     private static readonly CliModelCatalog Gpt56OnlyCatalogue = new()
     {
         Source = "test-gpt56",
-        FetchedAt = DateTime.UtcNow,
+        FetchedAt = DateTime.UnixEpoch,
         Models =
         [
             GptModel("gpt-5.5", "low", "medium", "high", "xhigh"),

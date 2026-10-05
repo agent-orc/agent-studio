@@ -113,7 +113,6 @@ wall-clock backend.Tests/MergeServiceTests.cs 2
 wall-clock backend.Tests/MetaCycleResumeVerificationTests.cs 1
 wall-clock backend.Tests/MetaCycleRulesTests.cs 16
 wall-clock backend.Tests/ModelQualificationTests.cs 1
-wall-clock backend.Tests/ModelRoutingPolicyGuardTests.cs 2
 wall-clock backend.Tests/NeedsInputArtifactTests.cs 1
 wall-clock backend.Tests/OrchestratorChatErrorTranslatorTests.cs 4
 wall-clock backend.Tests/OrchestratorChatRejectionRecoveryTests.cs 2
