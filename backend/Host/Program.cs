@@ -427,6 +427,7 @@ builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -1371,6 +1372,17 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
+}
+
+// One-time collapse of task receipts that recorded the same usage more than
+// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

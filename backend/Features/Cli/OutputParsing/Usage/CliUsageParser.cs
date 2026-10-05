@@ -13,6 +13,12 @@ namespace AgentStudio.Cli;
 /// and ClaudeEventAdapter.FormatUsage). This record removes that duplication and
 /// gives both call sites the same enrichment (context-window snapshot, file count,
 /// reasoning-tokens roll-up where the model exposes it).
+/// <para>
+/// <see cref="CumulativeScope"/> is set when the counts are a running total for
+/// a whole CLI session rather than one turn (Claude's <c>modelUsage</c>). Every
+/// frame in the same scope restates the same usage, so a consumer that folds
+/// several frames keeps only the latest snapshot per scope and model.
+/// </para>
 /// </remarks>
 public sealed record ParsedTurnUsage(
     string? Model,
@@ -24,7 +30,8 @@ public sealed record ParsedTurnUsage(
     AgentMessageContextWindow? ContextWindow,
     bool InputIncludesCached = false,
     string? PinnedModel = null,
-    bool ModelMismatch = false)
+    bool ModelMismatch = false,
+    string? CumulativeScope = null)
 {
     /// <summary>Sum of all tokens that occupied the context this turn.</summary>
     public long ContextUsed => Input + CacheRead;
@@ -136,6 +143,12 @@ public sealed class ClaudeUsageParser : ICliUsageParser
             || modelUsage.ValueKind != JsonValueKind.Object)
             return TryParse(frame, modelHint, modelRegistry, out var fallbackUsage) ? [fallbackUsage] : [];
 
+        // modelUsage is the session's running total per model, repeated on
+        // every result frame (AGT-3004 logged 22 identical copies).
+        var sessionId = frame.TryGetProperty("session_id", out var sid) && sid.ValueKind == JsonValueKind.String
+            ? sid.GetString()
+            : null;
+        var scope = $"claude-session:{sessionId?.Trim() ?? string.Empty}";
         var result = new List<ParsedTurnUsage>();
         foreach (var property in modelUsage.EnumerateObject())
         {
@@ -156,7 +169,8 @@ public sealed class ClaudeUsageParser : ICliUsageParser
                 ReasoningOutput: null,
                 BuildContextWindow(model, input, cacheRead, modelRegistry),
                 PinnedModel: modelHint,
-                ModelMismatch: ModelAttribution.IsMismatch(modelHint, model)));
+                ModelMismatch: ModelAttribution.IsMismatch(modelHint, model),
+                CumulativeScope: scope));
         }
 
         return result.Count > 0

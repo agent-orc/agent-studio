@@ -449,7 +449,11 @@ public class TaskMutationService
     /// <summary>
     /// Replaces one remote attempt's token rows while preserving receipts from
     /// earlier attempts. The attempt-scoped participant id makes completion
-    /// replay idempotent and keeps continuation costs visible.
+    /// replay idempotent and keeps continuation costs visible. A row whose
+    /// usage fingerprint (timestamp, model, token counts) is already recorded
+    /// under another attempt, or repeated within this attempt, is the same
+    /// usage re-reported and is not appended again (AGT-3012); a receipt that
+    /// would not change is not rewritten.
     /// </summary>
     public bool SetRemoteTokenSummaryOnFolder(
         string folderPath,
@@ -471,15 +475,21 @@ public class TaskMutationService
             }
 
             var participant = $"agent:remote-runner:{runAttemptId}";
-            var entries = (persisted?.Entries ?? [])
+            var retained = (persisted?.Entries ?? [])
                 .Where(entry => !string.Equals(entry.ParticipantId, participant, StringComparison.Ordinal))
-                .Concat((attemptSummary.Entries ?? []).Select(entry => entry with
-                {
-                    ParticipantId = participant,
-                }))
+                .ToList();
+            var recorded = retained
+                .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
+                .ToHashSet();
+            var attemptEntries = (attemptSummary.Entries ?? [])
+                .Where(entry => recorded.Add(TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false)))
+                .Select(entry => entry with { ParticipantId = participant });
+            var entries = retained
+                .Concat(attemptEntries)
                 .OrderBy(entry => entry.Ts)
                 .ToList();
             if (entries.Count == 0) return false;
+            if (persisted is not null && persisted.Entries.SequenceEqual(entries)) return true;
 
             var summary = new TaskTokenSummary
             {
