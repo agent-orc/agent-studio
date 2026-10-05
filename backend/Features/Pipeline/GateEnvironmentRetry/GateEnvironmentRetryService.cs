@@ -325,6 +325,7 @@ public sealed class GateEnvironmentRetryService
         // TaskKey is a path-qualified scanner identity. Attempt authority uses
         // the card's stable public key, as GET /api/attempts/tasks/{key} does.
         var now = _time.GetUtcNow();
+        var inFlight = IntegrationGateJournal.Read(job.FolderPath) is not null;
         var withoutReview = GateEnvironmentRetryPolicy.Decide(
             job,
             status,
@@ -333,7 +334,8 @@ public sealed class GateEnvironmentRetryService
             ledger.LastAttemptAt,
             AsOffset(mergeStep?.CompletedAt ?? mergeStep?.StartedAt),
             options,
-            now);
+            now,
+            inFlight);
         // Let the policy decide whether review evidence matters before loading
         // archives. Most cards in these lanes have no gate failure to retry.
         var reviewLookup = withoutReview.Reason == GateEnvironmentRetryReasons.NoPassedReview
@@ -348,7 +350,8 @@ public sealed class GateEnvironmentRetryService
                 ledger.LastAttemptAt,
                 AsOffset(mergeStep?.CompletedAt ?? mergeStep?.StartedAt),
                 options,
-                now)
+                now,
+                inFlight)
             : withoutReview;
 
         return new GateEnvironmentRetryEvaluation(

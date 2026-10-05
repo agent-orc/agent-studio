@@ -867,6 +867,12 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+// AGT-3009: a red merge gate is classified (environment, product, integration
+// branch, undecidable) and routed by the delivery-chain reconciler before it may
+// park. The fingerprint counter is the Task Server store the cause breaker reads.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateFailureFingerprintCounter,
+    AgentStudio.Pipeline.TaskServerGateFailureFingerprintCounter>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // AGT-2849: a build gate that never reached a verdict left an un-gated merge on
 // the integration branch, and the next delivery merged on top of it. Startup
 // recovery rolls that branch back to the exact pre-merge tip (or resumes the
