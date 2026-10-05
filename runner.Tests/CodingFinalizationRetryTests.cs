@@ -413,18 +413,17 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         WorkDir = Path.Combine(_root, "work"),
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
-        // The worker writes a real deliverable and a real source change, so the
-        // retry has both an artifact transfer and a salvage push to repeat.
-        CliArgs =
-            "-c \"printf 'delivered\\n' > delivered.txt; "
+        ClaudeCliBin = CarStubCli.Write(
+            Path.Combine(_root, "stubs"),
+            "printf 'delivered\\n' > delivered.txt; "
             + "printf 'delivered\\n' > $JOB_RESULTS_DIR/deliverables.md; "
             + "printf 'evidence\\n' > $JOB_RESULTS_DIR/evidence.txt; "
             + (includeOversizedTrace
                 ? "mkdir -p $JOB_RESULTS_DIR/playwright; truncate -s 30M $JOB_RESULTS_DIR/playwright/trace.zip; "
                 : string.Empty)
-            + "printf 'delivered\\n[[TASK_DONE]]\\n'\"",
+            + "printf 'delivered\\n[[TASK_DONE]]\\n'"),
+        // The worker writes a real deliverable and a real source change, so the
+        // retry has both an artifact transfer and a salvage push to repeat.
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         HandoffLeaseTtlSeconds = 300,
