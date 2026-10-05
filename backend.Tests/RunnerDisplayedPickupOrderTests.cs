@@ -180,7 +180,7 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
         var gemini = GenericCliExecutionService.ForAntigravity(NullLogger<GenericCliExecutionService>.Instance, config);
         var router = new CliRouter(claude, codex, gemini);
 
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
         var quotaCacheStore = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
         var quotaService = new QuotaService(NullLogger<QuotaService>.Instance, Array.Empty<IQuotaProbe>(), config, quotaCacheStore);
@@ -195,7 +195,8 @@ public sealed class RunnerDisplayedPickupOrderTests : IDisposable
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
-            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null);
+            settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
 
         return (runner, settings);
     }

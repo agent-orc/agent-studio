@@ -1,9 +1,9 @@
 # Koordinationsplan: CAR-Migrations-Kette AGT-2370 → 2371 → 2372 → 2373
 
-**Status:** 2026-08-02 | **Phase:** T2 implementation (`AGT-2371`) | **Mode:** coordinated operator batch
+**Status:** completed 2026-09-24 (`AGT-2373`) | **Phase:** T1-T4 complete | **Mode:** coordinated operator batch
 **Sources verified in code:** `runner/`, `backend/Features/Cli/Execution/`, `backend/Features/Runner/`, CodingAgentRunner 0.7.0, `contracts/TaskServer.Contracts/`, `deploy/`, `docs/operations/{umsetzungsplan-zielbild,zielbild-komponenten-protokolle,execution-model-shift}`, `docs/concepts/distributed-agent-studio-target-architecture.md`
 
-> The original planning baseline below is retained to explain the migration sequence. T1 completed on 2026-08-02. T2 now has an implemented CAR-backed local path in the `AGT-2371` worktree; acceptance verification and the later parity and cleanup batches remain separate gates.
+> The original planning baseline below is retained to explain the migration sequence. CAR is now the only card-run CLI execution layer. Legacy engine settings, raw Runner spawn, and Studio-owned card-run argv construction described below are historical.
 
 ---
 

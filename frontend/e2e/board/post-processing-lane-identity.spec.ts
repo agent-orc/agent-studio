@@ -168,14 +168,14 @@ async function installRoutes(
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    if (p === '/api/auth/status') {
+    if (p === '/api/v1/studio/auth/status') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
       });
     }
-    if (p === '/api/tasks/grouped' || p === '/api/tasks/grouped') {
+    if (p === '/api/v1/studio/board') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(groupedBody) });
     }
     if (p === '/api/tasks/archive') {
@@ -220,7 +220,7 @@ async function installRoutes(
         body: JSON.stringify([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]),
       });
     }
-    if (p === '/api/workspaces') {
+    if (p === '/api/v1/workspaces') {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -300,7 +300,7 @@ async function installRoutes(
         body: JSON.stringify({ at: '2026-06-09T08:12:00Z', sections: [] }),
       });
     }
-    if (p.startsWith('/api/runner')) {
+    if (p.startsWith('/api/runner') || p.startsWith('/api/v1/studio/runner')) {
       return route.fulfill({
         status: 200,
         contentType: 'application/json',

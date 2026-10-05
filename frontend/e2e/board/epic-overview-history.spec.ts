@@ -45,7 +45,7 @@ async function installRoutes(page: Page): Promise<() => number> {
   let completedRollupsRequested = 0;
   await page.route('**/api/**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
-  await page.route('**/api/tasks/grouped**', route =>
+  await page.route('**/api/v1/studio/board**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
   await page.route('**/api/epics**', route => {
     const status = new URL(route.request().url()).searchParams.get('status');

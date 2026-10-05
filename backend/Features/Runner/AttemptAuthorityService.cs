@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,10 @@ public sealed record AttemptIndexedDeliveryRef(
     string Ref,
     string ResultSha,
     DateTime RecordedAt);
+
+internal readonly record struct BoardReviewActivity(
+    AttemptLifecycleState State,
+    DateTime? LeaseExpiresAt);
 
 internal sealed record ReviewLeaseIsolation(
     string ResourceNamespace,
@@ -87,6 +92,8 @@ public sealed class AttemptAuthorityService
     private readonly IAtomicJsonFileWriter _writer;
     private readonly int _terminalRetentionCount;
     private AuthorityState _state;
+    private ImmutableDictionary<string, BoardReviewActivity> _boardReviewActivity =
+        ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -128,6 +135,7 @@ public sealed class AttemptAuthorityService
             throw new InvalidDataException("AttemptAuthority:TerminalRetentionCount must be greater than zero.");
         if (requiresCompactionMigration && _path is not null)
             PersistLocked(forceCompaction: true);
+        _boardReviewActivity = BuildBoardReviewActivityLocked();
     }
 
     internal AttemptAuthorityService(ILogger<AttemptAuthorityService> logger, Func<DateTime>? utcNow = null)
@@ -1926,6 +1934,19 @@ public sealed class AttemptAuthorityService
         lock (_gate) return FindReview(attemptId) is { } review ? ToDto(review) : null;
     }
 
+    // Display-only committed state. A log receipt can persist a large authority
+    // file while board readers keep using this small immutable projection.
+    internal ImmutableDictionary<string, BoardReviewActivity> ReadBoardReviewActivity()
+        => Volatile.Read(ref _boardReviewActivity);
+
+    private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()
+        => _state.ReviewAttempts
+            .Where(IsCurrentReview)
+            .ToImmutableDictionary(
+                review => review.TaskKey,
+                review => new BoardReviewActivity(review.State, review.Lease?.ExpiresAt),
+                StringComparer.OrdinalIgnoreCase);
+
     public AttemptAuthorityProjection GetTaskProjection(string taskKey, bool includeArchived = false)
     {
         var key = Normalize(taskKey);
@@ -2298,11 +2319,19 @@ public sealed class AttemptAuthorityService
 
     private void PersistLocked(bool forceCompaction = false)
     {
-        if (_path is null) return;
+        if (_path is null)
+        {
+            Volatile.Write(ref _boardReviewActivity, BuildBoardReviewActivityLocked());
+            return;
+        }
         try
         {
             CompactTerminalAttemptsLocked(forceCompaction);
-            _writer.Write(_path, JsonSerializer.Serialize(_state, JsonOptions));
+            var boardReviewActivity = BuildBoardReviewActivityLocked();
+            _writer.WriteJson(_path, _state, JsonOptions);
+            // Publish only after the atomic write succeeds. Failed writes must
+            // not expose speculative review state to concurrent board readers.
+            Volatile.Write(ref _boardReviewActivity, boardReviewActivity);
         }
         catch
         {

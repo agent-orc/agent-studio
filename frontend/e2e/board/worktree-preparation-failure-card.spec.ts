@@ -44,7 +44,7 @@ function json(route: Route, body: unknown) {
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname === '/api/tasks/grouped') {
+    if (pathname === '/api/v1/studio/board') {
       return json(route, {
         backlog: [], preparation: [], orchestratorPrep: [], ready: [failedReadyCard],
         progress: [], failedPickup: [], codeNotComplete: [], review: [], autoReview: [],
@@ -56,11 +56,11 @@ async function installRoutes(page: Page): Promise<void> {
     if (pathname === '/api/watch-paths') {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]);
     }
-    if (pathname === '/api/auth/status') {
+    if (pathname === '/api/v1/studio/auth/status') {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (pathname === '/api/environment') return json(route, { isDev: false, devTools: {} });
-    if (pathname === '/api/runner/status') return json(route, { projects: {} });
+    if (pathname === '/api/v1/studio/runner/status') return json(route, { projects: {} });
     if (pathname === '/api/cli/quota') {
       return json(route, { at: '2026-09-12T11:35:00Z', ttlSeconds: 600, snapshots: [] });
     }

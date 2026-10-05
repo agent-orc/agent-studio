@@ -285,7 +285,7 @@ public sealed class RunnerActiveStateClearedOnExternalMoveTests : IDisposable
         var gemini = GenericCliExecutionService.ForAntigravity(NullLogger<GenericCliExecutionService>.Instance, config);
         var router = new CliRouter(claude, codex, gemini);
 
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
 
         return new Deps(config, scanner, states, mutations, sessions, summary, prompts, settings, git,
@@ -315,6 +315,7 @@ public sealed class RunnerActiveStateClearedOnExternalMoveTests : IDisposable
             d.Scanner, d.States, d.Sessions, d.Router,
             d.Summary, d.Prompts, d.Transitions, d.ChatLog, d.Mutations,
             d.OrchestratorLog, d.OrchestratorRunner, d.OrchestratorSessions,
-            d.Settings, quotaService, quotaCaps, d.Git, pickupFailures, infraBreaker, d.TaskAccess, bus: null);
+            d.Settings, quotaService, quotaCaps, d.Git, pickupFailures, infraBreaker, d.TaskAccess, bus: null,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
     }
 }

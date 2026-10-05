@@ -13,7 +13,7 @@ function slugFor(name: string): string {
 
 test('document drag order stays in place, survives reload, and fits the fixed table in both themes', async ({ page, devBackend }) => {
   mkdirSync(RESULTS_DIR, { recursive: true });
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({

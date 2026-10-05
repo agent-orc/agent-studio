@@ -2783,6 +2783,75 @@
             New terminal: waiting on the cause card, not escalated.
           </td>
         </tr>
+        <tr id="case-stable-canonical-review-polling-thrash">
+          <td>2026-10-04</td>
+          <td><code>Stable incident</code><br><span class="small">canonical-review-polling-thrash</span></td>
+          <td>
+            Three Quality Studio cards repeatedly entered and left local post-processing while their canonical
+            review verdicts were still pending. The operator reported 178 retries and 384 full task scans in
+            one hour, alongside heavy paging and a Stable backend heap oscillating between 4 and 8 GB.
+          </td>
+          <td>
+            Executor registration kept the deferral chain alive and reset its counter every five attempts.
+            The resulting 30/60-second polling repeatedly wrote the running and awaiting-review phases;
+            each changed phase invalidated the full task index. Registration did not establish verdict progress.
+          </td>
+          <td>
+            Registered canonical-verdict waits now retain their attempt count and back off through
+            30, 60, 120, 240, then 300 seconds, remaining scheduled at that cap. Missing-executor exhaustion
+            and earned delivery-resume behavior are unchanged. The card stays in
+            <span class="lane">4-auto-review</span> under the canonical executor's ownership until its verdict
+            settles; the local poll does not manufacture a terminal outcome. Deterministic regression tests
+            cover retained attempts and the capped delay schedule.
+          </td>
+        </tr>
+        <tr id="case-local-integration-gate-remote-placement">
+          <td>2026-10-04</td>
+          <td><code>Stable incident</code><br><span class="small">local-integration-gate-remote-placement</span></td>
+          <td>
+            During the memory incident an automatic merge-result gate still spawned build and test processes
+            on the Windows Studio host, although coding and review execution were remote. The operator
+            required all further verification to execute remotely without creating another task card.
+          </td>
+          <td>
+            The backend bound <code>IBuildTestGateRunner</code> directly to its local executor. The separate
+            Task Server gate pilot accepted only a fenced run's result SHA and did not own newly created
+            integration or promotion candidate commits. Remote Review reuse still required compilation.
+          </td>
+          <td>
+            Backend gates now use an explicitly configured remote transport and fail closed when it is
+            unavailable. A digest-pinned bundle carries the exact commit to a Linux-only worker which runs
+            the existing gate implementation and returns bound evidence. Existing Git merge and rollback
+            ownership is unchanged. This is a bounded emergency SSH bridge, documented in the
+            <a href="../system/domains/pipeline.md">pipeline domain map</a>, while canonical admission for
+            integration and promotion subjects remains the target. No local build/test fallback exists;
+            transport or proof failures produce an infrastructure-failure gate instead of acceptance.
+          </td>
+        </tr>
+        <tr id="case-deployment-smoke-completion-budget">
+          <td>2026-10-04</td>
+          <td><code>Deployment regression</code><br><span class="small">completion-wait-excluded-worker-cleanup</span></td>
+          <td>
+            Two full verification runs passed all 9,114 .NET tests, then the explicit deployment smoke
+            timed out after 30 seconds waiting for <code>run.completed</code>. Identical-environment
+            retries both failed and passed. A diagnostic passing run finished its fake CLI immediately,
+            then spent another 7.1 seconds before the worker published its result.
+          </td>
+          <td>
+            The harness completion wait was shorter than the runner's allowed lifecycle: the CLI may
+            run for 45 seconds, and build-server shutdown may take 30 seconds before
+            <code>result.json</code> appears. The failed runs did not retain the inner worker timing,
+            so the precise delay in those attempts remains unproven; the conflicting budgets are explicit.
+          </td>
+          <td>
+            The test harness now budgets 45 seconds for the CLI, the actual 30-second cleanup allowance,
+            and 10 seconds for result transport, totaling 85 seconds. A runner-side contract test checks
+            the shared harness allowance against the production cleanup budget. The scenario still
+            requires <code>run.completed</code>, durable result evidence, and a real review verdict reaching
+            <span class="lane">5-human-review</span>. Production execution and cleanup limits are unchanged;
+            an earlier failed gate remains failed evidence rather than being relabelled by a retry.
+          </td>
+        </tr>
       </tbody>
     </table>
 

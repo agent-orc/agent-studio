@@ -61,7 +61,7 @@ public class ProjectObservationServiceTests : IDisposable
         var transitions = new TaskTransitionService(scanner, states, mutations, git, projectSettings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var orchestratorLog = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
         var globalStore = new GlobalOrchestratorSessionStore(config, NullLogger<GlobalOrchestratorSessionStore>.Instance);
         var globalBoot = new GlobalOrchestratorBootstrap(NullLogger<GlobalOrchestratorBootstrap>.Instance, globalStore, orchestratorRunner, scanner, config);
