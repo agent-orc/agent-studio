@@ -106,6 +106,29 @@ public sealed class BuildNodeSweepPolicyTests
     }
 
     [Fact]
+    public void A_node_with_an_unobserved_parent_is_kept()
+        => Assert.Equal(
+            BuildNodeVerdict.UnresolvedAncestry,
+            Decide(Node(parent: 301, cwd: "/outside/workspace"), Context(pids: [300])));
+
+    [Fact]
+    public void A_node_with_an_unobserved_intermediate_ancestor_is_kept()
+    {
+        var parentNode = Node(pid: 400, parent: 301, cwd: null);
+        Assert.Equal(
+            BuildNodeVerdict.UnresolvedAncestry,
+            Decide(Node(parent: 400, cwd: "/outside/workspace"), Context(pids: [300]), parentNode));
+    }
+
+    [Fact]
+    public void A_node_with_an_invalid_parent_chain_is_kept()
+    {
+        Assert.Equal(BuildNodeVerdict.UnresolvedAncestry, Decide(Node(parent: 0), Context()));
+        var parentNode = Node(pid: 400, parent: 500);
+        Assert.Equal(BuildNodeVerdict.UnresolvedAncestry, Decide(Node(parent: 400), Context(), parentNode));
+    }
+
+    [Fact]
     public void A_review_workers_descendant_is_kept_outside_its_workspace()
     {
         var activePids = RemoteReviewDaemon.ActiveReviewWorkerPids(

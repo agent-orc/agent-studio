@@ -34,6 +34,7 @@ public enum BuildNodeVerdict
     TooYoung,
     ActiveRun,
     LiveDriver,
+    UnresolvedAncestry,
     Stale,
 }
 
@@ -105,10 +106,16 @@ public static class BuildNodeSweepPolicy
             return BuildNodeVerdict.TooYoung;
         if (IsUnder(process.Cwd, context.ActiveRunPaths)) return BuildNodeVerdict.ActiveRun;
         var seen = new HashSet<int>();
-        for (int? pid = process.ParentPid; pid is > 1 && seen.Add(pid.Value); pid = lookup(pid.Value)?.ParentPid)
+        var parentPid = process.ParentPid;
+        while (parentPid > 1)
         {
-            if (context.ActiveRunPids.Contains(pid.Value)) return BuildNodeVerdict.ActiveRun;
+            if (!seen.Add(parentPid)) return BuildNodeVerdict.UnresolvedAncestry;
+            if (context.ActiveRunPids.Contains(parentPid)) return BuildNodeVerdict.ActiveRun;
+            var ancestor = lookup(parentPid);
+            if (ancestor is null) return BuildNodeVerdict.UnresolvedAncestry;
+            parentPid = ancestor.ParentPid;
         }
+        if (parentPid != 1) return BuildNodeVerdict.UnresolvedAncestry;
         var parent = process.ParentPid > 1 ? lookup(process.ParentPid) : null;
         if (parent is not null
             && !IsProcessManager(parent.Comm)

@@ -1060,7 +1060,9 @@ seconds. Three measures now keep the host free of them:
   minutes old, have no ancestor among runs this daemon tracks, have no working
   directory inside an active workspace, and have no live build driver as its
   parent (only nodes reparented to init or the systemd manager, or parented by
-  another node, qualify). Each kill logs `build-node-reaped`; each pass logs
+  another node, qualify). If any parent in the chain is unavailable, the
+  sweep keeps the node because it cannot rule out an active run ancestor.
+  Each kill logs `build-node-reaped`; each pass logs
   `build-node-sweep dotnetProcesses=<n> staleNodes=<n> terminated=<n>`.
   The review daemon reads active worker PIDs from persisted review slots and
   verifies their process generation before each sweep. Descendant nodes stay
