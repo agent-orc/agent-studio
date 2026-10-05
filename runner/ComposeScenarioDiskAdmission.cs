@@ -25,7 +25,8 @@ internal static class ComposeScenarioDiskAdmission
     /// level) or <c>scripts/compose-smoke-test.sh</c>, run directly, through a
     /// shell (<c>sh -lc '...'</c>, <c>bash script</c>), inside a command
     /// substitution (<c>out=$(...)</c>, backticks) or behind environment
-    /// assignments and <c>env</c>/<c>exec</c>/<c>timeout</c> wrappers. Only a
+    /// assignments and <c>env</c>/<c>exec</c>/<c>nohup</c>/<c>time</c>/<c>timeout</c>
+    /// wrappers (with any of their options). Only a
     /// command position counts: a mention inside quoted data, an argument of
     /// another program (<c>echo</c>, <c>grep</c>) or a shell comment does not,
     /// because refusing such a step on a low disk would block a review that
@@ -63,12 +64,33 @@ internal static class ComposeScenarioDiskAdmission
         new(["sh", "bash", "dash", "ash", "ksh", "zsh"], StringComparer.Ordinal);
 
     // Words that may precede the program of a simple command without being it.
+    // "time" is parsed as a wrapper instead, so that its options are skipped.
     private static readonly HashSet<string> ReservedWords =
-        new(["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "time"],
+        new(["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until"],
             StringComparer.Ordinal);
 
-    private static readonly HashSet<string> Wrappers =
-        new(["env", "exec", "nohup", "time", "timeout"], StringComparer.Ordinal);
+    // The complete option syntax of each wrapper (GNU coreutils env/timeout,
+    // GNU time and the bash time keyword, bash exec), so that every option
+    // that takes an operand is skipped together with it in all forms getopt
+    // accepts. All of them stop parsing options at the first non-option word.
+    private static readonly Dictionary<string, WrapperSyntax> Wrappers = new(StringComparer.Ordinal)
+    {
+        ["env"] = new("aCSu", ["argv0", "chdir", "split-string", "unset"],
+            ["block-signal", "debug", "default-signal", "help", "ignore-environment", "ignore-signal",
+             "list-signal-handling", "null", "version"]),
+        ["exec"] = new("a", [], []),
+        ["nohup"] = new("", [], ["help", "version"]),
+        ["time"] = new("fo", ["format", "output"], ["append", "help", "portability", "quiet", "verbose", "version"]),
+        // timeout [OPTION] DURATION COMMAND...
+        ["timeout"] = new("ks", ["kill-after", "signal"], ["foreground", "help", "preserve-status", "verbose", "version"],
+            TakesOperand: true),
+    };
+
+    private sealed record WrapperSyntax(
+        string ShortWithValue,
+        string[] LongWithValue,
+        string[] LongFlags,
+        bool TakesOperand = false);
 
     private static bool ExecutesComposeScenario(IReadOnlyList<string> argv, int depth)
     {
@@ -83,52 +105,12 @@ internal static class ComposeScenarioDiskAdmission
                 index++;
                 continue;
             }
-            var wrapper = ProgramName(word);
-            if (!Wrappers.Contains(wrapper))
+            if (!Wrappers.TryGetValue(ProgramName(word), out var syntax))
                 break;
-            index++;
-            if (wrapper == "env")
-            {
-                while (index < argv.Count)
-                {
-                    var option = argv[index];
-                    if (option == "--")
-                    {
-                        index++;
-                        break;
-                    }
-                    if (option is "-a" or "--argv0" or "-u" or "--unset" or "-C" or "--chdir")
-                    {
-                        index += 2;
-                        continue;
-                    }
-                    if (option is "-S" or "--split-string")
-                    {
-                        index++;
-                        return index < argv.Count
-                            && ExecutesEnvSplitString(argv[index], argv.Skip(index + 1), depth);
-                    }
-                    if (option.StartsWith("--split-string=", StringComparison.Ordinal))
-                        return ExecutesEnvSplitString(option["--split-string=".Length..], argv.Skip(index + 1), depth);
-                    if (option.StartsWith("-S", StringComparison.Ordinal) && option.Length > 2)
-                        return ExecutesEnvSplitString(option[2..], argv.Skip(index + 1), depth);
-                    if (option.StartsWith('-'))
-                    {
-                        index++;
-                        continue;
-                    }
-                    break;
-                }
-                continue;
-            }
-            while (index < argv.Count && argv[index].StartsWith('-'))
-            {
-                // timeout -s SIGNAL / -k DURATION take a value.
-                index += wrapper == "timeout" && argv[index] is "-s" or "-k" ? 2 : 1;
-            }
-            // timeout DURATION COMMAND...
-            if (wrapper == "timeout" && index < argv.Count)
-                index++;
+            index = SkipWrapperOptions(argv, index + 1, syntax, out var splitString);
+            // env -S STRING splits STRING into the command (and its leading options).
+            if (splitString is not null)
+                return ExecutesEnvSplitString(splitString, argv.Skip(index), depth);
         }
         if (index >= argv.Count)
             return false;
@@ -142,6 +124,73 @@ internal static class ComposeScenarioDiskAdmission
         if (Shells.Contains(program))
             return ShellRunsComposeScenario(arguments, depth);
         return false;
+    }
+
+    /// <summary>
+    /// Returns the index of the first word after a wrapper's options (and,
+    /// for <c>timeout</c>, its DURATION). Handles <c>-x VALUE</c>,
+    /// <c>-xVALUE</c>, clusters such as <c>-vs VALUE</c>, <c>--name VALUE</c>,
+    /// <c>--name=VALUE</c>, unique long-option abbreviations and <c>--</c>.
+    /// </summary>
+    private static int SkipWrapperOptions(
+        IReadOnlyList<string> argv, int index, WrapperSyntax syntax, out string? splitString)
+    {
+        splitString = null;
+        while (index < argv.Count)
+        {
+            var word = argv[index];
+            if (word == "--")
+            {
+                index++;
+                break;
+            }
+            if (!word.StartsWith('-'))
+                break;
+            index++;
+            string? option = null;
+            string? value = null;
+            if (word.StartsWith("--", StringComparison.Ordinal))
+            {
+                var equals = word.IndexOf('=');
+                option = LongOptionWithValue(syntax, equals < 0 ? word[2..] : word[2..equals]);
+                if (option is not null)
+                    value = equals >= 0 ? word[(equals + 1)..] : index < argv.Count ? argv[index++] : null;
+            }
+            else
+            {
+                for (var at = 1; at < word.Length; at++)
+                {
+                    if (!syntax.ShortWithValue.Contains(word[at]))
+                        continue;
+                    option = word[at].ToString();
+                    value = at + 1 < word.Length ? word[(at + 1)..] : index < argv.Count ? argv[index++] : null;
+                    break;
+                }
+            }
+            if (option is "S" or "split-string")
+            {
+                splitString = value ?? "";
+                return index;
+            }
+        }
+        if (syntax.TakesOperand && index < argv.Count)
+            index++;
+        return index;
+    }
+
+    // getopt_long accepts an exact long name or a unique prefix of one.
+    private static string? LongOptionWithValue(WrapperSyntax syntax, string name)
+    {
+        if (syntax.LongWithValue.Contains(name, StringComparer.Ordinal))
+            return name;
+        if (syntax.LongFlags.Contains(name, StringComparer.Ordinal))
+            return null;
+        var matches = syntax.LongWithValue.Concat(syntax.LongFlags)
+            .Where(candidate => candidate.StartsWith(name, StringComparison.Ordinal))
+            .ToArray();
+        return matches.Length == 1 && syntax.LongWithValue.Contains(matches[0], StringComparer.Ordinal)
+            ? matches[0]
+            : null;
     }
 
     private static bool ExecutesEnvSplitString(string splitString, IEnumerable<string> remaining, int depth)

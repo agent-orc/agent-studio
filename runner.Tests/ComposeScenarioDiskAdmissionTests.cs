@@ -96,6 +96,31 @@ public sealed class ComposeScenarioDiskAdmissionTests
         { "sh", ["-lc", "n=$(( 1 + $(( $(scripts/compose-smoke-test.sh) * 2 )) ))"], true },
         { "sh", ["-lc", "echo $(( 1 + $(echo scripts/scenario.sh --target compose) ))"], false },
         { "sh", ["-lc", "echo $(( scenario + compose ))"], false },
+        // Review round 8: every GNU option form of a wrapper is parsed from one
+        // option table (separate operand, attached operand, --name=value, unique
+        // long-option abbreviations, short clusters, "--"), not per reported case.
+        { "sh", ["-lc", "timeout --signal TERM 3600 scripts/scenario.sh --target compose"], true },
+        { "timeout", ["--signal", "TERM", "3600", "scripts/scenario.sh", "--target", "compose"], true },
+        { "sh", ["-lc", "timeout --signal=TERM 3600 scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "timeout --sig TERM 3600 scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "timeout --kill-after 30 3600 scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "timeout --kill 30 --signal KILL 3600 scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "timeout -k 30 -sTERM 3600 scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "timeout -vs TERM 3600 scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "timeout --preserve-status --foreground -v 3600 scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "timeout -- 3600 scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "timeout --signal TERM 3600 echo scripts/scenario.sh --target compose"], false },
+        { "sh", ["-lc", "env --ch /tmp --un FOO scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "env -iu FOO scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "env -vS 'FOO=1 scripts/scenario.sh --target compose'"], true },
+        { "sh", ["-lc", "env --default-signal=TERM -- scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "exec -a scenario-run scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "exec -cl scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "time -p scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "time -o /tmp/t -f %e scripts/compose-smoke-test.sh"], true },
+        { "sh", ["-lc", "time --output /tmp/t --format=%e scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "nohup timeout --signal TERM 3600 env -u FOO scripts/scenario.sh --target compose"], true },
+        { "sh", ["-lc", "time -o /tmp/t echo scripts/compose-smoke-test.sh"], false },
     };
 
     [Theory]
