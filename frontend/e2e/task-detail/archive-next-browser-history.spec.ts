@@ -76,7 +76,7 @@ async function installRoutes(page: Page): Promise<void> {
   });
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
@@ -84,7 +84,7 @@ async function installRoutes(page: Page): Promise<void> {
     id: 'fixture', name: PROJECT, shortCode: 'AH', path: WATCH_PATH,
     rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
   }]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, [{
     id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true,
     color: null, createdAt: '2026-09-18T10:00:00Z', projects: [{
       sourceType: 'local-folder', id: 'fixture', displayName: PROJECT, shortCode: 'AH',
@@ -95,15 +95,15 @@ async function installRoutes(page: Page): Promise<void> {
     }],
   }]));
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
-  await page.route(/\/api\/tasks\/([^/?]+)(?:\?.*)?$/, route => {
+  await page.route(/\/api\/(?:v1\/projects\/[^/]+\/)?tasks\/([^/?]+)(?:\?.*)?$/, route => {
     const reference = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1) ?? '');
     const current = findTask(reference);
     return current ? json(route, detail({ ...current })) : json(route, { message: 'Not found' }, 404);
   });
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
   await page.route('**/api/tasks', route => json(route, tasks));
-  await page.route('**/api/tasks/grouped**', route => json(route, grouped()));
-  await page.route(/\/api\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/board**', route => json(route, grouped()));
+  await page.route(/\/api\/v1\/studio\/runner\/status(?:\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-09-18T10:00:00Z', snapshots: [] }));
   await page.route(/\/api\/tasks\/[^/?]+\/pipeline(?:\?.*)?$/, route => json(route, {
@@ -120,7 +120,7 @@ async function installRoutes(page: Page): Promise<void> {
     hasPlan: false, source: null, snapshotCount: 0, activeItemId: null,
     softEstimateMedian: null, items: [], unassignedSubActions: [],
   }));
-  await page.route(/\/api\/tasks\/([^/?]+)\/move(?:\?.*)?$/, async route => {
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/([^/?]+)\/move(?:\?.*)?$/, async route => {
     const reference = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2) ?? '');
     const current = findTask(reference);
     if (!current) return json(route, { message: 'Not found' });

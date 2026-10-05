@@ -65,7 +65,7 @@ describe('TaskDetailPrefetchService', () => {
 
   it('prefetches once and caches the result for subsequent `take`', () => {
     service.prefetch('job-a', '/wp');
-    const req = http.expectOne(r => r.url.endsWith('/api/tasks/job-a'));
+    const req = http.expectOne(r => r.url === '/api/v1/projects/-/tasks/job-a');
     req.flush(makeDetail('job-a', '/wp'));
 
     const cached = service.take('job-a', '/wp');
@@ -81,27 +81,27 @@ describe('TaskDetailPrefetchService', () => {
     service.prefetch('job-b', '/wp');
     service.prefetch('job-b', '/wp');
     // Only one request is in flight; the others piggyback the ReplaySubject.
-    const reqs = http.match(r => r.url.endsWith('/api/tasks/job-b'));
+    const reqs = http.match(r => r.url === '/api/v1/projects/-/tasks/job-b');
     expect(reqs).toHaveLength(1);
     reqs[0].flush(makeDetail('job-b', '/wp'));
   });
 
   it('skips `prefetch` when a fresh entry already exists', () => {
     service.prefetch('job-c', '/wp');
-    const first = http.expectOne(r => r.url.endsWith('/api/tasks/job-c'));
+    const first = http.expectOne(r => r.url === '/api/v1/projects/-/tasks/job-c');
     first.flush(makeDetail('job-c', '/wp'));
     // Trigger a second prefetch immediately - within TTL the service should
     // short-circuit without firing an HTTP call.
     service.prefetch('job-c', '/wp');
-    http.expectNone(r => r.url.endsWith('/api/tasks/job-c'));
+    http.expectNone(r => r.url === '/api/v1/projects/-/tasks/job-c');
   });
 
   it('`invalidate` drops only the matching key', () => {
     service.prefetch('job-d', '/wp');
     service.prefetch('job-e', '/wp');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-d'))
+    http.expectOne(r => r.url === '/api/v1/projects/-/tasks/job-d')
       .flush(makeDetail('job-d', '/wp'));
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-e'))
+    http.expectOne(r => r.url === '/api/v1/projects/-/tasks/job-e')
       .flush(makeDetail('job-e', '/wp'));
 
     service.invalidate('job-d', '/wp');
@@ -111,7 +111,7 @@ describe('TaskDetailPrefetchService', () => {
 
   it('`take` returns null after an error swallows the prefetch', () => {
     service.prefetch('job-f', '/wp');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-f'))
+    http.expectOne(r => r.url === '/api/v1/projects/-/tasks/job-f')
       .error(new ProgressEvent('error'));
     expect(service.take('job-f', '/wp')).toBeNull();
   });

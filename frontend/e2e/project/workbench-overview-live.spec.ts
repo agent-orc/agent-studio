@@ -170,7 +170,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
       createdAt: '2026-01-01T00:00:00Z',
     },
   ];
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -180,7 +180,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
       user: null,
     }),
   }));
-  await page.route('**/api/runner/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/runner/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ projects: {} }),
@@ -200,7 +200,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
     contentType: 'application/json',
     body: JSON.stringify({ items: VISUAL_REFERENCE_STATUSES }),
   }));
-  await page.route('**/api/workspaces', route => route.fulfill({
+  await page.route('**/api/v1/workspaces', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify([{
@@ -208,7 +208,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
       color: null, createdAt: '2026-01-01T00:00:00Z', projects,
     }]),
   }));
-  await page.route('**/api/projects', route => route.fulfill({
+  await page.route('**/api/v1/projects', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify(projects),
@@ -218,7 +218,7 @@ test('captures the Dossier overview at wide and narrow widths in both themes', a
     contentType: 'application/json',
     body: JSON.stringify([]),
   }));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -300,7 +300,7 @@ test('project and central overviews receive a newly created item without reloadi
   try {
     await proxyApi(page, devBackend.baseUrl);
     const hubConnected = page.waitForEvent('websocket', {
-      predicate: socket => socket.url().includes('/hubs/jobs'),
+      predicate: socket => socket.url().includes('/hubs/v1/studio'),
       // A cold dev-server bundle can take longer than the default navigation window.
       timeout: 45_000,
     });

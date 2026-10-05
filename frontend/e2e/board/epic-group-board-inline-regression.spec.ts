@@ -71,15 +71,16 @@ async function installRoutes(page: Page) {
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (url.includes('/api/tasks/archive')) {
       return json({ items: [], total: 0, offset: 0, limit: 50 });
     }
     if (url.includes('/api/epics/completed/count')) return json({ count: 0 });
-    if (url.includes('/api/tasks/grouped')) return json(GROUPED_PAYLOAD);
+    if (url.includes('/api/v1/studio/board')) return json(GROUPED_PAYLOAD);
     if (url.includes(`/api/tasks/${EPIC.id}`)) return json(EPIC_DETAIL);
+    if (url.includes(`/api/v1/projects/`) && url.includes(`/tasks/${EPIC.id}`)) return json(EPIC_DETAIL);
     if (url.includes(`/api/epics/${EPIC.id}`)) {
       return json({
         ...EPIC,
@@ -97,7 +98,7 @@ async function installRoutes(page: Page) {
     if (url.includes('/api/watch-paths')) {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH }]);
     }
-    if (url.includes('/api/runner/status')) {
+    if (url.includes('/api/v1/studio/runner/status')) {
       return json({ projects: { [PROJECT]: { projectName: PROJECT, mode: 'manual', activeJobId: null, activeExecution: null, queuedJobIds: [] } } });
     }
     if (url.includes('/api/environment')) {

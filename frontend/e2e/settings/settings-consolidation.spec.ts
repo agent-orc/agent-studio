@@ -24,9 +24,9 @@ const json = (body: unknown) => async (route: import('@playwright/test').Route) 
 
 async function stub(page: Page) {
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/tasks/grouped', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/watch-paths', json([]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/cli/quota', json({ ttlMs: 1, snapshots: [] }));
   await page.route('**/api/cli/quota/caps', json({ defaultCapPct: 95, caps: {} }));
   await page.route('**/api/cli/quota/model-routes', json({ profiles: {} }));
@@ -38,7 +38,7 @@ async function stub(page: Page) {
   await page.route('**/api/clients', json([]));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
   await page.route('**/api/admin/prompts', json({ overrideDirectory: 'stub', items: [] }));
-  await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/workspaces*', json([]));
   await page.route('**/api/v1/management/retention/policy', json({ scope: 'workspace', version: 0, updatedAt: '', updatedBy: 'platform', rules: [], fullBackups: { daily: 7, weekly: 4, monthly: 12 } }));
   await page.route('**/api/v1/management/retention/runs', json([]));
   await page.route('**/api/v1/management/retention/schedule', json({ enabled: false, serverLocalHour: 3, nextRunAt: null }));

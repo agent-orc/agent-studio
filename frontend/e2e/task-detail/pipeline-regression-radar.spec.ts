@@ -164,7 +164,7 @@ async function installRoutes(page: Page, state: string) {
   await page.route('**/api/tasks', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -190,10 +190,10 @@ async function installRoutes(page: Page, state: string) {
       ]),
     }),
   );
-  await page.route('**/api/workspaces**', (route) =>
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
-  await page.route('**/api/projects**', (route) =>
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
   await page.route('**/api/git/summary**', (route) =>
@@ -232,7 +232,7 @@ async function installRoutes(page: Page, state: string) {
       body: JSON.stringify({ at: '2026-06-02T00:00:00Z', snapshots: [] }),
     }),
   );
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -276,7 +276,7 @@ async function installRoutes(page: Page, state: string) {
   );
   // Exact-task detail (the `(\?|$)` guard keeps it from swallowing the
   // `/pipeline`, `/runs`, ... sub-routes registered above).
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

@@ -222,7 +222,7 @@ function detail() {
 }
 
 async function installRoutes(page: Page): Promise<void> {
-  await page.route('**/hubs/jobs/negotiate**', (route) => route.fulfill({
+  await page.route('**/hubs/v1/studio/negotiate**', (route) => route.fulfill({
     json: {
       connectionId: 'activity-gallery-e2e',
       connectionToken: 'activity-gallery-e2e',
@@ -230,7 +230,7 @@ async function installRoutes(page: Page): Promise<void> {
       availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
     },
   }));
-  await page.routeWebSocket('**/hubs/jobs**', (socket) => {
+  await page.routeWebSocket('**/hubs/v1/studio**', (socket) => {
     socket.onMessage((message) => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
@@ -239,7 +239,7 @@ async function installRoutes(page: Page): Promise<void> {
   const encodedId = encodeURIComponent(TARGET.id);
   await context.route('**/api/**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await context.route('**/api/auth/status', (route) =>
+  await context.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -250,7 +250,7 @@ async function installRoutes(page: Page): Promise<void> {
         user: null,
       }),
     }));
-  await context.route('**/api/tasks/grouped**', (route) =>
+  await context.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -287,13 +287,13 @@ async function installRoutes(page: Page): Promise<void> {
     archived: false,
     urls: [],
   };
-  await context.route('**/api/projects', (route) =>
+  await context.route('**/api/v1/projects', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify([project]),
     }));
-  await context.route('**/api/workspaces', (route) =>
+  await context.route('**/api/v1/workspaces', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -310,7 +310,7 @@ async function installRoutes(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ snapshots: [], ttlSeconds: 600 }),
     }));
-  await context.route('**/api/runner/status**', (route) =>
+  await context.route('**/api/v1/studio/runner/status**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -403,7 +403,7 @@ async function installRoutes(page: Page): Promise<void> {
     }));
   await context.route(`**/api/tasks/${encodedId}/claude-session**`, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
-  await context.route(`**/api/tasks/${encodedId}?**`, (route) =>
+  await context.route(`**/api/v1/projects/*/tasks/${encodedId}?**`, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

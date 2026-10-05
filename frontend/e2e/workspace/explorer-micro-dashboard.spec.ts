@@ -36,10 +36,10 @@ function allJobs() {
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped()) }));
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped()) }));
   await page.route('**/api/tasks', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs()) }));
   await page.route('**/api/tasks/archive**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], total: 0, offset: 0, limit: 50 }) }));
-  await page.route('**/api/workspaces**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{
+  await page.route('**/api/v1/workspaces**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{
     id: 'WS-MICRO', displayName: 'Experiments', sortOrder: 0, isDefault: true, color: null,
     createdAt: '2026-07-10T08:00:00Z', projects: [{
       id: 'PROJ-MICRO', displayName: projectName, shortCode: 'MIC', workspaceId: 'WS-MICRO',
@@ -53,7 +53,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/environment**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ isDev: false, devTools: {} }) }));
   await page.route('**/api/cli/usage**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-10T08:00:00Z', sessions: [] }) }));
   await page.route('**/api/cli/quota**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-10T08:00:00Z', ttlSeconds: 600, snapshots: [] }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
 }
 
 async function openStudio(page: Page): Promise<void> {
