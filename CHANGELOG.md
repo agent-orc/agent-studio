@@ -23,6 +23,10 @@ release yet.
 - The deployment regression scenario runs the coding attempt on both runner planes: a new smoke step boots the backend monolith, a second real runner and a smart-HTTP fixture repository for the legacy plane the fleet uses (AGT-2985).
 - `agent-runner-deploy` waits up to ten minutes after a promotion for an accepted completion and otherwise prints the rollback command; `agent-runner-deploy verify-completions` reruns the check (AGT-2985).
 
+### Changed
+
+- A failed merge gate is classified (environment, product, integration branch, undecidable) and routed by the orchestrator: environment failures replay, product failures get one fix round, a fingerprint shared by two cards opens one cause card, and only undecidable failures park for a person (AGT-3009).
+
 ## [0.9.5] - 2026-10-04
 
 Catch-up release after the operations week: 189 commits on develop since 0.9.4

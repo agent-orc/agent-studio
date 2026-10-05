@@ -101,8 +101,7 @@ public sealed class GitWorkspaceTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, "QS-31", _ => { }, isProjectClone: true);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -302,8 +301,7 @@ public sealed class GitWorkspaceTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             "/bin/sh",
             ["-c", "sleep 300 & wait"],
-            workingDirectory: workspace.RepoPath,
-            isolateProcessGroup: true);
+            workingDirectory: workspace.RepoPath);
         for (var attempt = 0;
              attempt < 100 && WorktreeProcessReaper.FindByCwd(workspace.RepoPath).Count == 0;
              attempt++)
@@ -840,8 +838,7 @@ public sealed class GitWorkspaceTests : IDisposable
             WorkDir = _workDir,
             StateDir = Path.Combine(_workDir, ".runner-state"),
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         },
             "AGT-2147",
             log ?? (_ => { }),
@@ -862,8 +859,7 @@ public sealed class GitWorkspaceTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, "QS-30", log ?? (_ => { }), "PROJ-016", repositoryUrl, "main");
 
     private RunnerOptions PreflightOptions() => new()
@@ -875,8 +871,7 @@ public sealed class GitWorkspaceTests : IDisposable
         BackendName = "test",
         WorkDir = _workDir,
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
     };
 
     private async Task CommitFileAsync(string repo, string path, string content, string message)

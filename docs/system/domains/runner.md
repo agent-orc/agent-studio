@@ -291,7 +291,7 @@ rollout decision.
   totals by host and project for Execution Hosts and the status-bar usage view.
 - Coding hosts advertise fresh `cli-execution:<cliType>` and
   `provider-auth:<cliType>` capabilities for every card CLI binary they can
-  invoke. The primary `RUNNER_CLI_BIN` and the provider-specific
+  invoke. `RUNNER_CLI_TYPE` selects the default provider and the provider-specific
   `RUNNER_CLAUDE_CLI_BIN` / `RUNNER_CODEX_CLI_BIN` paths form that inventory;
   setup preserves both discovered paths even when Codex is selected as the
   primary. `LeaseEndpoints` adds the candidate card's normalized CLI keys to

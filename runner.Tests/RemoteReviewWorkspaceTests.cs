@@ -128,7 +128,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             baselineExitCode: 0);
         var index = new ReviewFlakyTestIndex(methods: [marked]);
 
-        var retried = initial.Reclassify([], index);
+        var retried = initial.Reclassify([], index, repeatPassed: true);
         var verdict = RemoteReviewWorkspace.BaselineVerdict(
             BaselineCommand("exit 0"),
             retried);
@@ -154,7 +154,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var retried = initial.Reclassify(
             [marked],
-            new ReviewFlakyTestIndex(methods: [marked]));
+            new ReviewFlakyTestIndex(methods: [marked]), repeatPassed: false);
         var verdict = RemoteReviewWorkspace.BaselineVerdict(
             BaselineCommand("exit 1"),
             retried);
@@ -163,6 +163,18 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Empty(retried.FlakyQuarantinedFailures);
         Assert.Equal("block", verdict.Status);
         Assert.Equal("NewTestFailures", verdict.Classification);
+    }
+
+    [Fact]
+    public void Failed_retry_without_test_output_does_not_prove_a_flake()
+    {
+        const string marked = "Product.Tests.ProcessTiming";
+        var initial = BaselineComparison.Create(new string('a', 40), [], [marked],
+            cacheHit: false, baselineExitCode: 0);
+        var retried = initial.Reclassify([], new ReviewFlakyTestIndex(methods: [marked]),
+            repeatPassed: false);
+        Assert.Empty(retried.FlakyQuarantinedFailures);
+        Assert.Equal([marked], retried.InitialFailures);
     }
 
     [Fact]
@@ -215,7 +227,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             TimeoutSeconds: 30,
             ExecutionKind: ReviewCommandKinds.AgentAspect,
             Prompt: "Inspect the exact result and return the required aspect sentinel.",
-            CliType: AgentCliProcess.CodexCli,
+            CliType: CliSelection.CodexCli,
             Model: "gpt-5.4-mini",
             ThinkingLevel: "high");
         var (workspace, _) = Workspace(
@@ -272,7 +284,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
                 TimeoutSeconds: 30,
                 ExecutionKind: ReviewCommandKinds.AgentAspect,
                 Prompt: $"Grade aspect {index}.",
-                CliType: AgentCliProcess.CodexCli,
+                CliType: CliSelection.CodexCli,
                 Model: "gpt-5.4-mini",
                 ThinkingLevel: "high"))
             .ToArray();
@@ -336,7 +348,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             TimeoutSeconds: 30,
             ExecutionKind: ReviewCommandKinds.AgentAspect,
             Prompt: "Review documentation impact.",
-            CliType: AgentCliProcess.CodexCli,
+            CliType: CliSelection.CodexCli,
             Model: "gpt-5.4-mini",
             ThinkingLevel: "high");
         var (workspace, _) = Workspace(
@@ -1850,8 +1862,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             WorkDir = Path.Combine(_root, "coding"),
             ReviewWorkDir = _reviewRoot,
             BaseBranch = "main",
-            CliBin = "unused",
-            CliArgs = "",
+            ClaudeCliBin = "unused",
             CodexCliBin = codexCliBin ?? "codex",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,

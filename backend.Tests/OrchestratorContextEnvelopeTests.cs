@@ -537,7 +537,7 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
     private sealed class CapturingRunner : OrchestratorRunner
     {
         public CapturingRunner() : base(
-            null!, NullLogger<OrchestratorRunner>.Instance, null, null, null)
+            NullLogger<OrchestratorRunner>.Instance, null, null, null)
         {
         }
 

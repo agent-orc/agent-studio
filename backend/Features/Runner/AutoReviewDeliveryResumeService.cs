@@ -158,12 +158,13 @@ public sealed class AutoReviewDeliveryResumeService
         if (!RemoteDeliverySettlementStore.MatchesAttempt(settlement, review?.AttemptId))
             settlement = null;
 
+        var deliveryMerged = ReadIntegrationStatus(task) == IntegrationStatuses.Integrated;
         var decision = AutoReviewResumePolicy.Decide(
             task.State,
             task.Fixture,
             review?.State,
             review?.Outcome,
-            ReadIntegrationStatus(task) == IntegrationStatuses.Integrated,
+            deliveryMerged,
             settlement?.Stage,
             settlement?.ShouldIntegrate ?? false,
             IntegrationGateJournal.Read(task.FolderPath) is not null);
@@ -181,22 +182,28 @@ public sealed class AutoReviewDeliveryResumeService
         var integrationOutcome = decision.Reason == AutoReviewResumePolicy.Reasons.DeliveryGateFailed
             ? AcceptedIntegrationFailureCodes.DeliveryGateFailed
             : settlement?.IntegrationOutcome;
-        var integrationDetail = settlement?.IntegrationDetail;
+        // A merged delivery owes no failure detail, whatever an earlier
+        // integration attempt recorded as its park reason.
+        var integrationDetail = deliveryMerged ? null : settlement?.IntegrationDetail;
 
         if (decision.Action == AutoReviewResumeAction.StartIntegration)
         {
             // The coordinator coalesces a replay of the same delivery key and
             // the merge runner answers AlreadyMerged for a delivery the branch
-            // already contains, so re-entering here cannot double-merge.
+            // already contains, so re-entering here cannot double-merge. After
+            // an operator re-entry the last completed result is exactly the
+            // stale verdict being replaced, so it is not handed back.
             var request = BuildIntegrationRequest(task, settlement!);
-            var result = await _integration.EnqueueAsync(request).ConfigureAwait(false);
+            var result = await _integration.EnqueueAsync(
+                    request,
+                    discardCompletedReplay: decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry)
+                .ConfigureAwait(false);
             if (!IsCurrent(review!))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
             integrationOutcome = result.Outcome.ToString();
-            integrationDetail = result.AutomaticRecoveryDetail;
-            RemoteDeliverySettlementStore.Advance(
+            integrationDetail = RemoteDeliveryParkReason.For(result);
+            RemoteDeliverySettlementStore.RecordIntegration(
                 task.FolderPath,
-                RemoteDeliverySettlementStage.IntegrationSettled,
                 integrationOutcome,
                 integrationDetail);
         }

@@ -73,6 +73,31 @@ public static class ProjectSettingsEndpoints
 {
     public static void MapProjectSettingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/projects/{projectName}/chat-metadata", (
+            string projectName, ProjectSettingsService settings, TaskScannerService scanner,
+            ProjectRegistry projects, WorkspaceSettingsService workspaceSettings) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            var project = projects.FindByIdOrDisplayName(projectName);
+            var workspaceDefault = workspaceSettings.Get(project?.WorkspaceId).ChatMetadataEnabled ?? true;
+            return Results.Ok(new {
+                chatMetadataEnabled = settings.Get(projectName).ChatMetadataEnabled ?? workspaceDefault,
+                projectOverride = settings.Get(projectName).ChatMetadataEnabled,
+                workspaceDefault,
+            });
+        });
+        app.MapPut("/api/projects/{projectName}/chat-metadata", (
+            string projectName, SetChatMetadataEnabledRequest request,
+            ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetChatMetadataEnabled(projectName, request.Enabled);
+            return Results.Ok(new { chatMetadataEnabled = settings.Get(projectName).ChatMetadataEnabled });
+        });
         app.MapGet("/api/projects/{projectName}/execution", (
             string projectName,
             ProjectSettingsService settings,
@@ -216,10 +241,8 @@ public static class ProjectSettingsEndpoints
                     executionRunner = kv.Value.ExecutionRunner,
                     remoteExecutionEnabled = kv.Value.RemoteExecutionEnabled,
                     orchestratorModel = kv.Value.OrchestratorModel,
+                    chatMetadataEnabled = kv.Value.ChatMetadataEnabled,
                     orchestratorThinkingLevel = kv.Value.OrchestratorThinkingLevel,
-                    cliExecutionEngine = defaults.ResolveCliExecutionEngine(kv.Key).ExecutionEngine,
-                    cliExecutionEngineSource = defaults.ResolveCliExecutionEngine(kv.Key).Source,
-                    cliExecutionEngineOverride = kv.Value.CliExecutionEngine,
                     // Epic decomposition (planning) run knobs (way 3): null
                     // model means "use the epic card's own model"; subTasksToReady
                     // null/false lands generated sub-tasks in 0-backlog.
@@ -467,12 +490,12 @@ public static class ProjectSettingsEndpoints
             if (!PipelineTypes.IsValid(req.PipelineType))
                 return Results.BadRequest(new { error = $"Unknown pipeline type '{req.PipelineType}'" });
             var pipelineType = PipelineTypes.Normalize(req.PipelineType);
-            var stepId = ResolveKnownPipelineStepId(req.StepId, pipelineType);
 
             // Reject step ids the catalogue does not know so a typo fails loud
             // instead of writing dead config that never reaches a real step. The
             // abort-review step lives off the linear AllSteps list but is a valid
             // configurable target, so accept it explicitly.
+            var stepId = ResolveKnownPipelineStepId(req.StepId, pipelineType);
             if (stepId is null)
                 return Results.BadRequest(new { error = $"Unknown pipeline step '{req.StepId}'" });
             if (PipelineStepConfigResolver.IsRepositoryOwnedAnalysisStep(stepId))
@@ -486,6 +509,7 @@ public static class ProjectSettingsEndpoints
 
             if (req.MaxIterations is < UiIterationGate.MinimumIterations or > UiIterationGate.MaximumIterations)
                 return Results.BadRequest(new { error = $"maxIterations must be between {UiIterationGate.MinimumIterations} and {UiIterationGate.MaximumIterations}" });
+
             if (req.EnrichmentBlockIds is { Count: > 16 }
                 || req.EnrichmentBlockIds?.Any(id => string.IsNullOrWhiteSpace(id)
                     || id.Length > 100 || !IntakeRunner.IsBuiltInConstraintId(id.Trim())) == true
@@ -676,60 +700,6 @@ public static class ProjectSettingsEndpoints
                 req.ScopedReviewAfterFinding,
                 req.ScopedReviewMaximumDeltaFiles);
             return Results.Ok(settings.Get(projectName));
-        });
-
-        // Flag-gated local CLI execution engine. The effective value resolves
-        // process environment -> project override -> workspace default -> CAR
-        // platform default.
-        app.MapGet("/api/projects/{projectName}/cli-execution-engine", (
-            string projectName,
-            OrchestratorDefaultsProvider defaults,
-            TaskScannerService scanner) =>
-        {
-            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
-            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-
-            var r = defaults.ResolveCliExecutionEngine(projectName);
-            return Results.Ok(new
-            {
-                executionEngine = r.ExecutionEngine,
-                source = r.Source,
-                projectOverride = r.ProjectOverride,
-                workspaceDefault = r.WorkspaceDefault,
-                platformDefault = r.PlatformDefault,
-                available = CliExecutionEngines.All,
-            });
-        });
-
-        app.MapPut("/api/projects/{projectName}/cli-execution-engine", (
-            string projectName,
-            SetCliExecutionEngineRequest req,
-            ProjectSettingsService settings,
-            OrchestratorDefaultsProvider defaults,
-            TaskScannerService scanner) =>
-        {
-            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
-            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            if (!string.IsNullOrWhiteSpace(req.ExecutionEngine)
-                && !CliExecutionEngines.IsValid(req.ExecutionEngine))
-            {
-                return Results.BadRequest(new
-                {
-                    error = $"Unsupported CLI execution engine '{req.ExecutionEngine}'",
-                });
-            }
-
-            settings.SetCliExecutionEngine(projectName, req.ExecutionEngine);
-            var r = defaults.ResolveCliExecutionEngine(projectName);
-            return Results.Ok(new
-            {
-                executionEngine = r.ExecutionEngine,
-                source = r.Source,
-                projectOverride = r.ProjectOverride,
-                workspaceDefault = r.WorkspaceDefault,
-                platformDefault = r.PlatformDefault,
-                available = CliExecutionEngines.All,
-            });
         });
 
         // Per-project CLI permission modes. GET returns the resolved mode +
@@ -1308,7 +1278,6 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
         });
-
     }
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)
@@ -1326,7 +1295,7 @@ public static class ProjectSettingsEndpoints
         if (full is not null) return full.Id;
 
         // A bare suffix is accepted only when it names exactly one step in
-        // this pipeline type. Persist the catalogue id so runtime lookups work.
+        // this pipeline type. Persist the catalogue id for runtime lookups.
         var matches = known.Where(step =>
         {
             var separator = step.Id.IndexOf('-');

@@ -278,7 +278,7 @@ public sealed partial class ScenarioContext : IDisposable
                 "--git-remote", _bareRepositoryPath,
                 "--branch", _fixture.Repository.DefaultBranch,
                 "--workdir", runnerWork,
-                "--cli", _fakeCliPath,
+                "--claude-cli", _fakeCliPath,
                 "--ttl", "15",
                 "--max-parallelism", "1",
                 "--poll-seconds", "1");

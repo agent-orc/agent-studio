@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-09-28</td>
+          <td><code>QS-106</code><br><span class="small">stale-integration-verdict-park (fix <code>AGT-2995</code>)</span></td>
+          <td>No CLI crashed. The immediate integration returned <code>Error</code> after <code>main</code> moved; the log said only <code>outcome=Error</code> and the card read <code>integration: pending</code>, "not yet integrated", parked as <code>review-verdict: Error</code>. When the operator moved the card back to <span class="lane">4-auto-review</span>, deferred post-processing resumed with <code>action=CompleteTransition reason=awaiting-integration-completion integration=Error</code> and parked it again.</td>
+          <td>Merge-runner <code>Error</code> results carried no typed code, and the resume policy read a <code>LaneSettled</code> settlement sidecar as "only the transition is owed", replaying the stale verdict.</td>
+          <td><span class="pill human">re-parked</span> in <span class="lane">5-human-review</span> for eight hours; only a fresh delivery escaped. Now every <code>Error</code> names a <code>failureCode</code> in the log line, the pipeline step, and the park reason (<code>integration: source-needs-rebase</code>), and a <code>LaneSettled</code> card back in Auto Review re-runs the integration decision (<code>operator-reentry-reintegration</code>).</td>
+        </tr>
+        <tr>
           <td>2026-09-27</td>
           <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>
           <td>No reviewer crashed. A product block mentioning "infra crash" or "no parseable verdict" was reproduced as a review-infrastructure decision.</td>
@@ -2758,6 +2765,13 @@
           <td>A real Stable recovery dialog covered AGT-2910 at 16:17:53 Europe/Berlin, 3 h 54 min 53 s after the operator-reported 12:23 restart. The visible dirty-file date was 22 September. The browser replay completed zero task switches; no shared recovery action was taken. Neither the source boot nor continuous display is established.</td>
           <td>The shell automatically opened a global modal for every review-required pending item. The old dirty-file timestamp was shown as its creation time, with no boot or detection identifier to connect the decision to a restart.</td>
           <td>The observed navigation terminal was an intervention-dependent block with no finite duration. The presentation now keeps the pending decision reachable through a quiet entry point; opening and closing the view leave the shared record untouched. Explicit commit or leave-uncommitted actions retain their backend checks. New findings expose boot and detection identifiers; the 12:23 attribution remains unknown.</td>
+        </tr>
+        <tr id="case-agt-3009-gate-failure-triage">
+          <td>2026-10-04</td>
+          <td><code>AGT-3009</code><br><span class="small">every red merge gate parked as operator-decision</span></td>
+          <td>13 of 14 cards in human review were merge-gate parks with <code>parkedBlocker.blockerType = operator-decision</code>; one was a real acceptance decision. An operator script outside the product (<code>gate-triage.mjs</code>) read the newest gate log and queued a redelivery or a fix round by hand. One red baseline test (<code>orchestrator-side-sheet.pin.spec</code>, AGT-3007) held every gate red from about 2026-09-29 and was graded a flake more than 20 times before a cause card existed.</td>
+          <td>The delivery-chain reconciler parked every failed integration with an untyped reason, so the blocker read as a person's decision. Nothing classified the gate log or counted the same failing item across cards.</td>
+          <td><span class="pill ok">fixed in dev</span> The reconciler routes a red gate through <code>GateFailureRouter</code> first. Environment classes stay in Auto Review and the bounded gate-environment ladder replays them. Transport faults retry the same exact-subject gate at most three times, without integration redelivery. Failed cause-card creation stays pending for another reconciler sweep, including legacy receipts missing the cause key. Unsupported review flake labels require a green repeat of the same command and tree, or settle as undecidable and retain their named failure count. A product class gets one fix round with the failing items. An integration-branch class, or a fingerprint already seen on another card, opens or joins one cause card and waits on it. Only <code>gate-undecidable</code> parks for a person, stating the missing evidence; spent budgets park with their own typed category. See <a href="../system/domains/review.md#merge-gate-failure-triage-agt-3009">merge-gate failure triage</a>.</td>
         </tr>
         <tr id="case-stable-canonical-review-polling-thrash">
           <td>2026-10-04</td>

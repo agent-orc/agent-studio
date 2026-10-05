@@ -1,0 +1,13 @@
+<div class="usage" data-testid="chat-session-usage">
+  @if (preferences.chatMetadataEnabled()) {
+    <span class="usage__totals">
+      <span>{{ summary() }}</span>
+      @if (details()) { <small>{{ details() }}</small> }
+    </span>
+  }
+  <button type="button" (click)="toggle()"
+          [attr.aria-pressed]="preferences.chatMetadataEnabled()"
+          data-testid="chat-metadata-toggle">
+    {{ preferences.chatMetadataEnabled() ? 'Hide usage' : 'Show usage' }}
+  </button>
+</div>

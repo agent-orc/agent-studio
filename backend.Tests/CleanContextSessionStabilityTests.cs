@@ -54,8 +54,6 @@ public class CleanContextSessionStabilityTests
         {
             CliType = CliTypes.Codex,
             GetCliPath = _ => "unused",
-            BuildStartInfo = (_, _, workingDirectory, _, _, _, _, _) =>
-                new System.Diagnostics.ProcessStartInfo { FileName = "unused", WorkingDirectory = workingDirectory },
             SupportsCleanContext = true,
             PrepareCleanContext = (_, jobKey, _) => CleanContextPreparer.PrepareCodex(
                 userHome,

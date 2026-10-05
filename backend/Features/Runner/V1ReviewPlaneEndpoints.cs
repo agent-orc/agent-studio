@@ -858,6 +858,12 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            if (context.RequestServices.GetService<IGateFailureFingerprintCounter>() is { } fingerprints)
+                foreach (var command in Contract.ReviewFlakeEvidencePolicy.UnprovenFailures(request))
+                    await fingerprints.RecordAndReadCardsAsync(
+                        Contract.FailureItemFingerprint.Compute(command.NewFailures!), task.Key ?? task.Id,
+                        $"review-unproven-flake:{attemptId}:{command.StepId}", ct);
+
             var receivedAt = settled.ReviewAttempt.Reports
                 .LastOrDefault(report => string.Equals(
                     report.IdempotencyKey,
@@ -1445,7 +1451,7 @@ public static class V1ReviewPlaneEndpoints
                         // is what a successor still refuses.
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
-                        integrationParkReason = integrated.AutomaticRecoveryDetail;
+                        integrationParkReason = RemoteDeliveryParkReason.For(integrated);
                     }
                     else
                     {
@@ -2369,17 +2375,7 @@ public static class V1ReviewPlaneEndpoints
             "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 
@@ -2468,17 +2464,7 @@ public static class V1ReviewPlaneEndpoints
             "Fix exactly the blocking findings below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 
