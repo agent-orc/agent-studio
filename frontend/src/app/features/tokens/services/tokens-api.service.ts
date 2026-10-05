@@ -7,6 +7,7 @@ import type {
   TokenTimeline,
   WorkspaceExpensiveJobsResponse,
 } from '../models/tokens.model';
+import type { UsageLedgerScope } from '../../usage-cockpit';
 
 /**
  * Cycle 10d API client for the token-aggregate endpoints. Lifted out
@@ -71,10 +72,15 @@ export class TokensApiService {
    * {5, 15, 60}. Out-of-range values are silently snapped to the
    * defaults by the backend.
    */
-  getWorkspaceTokensTimeline(windowHours: number, bucketMinutes: number) {
-    const params = new HttpParams()
+  getWorkspaceTokensTimeline(windowHours: number, bucketMinutes: number, scope: UsageLedgerScope | null = null) {
+    let params = new HttpParams()
       .set('windowHours', String(windowHours))
       .set('bucketMinutes', String(bucketMinutes));
+    if (scope) {
+      params = params.set('workspaceId', scope.workspaceId)
+        .set('fromUtc', scope.fromUtc).set('toUtc', scope.toUtc);
+      if (scope.projectId) params = params.set('projectId', scope.projectId);
+    }
     return this.http.get<TokenTimeline>(
       `${this.baseUrl}/workspace/tokens/timeline`,
       { params },

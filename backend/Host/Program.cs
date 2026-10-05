@@ -386,12 +386,12 @@ builder.Services.AddSingleton<OrchestratorContextDigestService>();
 builder.Services.AddSingleton<OrchestratorTaskPromptContextComposer>();
 builder.Services.AddSingleton<OrchestratorWorkbenchPromptContextComposer>();
 builder.Services.AddSingleton<RemoteChatWorkBroker>();
+builder.Services.AddSingleton<LocalChatUsageTracker>();
 builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();
 builder.Services.AddSingleton<ProjectChatMigration>();
 builder.Services.AddSingleton<OrchestratorRunner>(sp => new OrchestratorRunner(
-    sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredService<ILogger<OrchestratorRunner>>(),
     sp.GetService<CliUsageParserRegistry>(),
     sp.GetService<ICliModelRegistry>(),
@@ -427,6 +427,7 @@ builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -866,6 +867,12 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+// AGT-3009: a red merge gate is classified (environment, product, integration
+// branch, undecidable) and routed by the delivery-chain reconciler before it may
+// park. The fingerprint counter is the Task Server store the cause breaker reads.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateFailureFingerprintCounter,
+    AgentStudio.Pipeline.TaskServerGateFailureFingerprintCounter>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // AGT-2849: a build gate that never reached a verdict left an un-gated merge on
 // the integration branch, and the next delivery merged on top of it. Startup
 // recovery rolls that branch back to the exact pre-merge tip (or resumes the
@@ -994,6 +1001,7 @@ builder.Services.AddSingleton<IQuotaProbe, ClaudeQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
+builder.Services.AddSingleton<QuotaHistoryStore>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
@@ -1371,6 +1379,17 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
+}
+
+// One-time collapse of task receipts that recorded the same usage more than
+// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

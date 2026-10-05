@@ -1,4 +1,5 @@
 using AgentStudio.Cli;
+using AgentStudio.Pipeline;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -29,6 +30,27 @@ public sealed class ModelEquivalenceCatalogTests
         => Assert.DoesNotContain(_catalogue.Routes, route =>
             string.Equals(route.FromModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase)
             || string.Equals(route.ToModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase));
+
+    [Fact]
+    public void AutomaticCodexFallbacks_StayWithinStudioPolicyTiers()
+    {
+        // AGT-2903 re-based the tiers on GPT-6; the gpt-5.6 siblings stay in the
+        // policy as declared provider-rejection fallbacks of the GPT-6 tiers.
+        var policy = new ModelRoutingPolicyRegistry().Policy;
+        var policyModels = policy.Tiers.Select(tier => tier.Model)
+            .Concat(policy.ProviderRejectionFallbacks
+                .Where(fallback => fallback.CliType == CliTypes.Codex)
+                .Select(fallback => fallback.ToModel))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.NotEmpty(_catalogue.Routes);
+        Assert.All(_catalogue.Routes, route =>
+        {
+            if (route.FromCliType == CliTypes.Codex)
+                Assert.Contains(route.FromModel, policyModels);
+            if (route.ToCliType == CliTypes.Codex)
+                Assert.Contains(route.ToModel, policyModels);
+        });
+    }
 
     [Theory]
     [InlineData("low")]

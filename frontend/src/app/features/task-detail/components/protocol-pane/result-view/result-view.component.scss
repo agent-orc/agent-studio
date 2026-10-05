@@ -170,18 +170,13 @@
 }
 
 // --- 2. Overview ------------------------------------------------------------
-// One card, four per-case arrangements (concept doc §8.3). The tone accent and
-// the outer card are shared; `data-layout` reshapes the inner flow so a bugfix
-// (sequence), a UI cleanup (before -> after), and a blocked run (warn callout)
-// read as visibly different templates, not the same stacked pair.
+// Case layouts keep their distinct reading order on one flat surface.
 .result__overview {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--studio-border, rgba(255, 255, 255, 0.1));
-  background: color-mix(in srgb, var(--result-tone) 6%, var(--studio-bg-elevated, transparent));
+  padding: var(--studio-spacing-3) 0;
+  border-top: 1px solid var(--studio-border);
 
   &[data-tone="accent"]  { --result-tone: var(--studio-accent); }
   &[data-tone="warn"]    { --result-tone: var(--studio-accent-warn); }
@@ -280,12 +275,13 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding-top: var(--studio-spacing-3);
+  border-top: 1px solid var(--studio-border);
 }
 
 .result__detail-title {
   margin: 0;
   padding-bottom: 4px;
-  border-bottom: 1px solid var(--studio-border, rgba(255, 255, 255, 0.1));
   color: var(--studio-fg-dim, var(--studio-fg));
   font-size: 11px;
   font-weight: 700;

@@ -67,9 +67,11 @@ internal static class BusTokenEntryConverter
         if (string.IsNullOrWhiteSpace(workspaceRoot) || string.IsNullOrWhiteSpace(projectName))
             return new List<OrchestratorLogEntry>();
         var participant = AgentMessageBusBridge.ParticipantOrchestratorFor(projectName);
-        var messages = store.Query(workspaceRoot, projectName, new AgentMessageQuery(
-            ParticipantId: participant,
-            Kind: "token-usage"));
+        var messages = TokenLedgerDuplicates.CollapseMessages(
+            store.Query(workspaceRoot, projectName, new AgentMessageQuery(
+                ParticipantId: participant,
+                Kind: "token-usage")),
+            out _);
         var entries = new List<OrchestratorLogEntry>(messages.Count);
         foreach (var m in messages)
         {
@@ -83,7 +85,8 @@ internal static class BusTokenEntryConverter
     /// of participant, and retain the participant id on the transient entry.
     /// Runtime token panels use this bus-native shape so coding-agent turns
     /// (<c>agent:*</c>) do not disappear behind orchestrator-only parity
-    /// shims.
+    /// shims. Identical re-emissions collapse to one row
+    /// (<see cref="TokenLedgerDuplicates"/>) in both loaders.
     /// </summary>
     public static List<OrchestratorLogEntry> LoadTokenUsageEntries(
         AgentMessageBusStore store,
@@ -92,8 +95,10 @@ internal static class BusTokenEntryConverter
     {
         if (string.IsNullOrWhiteSpace(workspaceRoot) || string.IsNullOrWhiteSpace(projectName))
             return new List<OrchestratorLogEntry>();
-        var messages = store.Query(workspaceRoot, projectName, new AgentMessageQuery(
-            Kind: "token-usage"));
+        var messages = TokenLedgerDuplicates.CollapseMessages(
+            store.Query(workspaceRoot, projectName, new AgentMessageQuery(
+                Kind: "token-usage")),
+            out _);
         var entries = new List<OrchestratorLogEntry>(messages.Count);
         foreach (var m in messages)
         {

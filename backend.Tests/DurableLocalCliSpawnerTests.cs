@@ -160,8 +160,7 @@ public sealed class DurableLocalCliSpawnerTests : IDisposable
             jobId: "AGT-durable",
             jobKey: jobKey,
             prompt: prompt,
-            workingDirectory: _root,
-            executionEngine: CliExecutionEngines.Car);
+            workingDirectory: _root);
 
         Assert.Null(error);
         Assert.NotNull(execution);

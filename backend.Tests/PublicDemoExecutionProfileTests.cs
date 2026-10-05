@@ -131,9 +131,11 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // path its sibling POST /api/projects/{projectId}/completed-lane/audit
             // carries. The two read-only delivery-claim reports stay unmarked,
             // like every other GET that only re-derives git state.
+            // AGT-3001 added GET /api/cli/quota/history on Preview: read-only
+            // quota history is denied in public demo like GET /api/cli/quota.
             // Decision-card decide and reopen are execution mutations on Start.
             // Project model migration is an operator-triggered Preview mutation.
-            Assert.Equal(88, routes.Count);
+            Assert.Equal(89, routes.Count);
             // Pin their identities too: an unrelated route must not mask the loss
             // of either decision mutation from the denial inventory.
             foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen" })
@@ -160,7 +162,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Continue] = 14,
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
-                    [ExecutionAdmissionPath.Preview] = 25,
+                    [ExecutionAdmissionPath.Preview] = 26,
                     [ExecutionAdmissionPath.PostStep] = 11,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

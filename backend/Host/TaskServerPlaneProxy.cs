@@ -50,11 +50,14 @@ public static class TaskServerPlaneProxy
                 TaskServerProtocol.ClientVersionHeaderName,
                 typeof(TaskServerPlaneProxy).Assembly.GetName().Version?.ToString(3)
                 ?? "unknown");
+            var consumerId = configuration["TaskServer:ConsumerId"]?.Trim();
+            if (!string.IsNullOrWhiteSpace(consumerId))
+                client.DefaultRequestHeaders.Add("X-Principal-Consumer-Id", consumerId);
             var token = ReadServiceToken(configuration);
-            if (token is not null)
+            if (token is not null && string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
                 client.DefaultRequestHeaders.Authorization =
                     new AuthenticationHeaderValue("Bearer", token);
-        });
+        }).AddHttpMessageHandler(() => new ReloadingProxyCredentialHandler(configuration));
     }
 
     public static bool MapTaskServerPlaneProxy(this WebApplication app)
@@ -66,11 +69,13 @@ public static class TaskServerPlaneProxy
             app.MapMethods(
                 "/api/v1/{**path}",
                 ["GET", "HEAD", "OPTIONS"],
-                ForwardAsync);
+                ForwardAsync)
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
             var unsafeProxy = app.MapMethods(
                 "/api/v1/{**path}",
                 ["POST", "PUT", "PATCH", "DELETE"],
-                ForwardAsync);
+                ForwardAsync)
+                .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
             unsafeProxy.Add(endpoint =>
             {
                 endpoint.Metadata.Add(new ExecutionRouteMetadata(ExecutionAdmissionPath.PostStep));
@@ -84,7 +89,8 @@ public static class TaskServerPlaneProxy
         app.MapMethods(
             "/api/v1/{**path}",
             ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            ForwardAsync);
+            ForwardAsync)
+            .WithMetadata(TaskServerPlaneProxyEndpoint.Instance);
         return true;
     }
 
@@ -185,4 +191,37 @@ public static class TaskServerPlaneProxy
         }
         return string.IsNullOrWhiteSpace(direct) ? null : direct;
     }
+
+    private sealed class ReloadingProxyCredentialHandler(IConfiguration configuration) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (!string.IsNullOrWhiteSpace(configuration["TaskServer:AuthTokenFile"]))
+            {
+                var token = ReadServiceToken(configuration)
+                    ?? throw new InvalidOperationException("The Task Server service credential is empty.");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                if (PrincipalConsumerProofFile.ReadForBearerFile(configuration["TaskServer:AuthTokenFile"]!) is { } proof)
+                {
+                    request.Headers.Remove("X-Principal-Consumer-Id");
+                    request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Id", proof.ConsumerId);
+                    request.Headers.TryAddWithoutValidation("X-Principal-Consumer-Proof", proof.Value);
+                }
+            }
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
+}
+
+/// <summary>
+/// Endpoint metadata marking a route that forwards to the standalone Task
+/// Server. The networked access middleware leaves bearer authentication to the
+/// upstream only when routing selected an endpoint carrying this marker.
+/// </summary>
+public sealed class TaskServerPlaneProxyEndpoint
+{
+    public static readonly TaskServerPlaneProxyEndpoint Instance = new();
+
+    private TaskServerPlaneProxyEndpoint() { }
 }

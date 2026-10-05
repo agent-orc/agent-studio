@@ -1,5 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
 import { CopyableTaskKeyComponent } from '../../../../components/copyable-task-key/copyable-task-key.component';
+import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
+import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-proposals.component';
 import {
   TaskReferenceMicrocardComponent,
   type TaskReferenceStatus,
@@ -17,6 +19,8 @@ type OverviewCardMode = 'decision' | 'current' | 'invalid' | 'history';
   standalone: true,
   imports: [
     CopyableTaskKeyComponent,
+    TagChipsComponent,
+    TagProposalsComponent,
     StudioIconComponent,
     TaskReferenceMicrocardComponent,
     WorkbenchReviewTagComponent,

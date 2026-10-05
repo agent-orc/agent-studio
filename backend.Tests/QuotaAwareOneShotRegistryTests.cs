@@ -102,7 +102,6 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
         var codex = new RecordingOneShot(CliTypes.Codex);
         var registry = BuildRegistry(claude, codex);
         var runner = new OrchestratorRunner(
-            null!,
             NullLogger<OrchestratorRunner>.Instance,
             oneShotRegistry: registry);
 

@@ -506,7 +506,11 @@ load-bearing boundary is recorded in
 The equivalence adapter reads Token Economy's published, embedded model-routing
 knowledge base and price catalogue from the exactly pinned NuGet package. It
 selects another provider only within the same capability class, excludes
-unqualified and retired routes, preserves a supported explicit thinking level,
+unqualified and retired routes, and admits Codex routes only when their model
+appears in this repository's versioned routing tiers. That local policy gate
+keeps a TokenEconomy price or knowledge update from promoting a newly listed
+model into automatic quota fallback before Studio adopts the route. It
+preserves a supported explicit thinking level,
 and chooses the cheapest remaining comparable route. The package version and
 its independent routing-policy version are recorded together. Admission makes
 no network call. An operator-configured pair remains an explicit override and
@@ -539,7 +543,7 @@ Every switch emits the shared `modelFallback` receipt:
   "reason": "quota-cap",
   "window": "Weekly",
   "usedPct": 98,
-  "catalogueVersion": "TokenEconomy 0.3.4; routing 2026-07-24"
+  "catalogueVersion": "TokenEconomy 0.3.5; routing 2026-09-24"
 }
 ```
 

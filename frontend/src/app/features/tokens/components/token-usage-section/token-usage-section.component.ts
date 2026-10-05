@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, input, output } from '@angular/core';
+import { describeLedgerScope, type UsageLedgerScope } from '../../../usage-cockpit';
 import type { CliType } from '../../../../models/task.model';
 import { CliUsageStore } from '../../services/cli-usage.store';
 import { CliUsageDetailComponent } from '../cli-usage-detail/cli-usage-detail';
@@ -39,6 +40,14 @@ export class TokenUsageSectionComponent implements OnInit, OnDestroy {
   /** Bubbled up (through WorkspaceOverlaysComponent) so the shell can route to a
    *  project's Settings when a "By project" usage row is clicked. */
   readonly openProjectSettings = output<string>();
+
+  /**
+   * Workspace and local-calendar range carried by a usage-detail ledger link
+   * (HUC-S3). Shown as one line so the scope survives the navigation; `null`
+   * when the page was opened without one.
+   */
+  readonly ledgerScope = input<UsageLedgerScope | null>(null);
+  readonly ledgerScopeLabel = computed(() => this.ledgerScope() ? describeLedgerScope(this.ledgerScope()!) : null);
 
   ngOnInit(): void {
     this.usage.startDetail();

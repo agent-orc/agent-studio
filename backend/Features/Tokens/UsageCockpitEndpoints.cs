@@ -23,7 +23,8 @@ public sealed record UsageSlotPool(string Name, int? Occupied, int? Capacity, Us
 public sealed record UsageCockpitResponse(int SnapshotVersion, string WorkspaceId, string TimeZone,
     DayOfWeek WeekStart, DateTime GeneratedAt, UsageCalendar Calendar,
     IReadOnlyList<UsageCli> Clis, UsageCostProjection Cost, IReadOnlyList<UsageRun> Runs,
-    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources);
+    IReadOnlyList<UsageSlotPool> Slots, IReadOnlyDictionary<string, UsageSourceState> Sources,
+    IReadOnlyList<RemoteChatUsage>? ChatTurns = null);
 
 public static class UsageCockpitEndpoints
 {
@@ -35,6 +36,8 @@ public static class UsageCockpitEndpoints
             BusBackedProjectTokenUsageReader ledger, AgentMessageBusStore bus,
             TaskRunnerService runner, ClientIdentityStore clients,
             AttemptAuthorityService reviews,
+            RemoteChatWorkBroker chatWork,
+            LocalChatUsageTracker localChatWork,
             IConfiguration configuration) =>
         {
             var workspace = string.IsNullOrWhiteSpace(workspaceId)
@@ -46,8 +49,8 @@ public static class UsageCockpitEndpoints
             var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
             var visibleProjects = allProjects.Where(project => human is null
                 || ProjectAccessAuthorization.Allows(human.User, project.Id, projects)).ToList();
-            if (human is not null && human.User.Role != StudioRoles.Owner
-                && human.User.Projects.Count > 0 && visibleProjects.Count == 0)
+            if (human is not null && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
+                && visibleProjects.Count == 0)
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
             var now = DateTime.UtcNow;
@@ -107,7 +110,7 @@ public static class UsageCockpitEndpoints
                 var unattributed = new List<OrchestratorLogEntry>();
                 var unassignedCount = 0;
                 var canAssignUnattributed = workspace.IsDefault
-                    && (human is null || human.User.Role == StudioRoles.Owner || human.User.Projects.Count == 0);
+                    && (human is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User));
                 foreach (var message in messages)
                 {
                     var entry = BusTokenEntryConverter.ToEntry(message);
@@ -217,7 +220,9 @@ public static class UsageCockpitEndpoints
                 ? new UsageSourceState("complete", now, null)
                 : new UsageSourceState("partial", now, null, "One slot source is unavailable.");
             return Results.Ok(new UsageCockpitResponse(1, workspace.Id, calendar.TimeZone,
-                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates));
+                calendar.WeekStart, now, calendar, clis, cost, runs, slots, sourceStates,
+                chatWork.GetUsage().Concat(localChatWork.GetUsage())
+                    .Where(row => visibleNames.Contains(row.ProjectName)).ToArray()));
         });
     }
 
