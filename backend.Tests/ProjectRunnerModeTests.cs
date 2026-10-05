@@ -639,7 +639,7 @@ public sealed class ProjectRunnerModeTests : IDisposable
         var gemini = GenericCliExecutionService.ForAntigravity(NullLogger<GenericCliExecutionService>.Instance, config);
         var router = new CliRouter(claude, codex, gemini);
 
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
 
         var quotaCacheStore = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
@@ -657,7 +657,8 @@ public sealed class ProjectRunnerModeTests : IDisposable
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
-            timeline: timeline);
+            timeline: timeline,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
         if (maxParallelism is { } configuredMaxParallelism)
             settings.SetMaxParallelism(ProjectName, configuredMaxParallelism);
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(config));

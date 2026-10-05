@@ -233,13 +233,11 @@ sind davon unberührt — dieser Nachtrag ersetzt die folgenden Abschnitte nicht
 laufenden Betrieb belegbar war. Was sich nicht belegen ließ, steht am Ende als offene Frage — nicht als
 Ergebnis.</p>
 
-<h3>§0.1 Ausführungsschicht: engine=car ist der Normalfall</h3>
-<p class="stx stx-ok"><b>Stand 03.08.:</b> Der CAR-Pfad ist Default. <code>RUNNER_EXEC_ENGINE</code> steht
-auf <code>car</code>, der Legacy-Pfad bleibt als bewusster Rückfall wählbar.</p>
-<p>Der Runner entscheidet den Spawn an einer Stelle: bei <code>engine=car</code> übernimmt
-<code>CarWorkerExecution</code> die Ausführung, sonst der alte Direktaufruf. Beide Projekte —
-Runner und Backend — hängen an derselben gepinnten Bibliotheksversion
-(<code>CodingAgentRunner 0.7.0</code>), damit Container-, Mount- und Token-Logik nur einmal existiert.</p>
+<h3>§0.1 Execution layer: CAR is the only card-run path</h3>
+<p class="stx stx-ok"><b>Status 24.09.:</b> Rollback switches and the raw invocation path are removed.</p>
+<p><code>CarWorkerExecution</code> handles every invocation inside the detached worker.
+Runner and backend use the same exact library version
+(<code>CodingAgentRunner 0.7.0</code>), so container, mount, and token behavior has one owner.</p>
 
 <table>
   <thead><tr><th>Tranche</th><th>Inhalt</th><th>Karte</th><th>Stand 03.08.</th></tr></thead>
@@ -251,7 +249,7 @@ Runner und Backend — hängen an derselben gepinnten Bibliotheksversion
     <tr><td><b>T3</b></td><td>Parity-Suite für beide Ausführungspfade</td><td>AGT-2372</td>
         <td><span class="pill done">auf <code>develop</code></span> <code>c9ce1342e</code> — <span class="pill part">Board-Badge steht auf <code>pending</code></span></td></tr>
     <tr><td><b>T4</b></td><td>Legacy-Invocation-Pfade entfernen, ADR + Doku nachziehen</td><td>AGT-2373</td>
-        <td><span class="pill new">bewusst geparkt</span> im Backlog, nicht gequeued</td></tr>
+        <td><span class="pill done">completed 24.09.</span></td></tr>
   </tbody>
 </table>
 
@@ -264,11 +262,8 @@ Runner und Backend — hängen an derselben gepinnten Bibliotheksversion
   nachweisbar" beschreibt §2.5. Verbindlich ist die Ancestry, nicht das Badge.</p>
 </div>
 
-<p>Der Legacy-Zweig trägt seinen eigenen Rückbauhinweis im Quelltext („behind
-<code>RUNNER_EXEC_ENGINE=legacy</code> since AGT-2370, deleted in AGT-2373"). Solange T4 geparkt ist,
-existieren beide Pfade nebeneinander — das ist der Zustand, den §5.4 („Hat die Übergangslösung ein
-Ende?") als begründungspflichtig markiert. Die Begründung ist hier ein bewusstes Freigabe-Protokoll,
-kein Vergessen.</p>
+<p>The time-bounded legacy branch was removed after the T3 release protocol.
+The transitional solution described in §5.4 therefore has a proven end.</p>
 
 <h3>§0.2 Rollen-Dreiklang als Zielbegriffe</h3>
 <p class="stx stx-part"><b>Stand 03.08.:</b> Die Begriffe sind gesetzt und serverseitig teilweise

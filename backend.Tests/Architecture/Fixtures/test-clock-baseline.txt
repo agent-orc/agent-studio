@@ -36,9 +36,7 @@ wall-clock backend.Tests/AutoReviewPostProcessingWorkerTests.cs 3
 wall-clock backend.Tests/AutoReviewQueueStagnationWatchdogAttemptAuthorityTests.cs 1
 wall-clock backend.Tests/AutoReviewRestartDrillTests.cs 12
 wall-clock backend.Tests/BackendCarExecutionParityTests.cs 3
-wall-clock backend.Tests/BackendCarProjectPipelineAcceptanceTests.cs 3
 wall-clock backend.Tests/BackendCrashSurfaceTests.cs 3
-wall-clock backend.Tests/BackendLocalExecutionEngineParityTests.cs 2
 wall-clock backend.Tests/BatchMoveJobTests.cs 2
 wall-clock backend.Tests/BoardConditionalReadTests.cs 6
 wall-clock backend.Tests/BoardMergeStatusServiceTests.cs 1
@@ -53,8 +51,6 @@ wall-clock backend.Tests/CliKestrelHostingRepoTests.cs 4
 wall-clock backend.Tests/CliModelRoutesEndpointTests.cs 2
 wall-clock backend.Tests/CliOutputLogStoreTests.cs 1
 wall-clock backend.Tests/CliResumeContractTests.cs 4
-wall-clock backend.Tests/CliSpawnIntegrationTests.cs 17
-wall-clock backend.Tests/CliWatchdogIntegrationTests.cs 17
 wall-clock backend.Tests/ClientDefaultsStoreTests.cs 1
 wall-clock backend.Tests/ClientDeletionPolicyTests.cs 1
 wall-clock backend.Tests/ClientIdentityTests.cs 4
@@ -237,7 +233,7 @@ wall-clock runner.Tests/CodingDaemonRestartTests.cs 5
 wall-clock runner.Tests/CodingFinalizationRetryTests.cs 6
 wall-clock runner.Tests/CommandProgressWatchdogTests.cs 2
 wall-clock runner.Tests/DaemonRecoveryTests.cs 3
-wall-clock runner.Tests/DurableAgentProcessTests.cs 3
+wall-clock runner.Tests/DurableAgentProcessTests.cs 1
 wall-clock runner.Tests/DurableHandoffRecoveryTests.cs 10
 wall-clock runner.Tests/DurableRunOutboxTests.cs 2
 wall-clock runner.Tests/DurableSentinelIncidentTests.cs 3
@@ -262,7 +258,6 @@ wall-clock runner.Tests/RemoteRunnerDaemonWorkerLossTests.cs 2
 wall-clock runner.Tests/RemoteTaskRunnerClaimGuardTests.cs 6
 wall-clock runner.Tests/RemoteTaskRunnerProviderAuthTests.cs 2
 wall-clock runner.Tests/RemoteTaskRunnerRestartTests.cs 2
-wall-clock runner.Tests/RemoteWorkerEngineParityTests.cs 2
 wall-clock runner.Tests/ReviewConcurrentWorkspaceIsolationTests.cs 5
 wall-clock runner.Tests/ReviewDaemonDrainTests.cs 3
 wall-clock runner.Tests/ReviewHandoffAdoptionTests.cs 3
@@ -271,7 +266,6 @@ wall-clock runner.Tests/ReviewPlaneBudgetProbeTests.cs 1
 wall-clock runner.Tests/ReviewSlotAdmissionPolicyTests.cs 1
 wall-clock runner.Tests/ReviewSlotReconcilerTests.cs 5
 wall-clock runner.Tests/ReviewWorkerReleaseProvenanceTests.cs 6
-wall-clock runner.Tests/RunSpecInvocationTests.cs 2
 wall-clock runner.Tests/RunnerActiveAttemptReporterTests.cs 3
 wall-clock runner.Tests/SessionContinuationEvidenceTests.cs 2
 wall-clock runner.Tests/TaskServerClientHealthTests.cs 9

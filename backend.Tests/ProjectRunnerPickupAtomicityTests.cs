@@ -27,6 +27,47 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
     // defeat a plain recursive delete on Windows.
     public void Dispose() => TestTempRoot.TryDelete(_workspaceRoot);
 
+    [Theory]
+    [InlineData("manual", TaskModes.Coding)]
+    [InlineData("continue", TaskModes.Coding)]
+    [InlineData("auto", TaskModes.Coding)]
+    [InlineData("manual", TaskModes.Concept)]
+    public async Task DefaultAdmission_RejectsCodingBeforePreparationOrLaneMutation(string entryPoint, string taskMode)
+    {
+        WritePreparationContract();
+        WriteJob(TaskStates.Ready, "remote-only");
+        var taskPath = Path.Combine(_watchPath, TaskStates.Ready, "remote-only", "task.json");
+        var task = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(taskPath))!;
+        task["mode"] = taskMode;
+        File.WriteAllText(taskPath, task.ToJsonString());
+        var cli = new FailingCliService();
+        var runner = BuildRunner(cli, allowLocalCoding: false);
+        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "remote-only");
+        var originalTask = File.ReadAllText(Path.Combine(readyFolder, "task.json"));
+
+        if (entryPoint == "auto")
+        {
+            runner.SetMode("auto-continuous");
+            await runner.TickAsync(CancellationToken.None);
+        }
+        else
+        {
+            var outcome = entryPoint == "manual"
+                ? await runner.StartJobManualAsync("remote-only", CancellationToken.None)
+                : await runner.ContinueJobAsync("remote-only", "continue", null, CancellationToken.None);
+            Assert.Equal(RunRejectReason.RemoteExecutionRequired, outcome.Rejection?.Reason);
+            Assert.Contains(RemoteExecutionRequirement.Code, outcome.Rejection!.Message);
+        }
+
+        Assert.False(cli.StartCalled);
+        Assert.True(Directory.Exists(readyFolder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "remote-only")));
+        Assert.Equal(originalTask, File.ReadAllText(Path.Combine(readyFolder, "task.json")));
+        Assert.False(File.Exists(Path.Combine(readyFolder, PickupLockFile.LockFileName)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, ".git", "worktrees")));
+        Assert.Equal(0, runner.GetStatus().OccupiedSlots);
+    }
+
     [Fact]
     public async Task AutoPickupSpawnFailure_RevertsReady_RemovesLock_AndFreesSlot()
     {
@@ -40,7 +81,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-a");
         var progressFolder = Path.Combine(_watchPath, TaskStates.Progress, "job-a");
         Assert.True(cli.StartCalled, "the fake CLI should have reached the spawn boundary");
-        Assert.Equal(CliExecutionEngines.Car, cli.ExecutionEngineAtStart);
         Assert.True(cli.PickupLockExistedAtStart,
             "the pickup lock must be stamped on the actual 3-progress folder before StartAsync is called");
         Assert.True(Directory.Exists(readyFolder), "failed spawn must return the task to 2-ready immediately");
@@ -83,28 +123,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         Assert.False(Directory.Exists(cli.EnvironmentAtStart["NUGET_PACKAGES"]));
     }
 
-    [Fact]
-    public async Task AutoPickupAdmissionFault_RevertsReady_RemovesLock_AndFreesSlot()
-    {
-        WriteJob(TaskStates.Ready, "job-fault");
-        var cli = new FailingCliService(throwOnStart: true);
-        var runner = BuildRunner(cli, CliExecutionEngines.Legacy);
-        runner.SetMode("auto-continuous");
-
-        await runner.TickAsync(CancellationToken.None);
-
-        var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "job-fault");
-        Assert.True(cli.StartCalled, "fault injection must reach the process-start boundary");
-        Assert.Equal(CliExecutionEngines.Legacy, cli.ExecutionEngineAtStart);
-        Assert.True(Directory.Exists(readyFolder), "an admission exception must self-heal back to Ready");
-        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Progress, "job-fault")),
-            "an admission exception must never leave Progress without an active run");
-        Assert.False(File.Exists(Path.Combine(readyFolder, PickupLockFile.LockFileName)),
-            "fault recovery must release durable ownership so the bounded wake can retry");
-        Assert.Equal(0, runner.GetStatus().OccupiedSlots);
-        Assert.False(File.Exists(Path.Combine(readyFolder, "logs", "session-events.jsonl")),
-            "an admission fault must not create a historical run boundary");
-    }
 
     [Fact]
     public async Task AutoPickupUnsupportedPinnedModel_StaysReady_RecordsReason_AndDoesNotSpawn()
@@ -378,10 +396,10 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
     private ProjectRunner BuildRunner(
         ICliExecutionService cli,
-        string? executionEngine = null,
         ProviderLimitRegistry? providerLimits = null,
         IReadOnlyList<IQuotaProbe>? quotaProbes = null,
-        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null)
+        Microsoft.Extensions.Logging.ILogger<ProjectRunner>? logger = null,
+        bool allowLocalCoding = true)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -416,8 +434,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         var sessions = new TaskSessionLog(scanner, NullLogger<TaskSessionLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
-        if (executionEngine is not null)
-            settings.SetCliExecutionEngine(ProjectName, executionEngine);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config, prompts);
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
@@ -430,7 +446,7 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
 
         var router = new CliRouter(cli);
         var claude = GenericCliExecutionService.ForClaude(NullLogger<GenericCliExecutionService>.Instance, config);
-        var orchestratorRunner = new OrchestratorRunner(claude, NullLogger<OrchestratorRunner>.Instance);
+        var orchestratorRunner = new OrchestratorRunner(NullLogger<OrchestratorRunner>.Instance);
         var orchestratorSessions = new OrchestratorSessionStore(NullLogger<OrchestratorSessionStore>.Instance);
         var quotaCacheStore = new QuotaCacheStore(config, NullLogger<QuotaCacheStore>.Instance);
         var quotaService = new QuotaService(
@@ -467,7 +483,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             pickupLockOwner: pickupLockOwner,
             timeline: timeline,
             providerLimits: providerLimits,
-            dispatchRejections: dispatchRejections);
+            dispatchRejections: dispatchRejections,
+            localCodingAdmission: allowLocalCoding ? AllowLocalCodingForTests.Instance : null);
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
@@ -492,7 +509,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         public string CliType => CliTypes.Claude;
         public bool StartCalled { get; private set; }
         public bool PickupLockExistedAtStart { get; private set; }
-        public string? ExecutionEngineAtStart { get; private set; }
 
         /// <summary>Preparation cache binding this launch was handed (TE-52).</summary>
         public IReadOnlyDictionary<string, string>? EnvironmentAtStart { get; private set; }
@@ -521,12 +537,10 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? jobFolderPath = null,
             string? permissionMode = null,
             string? contextMode = null,
-            string? executionEngine = null,
             IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {
             StartCalled = true;
-            ExecutionEngineAtStart = executionEngine;
             EnvironmentAtStart = environment;
             PackagesVisibleAtStart = environment is not null
                                      && environment.TryGetValue("NUGET_PACKAGES", out var packages)
@@ -590,7 +604,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? jobFolderPath = null,
             string? permissionMode = null,
             string? contextMode = null,
-            string? executionEngine = null,
             IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {
@@ -663,7 +676,6 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
             string? jobFolderPath = null,
             string? permissionMode = null,
             string? contextMode = null,
-            string? executionEngine = null,
             IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken ct = default)
         {

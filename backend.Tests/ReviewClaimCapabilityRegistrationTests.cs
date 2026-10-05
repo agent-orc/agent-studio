@@ -338,8 +338,7 @@ public sealed class ReviewClaimCapabilityRegistrationTests : IDisposable
         Role = "review",
         WorkDir = Path.GetTempPath(),
         BaseBranch = "main",
-        CliBin = "sh",
-        CliArgs = "",
+        ClaudeCliBin = "sh",
     };
 
     private AttemptAuthorityService NewAuthority(Func<DateTime>? now = null)
