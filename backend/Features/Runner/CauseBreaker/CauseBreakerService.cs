@@ -173,6 +173,7 @@ public sealed class CauseBreakerService
             var variants = record.Variants.Contains(variant, StringComparer.Ordinal) || record.Variants.Count >= MaxVariants
                 ? record.Variants
                 : [.. record.Variants, variant];
+            var previousObservations = record.Observations;
             var observations = record.Observations.Any(item => Same(item.AttemptId, attemptId))
                 ? record.Observations
                 : record.Observations
@@ -252,6 +253,12 @@ public sealed class CauseBreakerService
             }
             else if (decision.Action == CauseBreakerAction.Wait)
             {
+                // A first observation in another project widens where the open
+                // cause applies; pending attempts checked before it must be
+                // reconsidered by the next claim poll.
+                if (!previousObservations.Any(item =>
+                        string.Equals(item.Project, task.ProjectName, StringComparison.OrdinalIgnoreCase)))
+                    _checkedPendingReviewIds.Clear();
                 intervention = _interventions.RaiseCause(
                     task, evidence, Classification(fingerprint, decision), record.CauseWatchPath);
                 var isProbeCard = Same(record.ProbeTaskKey, taskKey);
