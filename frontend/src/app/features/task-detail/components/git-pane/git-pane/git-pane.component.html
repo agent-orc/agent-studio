@@ -1,6 +1,6 @@
 <section class="pane pane--git"
          [class.pane--git-split]="maximized()"
-         [style.flex]="maximized() ? '1 1 100%' : weight()"
+         [style.--pane-weight]="maximized() ? '1 1 100%' : weight()"
          data-testid="pane-git"
          [attr.data-active-job]="isActiveJob() ? 'true' : 'false'">
   <header class="pane__header">

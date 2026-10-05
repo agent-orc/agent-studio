@@ -162,9 +162,9 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var client = new TaskServerClient(
             http, options.RunnerId, usesDurableTaskServer: true, options: options);
-        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting,
-            AdmittingBudget()).RunAsync(shutdown.Token);
-        while (server.ClaimAttempts == 0) await Task.Delay(20, shutdown.Token);
+        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting, AdmittingBudget())
+            .RunAsync(shutdown.Token);
+        await WaitForClaimAsync(server, logs, shutdown.Token);
         await shutdown.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(20));
 
@@ -195,8 +195,8 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var client = new TaskServerClient(
             http, options.RunnerId, usesDurableTaskServer: true, options: options);
-        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting,
-            AdmittingBudget()).RunAsync(shutdown.Token);
+        var run = new RemoteReviewDaemon(options, client, logs.Enqueue, Admitting, AdmittingBudget())
+            .RunAsync(shutdown.Token);
 
         // The adopted attempt is mid-report, so the drain must hold admission.
         await server.WaitForReportAsync().WaitAsync(TimeSpan.FromSeconds(20));
@@ -209,7 +209,7 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
 
         // Finishing the adopted attempt - never killing it - reopens claims.
         server.ReleaseReport();
-        while (server.ClaimAttempts == 0) await Task.Delay(20, shutdown.Token);
+        await WaitForClaimAsync(server, logs, shutdown.Token);
         await shutdown.CancelAsync();
         await run.WaitAsync(TimeSpan.FromSeconds(20));
 
@@ -244,7 +244,25 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
             ActiveSlots: activeSlots);
 
     private static ReviewPlaneBudgetProbe AdmittingBudget()
-        => new(() => 12, () => "max 100000", () => "throttled_usec 0\n");
+        => new(() => 12, () => "max 100000", () => string.Empty);
+
+    private static async Task WaitForClaimAsync(
+        ReviewPlane server,
+        ConcurrentQueue<string> logs,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (server.ClaimAttempts == 0)
+                await Task.Delay(20, cancellationToken);
+        }
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                "The review daemon did not claim after the adopted attempt. Recent logs:\n" +
+                string.Join("\n", logs.TakeLast(40)), exception);
+        }
+    }
 
     /// <summary>
     /// A handed-off slot with a durable terminal result and no live process: the
@@ -299,8 +317,7 @@ public sealed class ReviewWorkerReleaseProvenanceTests : IDisposable
         ReviewWorkDir = _root,
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
         TtlSeconds = 120,
         // An hour of heartbeat silence: every renewal is an adoption check.
         HeartbeatSeconds = 3600,

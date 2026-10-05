@@ -24,8 +24,8 @@ public sealed class RemoteReviewDaemon
     /// the production sampler.
     /// </param>
     /// <param name="planeBudgetProbe">
-    /// Test seam for the role quota used by claim admission. Null reads the
-    /// live cgroup quota.
+    /// Test seam for the review role's CPU quota. Production reads the host
+    /// cgroup; daemon tests can supply a fixed quota independent of their host.
     /// </param>
     public RemoteReviewDaemon(
         RunnerOptions options,

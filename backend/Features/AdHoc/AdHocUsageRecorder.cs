@@ -111,14 +111,12 @@ public sealed class AdHocUsageRecorder
                     OutputTokens = (int)record.OutputTokens,
                     CacheReadTokens = (int)record.CacheReadTokens,
                     CacheCreationTokens = (int)record.CacheCreationTokens,
+                    InputIncludesCached = record.InputIncludesCached,
                 };
-                // Ad-hoc records are workspace-wide by design (the legacy JSONL is
-                // workspace-wide too), so route every message to the _workspace
-                // projection regardless of the record.Project metadata. The
-                // optional project / jobId stay on the message body for
-                // drill-down without affecting workspace-wide aggregation.
+                // Chat turns need project attribution in the token ledger. Other
+                // ad-hoc calls retain their workspace-wide historical scope.
                 _ = _bus.EmitTokenUsageAsync(
-                    project: null,
+                    project: record.Source == AdHocUsageSources.ChatTurn ? record.Project : null,
                     jobId: string.IsNullOrWhiteSpace(record.JobId) ? null : record.JobId,
                     participantId: "support:adhoc",
                     topic: string.IsNullOrWhiteSpace(record.Source) ? AdHocUsageSources.Unknown : record.Source,

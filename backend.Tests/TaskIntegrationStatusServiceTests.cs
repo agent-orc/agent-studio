@@ -1105,6 +1105,48 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.DoesNotContain("review-subject", status.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// AGT-2995: an Error the merge runner recorded with a typed code reaches
+    /// the card as that code plus the recorded reason, never as a bare
+    /// "not yet integrated" pending card.
+    /// </summary>
+    [Theory]
+    [InlineData(AcceptedIntegrationFailureCodes.WorktreeUnavailable, "No integration worktree could be prepared for this project.")]
+    [InlineData(AcceptedIntegrationFailureCodes.BranchSyncFailed, "Integration branch 'develop' diverged from origin.")]
+    [InlineData(AcceptedIntegrationFailureCodes.LineageBlocked, "main is not an ancestor of develop.")]
+    [InlineData(AcceptedIntegrationFailureCodes.StaleAttempt, "Review subject RunAttempt 'old' is stale; current RunAttempt is 'new'.")]
+    public void BuildLookup_RecordedTypedError_ExposesCodeAndDetail(string code, string reason)
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/typed-error");
+        File.WriteAllText(Path.Combine(repo, "typed-error.txt"), "wip");
+        Commit(repo, "feat: typed error");
+        var anchor = RunGit(repo, "rev-parse task/typed-error").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("typed-error-" + code, "AGT-2995", project, repo, log,
+            commits: [Commit(anchor)], prov: Prov(branch: "task/typed-error"));
+        log.EnsureRun(job.FolderPath, PipelineCatalogue.Standard, project, job.Id);
+        log.RecordStep(job.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "error",
+            Reason = reason,
+            FailureCode = code,
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.NotEqual(IntegrationStatuses.Pending, status.Status);
+        Assert.Equal(code, status.Failure?.Code);
+        Assert.Equal(reason, status.Failure?.Reason);
+        Assert.Equal(reason, status.Detail);
+    }
+
     [Fact]
     public void BuildLookup_MergePassedButPushBlocked_IsConflictSkippedNotPending()
     {
