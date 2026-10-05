@@ -145,9 +145,27 @@ export interface OrchestratorChatTurn {
   text: string;
   model?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
+  metadata?: StudioChatTurnMetadata | null;
   errorMessage?: string | null;
   contextReceipt?: OrchestratorContextReceipt | null;
   attachments?: OrchestratorChatAttachment[] | null;
+}
+
+export interface StudioChatTurnMetadata {
+  model?: string | null;
+  effort?: string | null;
+  providerThreadId?: string | null;
+  host?: string | null;
+  queuedAt?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  inputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cost?: number | null;
+  currency?: string | null;
+  priceCatalogueVersion?: string | null;
 }
 
 /** Context blocks the backend composed into one orchestrator reply request. */

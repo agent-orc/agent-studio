@@ -120,13 +120,21 @@ public static class CouncilReviewPolicy
             fixes, true, jobId, targetRunAttempt ?? priorReissues + 2);
     }
 
-    public static string BuildTargetedFollowUp(CouncilReviewReaction reaction)
+    /// <summary>
+    /// The implementer's next-round prompt. Finding text is reviewer output, so
+    /// it is quoted as data inside a nonce fence (<see cref="ReviewFindingDataBlock"/>)
+    /// and never spliced into the directions around it.
+    /// </summary>
+    public static string BuildTargetedFollowUp(CouncilReviewReaction reaction, string? nonce = null)
     {
+        var findings = reaction.Assessments
+            .Where(a => a.Action == CouncilFindingAction.FixNextRound)
+            .Select(a => "- " + Regex.Replace(a.Finding, @"\s+", " ").Trim())
+            .ToList();
         var sb = new System.Text.StringBuilder();
         sb.Append("Council reaction to quality grade ").Append(reaction.Grade).AppendLf(": fix the named findings below.");
-        sb.AppendLf("Do not redo unrelated work. For each item, implement the fix and add the focused test or evidence it asks for:");
-        foreach (var assessment in reaction.Assessments.Where(a => a.Action == CouncilFindingAction.FixNextRound))
-            sb.Append("- ").AppendLf(assessment.Finding);
+        sb.AppendLf("Do not redo unrelated work. For each finding, implement the fix and add the focused test or evidence that proves it.");
+        sb.AppendLf(ReviewFindingDataBlock.Render(findings, nonce));
         sb.AppendLf();
         sb.AppendLf("Finish with a concise verification summary and the required terminal sentinel.");
         return sb.ToString().TrimEnd();

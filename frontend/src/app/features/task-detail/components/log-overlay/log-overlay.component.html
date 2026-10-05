@@ -40,8 +40,8 @@
         @if (log().length > 0) {
           <div class="log log--overlay">
             @for (entry of log(); track entry.timestamp) {
-              <div class="log__row">
-                <span class="log__time">{{ formatTime(entry.timestamp) }}</span>
+              <div class="log__row" data-testid="protocol-log-row">
+                <span class="log__time" data-testid="protocol-log-time">{{ formatTime(entry.timestamp) }}</span>
                 <span class="log__event">{{ entry.event }}</span>
                 @if (entry.detail) {
                   <span class="log__detail">{{ entry.detail }}</span>

@@ -10,6 +10,8 @@ Imports via `from './features/quota'`. See [`index.ts`](./index.ts).
 
 - `QuotaStripComponent` — compact strip surfacing each installed CLI's quota status; lives at the top of the CLI Usage sidesheet.
 - `HeaderQuotaComponent` — donut-ring variant for the status-bar usage hover panel.
+- `QuotaForecastPanelComponent`: CLI Management "Quota forecast" section (AGT-3001): per CLI the 48 h weekly curve, the 3-hour rate, the time of 100 %, the reset, a session gauge, and the armed fallback when 100 % comes first. Data from `/api/cli/quota/history`.
+- `QuotaCurveComponent`: the SVG weekly curve used by the forecast panel, with a hover crosshair and a visually hidden table view.
 
 **Types**: `QuotaWindow`, `QuotaSnapshot`, `QuotaReport`.
 
