@@ -4,7 +4,10 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
+import { HttpTestingController } from '@angular/common/http/testing';
 import { WorkspaceTokenTimelineComponent } from './workspace-token-timeline';
+import type { TokenTimeline } from '../../models/tokens.model';
+import type { UsageLedgerScope } from '../../../usage-cockpit';
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.
@@ -19,6 +22,53 @@ import { WorkspaceTokenTimelineComponent } from './workspace-token-timeline';
  * stable across template tweaks.
  */
 describe('WorkspaceTokenTimelineComponent (smoke)', () => {
+  it('cancels an older ledger request and clears its data when the scope changes', async () => {
+    await TestBed.configureTestingModule({
+      imports: [WorkspaceTokenTimelineComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(WorkspaceTokenTimelineComponent);
+    const http = TestBed.inject(HttpTestingController);
+    const firstScope: UsageLedgerScope = {
+      workspaceId: 'ws-a', range: 'today', fromUtc: '2026-09-24T22:00:00Z',
+      toUtc: '2026-09-25T22:00:00Z', timeZone: 'Europe/Berlin',
+    };
+    const nextScope: UsageLedgerScope = {
+      ...firstScope, workspaceId: 'ws-b', projectId: 'PROJ-002',
+    };
+    const timeline: TokenTimeline = {
+      windowStart: firstScope.fromUtc, windowEnd: firstScope.toUtc,
+      windowHours: 24, bucketMinutes: 60, bucketCount: 24,
+      cells: [], projects: [], fetchedAt: firstScope.toUtc, disclaimer: '',
+    };
+
+    fixture.componentRef.setInput('scope', firstScope);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const old = http.expectOne(req => req.url.endsWith('/workspace/tokens/timeline'));
+    expect(old.request.params.get('workspaceId')).toBe('ws-a');
+
+    fixture.componentRef.setInput('scope', nextScope);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const current = http.expectOne(req => req.url.endsWith('/workspace/tokens/timeline'));
+    expect(old.cancelled).toBe(true);
+    expect(current.request.params.get('workspaceId')).toBe('ws-b');
+    expect(current.request.params.get('projectId')).toBe('PROJ-002');
+    expect(fixture.componentInstance.timeline()).toBeNull();
+
+    current.flush(timeline);
+    expect(fixture.componentInstance.timeline()).toEqual(timeline);
+
+    fixture.componentRef.setInput('scope', firstScope);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.componentInstance.timeline()).toBeNull();
+    const third = http.expectOne(req => req.url.endsWith('/workspace/tokens/timeline'));
+    expect(third.request.params.get('workspaceId')).toBe('ws-a');
+    fixture.destroy();
+    http.verify({ ignoreCancelled: true });
+  });
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({
       imports: [WorkspaceTokenTimelineComponent],

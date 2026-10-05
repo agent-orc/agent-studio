@@ -386,6 +386,17 @@ mixed dashboard:
   does not invent either attribution.
 - Per-task cap forecast (TE-4) is a labelled future integration point only.
 
+Usage-detail links to `#/workspace/settings/tokens[/cli]` carry `ledger-workspace`,
+`ledger-range`, `ledger-from`, `ledger-to`, `ledger-zone`, and optionally
+`ledger-project` hash keys. The settings route reads these through the shared
+hash parser. The workspace timeline applies workspace and project selection on
+the server and reads the exact UTC interval behind the workspace-local day or
+week. Scoped requests are not written to the 24h/7d timeline cache. The
+existing timeline has no CLI dimension, so a CLI deep link does not claim that
+its token events are filtered by provider; provider quota remains in the usage
+detail and CLI account page. The unattributed cost bucket has no project token
+events in this legacy timeline and displays an empty scoped timeline.
+
 Workspace and project usage calculations are unchanged by this navigation
 split. CLI pages are extendable by adding another page key and model mapping.
 
