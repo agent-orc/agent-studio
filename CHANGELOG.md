@@ -56,6 +56,7 @@ ledger prices GPT-6 Sol again, the Stable catalogue moves to TokenEconomy 0.3.5.
 - Test-suite audit: time bombs, clock dependencies, line-ending and platform assumptions removed from the test suites (AGT-3003).
 - Acceptance-rail correctness findings from the Quality Studio review (AGT-2990).
 - Security hygiene wave: vulnerable runtime dependencies, secret-scan baseline, bounded whole-file reads (AGT-2991).
+- Stable hotfixes from 4 October, merged back from main (88bee6805..c076d2da9): backend build and test gates run only on the remote Linux worker and fail closed without it; integration status reads each Git origin once per projection instead of once per card (180 to 2-13 Git spawns per index run); deployment smoke budgets the worker cleanup before run.completed; board review reads no longer depend on authority persistence.
 
 ## [0.9.4] - 2026-09-27
 

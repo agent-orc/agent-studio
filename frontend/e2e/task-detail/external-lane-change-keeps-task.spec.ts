@@ -120,7 +120,7 @@ test.describe('External lane change keeps task in view', () => {
       // Move via the state dropdown (user-initiated) - should auto-advance.
       const moveResponse = page.waitForResponse(resp =>
         resp.request().method() === 'POST'
-        && resp.url().includes(`/api/tasks/${encodeURIComponent(ids[0])}/move`)
+        && resp.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(ids[0])}/move`)
       );
       await page.getByTestId('detail-state-select').selectOption('4-auto-review');
       await moveResponse;

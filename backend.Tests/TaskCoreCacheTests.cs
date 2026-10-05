@@ -157,6 +157,52 @@ public sealed class TaskCoreCacheTests : IDisposable
         Assert.NotNull(record.Prompt.Cursor);
     }
 
+    [Fact]
+    public void UnchangedDependencyProjection_ReusesPublishedCoreRecord()
+    {
+        var task = MakeTask("AGT-resident", TaskStates.Ready);
+        var record = TaskCoreRecord.Create(task);
+
+        Assert.Same(record, record.WithDependencies(task, null));
+    }
+
+    [Fact]
+    public void ChangedDependencies_ReplacePublishedCoreRecord()
+    {
+        var task = MakeTask("AGT-dependencies", TaskStates.Ready);
+        var record = TaskCoreRecord.Create(task);
+        var changed = task with
+        {
+            References = new TaskReferences
+            {
+                DependsOn = [new TaskDependencyReference("AGT-waiting")],
+            },
+        };
+
+        var updated = record.WithDependencies(changed, null);
+        Assert.Equal("warming", updated.DependencyState);
+        Assert.Equal("AGT-waiting", Assert.Single(updated.DependsOn));
+        Assert.NotEqual(record.Version, updated.Version);
+        Assert.Same(updated, updated.WithDependencies(changed, null));
+    }
+
+    [Theory]
+    [InlineData("unchanged ASCII", 100)]
+    [InlineData("é🧭", 6)]
+    public void CoreTextWithinByteBudget_ReusesTheResidentString(string value, int maxBytes)
+    {
+        Assert.Same(value, TaskCoreRecord.Limit(value, maxBytes));
+    }
+
+    [Theory]
+    [InlineData("é🧭tail", 5, "é")]
+    [InlineData("é🧭tail", 6, "é🧭")]
+    [InlineData("ascii", 0, "")]
+    public void CoreTextTruncation_PreservesUtf8RuneBoundaries(string value, int maxBytes, string expected)
+    {
+        Assert.Equal(expected, TaskCoreRecord.Limit(value, maxBytes));
+    }
+
     private TaskIndexCache Cache(Func<List<TaskInfo>> scan, int ttlSeconds = 3600)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

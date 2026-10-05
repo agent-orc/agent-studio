@@ -104,12 +104,12 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = [];
-    if (path === '/api/tasks/grouped') body = grouped();
+    if (path === '/api/v1/studio/board') body = grouped();
     else if (path === '/api/watch-paths') body = watchPaths;
-    else if (path === '/api/workspaces') body = workspaces;
+    else if (path === '/api/v1/workspaces') body = workspaces;
     else if (path === '/api/projects/settings') body = projectSettings;
-    else if (path === '/api/runner/status') body = { projects: runnerProjects };
-    else if (path === '/api/auth/status') {
+    else if (path === '/api/v1/studio/runner/status') body = { projects: runnerProjects };
+    else if (path === '/api/v1/studio/auth/status') {
       body = { profile: 'local', bootstrapRequired: false, authenticated: false, user: null };
     }
     else if (path === '/api/environment') body = environment;

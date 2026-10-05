@@ -138,13 +138,13 @@ async function installRoutes(page: Page, gate: ExecuteGate): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/**', r => r.fulfill(json([])).catch(() => { /* late */ }));
-  await page.route('**/api/auth/status', r => r.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null })));
+  await page.route('**/api/v1/studio/auth/status', r => r.fulfill(json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null })));
   await page.route('**/api/runner/orchestrator-feed**', r => r.fulfill(json({ entries: [], generatedAtUtc: '2026-09-14T12:00:00Z' })));
-  await page.route(/\/api\/(?:jobs|tasks)\/grouped/, r => r.fulfill(json(EMPTY_GROUPED)));
+  await page.route(/\/api\/v1\/studio\/board/, r => r.fulfill(json(EMPTY_GROUPED)));
   await page.route(/\/api\/(?:jobs|tasks)(\?|$)/, r => r.fulfill(json([])));
   await page.route('**/api/watch-paths**', r => r.fulfill(json([{ name: PROJECT, path: REPO_PATH, rootPath: REPO_PATH, repositoryPath: REPO_PATH }])));
   await page.route('**/api/environment**', r => r.fulfill(json({ isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false } })));
-  await page.route(/\/api\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/clients', r => r.fulfill(json([])));
   await page.route('**/api/git/inventory**', r => r.fulfill(json(INVENTORY)));
   await page.route('**/api/git/branch-sweep/settings**', r => r.fulfill(json({

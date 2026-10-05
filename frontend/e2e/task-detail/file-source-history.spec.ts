@@ -66,11 +66,11 @@ async function installRoutes(page: Page): Promise<void> {
   const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   await page.route('**/api/**', (route) => json(route, []));
-  await page.route('**/api/auth/status', (route) => json(route, {
+  await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks', (route) => json(route, []));
-  await page.route('**/api/tasks/grouped**', (route) => json(route, {
+  await page.route('**/api/v1/studio/board**', (route) => json(route, {
     backlog: [],
     preparation: [],
     orchestratorPrep: [],
@@ -96,7 +96,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/projects/*/workbenches**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/usage**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', (route) => json(route, { at: '2026-06-09T00:00:00Z', snapshots: [] }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) => json(route, {
     projects: {
       [PROJECT]: {
         projectName: PROJECT,
@@ -173,7 +173,7 @@ async function installRoutes(page: Page): Promise<void> {
     files: [],
     error: null,
   }));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail()));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) => json(route, detail()));
 }
 
 /**
@@ -211,7 +211,7 @@ async function installStatusRoutes(page: Page): Promise<void> {
       ? '# Status\n\nResult: concerns\n\n## Summary\n\nHistorical status body for run one.'
       : '# Status\n\nResult: pass\n\n## Summary\n\nHistorical status body for run two.');
   });
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     json(route, detail(
       '# Status\n\n- Result: Success\n- Case: feature\n\n## What Was Done\n\n- The current protocol summary.')));
 }

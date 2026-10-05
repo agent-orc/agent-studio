@@ -224,7 +224,7 @@ export class ProjectSettingsPanelComponent implements OnInit {
    */
   private loadWorkspaceOrchestratorSettings(): void {
     this.http
-      .get<WorkspaceListItemLite[]>('/api/workspaces?includeArchived=true')
+      .get<WorkspaceListItemLite[]>('/api/v1/workspaces?includeArchived=true')
       .subscribe({
         next: (workspaces) => {
           const name = this.projectName();

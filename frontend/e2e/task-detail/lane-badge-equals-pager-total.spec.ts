@@ -92,14 +92,15 @@ async function installRoutes(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined);
   });
 
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
 
-  // Task-detail GET: `/api/tasks/<id>?watchPath=...`. The negative lookahead
+  // Task-detail GET: `/api/v1/projects/<project>/tasks/<id>?watchPath=...`
+  // (legacy `/api/tasks/<id>` still matched). The negative lookahead
   // keeps this off `/api/tasks/grouped` - without it this later-registered
   // route wins (Playwright runs the most-recently-added match first) and 404s
   // the grouped feed, leaving the board empty (badge 0).
-  await page.route(/\/api\/tasks\/(?!grouped)[^/?]+(\?|$)/, (route) => {
+  await page.route(/\/api\/(?:v1\/projects\/[^/]+\/)?tasks\/(?!grouped)[^/?]+(\?|$)/, (route) => {
     const url = new URL(route.request().url());
     const id = decodeURIComponent(url.pathname.split('/').pop() ?? '');
     const all = [...ALPHA_TASKS, ...BETA_TASKS];
@@ -121,7 +122,7 @@ async function installRoutes(page: Page) {
       ]),
     }));
 
-  await page.route('**/api/runner/status**', (route) =>
+  await page.route('**/api/v1/studio/runner/status**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',

@@ -89,10 +89,10 @@ async function stubRouteData(page: Page): Promise<void> {
       body: JSON.stringify(body),
     });
 
-    if (url.pathname === '/api/auth/status') {
+    if (url.pathname === '/api/v1/studio/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/workspaces') return json([{
+    if (url.pathname === '/api/v1/workspaces') return json([{
       id: 'WS-ROUTE', displayName: 'Route workspace', sortOrder: 0, isDefault: true,
       projects: [{
         id: 'PROJ-ROUTE', displayName: PROJECT, shortCode: 'ROU', workspaceId: 'WS-ROUTE',
@@ -100,7 +100,7 @@ async function stubRouteData(page: Page): Promise<void> {
         sortOrder: 0, archived: false, urls: [],
       }],
     }]);
-    if (url.pathname === '/api/projects') return json([]);
+    if (url.pathname === '/api/v1/projects') return json([]);
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
     if (url.pathname.startsWith('/api/runner/token-summary-aggregate')) {
       return json({
@@ -161,7 +161,7 @@ async function stubRouteData(page: Page): Promise<void> {
       return json([{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
     if (url.pathname === '/api/tasks/archive') return json({ items: [], total: 0 });
-    if (url.pathname === '/api/tasks/grouped') return json(EMPTY_GROUPED);
+    if (url.pathname === '/api/v1/studio/board') return json(EMPTY_GROUPED);
     if (url.pathname === '/api/epics') return json([]);
     if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
     if (url.pathname === `/api/epics/${EPIC_ID}`) {
@@ -178,15 +178,16 @@ async function stubRouteData(page: Page): Promise<void> {
         subTasks: [],
       });
     }
-    if (url.pathname === '/api/runner/status') return json({ projects: {} });
+    if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/pipeline/accepted-integration-alert') {
       return json({ active: false, items: [], generatedAtUtc: '2026-07-24T10:00:00Z' });
     }
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
-    if (url.pathname === `/api/tasks/${TASK_REFERENCE}` || url.pathname === `/api/tasks/${TASK_ID}`) {
+    const detailTaskId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (detailTaskId === TASK_REFERENCE || detailTaskId === TASK_ID) {
       return json(TASK_DETAIL);
     }
-    if (url.pathname === `/api/tasks/${EPIC_REFERENCE}` || url.pathname === `/api/tasks/${EPIC_ID}`) {
+    if (detailTaskId === EPIC_REFERENCE || detailTaskId === EPIC_ID) {
       return json(EPIC_DETAIL);
     }
     if (url.pathname === '/api/tasks') return json([]);

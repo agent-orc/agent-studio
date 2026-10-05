@@ -63,24 +63,24 @@ export class AuthService {
 
   initialize(): void {
     this.loading.set(true);
-    this.http.get<AuthStatus>('/api/auth/status').subscribe({
+    this.http.get<AuthStatus>('/api/v1/studio/auth/status').subscribe({
       next: (status) => { this.status.set(status); this.loading.set(false); },
       error: () => { this.status.set(null); this.loading.set(false); },
     });
   }
 
   login(username: string, password: string): Observable<AuthStatus> {
-    return this.http.post<AuthStatus>('/api/auth/login', { username, password })
+    return this.http.post<AuthStatus>('/api/v1/studio/auth/login', { username, password })
       .pipe(tap((status) => this.status.set(status)));
   }
 
   bootstrap(username: string, password: string, displayName: string): Observable<AuthStatus> {
-    return this.http.post<AuthStatus>('/api/auth/bootstrap', { username, password, displayName })
+    return this.http.post<AuthStatus>('/api/v1/studio/auth/bootstrap', { username, password, displayName })
       .pipe(tap((status) => this.status.set(status)));
   }
 
   changePassword(currentPassword: string, newPassword: string): Observable<AuthUser> {
-    return this.http.post<AuthUser>('/api/auth/change-password', { currentPassword, newPassword })
+    return this.http.post<AuthUser>('/api/v1/studio/auth/change-password', { currentPassword, newPassword })
       .pipe(tap((user) => {
         const status = this.status();
         if (status) this.status.set({ ...status, authenticated: true, user });
@@ -88,7 +88,7 @@ export class AuthService {
   }
 
   logout(): Observable<void> {
-    return this.http.post<void>('/api/auth/logout', {})
+    return this.http.post<void>('/api/v1/studio/auth/logout', {})
       .pipe(tap(() => this.session.expireNetworkedSession()));
   }
 }
