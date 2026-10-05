@@ -1,7 +1,7 @@
 # Installation recovery set and empty-target drill
 
 This runbook implements Dossier AGT-W63 decision D7, option A, delivered as
-item I07 ([deployment story](../../deployment-story/index.html#recovery)). An
+item I07 ([deployment story](../deployment-story/index.html#recovery)). An
 installation is recoverable only from a verified full recovery set that has
 been rehearsed onto an empty target. A retained Docker volume, a successful
 database backup alone, or a workspace Git push is not a verified full backup.

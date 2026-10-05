@@ -107,17 +107,11 @@ async function installBoardMocks(page: Page): Promise<void> {
       body: JSON.stringify([{ name: FIXTURE_PROJECT, path: FIXTURE_WATCH, rootPath: FIXTURE_WATCH }]),
     });
   });
-  // Studio shell calls both the legacy /api/tasks* and the renamed /api/tasks*
-  // surfaces depending on which slice is wired in.
-  for (const re of [/\/api\/tasks(\?|$)/, /\/api\/tasks(\?|$)/]) {
-    await page.route(re, async (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) }));
-  }
-  for (const re of [/\/api\/tasks\/grouped/, /\/api\/tasks\/grouped/]) {
-    await page.route(re, async (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
-  }
-  await page.route('**/api/runner/status', async (route) => {
+  await page.route(/\/api\/tasks(\?|$)/, async (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) }));
+  await page.route(/\/api\/v1\/studio\/board/, async (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

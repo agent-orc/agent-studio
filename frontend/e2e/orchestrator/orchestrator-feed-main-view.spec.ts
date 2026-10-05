@@ -90,7 +90,7 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
   await page.route('**/update/status', route => route.fulfill({
     json: { phase: 'idle', isRunning: false, behindBy: 0 },
   }));
-  await page.route('**/hubs/jobs/negotiate**', route => route.fulfill({
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({
     json: {
       connectionId: 'orchestrator-feed-e2e',
       connectionToken: 'orchestrator-feed-e2e',
@@ -98,7 +98,7 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
     },
   }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
@@ -111,7 +111,7 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       body: JSON.stringify(body),
     });
 
-    if (url.pathname === '/api/auth/status') {
+    if (url.pathname === '/api/v1/studio/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (url.pathname === '/api/runner/orchestrator-feed') return json({ entries: currentEntries() });
@@ -137,25 +137,25 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
     if (url.pathname === '/api/watch-paths') {
       return json(PROJECTS.map(name => ({ name, path: WATCH_PATH, rootPath: WATCH_PATH })));
     }
-    if (url.pathname === '/api/tasks/grouped') return json(EMPTY_GROUPED);
+    if (url.pathname === '/api/v1/studio/board') return json(EMPTY_GROUPED);
     if (url.pathname === '/api/tasks/archive') return json({ items: [], total: 0 });
     if (url.pathname === '/api/tasks') return json([]);
-    if (url.pathname === '/api/runner/status') return json({ projects: {} });
+    if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/runner/pickup-gates') return json({ projects: {} });
-    if (url.pathname === '/api/workspaces') {
+    if (url.pathname === '/api/v1/workspaces') {
       return json([{
         id: 'workspace-1', displayName: 'Workspace', sortOrder: 0, isDefault: true,
         color: null, createdAt: '2026-07-30T07:00:00Z', projects: REGISTRY_PROJECTS,
       }]);
     }
-    if (url.pathname === '/api/projects') return json(REGISTRY_PROJECTS);
+    if (url.pathname === '/api/v1/projects') return json(REGISTRY_PROJECTS);
     if (/^\/api\/bus\/[^/]+\/messages$/.test(url.pathname)) return json([]);
     if (
       url.pathname === '/api/tags'
       || url.pathname === '/api/clients'
       || url.pathname === '/api/clients/'
     ) return json([]);
-    if (url.pathname === '/api/orchestrator/sessions') return json({ sessions: [] });
+    if (url.pathname === '/api/v1/studio/orchestrator/sessions') return json({ sessions: [] });
     if (url.pathname === '/api/epics') return json([]);
     if (url.pathname === '/api/epics/completed/count') return json({ count: 0 });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
