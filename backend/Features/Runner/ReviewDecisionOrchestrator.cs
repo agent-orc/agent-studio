@@ -2643,6 +2643,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     }
                     : verdict).ToArray());
             if (!TryRecordDegradedAspects(current.FolderPath, report, roundBudget)) return;
+            // The degraded findings now live on the linked follow-up card; they
+            // must not start a further automatic concern round on this delivery.
+            followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(followUpDecision, roundBudget);
         }
 
         if (report.Overall == AspectStatus.Block)

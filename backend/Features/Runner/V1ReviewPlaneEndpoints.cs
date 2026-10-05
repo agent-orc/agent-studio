@@ -1107,11 +1107,7 @@ public static class V1ReviewPlaneEndpoints
                     concernLedger?.Used ?? 0,
                     projectSettingsForFollowUp.MaxReviewConcernRounds);
                 if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
-                    reviewFollowUp = reviewFollowUp with
-                    {
-                        Action = Contract.ReviewFollowUpAction.Accept,
-                        Reason = "The lifetime review budget moved these findings to a linked follow-up.",
-                    };
+                    reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
                 if (concernLedger is { StillOpen: true }
                     && !string.Equals(
                         concernLedger.ReviewAttemptId,

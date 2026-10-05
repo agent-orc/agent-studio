@@ -58,6 +58,23 @@ public static class ReviewRoundBudgetPolicy
         };
     }
 
+    /// <summary>
+    /// A spent budget moves the degraded findings to the linked follow-up card,
+    /// so the delivery must not start another automatic finding or concern round
+    /// for them. Shared by local aspect review and Remote Review.
+    /// </summary>
+    public static AgentStudio.TaskServer.Contracts.ReviewFollowUpDecision ApplyFollowUp(
+        AgentStudio.TaskServer.Contracts.ReviewFollowUpDecision followUp,
+        ReviewRoundBudgetDecision decision)
+    {
+        if (!decision.Degrade || !followUp.StartsCodingRound) return followUp;
+        return followUp with
+        {
+            Action = AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.Accept,
+            Reason = "The lifetime review budget moved these findings to a linked follow-up.",
+        };
+    }
+
     public static ReviewRoundBudgetDecision Decide(
         ReviewRoundBudgetLedger ledger,
         string attemptId,

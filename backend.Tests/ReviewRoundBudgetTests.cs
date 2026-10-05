@@ -172,4 +172,47 @@ public sealed class ReviewRoundBudgetTests
         Assert.Equal(1, ledger.Delivered);
         Assert.Equal("code-quality", Assert.Single(ledger.Rounds).BlockingAspects[0]);
     }
+    [Fact]
+    public void DegradedBlock_DoesNotStartAnAutomaticConcernRound()
+    {
+        // Local review follows the same composition as Remote Review: the
+        // follow-up policy sees an actionable finding, the spent budget moves it
+        // to the linked follow-up card, and the delivery is accepted.
+        var findings = new AgentStudio.TaskServer.Contracts.ReviewFollowUpFinding[]
+        {
+            new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
+                "backend/Feature.cs", "Remove the dead branch."),
+        };
+        var followUp = AgentStudio.TaskServer.Contracts.ReviewFollowUpPolicy.Decide(findings, 0, 1);
+        Assert.Equal(AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.ReviewConcernRound, followUp.Action);
+
+        var degraded = new ReviewRoundBudgetDecision(4, 4, ["code-quality"], "code-quality");
+        var applied = ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, degraded);
+
+        Assert.Equal(AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.Accept, applied.Action);
+        Assert.False(applied.StartsCodingRound);
+        Assert.Contains("linked follow-up", applied.Reason);
+    }
+
+    [Fact]
+    public void UnspentBudget_KeepsTheOrdinaryConcernRound()
+    {
+        var followUp = AgentStudio.TaskServer.Contracts.ReviewFollowUpPolicy.Decide(
+            [new("code-quality", "concerns", "Dead branch in backend/Feature.cs.",
+                "backend/Feature.cs", "Remove the dead branch.")], 0, 1);
+        var unspent = new ReviewRoundBudgetDecision(2, 4, [], null);
+
+        Assert.Same(followUp, ReviewRoundBudgetPolicy.ApplyFollowUp(followUp, unspent));
+    }
+
+    [Fact]
+    public void DegradedBlock_LeavesAspectRetryUntouched()
+    {
+        var retry = new AgentStudio.TaskServer.Contracts.ReviewFollowUpDecision(
+            AgentStudio.TaskServer.Contracts.ReviewGrade.ProductFailure,
+            AgentStudio.TaskServer.Contracts.ReviewFollowUpAction.RetryAspect, [], "infra");
+        var degraded = new ReviewRoundBudgetDecision(4, 4, ["code-quality"], "code-quality");
+
+        Assert.Same(retry, ReviewRoundBudgetPolicy.ApplyFollowUp(retry, degraded));
+    }
 }
