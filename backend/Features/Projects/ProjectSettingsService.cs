@@ -772,24 +772,16 @@ public class ProjectSettingsService
         }
     }
 
-    /// <summary>
-    /// Sets or clears the per-project local CLI execution-engine override.
-    /// Blank clears the override; unknown non-blank values are rejected.
-    /// </summary>
-    public void SetCliExecutionEngine(string projectName, string? executionEngine)
+    public void SetChatMetadataEnabled(string projectName, bool? enabled)
     {
-        var normalized = CliExecutionEngines.NormalizeOverride(executionEngine);
         EnsureLoaded();
         lock (_lock)
         {
             var key = ResolveAliasLocked(projectName);
-            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            _cache[key] = current with { CliExecutionEngine = normalized };
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { ChatMetadataEnabled = enabled };
             Persist();
         }
-        _logger.LogInformation(
-            "CLI execution-engine override set to {ExecutionEngine} for project {Project}",
-            normalized ?? "(workspace/default)", projectName);
     }
 
     /// <summary>

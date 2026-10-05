@@ -1,5 +1,5 @@
 import type { UsageCli, UsageCockpitResponse, UsageCostProjection } from './models/usage-cockpit.model';
-import { ageExceedsTtl, cliDisplayName, findWindow, formatUsdExact, formatUsedPct, hasCompleteBudgetCoverage, percentSpoken, windowSpokenName } from './usage-chip.util';
+import { ageExceedsTtl, cliDisplayName, findWindow, formatUsdExact, formatUsedPct, percentSpoken, trustedBudgetPeriods, type UsageBudgetPeriod, windowSpokenName } from './usage-chip.util';
 
 /**
  * Usage alarm transitions (HUC-S5, docs/header-usage-cockpit/index.html
@@ -54,10 +54,10 @@ export interface UsageSourceObservation {
   source: string;
   /** Alarms confirmed by this sample. */
   alarms: UsageAlarm[];
-  /** Kinds this sample may clear; quota also requires the key in clearQuotaKeys. */
+  /** Kinds this sample may clear; quota and budget also require the key in clearKeys. */
   clears: UsageAlarmKind[];
-  /** Quota keys whose own windows have a trusted numeric reading. */
-  clearQuotaKeys?: string[];
+  /** Quota windows or budget periods whose own reading is trusted. */
+  clearKeys?: string[];
 }
 
 // ------------------------------------------------------------ evaluation
@@ -86,7 +86,7 @@ export function observeCli(cli: UsageCli, now: number): UsageSourceObservation {
   const name = cliDisplayName(cli.cliId);
   const alarms: UsageAlarm[] = [];
   const clears: UsageAlarmKind[] = [];
-  const clearQuotaKeys: string[] = [];
+  const clearKeys: string[] = [];
 
   const trusted = isTrustedQuotaSample(cli, now);
   // `limited === null` means the limit source could not be read: no claim
@@ -107,7 +107,7 @@ export function observeCli(cli: UsageCli, now: number): UsageSourceObservation {
     for (const kind of ['weekly', 'session'] as const) {
       const w = findWindow(cli.windows, kind);
       if (w?.usedPct == null || !Number.isFinite(w.usedPct)) continue;
-      clearQuotaKeys.push(`${source}/quota/${w.id}`);
+      clearKeys.push(`${source}/quota/${w.id}`);
       if (w.usedPct <= QUOTA_WARNING_ABOVE_PCT) continue;
       const pct = formatUsedPct(w.usedPct)!;
       // A reset instant already in the past is not a usable cycle end; treating
@@ -121,23 +121,22 @@ export function observeCli(cli: UsageCli, now: number): UsageSourceObservation {
       });
     }
   }
-  return { source, alarms, clears, clearQuotaKeys };
+  return { source, alarms, clears, clearKeys };
 }
-
-type BudgetPeriod = 'daily' | 'weekly';
 
 /**
  * Budget evaluation. A known total that strictly exceeds its budget warns,
  * including a partial total (it is a lower bound) and a stale total from the
  * current period (ledger totals only grow). Only complete, fresh coverage
- * clears a budget alarm.
+ * clears a budget alarm, decided per period: a trusted daily total clears a
+ * daily alarm even when the weekly total is missing, and vice versa.
  */
 export function observeCost(cost: UsageCostProjection, now: number): UsageSourceObservation {
   const source = 'cost';
   const status = cost.coverage?.status;
   const alarms: UsageAlarm[] = [];
   if (status !== 'unavailable' && status !== 'suspicious') {
-    const periods: [BudgetPeriod, number | null, number | null | undefined, string | undefined, string | undefined][] = [
+    const periods: [UsageBudgetPeriod, number | null, number | null | undefined, string | undefined, string | undefined][] = [
       ['daily', cost.todayUsd, cost.dailyBudgetUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
       ['weekly', cost.weekUsd, cost.weeklyBudgetUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
     ];
@@ -158,7 +157,8 @@ export function observeCost(cost: UsageCostProjection, now: number): UsageSource
       });
     }
   }
-  return { source, alarms, clears: hasCompleteBudgetCoverage(cost, now) ? ['budget'] : [] };
+  const clearKeys = trustedBudgetPeriods(cost, now).map(period => `${source}/budget/${period}`);
+  return { source, alarms, clears: clearKeys.length ? ['budget'] : [], clearKeys };
 }
 
 /** Every source in one snapshot. */
@@ -218,7 +218,7 @@ export function reduceUsageAlarms(
     const raised = new Set(observation.alarms.map(a => a.key));
     for (const [key, alarm] of Object.entries(active)) {
       if (alarm.source !== observation.source || raised.has(key) || !observation.clears.includes(alarm.kind)) continue;
-      if (alarm.kind === 'quota' && !observation.clearQuotaKeys?.includes(key)) continue;
+      if (alarm.kind !== 'limited' && !observation.clearKeys?.includes(key)) continue;
       delete active[key];
       if (alarm.kind === 'limited') {
         announcements.push(`${cliDisplayName(alarm.source.replace(/^cli:/, ''))} is no longer limited.`);

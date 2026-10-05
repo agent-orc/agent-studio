@@ -196,6 +196,33 @@ describe('budget crossed', () => {
     expect(later.spoken).toEqual([[]]);
   });
 
+  it('clears a daily alarm on a trusted daily total even when the weekly total is missing', () => {
+    const { state } = run([[snapshot([], cost(60, 120, budgets)), NOW]]);
+    expect(Object.values(state.active).map(a => a.window)).toEqual(['daily']);
+    const recovered = run([[snapshot([], cost(20, null, budgets)), NOW]], state);
+    expect(recovered.state.active).toEqual({});
+    expect(recovered.spoken).toEqual([[]]);
+    expect(observeCost(cost(20, null, budgets), NOW).clearKeys).toEqual(['cost/budget/daily']);
+  });
+
+  it('clears each budget period on its own trusted total and keeps the other latched', () => {
+    const { state } = run([[snapshot([], cost(60, 250, budgets)), NOW]]);
+    expect(Object.values(state.active).map(a => a.window).sort()).toEqual(['daily', 'weekly']);
+    const dailyOnly = run([[snapshot([], cost(20, null, budgets)), NOW]], state);
+    expect(Object.values(dailyOnly.state.active).map(a => a.window)).toEqual(['weekly']);
+    const weeklyOnly = run([[snapshot([], cost(null, 150, budgets)), NOW]], state);
+    expect(Object.values(weeklyOnly.state.active).map(a => a.window)).toEqual(['daily']);
+  });
+
+  it('does not clear a daily alarm from a partial or stale ledger even with a low daily total', () => {
+    const { state } = run([[snapshot([], cost(60, 120, budgets)), NOW]]);
+    const partial = cost(20, null, { ...budgets, coverage: { status: 'partial', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } });
+    const stale = cost(20, null, { ...budgets, coverage: { status: 'complete', observedAt: '2026-09-25T14:20:00Z', ttlSeconds: 60 } });
+    for (const c of [partial, stale]) {
+      expect(Object.values(run([[snapshot([], c), NOW + 1_000]], state).state.active).map(a => a.window)).toEqual(['daily']);
+    }
+  });
+
   it('ignores a total from a period that has already ended', () => {
     // At the local midnight the day has ended; the week (budget 200) has not been exceeded.
     expect(budgetKinds(cost(80, 80, budgets), Date.parse('2026-09-25T22:00:00Z'))).toEqual([]);

@@ -161,6 +161,15 @@ public record MergeIntoIntegrationResult(
     public string? AutomaticRecoveryDetail { get; init; }
     public int? AutomaticRecoveryBudgetUsed { get; init; }
     public int? AutomaticRecoveryBudgetLimit { get; init; }
+
+    /// <summary>
+    /// Typed cause of an <see cref="MergeIntoIntegrationOutcome.Error"/> result
+    /// (<see cref="AcceptedIntegrationFailureCodes"/>). Every Error names one, so
+    /// the log line, the pipeline step, and the card projection agree on why the
+    /// delivery was not integrated instead of reading "Error" (AGT-2995).
+    /// </summary>
+    public string? FailureCode { get; init; }
+
     public static MergeIntoIntegrationResult Of(MergeIntoIntegrationOutcome outcome, string? mergedSha = null, string? error = null)
         => new(
             outcome,
@@ -169,6 +178,10 @@ public record MergeIntoIntegrationResult(
             Array.Empty<string>(),
             Array.Empty<RebasedCommitReplacement>(),
             null);
+
+    /// <summary>An <see cref="MergeIntoIntegrationOutcome.Error"/> that names its typed failure code.</summary>
+    public static MergeIntoIntegrationResult Failed(string failureCode, string? error, string? mergedSha = null)
+        => Of(MergeIntoIntegrationOutcome.Error, mergedSha, error) with { FailureCode = failureCode };
 
     public static MergeIntoIntegrationResult Conflicted(IReadOnlyList<string> conflictedFiles, string? error)
         => new(
@@ -4683,9 +4696,9 @@ public class GitService
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.NoTaskBranch, error: $"Task branch '{taskBranch}' does not exist.");
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
-            return MergeIntoIntegrationResult.Of(
-                MergeIntoIntegrationOutcome.Error,
-                error: synchronized.Error);
+            return MergeIntoIntegrationResult.Failed(
+                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                synchronized.Error);
         return MergeRefIntoIntegration(repoRoot, taskBranch, integrationBranch);
     }
 
@@ -4867,9 +4880,9 @@ public class GitService
 
         var synchronized = SynchronizeIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!synchronized.Success)
-            return MergeIntoIntegrationResult.Of(
-                MergeIntoIntegrationOutcome.Error,
-                error: synchronized.Error);
+            return MergeIntoIntegrationResult.Failed(
+                AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                synchronized.Error);
 
         var remoteRef = $"refs/remotes/origin/{deliveryBranch}";
         var fetchSource = $"refs/heads/{deliveryBranch}";

@@ -281,8 +281,6 @@ export function buildCliChipView(
   const weekly = windowView(weeklyWindow, 'weekly', timeZone);
   const session = windowView(sessionWindow, 'session', timeZone);
   const status = cli.availability?.status;
-  const suspiciousReason = cli.suspiciousReason
-    ?? weeklyWindow?.suspiciousReason ?? sessionWindow?.suspiciousReason ?? null;
   const suspicious = cli.suspicious || status === 'suspicious'
     || !!weeklyWindow?.suspiciousReason || !!sessionWindow?.suspiciousReason;
   const stale = readFailed || status === 'stale' || !!cli.probeFailedAt
@@ -291,13 +289,7 @@ export function buildCliChipView(
   const state: UsageChipState = unknown ? 'unknown' : suspicious ? 'suspicious' : stale ? 'stale' : 'normal';
 
   const updated = formatLocalWithUtc(cli.fetchedAt, timeZone);
-  const reason = state === 'unknown'
-    ? cli.availability?.reason ?? 'The provider reported no usage window'
-    : state === 'suspicious'
-      ? suspiciousReason ?? 'The latest snapshot is not yet confirmed'
-      : state === 'stale'
-        ? readFailed ? 'The latest refresh failed; showing the last-known values' : cli.probeFailedAt ? 'The latest probe failed; showing the last good values' : 'The snapshot is older than its refresh interval'
-        : null;
+  const reason = cliStateReason(cli, state, readFailed);
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const spokenWindows = state === 'unknown'
@@ -317,6 +309,21 @@ export function buildCliChipView(
   ].filter(Boolean).join('\n');
 
   return { cliId, name, state, stateLabel, alarm, alarmLabel, hiddenAlarm, weekly, session, ariaLabel, detail };
+}
+
+/** Structured provider state explanation shared by chip text and detail. */
+export function cliStateReason(cli: UsageCli, state: UsageChipState, readFailed = false): string | null {
+  if (state === 'unknown') return cli.availability?.reason ?? 'The provider reported no usage window';
+  if (state === 'suspicious') return cli.suspiciousReason
+    ?? findWindow(cli.windows, 'weekly')?.suspiciousReason
+    ?? findWindow(cli.windows, 'session')?.suspiciousReason
+    ?? 'The latest snapshot is not yet confirmed';
+  if (state === 'stale') return readFailed
+    ? 'The latest refresh failed; showing the last-known values'
+    : cli.probeFailedAt
+      ? 'The latest probe failed; showing the last good values'
+      : 'The snapshot is older than its refresh interval';
+  return null;
 }
 
 // ------------------------------------------------------------ cost chip
@@ -365,13 +372,7 @@ export function buildCostChipView(
       : stale ? 'stale'
         : status === 'partial' ? 'partial'
           : 'normal';
-  const reason = state === 'unknown'
-    ? coverage?.reason ?? 'The token ledger is unavailable'
-    : state === 'partial'
-      ? coverage?.reason ?? 'Some usage is not priced or not yet received'
-      : state === 'stale'
-        ? readFailed ? 'The latest refresh failed; showing the last-known ledger total' : 'The ledger snapshot is older than its refresh interval'
-        : state === 'suspicious' ? coverage?.reason ?? 'The ledger snapshot is not yet confirmed' : null;
+  const reason = costStateReason(cost, state, readFailed);
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
@@ -395,26 +396,43 @@ export function buildCostChipView(
   };
 }
 
+export type UsageBudgetPeriod = 'daily' | 'weekly';
+
+/**
+ * Budget periods whose state this ledger sample can confirm: coverage is
+ * complete and fresh, and the period either has no budget configured or has
+ * a known total for the current period. Each period is decided on its own,
+ * so a missing weekly total never blocks a trusted daily answer.
+ */
+export function trustedBudgetPeriods(cost: UsageCostProjection, now: number): UsageBudgetPeriod[] {
+  if (cost.coverage?.status !== 'complete' || !cost.coverage.observedAt
+    || !Number.isFinite(Date.parse(cost.coverage.observedAt))
+    || ageExceedsTtl(cost.coverage.observedAt, cost.coverage.ttlSeconds, now)) return [];
+  const trusted: UsageBudgetPeriod[] = [];
+  for (const [period, budget, amount, startIso, endIso] of [
+    ['daily', cost.dailyBudgetUsd, cost.todayUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
+    ['weekly', cost.weeklyBudgetUsd, cost.weekUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
+  ] as const) {
+    if (budget == null) {
+      trusted.push(period);
+      continue;
+    }
+    if (!Number.isFinite(budget) || amount == null || !Number.isFinite(amount)) continue;
+    const start = Date.parse(startIso ?? '');
+    const end = Date.parse(endIso ?? '');
+    if (!Number.isFinite(start) || !Number.isFinite(end) || now < start || now >= end) continue;
+    trusted.push(period);
+  }
+  return trusted;
+}
+
 /**
  * Budget wording beside the amount. Unset budgets say nothing (no alarm
  * without a budget). A configured budget without complete, fresh coverage
- * never reads as safe.
+ * of every period never reads as safe.
  */
 export function hasCompleteBudgetCoverage(cost: UsageCostProjection, now: number): boolean {
-  if (cost.coverage?.status !== 'complete' || !cost.coverage.observedAt
-    || !Number.isFinite(Date.parse(cost.coverage.observedAt))
-    || ageExceedsTtl(cost.coverage.observedAt, cost.coverage.ttlSeconds, now)) return false;
-  for (const [budget, amount, startIso, endIso] of [
-    [cost.dailyBudgetUsd, cost.todayUsd, cost.calendar?.dayStartUtc, cost.calendar?.dayEndUtc],
-    [cost.weeklyBudgetUsd, cost.weekUsd, cost.calendar?.weekStartUtc, cost.calendar?.weekEndUtc],
-  ] as const) {
-    if (budget == null) continue;
-    if (!Number.isFinite(budget) || amount == null || !Number.isFinite(amount)) return false;
-    const start = Date.parse(startIso ?? '');
-    const end = Date.parse(endIso ?? '');
-    if (!Number.isFinite(start) || !Number.isFinite(end) || now < start || now >= end) return false;
-  }
-  return true;
+  return trustedBudgetPeriods(cost, now).length === 2;
 }
 
 function budgetClause(cost: UsageCostProjection, state: UsageChipState, alarms: readonly UsageAlarm[], now: number): string {
@@ -424,6 +442,17 @@ function budgetClause(cost: UsageCostProjection, state: UsageChipState, alarms: 
   return state === 'partial'
     ? 'Budget: totals are partial, an overrun may not be detected yet.'
     : 'Budget: not confirmed while the ledger is not current.';
+}
+
+/** Structured ledger coverage explanation shared by chip text and detail. */
+export function costStateReason(cost: UsageCostProjection, state: UsageChipState, readFailed = false): string | null {
+  if (state === 'unknown') return cost.coverage?.reason ?? 'The token ledger is unavailable';
+  if (state === 'partial') return cost.coverage?.reason ?? 'Some usage is not priced or not yet received';
+  if (state === 'stale') return readFailed
+    ? 'The latest refresh failed; showing the last-known ledger total'
+    : 'The ledger snapshot is older than its refresh interval';
+  if (state === 'suspicious') return cost.coverage?.reason ?? 'The ledger snapshot is not yet confirmed';
+  return null;
 }
 
 // ------------------------------------------------------------ slot chip

@@ -55,8 +55,24 @@
   font-size: 12px;
 }
 
-// HUC-S5 alarm gallery additions. A phone-width fixture row, not the HUC-S4 header.
+// HUC-S3 harness: the phone row replaces the desktop row below 768 px.
 .gallery__row--phone {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .gallery__row--desktop {
+    display: none;
+  }
+
+  .gallery__row--phone {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+}
+
+// HUC-S5 alarm gallery additions. A phone-width fixture row, not the HUC-S4 header.
+.gallery__row--alarm-phone {
   flex-wrap: nowrap;
   width: 390px;
   box-sizing: border-box;

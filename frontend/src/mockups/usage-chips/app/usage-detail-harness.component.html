@@ -1,0 +1,26 @@
+<main class="gallery" [attr.data-theme]="theme">
+  <div class="gallery__row gallery__row--desktop" data-testid="harness-desktop">
+    <app-usage-cli-chip cliId="codex" [cli]="f.CODEX" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW"
+                        [expanded]="isOpen(cli('codex'))" controls="usage-detail"
+                        (activate)="toggle(cli($event))" />
+    <app-usage-cli-chip cliId="claude" [cli]="f.CLAUDE" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW"
+                        [expanded]="isOpen(cli('claude'))" controls="usage-detail"
+                        (activate)="toggle(cli($event))" />
+    <app-usage-cost-chip [cost]="f.SNAPSHOT.cost" [now]="f.FIXTURE_NOW" [expanded]="isOpen(cost)" controls="usage-detail"
+                         (activate)="toggle(cost)" />
+  </div>
+  <div class="gallery__row gallery__row--phone" data-testid="harness-phone">
+    <app-usage-cli-chip cliId="codex" [cli]="f.CODEX" [timeZone]="f.FIXTURE_ZONE" [now]="f.FIXTURE_NOW"
+                        [expanded]="isOpen(cli('codex'))" controls="usage-detail"
+                        (activate)="toggle(cli($event))" />
+    <app-usage-cost-chip [cost]="f.SNAPSHOT.cost" [now]="f.FIXTURE_NOW" [expanded]="isOpen(cost)" controls="usage-detail"
+                         (activate)="toggle(cost)" />
+  </div>
+
+  <h1 class="gallery__title">Usage detail (HUC-S3), {{ theme }} theme</h1>
+  <p class="gallery__note">Synthetic fixture pinned to 25 September 2026, 16:58 Europe/Berlin. Real components, not live telemetry.</p>
+  <p class="gallery__note"><a href="#after-popover" data-testid="harness-after">Link after the header</a></p>
+
+  <app-usage-detail-surface surfaceId="usage-detail" [snapshot]="f.SNAPSHOT" [focus]="detail()" [now]="f.FIXTURE_NOW"
+                            (closed)="detail.set(null)" />
+</main>

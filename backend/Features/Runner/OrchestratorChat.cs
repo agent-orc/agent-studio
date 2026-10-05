@@ -5,6 +5,7 @@ using AgentStudio.Orchestrator;
 using AgentStudio.Projects;
 using AgentStudio.Registry;
 using AgentStudio.Tasks;
+using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
 
 namespace AgentStudio.Runner;
@@ -145,6 +146,7 @@ public class OrchestratorChat
                 QueuedAt = turn.QueuedAt,
                 StartedAt = turn.StartedAt,
                 FinishedAt = turn.FinishedAt,
+                Metadata = turn.Metadata,
                 Body = body
             };
             var written = _projectStore.Write(projectFolder, pTurn);
@@ -329,6 +331,7 @@ public record OrchestratorChatTurn
     public string? ConfiguredModel { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public OrchestratorTokenUsage? TokenUsage { get; init; }
+    public ChatTurnMetadata? Metadata { get; init; }
     public DateTime? QueuedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? FinishedAt { get; init; }
@@ -481,6 +484,8 @@ public class OrchestratorChatService
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly QuotaAdmissionRecorder? _quotaAdmissionRecorder;
+    private readonly AdHocUsageRecorder? _chatUsage;
+    private readonly LocalChatUsageTracker? _localChatUsage;
 
     /// <summary>
     /// Serializes local session resumes. Remote turns use independent host
@@ -508,13 +513,17 @@ public class OrchestratorChatService
         StartupExecutionAdmission? executionAdmission = null,
         QuotaAdmissionService? quotaAdmission = null,
         QuotaAdmissionRecorder? quotaAdmissionRecorder = null,
-        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null)
+        OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
+        AdHocUsageRecorder? chatUsage = null,
+        LocalChatUsageTracker? localChatUsage = null)
     {
         _chat = chat;
         _runner = runner;
         _bootstrap = bootstrap;
         _scanner = scanner;
         _logger = logger;
+        _chatUsage = chatUsage;
+        _localChatUsage = localChatUsage;
         _identityStore = identityStore;
         _contextDigests = contextDigests;
         _componentRouting = componentRouting;
@@ -593,6 +602,8 @@ public class OrchestratorChatService
         var contextRoute = remoteRoute is null ? null : remoteRoute with { ContextKey = context?.Value };
         var holdsSessionGate = remoteRoute is null;
         var queuedAt = DateTime.UtcNow;
+        var localStarted = false;
+        OrchestratorChatTurn? localOutcome = null;
         if (holdsSessionGate)
             await SessionGate.WaitAsync(ct);
         var queueWaitMs = (DateTime.UtcNow - queuedAt).TotalMilliseconds;
@@ -619,6 +630,11 @@ public class OrchestratorChatService
                 : req.ThinkingLevel.Trim();
             var workingDirectory = ResolveWorkingDirectory(projectName, watchPath);
             var startedAt = DateTime.UtcNow;
+            if (remoteRoute is null)
+            {
+                _localChatUsage?.Start(userTurn.Id, projectName, queuedAt, startedAt);
+                localStarted = true;
+            }
             DateTime? fallbackQueuedAt = null;
             OrchestratorDecisionResult result;
             RemoteChatWorkResult? remoteResult = null;
@@ -696,6 +712,9 @@ public class OrchestratorChatService
                             try
                             {
                                 startedAt = DateTime.UtcNow;
+                                _localChatUsage?.Start(userTurn.Id, projectName,
+                                    fallbackQueuedAt ?? queuedAt, startedAt);
+                                localStarted = true;
                                 result = await _runner.DecideCodexAsync(
                                     fullPrompt, effectiveModel, effectiveThinking,
                                     workingDirectory, ct, projectName, watchPath);
@@ -743,6 +762,13 @@ public class OrchestratorChatService
                 {
                     Role = OrchestratorChatRoles.Orchestrator,
                     Text = "",
+                    Model = requestedModel,
+                    Metadata = ChatTurnMetadata.Create(
+                        requestedModel, thinkingLevel, null,
+                        remoteResult?.HostName ?? Environment.MachineName,
+                        remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                        remoteResult?.StartedAt ?? startedAt, DateTime.UtcNow,
+                        null, CliTypes.Codex),
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
                     QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
@@ -751,6 +777,7 @@ public class OrchestratorChatService
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
+                localOutcome = failure;
                 return failure;
             }
 
@@ -771,6 +798,13 @@ public class OrchestratorChatService
                     ConfiguredModel = result.ConfiguredModel,
                     QuotaFallbackReason = result.QuotaFallbackReason,
                     TokenUsage = result.TokenUsage,
+                    Metadata = ChatTurnMetadata.Create(
+                        result.Model, remoteResult?.ThinkingLevel ?? thinkingLevel,
+                        remoteResult?.ProviderThreadId ?? result.ProviderThreadId ?? result.CapturedSessionId,
+                        remoteResult?.HostName ?? Environment.MachineName,
+                        remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                        remoteResult?.StartedAt ?? startedAt, DateTime.UtcNow,
+                        result.TokenUsage, result.CliType),
                     ErrorMessage = translation.FriendlyMessage,
                     ErrorDetail = translation.RawDetail,
                     QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
@@ -779,6 +813,7 @@ public class OrchestratorChatService
                     ContextReceipt = contextReceipt
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
+                localOutcome = failure;
                 return failure;
             }
 
@@ -791,22 +826,34 @@ public class OrchestratorChatService
                 ConfiguredModel = result.ConfiguredModel,
                 QuotaFallbackReason = result.QuotaFallbackReason,
                 TokenUsage = result.TokenUsage,
+                Metadata = ChatTurnMetadata.Create(
+                    result.Model, remoteResult?.ThinkingLevel ?? thinkingLevel,
+                    remoteResult?.ProviderThreadId ?? result.ProviderThreadId ?? result.CapturedSessionId,
+                    remoteResult?.HostName ?? Environment.MachineName,
+                    remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
+                    remoteResult?.StartedAt ?? startedAt,
+                    remoteResult?.FinishedAt ?? DateTime.UtcNow,
+                    result.TokenUsage, result.CliType),
                 QueuedAt = remoteResult?.QueuedAt ?? fallbackQueuedAt ?? queuedAt,
                 StartedAt = remoteResult?.StartedAt ?? startedAt,
                 FinishedAt = remoteResult?.FinishedAt ?? DateTime.UtcNow,
                 ContextReceipt = contextReceipt
             };
             await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
+            localOutcome = reply;
             return reply;
         }
         finally
         {
+            if (localStarted)
+                _localChatUsage?.Complete(userTurn.Id, localOutcome?.TokenUsage,
+                    localOutcome?.Model, localOutcome?.FinishedAt ?? DateTime.UtcNow);
             if (holdsSessionGate)
                 SessionGate.Release();
         }
     }
 
-    private Task AppendTurnAsync(
+    private async Task AppendTurnAsync(
         string projectName,
         string watchPath,
         OrchestratorContextKey? context,
@@ -814,10 +861,27 @@ public class OrchestratorChatService
         CancellationToken ct)
     {
         if (_persistence is not null)
-            return _persistence.AppendAsync(projectName, watchPath, context, turn, ct);
-        if (!_chat.Append(watchPath, turn, context))
+            await _persistence.AppendAsync(projectName, watchPath, context, turn, ct);
+        else if (!_chat.Append(watchPath, turn, context))
             throw new IOException("The orchestrator chat turn could not be persisted.");
-        return Task.CompletedTask;
+        if (turn.Role == OrchestratorChatRoles.Orchestrator && turn.TokenUsage is { } usage)
+        {
+            _chatUsage?.Record(new AdHocUsageRecord
+            {
+                Ts = turn.FinishedAt ?? turn.Ts,
+                Source = AdHocUsageSources.ChatTurn,
+                Model = usage.Model ?? turn.Model ?? "",
+                InputTokens = usage.InputTokens,
+                OutputTokens = usage.OutputTokens,
+                CacheReadTokens = usage.CacheReadTokens,
+                CacheCreationTokens = usage.CacheCreationTokens,
+                InputIncludesCached = usage.InputIncludesCached,
+                DurationMs = turn.StartedAt is { } started && turn.FinishedAt is { } finished
+                    ? Math.Max(0, (long)(finished - started).TotalMilliseconds) : 0,
+                Ok = turn.ErrorMessage is null,
+                Project = projectName,
+            });
+        }
     }
 
     private async Task<OrchestratorChatPromptComposition> BuildPromptAsync(

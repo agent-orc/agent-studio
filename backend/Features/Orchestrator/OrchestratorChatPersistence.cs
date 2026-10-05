@@ -381,7 +381,15 @@ public sealed class TaskServerOrchestratorChatPersistence(
             turn.ErrorDetail,
             turn.Attachments?.Select(item =>
                 new OrchestratorContextAttachmentDto(item.Alt, item.RelativePath)).ToArray(),
-            receipt);
+            receipt,
+            turn.Metadata is { } metadata
+                ? new OrchestratorChatMetadataDto(
+                    metadata.Model, metadata.Effort, metadata.ProviderThreadId, metadata.Host,
+                    metadata.QueuedAt, metadata.StartedAt, metadata.FinishedAt,
+                    metadata.InputTokens, metadata.CachedInputTokens, metadata.OutputTokens,
+                    metadata.ReasoningTokens, metadata.Cost, metadata.Currency,
+                    metadata.PriceCatalogueVersion)
+                : null);
     }
 
     private static OrchestratorChatTurn FromDto(OrchestratorContextTurnDto turn)
@@ -433,6 +441,31 @@ public sealed class TaskServerOrchestratorChatPersistence(
             Text = turn.Body,
             Model = turn.Model,
             TokenUsage = usage,
+            Metadata = turn.Metadata is { } metadata
+                ? new ChatTurnMetadata
+                {
+                    Model = metadata.Model,
+                    Effort = metadata.Effort,
+                    ProviderThreadId = metadata.ProviderThreadId,
+                    Host = metadata.Host,
+                    QueuedAt = metadata.QueuedAt,
+                    StartedAt = metadata.StartedAt,
+                    FinishedAt = metadata.FinishedAt,
+                    InputTokens = metadata.InputTokens,
+                    CachedInputTokens = metadata.CachedInputTokens,
+                    OutputTokens = metadata.OutputTokens,
+                    ReasoningTokens = metadata.ReasoningTokens,
+                    Cost = metadata.Cost,
+                    Currency = metadata.Currency,
+                    PriceCatalogueVersion = metadata.PriceCatalogueVersion,
+                    Capabilities = new ChatTurnMetadataCapabilities(
+                        metadata.InputTokens.HasValue, metadata.Cost.HasValue,
+                        metadata.ReasoningTokens.HasValue,
+                        metadata.QueuedAt.HasValue && metadata.StartedAt.HasValue,
+                        metadata.StartedAt.HasValue && metadata.FinishedAt.HasValue,
+                        !string.IsNullOrWhiteSpace(metadata.ProviderThreadId)),
+                }
+                : null,
             ErrorMessage = turn.ErrorMessage,
             ErrorDetail = turn.ErrorDetail,
             Attachments = turn.Attachments?.Select(item => new OrchestratorChatAttachment
