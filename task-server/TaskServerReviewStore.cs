@@ -830,6 +830,8 @@ public sealed partial class TaskServerStore
                     "Review command evidence does not match the leased library step digest.");
             var classified = ClassifyReviewReport(subject, request, attempt);
             var received = UtcNow;
+            await RecordUnprovenFlakeFailuresAsync(
+                connection, transaction, request, attemptId, subject.TaskId, received, ct);
             var reportId = $"rrpt_{Guid.NewGuid():N}";
             var retry = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal);
             const string taskState = "4-auto-review";

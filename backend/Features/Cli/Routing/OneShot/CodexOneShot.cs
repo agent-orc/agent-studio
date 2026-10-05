@@ -242,6 +242,8 @@ public sealed class CodexOneShot : ICliOneShot
             OutputTokens = ToInt(richUsage.Output),
             CacheReadTokens = ToInt(richUsage.CacheRead),
             CacheCreationTokens = ToInt(richUsage.CacheWrite),
+            ReasoningTokens = richUsage.ReasoningOutput is { } reasoning
+                ? ToInt(reasoning) : null,
             InputIncludesCached = richUsage.InputIncludesCached,
         };
         var ok = exitCode == 0 && turnError is null;

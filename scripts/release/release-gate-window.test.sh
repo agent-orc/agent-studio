@@ -2,6 +2,11 @@
 # Contract tests for the promotion gate capacity window (AGT-2982): pure load
 # and quota policy, then record/apply/restore against a fake systemctl on
 # success, failure, and signal.
+#
+# The helper under test always starts with default signal dispositions, however
+# this file was launched (AGT-3014): nohup leaves HUP ignored and a
+# non-interactive "cmd &" leaves INT and QUIT ignored for the whole tree, and
+# bash cannot trap a signal that was ignored on entry.
 
 set -Eeuo pipefail
 
@@ -54,6 +59,15 @@ expect_eq "$(gate_window_quota_percent 12s)" 1200% 'whole seconds'
 expect_eq "$(gate_window_quota_percent 7.200000s)" 720% 'fractional seconds'
 expect_eq "$(gate_window_quota_percent 500ms)" 50% 'milliseconds'
 expect_eq "$(gate_window_quota_percent '1min 12s')" 7200% 'compound timespan'
+
+expect_eq "$(gate_window_ignored_stop_signals 0000000000000000)" '' 'nothing ignored'
+expect_eq "$(gate_window_ignored_stop_signals 0000000000000001)" HUP 'nohup ignores HUP'
+expect_eq "$(gate_window_ignored_stop_signals 0000000000000006)" INT 'background launch ignores INT and QUIT'
+expect_eq "$(gate_window_ignored_stop_signals 0000000000001000)" '' 'ignored PIPE is not a stop signal'
+expect_eq "$(gate_window_ignored_stop_signals 0000000000004007)" 'HUP INT TERM' 'all stop signals ignored'
+expect_eq "$(gate_window_ignored_stop_signals 8000000000004001)" 'HUP TERM' 'high real-time bit does not overflow'
+expect_eq "$(gate_window_ignored_stop_signals '')" '' 'no /proc mask'
+expect_eq "$(gate_window_ignored_stop_signals 'not hex')" '' 'malformed mask'
 printf '%s\n' 'gate window unit policy passed'
 
 # --- Contract: fake systemctl -------------------------------------------------
@@ -104,6 +118,42 @@ esac
 EOF
 chmod +x "$fake_bin/systemctl"
 
+# Starts "$@" with HUP, INT, QUIT, TERM, and PIPE at their default disposition,
+# except the comma-separated signals in $1, which start ignored.
+stop_signals=(HUP INT QUIT TERM PIPE)
+if env --default-signal=HUP true 2>/dev/null; then
+  with_signal_dispositions() {
+    local ignore=$1 defaults=() signal
+    shift
+    for signal in "${stop_signals[@]}"; do
+      [[ ",$ignore," == *",$signal,"* ]] || defaults+=("$signal")
+    done
+    local IFS=,
+    exec env "--default-signal=${defaults[*]}" ${ignore:+"--ignore-signal=$ignore"} "$@"
+  }
+elif command -v perl >/dev/null 2>&1; then
+  with_signal_dispositions() {
+    local ignore=$1 IFS=,
+    shift
+    exec perl -e 'my ($defaults, $ignore) = splice(@ARGV, 0, 2);
+      $SIG{$_} = "DEFAULT" for split /,/, $defaults;
+      $SIG{$_} = "IGNORE" for split /,/, $ignore;
+      exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\n";' "${stop_signals[*]}" "$ignore" "$@"
+  }
+else
+  fail 'resetting signal dispositions needs env --default-signal (coreutils 8.32+) or perl'
+fi
+
+# Prints the stop signals ignored by a running process, empty without /proc.
+process_ignored_stop_signals() {
+  local key value
+  [[ -r "/proc/$1/status" ]] || return 0
+  while read -r key value; do
+    [[ "$key" == SigIgn: ]] && { gate_window_ignored_stop_signals "$value"; return 0; }
+  done < "/proc/$1/status"
+}
+printf 'test shell started with stop signals ignored: %s\n' "$(process_ignored_stop_signals $$)"
+
 # Each scenario gets a fresh state directory: coding unlimited, review 600%.
 new_state() {
   local name=$1
@@ -128,7 +178,7 @@ run_helper() {
 exec_helper() {
   local state=$1
   shift
-  exec env FAKE_SYSTEMCTL_STATE="$state" \
+  with_signal_dispositions "${HELPER_IGNORE_SIGNALS:-}" env FAKE_SYSTEMCTL_STATE="$state" \
     RELEASE_GATE_SYSTEMCTL="$fake_bin/systemctl" \
     RELEASE_GATE_SUDO= \
     RELEASE_GATE_CPU_COUNT=12 \
@@ -172,6 +222,7 @@ record_has "$state" 'load-at-gate-end=3.10'
 record_has "$state" 'load-wait-seconds=0'
 record_has "$state" 'gate-exit=0'
 record_has "$state" 'quotas-restored=restored'
+record_has "$state" 'signals-ignored-at-entry=none'
 grep -q '^gate-duration-seconds=[0-9][0-9]*$' "$state/record.env" || fail 'gate duration recorded'
 printf '%s\n' 'gate window success path passed'
 
@@ -200,8 +251,11 @@ sleep 300 &
 printf '%s\n' "$!" >> "$state/gate-tree.pids"
 bash -c 'trap "" TERM; printf "%s\n" "$$" >> "$1/gate-tree.pids"; while :; do sleep 0.1; done' _ "$state" &
 bash -c 'printf "%s\n" "$$" >> "$1/gate-tree.pids"; sleep 300; :' _ "$state" &
-# Foreground, non-exec child: this shell keeps running while it waits.
-bash -c 'printf "%s\n" "$$" >> "$1/gate-tree.pids"; touch "$1/gate-started"; sleep 300; :' _ "$state"
+# Foreground, non-exec child: this shell keeps running while it waits. It
+# reports the gate as started only once every background child recorded its pid.
+bash -c 'printf "%s\n" "$$" >> "$1/gate-tree.pids"
+  while (($(wc -l < "$1/gate-tree.pids") < 5)); do sleep 0.05; done
+  touch "$1/gate-started"; sleep 300; :' _ "$state"
 printf '%s\n' 'gate shell continued after its child' >> "$state/gate-continued.log"
 EOF
 chmod +x "$test_root/tree-gate.sh"
@@ -214,11 +268,12 @@ gate_tree_alive() {
   printf '%s' "$alive"
 }
 
+# signal_scenario <signal> <expected exit code> [signals ignored at helper start]
 signal_scenario() {
-  local signal=$1 expected_rc=$2
-  local state helper_pid rc
-  state=$(new_state "signal-$signal")
-  RELEASE_GATE_STOP_GRACE_SECONDS=1 exec_helper "$state" "$test_root/tree-gate.sh" "$state" \
+  local signal=$1 expected_rc=$2 ignore=${3:-}
+  local state helper_pid rc ignored
+  state=$(new_state "signal-$signal${ignore:+-ignoring-$ignore}")
+  HELPER_IGNORE_SIGNALS=$ignore RELEASE_GATE_STOP_GRACE_SECONDS=1 exec_helper "$state" "$test_root/tree-gate.sh" "$state" \
     > "$state/out.log" 2>&1 &
   helper_pid=$!
   for _ in $(seq 1 100); do
@@ -228,6 +283,10 @@ signal_scenario() {
   [[ -f "$state/gate-started" ]] || fail "$signal scenario gate never started"
   expect_eq "$(wc -l < "$state/gate-tree.pids" | tr -d ' ')" 5 "$signal scenario gate tree size"
   expect_eq "$(cat "$state/agent-runner-review.service.quota")" 5s "window active before SIG$signal"
+  # Name the cause instead of a later "expected '129', got '0'".
+  ignored=$(process_ignored_stop_signals "$helper_pid")
+  [[ "$ignored" == "${ignore//,/ }" ]] \
+    || fail "SIG$signal scenario: the helper under test ignores stop signals '$ignored' instead of '${ignore//,/ }'; a signal ignored on entry cannot be trapped, so the disposition reset did not apply"
   kill "-$signal" "$helper_pid"
   set +e
   wait "$helper_pid"
@@ -248,6 +307,21 @@ signal_scenario TERM 143
 signal_scenario INT 130
 signal_scenario HUP 129
 printf '%s\n' 'gate window signal path passed'
+
+# A helper started under nohup cannot trap HUP: it says so, records it, and the
+# TERM path still stops the gate tree and restores the quotas.
+signal_scenario TERM 143 HUP
+state="$test_root/signal-TERM-ignoring-HUP"
+record_has "$state" 'signals-ignored-at-entry=HUP'
+grep -q 'SIGHUP was ignored when this process tree started.*HUP-triggered stop is unavailable' "$state/out.log" \
+  || fail "ignored HUP is not logged: $(cat "$state/out.log")"
+state=$(new_state ignored-hup-success)
+HELPER_IGNORE_SIGNALS=HUP run_helper "$state" true > "$state/out.log" 2>&1 \
+  || fail "an ignored HUP must not fail the gate: $(cat "$state/out.log")"
+record_has "$state" 'gate-exit=0'
+record_has "$state" 'signals-ignored-at-entry=HUP'
+assert_restored "$state"
+printf '%s\n' 'gate window ignored-HUP detection passed'
 
 # Broken output: the train pipes the helper into tee, and an interactive INT
 # kills tee first. The helper's own log writes must not turn into a SIGPIPE

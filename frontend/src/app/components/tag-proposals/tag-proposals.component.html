@@ -1,0 +1,14 @@
+@if (pending().length || statusWithoutDetails()) {
+  <div class="tag-proposals" data-testid="tags-proposed" aria-label="Tags proposed">
+    <strong>Tags proposed</strong>
+    @for (proposal of pending(); track proposal.id) {
+      <span class="tag-proposals__row" [attr.data-proposal-id]="proposal.id">
+        <span>{{ labels(proposal.tagIds) }}</span>
+        <button type="button" [disabled]="busy() === proposal.id" (click)="$event.stopPropagation(); decide(proposal.id, 'accept')">Accept</button>
+        <button type="button" [disabled]="busy() === proposal.id" (click)="$event.stopPropagation(); decide(proposal.id, 'reject')">Reject</button>
+      </span>
+    }
+    @if (statusWithoutDetails()) { <span>Awaiting proposal details</span> }
+    @if (error()) { <span role="alert">{{ error() }}</span> }
+  </div>
+}

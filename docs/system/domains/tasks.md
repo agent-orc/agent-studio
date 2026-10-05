@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-27
+Version: 2026-09-29
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -572,6 +572,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   obligation before any lane mutation. It binds the current RunAttempt, review
   epoch, failure evidence, result ref and SHA, branch, conflict paths, round
   count, hold state, operator route and the safe merge-into-delivery route.
+  The idempotency key and evidence fingerprint hash length-prefixed fields
+  (`AgentStudio.Shared.CanonicalFields`, AGT-2989), so a failure reason or
+  path containing a newline cannot alias another conflict. Obligations written
+  before AGT-2989 keep their old file name; the one-automatic-round-per-epoch
+  timeline check still holds across the key change.
   Operator recovery writes the same
   projection and records a manual action. The rail may queue only one automatic
   round per review epoch; later recoverable conflicts in that epoch remain
@@ -629,6 +634,20 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   history and `status.md` retain the override and reason. Concept and other
   no-branch cards are exempt through their mode, kind, `taskType=concept|decision`,
   or the explicit `noBranchExpected: true` card field.
+  The acceptance integration writer appends its own marked section to
+  `status.md`. On retry or clear, it finds a whole-line ownership marker
+  immediately before the section's marker pair, heading, and field layout.
+  The ownership marker does not depend on surrounding task text, so edits
+  before the section and task notes after it do not prevent replacement.
+  Quoted marker pairs and copied section bodies without the ownership marker
+  remain task text. Each retry advances the marker generation, so a copy of
+  an older complete writer block remains task text after replacement. When
+  task text appends an exact copy of the current block, the first occurrence
+  remains the writer's section. For status files written before the ownership
+  marker existed, retry and clear also recognize the previous writer's complete
+  field layout when it is separated from the task result by a blank line and
+  ends the document. The next write replaces it with a marked section; other
+  marker pairs remain task text (AGT-2989).
 - `HistoricalIntegrationVerificationSweep` runs once off the startup request
   path before the accepted integration inventory. The V2 pass reads every task
   folder directly, groups Git reads by repository, and processes card writes in
@@ -1362,6 +1381,11 @@ every byte of it is a byte the client already holds.
   `?includeLegacyReviewLane=false` and receives the key as an empty array
   instead of the duplicate, which is what the Angular board does. Omitting the
   parameter keeps the pre-ADR-0025 contract unchanged.
+- **Task navigation does not re-read the board.** Selection reuses the
+  resident grouped snapshot and reads only the bounded task core; this route
+  stays reserved for mutations, push convergence, reconnect and the conditional
+  heartbeat. The client contract is in
+  [Task core cache and board reuse](frontend.md#task-core-cache-and-board-reuse-agt-2956).
 
 ## Project Git inventory contract
 

@@ -74,6 +74,22 @@ public sealed record OrchestratorContextTokenUsageDto(
     long CacheReadTokens,
     long CacheCreationTokens);
 
+public sealed record OrchestratorChatMetadataDto(
+    string? Model,
+    string? Effort,
+    string? ProviderThreadId,
+    string? Host,
+    DateTime? QueuedAt,
+    DateTime? StartedAt,
+    DateTime? FinishedAt,
+    long? InputTokens,
+    long? CachedInputTokens,
+    long? OutputTokens,
+    long? ReasoningTokens,
+    decimal? Cost,
+    string? Currency,
+    string? PriceCatalogueVersion);
+
 public sealed record OrchestratorContextAttachmentDto(
     string Alt,
     string RelativePath);
@@ -88,7 +104,8 @@ public sealed record OrchestratorContextTurnDto(
     string? ErrorMessage = null,
     string? ErrorDetail = null,
     IReadOnlyList<OrchestratorContextAttachmentDto>? Attachments = null,
-    OrchestratorContextReceiptDto? Receipt = null);
+    OrchestratorContextReceiptDto? Receipt = null,
+    OrchestratorChatMetadataDto? Metadata = null);
 
 public sealed record OrchestratorContextTranscriptResponse(
     OrchestratorContextDto Context,

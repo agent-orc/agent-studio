@@ -206,26 +206,19 @@ public sealed class MergeIntoDevelopRunner
         CancellationToken ct)
     {
         var startedAt = DateTime.UtcNow;
+        var strategy = IntegrationStrategies.Normalize(integrationStrategy);
         try
         {
             var developerRoot = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
             if (string.IsNullOrWhiteSpace(developerRoot))
             {
-                var unresolved = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error, error: "Could not resolve repository root for the project.");
-                Record(
-                    jobFolderPath,
-                    project,
-                    jobId,
-                    integrationBranch,
-                    unresolved,
-                    preMainResult: null,
-                    preDevelopResult: null,
-                    startedAt);
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, unresolved,
+                return await ConcludeAsync(
+                    project, jobId, jobFolderPath, watchPath, UnresolvedDelivery, integrationBranch, strategy,
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.RepositoryRootUnavailable,
+                        "Could not resolve repository root for the project."),
                     null, null, startedAt, ct).ConfigureAwait(false);
-                return unresolved;
             }
 
             // The direct merge may advance a ref before its in-process gate
@@ -245,21 +238,16 @@ public sealed class MergeIntoDevelopRunner
                     _attemptAuthority,
                     out var subjectError))
             {
-                var stale = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: subjectError);
-                Record(
-                    jobFolderPath,
-                    project,
-                    jobId,
-                    integrationBranch,
-                    stale,
-                    preMainResult: null,
-                    preDevelopResult: null,
-                    startedAt);
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, stale,
+                // A task-key lookup failure is storage, not staleness, and keeps
+                // its own retryable code.
+                var staleCode = AcceptedIntegrationFailurePolicy.InferErrorCode(subjectError)
+                    == AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable
+                        ? AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable
+                        : AcceptedIntegrationFailureCodes.StaleAttempt;
+                return await ConcludeAsync(
+                    project, jobId, jobFolderPath, watchPath, UnresolvedDelivery, integrationBranch, strategy,
+                    MergeIntoIntegrationResult.Failed(staleCode, subjectError),
                     null, null, startedAt, ct).ConfigureAwait(false);
-                return stale;
             }
             var delivery = DeliveryRefResolver.Resolve(jobId, jobFolderPath);
             // The caller supplies current project/repository truth. A review
@@ -275,26 +263,16 @@ public sealed class MergeIntoDevelopRunner
             var workspace = _integrationWorktrees.Resolve(developerRoot, branch, ct);
             if (!workspace.Success)
             {
-                var unavailable = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: workspace.Error ?? "The integration worktree is unavailable.");
-                Record(
-                    jobFolderPath,
-                    project,
-                    jobId,
-                    branch,
-                    unavailable,
-                    preMainResult: null,
-                    preDevelopResult: null,
-                    startedAt);
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, unavailable,
+                return await ConcludeAsync(
+                    project, jobId, jobFolderPath, watchPath, delivery.Ref, branch, strategy,
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+                        workspace.Error ?? "The integration worktree is unavailable."),
                     null, null, startedAt, ct).ConfigureAwait(false);
-                return unavailable;
             }
             var repoRoot = workspace.Path!;
 
             var taskBranch = delivery.Ref;
-            var strategy = IntegrationStrategies.Normalize(integrationStrategy);
             var isPullRequest = string.Equals(
                 strategy,
                 IntegrationStrategies.PullRequest,
@@ -348,15 +326,15 @@ public sealed class MergeIntoDevelopRunner
 
             if (!synchronized.Success)
             {
-                result = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: synchronized.Error);
+                result = MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.BranchSyncFailed,
+                    synchronized.Error);
             }
             else if (lineage?.Mode == ImmediateIntegrationLineageMode.Blocked)
             {
-                result = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: lineage.Reason);
+                result = MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.LineageBlocked,
+                    lineage.Reason);
             }
             else if (isPullRequest)
             {
@@ -450,9 +428,9 @@ public sealed class MergeIntoDevelopRunner
                 var detail = rollback?.Success == true
                     ? $"Mechanical rebase attribution could not be persisted; {branch} was rolled back and nothing was pushed."
                     : $"Mechanical rebase attribution could not be persisted and rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
-                result = MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: detail);
+                result = MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
+                    detail);
             }
             if (pushBranch is null && result.Outcome.IsSuccessfulIntegration())
             {
@@ -492,17 +470,12 @@ public sealed class MergeIntoDevelopRunner
                 }
                 pushDecidedByFence = true;
             }
-            _logger.LogInformation(
-                "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome}",
-                project, jobId, taskBranch, branch, strategy, result.Outcome);
-            Record(jobFolderPath, project, jobId, branch, result, preMainResult, preDevelopResult, startedAt);
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
-            if (!supersededCleanly)
-            {
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
-                    preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
-            }
+            result = await ConcludeAsync(
+                project, jobId, jobFolderPath, watchPath, taskBranch, branch, strategy,
+                result, preMainResult, preDevelopResult, startedAt, ct,
+                raiseIntervention: !supersededCleanly).ConfigureAwait(false);
 
             // AGT-1999: once the accepted task is folded into the integration
             // branch, push that branch to origin so integration is never only
@@ -526,20 +499,14 @@ public sealed class MergeIntoDevelopRunner
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "merge-into-develop post-step failed for {JobId}", jobId);
-            var errored = MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: ex.Message);
+            var errored = MergeIntoIntegrationResult.Failed(
+                AcceptedIntegrationFailureCodes.IntegrationError,
+                ex.Message);
             try
             {
-                Record(
-                    jobFolderPath,
-                    project,
-                    jobId,
-                    integrationBranch,
-                    errored,
-                    preMainResult: null,
-                    preDevelopResult: null,
-                    startedAt);
-                await MaybeRaiseInterventionAsync(project, jobId, watchPath, errored,
-                    null, null, startedAt, ct).ConfigureAwait(false);
+                errored = await ConcludeAsync(
+                    project, jobId, jobFolderPath, watchPath, UnresolvedDelivery, integrationBranch, strategy,
+                    errored, null, null, startedAt, ct).ConfigureAwait(false);
             }
             catch (Exception __ex)
             {
@@ -547,6 +514,67 @@ public sealed class MergeIntoDevelopRunner
             }
             return errored;
         }
+    }
+
+    /// <summary>Delivery label for a log line written before the delivery ref was resolved.</summary>
+    private const string UnresolvedDelivery = "unresolved";
+
+    /// <summary>
+    /// The one exit of a merge attempt: names the typed failure code of an
+    /// Error, writes the log line, records the pipeline step, and raises the
+    /// failure intervention. Every Error therefore carries the same
+    /// <c>failureCode</c> in the log, in <c>pipeline-execution.json</c>, and on
+    /// the card (AGT-2995).
+    /// </summary>
+    private async Task<MergeIntoIntegrationResult> ConcludeAsync(
+        string project,
+        string jobId,
+        string jobFolderPath,
+        string? watchPath,
+        string delivery,
+        string integrationBranch,
+        string strategy,
+        MergeIntoIntegrationResult result,
+        BuildTestGateResult? preMainResult,
+        BuildTestGateResult? preDevelopResult,
+        DateTime startedAt,
+        CancellationToken ct,
+        bool raiseIntervention = true)
+    {
+        if (result.Outcome == MergeIntoIntegrationOutcome.Error && string.IsNullOrWhiteSpace(result.FailureCode))
+            result = result with { FailureCode = AcceptedIntegrationFailureCodes.For(result) };
+
+        var failureCode = AcceptedIntegrationFailureCodes.For(result);
+        if (result.Outcome == MergeIntoIntegrationOutcome.Error)
+        {
+            _logger.LogWarning(
+                "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome} failureCode={FailureCode} reason={Reason}",
+                project, jobId, delivery, integrationBranch, strategy, result.Outcome,
+                failureCode, OneLine(result.Error));
+        }
+        else
+        {
+            _logger.LogInformation(
+                "merge-into-develop project={Project} job={JobId} delivery={Delivery} integration={Integration} strategy={Strategy} outcome={Outcome} failureCode={FailureCode} reason={Reason}",
+                project, jobId, delivery, integrationBranch, strategy, result.Outcome,
+                failureCode ?? "none", result.Outcome.IsSuccessfulIntegration() ? "none" : OneLine(result.Error));
+        }
+
+        Record(jobFolderPath, project, jobId, integrationBranch, result, preMainResult, preDevelopResult, startedAt);
+        if (raiseIntervention)
+            await MaybeRaiseInterventionAsync(project, jobId, watchPath, result,
+                preMainResult, preDevelopResult, startedAt, ct).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>Collapses a multi-line diagnostic into one bounded log field.</summary>
+    internal static string OneLine(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return "none";
+        var collapsed = string.Join(
+            ' ',
+            reason.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return collapsed.Length <= 300 ? collapsed : collapsed[..297] + "...";
     }
 
     private async Task MaybeRaiseInterventionAsync(
@@ -650,9 +678,9 @@ public sealed class MergeIntoDevelopRunner
         if (string.IsNullOrWhiteSpace(developSha))
         {
             return new(
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Immediate integration could not resolve the exact develop merge commit."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    "Immediate integration could not resolve the exact develop merge commit."),
                 null,
                 preDevelopGate,
                 null,
@@ -677,9 +705,9 @@ public sealed class MergeIntoDevelopRunner
                     ? "Mechanical rebase attribution could not be persisted; develop was rolled back and main remained unchanged."
                     : $"Mechanical rebase attribution could not be persisted and develop rollback failed ({rollback?.Error ?? "missing rollback anchor"}); manual repair is required.";
                 return new(
-                    MergeIntoIntegrationResult.Of(
-                        MergeIntoIntegrationOutcome.Error,
-                        error: detail),
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
+                        detail),
                     null,
                     preDevelopGate,
                     null,
@@ -794,9 +822,9 @@ public sealed class MergeIntoDevelopRunner
         {
             IntegrationGateJournal.Clear(jobFolderPath);
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"The build gate could not resolve the exact {integrationBranch} SHA."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    $"The build gate could not resolve the exact {integrationBranch} SHA."),
                 null);
         }
 
@@ -860,10 +888,10 @@ public sealed class MergeIntoDevelopRunner
                 jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, missingAnchor, _timeline);
             IntegrationGateJournal.Clear(jobFolderPath);
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    mergedSha: gatedSha,
-                    error: missingAnchor.Reason),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    missingAnchor.Reason,
+                    mergedSha: gatedSha),
                 missingAnchor);
         }
 
@@ -1139,17 +1167,17 @@ public sealed class MergeIntoDevelopRunner
         if (string.IsNullOrWhiteSpace(sourceSha) || string.IsNullOrWhiteSpace(targetSha))
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Could not resolve the exact develop and main SHAs for immediate release integration."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    "Could not resolve the exact develop and main SHAs for immediate release integration."),
                 null);
         }
         if (!_git.IsAncestor(repoRoot, releaseBranch, workBranch))
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Immediate integration refused to advance main because the develop candidate is not a descendant of main."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.LineageBlocked,
+                    "Immediate integration refused to advance main because the develop candidate is not a descendant of main."),
                 null);
         }
         if (string.Equals(sourceSha, targetSha, StringComparison.OrdinalIgnoreCase))
@@ -1163,9 +1191,9 @@ public sealed class MergeIntoDevelopRunner
         if (_preMainTestGate is null || _projectSettings is null)
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Pre-main test gate is unavailable; refusing to advance main."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.GateUnavailable,
+                    "Pre-main test gate is unavailable; refusing to advance main."),
                 null);
         }
 
@@ -1215,9 +1243,9 @@ public sealed class MergeIntoDevelopRunner
             if (gate.Verdict != BuildTestGateVerdict.Ok)
             {
                 return (
-                    MergeIntoIntegrationResult.Of(
-                        MergeIntoIntegrationOutcome.Error,
-                        error: $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.BuildGateFailed,
+                        $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
                     gate);
             }
         }
@@ -1247,9 +1275,9 @@ public sealed class MergeIntoDevelopRunner
             if (!ReviewSubjectStore.IsValidResultSha(delivery.ExpectedResultSha))
             {
                 return (
-                    MergeIntoIntegrationResult.Of(
-                        MergeIntoIntegrationOutcome.Error,
-                        error: $"Remote delivery '{taskBranch}' has no valid fenced result SHA."),
+                    MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.ReviewSubjectInvalid,
+                        $"Remote delivery '{taskBranch}' has no valid fenced result SHA."),
                     null);
             }
             var inspected = _git.InspectRemoteDeliveryCommitRange(
@@ -1279,9 +1307,9 @@ public sealed class MergeIntoDevelopRunner
         if (!_git.BranchExists(repoRoot, releaseBranch))
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"Release branch '{releaseBranch}' does not exist."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    $"Release branch '{releaseBranch}' does not exist."),
                 null);
         }
         if (_git.IsAncestor(repoRoot, taskBranch, releaseBranch))
@@ -1293,9 +1321,9 @@ public sealed class MergeIntoDevelopRunner
         if (_preMainTestGate is null || _projectSettings is null)
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Pre-main test gate is unavailable; refusing to advance main."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.GateUnavailable,
+                    "Pre-main test gate is unavailable; refusing to advance main."),
                 null);
         }
 
@@ -1304,9 +1332,9 @@ public sealed class MergeIntoDevelopRunner
         if (string.IsNullOrWhiteSpace(sourceSha) || string.IsNullOrWhiteSpace(targetSha))
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: "Could not resolve the exact source and main SHAs for the pre-main gate."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+                    "Could not resolve the exact source and main SHAs for the pre-main gate."),
                 null);
         }
 
@@ -1349,9 +1377,9 @@ public sealed class MergeIntoDevelopRunner
         if (!_git.IsAncestor(repoRoot, releaseBranch, taskBranch))
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"Release source '{taskBranch}' must be rebased onto '{releaseBranch}' before the full-suite gate."),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.SourceNeedsRebase,
+                    $"Release source '{taskBranch}' must be rebased onto '{releaseBranch}' before the full-suite gate."),
                 null);
         }
 
@@ -1376,9 +1404,9 @@ public sealed class MergeIntoDevelopRunner
         if (gate.Verdict != BuildTestGateVerdict.Ok)
         {
             return (
-                MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: $"Pre-main full suite blocked the merge: {gate.Reason}"),
+                MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.BuildGateFailed,
+                    $"Pre-main full suite blocked the merge: {gate.Reason}"),
                 gate);
         }
 
@@ -1823,7 +1851,8 @@ public sealed class MergeIntoDevelopRunner
             status,
             verdict,
             reason,
-            summary);
+            summary,
+            result.FailureCode);
 
         _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
         {

@@ -1,0 +1,507 @@
+verdict=Fail exit=n/a durationMs=438416
+expectedSha=a3defaf11c556f9c5806d3f6e7215de04b25e1bf testedSha=a3defaf11c556f9c5806d3f6e7215de04b25e1bf
+reason=exact review workspace cleanup failed; evidence: cleanup attempt 1: fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree cleanup attempt 2: fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree cleanup attempt 3: fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree
+budget=none
+--- dependency-cache.json ---
+[
+  {
+    "WorkingSubdir": "frontend",
+    "State": "miss",
+    "Reason": "lock-changed",
+    "LockHash": "b4d33b26459e80b47f827fa871f0f768df18c41772936b75a27815fe20e80f50",
+    "Lockfiles": [
+      "package-lock.json"
+    ],
+    "InstallRan": true
+  }
+]
+--- test-selection.json ---
+{
+  "Level": "work-package",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "docs/system/domains/frontend.md",
+    "frontend/e2e/chat/chat-attachment-inline-and-lightbox.spec.ts",
+    "frontend/e2e/orchestrator/orchestrator-context-header.spec.ts",
+    "frontend/e2e/orchestrator/orchestrator-model-picker.spec.ts",
+    "frontend/e2e/orchestrator/orchestrator-project-chat.spec.ts",
+    "frontend/e2e/orchestrator/orchestrator-project-entry.spec.ts",
+    "frontend/e2e/orchestrator/orchestrator-side-sheet.spec.ts",
+    "frontend/e2e/orchestrator/project-chat-context-awareness.spec.ts",
+    "frontend/e2e/orchestrator/project-chat-context-sources.spec.ts",
+    "frontend/e2e/orchestrator/project-chat-fix.spec.ts",
+    "frontend/package-lock.json",
+    "frontend/package.json",
+    "frontend/scripts/patch-coding-agent-chat-model-selector.mjs",
+    "frontend/scripts/patch-coding-agent-chat-technical-blocks.mjs",
+    "frontend/src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.html",
+    "frontend/src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.scss",
+    "frontend/src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.spec.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.bug-directive.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.component.html",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.component.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.context-attachments.spec.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.context-chip.spec.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.file-reader.ts",
+    "frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.lazy.ts",
+    "frontend/src/app/features/orchestrator/composer-location-context.ts",
+    "frontend/src/app/features/orchestrator/README.md",
+    "frontend/src/app/services/task.service.ts"
+  ],
+  "HistoryInput": [],
+  "Candidates": [
+    {
+      "Id": "test-79d55191acdd",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022backend.Tests/OrchestratorApi.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-7c70c1c60e31",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022demo-replay-runner.Tests/DemoReplayRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-7752045b73d6",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-f2d03e18b3ab",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022runner.Tests/AgentRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-9962dc073fa3",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022setup.Tests/AgentOrchestratorSetup.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-3cf1cd39e64f",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022task-server.Tests/TaskServer.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-29aece91168a",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022testsupport/AgentStudio.TestSupport.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-085de4f98fe1",
+      "Command": {
+        "Ecosystem": 2,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test --filter Category!=MachineBound --nologo",
+        "Shell": 1,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-ee058ad8b512",
+      "Command": {
+        "Ecosystem": 1,
+        "Kind": 1,
+        "WorkingSubdir": "frontend",
+        "Command": "npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/*.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/components/orchestrator-context-picker/*.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/components/orchestrator-side-sheet/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022 --include=\u0022src/app/services/*.spec.ts\u0022",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      },
+      "Reasons": [
+        "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      ]
+    }
+  ],
+  "SelectedCandidateIds": [
+    "test-ee058ad8b512"
+  ],
+  "SelectedCommands": [
+    "(frontend) npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/*.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/components/orchestrator-context-picker/*.spec.ts\u0022 --include=\u0022src/app/features/orchestrator/components/orchestrator-side-sheet/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022 --include=\u0022src/app/services/*.spec.ts\u0022"
+  ],
+  "OmittedTestCommands": [
+    "dotnet test --filter Category!=MachineBound --nologo"
+  ],
+  "Reasons": [
+    "continuous baseline not configured"
+  ],
+  "Selector": "deterministic",
+  "SelectorModel": null,
+  "AdvisorReason": null,
+  "FullSuiteRequired": false,
+  "FullSuiteRan": false
+}
+--- last-300-lines ---
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/workbench-decision-markup.util.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/session-security.interceptor.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/lifecycle-phase.util.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/wiki-image-resolver.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/task-reference-navigation.service.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-context-key.util.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/url-hash.util.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/features/orchestrator/composer-location-context.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/confirm-dialog.service.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/code-review-activity.store.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/features/orchestrator/components/orchestrator-side-sheet/orchestrator-side-sheet.component.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/project-identity.util.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯ Unhandled Error ⎯⎯⎯⎯⎯⎯⎯
+[stderr] Error: [vitest-pool]: Failed to start forks worker for test files C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/src/app/services/task-reference-microcard-hydrator.service.spec.ts.
+[stderr]  ❯ node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:94
+[stderr]  ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+[stderr]  ❯ Pool.schedule node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3448:5
+[stderr] 
+[stderr] Caused by: Error: Cannot find module 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\utility.js' imported from C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e\frontend\node_modules\@asamuzakjp\dom-selector\src\js\parser.js
+[stderr]  ❯ finalizeResolution node:internal/modules/esm/resolve:271:11
+[stderr]  ❯ moduleResolve node:internal/modules/esm/resolve:865:10
+[stderr]  ❯ defaultResolve node:internal/modules/esm/resolve:992:11
+[stderr]  ❯ #cachedDefaultResolve node:internal/modules/esm/loader:701:20
+[stderr]  ❯ #resolveAndMaybeBlockOnLoaderThread node:internal/modules/esm/loader:721:38
+[stderr]  ❯ ModuleLoader.resolveSync node:internal/modules/esm/loader:759:56
+[stderr]  ❯ ModuleLoader.getOrCreateModuleJob node:internal/modules/esm/loader:600:27
+[stderr]  ❯ ModuleJobSync.syncLink node:internal/modules/esm/module_job:163:33
+[stderr]  ❯ ModuleJobSync.link node:internal/modules/esm/module_job:489:17
+[stderr]  ❯ new ModuleJobSync node:internal/modules/esm/module_job:479:26
+[stderr] 
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] Serialized Error: { code: 'ERR_MODULE_NOT_FOUND', url: 'file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/@asamuzakjp/dom-selector/src/js/utility.js' }
+[stderr] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+[stderr] 
+[stderr] node:events:487
+[stderr]       throw er; // Unhandled 'error' event
+[stderr]       ^
+[stderr] 
+[stderr] Error: Worker exited unexpectedly
+[stderr]     at ChildProcess.emitUnexpectedExit (file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3011:33)
+[stderr]     at ChildProcess.emit (node:events:521:24)
+[stderr]     at Process.ChildProcess._handle.onexit (node:internal/child_process:295:12)
+[stderr] Emitted 'error' event at:
+[stderr]     at ChildProcess.emitUnexpectedExit (file:///C:/Users/rmisc/AppData/Local/Temp/agentstudio-review-gates/16d0f2d1deb64131911b8fbf59b4dc5e/frontend/node_modules/vitest/dist/chunks/cli-api.Cjt90eJu.js:3012:22)
+[stderr]     at ChildProcess.emit (node:events:521:24)
+[stderr]     at Process.ChildProcess._handle.onexit (node:internal/child_process:295:12)
+[stderr] 
+[stderr] Node.js v24.18.0
+# dependency-cache save item=frontend/.angular state=moved
+# dependency-cache save item=frontend/node_modules state=moved
+# dependency-cache save repository=ba654d41d5c5937d016ab8f8 scopes=1 durationMs=18
+cleanup attempt 1:  fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree
+cleanup attempt 2:  fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree
+cleanup attempt 3:  fatal: 'C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\16d0f2d1deb64131911b8fbf59b4dc5e' is not a working tree

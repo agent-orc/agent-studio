@@ -4,6 +4,9 @@ public record ProjectSettings
 {
     /// <summary>Documentation-only batch gate pilot. Disabled until a project opts in.</summary>
     public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
+    /// <summary>Optional project override for chat metadata visibility.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("chat.metadata.enabled")]
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>

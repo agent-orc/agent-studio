@@ -13,6 +13,7 @@ import {
   viewChildren,
 } from '@angular/core';
 import { TreeRowComponent } from '../../../../components/tree-row/tree-row.component';
+import { TagChipsComponent } from '../../../../components/tag-chips/tag-chips.component';
 import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ProjectDocsService } from '../../../../services/project-docs.service';
 import { JobsHubClient } from '../../../../services/jobs-hub-client.service';
@@ -39,7 +40,7 @@ interface WorkbenchNavigationGroup {
 @Component({
   selector: 'app-explorer-workbench-list',
   standalone: true,
-  imports: [TreeRowComponent, ExplorerWorkbenchHistoryComponent],
+  imports: [TreeRowComponent, TagChipsComponent, ExplorerWorkbenchHistoryComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './explorer-workbench-list.component.html',
   styleUrl: './explorer-workbench-list.component.scss',
