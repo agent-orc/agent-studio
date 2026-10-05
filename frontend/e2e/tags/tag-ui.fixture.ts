@@ -25,10 +25,12 @@ export async function installTagUiFixture(page: Page): Promise<void> {
   await page.route('**/api/**', async route => {
     const pathname = new URL(route.request().url()).pathname;
     let body: unknown = [];
-    if (pathname === '/api/auth/status') body = { profile: 'local', bootstrapRequired: false, authenticated: true };
-    else if (pathname === '/api/workspaces') body = [{ id: 'workspace', displayName: 'Workspace', sortOrder: 0,
+    if (pathname === '/api/auth/status' || pathname === '/api/v1/studio/auth/status') {
+      body = { profile: 'local', bootstrapRequired: false, authenticated: true };
+    }
+    else if (pathname === '/api/workspaces' || pathname === '/api/v1/workspaces') body = [{ id: 'workspace', displayName: 'Workspace', sortOrder: 0,
       isDefault: true, projects: [project] }];
-    else if (pathname === '/api/projects') body = [project];
+    else if (pathname === '/api/projects' || pathname === '/api/v1/projects') body = [project];
     else if (pathname === '/api/watch-paths') body = [{ name: TAG_PROJECT, path: '/repo', rootPath: '/repo', repositoryPath: '/repo' }];
     else if (pathname === '/api/tags') body = tags;
     else if (pathname.endsWith('/tags')) body = { items: tags };
@@ -45,8 +47,8 @@ export async function installTagUiFixture(page: Page): Promise<void> {
     else if (pathname.endsWith('/style-guides')) body = { snapshotId: 'fixture', technologies: [], guides: [], warnings: [] };
     else if (pathname === '/api/crash-recovery/pending') body = { pending: [] };
     else if (pathname === '/api/cli/quota') body = { snapshots: [], ttlSeconds: 600 };
-    else if (pathname === '/api/runner/status') body = { projects: {} };
-    else if (pathname === '/api/tasks/grouped') body = { backlog: [], preparation: [], ready: [card], progress: [],
+    else if (pathname === '/api/runner/status' || pathname === '/api/v1/studio/runner/status') body = { projects: {} };
+    else if (pathname === '/api/tasks/grouped' || pathname === '/api/v1/studio/board') body = { backlog: [], preparation: [], ready: [card], progress: [],
       autoReview: [], humanReview: [], completed: [], archive: [], escalated: [] };
     else if (pathname === '/api/tasks/archive') body = { items: [], total: 0, offset: 0, limit: 50 };
     else if (pathname === '/api/tasks/reference-status') body = { items: [] };
