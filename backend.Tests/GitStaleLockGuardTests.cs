@@ -430,6 +430,106 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Fact]
+    public void Linked_worktree_scope_names_the_main_checkout_and_sibling_worktrees()
+    {
+        var repo = SeedRepo("shared-store");
+        var gate = Path.Combine(_root, "shared-store-gate");
+        var sibling = Path.Combine(_root, "shared-store-sibling");
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", gate).Code);
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", sibling).Code);
+
+        var gateScope = GitStaleLockGuard.ResolveScope(gate)!;
+        var mainScope = GitStaleLockGuard.ResolveScope(repo)!;
+
+        Assert.True(gateScope.SharedWorkTreesComplete);
+        Assert.Contains(Path.GetFullPath(repo), gateScope.SharedWorkTrees!);
+        Assert.Contains(Path.GetFullPath(sibling), gateScope.SharedWorkTrees!);
+        Assert.DoesNotContain(Path.GetFullPath(gate), gateScope.SharedWorkTrees!);
+        Assert.True(mainScope.SharedWorkTreesComplete);
+        Assert.Contains(Path.GetFullPath(gate), mainScope.SharedWorkTrees!);
+        Assert.Contains(Path.GetFullPath(sibling), mainScope.SharedWorkTrees!);
+    }
+
+    [Fact]
+    public void Git_running_from_the_main_checkout_keeps_a_linked_worktree_shared_ref_lock()
+    {
+        var repo = SeedRepo("main-owner");
+        var gate = Path.Combine(_root, "main-owner-gate");
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", gate).Code);
+        var refLock = Path.Combine(repo, ".git", "refs", "heads", "main.lock");
+        PlantLock(refLock, TimeSpan.FromHours(1));
+        // `git update-ref` started in the main checkout: the cwd is the main
+        // root and the command line names no path of the gate worktree.
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => [new GitProcessObservation(8100, "git", Path.GetFullPath(repo), "git update-ref refs/heads/main HEAD")]);
+
+        var result = Guard(probe).EnsureWritable(gate, GitLockSurface.SharedRefs);
+
+        Assert.True(File.Exists(refLock));
+        Assert.Empty(result.Cleared);
+        Assert.Equal(GitLockVerdict.KeepOwned, Assert.Single(result.Remaining).Verdict);
+    }
+
+    [Fact]
+    public void Git_running_from_a_sibling_worktree_keeps_the_main_checkout_ref_lock()
+    {
+        var repo = SeedRepo("sibling-owner");
+        var sibling = Path.Combine(_root, "sibling-owner-wt");
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", sibling).Code);
+        var refLock = Path.Combine(repo, ".git", "refs", "heads", "main.lock");
+        PlantLock(refLock, TimeSpan.FromHours(1));
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => [new GitProcessObservation(8101, "git", Path.GetFullPath(sibling), "git commit -m x")]);
+
+        var result = Guard(probe).EnsureWritable(repo, GitLockSurface.SharedRefs);
+
+        Assert.True(File.Exists(refLock));
+        Assert.Empty(result.Cleared);
+    }
+
+    [Fact]
+    public void Unreadable_linked_worktree_registration_leaves_ownership_unknown()
+    {
+        var repo = SeedRepo("broken-registry");
+        var gate = Path.Combine(_root, "broken-registry-gate");
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", gate).Code);
+        // A registration whose gitdir pointer is missing hides where that
+        // worktree lives, so a git process there cannot be ruled out.
+        Directory.CreateDirectory(Path.Combine(repo, ".git", "worktrees", "orphan"));
+        var refLock = Path.Combine(repo, ".git", "refs", "heads", "main.lock");
+        PlantLock(refLock, TimeSpan.FromHours(1));
+        var probe = new GitProcessLockOwnerProbe(() => [], () => []);
+
+        var scope = GitStaleLockGuard.ResolveScope(gate)!;
+        var result = Guard(probe).EnsureWritable(gate, GitLockSurface.SharedRefs);
+
+        Assert.False(scope.SharedWorkTreesComplete);
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(scope));
+        Assert.True(File.Exists(refLock));
+        Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
+    }
+
+    [Fact]
+    public void Git_in_an_unrelated_directory_still_lets_a_linked_worktree_lock_clear()
+    {
+        var repo = SeedRepo("unrelated-owner");
+        var gate = Path.Combine(_root, "unrelated-owner-gate");
+        Assert.Equal(0, Git(repo, "worktree", "add", "-q", "--detach", gate).Code);
+        var refLock = Path.Combine(repo, ".git", "refs", "heads", "main.lock");
+        PlantLock(refLock, TimeSpan.FromHours(1));
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => [new GitProcessObservation(8102, "git", Path.Combine(_root, "elsewhere"), "git status")]);
+
+        var result = Guard(probe).EnsureWritable(gate, GitLockSurface.SharedRefs);
+
+        Assert.False(File.Exists(refLock));
+        Assert.Equal(refLock, Assert.Single(result.Cleared).Path);
+    }
+
+    [Fact]
     public void Windows_git_process_without_a_repository_path_keeps_a_stale_lock()
     {
         var repo = SeedRepo("windows-unresolved-owner");

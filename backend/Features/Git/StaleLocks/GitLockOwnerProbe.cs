@@ -8,12 +8,23 @@ namespace AgentStudio.Git;
 /// <summary>
 /// The directories a git write on one repository can take locks in: the
 /// working tree, its private git directory, and the shared common directory
-/// (they differ for a linked worktree).
+/// (they differ for a linked worktree). <see cref="SharedWorkTrees"/> lists
+/// every other working tree on the same common directory (the main checkout
+/// and its linked worktrees): git running from any of them can hold a shared
+/// ref lock without naming this path. When that list could not be read
+/// completely, <see cref="SharedWorkTreesComplete"/> is false and ownership
+/// cannot be disproven.
 /// </summary>
-public sealed record GitLockScope(string WorkTree, string GitDirectory, string CommonDirectory)
+public sealed record GitLockScope(
+    string WorkTree,
+    string GitDirectory,
+    string CommonDirectory,
+    IReadOnlyList<string>? SharedWorkTrees = null,
+    bool SharedWorkTreesComplete = true)
 {
     public IEnumerable<string> Paths()
         => new[] { WorkTree, GitDirectory, CommonDirectory }
+            .Concat(SharedWorkTrees ?? [])
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase);
 }
@@ -89,6 +100,9 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         var paths = scope.Paths().Select(NormalizeDirectory).ToArray();
         if (_serverChildren().Any(cwd => IsInside(cwd, paths)))
             return GitLockOwnership.Owned;
+
+        // A sibling working tree we could not resolve may host the owner.
+        if (!scope.SharedWorkTreesComplete) return GitLockOwnership.Unknown;
 
         var processes = _inventory();
         if (processes is null) return GitLockOwnership.Unknown;

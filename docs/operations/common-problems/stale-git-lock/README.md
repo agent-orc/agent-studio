@@ -63,9 +63,14 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
    running git child of this server whose working directory is inside the
    repository, or an OS process: on Linux any `git*` process whose
    `/proc/<pid>/cwd` or command line points into the repository, on Windows any
-   `git*.exe` whose command line names the path.
-3. **Older, and the process list, a still-present Linux `/proc` entry, or a
-   git process's working directory cannot be read**: keep it. An external
+   `git*.exe` whose command line names the path. "The repository" covers
+   every working tree on the same ref store: the main checkout and all of its
+   linked worktrees (read from `.git/worktrees/*/gitdir`). A `git update-ref`
+   started in the project checkout can hold a shared ref lock that the gate
+   or integration worktree would otherwise trip over.
+3. **Older, and the process list, a still-present Linux `/proc` entry, a
+   git process's working directory, or a linked worktree registration cannot
+   be read**: keep it. An external
    Windows `git.exe add` may hold the lock without naming the repository in
    its command line; unresolved ownership is never guessed. The Windows
    process query also returns unknown after 15

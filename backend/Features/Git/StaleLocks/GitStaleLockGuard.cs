@@ -239,7 +239,82 @@ public sealed class GitStaleLockGuard
                 if (Directory.Exists(resolved)) commonDir = resolved;
             }
         }
-        return new GitLockScope(workTree, gitDir, commonDir);
+        var complete = TryResolveSharedWorkTrees(commonDir, out var sharedWorkTrees);
+        return new GitLockScope(
+            workTree, gitDir, commonDir,
+            sharedWorkTrees.Where(path => !string.Equals(path, workTree, StringComparison.OrdinalIgnoreCase)).ToArray(),
+            complete);
+    }
+
+    /// <summary>
+    /// Every working tree that shares <paramref name="commonDir"/>'s ref store:
+    /// the main checkout (parent of a non-bare <c>.git</c>) and each linked
+    /// worktree registered under <c>worktrees/*/gitdir</c>. Returns false when
+    /// any of them cannot be determined; the probe then treats ownership as
+    /// unknown rather than miss a git process running from that tree.
+    /// </summary>
+    internal static bool TryResolveSharedWorkTrees(string commonDir, out List<string> workTrees)
+    {
+        workTrees = [];
+        var complete = true;
+        try
+        {
+            if (string.Equals(Path.GetFileName(commonDir.TrimEnd('/', '\\')), ".git", StringComparison.OrdinalIgnoreCase))
+            {
+                var mainRoot = Path.GetDirectoryName(commonDir.TrimEnd('/', '\\'));
+                if (!string.IsNullOrEmpty(mainRoot)) workTrees.Add(Path.GetFullPath(mainRoot));
+            }
+            else if (!IsBareRepository(commonDir))
+            {
+                // A non-bare repository whose git directory is not named .git
+                // (core.worktree or a separate git dir): its main tree is not
+                // derivable from the layout.
+                complete = false;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "GitStaleLockGuard: main working tree is unresolved");
+            complete = false;
+        }
+
+        var registry = Path.Combine(commonDir, "worktrees");
+        if (!Directory.Exists(registry)) return complete;
+        try
+        {
+            foreach (var entry in Directory.EnumerateDirectories(registry))
+            {
+                try
+                {
+                    var pointer = File.ReadAllText(Path.Combine(entry, "gitdir")).Trim();
+                    if (string.IsNullOrWhiteSpace(pointer)) { complete = false; continue; }
+                    var dotGit = Path.GetFullPath(Path.IsPathRooted(pointer) ? pointer : Path.Combine(entry, pointer));
+                    var root = Path.GetDirectoryName(dotGit);
+                    if (string.IsNullOrEmpty(root)) { complete = false; continue; }
+                    workTrees.Add(root);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SilentCatch.Note(ex, "GitStaleLockGuard: linked worktree registration is unreadable");
+                    complete = false;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SilentCatch.Note(ex, "GitStaleLockGuard: linked worktree registry is unreadable");
+            complete = false;
+        }
+        return complete;
+    }
+
+    private static bool IsBareRepository(string gitDir)
+    {
+        var config = Path.Combine(gitDir, "config");
+        if (!File.Exists(config)) return false;
+        return File.ReadLines(config)
+            .Select(line => line.Replace(" ", "").Replace("\t", "").Trim())
+            .Any(line => string.Equals(line, "bare=true", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
