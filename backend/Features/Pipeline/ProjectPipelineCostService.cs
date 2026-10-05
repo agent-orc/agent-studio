@@ -357,25 +357,24 @@ public sealed class ProjectPipelineCostService
                 group => group.Select(record => record.StartedAt).ToList(),
                 StringComparer.Ordinal);
         // A receipt has no step id. Match each orchestrator or supporting
-        // (aspect) call to one measured execution of the same kind by model
-        // and all four token counters. Consume matches one at a time so
-        // repeated calls with identical usage are reconciled without hiding
-        // additional receipts, and a receipt with no measured execution in a
-        // partial log stays in the ledger.
-        var measuredCalls = new Dictionary<ReceiptMatch, int>();
+        // (aspect, drift, analysis) call to one measured execution of the
+        // same family by model and all four token counters. Consume matches
+        // one at a time so repeated calls with identical usage are reconciled
+        // without hiding additional receipts, and a receipt with no measured
+        // execution in a partial log stays in the ledger.
+        var measuredCalls = new List<ReceiptMatch>();
         foreach (var (jobId, record) in taskLogs)
         {
             var attempts = new List<PipelineExecutionRecord> { record };
             attempts.AddRange(record.PreviousAttempts);
-            foreach (var step in attempts.SelectMany(attempt => attempt.Steps)
-                         .Where(step => IsReconciledKind(step.Kind)))
+            foreach (var step in attempts.SelectMany(attempt => attempt.Steps))
             {
+                if (ReconciledFamily(step.Kind) is not { } family) continue;
                 foreach (var run in StepCostMeasurement.Executions(step))
                 {
                     if (StepCostMeasurement.Tokens(run) <= 0) continue;
-                    var key = ReceiptMatchKey(jobId, step.Kind, run.Model, run.InputTokens, run.OutputTokens,
-                        run.CacheReadTokens, run.CacheCreationTokens);
-                    measuredCalls[key] = measuredCalls.GetValueOrDefault(key) + 1;
+                    measuredCalls.Add(ReceiptMatchKey(jobId, family, run.Model, run.InputTokens, run.OutputTokens,
+                        run.CacheReadTokens, run.CacheCreationTokens));
                 }
             }
             if (coreReceiptTimes.TryGetValue(jobId, out var receiptTimes))
@@ -384,29 +383,94 @@ public sealed class ProjectPipelineCostService
             }
             merged.AddRange(attempts);
         }
-        foreach (var receipt in receiptRecords)
-        {
-            var call = receipt.Steps.Single();
-            if (IsReconciledKind(call.Kind))
+
+        var receiptCalls = receiptRecords
+            .Select(receipt =>
             {
-                var key = ReceiptMatchKey(receipt.JobId, call.Kind, call.Model, call.InputTokens,
-                    call.OutputTokens, call.CacheReadTokens, call.CacheCreationTokens);
-                if (measuredCalls.TryGetValue(key, out var remaining) && remaining > 0)
-                {
-                    measuredCalls[key] = remaining - 1;
-                    continue;
-                }
-            }
-            merged.Add(receipt);
-        }
+                var call = receipt.Steps.Single();
+                return ReconciledFamily(call.Kind) is { } family
+                    ? ReceiptMatchKey(receipt.JobId, family, call.Model, call.InputTokens, call.OutputTokens,
+                        call.CacheReadTokens, call.CacheCreationTokens)
+                    : (ReceiptMatch?)null;
+            })
+            .ToList();
+        var reconciled = ReconcileReceipts(receiptCalls, measuredCalls);
+        merged.AddRange(receiptRecords.Where((_, index) => !reconciled.Contains(index)));
         return merged;
     }
 
-    private readonly record struct ReceiptMatch(
+    /// <summary>
+    /// Indices of the receipts a measured execution already prices. First
+    /// every receipt that equals one execution is consumed; then each
+    /// remaining execution is matched against a pair of remaining receipts
+    /// whose counters sum to it, because an aspect verdict retry writes one
+    /// receipt per paid call while its step row carries the sum of both
+    /// (AspectRunnerService retries a missing verdict exactly once).
+    /// </summary>
+    internal static HashSet<int> ReconcileReceipts(
+        IReadOnlyList<ReceiptMatch?> receiptCalls, IReadOnlyList<ReceiptMatch> measuredCalls)
+    {
+        var reconciled = new HashSet<int>();
+        var openMeasured = new List<ReceiptMatch>();
+        var openReceipts = new Dictionary<ReceiptMatch, Queue<int>>();
+        for (var index = 0; index < receiptCalls.Count; index++)
+        {
+            if (receiptCalls[index] is not { } key) continue;
+            if (!openReceipts.TryGetValue(key, out var queue)) openReceipts[key] = queue = new Queue<int>();
+            queue.Enqueue(index);
+        }
+        foreach (var measured in measuredCalls)
+        {
+            if (openReceipts.TryGetValue(measured, out var queue) && queue.Count > 0)
+                reconciled.Add(queue.Dequeue());
+            else
+                openMeasured.Add(measured);
+        }
+
+        foreach (var measured in openMeasured)
+        {
+            var candidates = openReceipts
+                .Where(entry => entry.Value.Count > 0 && SameCall(entry.Key, measured))
+                .Select(entry => entry.Key)
+                .ToList();
+            foreach (var first in candidates)
+            {
+                var rest = measured with
+                {
+                    Input = measured.Input - first.Input,
+                    Output = measured.Output - first.Output,
+                    CacheRead = measured.CacheRead - first.CacheRead,
+                    CacheCreation = measured.CacheCreation - first.CacheCreation,
+                };
+                if (!openReceipts.TryGetValue(rest, out var restQueue)) continue;
+                var needed = rest == first ? 2 : 1;
+                if (restQueue.Count < needed) continue;
+                reconciled.Add(openReceipts[first].Dequeue());
+                reconciled.Add(restQueue.Dequeue());
+                break;
+            }
+        }
+        return reconciled;
+    }
+
+    private static bool SameCall(ReceiptMatch receipt, ReceiptMatch measured)
+        => receipt.JobId == measured.JobId && receipt.Kind == measured.Kind && receipt.Model == measured.Model;
+
+    internal readonly record struct ReceiptMatch(
         string JobId, StepKind Kind, string Model, long Input, long Output, long CacheRead, long CacheCreation);
 
-    private static bool IsReconciledKind(StepKind kind)
-        => kind is StepKind.Orchestrator or StepKind.Aspect;
+    /// <summary>
+    /// The receipt kind a measured step reconciles against. Receipts know
+    /// only their participant: <c>orchestrator:</c> calls are Orchestrator
+    /// and every <c>support:</c> call (aspect, drift, analysis) is Aspect.
+    /// Core is reconciled per attempt by time instead.
+    /// </summary>
+    private static StepKind? ReconciledFamily(StepKind kind) => kind switch
+    {
+        StepKind.Orchestrator => StepKind.Orchestrator,
+        StepKind.Aspect or StepKind.Drift or StepKind.Analysis => StepKind.Aspect,
+        _ => null,
+    };
 
     private static ReceiptMatch ReceiptMatchKey(
         string jobId, StepKind kind, string? model, long input, long output, long cacheRead, long cacheCreation)

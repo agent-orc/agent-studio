@@ -325,6 +325,99 @@ public sealed class StepCostMeasurementTests : IDisposable
     }
 
     [Fact]
+    public void A_retried_aspect_is_priced_once_from_its_summed_step_row_not_again_from_its_per_call_receipts()
+    {
+        // AspectRunnerService retries a missing verdict once: two paid calls,
+        // two receipts, and one step row carrying the sum of both.
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt, JobId = "J1", ParticipantId = "support:aspect-code-quality",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 40_000, OutputTokens = 1_000,
+                },
+            },
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt.AddSeconds(30), JobId = "J1", ParticipantId = "support:aspect-code-quality",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 42_000, OutputTokens = 3_000,
+                },
+            },
+            // An unrelated call with no measured execution stays in the ledger.
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt.AddSeconds(60), JobId = "J1", ParticipantId = "support:aspect-requirement-fit",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 30_000, OutputTokens = 3_000,
+                },
+            },
+        ]);
+        var log = Record("J1", TestAt,
+            Step("aspect-code-quality", StepKind.Aspect, PricedModel, 82_000, 4_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+
+        Assert.Equal(2, merged.Count); // summed step row plus the unrelated receipt
+        var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
+        Assert.Equal(86_000 + 33_000, aspect.TotalTokens);
+        Assert.Equal(
+            TokenPricing.Estimate(PricedModel, 82_000, 4_000, 0, 0, TestAt).Total
+            + TokenPricing.Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
+            timeline.TotalCostUsd);
+    }
+
+    [Fact]
+    public void A_retried_aspect_with_identical_per_call_usage_consumes_both_receipts()
+    {
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt, JobId = "J1", ParticipantId = "support:aspect-code-quality",
+                TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 10_000, OutputTokens = 500 },
+            },
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt.AddSeconds(30), JobId = "J1", ParticipantId = "support:aspect-code-quality",
+                TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 10_000, OutputTokens = 500 },
+            },
+        ]);
+        var log = Record("J1", TestAt,
+            Step("aspect-code-quality", StepKind.Aspect, PricedModel, 20_000, 1_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
+
+        Assert.Single(merged);
+    }
+
+    [Fact]
+    public void A_drift_receipt_is_reconciled_with_its_measured_drift_execution()
+    {
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt, JobId = "J1", ParticipantId = "support:docs-drift",
+                TokenUsage = new OrchestratorTokenUsage { Model = PricedModel, InputTokens = 25_000, OutputTokens = 2_000 },
+            },
+        ]);
+        var log = Record("J1", TestAt,
+            Step(PipelineCatalogue.DriftAdrCodeStepId, StepKind.Drift, PricedModel, 25_000, 2_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(receipts, [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+
+        Assert.Single(merged);
+        Assert.Equal(27_000, timeline.TotalTokens);
+    }
+
+    [Fact]
     public void An_orchestrator_only_receipt_does_not_erase_core_step_usage()
     {
         var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",

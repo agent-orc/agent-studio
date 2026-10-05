@@ -311,9 +311,13 @@ Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
 - A core receipt prices the agent run of the attempt whose time window holds
   it (an attempt owns the span from its start to the next attempt's start).
   An attempt with no core receipt keeps its logged core tokens. The log adds the aspect,
-  orchestrator and drift rows, plus the core run count. Orchestrator receipts
-  matching a measured step execution by job, model and all four token
-  counters are consumed one at a time; unmatched receipts remain visible.
+  orchestrator and drift rows, plus the core run count. Orchestrator and
+  supporting receipts (`support:` calls: aspect, drift, analysis rows) that
+  match a measured step execution by job, model and all four token counters
+  are consumed one at a time. An aspect verdict retry writes one receipt per
+  paid call while its step row carries their sum, so a still-unmatched
+  execution then consumes a pair of receipts whose counters sum to it.
+  Unmatched receipts remain visible.
   A task with only an orchestrator receipt retains its log's core usage.
 - Before this change, the log of a receipt-backed task was skipped entirely.
   That is why no orchestrator step appeared in the ledger.
