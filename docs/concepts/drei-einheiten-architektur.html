@@ -355,7 +355,7 @@ konzeptionelle Verantwortung direkt in <code>backend/Features/Runner</code> und
     <tr><td>CLI-Hosting</td>
         <td><code>backend/Features/Cli/Execution/*</code> (<code>CliExecutionServiceBase.cs</code>,
         <code>BuiltInCliBehaviors.cs</code>, <code>ClaudeOneShot.cs</code>, <code>CodexOneShot.cs</code>)</td>
-        <td><code>runner/AgentCliProcess.cs</code></td></tr>
+        <td><code>runner/CarWorkerExecution.cs</code> + <code>runner/CliSelection.cs</code></td></tr>
     <tr><td>Pickup / Lebenszyklus</td>
         <td><code>backend/Features/Runner/ProjectRunner.cs</code></td>
         <td><code>runner/RemoteTaskRunner.cs</code> + <code>runner/RemoteRunnerDaemon.cs</code></td></tr>
@@ -385,9 +385,9 @@ heute als <code>agent-runner-01</code> auf einem Linux-Host (Hetzner) deployt. E
   <li><b>Nur ausgehende Verbindungen, keine offenen Ports:</b> der Testhost ist heute nur per
       SSH-Tunnel oder LAN-Adresse erreichbar (<code>docs/operations/setup/linux-runner-host.md</code>); eine
       zentrale, TLS-gesicherte URL (§2) ist das Zielbild, keine offene Inbound-Regel.</li>
-  <li><b>Läuft auf jedem Host mit git + Agent-CLIs:</b> welche CLI-Binary und welche Flags, ist konfigurierbar
-      (<code>RUNNER_CLI_BIN</code>, Standard <code>claude</code>; <code>RUNNER_CLI_ARGS</code>, Standard
-      <code>-p</code>) — kein Hardcoding auf ein CLI.</li>
+  <li><b>Runs on any host with Git and the agent CLIs:</b> the default provider
+      (<code>RUNNER_CLI_TYPE</code>) and provider-specific executable paths are
+      configurable; CodingAgentRunner owns protocol and headless flags.</li>
 </ul>
 
 <div class="box ok">

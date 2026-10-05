@@ -30,6 +30,14 @@
 
 ## Provider input and cache semantics
 
+Chat replies are a separate `chat-turn` source in the workspace token ledger.
+The turn stores normalized input, cache read, output, and optional reasoning
+tokens, plus the historical TokenEconomy cost, currency, and catalogue version.
+The usage cockpit exposes chat turns per host and project with active and heavy
+counts, CPU percent where sampled, cumulative tokens, and cost beside coding
+slots. The remote work broker owns remote heavy admission and its snapshot;
+the local chat tracker supplies the workstation row with no CPU sample.
+
 The canonical stored dimensions always mean:
 
 - `input` / `inputTokens`: uncached input, priced at the normal input rate.
@@ -385,6 +393,17 @@ mixed dashboard:
   the trend as a workspace plausibility baseline and effort as unattributed. It
   does not invent either attribution.
 - Per-task cap forecast (TE-4) is a labelled future integration point only.
+
+Usage-detail links to `#/workspace/settings/tokens[/cli]` carry `ledger-workspace`,
+`ledger-range`, `ledger-from`, `ledger-to`, `ledger-zone`, and optionally
+`ledger-project` hash keys. The settings route reads these through the shared
+hash parser. The workspace timeline applies workspace and project selection on
+the server and reads the exact UTC interval behind the workspace-local day or
+week. Scoped requests are not written to the 24h/7d timeline cache. The
+existing timeline has no CLI dimension, so a CLI deep link does not claim that
+its token events are filtered by provider; provider quota remains in the usage
+detail and CLI account page. The unattributed cost bucket has no project token
+events in this legacy timeline and displays an empty scoped timeline.
 
 Workspace and project usage calculations are unchanged by this navigation
 split. CLI pages are extendable by adding another page key and model mapping.

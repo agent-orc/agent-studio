@@ -101,7 +101,8 @@ public sealed class RemoteProjectChatRunner
                 : ParseCodex(process, work.Model!);
             return await CompleteAsync(
                 work, parsed.Success, parsed.ReplyText, parsed.ErrorMessage,
-                work.Model, parsed.TokenUsage, executionContext, shutdown);
+                parsed.TokenUsage?.Model ?? work.Model, parsed.TokenUsage, executionContext, shutdown,
+                parsed.ProviderThreadId);
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
         {
@@ -229,7 +230,8 @@ public sealed class RemoteProjectChatRunner
         string? model,
         OrchestratorTokenUsage? tokenUsage,
         ChatExecutionContext? executionContext,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? providerThreadId = null)
     {
         var accepted = await _client.CompleteProjectChatWorkAsync(
             new RemoteChatWorkCompletionRequest(
@@ -245,7 +247,8 @@ public sealed class RemoteProjectChatRunner
                 work.CliType,
                 work.ConfiguredCliType,
                 work.ConfiguredModel,
-                work.QuotaFallbackReason),
+                work.QuotaFallbackReason,
+                providerThreadId),
             ct);
         if (!accepted)
         {
@@ -307,6 +310,7 @@ public sealed class RemoteProjectChatRunner
         var replies = new List<string>();
         string? turnError = null;
         OrchestratorTokenUsage? usage = null;
+        string? providerThreadId = null;
         foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
@@ -314,6 +318,8 @@ public sealed class RemoteProjectChatRunner
                 using var doc = JsonDocument.Parse(line);
                 var root = doc.RootElement;
                 var type = root.TryGetProperty("type", out var typeNode) ? typeNode.GetString() : null;
+                if (type == "thread.started" && root.TryGetProperty("thread_id", out var threadId))
+                    providerThreadId = threadId.GetString();
                 if (type == "item.completed"
                     && root.TryGetProperty("item", out var item)
                     && item.TryGetProperty("type", out var itemType)
@@ -333,14 +339,20 @@ public sealed class RemoteProjectChatRunner
                 else if (type == "turn.completed"
                          && root.TryGetProperty("usage", out var usageNode))
                 {
+                    var observedModel = root.TryGetProperty("model", out var modelNode)
+                        ? modelNode.GetString() : null;
                     var normalized = ProviderUsageNormalization.OpenAi(
                         ReadLong(usageNode, "input_tokens"),
                         ReadLong(usageNode, "cached_input_tokens"));
                     usage = new OrchestratorTokenUsage
                     {
-                        Model = model,
+                        Model = string.IsNullOrWhiteSpace(observedModel) ? model : observedModel,
                         InputTokens = SafeInt(normalized.InputTokens),
                         OutputTokens = ReadInt(usageNode, "output_tokens"),
+                        ReasoningTokens = usageNode.TryGetProperty("reasoning_output_tokens", out _)
+                            ? ReadInt(usageNode, "reasoning_output_tokens")
+                            : usageNode.TryGetProperty("output_tokens_details", out var outputDetails)
+                                ? ReadInt(outputDetails, "reasoning_output_tokens") : null,
                         CacheReadTokens = SafeInt(normalized.CacheReadTokens),
                         InputIncludesCached = normalized.InputIncludesCached,
                     };
@@ -363,7 +375,8 @@ public sealed class RemoteProjectChatRunner
             success,
             string.Join("\n", replies),
             errorMessage,
-            usage);
+            usage,
+            providerThreadId);
     }
 
     internal static RemoteProjectChatResult ParseClaude(ProcessResult process, string model)
@@ -371,6 +384,7 @@ public sealed class RemoteProjectChatRunner
         string? reply = null;
         string? error = null;
         OrchestratorTokenUsage? usage = null;
+        string? providerThreadId = null;
         foreach (var line in process.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
             try
@@ -380,6 +394,8 @@ public sealed class RemoteProjectChatRunner
                 if (root.TryGetProperty("type", out var type)
                     && type.GetString() == "result")
                 {
+                    providerThreadId = root.TryGetProperty("session_id", out var sessionId)
+                        ? sessionId.GetString() : providerThreadId;
                     reply = root.TryGetProperty("result", out var resultText)
                         ? resultText.GetString()
                         : reply;
@@ -388,9 +404,11 @@ public sealed class RemoteProjectChatRunner
                         error = "Claude reported is_error=true.";
                     if (root.TryGetProperty("usage", out var usageNode))
                     {
+                        var observedModel = root.TryGetProperty("model", out var modelNode)
+                            ? modelNode.GetString() : null;
                         usage = new OrchestratorTokenUsage
                         {
-                            Model = model,
+                            Model = string.IsNullOrWhiteSpace(observedModel) ? model : observedModel,
                             InputTokens = ReadInt(usageNode, "input_tokens"),
                             OutputTokens = ReadInt(usageNode, "output_tokens"),
                             CacheReadTokens = ReadInt(usageNode, "cache_read_input_tokens"),
@@ -413,7 +431,7 @@ public sealed class RemoteProjectChatRunner
                 ? $"exitCode={process.ExitCode}"
                 : process.StdErr.Trim();
         }
-        return new RemoteProjectChatResult(success, reply?.Trim() ?? "", error, usage);
+        return new RemoteProjectChatResult(success, reply?.Trim() ?? "", error, usage, providerThreadId);
     }
 
     private static int ReadInt(JsonElement node, string property)
@@ -546,4 +564,5 @@ internal sealed record RemoteProjectChatResult(
     bool Success,
     string ReplyText,
     string? ErrorMessage,
-    OrchestratorTokenUsage? TokenUsage);
+    OrchestratorTokenUsage? TokenUsage,
+    string? ProviderThreadId = null);

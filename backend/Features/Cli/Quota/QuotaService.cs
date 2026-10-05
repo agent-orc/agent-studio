@@ -24,13 +24,15 @@ public sealed class QuotaService
     private readonly TimeSpan _ttl;
     private readonly QuotaCacheStore _store;
     private readonly CliVersionTracker? _versionTracker;
+    private readonly QuotaHistoryStore? _history;
 
     public QuotaService(
         ILogger<QuotaService> logger,
         IEnumerable<IQuotaProbe> probes,
         IConfiguration configuration,
         QuotaCacheStore store,
-        CliVersionTracker? versionTracker = null)
+        CliVersionTracker? versionTracker = null,
+        QuotaHistoryStore? history = null)
     {
         _logger = logger;
         _probes = probes.ToDictionary(p => p.CliType, StringComparer.OrdinalIgnoreCase);
@@ -38,6 +40,7 @@ public sealed class QuotaService
         _ttl = TimeSpan.FromSeconds(ttlSec);
         _store = store;
         _versionTracker = versionTracker;
+        _history = history;
 
         // Hydrate the in-memory cache from disk on startup so the
         // header / strip have something to render before the first
@@ -50,6 +53,7 @@ public sealed class QuotaService
                 if (string.IsNullOrWhiteSpace(snap.CliType)) continue;
                 _cache[snap.CliType] = snap;
                 _versionTracker?.Seed(snap.CliType, snap.CliVersion);
+                RecordHistory(snap);
             }
             _logger.LogInformation("Hydrated quota cache from disk ({Count} snapshots).", _cache.Count);
         }
@@ -150,6 +154,7 @@ public sealed class QuotaService
             }
             _cache[cliType] = snap;
             PersistCache();
+            RecordHistory(snap);
             return snap;
         }
         catch (Exception ex)
@@ -283,6 +288,17 @@ public sealed class QuotaService
             cliType, reason);
 
         return RefreshAsync(cliType, ct);
+    }
+
+    /// <summary>
+    /// Append a trusted snapshot to the quota history (AGT-3001). The store
+    /// skips failed, suspicious, and already-recorded snapshots itself.
+    /// </summary>
+    private void RecordHistory(QuotaSnapshot snapshot)
+    {
+        if (_history is null) return;
+        try { _history.Record(snapshot); }
+        catch (Exception ex) { _logger.LogDebug(ex, "Quota history record failed"); }
     }
 
     /// <summary>

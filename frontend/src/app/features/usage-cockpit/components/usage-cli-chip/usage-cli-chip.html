@@ -3,6 +3,7 @@
         class="usage-cli-chip"
         [attr.data-testid]="'usage-cli-chip-' + v.cliId"
         [attr.data-state]="v.state"
+        [attr.data-usage-trigger]="controls() ? 'cli:' + v.cliId.toLowerCase() : null"
         aria-haspopup="dialog"
         [attr.aria-expanded]="expanded()"
         [attr.aria-controls]="controls()"

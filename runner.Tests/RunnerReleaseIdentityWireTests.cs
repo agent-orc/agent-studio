@@ -29,8 +29,7 @@ public sealed class RunnerReleaseIdentityWireTests
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "claude",
-            CliArgs = "",
+            ClaudeCliBin = "claude",
         };
         using var client = new TaskServerClient(
             http,

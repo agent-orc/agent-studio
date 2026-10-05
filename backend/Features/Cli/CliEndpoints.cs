@@ -185,6 +185,23 @@ public static class CliEndpoints
             return Results.Ok(quota.GetWithBackgroundRefresh(ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
 
+        // AGT-3001: recorded series per window plus the burn rate over the last
+        // three hours and the forecast time of 100 %. Reads the store only; it
+        // never triggers a probe.
+        cliGroup.MapGet("/quota/history", (string? cli, int? hours, QuotaHistoryStore history) =>
+        {
+            if (string.IsNullOrWhiteSpace(cli) || !CliTypes.IsValid(cli))
+                return Results.BadRequest(new { error = $"cli must be one of: {string.Join(", ", CliTypes.All)}" });
+            var range = hours ?? QuotaHistoryReport.DefaultHours;
+            if (range < 1 || range > QuotaHistoryReport.MaxHours)
+                return Results.BadRequest(new { error = $"hours must be between 1 and {QuotaHistoryReport.MaxHours}" });
+
+            var cliType = cli.Trim().ToLowerInvariant();
+            var now = DateTime.UtcNow;
+            var retained = history.Read(cliType, now - QuotaHistoryStore.Retention);
+            return Results.Ok(QuotaHistoryReport.Build(cliType, range, retained, now));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Preview);
+
         cliGroup.MapPost("/quota/refresh", async (QuotaService quota, CancellationToken ct) =>
         {
             return Results.Ok(await quota.RefreshAllAsync(ct));
