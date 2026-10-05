@@ -200,7 +200,9 @@ public sealed class TaskIntegrationStatusService
                     ? ResolveVerification(
                         job,
                         CurrentIntegrationSha(classified, card, reaches),
-                        classified.IntegrationBranch)
+                        classified.IntegrationBranch,
+                        classified.Sha ?? CurrentReviewSubject(job)?.ResultSha,
+                        BranchHistory(classified, card, reaches))
                     : null,
             };
         }
@@ -266,6 +268,18 @@ public sealed class TaskIntegrationStatusService
             return ResolveMergedRecovery(job, status!.Verification, lastMerge);
         }
 
+        // AGT-3002 lets cards with a historical verification row reach this
+        // decision so a merged one is checked for exact-tree evidence. For a
+        // delivery that is not merged the row stays what it always was:
+        // bookkeeping, never a request to replay a merge or move the card.
+        if (TaskIntegrationRecordDetector.LatestVerification(job) is not null)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "A historical verification row records this card; it is not a merge-replay request.",
+                lastMerge);
+        }
+
         // AGT-2688: the merge itself already succeeded and only the deferred
         // push is blocked (main/develop lineage, or a diverged remote). That is
         // not a merge-replay case - re-running the merge cannot fix a push
@@ -308,14 +322,27 @@ public sealed class TaskIntegrationStatusService
     /// through the merge runner, which applies the lane's rule: evidence for
     /// the exact tree, or one gate run on the current tip. Once that gate has
     /// failed on the tree, the card returns to Human Review instead of
-    /// running it again. Archived cards are history and are left alone.
+    /// running it again. Archived cards are history and are left alone,
+    /// whatever their evidence says: no recovery action may reopen them.
     /// </summary>
     internal static AcceptedIntegrationRecoveryDecision ResolveMergedRecovery(
         TaskInfo job,
         TaskIntegrationVerification? verification,
         PipelineStepExecution? lastMerge)
     {
-        if (IntegrationVerificationStates.PermitsCompletion(verification))
+        // Finalize never moves an archived card (it only settles Human Review
+        // and clears the pending tag), so a verified archived card keeps that
+        // bookkeeping. Every other action is guarded before it is chosen.
+        var permitsCompletion = IntegrationVerificationStates.PermitsCompletion(verification);
+        if (job.State == TaskStates.Archive && !permitsCompletion)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "An archived card is not re-verified or reopened.",
+                lastMerge);
+        }
+
+        if (permitsCompletion)
         {
             return new AcceptedIntegrationRecoveryDecision(
                 AcceptedIntegrationRecoveryAction.Finalize,
@@ -330,14 +357,6 @@ public sealed class TaskIntegrationStatusService
                 AcceptedIntegrationRecoveryAction.ReturnToReview,
                 "The delivery is contained but integrated-unverified: a gate already failed on its tree. "
                 + (verification.Reason ?? string.Empty),
-                lastMerge);
-        }
-
-        if (job.State == TaskStates.Archive)
-        {
-            return new AcceptedIntegrationRecoveryDecision(
-                AcceptedIntegrationRecoveryAction.Ignore,
-                "An archived card is not re-verified.",
                 lastMerge);
         }
 
@@ -364,10 +383,30 @@ public sealed class TaskIntegrationStatusService
             : reach.PublishedHead;
     }
 
+    /// <summary>
+    /// The cached ancestor set of the published ref <see cref="CurrentIntegrationSha"/>
+    /// reads, so a verified tree the branch still carries is recognised
+    /// without a Git spawn per card. A local-only merge has no cached set for
+    /// the local ref alone, so it matches its exact tip only.
+    /// </summary>
+    private static Func<string, bool>? BranchHistory(
+        TaskIntegrationStatus classified,
+        CardIntegrationWork card,
+        ConcurrentDictionary<RepoBranchKey, RepoIntegration> reaches)
+    {
+        if (classified.Status != IntegrationStatuses.Integrated) return null;
+        var key = card.PrimaryKey ?? card.Groups.Select(group => group.Key).FirstOrDefault(group => group is not null);
+        if (key is null || !reaches.TryGetValue(key, out var reach) || !reach.IntegrationReachSucceeded) return null;
+        var ancestors = reach.PublishedAncestors;
+        return sha => AncestorSetContains(ancestors, sha);
+    }
+
     private TaskIntegrationVerification? ResolveVerification(
         TaskInfo job,
         string? currentIntegrationSha,
-        string currentIntegrationBranch)
+        string currentIntegrationBranch,
+        string? currentDeliverySha,
+        Func<string, bool>? branchHistory)
     {
         try
         {
@@ -376,7 +415,9 @@ public sealed class TaskIntegrationStatusService
                 ReadLatestMergeStep(job),
                 job.IntegrationRecords,
                 currentIntegrationSha,
-                currentIntegrationBranch);
+                currentIntegrationBranch,
+                currentDeliverySha,
+                branchHistory);
         }
         catch (Exception ex)
         {

@@ -455,6 +455,7 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 RecordFreshMergeVerification(
                     jobFolderPath,
+                    repoRoot,
                     pushBranch ?? branch,
                     result,
                     preMainResult ?? preDevelopResult);

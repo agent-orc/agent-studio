@@ -1083,6 +1083,42 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(AcceptedIntegrationRecoveryAction.Ignore, recovery.Action);
     }
 
+    /// <summary>
+    /// AGT-3002 - merged cards with a historical verification row are now
+    /// recovery candidates so their exact-tree evidence is checked. A card
+    /// whose delivery is not merged keeps the old rule: the row is bookkeeping,
+    /// never a merge replay that could move a terminal card.
+    /// </summary>
+    [Theory]
+    [InlineData(TaskStates.Completed)]
+    [InlineData(TaskStates.Archive)]
+    public void AcceptedRecovery_HistoricalRowOnAnUnmergedCard_IsIgnored(string lane)
+    {
+        var repo = SeedDevelopMainRepo();
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("historical-unmerged", "AGT-3004", project, repo, log, commits:
+        [
+            new TaskCommitInfo { Sha = new string('c', 40), ShortSha = "ccccccc", Message = "feat: never merged" },
+        ]) with
+        {
+            State = lane,
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = HistoricalIntegrationVerificationSweep.RecordId,
+                    Classification = IntegrationRecordClasses.GenuinelyMissing,
+                },
+            ],
+        };
+
+        var recovery = svc.ResolveAcceptedIntegrationRecovery(
+            job,
+            new TaskIntegrationStatus { Status = IntegrationStatuses.Pending, IntegrationBranch = "develop" });
+
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Ignore, recovery.Action);
+    }
+
     [Fact]
     public void BuildLookup_NoCommitAndNoBranch_IsNoBranch()
     {

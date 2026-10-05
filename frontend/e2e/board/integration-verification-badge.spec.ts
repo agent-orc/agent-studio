@@ -80,9 +80,32 @@ function json(route: Route, body: unknown) {
   });
 }
 
+const GROUPED = {
+  backlog: [],
+  preparation: [],
+  orchestratorPrep: [],
+  ready: [],
+  progress: [],
+  failedPickup: [],
+  codeNotComplete: [],
+  review: [],
+  autoReview: [],
+  humanReview: [unverified],
+  escalated: [],
+  completed: [verified],
+  archive: [],
+};
+
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => {
     const url = route.request().url();
+    // The board reads auth, lanes and runner state through the Studio Core
+    // BFF; the legacy routes below stay for the remaining board widgets.
+    if (url.includes('/api/v1/studio/auth/status')) {
+      return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
+    }
+    if (url.includes('/api/v1/studio/board')) return json(route, GROUPED);
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/tasks/archive')) {
       return json(route, { items: [], total: 0, offset: 0, limit: 50 });
     }
@@ -95,23 +118,7 @@ async function installRoutes(page: Page): Promise<void> {
     if (url.includes('/api/orchestrator/global')) {
       return json(route, { session: null });
     }
-    if (url.includes('/api/tasks/grouped')) {
-      return json(route, {
-        backlog: [],
-        preparation: [],
-        orchestratorPrep: [],
-        ready: [],
-        progress: [],
-        failedPickup: [],
-        codeNotComplete: [],
-        review: [],
-        autoReview: [],
-        humanReview: [unverified],
-        escalated: [],
-        completed: [verified],
-        archive: [],
-      });
-    }
+    if (url.includes('/api/tasks/grouped')) return json(route, GROUPED);
     if (/\/api\/tasks(\?|$)/.test(url)) return json(route, [unverified, verified]);
     if (url.includes('/api/watch-paths')) {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);

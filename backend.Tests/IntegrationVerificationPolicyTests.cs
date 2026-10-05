@@ -183,6 +183,80 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.Equal(IntegrationVerificationStates.Verified, verified?.State);
     }
 
+    private const string Delivery = "dddddddddddddddddddddddddddddddddddddddd";
+    private const string LaterTip = "abcdef0123456789abcdef0123456789abcdef01";
+
+    private static IntegrationVerificationRecord VerifiedOnTreeA(params string[] deliveryShas) => new()
+    {
+        State = IntegrationVerificationStates.Verified,
+        Sha = Sha,
+        IntegrationBranch = "develop",
+        Evidence = IntegrationVerificationEvidence.GateRun,
+        GateVerdict = nameof(BuildTestGateVerdict.Ok),
+        Reason = "The gate ran once on the current branch tip 0123456 and returned Ok.",
+        DeliveryShas = [.. deliveryShas],
+    };
+
+    /// <summary>
+    /// The tip advanced past the tree the gate passed on. The branch still
+    /// carries that tree and the record covers this card's delivery, so the
+    /// verdict stands for that exact tree; re-gating every completed card on
+    /// each tip change would let an unrelated red tip reopen them.
+    /// </summary>
+    [Theory]
+    [InlineData(Delivery)]
+    [InlineData("ddddddd")]
+    public void Projection_VerifiedTreeTheBranchStillCarries_StaysVerifiedForThatTree(string currentDelivery)
+    {
+        var projected = IntegrationVerificationProjection.Resolve(
+            VerifiedOnTreeA(Delivery), null, [], LaterTip, "origin/develop", currentDelivery, sha => sha == Sha);
+
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.State);
+        Assert.Equal(Sha, projected.Sha);
+        Assert.Contains(LaterTip, projected.Reason);
+        Assert.True(IntegrationVerificationStates.PermitsCompletion(projected));
+    }
+
+    public static TheoryData<string, IntegrationVerificationRecord, string?, bool> StaleCarryCases => new()
+    {
+        // The branch was rewritten: tree A is no longer in its history.
+        { "rewritten", VerifiedOnTreeA(Delivery), Delivery, false },
+        // A newer delivery replaced the one tree A contained.
+        { "newer-delivery", VerifiedOnTreeA(Delivery), "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", true },
+        // A record from before DeliveryShas cannot name the delivery it covered.
+        { "legacy-record", VerifiedOnTreeA(), Delivery, true },
+        // No current delivery identity to compare.
+        { "no-delivery", VerifiedOnTreeA(Delivery), null, true },
+        // An abbreviation too short to identify a commit.
+        { "short-delivery", VerifiedOnTreeA(Delivery), "dddd", true },
+        // Only a verified verdict is carried; a failed one is not evidence.
+        { "unverified", VerifiedOnTreeA(Delivery) with { State = IntegrationVerificationStates.Unverified, GateFailed = true }, Delivery, true },
+        // Another branch's verdict is not this branch's evidence.
+        { "other-branch", VerifiedOnTreeA(Delivery) with { IntegrationBranch = "main" }, Delivery, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(StaleCarryCases))]
+    public void Projection_VerifiedRecordOnAnotherTree_IsCarriedOnlyForTheSameDeliveryOnTheSameHistory(
+        string scenario, IntegrationVerificationRecord record, string? currentDelivery, bool branchCarriesTreeA)
+    {
+        var projected = IntegrationVerificationProjection.Resolve(
+            record, null, [], LaterTip, "develop", currentDelivery, sha => branchCarriesTreeA && sha == Sha);
+
+        Assert.True(IntegrationVerificationStates.Unverified == projected.State, scenario);
+        Assert.Equal(LaterTip, projected.Sha);
+        Assert.False(IntegrationVerificationStates.PermitsCompletion(projected), scenario);
+    }
+
+    [Fact]
+    public void Projection_WithoutBranchHistory_MatchesTheExactTipOnly()
+    {
+        var projected = IntegrationVerificationProjection.Resolve(
+            VerifiedOnTreeA(Delivery), null, [], LaterTip, "develop", Delivery, branchCarries: null);
+
+        Assert.Equal(IntegrationVerificationStates.Unverified, projected.State);
+    }
+
     [Fact]
     public void Projection_StaleVerifiedRecordForTreeA_DoesNotCompleteTreeB()
     {
@@ -358,6 +432,10 @@ public sealed class IntegrationVerificationPolicyTests
     [InlineData(IntegrationVerificationStates.Unverified, false, TaskStates.HumanReview, "Retry")]
     [InlineData(IntegrationVerificationStates.Unverified, true, TaskStates.Completed, "ReturnToReview")]
     [InlineData(IntegrationVerificationStates.Unverified, false, TaskStates.Archive, "Ignore")]
+    // An archived card is never reopened, even when a gate failed on its tree.
+    [InlineData(IntegrationVerificationStates.Unverified, true, TaskStates.Archive, "Ignore")]
+    [InlineData(null, false, TaskStates.Archive, "Ignore")]
+    [InlineData(IntegrationVerificationStates.Verified, false, TaskStates.Archive, "Finalize")]
     public void Backstop_FinalizesAMergedCardOnlyWhenVerificationPermitsIt(
         string? state, bool gateFailed, string lane, string expected)
     {

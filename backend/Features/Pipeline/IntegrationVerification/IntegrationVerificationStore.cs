@@ -21,6 +21,15 @@ public sealed record IntegrationVerificationRecord
 
     public string IntegrationBranch { get; init; } = "";
 
+    /// <summary>
+    /// Full SHAs of the card's delivery that <see cref="Sha"/> contained when
+    /// the verdict was recorded (review-subject result, attributed commits).
+    /// Lets a later branch tip keep this verdict only while it still carries
+    /// <see cref="Sha"/> and the card's current delivery is one of these.
+    /// Empty on records from before this field; those match the exact tree only.
+    /// </summary>
+    public List<string> DeliveryShas { get; init; } = [];
+
     /// <summary>One of <see cref="IntegrationVerificationEvidence"/>.</summary>
     public string Evidence { get; init; } = IntegrationVerificationEvidence.None;
 

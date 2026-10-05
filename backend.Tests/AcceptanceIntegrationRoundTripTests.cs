@@ -2047,6 +2047,68 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     /// The state the old lane left behind: Completed with a Passed
     /// <c>already-merged</c> step that carries no gate verdict.
     /// </summary>
+    /// <summary>
+    /// AGT-3002 - once a gate passed on a tree carrying this delivery, later
+    /// commits on develop belong to other cards. The card keeps its verdict for
+    /// that exact tree, so the backstop neither re-gates every completed card
+    /// on each tip change nor lets a red tip it did not cause reopen it.
+    /// </summary>
+    [Fact]
+    public void Backstop_VerifiedCardStaysVerifiedAfterDevelopAdvances_WithoutAnotherGate()
+    {
+        var deliverySha = PublishDelivery("verified-then-advanced.txt", "gated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner();
+        var deps = Build(deliverySha, gateRunner: gate);
+        CompleteAsAlreadyMergedWithoutEvidence(deps);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            VerifyingRunner(deps, gate),
+            deps.Integration,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            deps.Pipeline);
+
+        backstop.RunOnce();
+
+        Assert.Equal(1, gate.Invocations);
+        var verified = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var record = IntegrationVerificationStore.Read(verified.FolderPath);
+        Assert.Equal(IntegrationVerificationStates.Verified, record?.State);
+        Assert.Equal(deliverySha, record?.Sha);
+        Assert.Contains(deliverySha, record!.DeliveryShas);
+
+        // Another card's commit lands on develop after the verification.
+        RunGit(_repo, "fetch", "-q", "origin");
+        RunGit(_repo, "checkout", "-q", "-B", "advance-develop", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "someone-else.txt"), "a later card\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "feat(OTHER-1): a later delivery");
+        var laterTip = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin");
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "advance-develop");
+        Assert.NotEqual(deliverySha, laterTip);
+
+        var projected = deps.Integration.BuildLookup([verified])[verified.TaskKey];
+        Assert.True(IntegrationStatuses.IsMerged(projected.Status));
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.Verification?.State);
+        Assert.Equal(deliverySha, projected.Verification?.Sha);
+        Assert.Contains(laterTip, projected.Verification?.Reason);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Finalize,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(verified, projected).Action);
+
+        backstop.RunOnce();
+
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
     private TaskInfo CompleteAsAlreadyMergedWithoutEvidence(Deps deps)
     {
         Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);

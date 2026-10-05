@@ -73,7 +73,7 @@ public sealed partial class MergeIntoDevelopRunner
         {
             // The card says integrated-unverified while the gate runs, so a
             // crash mid-gate never leaves a completed-looking card behind.
-            RecordVerification(jobFolderPath, branch, sha, decision, gate: null);
+            RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate: null);
             gate = await RunVerificationGateAsync(
                 project, jobId, jobFolderPath, repoRoot, branch, sha!, releaseGate).ConfigureAwait(false);
             IntegrationGateReceipts.Record(
@@ -84,7 +84,7 @@ public sealed partial class MergeIntoDevelopRunner
             decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = gate });
         }
 
-        RecordVerification(jobFolderPath, branch, sha, decision, gate);
+        RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate, result.EvidenceShas);
         _logger.LogInformation(
             "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} state={State} evidence={Evidence} action={Action}",
             project, jobId, branch, sha, decision.State, decision.Evidence, decision.Action);
@@ -319,6 +319,7 @@ public sealed partial class MergeIntoDevelopRunner
     /// </summary>
     private void RecordFreshMergeVerification(
         string jobFolderPath,
+        string repoRoot,
         string branch,
         MergeIntoIntegrationResult result,
         BuildTestGateResult? gate)
@@ -331,15 +332,17 @@ public sealed partial class MergeIntoDevelopRunner
             gate is null
                 ? "The integration lane created this merge; no gate applies to its diff."
                 : $"The integration lane created this merge and its gate returned {gate.Verdict}.");
-        RecordVerification(jobFolderPath, branch, sha, decision, gate);
+        RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate, result.EvidenceShas);
     }
 
     private void RecordVerification(
         string jobFolderPath,
+        string repoRoot,
         string branch,
         string? sha,
         IntegrationVerificationDecision decision,
-        BuildTestGateResult? gate)
+        BuildTestGateResult? gate,
+        IReadOnlyList<string>? evidenceShas = null)
     {
         try
         {
@@ -348,6 +351,9 @@ public sealed partial class MergeIntoDevelopRunner
                 State = decision.State,
                 Sha = sha,
                 IntegrationBranch = branch,
+                DeliveryShas = decision.State == IntegrationVerificationStates.Verified
+                    ? DeliveryShasContainedIn(jobFolderPath, repoRoot, sha, evidenceShas)
+                    : [],
                 Evidence = decision.Evidence,
                 GateVerdict = gate?.Verdict.ToString(),
                 GateFailed = decision.GateFailed,
@@ -374,6 +380,32 @@ public sealed partial class MergeIntoDevelopRunner
             // record is the card's explanation of it.
             _logger.LogWarning(ex, "merge-into-develop could not record integration verification for {JobFolder}", jobFolderPath);
         }
+    }
+
+    /// <summary>
+    /// The card's delivery SHAs the verified tree contains: the review-subject
+    /// result, the merge evidence, and every attributed commit. Ancestry is
+    /// checked here, once per verdict, so the board projection can keep the
+    /// verdict after the tip advances without a Git call per card.
+    /// </summary>
+    private List<string> DeliveryShasContainedIn(
+        string jobFolderPath,
+        string repoRoot,
+        string? sha,
+        IReadOnlyList<string>? evidenceShas)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(sha)) return [];
+        var candidates = new List<string>();
+        var subjectSha = ReviewSubjectStore.Read(jobFolderPath)?.ResultSha;
+        if (subjectSha is not null) candidates.Add(subjectSha);
+        candidates.AddRange(evidenceShas ?? []);
+        candidates.AddRange(DeliveryRefResolver.AttributedCommitShas(jobFolderPath));
+        return candidates
+            .Where(ReviewSubjectStore.IsValidResultSha)
+            .Select(candidate => candidate.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .Where(candidate => _git.IsAncestor(repoRoot, candidate, sha!))
+            .ToList();
     }
 
     /// <summary>

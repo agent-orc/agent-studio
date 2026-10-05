@@ -175,7 +175,7 @@ Each job folder uses this structure:
   post-processing-outcomes.jsonl
                     # Optional: typed Post Processing outcomes
   integration-verification.json
-                    # Optional: latest gate evidence for the integrated tree, integrated-verified or integrated-unverified (AGT-3002)
+                    # Optional: latest gate evidence for the integrated tree, integrated-verified or integrated-unverified, with the delivery SHAs that tree contained (AGT-3002)
   .metadata/        # Application-owned sidecars (pipeline-execution.json, files.json, ...)
                     # Optional: .metadata/prompts.jsonl (raw step-call prompts)
                     # Optional: .metadata/spawned-tasks.jsonl (task-spawner dedup ledger, AGT-2028)

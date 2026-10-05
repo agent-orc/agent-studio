@@ -450,9 +450,20 @@ pure `IntegrationVerificationPolicy`
 A fresh merge created by the lane is verified by construction: its own gate
 guarded it, and the lane records that too.
 
+**When the tip moves on.** A verified record names the exact tree the gate
+passed on and lists the card's delivery SHAs that tree contained
+(`deliveryShas`). After other cards land, the projection keeps the card
+`integrated-verified` for that tree while the published branch still carries
+it and the card's current delivery is one of those SHAs. A rewritten branch, a
+newer delivery, another branch, or a record without `deliveryShas` makes it
+stale. Later commits are their own cards' responsibility: re-gating every
+completed card on each tip change would let a red tip they did not cause reopen
+them. The merge runner itself still matches the exact tip only, so a push it
+approves never extends past a gated tree.
+
 **Who else asks.** The accepted-integration backstop finalizes a merged card only
-when its verification is `integrated-verified` for the current integration SHA.
-Without other exact-tree evidence, a missing or stale verification file and a
+when its verification is `integrated-verified` for the current integration
+tree as described above. Without other exact-tree evidence, a missing or stale verification file and a
 historical Passed merge step fail closed as `integrated-unverified`.
 A stale or current-tree `integrated-unverified` verification file does not hide
 a later `integrated-verified` integration record that names the current SHA and
@@ -460,7 +471,10 @@ branch. The projection checks that exact-tree record before the file.
 An unverified card goes back through
 the merge runner, which applies the rule above; once a gate has failed on that
 tree, the backstop returns the card to Human Review instead of running it
-again, and archived cards are left alone. The acceptance rail does not
+again. Archived cards are left alone: the archive guard runs before every
+recovery action, so a failed gate never reopens one. A card whose delivery is
+not merged and that carries a historical verification row is not replayed
+either; that row stays bookkeeping. The acceptance rail does not
 auto-accept an unverified card (`integrated-unverified`). A human acceptance of
 an unverified card is refused with the reason; the operator can still accept it
 with a written override. The board badge reads `merged @sha · verified` or,
