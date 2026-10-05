@@ -765,7 +765,10 @@ public sealed class ProviderAuthProbe
     private readonly HashSet<string> _refreshInFlight =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _activeRuns = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, long> _successfulWorkVersions = new(StringComparer.Ordinal);
+    // Bumped whenever a completed run publishes evidence. A probe that started
+    // before the bump holds older evidence and must not overwrite the run's.
+    // A sequence, not a timestamp: fake or stepped clocks can tie both events.
+    private readonly Dictionary<string, long> _runEvidenceVersions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SemaphoreSlim> _singleFlights = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (DateTimeOffset Window, int Used)> _realBudgets = new(StringComparer.Ordinal);
     private ProviderAuthLauncher? _realLauncher;
@@ -912,12 +915,26 @@ public sealed class ProviderAuthProbe
             await gate.WaitAsync(ct);
             try
             {
+                long runEvidenceVersion;
+                lock (_sync) runEvidenceVersion = _runEvidenceVersions.GetValueOrDefault(cliBinary);
                 var observation = await ObserveAsync(cliBinary, ct);
                 ProviderAuthCacheEntry decision;
                 ProviderAuthCacheEntry? previous;
                 lock (_sync)
                 {
                     _observed.TryGetValue(cliBinary, out previous);
+                    if (previous is not null
+                        && _runEvidenceVersions.GetValueOrDefault(cliBinary) != runEvidenceVersion
+                        && previous.Status.EffectiveSource == observation.EffectiveSource
+                        && previous.Status.CredentialGeneration == observation.CredentialGeneration)
+                    {
+                        // Run evidence for this credential arrived while the status
+                        // command was running, so this answer is older. A changed
+                        // source or generation is still published as a new binding.
+                        _observed[cliBinary] = previous with { LastAttemptAt = _clock() };
+                        return previous.Status;
+                    }
+                    runEvidenceVersion = _runEvidenceVersions.GetValueOrDefault(cliBinary);
                     decision = Decide(previous, observation, _negativeConfirmations, _clock());
                     var sourceDecision = ProviderProbeClassifier.Classify(new ProviderProbeRequest(
                         RunnerCapabilityProbe.Provider(cliBinary), "configured",
@@ -939,7 +956,7 @@ public sealed class ProviderAuthProbe
                 }
                 LogTransition(cliBinary, previous, decision, observation);
                 return await MaybeRealRequestAsync(cliBinary, decision.Status,
-                    observation.Kind == ProviderAuthObservationKind.Unauthorized, ct);
+                    observation.Kind == ProviderAuthObservationKind.Unauthorized, runEvidenceVersion, ct);
             }
             finally { gate.Release(); }
         }
@@ -950,20 +967,19 @@ public sealed class ProviderAuthProbe
     }
 
     private async Task<ProviderAuthStatus> MaybeRealRequestAsync(
-        string cliBinary, ProviderAuthStatus status, bool statusUnauthorized, CancellationToken ct)
+        string cliBinary, ProviderAuthStatus status, bool statusUnauthorized, long runEvidenceVersion,
+        CancellationToken ct)
     {
         ProviderAuthLauncher? launcher;
         ProviderStatusIncidentAdapter? incidents;
         Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? comparisons;
         string hostId;
-        long successfulWorkVersion;
         lock (_sync)
         {
             launcher = _realLauncher;
             incidents = _incidentAdapter;
             comparisons = _comparisonAdapter;
             hostId = _hostId;
-            successfulWorkVersion = _successfulWorkVersions.GetValueOrDefault(cliBinary);
         }
         if (launcher is null || status.Status == Limited
             || (!statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
@@ -981,7 +997,7 @@ public sealed class ProviderAuthProbe
                 if (!_observed.TryGetValue(cliBinary, out var existing)) return status;
                 if (existing.Status.CredentialGeneration != status.CredentialGeneration
                     || existing.Status.EffectiveSource != status.EffectiveSource
-                    || _successfulWorkVersions.GetValueOrDefault(cliBinary) != successfulWorkVersion)
+                    || _runEvidenceVersions.GetValueOrDefault(cliBinary) != runEvidenceVersion)
                     return existing.Status;
                 var expired = ExpireStaleHealthy(existing.Status, now);
                 if (expired != existing.Status)
@@ -1057,12 +1073,11 @@ public sealed class ProviderAuthProbe
         {
             if (_observed.TryGetValue(cliBinary, out var existing))
             {
-                // A completed run is newer evidence than a request started before it.
-                // Use a sequence because fake or stepped clocks can give both events
-                // the same timestamp.
+                // A completed run, successful or not, is newer evidence than a
+                // request started before it.
                 if (existing.Status.CredentialGeneration != status.CredentialGeneration
                     || existing.Status.EffectiveSource != status.EffectiveSource
-                    || _successfulWorkVersions.GetValueOrDefault(cliBinary) != successfulWorkVersion)
+                    || _runEvidenceVersions.GetValueOrDefault(cliBinary) != runEvidenceVersion)
                     return existing.Status;
                 _observed[cliBinary] = existing with { Status = updated };
             }
@@ -1275,7 +1290,8 @@ public sealed class ProviderAuthProbe
                         || last.Status.CredentialGeneration == credentialGeneration))
                 {
                     var ready = last.Status.Status == Ready;
-                    _observed[cliBinary] = last with { Status = last.Status with
+                    // Working access interrupts any run of explicit logout answers.
+                    _observed[cliBinary] = last with { ConsecutiveLogoutSignals = 0, Status = last.Status with
                     {
                         LastRealSuccessAt = _clock(),
                         Outcome = ProviderProbeOutcome.Healthy,
@@ -1283,7 +1299,7 @@ public sealed class ProviderAuthProbe
                         ProbeDegraded = ready ? false : last.Status.ProbeDegraded,
                         Detail = ready ? "Same-generation work confirmed provider access." : last.Status.Detail,
                     } };
-                    _successfulWorkVersions[cliBinary] = _successfulWorkVersions.GetValueOrDefault(cliBinary) + 1;
+                    _runEvidenceVersions[cliBinary] = _runEvidenceVersions.GetValueOrDefault(cliBinary) + 1;
                 }
             }
             // Current() still owns expired-limit and TTL re-probes.
@@ -1348,6 +1364,7 @@ public sealed class ProviderAuthProbe
                     },
                 };
             _observed[cliBinary] = decision;
+            _runEvidenceVersions[cliBinary] = _runEvidenceVersions.GetValueOrDefault(cliBinary) + 1;
         }
         LogTransition(cliBinary, previous, decision, observation);
         return decision.Status;

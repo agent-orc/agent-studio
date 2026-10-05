@@ -431,4 +431,222 @@ public sealed class ProviderProbeEvidenceTests
         await Task.WhenAll(first, second);
         Assert.Equal(1, peak);
     }
+
+    private static ProviderCredentialFreshness G1(string _) => new(null, null, "native store",
+        EffectiveSource: "native-cli-store", CredentialGeneration: "g1");
+
+    /// <summary>A status launcher whose next answer waits until the test releases it.</summary>
+    private sealed class HeldStatus
+    {
+        private TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource<ProcessResult>? _release;
+        private TaskCompletionSource<ProcessResult>? _waiting;
+        public ProcessResult Answer { get; set; } = new(0, "Logged in", "");
+        public Task Entered => _entered.Task;
+
+        public void Hold()
+        {
+            _entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void Release(ProcessResult answer) => _waiting!.SetResult(answer);
+
+        public Task<ProcessResult> Launch(string _, IReadOnlyList<string> __, CancellationToken ___)
+        {
+            var release = _release;
+            if (release is null) return Task.FromResult(Answer);
+            _waiting = release;
+            _release = null;
+            _entered.TrySetResult();
+            return release.Task;
+        }
+    }
+
+    [Fact]
+    public async Task Status_answer_started_before_successful_work_cannot_demote_it()
+    {
+        var now = At;
+        var realCalls = 0;
+        var status = new HeldStatus();
+        var probe = new ProviderAuthProbe(status.Launch, executableExists: _ => true,
+            clock: () => now, credentialFreshness: G1);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref realCalls);
+            return Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+
+        status.Hold();
+        now = now.AddMinutes(6);
+        var refresh = probe.RefreshAsync("codex", CancellationToken.None);
+        await status.Entered;
+        now = now.AddSeconds(10);
+        var work = probe.RecordProcessResult("codex", new ProcessResult(0, "OK", ""),
+            credentialGeneration: "g1");
+        Assert.Equal(ProviderProbeOutcome.Healthy, work.Outcome);
+
+        now = now.AddSeconds(10);
+        status.Release(new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        var completed = await refresh;
+
+        Assert.Equal(ProviderProbeOutcome.Healthy, completed.Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, completed.Signal);
+        Assert.False(completed.ProbeDegraded);
+        Assert.Equal(work.LastRealSuccessAt, completed.LastRealSuccessAt);
+        Assert.Equal(ProviderProbeOutcome.Healthy, probe.Current("codex").Outcome);
+        Assert.Equal(0, realCalls);
+    }
+
+    [Fact]
+    public async Task Status_answer_started_before_run_failure_cannot_clear_it()
+    {
+        var now = At;
+        var status = new HeldStatus();
+        var probe = new ProviderAuthProbe(status.Launch, executableExists: _ => true,
+            clock: () => now, credentialFreshness: G1);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+
+        status.Hold();
+        now = now.AddMinutes(6);
+        var refresh = probe.RefreshAsync("codex", CancellationToken.None);
+        await status.Entered;
+        var run = probe.RecordProcessResult("codex", new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        Assert.True(run.ProbeDegraded);
+
+        status.Release(new ProcessResult(0, "Logged in", ""));
+        var completed = await refresh;
+
+        Assert.True(completed.ProbeDegraded);
+        Assert.Equal(run.Signal, completed.Signal);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, completed.Outcome);
+        Assert.True(probe.Current("codex").ProbeDegraded);
+    }
+
+    [Fact]
+    public async Task Status_answer_for_a_new_credential_generation_still_publishes_after_run_evidence()
+    {
+        var now = At;
+        var generation = "g1";
+        var status = new HeldStatus();
+        var probe = new ProviderAuthProbe(status.Launch, executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: generation));
+        await probe.RefreshAsync("codex", CancellationToken.None);
+
+        status.Hold();
+        generation = "g2";
+        var refresh = probe.RefreshAsync("codex", CancellationToken.None);
+        await status.Entered;
+        probe.RecordProcessResult("codex", new ProcessResult(0, "OK", ""), credentialGeneration: "g1");
+        status.Release(new ProcessResult(0, "Logged in", ""));
+        var completed = await refresh;
+
+        Assert.Equal("g2", completed.CredentialGeneration);
+        Assert.Null(completed.LastRealSuccessAt);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, completed.Outcome);
+    }
+
+    [Fact]
+    public async Task Successful_work_resets_an_earlier_logout_confirmation()
+    {
+        var now = At;
+        var status = new HeldStatus();
+        var probe = new ProviderAuthProbe(status.Launch, executableExists: _ => true,
+            clock: () => now, credentialFreshness: G1);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+
+        status.Answer = new ProcessResult(1, "", "Not logged in");
+        now = now.AddMinutes(6);
+        var first = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.Ready, first.Status);
+
+        now = now.AddMinutes(1);
+        probe.RecordProcessResult("codex", new ProcessResult(0, "OK", ""), credentialGeneration: "g1");
+
+        now = now.AddMinutes(6);
+        var afterWork = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.Ready, afterWork.Status);
+        Assert.NotEqual(ProviderAuthProbe.SignalSignedOut, afterWork.Signal);
+
+        now = now.AddMinutes(6);
+        var confirmed = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.Unavailable, confirmed.Status);
+    }
+
+    [Fact]
+    public async Task In_flight_real_request_cannot_replace_newer_run_failure_evidence()
+    {
+        var now = At;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            executableExists: _ => true, clock: () => now, credentialFreshness: G1);
+        probe.UseRealRequest(async (_, _, _) =>
+        {
+            entered.TrySetResult();
+            return await release.Task;
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+
+        var inFlight = probe.RefreshAsync("codex", CancellationToken.None);
+        await entered.Task;
+        now = now.AddSeconds(10);
+        var run = probe.RecordProcessResult("codex", new ProcessResult(1, "", "HTTP 401 Unauthorized"));
+        Assert.True(run.ProbeDegraded);
+
+        release.SetResult(new ProcessResult(0, "OK", ""));
+        var completed = await inFlight;
+
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, completed.Outcome);
+        Assert.True(completed.ProbeDegraded);
+        Assert.Null(completed.LastRealSuccessAt);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, probe.Current("codex").Outcome);
+    }
+
+    [Fact]
+    public async Task Unexpected_status_feed_failure_stays_unknown_and_keeps_the_real_request_result()
+    {
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            executableExists: _ => true, clock: () => At, credentialFreshness: G1);
+        probe.UseRealRequest(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            new ProviderStatusIncidentAdapter((_, _) => throw new IOException("socket closed"), () => At));
+
+        var observed = await probe.RefreshAsync("codex", CancellationToken.None);
+
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, observed.Outcome);
+        Assert.Equal("unauthorized", observed.EvidenceExcerpt);
+        Assert.Equal("unauthorized", probe.Current("codex").EvidenceExcerpt);
+    }
+
+    [Fact]
+    public async Task One_cancelled_caller_does_not_poison_the_cached_status_feed()
+    {
+        var release = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fetches = 0;
+        var adapter = new ProviderStatusIncidentAdapter((_, ct) =>
+        {
+            Interlocked.Increment(ref fetches);
+            return release.Task.WaitAsync(ct);
+        }, () => At);
+        using var cancelled = new CancellationTokenSource();
+        var first = adapter.GetAsync("codex", cancelled.Token);
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        var second = adapter.GetAsync("codex", CancellationToken.None);
+        release.SetResult("""
+            {"incidents":[{"id":"incident-401","name":"Codex authentication errors",
+            "created_at":"2026-09-26T11:55:00Z","resolved_at":null}]}
+            """);
+        var snapshot = await second;
+
+        Assert.True(snapshot.Available);
+        Assert.Equal("incident-401", Assert.Single(snapshot.Incidents).Id);
+        Assert.Equal(1, fetches);
+    }
 }

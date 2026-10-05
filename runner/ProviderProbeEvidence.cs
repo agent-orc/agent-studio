@@ -142,18 +142,19 @@ public sealed class ProviderStatusIncidentAdapter
         lock (_sync)
         {
             if (_cache.TryGetValue(provider, out var entry) && _clock() - entry.At < CacheTtl)
-                return entry.Value;
-            var task = FetchAsync(provider, ct);
+                return entry.Value.WaitAsync(ct);
+            // The shared retrieval is bounded by its own timeout only, so one
+            // cancelled caller cannot cache "unavailable" for the others.
+            var task = FetchAsync(provider);
             _cache[provider] = (_clock(), task);
-            return task;
+            return task.WaitAsync(ct);
         }
     }
 
-    private async Task<ProviderIncidentSnapshot> FetchAsync(string provider, CancellationToken ct)
+    private async Task<ProviderIncidentSnapshot> FetchAsync(string provider)
     {
         if (provider is not ("codex" or "claude")) return new([], _clock(), false, "unsupported-provider");
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        bounded.CancelAfter(Timeout);
+        using var bounded = new CancellationTokenSource(Timeout);
         try
         {
             var json = await _fetch(provider, bounded.Token);
@@ -181,8 +182,11 @@ public sealed class ProviderStatusIncidentAdapter
             }
             return new(incidents, observed, true, "official-status");
         }
-        catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentOutOfRangeException)
-        { return new([], _clock(), false, "official-status-unavailable"); }
+        catch (Exception)
+        {
+            // Any feed failure is missing evidence, never a classification input.
+            return new([], _clock(), false, "official-status-unavailable");
+        }
     }
 
     private static string? ServiceFor(string provider, string name)
