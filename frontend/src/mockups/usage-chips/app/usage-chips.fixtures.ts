@@ -1,7 +1,9 @@
 import type {
   UsageCli,
   UsageCliWindow,
+  UsageCockpitResponse,
   UsageCostProjection,
+  UsageRun,
   UsageSlotPool,
 } from '../../../app/features/usage-cockpit';
 
@@ -104,3 +106,54 @@ const pool = (name: string, occupied: number | null, capacity: number | null, st
 
 export const SLOTS = [pool('remote', 2, 3), pool('review', 1, 3), pool('auto', 10, 17)];
 export const SLOTS_PARTIAL = [pool('remote', null, null, 'unavailable'), pool('review', 1, 3), pool('auto', 10, 17)];
+
+// ------------------------------------------------------- HUC-S3 detail
+
+function run(id: string, overrides: Partial<UsageRun>): UsageRun {
+  return {
+    id, projectId: 'agent-studio', taskId: id, taskKey: null, startedAt: '2026-09-25T14:21:00Z',
+    provisionalCostUsd: null, includedInTotals: true,
+    configuredCli: 'codex', configuredModel: 'gpt-5.5', configuredReasoning: 'high',
+    effectiveCli: 'codex', effectiveModel: 'gpt-5.5', effectiveReasoning: 'high',
+    fallbackReason: null,
+    ...overrides,
+  };
+}
+
+/**
+ * Full cockpit snapshot. Project rows sum exactly to today's $12.48 and this
+ * week's $68.20; the third-of-a-cent rows exercise the rounding row.
+ */
+export const SNAPSHOT: UsageCockpitResponse = {
+  snapshotVersion: 7,
+  workspaceId: 'studio-main',
+  timeZone: FIXTURE_ZONE,
+  weekStart: 1,
+  generatedAt: '2026-09-25T14:57:30Z',
+  calendar: COST.calendar,
+  clis: [CLAUDE, CODEX],
+  cost: {
+    ...COST,
+    weekUsd: 68.2,
+    dailyBudgetUsd: 25,
+    latestReceiptAt: '2026-09-25T14:56:40Z',
+    projects: [
+      { projectId: 'agent-studio', name: 'Agent Studio', todayUsd: 8.123, weekUsd: 41.333, coverage: { status: 'complete', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } },
+      { projectId: 'docs-site', name: 'Docs site', todayUsd: 3.123, weekUsd: 20.333, coverage: { status: 'complete', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } },
+      { projectId: null, name: 'Unattributed', todayUsd: 1.234, weekUsd: 6.534, coverage: { status: 'complete', observedAt: '2026-09-25T14:57:00Z', ttlSeconds: 60 } },
+    ],
+  },
+  runs: [
+    run('run-1', { taskKey: 'AGT-2962', provisionalCostUsd: 1.92 }),
+    run('run-2', { taskKey: 'AGT-2970', projectId: 'docs-site', provisionalCostUsd: 0.41,
+      configuredModel: 'gpt-5.5', effectiveModel: 'gpt-5.4-mini', effectiveReasoning: 'medium',
+      fallbackReason: 'Quota fallback to the smaller model' }),
+    run('run-3', { taskKey: 'AGT-2971', effectiveReasoning: '', includedInTotals: false }),
+    run('run-4', { taskKey: 'AGT-2955', configuredCli: 'claude', configuredModel: 'opus', configuredReasoning: 'high',
+      effectiveCli: 'claude', effectiveModel: 'claude-opus-5-5', effectiveReasoning: 'high', provisionalCostUsd: 2.2 }),
+    run('run-5', { taskKey: 'AGT-2958', configuredCli: 'claude', configuredModel: 'sonnet', configuredReasoning: 'medium',
+      effectiveCli: 'claude', effectiveModel: '', effectiveReasoning: '', provisionalCostUsd: 0.12 }),
+  ],
+  slots: SLOTS,
+  sources: {},
+};

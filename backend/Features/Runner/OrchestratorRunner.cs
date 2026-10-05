@@ -30,6 +30,7 @@ public sealed record OrchestratorDecisionResult(
     public bool QuotaFallback { get; init; }
     public string? QuotaFallbackReason { get; init; }
     public QuotaAdmissionPlan? QuotaAdmission { get; init; }
+    public string? ProviderThreadId { get; init; }
 }
 
 /// <summary>
@@ -211,6 +212,7 @@ public class OrchestratorRunner
                     ? result.QuotaAdmission.Reason
                     : null,
                 QuotaAdmission = result.QuotaAdmission,
+                ProviderThreadId = ReadProviderThreadId(result.Stdout),
             };
         }
 
@@ -231,7 +233,30 @@ public class OrchestratorRunner
                 ? result.QuotaAdmission.Reason
                 : null,
             QuotaAdmission = result.QuotaAdmission,
+            ProviderThreadId = ReadProviderThreadId(result.Stdout),
         };
+    }
+
+    private static string? ReadProviderThreadId(string stdout)
+    {
+        foreach (var line in stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("type", out var type)
+                    && type.GetString() == "thread.started"
+                    && root.TryGetProperty("thread_id", out var id))
+                    return id.GetString();
+                if (root.TryGetProperty("type", out var resultType)
+                    && resultType.GetString() == "result"
+                    && root.TryGetProperty("session_id", out var sessionId))
+                    return sessionId.GetString();
+            }
+            catch (JsonException ex) { SilentCatch.Note(ex, "OrchestratorRunner: non-protocol output"); }
+        }
+        return null;
     }
 
     /// <summary>

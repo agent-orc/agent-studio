@@ -772,6 +772,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string projectName, bool? enabled)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// Tunes the epic decomposition (planning) run for a project. A null
     /// argument leaves that knob untouched, so the caller can set the model

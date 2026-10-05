@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import type { CliType } from '../../../../models/task.model';
 import type { QuotaReport } from '../../../../features/quota';
 import { cliTypeIcon, cliTypeLabel } from '../../../../services/format.util';
-import { QuotaApiService } from '../../../../features/quota';
+import { QuotaApiService, QuotaForecastPanelComponent } from '../../../../features/quota';
 import { CliModelsPanelComponent } from '../cli-models-panel/cli-models-panel';
 import { CliContractsPanelComponent } from '../cli-contracts-panel/cli-contracts-panel';
 import { WatcherContingentStripComponent } from '../../../../features/watcher';
@@ -48,7 +48,7 @@ interface CapRow {
 @Component({
   selector: 'app-cli-admin-panel',
   standalone: true,
-  imports: [FormsModule, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent],
+  imports: [FormsModule, CliModelsPanelComponent, CliContractsPanelComponent, WatcherContingentStripComponent, QuotaForecastPanelComponent],
   templateUrl: './cli-admin-panel.html',
   styleUrl: './cli-admin-panel.scss',
   changeDetection: ChangeDetectionStrategy.OnPush
