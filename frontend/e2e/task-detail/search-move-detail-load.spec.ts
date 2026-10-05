@@ -58,9 +58,8 @@ async function dismissCrashRecovery(page: Page): Promise<void> {
 
 function isTaskDetailResponse(response: Response, jobId: string): boolean {
   const url = new URL(response.url());
-  return url.pathname.startsWith('/api/tasks/')
-    && !url.pathname.slice('/api/tasks/'.length).includes('/')
-    && decodeURIComponent(url.pathname.slice('/api/tasks/'.length)) === jobId;
+  const match = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname);
+  return match !== null && decodeURIComponent(match[1]) === jobId;
 }
 
 async function persistScreenshot(page: Page, fileName: string): Promise<void> {
@@ -99,7 +98,7 @@ test.describe('Search result task detail loading', () => {
     // Model the stale reference Robert captured: the search snapshot still
     // carries the old lane folder even after the API move. Board refreshes can
     // replace the row, so rewrite every grouped snapshot consistently.
-    await page.route('**/api/tasks/grouped**', async route => {
+    await page.route('**/api/v1/studio/board**', async route => {
       const response = await route.fetch();
       const grouped = await response.json() as Record<string, Record<string, unknown>[]>;
       for (const tasks of Object.values(grouped)) {
@@ -210,7 +209,7 @@ test.describe('Search result task detail loading', () => {
     });
 
     let failDetailRequests = true;
-    await page.route(`**/api/tasks/${encodeURIComponent(jobId)}?**`, async route => {
+    await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(jobId)}?**`, async route => {
       if (failDetailRequests && route.request().method() === 'GET') {
         await route.fulfill({
           status: 503,

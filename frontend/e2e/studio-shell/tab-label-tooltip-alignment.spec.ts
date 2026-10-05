@@ -10,8 +10,8 @@ const EMPTY_GROUPED = {
 test('restored task tab hides its watch path and uses the canonical tooltip in both themes', async ({ page }) => {
   await page.route('**/api/**', route => {
     const url = route.request().url();
-    const body = url.includes('/api/tasks/grouped') ? EMPTY_GROUPED
-      : url.includes('/api/runner/status') ? { projects: {} }
+    const body = url.includes('/api/v1/studio/board') ? EMPTY_GROUPED
+      : url.includes('/api/v1/studio/runner/status') ? { projects: {} }
       : [];
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });

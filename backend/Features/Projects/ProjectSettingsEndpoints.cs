@@ -1116,6 +1116,7 @@ public static class ProjectSettingsEndpoints
                 status = result.Status,
                 summary = result.Summary,
                 failedCommand = result.FailedCommand,
+                failureCode = result.FailureCode,
                 profile,
                 pickupAllowed = BuildProfileGate.AllowsAutoPickup(profile),
             });

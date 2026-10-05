@@ -45,7 +45,7 @@ async function stubWorkspace(
   await page.route(/\/api\//, route => {
     const requestPath = new URL(route.request().url()).pathname;
     let body = '{}';
-    if (requestPath === '/api/auth/status') {
+    if (requestPath === '/api/v1/studio/auth/status') {
       body = JSON.stringify({
         profile: 'local',
         bootstrapRequired: false,
@@ -53,11 +53,11 @@ async function stubWorkspace(
         user: null,
       });
     }
-    if (/\/api\/(?:tags|workspaces|projects|clients|git\/summary|crash-recovery\/pending)\/?$/.test(requestPath)) body = '[]';
+    if (/\/api\/(?:tags|v1\/workspaces|v1\/projects|clients|git\/summary|crash-recovery\/pending)\/?$/.test(requestPath)) body = '[]';
     if (requestPath.startsWith('/api/bus/')) body = '[]';
     if (requestPath === '/api/v1/management/remote-hosts') body = '[]';
     if (requestPath === '/api/v1/management/links') body = '[]';
-    if (requestPath === '/api/runner/status') body = '{"projects":{}}';
+    if (requestPath === '/api/v1/studio/runner/status') body = '{"projects":{}}';
     if (/\/api\/projects\/[^/]+\/workbenches$/.test(requestPath)) {
       body = JSON.stringify({ projectName: PROJECT, items: [] });
     }
@@ -88,10 +88,10 @@ async function stubWorkspace(
   await page.route(/\/api\/cli\/gemini\/models(?:\?.*)?$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ models: [], source: 'fixture' }),
   }));
-  await page.route(/\/api\/(?:tags|workspaces|clients)\/?$/, route => route.fulfill({
+  await page.route(/\/api\/(?:tags|v1\/workspaces|clients)\/?$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: '[]',
   }));
-  await page.route(/\/api\/workspaces\/?$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/workspaces\/?$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'workspace-1',
       displayName: 'Picker workspace', sortOrder: 0, isDefault: true, projects: [{ id: PROJECT,
         displayName: PROJECT, shortCode: 'MP', workspaceId: 'workspace-1', storageLocation: `/tmp/${PROJECT}`,
@@ -109,13 +109,13 @@ async function stubWorkspace(
   // The active tab and composer context switch synchronously. Keep the detail
   // request pending so this footer-focused spec does not mount the unrelated,
   // very large task-detail chunk in the dev server.
-  await page.route(/\/api\/tasks\/task-1(?:\?.*)?$/, () => undefined);
-  await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/task-1(?:\?.*)?$/, () => undefined);
+  await page.route(/\/api\/v1\/studio\/board(?:\?.*)?$/, route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
       failedPickup: [], autoReview: [], humanReview: [], review: [], completed: [], archive: [] }),
   }));
-  await page.route(/\/api\/orchestrator\/sessions$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/orchestrator\/sessions$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [
       { contextKey: `project:${PROJECT}`, kind: 'project', projectId: PROJECT, taskKey: null,
         updatedAt: '2026-07-12T10:00:00Z', model: null, cumulativeInputTokens: 0,

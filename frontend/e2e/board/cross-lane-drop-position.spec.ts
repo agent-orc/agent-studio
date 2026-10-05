@@ -207,7 +207,7 @@ test.describe('Cross-lane drop preserves drop position', () => {
       // exactly there, not at the bottom (the pre-fix symptom) and not
       // snapped to some other slot.
       const movePost = page.waitForResponse(
-        r => r.url().includes(`/api/tasks/${encodeURIComponent(src.id)}/move`) && r.request().method() === 'POST'
+        r => r.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(src.id)}/move`) && r.request().method() === 'POST'
       );
       await dispatchCrossLaneDropBefore(page, 'Ready', titleSrc, 'Backlog', titleB3);
       const resp = await movePost;
@@ -288,7 +288,7 @@ test.describe('Cross-lane drop preserves drop position', () => {
       // The persistence assertion below proves the rewritten order makes
       // src sort before B1 and B2 — independent of other Backlog cards.
       const movePost = page.waitForResponse(
-        r => r.url().includes(`/api/tasks/${encodeURIComponent(src.id)}/move`) && r.request().method() === 'POST'
+        r => r.url().includes(`/api/v1/projects/-/tasks/${encodeURIComponent(src.id)}/move`) && r.request().method() === 'POST'
       );
       await dispatchCrossLaneDropBefore(page, 'Ready', titleSrc, 'Backlog', titleB1);
       await movePost;

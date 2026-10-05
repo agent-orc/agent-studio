@@ -436,6 +436,8 @@ public class ProjectRunner
     /// </summary>
     public event Action<string, string>? OnModePersist;
 
+    private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
+
     public ProjectRunner(
         string projectName,
         WatchPathEntry entry,
@@ -486,7 +488,8 @@ public class ProjectRunner
         IReadOnlyList<ProjectUrlRecord>? projectUrls = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
-        LocalRunClaimAdapter? localRunClaims = null)
+        LocalRunClaimAdapter? localRunClaims = null,
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
     {
         ProjectName = projectName;
         Entry = entry;
@@ -527,6 +530,7 @@ public class ProjectRunner
         _pickupLock = pickupLock;
         _pickupLockOwner = pickupLockOwner;
         _localRunClaims = localRunClaims;
+        _localCodingAdmission = localCodingAdmission;
         _integrationLeases = integrationLeases;
         _timeline = timeline;
         _pipelineLog = pipelineLog;
@@ -2478,6 +2482,11 @@ public class ProjectRunner
         {
             var info = _scanner.FindJob(jobId, Entry.Path);
             if (info == null) return RunOutcome.Reject(new RunRejection(RunRejectReason.TaskNotFound, "Job not found"));
+            if (WorktreeRunPolicy.RequiresWorktree(info.Mode, EpicRunPolicy.IsPlanningRun(info.Kind, intent))
+                && _localCodingAdmission?.AllowsLocalCoding != true)
+                return RunOutcome.Reject(new RunRejection(
+                    RunRejectReason.RemoteExecutionRequired,
+                    RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message));
             admissionInfo = info;
 
             // Part 2 will submit human feedback through the ordinary Continue

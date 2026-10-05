@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,10 @@ public sealed record AttemptIndexedDeliveryRef(
     string Ref,
     string ResultSha,
     DateTime RecordedAt);
+
+internal readonly record struct BoardReviewActivity(
+    AttemptLifecycleState State,
+    DateTime? LeaseExpiresAt);
 
 internal sealed record ReviewLeaseIsolation(
     string ResourceNamespace,
@@ -87,16 +92,27 @@ public sealed class AttemptAuthorityService
     private readonly IAtomicJsonFileWriter _writer;
     private readonly int _terminalRetentionCount;
     private AuthorityState _state;
+    private ImmutableDictionary<string, BoardReviewActivity> _boardReviewActivity =
+        ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// UTC time a ReviewAttempt was most recently claimed by an executor.
-    /// In-memory only (not persisted, reset on restart), the canonical-review
-    /// counterpart of <see cref="AutoReviewPostProcessingQueue.LastStartedAt"/>:
-    /// the stagnation watchdog uses it to tell "still draining" from "stuck"
-    /// on a fleet where cards leave the combined queue through a fenced claim
-    /// rather than the legacy post-processing worker.
+    /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
+    /// its lease was delivered, settled, expired, or re-fenced. In-memory only
+    /// (not persisted, reset on restart); <see cref="ReadReviewClaimActivity"/>
+    /// combines it with persisted lease acquisitions so the review-claim
+    /// stagnation clock survives a restart.
     /// </summary>
-    private DateTime? _lastReviewClaimAtUtc;
+    private DateTime? _settledReviewClaimAtUtc;
+
+    /// <summary>
+    /// Claim times of review leases that are still live and may still be
+    /// relinquished by <see cref="DeferReviewClaim"/>, keyed per attempt and
+    /// fence. A deferred claim is removed without ever counting as drain
+    /// progress; any other end of the lease folds its time into
+    /// <see cref="_settledReviewClaimAtUtc"/>. Keeping one entry per lease makes
+    /// out-of-order deferrals of concurrent claims exact (AGT-2987).
+    /// </summary>
+    private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
 
     public AttemptAuthorityService(
         IConfiguration configuration,
@@ -119,6 +135,7 @@ public sealed class AttemptAuthorityService
             throw new InvalidDataException("AttemptAuthority:TerminalRetentionCount must be greater than zero.");
         if (requiresCompactionMigration && _path is not null)
             PersistLocked(forceCompaction: true);
+        _boardReviewActivity = BuildBoardReviewActivityLocked();
     }
 
     internal AttemptAuthorityService(ILogger<AttemptAuthorityService> logger, Func<DateTime>? utcNow = null)
@@ -131,10 +148,13 @@ public sealed class AttemptAuthorityService
         get { lock (_gate) return _state.AuthorityEpoch; }
     }
 
-    /// <summary>See <see cref="_lastReviewClaimAtUtc"/>.</summary>
+    /// <summary>
+    /// UTC time a ReviewAttempt was most recently claimed by an executor, not
+    /// counting claims the server deferred before delivery. In-memory only.
+    /// </summary>
     public DateTime? LastReviewClaimAtUtc
     {
-        get { lock (_gate) return _lastReviewClaimAtUtc; }
+        get { lock (_gate) return LastReviewClaimLocked(); }
     }
 
     public AttemptWriteResult AcquireRun(
@@ -691,7 +711,8 @@ public sealed class AttemptAuthorityService
             SetReviewLeaseIsolation(review, fence);
             review.CurrentClaimDeliveryKey = deliveryKey;
             review.IdempotencyKeys.Add(deliveryKey);
-            _lastReviewClaimAtUtc = now;
+            SettleReviewClaimsLocked();
+            _deferrableReviewClaims[(review.AttemptId, fence)] = now;
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }
@@ -905,6 +926,96 @@ public sealed class AttemptAuthorityService
     }
 
     /// <summary>
+    /// AGT-2987: the claimable queue <see cref="ClaimNextReview"/> would have
+    /// offered, restricted to attempts whose sealed plan requires capabilities
+    /// the executor did not register. The claim endpoint turns a non-empty
+    /// answer into the typed <c>unclaimable-plan-requirements</c> reason
+    /// instead of a silent "nothing queued".
+    /// </summary>
+    public IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto> ListUnclaimableReviews(
+        IReadOnlySet<string> capabilities)
+    {
+        lock (_gate)
+        {
+            var now = _utcNow();
+            return _state.ReviewAttempts
+                .Where(review => IsCurrentReview(review) && !Terminal(review.State))
+                .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
+                .Where(review => !IsUnmaterializableWithinGrace(review, now))
+                .Where(review => review.Subject.Plan is not null)
+                .Select(review => (Review: review, Missing: AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
+                    .MissingCapabilities(review.Subject.Plan!, capabilities)))
+                .Where(item => item.Missing.Count > 0)
+                .OrderBy(item => item.Review.CreatedAt)
+                .Select(item => new AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto(
+                    item.Review.AttemptId,
+                    item.Review.TaskKey,
+                    item.Review.CreatedAt,
+                    item.Missing))
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// AGT-2987: the facts the review-claim stagnation policy needs. The last
+    /// claim is the later of the in-memory claim time and every persisted lease
+    /// acquisition, so a backend restart does not restart the stagnation clock.
+    /// </summary>
+    public ReviewClaimActivity ReadReviewClaimActivity()
+    {
+        lock (_gate)
+        {
+            var pending = _state.ReviewAttempts
+                .Where(IsCurrentReview)
+                .Where(review => review.State == AttemptLifecycleState.Pending)
+                .OrderBy(review => review.CreatedAt)
+                .ToArray();
+            DateTime? persistedClaim = _state.ReviewAttempts
+                .Where(review => review.Lease is not null)
+                .Select(review => (DateTime?)review.Lease!.AcquiredAt)
+                .Max();
+            var lastClaim = Later(LastReviewClaimLocked(), persistedClaim);
+            var oldest = pending.FirstOrDefault();
+            return new ReviewClaimActivity(
+                pending.Length,
+                oldest?.AttemptId,
+                oldest?.TaskKey,
+                oldest?.CreatedAt,
+                lastClaim);
+        }
+    }
+
+    private DateTime? LastReviewClaimLocked()
+    {
+        SettleReviewClaimsLocked();
+        var last = _settledReviewClaimAtUtc;
+        foreach (var claimedAt in _deferrableReviewClaims.Values)
+            last = Later(last, claimedAt);
+        return last;
+    }
+
+    /// <summary>
+    /// Folds every tracked claim whose lease is no longer the live lease of its
+    /// attempt into <see cref="_settledReviewClaimAtUtc"/>. Deferral removes its
+    /// entry before clearing the lease, so only claims that reached an executor
+    /// are folded here.
+    /// </summary>
+    private void SettleReviewClaimsLocked()
+    {
+        foreach (var ((attemptId, fence), claimedAt) in _deferrableReviewClaims.ToArray())
+        {
+            var review = FindReview(attemptId);
+            if (review is { State: AttemptLifecycleState.Leased, Lease: { } lease } && lease.Fence == fence)
+                continue;
+            _deferrableReviewClaims.Remove((attemptId, fence));
+            _settledReviewClaimAtUtc = Later(_settledReviewClaimAtUtc, claimedAt);
+        }
+    }
+
+    private static DateTime? Later(DateTime? left, DateTime? right) =>
+        left is null ? right : right is null || left >= right ? left : right;
+
+    /// <summary>
     /// Terminalizes a ReviewAttempt whose lease expired before a report was
     /// delivered, and mints an immediate successor attempt for the same
     /// immutable subject so the claim queue does not stall behind it. The
@@ -970,6 +1081,7 @@ public sealed class AttemptAuthorityService
 
             if (!Blank(review.CurrentClaimDeliveryKey))
                 review.IdempotencyKeys.Remove(review.CurrentClaimDeliveryKey!);
+            _deferrableReviewClaims.Remove((review.AttemptId, review.Lease.Fence));
             review.CurrentClaimDeliveryKey = null;
             review.Lease = null;
             review.State = AttemptLifecycleState.Pending;
@@ -1817,6 +1929,19 @@ public sealed class AttemptAuthorityService
         lock (_gate) return FindReview(attemptId) is { } review ? ToDto(review) : null;
     }
 
+    // Display-only committed state. A log receipt can persist a large authority
+    // file while board readers keep using this small immutable projection.
+    internal ImmutableDictionary<string, BoardReviewActivity> ReadBoardReviewActivity()
+        => Volatile.Read(ref _boardReviewActivity);
+
+    private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()
+        => _state.ReviewAttempts
+            .Where(IsCurrentReview)
+            .ToImmutableDictionary(
+                review => review.TaskKey,
+                review => new BoardReviewActivity(review.State, review.Lease?.ExpiresAt),
+                StringComparer.OrdinalIgnoreCase);
+
     public AttemptAuthorityProjection GetTaskProjection(string taskKey, bool includeArchived = false)
     {
         var key = Normalize(taskKey);
@@ -2189,11 +2314,19 @@ public sealed class AttemptAuthorityService
 
     private void PersistLocked(bool forceCompaction = false)
     {
-        if (_path is null) return;
+        if (_path is null)
+        {
+            Volatile.Write(ref _boardReviewActivity, BuildBoardReviewActivityLocked());
+            return;
+        }
         try
         {
             CompactTerminalAttemptsLocked(forceCompaction);
-            _writer.Write(_path, JsonSerializer.Serialize(_state, JsonOptions));
+            var boardReviewActivity = BuildBoardReviewActivityLocked();
+            _writer.WriteJson(_path, _state, JsonOptions);
+            // Publish only after the atomic write succeeds. Failed writes must
+            // not expose speculative review state to concurrent board readers.
+            Volatile.Write(ref _boardReviewActivity, boardReviewActivity);
         }
         catch
         {

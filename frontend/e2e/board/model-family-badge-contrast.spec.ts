@@ -165,11 +165,11 @@ function json(route: Route, body: unknown): Promise<void> {
 
 async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
-  await page.route('**/api/tasks/grouped**', route => json(route, {
+  await page.route('**/api/v1/studio/board**', route => json(route, {
     backlog: [], preparation: [], orchestratorPrep: [], ready: tasks, progress: [],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [], humanReview: [],
     escalated: [], completed: [], archive: [],
@@ -184,7 +184,7 @@ async function installRoutes(page: Page): Promise<void> {
     id: 'local-default', displayName: 'Local', kind: 'agent-instance',
     defaultCliType: 'codex', defaultModel: 'gpt-5.6-sol', defaultThinkingLevel: 'xhigh',
   }]));
-  await page.route('**/api/runner/status**', route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-09T08:00:00.000Z', ttlSeconds: 600, snapshots: [],
@@ -199,7 +199,7 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route(`**/api/tasks/${encodedId}/pipeline?**`, route => json(route, null));
   await page.route(`**/api/tasks/${encodedId}/session-events?**`, route => json(route, { events: [], sessionChain: [] }));
   await page.route(`**/api/tasks/${encodedId}/claude-session?**`, route => json(route, null));
-  await page.route(`**/api/tasks/${encodedId}?**`, route => json(route, detail()));
+  await page.route(`**/api/v1/projects/*/tasks/${encodedId}?**`, route => json(route, detail()));
 }
 
 async function expectThemeTokens(page: Page, theme: Theme): Promise<void> {
