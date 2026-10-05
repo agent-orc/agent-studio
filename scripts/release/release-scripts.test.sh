@@ -270,6 +270,7 @@ then
 fi
 [ ! -e "$test_root/incomplete-etc/server.env" ]
 
+bash "$repo_root/scripts/api-prebuilt-start.test.sh"
 bash "$repo_root/scripts/release/promote-develop-to-main.test.sh"
 bash "$repo_root/scripts/release/release-gate-window.test.sh"
 bash "$repo_root/scripts/release/generate-build-manifest.test.sh"

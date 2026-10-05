@@ -360,7 +360,7 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             TimeSpan.FromSeconds(30),
             AutoReviewPostProcessingWorker.DeferralRetryDelay(0, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
         Assert.Equal(
-            AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay,
+            TimeSpan.FromSeconds(60),
             AutoReviewPostProcessingWorker.DeferralRetryDelay(1, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
         Assert.Equal(
             AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay,
@@ -368,14 +368,13 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
     }
 
     [Fact]
-    public void ResolveReviewExecutorAvailability_RegisteredExecutor_CapsTheEffectiveDelayAtSixtySeconds()
+    public void ResolveReviewExecutorAvailability_RegisteredExecutor_CapsTheEffectiveDelayAtFiveMinutes()
     {
         // Regression for AGT-2842: without a registered executor, attempt 4 of
         // this reason computes the generic 480s step of the ten-minute-capped
         // schedule (30,60,120,240,480,...). With one registered, the resolved
-        // cap must bring that down to 60s so the card - and its liveStatus
-        // queue reason - keep re-checking at least once a minute instead of
-        // going quiet for minutes at a time.
+        // cap must bring that down to five minutes. Registration alone is not
+        // verdict progress and must not keep rewriting the lifecycle every minute.
         var deps = BuildDeps();
         var registry = new V1ReviewExecutorRegistry();
         registry.Register("agent-runner-01-review", new Contract.RegisterRunnerRequest(
@@ -563,13 +562,14 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task ApplyOutcome_RegisteredExecutor_ResetsTheBudgetInsteadOfExhaustingIt()
+    [Theory]
+    [InlineData(5)]
+    [InlineData(8)]
+    [InlineData(int.MaxValue)]
+    public void ApplyOutcome_RegisteredExecutor_RetainsBackoffAfterTheAttemptBudget(int attempt)
     {
-        // AGT-2860: the budget counts against a blocking condition nobody is
-        // resolving. A registered executor is that condition observably
-        // satisfied, so the counter resets. The genuinely idle-executor case
-        // keeps its exhaustion - see the test directly above this one.
+        // Registration keeps the wait scheduled, but is not verdict progress.
+        // Repeated deferrals must never reset to the initial 30-second delay.
         SeedNoOpReviewJob("registered-task");
         var entries = new List<string>();
         var deps = BuildDeps();
@@ -589,16 +589,39 @@ public sealed class AutoReviewPostProcessingWorkerTests : IDisposable
             deps.Configuration,
             new CollectingLogger<AutoReviewPostProcessingWorker>(entries),
             registry);
-        worker.DeferralDelayOverride = _ => TimeSpan.FromMilliseconds(10);
+        var scheduledAttempt = -1;
+        worker.DeferralDelayOverride = value =>
+        {
+            scheduledAttempt = value;
+            return TimeSpan.FromHours(1);
+        };
 
         worker.ApplyOutcome(
-            Request("registered-task") with { Attempt = AutoReviewPostProcessingWorker.MaxDeferralRetries },
+            Request("registered-task") with { Attempt = attempt },
             PostProcessingCardResult.Deferred(PostProcessingCardResult.AwaitingCanonicalReviewVerdict),
-            CancellationToken.None);
+            new CancellationToken(canceled: true));
 
-        await WaitUntil(() => deps.Queue.PositionOf(Project, "registered-task") != null);
+        Assert.Equal(attempt, scheduledAttempt);
+        Assert.Equal(attempt, deps.Queue.WaitStateOf(Project, "registered-task")!.Attempt);
         Assert.DoesNotContain(entries, entry =>
             entry.Contains("auto-review-postprocessing-deferral-exhausted", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0, 30)]
+    [InlineData(1, 60)]
+    [InlineData(2, 120)]
+    [InlineData(3, 240)]
+    [InlineData(4, 300)]
+    [InlineData(5, 300)]
+    [InlineData(8, 300)]
+    [InlineData(int.MaxValue, 300)]
+    public void DeferralRetryDelay_RegisteredExecutorWait_BacksOffToFiveMinutes(int attempt, int seconds)
+    {
+        Assert.Equal(
+            TimeSpan.FromSeconds(seconds),
+            AutoReviewPostProcessingWorker.DeferralRetryDelay(
+                attempt, AutoReviewPostProcessingWorker.CanonicalReviewExecutorRegisteredMaxDelay));
     }
 
     [Fact]

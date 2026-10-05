@@ -98,7 +98,7 @@ test.describe('Git pane — preview, path disambiguation, and diff grouping (AGT
 
     try {
       // The worktree view only renders for the project's active job.
-      await page.route('**/api/runner/status', async (route) => {
+      await page.route('**/api/v1/studio/runner/status', async (route) => {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',

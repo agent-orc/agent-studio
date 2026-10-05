@@ -43,6 +43,29 @@ public sealed class TaskWatcherServiceTests : IDisposable
     }
 
     [Fact]
+    public void TaskJsonContextUsageOnlyChange_DoesNotInvalidateIndexAgain()
+    {
+        var taskJson = WriteTaskJson("original", DateTime.UnixEpoch);
+        Assert.True(_watcher.ShouldNotifyIndexChange(
+            _watchPath, taskJson, WatcherChangeTypes.Changed));
+
+        var metadata = JsonSerializer.Deserialize<Dictionary<string, object>>(
+            File.ReadAllText(taskJson))!;
+        for (var flush = 0; flush < 20; flush++)
+        {
+            metadata["contextUsage"] = new { at = DateTime.UnixEpoch.AddSeconds(flush), tokens = flush };
+            File.WriteAllText(taskJson, JsonSerializer.Serialize(metadata));
+            Assert.False(_watcher.ShouldNotifyIndexChange(
+                _watchPath, taskJson, WatcherChangeTypes.Changed));
+        }
+
+        metadata["title"] = "renamed during telemetry";
+        File.WriteAllText(taskJson, JsonSerializer.Serialize(metadata));
+        Assert.True(_watcher.ShouldNotifyIndexChange(
+            _watchPath, taskJson, WatcherChangeTypes.Changed));
+    }
+
+    [Fact]
     public void TaskJsonBoardFieldChange_InvalidatesIndex()
     {
         var taskJson = WriteTaskJson("original", DateTime.UtcNow);
