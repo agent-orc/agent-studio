@@ -187,14 +187,20 @@ public sealed class OperatorSweepServiceTests : IDisposable
         var failed = await stack.Service.RunOnceAsync();
 
         Assert.Equal(1, failed.Failed);
+        Assert.Contains("integration projection unavailable", failed.Error);
         Assert.Empty(stack.Actions.FixRounds);
         Assert.Equal(OperatorSweepReasons.EvaluationFailed,
             Assert.Single(Assert.Single(stack.Service.Project(Project).Cards).Decisions).Reason);
+        var alarm = stack.Service.Project(Project);
+        Assert.Equal(OperatorSweepHealthPolicy.Alarm, alarm.Status);
+        Assert.All(alarm.Sweeps, sweep => Assert.Contains("integration projection unavailable", sweep.LastRunError));
 
         stack.GateFacts.Throw = false;
         var next = await stack.Service.RunOnceAsync();
 
         Assert.Equal(1, next.Acted);
+        Assert.Null(next.Error);
+        Assert.Equal(OperatorSweepHealthPolicy.Healthy, stack.Service.Project(Project).Status);
         Assert.Single(stack.Actions.FixRounds);
     }
 

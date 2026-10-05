@@ -142,6 +142,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         var held = 0;
         var waiting = 0;
         var failed = 0;
+        string? firstCardError = null;
         var cards = 0;
         var perSweep = OperatorSweepKinds.All.ToDictionary(kind => kind, _ => new SweepCounters(), StringComparer.Ordinal);
         try
@@ -184,6 +185,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                     catch (Exception ex)
                     {
                         failed++;
+                        firstCardError ??= $"{job.Id}: {ex.GetType().Name}: {ex.Message}";
                         _logger.LogWarning(ex,
                             "operator-sweep-card-failed project={Project} job={JobId}",
                             job.ProjectName, job.Id);
@@ -258,7 +260,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 (_, state) => state with
                 {
                     LastFinishedAtUtc = finished,
-                    LastError = null,
+                    LastError = firstCardError,
                     LastActed = counters.Acted,
                     LastHeld = counters.Held,
                     LastWaitingForPerson = counters.Waiting,
@@ -267,7 +269,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         _logger.LogInformation(
             "operator-sweep-tick cards={Cards} acted={Acted} held={Held} waiting={Waiting} failed={Failed} durationMs={DurationMs}",
             cards, acted, held, waiting, failed, (long)(finished - started).TotalMilliseconds);
-        return new OperatorSweepTickReport(started, finished, cards, acted, held, waiting, failed);
+        return new OperatorSweepTickReport(started, finished, cards, acted, held, waiting, failed, firstCardError);
     }
 
     private async Task<OperatorSweepCardState> EvaluateCardAsync(

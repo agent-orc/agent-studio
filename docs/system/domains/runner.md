@@ -1625,7 +1625,11 @@ counted per card across every review-attempt epoch. Default 4, set by
 
 A sweep round appends a `Reissue` record, so the orchestrator's
 epoch-scoped count sees it as well. A requeue, a `/continue`, or a sweep never
-refills the budget. The orchestrator still applies its own per-epoch cap
+refills the budget. Every orchestrator path that starts a new reissue checks
+this lifetime budget at its common Ready move, including deterministic gates;
+an exhausted card moves to Escalated with a decision-journal and timeline reason.
+A recorded reissue whose lane move is only being backfilled does not charge a
+second round. The orchestrator also applies its per-epoch cap
 (`MaxAutoReissueAttempts`).
 
 **State.** The service has no state file:
@@ -1634,6 +1638,8 @@ refills the budget. The orchestrator still applies its own per-epoch cap
 - The per-subject receipt is an `operator_sweep_round_started` timeline event in the task folder.
 - The budget charge is the decision journal record.
 - The last tick's per-card reasons are kept in memory and rebuilt by the next tick.
+- A card evaluation failure is retained in the last-run error and alarms the
+  projection until a later tick succeeds.
 
 **API.**
 
