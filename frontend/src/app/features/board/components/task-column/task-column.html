@@ -187,7 +187,6 @@
         } @else if (isReview()) {
           @for (group of reviewGroups(); track group.kind) {
             <section class="column__subsection"
-                     [class]="'column__subsection--' + group.kind"
                      [attr.data-testid]="'review-subsection-' + group.kind">
               <h3 class="column__subsection-title">
                 <span class="column__subsection-icon" aria-hidden="true">{{ group.icon }}</span>
