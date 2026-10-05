@@ -69,6 +69,36 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.True(decision.GateFailed);
     }
 
+    [Fact]
+    public void VerifiedRecordForTheExactTree_SettlesAnOlderRedReceipt_LikeTheProjection()
+    {
+        // The lane and the board must agree: a later integrated-verified record
+        // for the current tree outranks the failed receipt on both paths.
+        var decision = Decide(
+            receipt: Gate(BuildTestGateVerdict.Fail, BuildTestGateFailureKind.Code),
+            verifiedRecord: true);
+        var projected = IntegrationVerificationProjection.Resolve(
+            new IntegrationVerificationRecord
+            {
+                State = IntegrationVerificationStates.Unverified,
+                Sha = Sha,
+                IntegrationBranch = "develop",
+                Evidence = IntegrationVerificationEvidence.GateReceipt,
+                GateVerdict = "Fail",
+                GateFailed = true,
+                Reason = "red",
+            },
+            null,
+            [new TaskIntegrationRecord { Classification = IntegrationRecordClasses.IntegratedVerified, IntegrationSha = Sha, IntegrationBranch = "develop" }],
+            Sha,
+            "develop");
+
+        Assert.Equal(IntegrationVerificationAction.CompleteVerified, decision.Action);
+        Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, decision.Evidence);
+        Assert.False(decision.GateFailed);
+        Assert.Equal(projected.State, decision.State);
+    }
+
     [Theory]
     [InlineData(BuildTestGateFailureKind.Environment)]
     [InlineData(BuildTestGateFailureKind.Timeout)]

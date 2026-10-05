@@ -105,31 +105,32 @@ public static class IntegrationVerificationPolicy
         }
 
         var sha = Short(facts.Sha!);
-        if (facts.ExactReceipt is { } receipt)
+        if (facts.ExactReceipt is { } receipt && PreDevelopBuildGate.IsGreen(receipt))
         {
-            if (PreDevelopBuildGate.IsGreen(receipt))
-            {
-                return Verified(
-                    IntegrationVerificationEvidence.GateReceipt,
-                    $"A {receipt.Verdict} gate receipt exists for the exact merged tree {sha}.");
-            }
-
-            // A host, budget, or source failure is not a verdict about the
-            // tree; only a product verdict settles it.
-            if (IsTreeVerdict(receipt))
-            {
-                return Unverified(
-                    IntegrationVerificationAction.FailUnverified,
-                    IntegrationVerificationEvidence.GateReceipt,
-                    $"The gate already ran on the exact merged tree {sha} and returned {receipt.Verdict}: {receipt.Reason}");
-            }
+            return Verified(
+                IntegrationVerificationEvidence.GateReceipt,
+                $"A {receipt.Verdict} gate receipt exists for the exact merged tree {sha}.");
         }
 
+        // A verified integration record for this exact tree settles it even
+        // after a failed receipt, the same precedence the board projection
+        // applies; otherwise the board would show verified while the lane
+        // refuses the card on the older receipt.
         if (facts.HasVerifiedIntegrationRecord)
         {
             return Verified(
                 IntegrationVerificationEvidence.IntegrationRecord,
                 $"An integrated-verified integration record names the exact merged tree {sha}.");
+        }
+
+        // A host, budget, or source failure is not a verdict about the tree;
+        // only a product verdict settles it.
+        if (facts.ExactReceipt is { } failed && IsTreeVerdict(failed))
+        {
+            return Unverified(
+                IntegrationVerificationAction.FailUnverified,
+                IntegrationVerificationEvidence.GateReceipt,
+                $"The gate already ran on the exact merged tree {sha} and returned {failed.Verdict}: {failed.Reason}");
         }
 
         if (facts.GateRun is not { } gate)
