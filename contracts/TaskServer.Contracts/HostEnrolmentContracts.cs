@@ -103,6 +103,7 @@ public static class HostEnrolmentPolicy
         if (request.ExpectedGeneration < 0) return "Expected generation cannot be negative.";
         var roles = request.Roles ?? [];
         if (roles.Count == 0) return "At least one role service is required.";
+        if (roles.Any(role => role is null)) return "A role entry is empty.";
         if (roles.Any(role => !HostRoles.All.Contains(role.Role, StringComparer.Ordinal)))
             return "Role must be coding or review.";
         if (roles.Select(role => role.Role).Distinct(StringComparer.Ordinal).Count() != roles.Count)

@@ -305,8 +305,22 @@ agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
   --host-class linux --out /etc/agent-host/host.json
 ```
 
-The import refuses disagreeing shared facts (server URL, origin, host id) and
-shared principals instead of choosing one. Every file named by `--runner-env`,
+The import refuses disagreeing shared facts (server URL, origin, push origin,
+host id) and shared principals instead of choosing one. A shared fact set in
+one role file but absent from the other is also refused, because the record
+would apply it to both roles. After building the record, migration renders it
+and compares every setting each role file declares with the generated file. A
+value the generated file would rewrite stops migration. This includes a
+`RUNNER_HOST_CODING_SLOTS` or `RUNNER_HOST_REVIEW_SLOTS` that disagrees with the
+other role's slot count, in either file. A peer slot count above zero for a
+role whose file was not supplied is refused too. A setting the record cannot
+carry also stops migration, for example a TLS pin, a workstation key, a
+non-standard work or state directory, or a custom CLI path. The importer names
+the file, key and generated value. Remove or align the setting, or keep that
+host on legacy onboarding. The generated service files carry the same CLI
+lines as legacy onboarding (`RUNNER_CLI_TYPE`, `RUNNER_CLAUDE_CLI_BIN`,
+`RUNNER_CODEX_CLI_BIN`). `host-record` refuses an unknown or repeated option,
+and a record field it does not know. Every file named by `--runner-env`,
 `--review-env` or `--profile` must exist; a missing named file stops migration
 before the record is written. Omit `--review-env` only for a coding-only host,
 or omit `--runner-env` only for a review-only host. Omit `--profile` only when
@@ -365,6 +379,12 @@ is refused. Coding claims report `placementReason`; review claims report
 | `principal-not-enrolled` / `role-not-enrolled` | The caller is not this host's enrolled service for that role. |
 | `slot-budget-full` | Coding leases plus review attempts on the host fill `totalSlots`. |
 | `role-slot-budget-full` | This role's cap is full. |
+
+A review re-claim is a repair, not a new admission. It reattaches authority to
+a worker that is still running, or delivers that worker's loss report. The
+envelope therefore does not refuse it, even when the expired lease's slot was
+reused meanwhile. The repaired attempt counts again at once, so fresh claims
+get `slot-budget-full` until the host is back inside its envelope.
 
 **Offline hosts.** A host that stops renewing keeps its expired lease: it is
 not free capacity and the task is not reassigned silently. After the

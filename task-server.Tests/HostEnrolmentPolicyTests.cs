@@ -39,6 +39,14 @@ public sealed class HostEnrolmentPolicyTests
             HostEnrolmentPolicy.Decide(codingOnly, HostRoles.Review, "r", 0, 0).Reason);
     }
 
+    [Fact]
+    public void Validate_reports_an_empty_role_entry_instead_of_throwing()
+    {
+        var request = new EnrolHostRequest(
+            "linux", [new HostRolePrincipalDto(HostRoles.Coding, "c"), null!], new HostEnvelopeDto(1, 1, 0), 0);
+        Assert.Equal("A role entry is empty.", HostEnrolmentPolicy.Validate("host-a", request));
+    }
+
     [Theory]
     [InlineData(2, 2, 1, "c", "r", null)]
     [InlineData(2, 2, 1, "same", "same", "distinct principals")]

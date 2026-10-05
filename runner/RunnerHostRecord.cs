@@ -31,6 +31,8 @@ public sealed record RunnerHostRecord(
     {
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        // A misspelt field would otherwise vanish and its default would apply.
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
     public EnrolHostRequest ToEnrolment(long expectedGeneration)
@@ -67,6 +69,14 @@ public static class RunnerHostRecordPolicy
 
     public const string ProfilePath = "/etc/agent-host/profile.conf";
 
+    /// <summary>The CLI settings <c>remote-runner-onboard.sh</c> writes for a service host.</summary>
+    private static readonly string[] ServiceCliLines =
+    [
+        "RUNNER_CLI_TYPE=claude",
+        "RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude",
+        "RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex",
+    ];
+
     private static readonly string[] ResourceKeys =
     [
         "CODING_CPU_QUOTA", "CODING_CPU_WEIGHT", "CODING_IO_WEIGHT", "CODING_MEMORY_MAX",
@@ -78,6 +88,11 @@ public static class RunnerHostRecordPolicy
         var errors = new List<string>();
         if (record.SchemaVersion != RunnerHostRecord.CurrentSchemaVersion)
             errors.Add($"schemaVersion must be {RunnerHostRecord.CurrentSchemaVersion}.");
+        if (record.Roles?.Any(role => role is null) == true)
+        {
+            errors.Add("A role entry is empty.");
+            return errors;
+        }
         if (HostEnrolmentPolicy.Validate(record.HostId ?? string.Empty, record.ToEnrolment(0)) is { } enrolment)
             errors.Add(enrolment);
         if (!Uri.TryCreate(record.ServerUrl, UriKind.Absolute, out _)) errors.Add("serverUrl must be an absolute URL.");
@@ -93,7 +108,7 @@ public static class RunnerHostRecordPolicy
         foreach (var key in record.Resources?.Keys ?? [])
             if (!ResourceKeys.Contains(key, StringComparer.Ordinal))
                 errors.Add($"Unknown resource key '{key}'.");
-        if (record.Workstation is { } workstation && workstation.Roots.Count == 0)
+        if (record.Workstation is { } workstation && workstation.Roots is not { Count: > 0 })
             errors.Add("A workstation host must declare at least one root.");
         return errors;
     }
@@ -122,6 +137,12 @@ public static class RunnerHostRecordPolicy
                 $"RUNNER_ID={role.PrincipalId}",
                 $"RUNNER_HOSTNAME={record.HostId}",
                 $"RUNNER_ROLE={role.Role}",
+            ]);
+            // Service hosts keep the CLI paths the onboarding script installs; a
+            // workstation resolves its own tools from PATH.
+            if (record.Workstation is null) lines.AddRange(ServiceCliLines);
+            lines.AddRange(
+            [
                 $"RUNNER_AUTH_TOKEN_FILE={role.TokenFile}",
                 $"RUNNER_GIT_REMOTE={record.GitRemote}",
             ]);
@@ -161,7 +182,9 @@ public static class RunnerHostRecordPolicy
     /// <summary>
     /// Builds the desired record from existing runner.env/review.env/profile.conf.
     /// Disagreements are errors; the operator resolves them instead of the
-    /// importer choosing one host fact silently.
+    /// importer choosing one host fact silently. Every setting a role file
+    /// declares must come back unchanged from the generated file, so migration
+    /// never drops, rewrites or redistributes an explicit value.
     /// </summary>
     public static RunnerHostMigration Migrate(string? runnerEnv, string? reviewEnv, string? profileConf, string hostClass)
     {
@@ -171,15 +194,24 @@ public static class RunnerHostRecordPolicy
         if (runnerEnv is not null) sources.Add((HostRoles.Coding, ParseEnv(runnerEnv)));
         if (reviewEnv is not null) sources.Add((HostRoles.Review, ParseEnv(reviewEnv)));
         if (sources.Count == 0) return new(null, ["No runner.env or review.env was supplied."], notes);
+        static string FileOf(string role) => Path.GetFileName(Service(role).EnvFile);
 
+        // A shared fact present in only one role file would be copied into the
+        // other role, changing a service whose file never stated it.
         string? Shared(string key, bool required)
         {
-            var values = sources
-                .Select(source => source.Values.GetValueOrDefault(key))
-                .Where(value => !string.IsNullOrWhiteSpace(value))
+            var declared = sources
+                .Where(source => !string.IsNullOrWhiteSpace(source.Values.GetValueOrDefault(key)))
+                .ToArray();
+            var values = declared
+                .Select(source => source.Values[key])
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
             if (values.Length > 1) errors.Add($"{key} differs between role files: {string.Join(" vs ", values)}.");
+            else if (declared.Length > 0 && declared.Length < sources.Count)
+                errors.Add($"{key} is set in {string.Join(", ", declared.Select(source => FileOf(source.Role)))} but not in "
+                    + $"{string.Join(", ", sources.Except(declared).Select(source => FileOf(source.Role)))}; "
+                    + "the record would apply it to every role. Set it in each role file or in none.");
             if (values.Length == 0 && required) errors.Add($"{key} is missing.");
             return values.FirstOrDefault();
         }
@@ -200,7 +232,7 @@ public static class RunnerHostRecordPolicy
         {
             var declared = values.GetValueOrDefault("RUNNER_ROLE") ?? HostRoles.Coding;
             if (!string.Equals(declared, role, StringComparison.Ordinal))
-                errors.Add($"{Path.GetFileName(Service(role).EnvFile)} declares RUNNER_ROLE={declared}.");
+                errors.Add($"{FileOf(role)} declares RUNNER_ROLE={declared}.");
             var principal = values.GetValueOrDefault("RUNNER_ID");
             var token = values.GetValueOrDefault("RUNNER_AUTH_TOKEN_FILE");
             if (string.IsNullOrWhiteSpace(principal)) errors.Add($"{role} RUNNER_ID is missing.");
@@ -220,13 +252,6 @@ public static class RunnerHostRecordPolicy
                 errors.Add($"{role} RUNNER_MAX_PARALLELISM must be an integer; found '{declaredOwn}'.");
                 slots[role] = 0; // No record is emitted when an explicit value is invalid.
             }
-            var otherKey = role == HostRoles.Coding ? "RUNNER_HOST_REVIEW_SLOTS" : "RUNNER_HOST_CODING_SLOTS";
-            var otherRole = role == HostRoles.Coding ? HostRoles.Review : HostRoles.Coding;
-            if (int.TryParse(values.GetValueOrDefault(otherKey), out var declaredOther)
-                && sources.Any(source => source.Role == otherRole)
-                && slots.TryGetValue(otherRole, out var actualOther)
-                && actualOther != declaredOther)
-                notes.Add($"{otherKey}={declaredOther} in the {role} file disagreed with the {otherRole} file; the {otherRole} file wins.");
         }
 
         var profile = ParseEnv(profileConf ?? string.Empty);
@@ -268,7 +293,40 @@ public static class RunnerHostRecordPolicy
             null,
             resources.Count == 0 ? null : resources);
         if (errors.Count == 0) errors.AddRange(Validate(record));
+        if (errors.Count == 0) errors.AddRange(UnreproducedSettings(record, sources));
         return new RunnerHostMigration(errors.Count == 0 ? record : null, errors, notes);
+    }
+
+    /// <summary>
+    /// Compares each declared role setting with the file generated from the
+    /// migrated record. This runs after every role file is read, so peer slot
+    /// counts (<c>RUNNER_HOST_CODING_SLOTS</c>/<c>RUNNER_HOST_REVIEW_SLOTS</c>)
+    /// are checked against the final envelope regardless of file order, and a
+    /// setting the record cannot carry stops migration instead of vanishing.
+    /// </summary>
+    private static IEnumerable<string> UnreproducedSettings(
+        RunnerHostRecord record, IEnumerable<(string Role, IReadOnlyDictionary<string, string> Values)> sources)
+    {
+        var rendered = Render(record).Files;
+        foreach (var (role, values) in sources)
+        {
+            var file = Path.GetFileName(Service(role).EnvFile);
+            var generated = ParseEnv(rendered[file]);
+            foreach (var (key, value) in values.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                if (generated.TryGetValue(key, out var kept))
+                {
+                    if (!string.Equals(kept, value, StringComparison.Ordinal))
+                        yield return $"{file} declares {key}={value}, but the record would generate {key}={kept}; "
+                            + "align the role files before migrating.";
+                }
+                else if (!string.IsNullOrWhiteSpace(value))
+                {
+                    yield return $"{file} declares {key}={value}, which the host record does not carry; "
+                        + "the generated file would drop it. Remove it or keep this host on legacy onboarding.";
+                }
+            }
+        }
     }
 
     public static string Digest(RunnerHostRecord record)

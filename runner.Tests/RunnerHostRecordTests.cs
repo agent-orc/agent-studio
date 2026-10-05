@@ -111,6 +111,7 @@ public sealed class RunnerHostRecordTests
         Assert.Equal("1", env["RUNNER_WORKSTATION"]);
         Assert.Equal("/home/dev/src", env["RUNNER_WORKSTATION_ROOTS"]);
         Assert.Equal("dotnet,node", env["RUNNER_WORKSTATION_TOOLS"]);
+        Assert.False(env.ContainsKey("RUNNER_CLAUDE_CLI_BIN"));
     }
 
     [Fact]
@@ -225,6 +226,107 @@ public sealed class RunnerHostRecordTests
 
         Assert.Empty(migrated.Errors);
         Assert.Equal(2, migrated.Record!.Envelope.CodingSlots);
+    }
+
+    [Theory]
+    [InlineData("runner.env", "RUNNER_HOST_REVIEW_SLOTS=1", "RUNNER_HOST_REVIEW_SLOTS=3")]
+    [InlineData("review.env", "RUNNER_HOST_CODING_SLOTS=2", "RUNNER_HOST_CODING_SLOTS=5")]
+    [InlineData("runner.env", "RUNNER_HOST_REVIEW_SLOTS=1", "RUNNER_HOST_REVIEW_SLOTS=two")]
+    [InlineData("runner.env", "RUNNER_HOST_CODING_SLOTS=2", "RUNNER_HOST_CODING_SLOTS=3")]
+    public void Migration_refuses_a_role_file_slot_count_that_disagrees_with_the_migrated_envelope(
+        string file, string original, string changed)
+    {
+        // The coding file is read first, so its peer count used to be compared
+        // with nothing; the review file's mismatch only produced a note.
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var edited = files[file].Replace(original, changed, StringComparison.Ordinal);
+        Assert.NotEqual(files[file], edited);
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            file == "runner.env" ? edited : files["runner.env"],
+            file == "review.env" ? edited : files["review.env"],
+            files["profile.conf"], "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains($"{file} declares {changed}"));
+    }
+
+    [Fact]
+    public void Migration_refuses_a_peer_slot_count_for_a_role_file_that_was_not_supplied()
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var migrated = RunnerHostRecordPolicy.Migrate(files["runner.env"], null, null, "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains(
+            "runner.env declares RUNNER_HOST_REVIEW_SLOTS=1, but the record would generate RUNNER_HOST_REVIEW_SLOTS=0"));
+    }
+
+    [Theory]
+    [InlineData("review.env", "RUNNER_GIT_PUSH_REMOTE=git@example.invalid:team/push.git\n", "RUNNER_GIT_PUSH_REMOTE is set in review.env but not in runner.env")]
+    [InlineData("runner.env", null, "RUNNER_HOSTNAME is set in review.env but not in runner.env")]
+    public void Migration_refuses_a_shared_fact_declared_by_only_one_role_file(string file, string? added, string expected)
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var edited = added is null
+            ? files[file].Replace("RUNNER_HOSTNAME=build-02\n", "", StringComparison.Ordinal)
+            : files[file] + added;
+        Assert.NotEqual(files[file], edited);
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            file == "runner.env" ? edited : files["runner.env"],
+            file == "review.env" ? edited : files["review.env"],
+            files["profile.conf"], "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains(expected));
+    }
+
+    [Theory]
+    [InlineData("RUNNER_TLS_CERTIFICATE_SHA256=ab12cd", "which the host record does not carry")]
+    [InlineData("RUNNER_WORKSTATION=1", "which the host record does not carry")]
+    [InlineData("RUNNER_STATE_DIR=/srv/runner-state", "the record would generate RUNNER_STATE_DIR=/var/lib/agent-runner/state")]
+    [InlineData("RUNNER_CLAUDE_CLI_BIN=/opt/claude/bin/claude", "the record would generate RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude")]
+    public void Migration_refuses_a_role_setting_the_generated_file_would_drop_or_rewrite(string setting, string expected)
+    {
+        var files = RunnerHostRecordPolicy.Render(Record()).Files;
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            files["runner.env"] + setting + "\n", files["review.env"], files["profile.conf"], "linux");
+
+        Assert.Null(migrated.Record);
+        Assert.Contains(migrated.Errors, error => error.Contains("runner.env declares " + setting) && error.Contains(expected));
+    }
+
+    [Fact]
+    public void Migration_reproduces_every_setting_of_legacy_onboarded_role_files()
+    {
+        // The exact key set remote-runner-onboard.sh writes without --host-record.
+        static string Legacy(string role, string id, string root, string token) => $"""
+            RUNNER_SERVER_URL=http://127.0.0.1:15031
+            RUNNER_ID={id}
+            RUNNER_NAME=build-02-{role}
+            RUNNER_ROLE={role}
+            RUNNER_HOSTNAME=build-02
+            RUNNER_CLI_TYPE=claude
+            RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude
+            RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex
+            RUNNER_AUTH_TOKEN_FILE={token}
+            RUNNER_GIT_REMOTE=git@example.invalid:team/project.git
+            RUNNER_WORKDIR={root}/work
+            {(role == "review" ? $"RUNNER_REVIEW_WORKDIR={root}/review-work" : "")}
+            RUNNER_STATE_DIR={root}/state
+            RUNNER_MAX_PARALLELISM={(role == "coding" ? 2 : 1)}
+            RUNNER_HOST_CODING_SLOTS=2
+            RUNNER_HOST_REVIEW_SLOTS=1
+            """;
+        var migrated = RunnerHostRecordPolicy.Migrate(
+            Legacy("coding", "rnr-coding", "/var/lib/agent-runner", "/etc/agent-runner/coding.token"),
+            Legacy("review", "rnr-review", "/var/lib/agent-runner-review", "/etc/agent-runner/review.token"),
+            null, "linux");
+
+        Assert.Empty(migrated.Errors);
+        Assert.Equal(new HostEnvelopeDto(3, 2, 1), migrated.Record!.Envelope);
+        var generated = RunnerHostRecordPolicy.ParseEnv(RunnerHostRecordPolicy.Render(migrated.Record).Files["review.env"]);
+        Assert.Equal("/usr/local/bin/claude", generated["RUNNER_CLAUDE_CLI_BIN"]);
+        Assert.Equal("/var/lib/agent-runner-review/review-work", generated["RUNNER_REVIEW_WORKDIR"]);
     }
 
     [Fact]
@@ -343,6 +445,54 @@ public sealed class RunnerHostRecordTests
                     foreach (var (key, value) in previous) Environment.SetEnvironmentVariable(key, value);
                 }
             }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("migrate", "--reveiw-env", "x", "migrate does not accept --reveiw-env")]
+    [InlineData("check", "--record", "a", "--record is given more than once")]
+    [InlineData("enrolment", "--expected-generation", "99999999999999999999", "--expected-generation must be a non-negative integer")]
+    public void Command_refuses_unknown_repeated_or_unparseable_options(string verb, string option, string value, string expected)
+    {
+        var args = verb == "check" ? new[] { verb, option, value, option, value } : [verb, option, value];
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        Assert.Equal(2, RunnerHostRecordCommand.Run(args, output, error));
+        Assert.Empty(output.ToString());
+        Assert.Contains(expected, error.ToString());
+    }
+
+    [Theory]
+    [InlineData("\"reviewSlot\": 2", "reviewSlot")]
+    [InlineData("\"roles\": [null]", "A role entry is empty")]
+    [InlineData("\"workstation\": {}", "at least one root")]
+    public void Command_refuses_a_record_with_unknown_or_empty_fields_instead_of_defaulting(string field, string expected)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "host-record-fields-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var json = System.Text.Json.Nodes.JsonNode.Parse(
+                System.Text.Json.JsonSerializer.Serialize(Record(), RunnerHostRecord.Json))!.AsObject();
+            var patch = System.Text.Json.Nodes.JsonNode.Parse("{" + field + "}")!.AsObject();
+            foreach (var (key, value) in patch.ToArray())
+            {
+                patch.Remove(key);
+                json[key] = value;
+            }
+            var path = Path.Combine(root, "host.json");
+            File.WriteAllText(path, json.ToJsonString());
+            var output = new StringWriter();
+            var error = new StringWriter();
+
+            Assert.Equal(2, RunnerHostRecordCommand.Run(["check", "--record", path], output, error));
+            Assert.Empty(output.ToString());
+            Assert.Contains(expected, error.ToString());
         }
         finally
         {

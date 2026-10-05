@@ -8,6 +8,14 @@ namespace AgentRunner;
 /// </summary>
 public static class RunnerHostRecordCommand
 {
+    private static readonly Dictionary<string, string[]> VerbOptions = new(StringComparer.Ordinal)
+    {
+        ["migrate"] = ["--runner-env", "--review-env", "--profile", "--host-class", "--out"],
+        ["check"] = ["--record"],
+        ["render"] = ["--record", "--out-dir"],
+        ["enrolment"] = ["--record", "--expected-generation"],
+    };
+
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
     {
         var verb = args.Count > 0 ? args[0] : string.Empty;
@@ -17,7 +25,24 @@ public static class RunnerHostRecordCommand
             return 2;
         }
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
-        for (var index = 1; index + 1 < args.Count; index += 2) options[args[index]] = args[index + 1];
+        if (VerbOptions.TryGetValue(verb, out var allowed))
+        {
+            // A mistyped or repeated option would otherwise be ignored, e.g. a
+            // misspelt --review-env silently migrating a coding-only record.
+            for (var index = 1; index + 1 < args.Count; index += 2)
+            {
+                if (!allowed.Contains(args[index], StringComparer.Ordinal))
+                {
+                    error.WriteLine($"error: {verb} does not accept {args[index]}; use {string.Join(", ", allowed)}.");
+                    return 2;
+                }
+                if (!options.TryAdd(args[index], args[index + 1]))
+                {
+                    error.WriteLine($"error: {args[index]} is given more than once.");
+                    return 2;
+                }
+            }
+        }
         string? Read(string key)
         {
             if (!options.TryGetValue(key, out var path)) return null;
@@ -70,7 +95,9 @@ public static class RunnerHostRecordCommand
                 }
                 case "enrolment":
                 {
-                    var generation = long.Parse(options.GetValueOrDefault("--expected-generation", "0"));
+                    var generationText = options.GetValueOrDefault("--expected-generation", "0");
+                    if (!long.TryParse(generationText, out var generation) || generation < 0)
+                        throw new ArgumentException($"--expected-generation must be a non-negative integer; found '{generationText}'.");
                     var record = Load(recordPath);
                     var errors = RunnerHostRecordPolicy.Validate(record);
                     if (errors.Count > 0)
