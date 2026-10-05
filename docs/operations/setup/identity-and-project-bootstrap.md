@@ -86,6 +86,14 @@ installation other than the one named, never prints either secret, writes the
 credential mode 600 and deletes the spent code. Set
 `RUNNER_AUTH_TOKEN_FILE` to the credential file.
 
+The credential is staged beside the target and installed with an exclusive
+link, so an existing credential is never replaced. If a credential file
+appears while the exchange runs, the script exits 7, keeps the spent code
+file, and leaves the issued credential in a mode-600
+`.enrol-credential.*` file in the same directory. Install that file or revoke
+the principal explicitly. A response without a principal or credential exits 6
+and installs nothing.
+
 Denials are one generic `401 enrolment-denied`; the audit log records the
 precise reason (unknown, consumed, revoked, expired, installation mismatch,
 principal exists). A consumed code therefore exposes a stolen replay.
@@ -115,6 +123,9 @@ POST /api/v1/projects/registrations
   `git@host:path`). Embedded credentials, query, fragment, `http://`,
   `file://` and local paths are rejected.
 - One repository belongs to one project (`409 repository-owned-by-other-project`).
+- Deleting a project (`DELETE /api/v1/studio/projects/{projectId}`, allowed only
+  without tasks) removes its registration and every host receipt. A later
+  registration of the same id starts unproven.
 - An identical repeat returns `200`; the check includes the stored workspace,
   project name and task key prefix as well as the repository fields. Any
   differing value is `409 project-repository-registered`, never an implicit
@@ -129,6 +140,8 @@ scripts/probe-project-repository.sh https://tasks.example.com build-02 prj-alpha
 ```
 
 The script applies the same Task Server origin check before reading the bearer.
+It stops before probing if the credential file is missing or empty, or if the
+registration lacks a repository URL or integration ref.
 It runs `git ls-remote` for the integration ref and a dry-run push
 against the **registered** origin, then posts the receipt to
 `POST /api/v1/runners/{runnerId}/project-probes/{projectId}`. The verdict is

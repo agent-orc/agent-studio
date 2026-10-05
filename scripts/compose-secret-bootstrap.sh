@@ -51,7 +51,10 @@ if [ ! -e "$target" ]; then
     head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$temporary"
     printf '\n' >> "$temporary"
     chmod 600 "$temporary"
-    if [ ! -e "$target" ]; then mv "$temporary" "$target"; else rm -f "$temporary"; fi
+    # link(2) never replaces a code another bootstrap created meanwhile; the
+    # checks below then verify whichever code won.
+    ln "$temporary" "$target" 2>/dev/null || true
+    rm -f "$temporary"
 fi
 chown 10001:10001 "$target"
 test -s "$target"

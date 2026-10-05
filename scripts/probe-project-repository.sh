@@ -9,6 +9,7 @@ set -euo pipefail
 server="${1%/}" runner="$2" project="$3" credential_file="$4"
 source "$(dirname "${BASH_SOURCE[0]}")/task-server-url.sh"
 validate_task_server_url "$server"
+[ -s "$credential_file" ] || { echo "credential file not found or empty" >&2; exit 2; }
 umask 077
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -16,9 +17,12 @@ trap 'rm -rf "$work"' EXIT
 printf 'Authorization: Bearer %s\nX-Task-Protocol-Version: %s\n' \
     "$(tr -d '\n' < "$credential_file")" "${TASK_PROTOCOL_VERSION:-2}" > "$work/headers"
 auth=(-H "@$work/headers")
-registration="$(curl "${task_server_curl_options[@]}" -fsS "${auth[@]}" "$server/api/v1/projects/$project/repository" | jq .registration)"
-url="$(jq -r .repositoryUrl <<<"$registration")"
-ref="$(jq -r .integrationRef <<<"$registration")"
+curl "${task_server_curl_options[@]}" -fsS "${auth[@]}" "$server/api/v1/projects/$project/repository" > "$work/registration.json"
+# A missing field must stop the probe, not become a literal "null" origin or ref.
+url="$(jq -er '.registration.repositoryUrl | select(type == "string" and length > 0)' "$work/registration.json")" ||
+    { echo "project $project has no registered repository URL" >&2; exit 3; }
+ref="$(jq -er '.registration.integrationRef | select(type == "string" and length > 0)' "$work/registration.json")" ||
+    { echo "project $project has no registered integration ref" >&2; exit 3; }
 
 fetch=false push=false detail=""
 if git ls-remote --exit-code "$url" "refs/heads/$ref" >"$work/ls" 2>"$work/err"; then

@@ -481,15 +481,17 @@ public sealed partial class TaskServerStore
     {
         RequireWritable();
         var runner = RequireIdentifier(runnerId, "Runner id");
-        var registration = await GetProjectRepositoryAsync(projectId, ct)
-                           ?? throw new KeyNotFoundException("Project has no registered repository.");
-        var verdict = ProjectRepositoryPolicy.DecideProbe(registration.RepositoryUrl, probe);
-        var admitted = verdict == ProjectRepositoryProbeVerdicts.Admitted;
         var detail = string.IsNullOrWhiteSpace(probe.Detail) ? null : RedactCredentials(probe.Detail.Trim());
         if (detail is { Length: > 500 }) detail = detail[..500];
         var now = UtcNow;
+        var verdict = string.Empty;
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
+            // Judge the receipt against the registration read in the same write
+            // transaction, so a concurrently deleted project cannot leave a receipt behind.
+            var registration = await ReadProjectRepositoryAsync(connection, transaction, projectId, ct)
+                               ?? throw new KeyNotFoundException("Project has no registered repository.");
+            verdict = ProjectRepositoryPolicy.DecideProbe(registration.RepositoryUrl, probe);
             await ExecuteAsync(connection, """
                 INSERT INTO project_repository_probes(project_id, runner_id, admitted, verdict, detail, observed_at)
                 VALUES ($project, $runner, $admitted, $verdict, $detail, $now)
@@ -497,12 +499,14 @@ public sealed partial class TaskServerStore
                     admitted = excluded.admitted, verdict = excluded.verdict,
                     detail = excluded.detail, observed_at = excluded.observed_at;
                 """, ct, transaction,
-                ("$project", projectId), ("$runner", runner), ("$admitted", admitted ? 1 : 0),
+                ("$project", projectId), ("$runner", runner),
+                ("$admitted", verdict == ProjectRepositoryProbeVerdicts.Admitted ? 1 : 0),
                 ("$verdict", verdict), ("$detail", detail), ("$now", Iso(now)));
             await AuditAsync(connection, transaction, $"runner:{runner}", "project.repository-probed", "project", projectId,
                 JsonSerializer.Serialize(new { runner, verdict }), ct);
         }, ct);
-        return new ProjectRepositoryProbeDto(projectId, runner, admitted, verdict, detail, now);
+        return new ProjectRepositoryProbeDto(
+            projectId, runner, verdict == ProjectRepositoryProbeVerdicts.Admitted, verdict, detail, now);
     }
 
     public async Task<IReadOnlyList<ProjectRepositoryProbeDto>> ListProjectRepositoryProbesAsync(

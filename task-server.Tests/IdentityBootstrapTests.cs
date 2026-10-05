@@ -480,6 +480,44 @@ public sealed class IdentityBootstrapTests
     }
 
     [Fact]
+    public async Task Deleting_a_registered_project_releases_its_repository_and_drops_stale_probe_receipts()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new IdentityFactory(temp.Path, OwnerCode);
+        using var edge = Client(factory, StudioToken);
+        var owner = await BootstrapOwnerAsync(edge);
+        using var ownerClient = Client(factory, StudioToken, owner.SessionToken);
+        var workspace = await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
+            new CreateWorkspaceRequest("Main"))).Content.ReadFromJsonAsync<WorkspaceDto>();
+        var registration = Registration("prj-gone", "https://github.com/org/gone.git", workspace!.WorkspaceId, prefix: "GONE");
+        Assert.Equal(HttpStatusCode.Created,
+            (await ownerClient.PostAsJsonAsync("/api/v1/projects/registrations", registration)).StatusCode);
+        var enrolment = await EnrolAsync(ownerClient, "runner:gone-host", "gone-host");
+        var runner = (await (await Client(factory, null).PostAsJsonAsync("/api/v1/enrolments/exchange",
+            new ExchangeEnrolmentRequest(enrolment.EnrolmentCode, enrolment.InstallationId)))
+            .Content.ReadFromJsonAsync<ExchangedEnrolment>())!;
+        using var runnerClient = Client(factory, runner.Issued.Credential);
+        var admittedProbe = new ProjectRepositoryProbeRequest(
+            "https://github.com/org/gone.git", "https://github.com/org/gone.git", true, true, false);
+        Assert.Equal(HttpStatusCode.OK, (await runnerClient.PostAsJsonAsync(
+            "/api/v1/runners/gone-host/project-probes/prj-gone", admittedProbe)).StatusCode);
+
+        // Before the fix the new foreign keys made this delete fail with a server error.
+        Assert.Equal(HttpStatusCode.OK, (await ownerClient.DeleteAsync("/api/v1/studio/projects/prj-gone")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await ownerClient.GetAsync("/api/v1/projects/prj-gone/repository")).StatusCode);
+        // A receipt for a project that no longer exists is refused, not half-written.
+        Assert.Equal(HttpStatusCode.NotFound, (await runnerClient.PostAsJsonAsync(
+            "/api/v1/runners/gone-host/project-probes/prj-gone", admittedProbe)).StatusCode);
+
+        // Re-registering the same id starts unproven: the old admitted receipt cannot admit it.
+        Assert.Equal(HttpStatusCode.Created,
+            (await ownerClient.PostAsJsonAsync("/api/v1/projects/registrations", registration)).StatusCode);
+        var status = await ownerClient.GetFromJsonAsync<ProjectRepositoryStatusDto>("/api/v1/projects/prj-gone/repository");
+        Assert.Empty(status!.Probes);
+    }
+
+    [Fact]
     public async Task Loopback_development_store_keeps_first_caller_bootstrap_without_a_code()
     {
         using var temp = new TempDirectory();

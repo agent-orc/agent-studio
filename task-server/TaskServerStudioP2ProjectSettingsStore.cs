@@ -206,9 +206,13 @@ public sealed partial class TaskServerStore
                     "project-has-tasks", "A project with tasks cannot be deleted; delete or archive its tasks first.");
             // The project row is referenced by foreign keys from its
             // orchestrator project-chat context, its flow definition, and
-            // this group's own settings/ownership-mapping/URL tables; all
-            // must be cleared before the project row itself can be deleted.
+            // this group's own settings/ownership-mapping/URL tables, and its
+            // I05 repository registration and host probe receipts; all must be
+            // cleared before the project row itself can be deleted. Clearing
+            // the receipts keeps them from admitting a later re-registration.
             await ExecuteAsync(connection, """
+                DELETE FROM project_repository_probes WHERE project_id = $project;
+                DELETE FROM project_repositories WHERE project_id = $project;
                 DELETE FROM orchestrator_context_turns WHERE context_key IN (
                     SELECT context_key FROM orchestrator_contexts WHERE project_id = $project);
                 DELETE FROM orchestrator_contexts WHERE project_id = $project;

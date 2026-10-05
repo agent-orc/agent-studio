@@ -14,7 +14,9 @@ validate_task_server_url "$server"
 if [ "$(stat -c %a "$code_file")" != 600 ] && [ "$(stat -c %a "$code_file")" != 400 ]; then
     echo "code file must be mode 600 or 400" >&2; exit 2
 fi
-[ ! -e "$credential_file" ] || { echo "credential file exists; rotate or revoke explicitly" >&2; exit 3; }
+credential_dir="$(dirname "$credential_file")"
+[ -d "$credential_dir" ] || { echo "credential directory not found" >&2; exit 2; }
+[ ! -e "$credential_file" ] && [ ! -L "$credential_file" ] || { echo "credential file exists; rotate or revoke explicitly" >&2; exit 3; }
 
 protocol=(-H "X-Task-Protocol-Version: ${TASK_PROTOCOL_VERSION:-2}")
 observed="$(curl "${task_server_curl_options[@]}" -fsS "${protocol[@]}" "$server/api/v1/installation" | jq -r .installationId)"
@@ -22,7 +24,10 @@ observed="$(curl "${task_server_curl_options[@]}" -fsS "${protocol[@]}" "$server
 
 umask 077
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# Stage the credential beside its target so link(2) can install it atomically.
+staged="$(mktemp "$credential_dir/.enrol-credential.XXXXXXXX")"
+keep_staged=""
+trap 'rm -rf "$work"; [ -n "$keep_staged" ] || rm -f "$staged"' EXIT
 jq -n --rawfile code "$code_file" --arg installation "$installation" \
     '{enrolmentCode: ($code | rtrimstr("\n")), expectedInstallationId: $installation}' > "$work/request.json"
 status="$(curl "${task_server_curl_options[@]}" -sS -o "$work/response.json" -w '%{http_code}' "${protocol[@]}" -H 'Content-Type: application/json' \
@@ -31,10 +36,18 @@ if [ "$status" != 201 ]; then
     echo "enrolment denied (HTTP $status): $(jq -r .code "$work/response.json" 2>/dev/null || echo unknown)" >&2
     exit 5
 fi
-jq -r .issued.credential "$work/response.json" > "$work/credential"
-mv -n "$work/credential" "$credential_file"
-chmod 600 "$credential_file"
+principal="$(jq -er '.issued.principal.principalId | select(type == "string" and length > 0)' "$work/response.json")" ||
+    { echo "enrolment response named no principal; revoke it explicitly before retrying" >&2; exit 6; }
+jq -er '.issued.credential | select(type == "string" and length > 0)' "$work/response.json" > "$staged" ||
+    { echo "enrolment response carried no credential for principal=$principal; rotate or revoke it explicitly" >&2; exit 6; }
+chmod 600 "$staged"
+# link(2) fails when the target exists; mv -n can skip the install silently.
+if ! ln -T "$staged" "$credential_file" 2>/dev/null; then
+    keep_staged=1
+    echo "credential file appeared during enrolment; the issued credential for principal=$principal is kept in $staged." \
+        "Install it or revoke the principal explicitly; the code file is left in place." >&2
+    exit 7
+fi
 # The one-time code is spent; remove it so the host keeps only its own credential.
 rm -f "$code_file"
-printf 'enrolled principal=%s installation=%s credential-file=%s\n' \
-    "$(jq -r .issued.principal.principalId "$work/response.json")" "$installation" "$credential_file"
+printf 'enrolled principal=%s installation=%s credential-file=%s\n' "$principal" "$installation" "$credential_file"
