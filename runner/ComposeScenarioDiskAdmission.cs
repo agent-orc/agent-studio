@@ -97,7 +97,7 @@ internal static class ComposeScenarioDiskAdmission
                         index++;
                         break;
                     }
-                    if (option is "-u" or "--unset" or "-C" or "--chdir")
+                    if (option is "-a" or "--argv0" or "-u" or "--unset" or "-C" or "--chdir")
                     {
                         index += 2;
                         continue;
