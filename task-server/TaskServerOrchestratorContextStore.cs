@@ -182,11 +182,11 @@ public sealed partial class TaskServerStore
         await using var command = Command(connection, """
             SELECT turn_id, created_at, role, body, model,
                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                   error_message, error_detail, attachments_json, receipt_json
+                   error_message, error_detail, attachments_json, receipt_json, metadata_json
               FROM (
                     SELECT sequence, turn_id, created_at, role, body, model,
                            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                           error_message, error_detail, attachments_json, receipt_json
+                           error_message, error_detail, attachments_json, receipt_json, metadata_json
                       FROM orchestrator_context_turns
                      WHERE context_key = $context
                      ORDER BY sequence DESC
@@ -293,11 +293,11 @@ public sealed partial class TaskServerStore
             INSERT INTO orchestrator_context_turns(
                 context_key, turn_id, created_at, role, body, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                error_message, error_detail, attachments_json, receipt_json, payload_sha256)
+                error_message, error_detail, attachments_json, receipt_json, metadata_json, payload_sha256)
             VALUES (
                 $context, $turn, $created, $role, $body, $model,
                 $input, $output, $cache_read, $cache_creation,
-                $error, $detail, $attachments, $receipt, $sha);
+                $error, $detail, $attachments, $receipt, $metadata, $sha);
             """, ct, transaction,
             ("$context", context.ContextKey),
             ("$turn", canonicalTurn.TurnId),
@@ -311,6 +311,8 @@ public sealed partial class TaskServerStore
             ("$cache_creation", usage?.CacheCreationTokens ?? 0),
             ("$error", canonicalTurn.ErrorMessage),
             ("$detail", canonicalTurn.ErrorDetail),
+            ("$metadata", canonicalTurn.Metadata is null
+                ? null : JsonSerializer.Serialize(canonicalTurn.Metadata)),
             ("$attachments", canonicalTurn.Attachments is null
                 ? null
                 : JsonSerializer.Serialize(canonicalTurn.Attachments)),
@@ -580,7 +582,10 @@ public sealed partial class TaskServerStore
                 : JsonSerializer.Deserialize<IReadOnlyList<OrchestratorContextAttachmentDto>>(reader.GetString(11)),
             reader.IsDBNull(12)
                 ? null
-                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)));
+                : JsonSerializer.Deserialize<OrchestratorContextReceiptDto>(reader.GetString(12)),
+            reader.IsDBNull(13)
+                ? null
+                : JsonSerializer.Deserialize<OrchestratorChatMetadataDto>(reader.GetString(13)));
     }
 
     private static void ValidateOrchestratorContextTurn(OrchestratorContextTurnDto turn)
@@ -608,8 +613,24 @@ public sealed partial class TaskServerStore
     }
 
     private static string TurnPayloadSha(OrchestratorContextTurnDto turn)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            JsonSerializer.Serialize(turn)))).ToLowerInvariant();
+    {
+        // Existing rows were hashed before Metadata was added. Preserve their
+        // idempotency hash when the new optional field is absent.
+        object payload = turn.Metadata is null
+            ? new LegacyTurnHashPayload(turn.TurnId, turn.CreatedAt, turn.Role, turn.Body,
+                turn.Model, turn.TokenUsage, turn.ErrorMessage, turn.ErrorDetail,
+                turn.Attachments, turn.Receipt)
+            : turn;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(payload)))).ToLowerInvariant();
+    }
+
+    private sealed record LegacyTurnHashPayload(
+        string TurnId, DateTime CreatedAt, string Role, string Body,
+        string? Model, OrchestratorContextTokenUsageDto? TokenUsage,
+        string? ErrorMessage, string? ErrorDetail,
+        IReadOnlyList<OrchestratorContextAttachmentDto>? Attachments,
+        OrchestratorContextReceiptDto? Receipt);
 
     private sealed record OrchestratorContextTarget(
         string ContextKey,

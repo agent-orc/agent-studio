@@ -40,8 +40,7 @@ public sealed class GitPushProbeTests : IDisposable
                 GitRemote = remote,
                 WorkDir = work,
                 BaseBranch = "main",
-                CliBin = "codex",
-                CliArgs = "",
+                ClaudeCliBin = "codex",
             },
             _ => { },
             CancellationToken.None);
