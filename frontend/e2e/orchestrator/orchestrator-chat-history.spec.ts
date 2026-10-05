@@ -94,16 +94,16 @@ async function stubWorkspace(page: Page): Promise<void> {
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = {};
-    if (/\/api\/(?:tags|workspaces|clients|projects)\/?$/.test(path)
+    if (/\/api\/(?:tags|v1\/workspaces|clients|v1\/projects)\/?$/.test(path)
       || path.startsWith('/api/bus/')
       || path === '/api/v1/management/remote-hosts') body = [];
-    if (path === '/api/runner/status') body = { projects: {} };
+    if (path === '/api/v1/studio/runner/status') body = { projects: {} };
     if (path === '/api/cli/quota') body = { snapshots: [] };
     if (path === '/api/tasks/archive') body = { items: [], total: 0, offset: 0, limit: 50 };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
 
-  await page.route(/\/api\/auth\/status$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/auth\/status$/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true }),
@@ -116,7 +116,7 @@ async function stubWorkspace(page: Page): Promise<void> {
       { name: 'Documentation Platform', path: '/workspace/docs', rootPath: '/workspace/docs', repositoryPath: '' },
     ]),
   }));
-  await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/board(?:\?.*)?$/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -127,12 +127,12 @@ async function stubWorkspace(page: Page): Promise<void> {
   await page.route(/\/api\/tasks(?:\?.*)?$/, route => route.fulfill({
     status: 200, contentType: 'application/json', body: '[]',
   }));
-  await page.route(/\/api\/orchestrator\/sessions(?:\?.*)?$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/orchestrator\/sessions(?:\?.*)?$/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ sessions }),
   }));
-  await page.route(/\/api\/orchestrator\/context\/task:Agent(?:%20| )Studio\/AGT-2577(?:\/refresh)?$/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/orchestrator\/context\/task:Agent(?:%20| )Studio\/AGT-2577(?:\/refresh)?$/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({

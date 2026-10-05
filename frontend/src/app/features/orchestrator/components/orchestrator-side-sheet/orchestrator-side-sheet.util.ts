@@ -311,5 +311,5 @@ export function resolveAttachmentUrl(projectName: string | null, relativePath: s
   const fileName = relativePath.startsWith('chat-attachments/')
     ? relativePath.substring('chat-attachments/'.length)
     : relativePath;
-  return `/api/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments/${encodeURIComponent(fileName)}`;
+  return `/api/v1/studio/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments/${encodeURIComponent(fileName)}`;
 }

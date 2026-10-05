@@ -229,10 +229,10 @@ function runTimeline() {
 
 async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
   await page.route('**/api/**', route => route.fulfill(json([])));
-  await page.route('**/api/auth/status', route => route.fulfill(json({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill(json({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
     preparation: [],
     orchestratorPrep: [],
     ready: [],
@@ -246,7 +246,7 @@ async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
   await page.route('**/api/watch-paths**', route => route.fulfill(json([
     { name: 'agent-taskboard', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ])));
-  await page.route('**/api/runner/status**', route => route.fulfill(json({ projects: {} })));
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill(json({ projects: {} })));
   await page.route('**/api/environment**', route => route.fulfill(json({
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
@@ -267,7 +267,7 @@ async function installFixtureRoutes(page: Page, tokenRunCount = 4) {
   await page.route(new RegExp(`/api/tasks/${id}/timeline(\\?|$)`), route => route.fulfill(json([])));
   await page.route(new RegExp(`/api/tasks/${id}/claude-session(\\?|$)`), route => route.fulfill(json(null)));
   await page.route(new RegExp(`/api/tasks/${id}/screenshots(\\?|$)`), route => route.fulfill(json([])));
-  await page.route(new RegExp(`/api/tasks/${id}(\\?|$)`), route => route.fulfill(json(jobDetail())));
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${id}(\\?|$)`), route => route.fulfill(json(jobDetail())));
 }
 
 async function saveShot(page: Page, name: string) {

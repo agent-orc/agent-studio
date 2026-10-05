@@ -164,9 +164,9 @@ async function installRoutes(
 ): Promise<void> {
   await page.route('**/api/**', route => {
     const url = route.request().url();
-    const taskDetail = new URL(url).pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    const taskDetail = new URL(url).pathname.match(/^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/);
     if (url.includes('/api/tasks/archive')) return json(route, { items: [], total: 0 });
-    if (url.includes('/api/auth/status')) return json(route, {
+    if (url.includes('/api/v1/studio/auth/status')) return json(route, {
       profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
     });
     if (route.request().method() === 'GET' && taskDetail && !['archive', 'grouped'].includes(taskDetail[1])) {
@@ -176,7 +176,7 @@ async function installRoutes(
         contextUsage: null, log: [], summaryState: null, reviewEvidence: [],
       });
     }
-    if (url.includes('/api/tasks/grouped')) return json(route, {
+    if (url.includes('/api/v1/studio/board')) return json(route, {
       backlog: [], preparation: [], orchestratorPrep: [],
       ready: currentTasks().filter(item => item.state === '2-ready'),
       progress: currentTasks().filter(item => item.state === '3-progress'),
@@ -188,7 +188,7 @@ async function installRoutes(
     if (/\/api\/(?:tasks|jobs)(\?|$)/.test(url)) return json(route, currentTasks());
     if (url.includes('/api/watch-paths')) return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     if (url.includes('/api/clients')) return json(route, [{ id: 'local-default', displayName: 'Local', kind: 'agent-instance' }]);
-    if (url.includes('/api/runner/status')) return json(route, { projects: {} });
+    if (url.includes('/api/v1/studio/runner/status')) return json(route, { projects: {} });
     if (url.includes('/api/runner/queue-starvation')) {
       if (queueSnapshot) return json(route, queueSnapshot);
       const waiting = currentTasks().filter(item => item.state === '2-ready');

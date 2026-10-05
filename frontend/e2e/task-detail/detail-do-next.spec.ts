@@ -114,7 +114,7 @@ test.describe('Detail view — Do Next', () => {
     const target   = await createJob({ id: uid('t'), title: 'do-next-pending', watchPath: wp.path, targetState: '2-ready' });
 
     try {
-      await page.route('**/api/tasks/*/move-to-top*', async route => {
+      await page.route('**/api/v1/projects/*/tasks/*/move-to-top*', async route => {
         await new Promise(r => setTimeout(r, 800));
         await route.continue();
       });
@@ -127,7 +127,7 @@ test.describe('Detail view — Do Next', () => {
       await expect(btn).toBeDisabled({ timeout: 2_000 });
       await expect(btn).toBeEnabled({ timeout: 5_000 });
     } finally {
-      await page.unroute('**/api/tasks/*/move-to-top*').catch(() => {});
+      await page.unroute('**/api/v1/projects/*/tasks/*/move-to-top*').catch(() => {});
       await deleteJob(target.id, wp.path).catch(() => {});
       await deleteJob(siblingA.id, wp.path).catch(() => {});
     }

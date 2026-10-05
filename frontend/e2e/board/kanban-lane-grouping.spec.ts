@@ -132,7 +132,7 @@ async function installBoardMocks(page: Page): Promise<void> {
   // (catch-all is intentionally registered first so the specific routes
   // below take precedence — Playwright evaluates routes LIFO.)
 
-  await page.route('**/api/auth/status', async (route) => {
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -146,7 +146,7 @@ async function installBoardMocks(page: Page): Promise<void> {
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) });
   });
-  await page.route('**/api/tasks/grouped**', async (route) => {
+  await page.route('**/api/v1/studio/board**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) });
   });
   await page.route('**/api/tasks/archive**', async (route) => {
@@ -156,7 +156,7 @@ async function installBoardMocks(page: Page): Promise<void> {
       body: JSON.stringify({ items: [], total: 0, offset: 0, limit: 50 })
     });
   });
-  await page.route('**/api/runner/status', async (route) => {
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({ projects: { [FIXTURE_PROJECT]: { projectName: FIXTURE_PROJECT, mode: 'manual', activeJobId: 'fx-progress-1', activeExecution: null, queuedJobIds: [] } } }) });
   });
@@ -264,8 +264,8 @@ test.describe('Kanban lane grouping and collapse', () => {
 
   test('Escalated is hidden at zero, appears live with work, and remains a drag target', async ({ page }) => {
     let grouped = { ...fixtureGrouped(), escalated: [] as Record<string, unknown>[] };
-    await page.unroute('**/api/tasks/grouped**');
-    await page.route('**/api/tasks/grouped**', async (route) => {
+    await page.unroute('**/api/v1/studio/board**');
+    await page.route('**/api/v1/studio/board**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -288,7 +288,7 @@ test.describe('Kanban lane grouping and collapse', () => {
     await sourceCard.dispatchEvent('dragstart', { dataTransfer });
     await expect(escalatedLane).toBeVisible();
     const moveRequest = page.waitForRequest((request) =>
-      request.url().includes('/api/tasks/fx-ready-1/move'),
+      request.url().includes('/api/v1/projects/-/tasks/fx-ready-1/move'),
     );
     await page.getByTestId('lane-5e-escalated').dispatchEvent('drop', { dataTransfer });
     expect((await moveRequest).postDataJSON()).toMatchObject({ targetState: '5e-escalated' });
