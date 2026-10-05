@@ -106,7 +106,7 @@ test.beforeEach(async ({ page, devBackend }) => {
   originalAbortOverride = (await getOverride(ABORT_STEP)) ?? null;
 
   await proxyBackend(page, devBackend.baseUrl);
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),

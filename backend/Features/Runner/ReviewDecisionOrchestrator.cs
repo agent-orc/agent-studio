@@ -757,6 +757,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 throw;
             }
+            catch (RemoteVerificationRequiredException ex)
+            {
+                result = PostProcessingCardResult.Deferred(ex.FailureCode);
+            }
             catch (Exception ex)
             {
                 // Isolate one card's failure from the rest of the parallel pool.
@@ -947,6 +951,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         await ProcessDoneAsync(workspace, entry, pending, aspects, cliBinary,
                             aspectModel, perAspectTimeout, ct);
                         _statusSnapshot.RecordAspectsRun(aspects.Count);
+                    }
+                    catch (RemoteVerificationRequiredException ex)
+                    {
+                        _logger.LogInformation("ReviewDecisionOrchestrator deferred {Project}/{JobId}: {Reason}",
+                            entry.Name, pending.Job.Id, ex.FailureCode);
                     }
                     catch (Exception ex)
                     {
@@ -2544,6 +2553,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // record; Fail short-circuits the move-to-review path with a
         // reissue (or, if we've already reissued once, an escalation).
         var lintResult = await RunLintScssPostStepAsync(workspace, entry, current, ct);
+        if (lintResult?.InfrastructureFailureCode is { } infrastructureFailureCode)
+            throw new RemoteVerificationRequiredException(infrastructureFailureCode, lintResult.Reason);
 
         // Regression radar post-step: a deterministic spec-change classification
         // recorded alongside lint so the Overview pipeline lists it with a
@@ -4093,6 +4104,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             result = await _lintScssRunner.RunAsync(repoPath, mode, TimeSpan.FromSeconds(timeoutSeconds), ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
@@ -4119,7 +4134,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             LintScssVerdict.Skipped => "skipped",
             _ => "skipped",
         };
-        RecordLintScssStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        RecordLintScssStep(current.FolderPath, status, result.DurationMs,
+            result.InfrastructureFailureCode ?? verdictToken, result.Reason);
         WriteLintScssLog(current.FolderPath, result);
         return result;
     }

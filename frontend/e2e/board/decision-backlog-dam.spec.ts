@@ -69,14 +69,14 @@ async function installRoutes(page: Page): Promise<void> {
     offset: 0,
     limit: 50,
   }));
-  await page.route('**/api/auth/status', (route) => json(route, {
+  await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
     user: null,
   }));
   await page.route(/\/api\/tasks(\?|$)/, (route) => json(route, ALL));
-  await page.route('**/api/tasks/grouped**', (route) => json(route, GROUPED));
+  await page.route('**/api/v1/studio/board**', (route) => json(route, GROUPED));
   await page.route('**/api/watch-paths**', (route) => json(route, [
     { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
@@ -93,7 +93,7 @@ async function installRoutes(page: Page): Promise<void> {
     ttlSeconds: 600,
     snapshots: [],
   }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) => json(route, {
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) => json(route, {
     projects: {
       [PROJECT]: {
         projectName: PROJECT,

@@ -95,7 +95,7 @@ async function mockBackend(page: Page): Promise<void> {
   await page.route('**/update/status', route => route.fulfill({
     json: { phase: 'idle', isRunning: false, behindBy: 0 },
   }));
-  await page.route('**/hubs/jobs/negotiate**', route => route.fulfill({
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({
     json: {
       connectionId: 'orchestrator-feed-overlay-e2e',
       connectionToken: 'orchestrator-feed-overlay-e2e',
@@ -103,7 +103,7 @@ async function mockBackend(page: Page): Promise<void> {
       availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
     },
   }));
-  await page.routeWebSocket('**/hubs/jobs**', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
     socket.onMessage(message => {
       if (message.toString().includes('"protocol":"json"')) socket.send('{}\u001e');
     });
@@ -121,13 +121,13 @@ async function mockBackend(page: Page): Promise<void> {
   // The board's `laneGroups` computed iterates each lane, so the grouped
   // endpoint must return the full lane-keyed shape (empty arrays) or the
   // app throws `jobs is not iterable` and the dev error dialog buries the UI.
-  await page.route('**/api/tasks/grouped', (route) =>
+  await page.route('**/api/v1/studio/board', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(EMPTY_GROUPED) }),
   );
   await page.route('**/api/tasks/archive**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], total: 0 }) }),
   );
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -173,10 +173,10 @@ async function mockBackend(page: Page): Promise<void> {
       ]),
     }),
   );
-  await page.route('**/api/workspaces', route =>
+  await page.route('**/api/v1/workspaces', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
-  await page.route('**/api/projects', route =>
+  await page.route('**/api/v1/projects', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
   await page.route('**/api/bus/*/messages**', route =>
@@ -188,7 +188,7 @@ async function mockBackend(page: Page): Promise<void> {
 
   // StatusBar.runningCount does `Object.values(status.projects)`, so the
   // runner-status snapshot must carry a `projects` object.
-  await page.route('**/api/runner/status', (route) =>
+  await page.route('**/api/v1/studio/runner/status', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }),
   );
 
