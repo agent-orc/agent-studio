@@ -71,13 +71,19 @@ public sealed class DurableHandoffRecovery
                     }
                     catch (TaskServerException ex) when (
                         ex.StatusCode == 409
-                        && completion is not null
-                        && outbox.Snapshot.FinalHandoffState == "artifact-replay")
+                        && completion is not null)
                     {
                         // Completion may have reached the server just before
-                        // the local acknowledgement was persisted. The exact
-                        // fenced authority still permits idempotent replay.
+                        // the local acknowledgement was persisted, whether the
+                        // artifact stage left the outbox in "transferring" or
+                        // "artifact-replay". A completion item is journaled only
+                        // after that stage, and the exact fenced authority still
+                        // permits idempotent replay; the server rejects it if
+                        // the attempt was superseded instead.
                         _client.RestoreCompletedOutboxAuthority(outbox.Authority);
+                        _log(
+                            $"unacknowledged completion authority restored run={outbox.Authority.RunId} " +
+                            $"fence={outbox.Authority.Fence} state={outbox.Snapshot.FinalHandoffState}");
                     }
                 }
                 reconciled = true;

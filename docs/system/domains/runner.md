@@ -91,8 +91,11 @@ rollout decision.
   partial-outcome report fails,
   the runner keeps `artifact-replay` in the durable outbox and persists any
   unsent report. Recovery retries both under the original exact fence after
-  completion; a newer fence denies the old attempt. Artifact idempotency keys
-  prevent duplicate storage. The server advertises its base64-safe request
+  completion; a newer fence denies the old attempt. If the server accepted a
+  journaled completion before the runner persisted its acknowledgement,
+  recovery treats the 409 lease renewal as completed authority in any handoff
+  state (`transferring` or `artifact-replay`) and replays the completion
+  idempotently. Artifact idempotency keys prevent duplicate storage. The server advertises its base64-safe request
   budget plus project file and total caps (8 MiB per file by default). On the
   v1 plane, each artifact, event, and result-finalization write carries the
   exact runner, instance, lease id, and fence. A completed lease needs no later

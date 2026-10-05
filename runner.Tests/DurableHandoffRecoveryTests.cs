@@ -466,6 +466,77 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         Assert.Equal(1, handler.StoredArtifactCount);
     }
 
+    [Fact]
+    public async Task Accepted_completion_without_local_ack_recovers_from_a_transferring_outbox()
+    {
+        var authority = new RunOutboxAuthority(
+            "run-unacked-completion", "TASK-15", "runner-a", "old-host:47", "lease-g", 15);
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _root, authority.TaskKey, authority.RunId);
+        Directory.CreateDirectory(evidence);
+        var bytes = Encoding.UTF8.GetBytes("evidence transferred before completion");
+        await File.WriteAllBytesAsync(Path.Combine(evidence, "evidence.txt"), bytes);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+            .ToLowerInvariant();
+        var manifest = RemoteTaskRunner.BuildArtifactManifest(
+        [
+            new ArtifactManifestEntry("results/evidence.txt", sha, bytes.LongLength),
+        ]);
+        var resultSha = new string('8', 40);
+        var envelope = new ImmutableResultEnvelope(
+            "repo-15", authority.RunId, new string('5', 40), resultSha,
+            FencedGitRefs.ImmutableResult(authority.RunId, authority.Fence, resultSha),
+            null, manifest.Digest);
+        var outbox = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        outbox.Enqueue("run-context", JsonSerializer.Serialize(
+            new DurableRunContextPayload("repo-15", null, "main", new string('5', 40)),
+            WebJson));
+        outbox.Enqueue("terminal", JsonSerializer.Serialize(
+            new DurableTerminalPayload("Done", null), WebJson));
+        outbox.Enqueue("artifact-manifest", manifest.Json);
+        var finalItem = outbox.Enqueue("final-result", JsonSerializer.Serialize(envelope, WebJson));
+        var envelopeDigest = ResultEnvelopeDigest.Compute(envelope);
+        outbox.Acknowledge(finalItem.Sequence);
+        outbox.RecordHandoffAcknowledgement(new ResultHandoffAck(
+            authority.RunId, finalItem.Sequence, envelopeDigest, "acknowledged",
+            new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc), // clock-independent: fixed journal fact
+            new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc), // clock-independent: fixed journal fact
+            false));
+        // The artifact stage succeeded and the completion item was journaled
+        // and accepted by the server, but the runner stopped before it
+        // persisted the local acknowledgement.
+        outbox.RecordHandoffState("transferring", envelopeDigest);
+        outbox.Enqueue("completion", JsonSerializer.Serialize(
+            new DurableCompletionPayload("Done", null, envelopeDigest), WebJson));
+
+        var handler = new RecordingHandler(
+            HttpStatusCode.Conflict,
+            completedOnServer: true);
+        // The artifact was stored before completion; only its idempotent
+        // replay is accepted now.
+        handler.SeedStoredArtifact($"runner-artifact:{authority.RunId}:results/evidence.txt:{sha}");
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(
+            http, "runner-a", usesDurableTaskServer: true);
+        var recovery = new DurableHandoffRecovery(Options(), client, _ => { });
+
+        await recovery.RecoverAllAsync(default);
+
+        var completed = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("completed", completed.Snapshot.FinalHandoffState);
+        Assert.Empty(completed.Pending);
+        Assert.Null(completed.PendingArtifactReport);
+        Assert.Equal(1, handler.RenewalCalls);
+        Assert.Equal(1, handler.CompletionCalls);
+        Assert.Equal(0, handler.RejectedArtifactCalls);
+        Assert.Equal(0, handler.PartialReportCalls);
+        Assert.Equal(1, handler.StoredArtifactCount);
+
+        await recovery.RecoverAllAsync(default);
+        Assert.Equal(1, handler.RenewalCalls);
+        Assert.Equal(1, handler.CompletionCalls);
+    }
+
     private RunnerOptions Options(string? gitRemote = null) => new()
     {
         ServerUrl = "http://localhost",
@@ -533,9 +604,12 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
     private sealed class RecordingHandler(
         HttpStatusCode renewalStatus = HttpStatusCode.OK,
         bool loseFirstArtifactAcknowledgement = false,
-        bool failFirstPartialReport = false) : HttpMessageHandler
+        bool failFirstPartialReport = false,
+        bool completedOnServer = false) : HttpMessageHandler
     {
         private readonly HashSet<string> _storedArtifactKeys = new(StringComparer.Ordinal);
+        public void SeedStoredArtifact(string idempotencyKey) => _storedArtifactKeys.Add(idempotencyKey);
+        public int RejectedArtifactCalls { get; private set; }
         public int RenewalCalls { get; private set; }
         public int HandoffCalls { get; private set; }
         public int CompletionCalls { get; private set; }
@@ -649,6 +723,16 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
                     body,
                     WebJson)!;
                 LastArtifact = artifact;
+                if (completedOnServer && !_storedArtifactKeys.Contains(artifact.IdempotencyKey))
+                {
+                    // The server checks idempotency before attempt state, so
+                    // only a replay of an already-stored write is accepted.
+                    RejectedArtifactCalls++;
+                    return Json(HttpStatusCode.Conflict, new
+                    {
+                        error = "RunAttempt is Completed and no longer has write authority.",
+                    });
+                }
                 var firstDelivery = _storedArtifactKeys.Add(artifact.IdempotencyKey);
                 if (firstDelivery && loseFirstArtifactAcknowledgement)
                     return Json(HttpStatusCode.ServiceUnavailable, new { error = "acknowledgement lost" });

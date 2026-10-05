@@ -1747,7 +1747,10 @@ If an upload or its partial-transfer report still fails, the outbox retains
 `artifact-replay` after completion. Later recovery sends any persisted report
 and retries the bounded files with the original exact runner, lease, and fence.
 The same artifact idempotency keys prevent duplicate storage, and a newer
-fence denies stale replay. The worker is not rerun.
+fence denies stale replay. If the host stopped after the server accepted the
+completion but before the local acknowledgement, the next recovery replays that
+completion under the same fence and settles the outbox as `completed`. The
+worker is not rerun.
 
 While completion is being retried, the runner reports its persisted terminal
 attempt in the active task set even though the coding process has exited. This
