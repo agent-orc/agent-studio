@@ -85,6 +85,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Review Plane claim/report/replay contract (two-phase report hand-off, idempotent replay, stale-lease claim requeue; AGT-2762) | [contracts/review-plane.md](../system/contracts/review-plane.md) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
+| Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
@@ -205,6 +206,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Windows Task Server fallback runbook (Phase B slice B4: install, warm standby, sub-15-minute switch drill both directions; AGT-2735) | [operations/setup/windows-fallback-runbook.md](../operations/setup/windows-fallback-runbook.md) |
 | Hosted Wiki publication (published revision, freshness SLO, credentials, atomic promotion, typed failures, rollback drill) | [operations/setup/hosted-wiki-publication.md](../operations/setup/hosted-wiki-publication.md) |
 | Common problems | [common-problems/README.md](../operations/common-problems/README.md) |
+| Background polling leaves an open HTTP request at `verify()` | [system/common-problems/open-http-request-at-verify-from-chat-polling/](../system/common-problems/open-http-request-at-verify-from-chat-polling/) |
+| Background chat polling test measure | [system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md](../system/common-problems/open-http-request-at-verify-from-chat-polling/measures.md) |
 | Ready shows waiting for sign-in but the host is logged in | [common-problems/ready-sign-in-runner-link-down/](../operations/common-problems/ready-sign-in-runner-link-down/) |
 | claude CLI not available right after a CLI auto-update (launcher stub) | [common-problems/claude-launcher-stub-after-autoupdate/](../operations/common-problems/claude-launcher-stub-after-autoupdate/) |
 | Every process of the runner account dies in one second (sentinel pid broadcast kill) | [common-problems/sentinel-pid-broadcast-kill/](../operations/common-problems/sentinel-pid-broadcast-kill/) |

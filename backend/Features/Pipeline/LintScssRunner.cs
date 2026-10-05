@@ -30,7 +30,10 @@ public sealed record LintScssResult(
     int? ExitCode,
     long DurationMs,
     string Output,
-    string Reason);
+    string Reason)
+{
+    public string? InfrastructureFailureCode { get; init; }
+}
 
 /// <summary>
 /// Deterministic post-step that runs <c>npx stylelint</c> against the

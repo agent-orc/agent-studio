@@ -85,7 +85,7 @@ async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
     autoReview: [], humanReview: [], completed: [], archive: [],
   };
 
-  await page.route('**/api/tasks/grouped**', route =>
+  await page.route('**/api/v1/studio/board**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
   await page.route('**/api/watch-paths**', route => route.fulfill({
     status: 200,
@@ -99,7 +99,7 @@ async function installQuotaWaitCardRoutes(page: Page): Promise<void> {
   }));
   await page.route('**/api/git/summary**', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill({
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({

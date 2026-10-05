@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
@@ -49,11 +49,11 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/tasks/grouped', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
-  await page.route('**/api/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
+  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
-  await page.route('**/api/runner/status', json({ projects: {} }));
+  await page.route('**/api/v1/studio/runner/status', json({ projects: {} }));
   await page.route('**/api/runner/queue-starvation', json({
     active: false,
     waitingTaskCount: 0,
@@ -90,11 +90,11 @@ async function stubBackgroundApis(page: Page) {
     cpuCores: 4, activeSlots: 0,
   }], findings: [] }));
   await page.route('**/api/dev-tools/flags', json({ updateStableEnabled: false, deleteE2EJobsEnabled: false }));
-  await page.route('**/api/workspaces*', json([]));
+  await page.route('**/api/v1/workspaces*', json([]));
 }
 
 async function stubOnlineJobsHub(page: Page) {
-  await page.route('**/hubs/jobs/negotiate?*', route => route.fulfill({
+  await page.route('**/hubs/v1/studio/negotiate?*', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -104,7 +104,7 @@ async function stubOnlineJobsHub(page: Page) {
       availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text', 'Binary'] }],
     }),
   }));
-  await page.routeWebSocket('**/hubs/jobs*', socket => {
+  await page.routeWebSocket('**/hubs/v1/studio*', socket => {
     socket.onMessage(message => {
       if (typeof message === 'string' && message.includes('"protocol":"json"')) socket.send(`{}\u001e`);
     });
@@ -848,11 +848,13 @@ test.describe('Execution Hosts settings section', () => {
       createBody = route.request().postDataJSON();
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'onboard-runner-02' }) });
     });
-    await page.route('**/api/tasks/onboard-runner-02**', route => route.fulfill({
+    const taskDetailNotMounted = (route: Route) => route.fulfill({
       status: 404,
       contentType: 'application/json',
       body: JSON.stringify({ error: 'mocked-task-detail-not-mounted' }),
-    }));
+    });
+    await page.route('**/api/tasks/onboard-runner-02**', taskDetailNotMounted);
+    await page.route('**/api/v1/projects/*/tasks/onboard-runner-02**', taskDetailNotMounted);
     await page.route('**/api/v1/management/remote-hosts/provider-auth', route => route.fulfill({
       status: 200,
       contentType: 'application/json',

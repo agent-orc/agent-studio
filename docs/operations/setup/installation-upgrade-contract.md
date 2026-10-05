@@ -1,7 +1,7 @@
 # Installation upgrade and rollback contract
 
 AGT-2947 implements item I06 of the deployment story
-([Dossier AGT-W63](../../deployment-story/index.html#I06)). It applies
+([Dossier AGT-W63](../deployment-story/index.html#I06)). It applies
 decision D6 option A: one versioned installation manifest, with one updater
 for each placement. It covers journey steps A7, B7 and C8.
 

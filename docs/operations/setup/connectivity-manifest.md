@@ -1,6 +1,6 @@
 # Installation connectivity manifest and single link owner
 
-Delivery of Dossier AGT-W63 item I04 (`docs/deployment-story/index.html`, links
+Delivery of Dossier AGT-W63 item I04 (`docs/operations/deployment-story/index.html`, links
 table, D4, B2 and C6). Implemented option: **D4 A**, private HTTPS as the target
 and supervised reverse SSH as a bounded transition (operator decision of
 26 September 2026).
@@ -83,13 +83,16 @@ evidence.
 1. Before adoption: `linkOwner: tunnel-keeper`. Run
    `probe-runner-route.sh` on the runner host.
 2. Adoption: set `linkOwner: link-supervisor`, bump `revision`, restart
-   backend/Host. `LinkSupervisor` adopts the healthy existing forward
-   (`lastProbe.kind = adoption`). Disable the TunnelKeeper scheduled task in
-   the same window. The probe fails with `duplicated-listener` if both run.
-3. Soak for the period agreed in AGT-2764. Only after it passes, remove the
-   TunnelKeeper registration. The scripts under
-   `deploy/windows/agent-runner-tunnel/` remain as the documented emergency
-   rollback until then.
+   backend/Host, and disable the TunnelKeeper scheduled task in the same
+   window. Confirm `lastProbe.kind = adoption` before claiming a flap-free
+   switch. If a foreign SSH session holds the listener, stop that owner before
+   the supervisor can bind; the 2026-09-25 switch took this recovery path and
+   did not prove live adoption.
+3. Soak for the period agreed in AGT-2764. Keep the TunnelKeeper registration
+   disabled through the remote Task Server cutover and rollback rehearsal. It
+   may be removed after the operator verifies a rollback that no longer needs
+   the registration. The scripts under `deploy/windows/agent-runner-tunnel/`
+   remain the documented manual emergency path under decision D3.
 4. Direct WireGuard (AGT-2737): switch the record to `wireguard-direct`,
    set each runner's server URL to `serverOrigin`, reconcile active attempts,
    then remove its reverse route. `linkOwner` becomes `none`. No unmonitored

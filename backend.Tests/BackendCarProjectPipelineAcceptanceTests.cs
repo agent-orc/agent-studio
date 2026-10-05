@@ -263,7 +263,8 @@ public sealed class BackendCarProjectPipelineAcceptanceTests : IDisposable
             bus,
             pickupLock: new PickupLockFile(NullLogger<PickupLockFile>.Instance),
             pickupLockOwner: pickupOwner,
-            pipelineLog: pipelineLog);
+            pipelineLog: pipelineLog,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
 
         return new Harness(
             config, summary, scanner, states, chatLog, prompts, mutations, git,

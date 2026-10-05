@@ -99,7 +99,7 @@ async function installRoutes(
       contentType: 'application/json',
       body: '[]',
     }).catch(() => undefined));
-  await page.route('**/api/auth/status', (route) =>
+  await page.route('**/api/v1/studio/auth/status', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -132,7 +132,7 @@ async function installRoutes(
         devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
       }),
     }));
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -144,13 +144,13 @@ async function installRoutes(
       contentType: 'application/json',
       body: JSON.stringify({ at: '2026-07-28T12:00:00Z', snapshots: [] }),
     }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(grouped),
     }));
-  await page.route(new RegExp(`/api/tasks/${JOB_ID}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -218,7 +218,7 @@ async function installRoutes(
     route.fulfill(artifact === 'html'
       ? { status: 200, contentType: 'text/html', body: DECISION_HTML }
       : { status: 404, contentType: 'text/plain', body: '' }));
-  await page.route(`**/api/tasks/${JOB_ID}/continue**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${JOB_ID}/continue**`, async (route) => {
     capture('continue', {
       body: route.request().postDataJSON() as Record<string, unknown>,
       headers: route.request().headers(),
@@ -229,7 +229,7 @@ async function installRoutes(
       body: JSON.stringify({ status: 'queued', execution: null }),
     });
   });
-  await page.route(`**/api/tasks/${JOB_ID}/move**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${JOB_ID}/move**`, async (route) => {
     capture('move', {
       body: route.request().postDataJSON() as Record<string, unknown>,
       headers: route.request().headers(),
