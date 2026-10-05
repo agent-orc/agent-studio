@@ -6,6 +6,14 @@ using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
 
+/// <summary>Installer tests that redirect the console or set process environment run one at a time.</summary>
+[CollectionDefinition(Name)]
+public sealed class InstallerProcessStateCollection
+{
+    public const string Name = "Installer console and environment";
+}
+
+[Collection(InstallerProcessStateCollection.Name)]
 public sealed class InstallationJourneyTests
 {
     private static readonly DateTime Now = new(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -577,17 +585,17 @@ public sealed class InstallationJourneyTests
                 RelocationGate.VerifyAsync(sourcePath, set, destination, true));
             await File.WriteAllTextAsync(set + ".rehearsal.json",
                 $$"""{"backupId":"backup-1","setSha256":"{{setHash}}","installationId":"inst_original","verified":true,"restoredIntoEmptyTarget":true}""");
-            Assert.Equal("inst_original", (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).InstallationId);
+            Assert.Equal("inst_original", (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).Restored.InstallationId);
             var pending = source with { Phase = InstallationManifest.PhaseAwaitingAcceptance };
             await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(pending));
             await ManifestStore.WriteAsync(destination, pending with { Mode = "control-plane", Journey = "relocate-authority" });
             Assert.Equal(InstallationManifest.PhaseAwaitingAcceptance,
-                (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).Phase);
+                (await RelocationGate.VerifyAsync(sourcePath, set, destination, true)).Restored.Phase);
             Assert.Equal(InstallationManifest.PhaseAwaitingAcceptance,
-                RelocationGate.RelocatedManifest(pending, "docker").Phase);
+                RelocationGate.RelocatedManifest(pending, "docker", setHash).Phase);
             await File.WriteAllTextAsync(sourcePath, System.Text.Json.JsonSerializer.Serialize(source));
             await ManifestStore.WriteAsync(destination, source with { Mode = "control-plane", Journey = "relocate-authority" });
-            var relocated = RelocationGate.RelocatedManifest(source, "docker");
+            var relocated = RelocationGate.RelocatedManifest(source, "docker", setHash);
             Assert.Equal(("inst_original", "control-plane", "relocate-authority"),
                 (relocated.InstallationId, relocated.Mode, relocated.Journey));
             Assert.Equal(source.Principals, relocated.Principals);
@@ -624,6 +632,8 @@ public sealed class InstallationJourneyTests
             {
                 calls.Add(request.RequestUri!.AbsolutePath);
                 Assert.Equal("private-token", request.Headers.Authorization!.Parameter);
+                // Task Server answers 426 to an /api/v1 call without the protocol header.
+                Assert.Equal("2", request.Headers.GetValues("X-Task-Protocol-Version").Single());
                 var answer = calls.Count == 1
                     ? "{\"backupId\":\"backup-1\",\"verified\":true,\"identitySha256\":\"" + identity + "\",\"summary\":{\"setSha256\":\"abc123\"}}"
                     : "{\"backupId\":\"backup-1\",\"restored\":true,\"identitySha256\":\"" + identity + "\"}";
@@ -732,6 +742,238 @@ public sealed class InstallationJourneyTests
             Console.SetIn(input);
             Console.SetOut(output);
         }
+    }
+
+    [Fact]
+    public void Join_host_probes_the_authority_named_in_its_join_token()
+    {
+        var join = new JoinPayload(1, "https://tasks.wg.internal", new string('c', 40), "1.2.0", Now);
+
+        Assert.Equal("https://tasks.wg.internal",
+            ProductSetup.ResolveAuthorityUrl("agent-host", false, null, join));
+        Assert.Equal("https://tasks.wg.internal",
+            ProductSetup.ResolveAuthorityUrl("agent-host", false, "https://TASKS.wg.internal/", join));
+        Assert.Contains("join token names authority", Assert.Throws<ArgumentException>(
+            () => ProductSetup.ResolveAuthorityUrl("agent-host", false, "https://other.wg.internal", join)).Message);
+    }
+
+    [Fact]
+    public void Only_runs_that_contact_an_existing_authority_probe_it()
+    {
+        Assert.Equal("https://a.wg.internal",
+            ProductSetup.ResolveAuthorityUrl("connector", false, "https://a.wg.internal", null));
+        Assert.Equal("https://a.wg.internal",
+            ProductSetup.ResolveAuthorityUrl("control-plane", true, "https://a.wg.internal", null));
+        // A fresh control-plane or one-box install creates the URL it is given.
+        Assert.Null(ProductSetup.ResolveAuthorityUrl("control-plane", false, "https://a.wg.internal", null));
+        Assert.Null(ProductSetup.ResolveAuthorityUrl("studio", false, "http://127.0.0.1:5071", null));
+    }
+
+    [Fact]
+    public async Task Fresh_control_plane_install_does_not_probe_its_own_future_url()
+    {
+        var facts = await PreflightProbe.ObserveAsync(InstallationJourney.RelocateAuthority, "native",
+            "https://127.0.0.1:1", contactsAuthority: false, null, null, Path.GetTempPath(), default);
+
+        Assert.Null(facts.AuthorityReachable);
+        Assert.Null(facts.AuthorityUrlKnown);
+        Assert.DoesNotContain(PreflightPolicy.Evaluate(InstallationJourney.RelocateAuthority, "native", facts),
+            finding => finding.Check is "Connectivity" or "Authority URL" && finding.Status == PreflightStatus.Fail);
+    }
+
+    [Fact]
+    public async Task Remote_journey_without_an_authority_url_fails_preflight()
+    {
+        var facts = await PreflightProbe.ObserveAsync(InstallationJourney.AttachStudio, "native",
+            null, contactsAuthority: true, null, null, Path.GetTempPath(), default);
+        var findings = PreflightPolicy.Evaluate(InstallationJourney.AttachStudio, "native", facts);
+
+        var missing = findings.Single(finding => finding.Check == "Authority URL");
+        Assert.Equal(PreflightStatus.Fail, missing.Status);
+        Assert.Contains("--server-url", missing.Recovery);
+    }
+
+    [Fact]
+    public async Task Http_authority_is_probed_for_reachability_without_a_tls_result()
+    {
+        using var listener = StartHealthListener(out var url);
+        Assert.Equal(((bool?)true, (bool?)null), await PreflightProbe.AuthorityAsync(new Uri(url), default));
+        listener.Stop();
+        Assert.Equal(((bool?)false, (bool?)null), await PreflightProbe.AuthorityAsync(new Uri(url), default));
+    }
+
+    [Fact]
+    public async Task Token_based_join_preflight_reaches_or_fails_on_the_token_authority()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var output = Console.Out;
+        try
+        {
+            using var listener = StartHealthListener(out var url);
+            var token = Path.Combine(root, "join.token");
+            await File.WriteAllTextAsync(token, JoinTokenCodec.Encode(
+                new JoinPayload(1, url, new string('c', 40), "1.2.0", Now)));
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(token, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            var reached = new StringWriter();
+            Console.SetOut(reached);
+            await ProductSetup.RunAsync(["preflight", "--journey", "join-host", "--join-token-file", token,
+                "--install-dir", root]);
+            Assert.Contains("[ok  ] Authority URL", reached.ToString());
+            Assert.Contains("[ok  ] Connectivity", reached.ToString());
+
+            listener.Stop();
+            var unreachable = new StringWriter();
+            Console.SetOut(unreachable);
+            Assert.Equal(1, await ProductSetup.RunAsync(["preflight", "--journey", "join-host",
+                "--join-token-file", token, "--install-dir", root]));
+            Assert.Contains("[FAIL] Connectivity", unreachable.ToString());
+        }
+        finally
+        {
+            Console.SetOut(output);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Malformed_join_token_fails_before_preflight_or_any_change()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var token = Path.Combine(root, "join.token");
+            await File.WriteAllTextAsync(token, "aosj1.not-a-token.0000");
+            Assert.Throws<ArgumentException>(() => ProductSetup.ReadJoinToken(token));
+            Assert.Null(ProductSetup.ReadJoinToken(Path.Combine(root, "missing.token")));
+            Assert.Equal(1, await ProductSetup.RunAsync(["--journey", "join-host", "--join-token-file", token,
+                "--install-dir", Path.Combine(root, "config")]));
+            Assert.False(Directory.Exists(Path.Combine(root, "config")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Unavailable_release_leaves_no_pin_so_a_corrected_version_installs()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var plan = new ProductPlan(ProductProfile.StudioDocker, "studio", "docker", []);
+            // The decision for a typo'd release is not written before its artifacts verify.
+            var wrong = await ProductSetup.DecideManifestAsync(root, "install", plan,
+                InstallationJourney.OneBox, "9.9.9", null, false);
+            Assert.Equal("9.9.9", wrong!.Manifest.ReleaseVersion);
+            Assert.Null(await ManifestStore.ReadAsync(root));
+
+            var corrected = await ProductSetup.ReconcileManifestAsync(root, "install", plan,
+                InstallationJourney.OneBox, "1.2.0", null, false);
+            Assert.Equal("1.2.0", (await ManifestStore.ReadAsync(root))!.ReleaseVersion);
+            Assert.Equal(corrected!.InstallationId, (await ManifestStore.ReadAsync(root))!.InstallationId);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Commit_refuses_a_manifest_changed_by_another_setup_run()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            var plan = new ProductPlan(ProductProfile.StudioDocker, "studio", "docker", []);
+            var pending = await ProductSetup.DecideManifestAsync(root, "install", plan,
+                InstallationJourney.OneBox, "1.2.0", null, false);
+            await ManifestStore.WriteAsync(root, Manifest("1.2.0", InstallationManifest.PhaseInstalling));
+
+            Assert.Contains("changed while setup was running",
+                (await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => ProductSetup.CommitManifestAsync(pending))).Message);
+            Assert.Equal("inst_original", (await ManifestStore.ReadAsync(root))!.InstallationId);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Rollback_records_a_retained_release_not_a_fresh_verification()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            await ProductSetup.FinishManifestAsync(root, Manifest("1.1.0", InstallationManifest.PhaseComplete),
+                false, false, InstallationManifest.PhaseComplete, "services-healthy", releaseVerifiedThisRun: false);
+            var lines = await File.ReadAllLinesAsync(Path.Combine(root, InstallationManifest.CheckpointFileName));
+            Assert.Contains(lines, line => line.Contains("\"checkpoint\":\"release-verified\"")
+                && line.Contains("\"outcome\":\"retained\""));
+            Assert.DoesNotContain(lines, line => line.Contains("\"checkpoint\":\"release-verified\"")
+                && line.Contains("\"outcome\":\"observed\""));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData("install", "authority-reachable")]
+    [InlineData("update", "services-healthy")]
+    [InlineData("rollback", "services-healthy")]
+    public void Connector_records_authority_reachable_only_when_it_probed_the_authority(string command,
+        string checkpoint)
+        => Assert.Equal(checkpoint, ProductSetup.WindowsCompletionCheckpoint(ProductProfile.ConnectorWindows, command));
+
+    [Fact]
+    public void Relocation_rerun_is_recognised_only_for_the_same_recovery_set()
+    {
+        var authority = Manifest("1.2.0", InstallationManifest.PhaseComplete) with
+        { Journey = "relocate-authority", Mode = "control-plane" };
+
+        // An authority installed or relocated earlier records the same journey and mode.
+        Assert.False(RelocationGate.AlreadyRelocated(new RelocationProof(authority, "set-b")));
+        Assert.False(RelocationGate.AlreadyRelocated(
+            new RelocationProof(authority with { RelocatedFromSet = "set-a" }, "set-b")));
+        var relocated = RelocationGate.RelocatedManifest(authority, "docker", "set-b");
+        Assert.Equal("set-b", relocated.RelocatedFromSet);
+        Assert.True(RelocationGate.AlreadyRelocated(new RelocationProof(relocated, "SET-B")));
+    }
+
+    [Fact]
+    public async Task Relocated_marker_survives_the_manifest_round_trip()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        try
+        {
+            await ManifestStore.WriteAsync(root, Manifest("1.2.0", InstallationManifest.PhaseComplete) with
+            { RelocatedFromSet = "set-a" });
+            Assert.Equal("set-a", (await ManifestStore.ReadAsync(root))!.RelocatedFromSet);
+            await File.WriteAllTextAsync(Path.Combine(root, InstallationManifest.FileName),
+                System.Text.Json.JsonSerializer.Serialize(Manifest("1.2.0", InstallationManifest.PhaseComplete))
+                    .Replace(",\"RelocatedFromSet\":null", ""));
+            Assert.Null((await ManifestStore.ReadAsync(root))!.RelocatedFromSet);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    internal static System.Net.HttpListener StartHealthListener(out string url)
+    {
+        var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        url = $"http://127.0.0.1:{port}";
+        var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add(url + "/");
+        listener.Start();
+        _ = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                try
+                {
+                    var context = await listener.GetContextAsync();
+                    context.Response.StatusCode = 200;
+                    context.Response.Close();
+                }
+                catch (Exception) { return; }
+            }
+        });
+        return listener;
     }
 
     private static ManifestDecision Decide(InstallationManifest? existing, ManifestRequest request)

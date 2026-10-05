@@ -55,7 +55,7 @@ internal sealed record ProductCommand(
         "--max-parallelism",
     };
 
-    private static readonly string[] Verbs = ["update", "rollback", "uninstall", "preflight"];
+    private static readonly string[] Verbs = ["update", "rollback", "uninstall", "preflight", "accept"];
 
     public bool Has(string flag) => Flags.Contains(flag);
 

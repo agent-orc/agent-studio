@@ -67,17 +67,31 @@ internal static class ProductSetup
             : new Answers();
         var unattended = parsed.Unattended;
         var prompter = new ConsolePrompter(unattended);
+        var dryRun = flags.Contains("--dry-run");
 
         // update, rollback, and uninstall act on the recorded installation
         // unless the operator names a profile explicitly.
         var explicitMode = Get("--mode", answers.Mode);
         var explicitTarget = Get("--target", answers.Target);
         var installDirectory = Get("--install-dir", answers.InstallDirectory);
+        var serverUrl = Get("--server-url", answers.ServerUrl);
+        var joinTokenFile = Get("--join-token-file", answers.JoinTokenFile);
+        var tokenFile = Get("--token-file", answers.TokenFile);
+        var backupPath = Get("--backup-path", null) ?? PassthroughValue(parsed, "--offhost-backup-path");
+        if (command == "accept")
+            return await AcceptanceJourney.RunAsync(new AcceptanceJourney.Request(
+                LocateManifestRoot(installDirectory),
+                serverUrl ?? throw new ArgumentException("accept requires --server-url with the Task Server URL."),
+                tokenFile ?? throw new ArgumentException(
+                    "accept requires --token-file with an owner-only management token file."),
+                values.GetValueOrDefault("--recovery-checkpoint"),
+                backupPath,
+                Environment.GetEnvironmentVariable(AcceptanceJourney.CanaryCommandVariable),
+                AcceptanceJourney.DefaultCanaryTimeout));
         var located = command is not ("install" or "preflight") && explicitMode is null && explicitTarget is null
             ? await LocateInstallationAsync(installDirectory)
             : null;
-        var mode = located?.State.Mode ?? ProductCommand.NormalizeMode(explicitMode,
-            Get("--join-token-file", answers.JoinTokenFile) is not null);
+        var mode = located?.State.Mode ?? ProductCommand.NormalizeMode(explicitMode, joinTokenFile is not null);
         var target = located?.State.Target ?? ProductCommand.NormalizeTarget(explicitTarget, mode);
         var forwarded = new List<(string, string)>();
         foreach (var (option, answer) in new[]
@@ -91,58 +105,70 @@ internal static class ProductSetup
             if (Get(option, answer) is { } value) forwarded.Add((option, value));
         }
         var journey = JourneyPolicy.ForMode(mode);
-        var authorityUrl = Get("--server-url", answers.ServerUrl);
-        var secretFile = Get("--join-token-file", answers.JoinTokenFile) ?? Get("--token-file", answers.TokenFile);
-        var backupPath = Get("--backup-path", null) ?? PassthroughValue(parsed, "--offhost-backup-path");
+        var relocation = values.TryGetValue("--journey", out var journeyName)
+            && JourneyPolicy.Parse(journeyName) == InstallationJourney.RelocateAuthority;
+        // The plan is resolved before prompts and probes, so an unsupported role fails first.
+        var resolvedPlan = command == "preflight"
+            ? null
+            : ProductPlanner.Plan(parsed, mode, target, OperatingSystem.IsWindows(), forwarded);
+        if (command == "install" && resolvedPlan?.Profile == ProductProfile.ConnectorWindows)
+        {
+            // Prompted values pass the same preflight and protection checks as flags.
+            serverUrl ??= prompter.Ask("Remote Task Server URL (https://...)", null);
+            ValidateUpstream(serverUrl);
+            tokenFile ??= prompter.Ask("File containing the Studio token for the remote Task Server", null);
+        }
+        var join = mode == "agent-host" ? ReadJoinToken(joinTokenFile) : null;
+        var authorityUrl = ResolveAuthorityUrl(mode, relocation, serverUrl, join);
+        var secretFile = joinTokenFile ?? tokenFile;
         var probeRoot = installDirectory ?? DefaultInstallRoot(ProductProfile.StudioDocker);
         if (command == "preflight" || command == "install")
         {
             PrintJourney(journey);
             var findings = PreflightPolicy.Evaluate(journey, target, await PreflightProbe.ObserveAsync(
-                journey, target, authorityUrl, backupPath, secretFile is null ? null : Path.GetFullPath(secretFile),
-                probeRoot, default));
+                journey, target, authorityUrl, ContactsAuthority(mode, relocation), backupPath,
+                secretFile is null ? null : Path.GetFullPath(secretFile), probeRoot, default));
             var failed = PrintPreflight(journey, target, findings);
             if (command == "preflight") return failed ? 1 : 0;
-            if (failed && !flags.Contains("--dry-run"))
+            if (failed && !dryRun)
                 throw new InvalidOperationException(
                     "Preflight failed. Apply the recovery actions above and rerun; nothing was changed.");
         }
-        if (command == "install" && values.TryGetValue("--journey", out var journeyName)
-            && JourneyPolicy.Parse(journeyName) == InstallationJourney.RelocateAuthority
+        var plan = resolvedPlan ?? throw new UnreachableException();
+        if (command == "install" && relocation
             && JourneyPolicy.RelocationBlocker(values.GetValueOrDefault("--recovery-checkpoint"),
                 flags.Contains("--authority-frozen")) is { } blocker)
             throw new InvalidOperationException(blocker);
-        if (command == "install" && mode == "agent-host" && secretFile is null)
+        if (command == "install" && mode == "agent-host" && joinTokenFile is null)
             throw new ArgumentException(
                 "Joining a host requires --join-token-file with an owner-only token file; interactive token paste is not supported by the guided installer.");
-        if (command == "install" && secretFile is not null && !flags.Contains("--dry-run"))
+        if (command == "install" && secretFile is not null && !dryRun)
             SetupSecrets.RequireProtected(Path.GetFullPath(secretFile),
                 mode == "agent-host" ? "Join token file" : "Token file");
-        var plan = ProductPlanner.Plan(parsed, mode, target, OperatingSystem.IsWindows(), forwarded);
-        if (command == "install" && values.TryGetValue("--journey", out var relocationJourney)
-            && JourneyPolicy.Parse(relocationJourney) == InstallationJourney.RelocateAuthority)
+        if (command == "install" && relocation)
         {
             var paths = InstallPaths.Load();
             var destination = Path.GetFullPath(installDirectory ?? paths.OrchestratorConfig);
-            var restored = await RelocationGate.VerifyAsync(
+            var proof = await RelocationGate.VerifyAsync(
                 values.GetValueOrDefault("--source-manifest"),
                 values.GetValueOrDefault("--recovery-checkpoint"), destination,
                 flags.Contains("--authority-frozen"));
-            if (restored.Journey == "relocate-authority" && restored.Mode == "control-plane")
+            var restored = proof.Restored;
+            if (RelocationGate.AlreadyRelocated(proof))
             {
-                Console.WriteLine($"Relocated authority {restored.InstallationId} is already recorded; no restore was repeated.");
+                Console.WriteLine($"Relocated authority {restored.InstallationId} is already recorded for this recovery set; no restore was repeated.");
                 return 0;
             }
-            if (!flags.Contains("--dry-run"))
+            if (!dryRun)
             {
-                var targetUrl = values.GetValueOrDefault("--server-url")
+                var targetUrl = serverUrl
                     ?? throw new ArgumentException("Relocation requires --server-url for the target Task Server.");
-                var managementToken = values.GetValueOrDefault("--token-file")
+                var managementToken = tokenFile
                     ?? throw new ArgumentException("Relocation requires --token-file for the target management principal.");
                 var authorityIdentity = await RelocationGate.RestoreAsync(targetUrl, managementToken,
                     values["--recovery-checkpoint"]);
                 var postRestore = await RelocationGate.VerifyManifestAfterRestoreAsync(restored, destination);
-                var relocated = RelocationGate.RelocatedManifest(postRestore, target);
+                var relocated = RelocationGate.RelocatedManifest(postRestore, target, proof.SetSha256);
                 await ManifestStore.WriteAsync(destination, relocated);
                 await ManifestStore.CheckpointAsync(destination, relocated, "recovery-verified", "observed",
                     "Full recovery set hashes and target Task Server verify and restore responses passed.");
@@ -153,9 +179,9 @@ internal static class ProductSetup
                 await ManifestStore.CheckpointAsync(destination, relocated, "workspace-restored", "observed",
                     "The target Task Server reported full backup restoration; the empty-target rehearsal receipt was supplied.");
                 await ManifestStore.CheckpointAsync(destination, relocated, "authenticated-canary", "not reached",
-                    "I09 owns the detached provider canary after private HTTPS cutover.");
+                    "Run 'agent-studio-setup accept' on the new authority after private HTTPS cutover.");
             }
-            Console.WriteLine($"Relocated authority {restored.InstallationId} verified. Resume admission only after the authenticated canary and network cutover.");
+            Console.WriteLine($"Relocated authority {restored.InstallationId} verified. Resume admission only after 'agent-studio-setup accept' passes after network cutover.");
             return 0;
         }
         if (plan.Profile == ProductProfile.Delegated)
@@ -164,32 +190,38 @@ internal static class ProductSetup
             var delegatedRoot = plan.Mode == "agent-host" ? paths.HostConfig : paths.OrchestratorConfig;
             var requestedDelegatedVersion = SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion));
             var delegatedVersion = requestedDelegatedVersion ?? ReleaseArtifacts.CurrentVersion();
-            if (plan.Mode == "agent-host" && secretFile is not null && !flags.Contains("--dry-run"))
+            if (plan.Mode == "agent-host" && join is not null)
             {
-                var tokenVersion = JoinTokenCodec.Decode(await File.ReadAllTextAsync(secretFile)).ReleaseVersion;
-                if (requestedDelegatedVersion is not null && requestedDelegatedVersion != tokenVersion)
+                if (requestedDelegatedVersion is not null && requestedDelegatedVersion != join.ReleaseVersion)
                     throw new InvalidOperationException(
-                        $"Join token requires release {tokenVersion}, but --release-version selected {requestedDelegatedVersion}.");
-                delegatedVersion = tokenVersion;
+                        $"Join token requires release {join.ReleaseVersion}, but --release-version selected {requestedDelegatedVersion}.");
+                delegatedVersion = join.ReleaseVersion;
             }
-            var delegatedManifest = await ReconcileManifestAsync(delegatedRoot, command, plan, journey,
-                delegatedVersion, null, flags.Contains("--dry-run"));
+            var pendingDelegated = await DecideManifestAsync(delegatedRoot, command, plan, journey,
+                delegatedVersion, null, dryRun);
             if (command == "uninstall")
             {
-                if (delegatedManifest is null && !flags.Contains("--dry-run"))
+                if (pendingDelegated is null && !dryRun)
                     throw new InvalidOperationException($"No installation manifest exists at {delegatedRoot}.");
-                await UninstallDelegatedAsync(plan, paths, flags.Contains("--dry-run"), flags.Contains("--purge"));
-                if (flags.Contains("--purge") && !flags.Contains("--dry-run"))
+                await UninstallDelegatedAsync(plan, paths, dryRun, flags.Contains("--purge"));
+                if (flags.Contains("--purge") && !dryRun)
                     PurgeDelegatedPaths(plan, paths);
-                await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"),
+                await FinishManifestAsync(delegatedRoot, pendingDelegated?.Manifest, dryRun,
                     flags.Contains("--purge"), InstallationManifest.PhaseUninstalled, "uninstalled");
                 return 0;
             }
-            var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray(), paths);
+            // The release pin is recorded once the delegated flow has verified the
+            // release artifacts, so a wrong or unavailable version leaves no pin behind.
+            InstallationManifest? delegatedManifest = null;
+            var delegatedResult = await SetupApplication.RunAsync(plan.DelegatedArguments.ToArray(), paths,
+                async () => delegatedManifest = await CommitManifestAsync(pendingDelegated));
             if (delegatedResult == 0)
-                await FinishManifestAsync(delegatedRoot, delegatedManifest, flags.Contains("--dry-run"), false,
+            {
+                delegatedManifest ??= await CommitManifestAsync(pendingDelegated);
+                await FinishManifestAsync(delegatedRoot, delegatedManifest, dryRun, false,
                     InstallationManifest.PhaseComplete,
                     plan.Mode == "agent-host" ? "host-enrolled" : "services-healthy");
+            }
             return delegatedResult;
         }
 
@@ -205,15 +237,17 @@ internal static class ProductSetup
             ? state?.PreviousVersion
             : SetupOptions.NormalizeVersion(Get("--release-version", answers.ReleaseVersion))
               ?? ReleaseArtifacts.CurrentVersion();
-        var manifest = await ReconcileManifestAsync(root, command, plan, journey, requestedVersion, state,
-            flags.Contains("--dry-run"));
-        var process = new ProcessRunner(flags.Contains("--dry-run"));
+        var pendingManifest = await DecideManifestAsync(root, command, plan, journey, requestedVersion, state,
+            dryRun);
+        var manifest = pendingManifest?.Manifest;
+        var process = new ProcessRunner(dryRun);
         if (plan.Profile != ProductProfile.StudioDocker)
-            return await RunWindowsServicesAsync(parsed, plan, root, statePath, state, manifest, process, prompter,
+            return await RunWindowsServicesAsync(parsed, plan, root, statePath, state, pendingManifest, process,
+                prompter,
                 Get("--release-version", answers.ReleaseVersion),
                 Get("--release-dir", answers.ReleaseDirectory),
-                Get("--server-url", answers.ServerUrl),
-                Get("--token-file", answers.TokenFile));
+                serverUrl,
+                tokenFile);
         await CheckDockerAsync();
 
         if (command == "uninstall")
@@ -269,6 +303,9 @@ internal static class ProductSetup
             var source = await artifacts.ExtractComposeAsync(default);
             CopyDirectory(source, bundle);
         }
+        // The release pin is recorded after the bundle passed verification and
+        // before any service changes, so an unavailable version leaves no pin.
+        manifest = await CommitManifestAsync(pendingManifest);
         if (flags.Contains("--dry-run"))
             Console.WriteLine($"[dry-run] install verified Compose bundle v{version} at {bundle}");
         var envPath = Path.Combine(root, ".env");
@@ -298,7 +335,8 @@ internal static class ProductSetup
                 var next = new InstalledState("studio", "docker", version, previousVersion, port);
                 await WritePrivateFileAsync(statePath, JsonSerializer.Serialize(next));
                 await FinishManifestAsync(root, manifest is null ? null : manifest with { ReleaseVersion = version }, false, false,
-                    InstallationManifest.PhaseComplete, "services-healthy", url);
+                    InstallationManifest.PhaseComplete, "services-healthy", url,
+                    releaseVerifiedThisRun: command != "rollback");
             }
         }
         catch
@@ -374,11 +412,12 @@ internal static class ProductSetup
     }
 
     private static async Task<int> RunWindowsServicesAsync(ProductCommand parsed, ProductPlan plan,
-        string root, string statePath, InstalledState? state, InstallationManifest? manifest,
+        string root, string statePath, InstalledState? state, PendingManifest? pendingManifest,
         ProcessRunner process, ConsolePrompter prompter,
         string? releaseVersion, string? releaseDirectory, string? serverUrl, string? tokenFile)
     {
         var command = parsed.Verb;
+        var manifest = pendingManifest?.Manifest;
         var dryRun = parsed.DryRun;
         if (!dryRun) WindowsServiceSetup.RequireAdministrator();
         var layout = WindowsServiceLayout.ForHost(root);
@@ -410,8 +449,8 @@ internal static class ProductSetup
             ValidateUpstream(upstream);
             tokenFile ??= prompter.Ask("File containing the Studio token for the remote Task Server", null);
             tokenFile = Path.GetFullPath(tokenFile);
-            if (!dryRun && !File.Exists(tokenFile))
-                throw new FileNotFoundException($"Token file not found: {tokenFile}", tokenFile);
+            if (!dryRun)
+                SetupSecrets.RequireProtected(tokenFile, "Studio token file");
         }
         else if (serverUrl is not null || tokenFile is not null)
         {
@@ -434,6 +473,7 @@ internal static class ProductSetup
             var previous = layout.ReleaseDirectory(version);
             if (!dryRun && !Directory.Exists(previous))
                 throw new InvalidOperationException($"Previous release is missing: {previous}");
+            manifest = await CommitManifestAsync(pendingManifest);
             await services.ApplyAsync(profile, previous, null, null);
         }
         else
@@ -442,6 +482,7 @@ internal static class ProductSetup
             var package = dryRun
                 ? Path.Combine(Path.GetTempPath(), $"agent-orchestrator-{version}-win-x64")
                 : await artifacts.ExtractWindowsPackageAsync(default);
+            manifest = await CommitManifestAsync(pendingManifest);
             try
             {
                 await services.ApplyAsync(profile, package, upstream, tokenFile);
@@ -465,24 +506,38 @@ internal static class ProductSetup
                 PreviousVersionFor(state, version, command), 0,
                 upstream ?? state?.ServerUrl)));
         }
+        var completion = WindowsCompletionCheckpoint(profile, command);
         if (manifest is not null)
-            await FinishManifestAsync(root, manifest is null ? null : manifest with { ReleaseVersion = version }, dryRun, false,
-                InstallationManifest.PhaseComplete,
-                profile == ProductProfile.ConnectorWindows ? "authority-reachable" : "services-healthy");
+            await FinishManifestAsync(root, manifest with { ReleaseVersion = version }, dryRun, false,
+                InstallationManifest.PhaseComplete, completion,
+                completion == "authority-reachable"
+                    ? $"Preflight reached {upstream}; the connector health check passed."
+                    : null,
+                releaseVerifiedThisRun: command != "rollback");
         services.PrintSummary(profile, upstream ?? state?.ServerUrl);
         return 0;
     }
 
     /// <summary>
+    /// A reconciled manifest that is not written yet. <see cref="Existing"/> is
+    /// the manifest on disk when the decision was made.
+    /// </summary>
+    internal sealed record PendingManifest(string Root, InstallationManifest Manifest,
+        InstallationManifest? Existing, bool Write, string Command, string Journey, string Target);
+
+    /// <summary>
     /// Applies <see cref="ManifestPolicy"/>: a re-run keeps the installation id,
     /// recorded principals and data; an interrupted install resumes with the same
-    /// release; a different release requires update or rollback.
+    /// release; a different release requires update or rollback. Nothing is
+    /// written; <see cref="CommitManifestAsync"/> records the decision once the
+    /// release is verified.
     /// </summary>
-    internal static async Task<InstallationManifest?> ReconcileManifestAsync(string root, string command,
+    internal static async Task<PendingManifest?> DecideManifestAsync(string root, string command,
         ProductPlan plan, InstallationJourney journey, string? version, InstalledState? state, bool dryRun)
     {
         if (command is "preflight" || version is null) return null;
-        var existing = await ManifestStore.ReadAsync(root);
+        var onDisk = await ManifestStore.ReadAsync(root);
+        var existing = onDisk;
         if (existing is null && state is not null)
         {
             // Installations from before the manifest adopt one without changing their data.
@@ -498,7 +553,9 @@ internal static class ProductSetup
             if (command == "rollback" && existing?.Phase == InstallationManifest.PhaseUpdating)
                 throw new InvalidOperationException(
                     $"Retry the interrupted update to {existing.ReleaseVersion} before rolling back.");
-            return existing;
+            return existing is null
+                ? null
+                : new PendingManifest(root, existing, onDisk, false, command, JourneyPolicy.Name(journey), plan.Target);
         }
         var principals = plan.Profile switch
         {
@@ -529,20 +586,56 @@ internal static class ProductSetup
             Console.WriteLine($"[dry-run] installation manifest: {decision.Action} {next.InstallationId}");
             return null;
         }
-        await ManifestStore.WriteAsync(root, next);
-        if (command == "install")
-            await ManifestStore.CheckpointAsync(root, next, "preflight", "observed",
-                $"The {JourneyPolicy.Name(journey)} preflight passed for --target {plan.Target}.");
-        return next;
+        return new PendingManifest(root, next, onDisk, true, command, JourneyPolicy.Name(journey), plan.Target);
     }
+
+    /// <summary>
+    /// Writes a pending decision. It refuses when another setup run changed the
+    /// manifest after the decision, instead of overwriting that run's state.
+    /// </summary>
+    internal static async Task<InstallationManifest?> CommitManifestAsync(PendingManifest? pending)
+    {
+        if (pending is null) return null;
+        if (!pending.Write) return pending.Manifest;
+        var current = await ManifestStore.ReadAsync(pending.Root);
+        if (!SameRevision(current, pending.Existing))
+            throw new InvalidOperationException(
+                $"The installation manifest at {pending.Root} changed while setup was running. Rerun setup.");
+        await ManifestStore.WriteAsync(pending.Root, pending.Manifest);
+        if (pending.Command == "install")
+            await ManifestStore.CheckpointAsync(pending.Root, pending.Manifest, "preflight", "observed",
+                $"The {pending.Journey} preflight passed for --target {pending.Target}.");
+        return pending.Manifest;
+    }
+
+    internal static async Task<InstallationManifest?> ReconcileManifestAsync(string root, string command,
+        ProductPlan plan, InstallationJourney journey, string? version, InstalledState? state, bool dryRun)
+        => await CommitManifestAsync(await DecideManifestAsync(root, command, plan, journey, version, state, dryRun));
+
+    private static bool SameRevision(InstallationManifest? left, InstallationManifest? right)
+        => left is null || right is null
+            ? left is null && right is null
+            : (left.InstallationId, left.Phase, left.ReleaseVersion, left.UpdatedUtc)
+              == (right.InstallationId, right.Phase, right.ReleaseVersion, right.UpdatedUtc);
+
+    /// <summary>
+    /// Only a connector install probed the remote authority in this run; on
+    /// update or rollback the connector health check alone shows local health.
+    /// </summary>
+    internal static string WindowsCompletionCheckpoint(ProductProfile profile, string command)
+        => profile == ProductProfile.ConnectorWindows && command == "install"
+            ? "authority-reachable"
+            : "services-healthy";
 
     internal static string? PreviousVersionFor(InstalledState? state, string requestedVersion, string command)
         => command == "rollback" ? state?.Version
             : state?.Version == requestedVersion ? state.PreviousVersion
             : state?.Version;
 
+    /// <param name="releaseVerifiedThisRun">False for a rollback, which re-activates a
+    /// retained release without verifying artifacts in this run.</param>
     internal static async Task FinishManifestAsync(string root, InstallationManifest? manifest, bool dryRun,
-        bool purge, string phase, string checkpoint, string? detail = null)
+        bool purge, string phase, string checkpoint, string? detail = null, bool releaseVerifiedThisRun = true)
     {
         if (manifest is null || dryRun) return;
         if (purge)
@@ -566,23 +659,22 @@ internal static class ProductSetup
         await ManifestStore.WriteAsync(root, next);
         if (phase == InstallationManifest.PhaseComplete)
         {
-            await ManifestStore.CheckpointAsync(root, next, "release-verified", "observed",
-                "The selected package or Compose release passed the installer artifact verification path.");
+            await ManifestStore.CheckpointAsync(root, next, "release-verified",
+                releaseVerifiedThisRun ? "observed" : "retained",
+                releaseVerifiedThisRun
+                    ? "The selected package or Compose release passed the installer artifact verification path."
+                    : "Rollback re-activated the retained release that was verified when it was first staged.");
             await ManifestStore.CheckpointAsync(root, next, checkpoint, "observed", detail);
-            foreach (var pending in new[]
-            {
-                (Name: "identity-bootstrapped", Owner: "I05"),
-                (Name: "authenticated-canary", Owner: "I09"),
-                (Name: "recovery-checkpoint", Owner: "I07"),
-            })
-                await ManifestStore.CheckpointAsync(root, next, pending.Name, "not reached",
-                    $"Owned by {pending.Owner}; this installer did not verify the checkpoint.");
+            foreach (var pending in new[] { "identity-bootstrapped", "authenticated-canary", "recovery-checkpoint" })
+                await ManifestStore.CheckpointAsync(root, next, pending, "not reached",
+                    "Observed by 'agent-studio-setup accept' on the authority host; this install run did not verify it.");
             Console.WriteLine($"Installation id: {next.InstallationId} (recorded in {Path.Combine(root, InstallationManifest.FileName)})");
             if (next.Journey == "one-box")
             {
                 Console.WriteLine("Installation state: awaiting acceptance; service health is verified.");
                 Console.WriteLine("Next: bootstrap the first human session, register the canonical project origin, and enrol the first runner with finite coding and review budgets.");
-                Console.WriteLine("Acceptance remains pending: run the provider-authenticated coding, review and canonical publication canary, then verify a full backup and rehearse restore into an empty target. Record those receipts against this installation id.");
+                Console.WriteLine("Then run 'agent-studio-setup accept --server-url URL --token-file PATH' with the installation's canary configured in " +
+                                  $"{AcceptanceJourney.CanaryCommandVariable}. It verifies identity, a full recovery set with its empty-target rehearsal receipt, and the canary, then marks the installation complete.");
             }
         }
         else
@@ -656,6 +748,50 @@ internal static class ProductSetup
     }
 
     private static string NewInstallationId() => $"inst_{Guid.NewGuid():N}";
+
+    /// <summary>A readable join token is decoded before preflight; a malformed one fails here.</summary>
+    internal static JoinPayload? ReadJoinToken(string? joinTokenFile)
+        => joinTokenFile is not null && File.Exists(joinTokenFile)
+            ? JoinTokenCodec.Decode(File.ReadAllText(joinTokenFile))
+            : null;
+
+    /// <summary>True when the run connects to an authority that already exists.</summary>
+    internal static bool ContactsAuthority(string mode, bool relocation)
+        => mode is "agent-host" or "connector" || relocation;
+
+    /// <summary>
+    /// The existing authority this run will contact, which preflight must probe.
+    /// A host join uses the URL inside its join token; a fresh one-box or
+    /// control-plane install creates its authority and has none.
+    /// </summary>
+    internal static string? ResolveAuthorityUrl(string mode, bool relocation, string? serverUrl, JoinPayload? join)
+    {
+        if (mode != "agent-host")
+            return ContactsAuthority(mode, relocation) ? serverUrl : null;
+        if (join is null) return null;
+        if (serverUrl is not null && !string.Equals(serverUrl.TrimEnd('/'), join.ServerUrl.TrimEnd('/'),
+                StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"The join token names authority {join.ServerUrl}, but --server-url is {serverUrl}. Remove --server-url or request a join token from that authority.");
+        return join.ServerUrl;
+    }
+
+    /// <summary>The setup identity file of this host: a Studio root or the Linux authority configuration.</summary>
+    private static string LocateManifestRoot(string? installDirectory)
+    {
+        var candidates = installDirectory is not null
+            ? [Path.GetFullPath(installDirectory)]
+            : new[]
+            {
+                DefaultInstallRoot(ProductProfile.StudioDocker),
+                DefaultInstallRoot(ProductProfile.StudioWindowsServices),
+                InstallPaths.Load().OrchestratorConfig,
+            }.Distinct().ToArray();
+        return candidates.FirstOrDefault(candidate =>
+                   File.Exists(Path.Combine(candidate, InstallationManifest.FileName)))
+               ?? throw new InvalidOperationException(
+                   $"No installation manifest found at {string.Join(" or ", candidates)}. Pass --install-dir.");
+    }
 
     private static string? PassthroughValue(ProductCommand command, string option)
     {
@@ -760,6 +896,8 @@ internal static class ProductSetup
               agent-studio-setup rollback
               agent-studio-setup uninstall [--purge]
               agent-studio-setup preflight [--journey NAME] [--server-url URL]
+              agent-studio-setup accept --server-url URL --token-file PATH
+                                 [--recovery-checkpoint DIR] [--backup-path PATH]
 
             Journeys (--journey):
               one-box             Install the whole system on one machine; a
@@ -767,8 +905,16 @@ internal static class ProductSetup
               join-host           Join a runner host to an existing Task Server.
               attach-studio       Attach a Studio edge to a remote Task Server.
               relocate-authority  Move Task Server and engine to an always-on box.
-                                  Requires --recovery-checkpoint ID and
-                                  --authority-frozen (gated migration).
+                                  Requires --recovery-checkpoint DIR,
+                                  --source-manifest PATH and --authority-frozen
+                                  (gated migration).
+
+            Acceptance (accept): on a one-box or relocated authority, checks the
+            service identities and an enrolled runner, creates and verifies a full
+            recovery set (or verifies --recovery-checkpoint DIR with its empty-target
+            rehearsal receipt), then runs the canary in
+            AGENT_ORCHESTRATOR_CANARY_COMMAND. Exit 0 marks the installation
+            complete; exit 2 names the pending step.
 
             Modes:
               studio          Full product on this machine (default). Docker by default;
@@ -784,8 +930,10 @@ internal static class ProductSetup
               --offline                 Use locally loaded images without a registry pull
               --install-dir PATH        Installation state (and Compose bundles for Docker)
               --ui-port NUMBER          Loopback browser port for Docker (default 4011)
-              --server-url URL          Task Server URL (connector, control-plane)
-              --token-file PATH         Studio token file for the remote Task Server (connector)
+              --server-url URL          Task Server URL (connector, control-plane, accept);
+                                        join-host reads it from the join token
+              --token-file PATH         Owner-only token file: Studio token (connector) or
+                                        management token (relocate-authority, accept)
               --answer-file PATH        JSON answers for unattended installation
               --unattended              Use defaults without prompts
               --dry-run                 Check prerequisites and print planned operations

@@ -1,9 +1,11 @@
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace AgentStudio.Setup;
+
+/// <summary>The staged destination manifest and the hash of the verified recovery set.</summary>
+internal sealed record RelocationProof(InstallationManifest Restored, string SetSha256);
 
 /// <summary>
 /// Certifies an authority restored by the Task Server full-backup workflow.
@@ -11,7 +13,7 @@ namespace AgentStudio.Setup;
 /// </summary>
 internal static class RelocationGate
 {
-    internal static async Task<InstallationManifest> VerifyAsync(
+    internal static async Task<RelocationProof> VerifyAsync(
         string? sourceManifestPath, string? recoverySetPath, string destinationRoot, bool authorityFrozen)
     {
         if (!authorityFrozen)
@@ -36,7 +38,16 @@ internal static class RelocationGate
                 restored.Principals.Order(StringComparer.Ordinal), StringComparer.Ordinal)
             || source.ProjectOrigin != restored.ProjectOrigin)
             throw new InvalidDataException("Restored installation identity, release, principals or project origin differ from the frozen source.");
+        return new RelocationProof(restored, await VerifyRecoverySetAsync(recoverySetPath, source.InstallationId));
+    }
 
+    /// <summary>
+    /// Recomputes every file hash and the set hash of a full backup set, then
+    /// requires the empty-target rehearsal receipt for this set and installation.
+    /// Returns the verified set hash.
+    /// </summary>
+    internal static async Task<string> VerifyRecoverySetAsync(string recoverySetPath, string installationId)
+    {
         using var inventory = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(recoverySetPath, "inventory.json")));
         using var complete = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(recoverySetPath, "complete.json")));
         var expectedHash = inventory.RootElement.GetProperty("setSha256").GetString();
@@ -79,24 +90,34 @@ internal static class RelocationGate
         var receiptPath = Path.TrimEndingDirectorySeparator(recoverySetPath) + ".rehearsal.json";
         if (!File.Exists(receiptPath))
             throw new InvalidOperationException(
-                "Empty-target restore rehearsal receipt is missing. Verify and rehearse the full backup set before relocation.");
+                $"Empty-target restore rehearsal receipt {receiptPath} is missing. Verify the full backup set and rehearse its restore into an empty target first.");
         using var receipt = JsonDocument.Parse(await File.ReadAllTextAsync(receiptPath));
         var proof = receipt.RootElement;
         if (proof.GetProperty("backupId").GetString() != Path.GetFileName(Path.TrimEndingDirectorySeparator(recoverySetPath))
             || proof.GetProperty("setSha256").GetString() != expectedHash
-            || proof.GetProperty("installationId").GetString() != source.InstallationId
+            || proof.GetProperty("installationId").GetString() != installationId
             || !proof.GetProperty("verified").GetBoolean()
             || !proof.GetProperty("restoredIntoEmptyTarget").GetBoolean())
             throw new InvalidDataException("The recovery rehearsal receipt does not match this set and installation.");
-        return restored;
+        return expectedHash;
     }
 
-    internal static InstallationManifest RelocatedManifest(InstallationManifest restored, string target)
+    /// <summary>
+    /// A re-run is complete only when this exact recovery set was already
+    /// restored here. A control-plane journey or mode alone is not evidence:
+    /// an authority that was itself relocated before records the same values.
+    /// </summary>
+    internal static bool AlreadyRelocated(RelocationProof proof)
+        => proof.Restored.RelocatedFromSet is { } restoredSet
+           && string.Equals(restoredSet, proof.SetSha256, StringComparison.OrdinalIgnoreCase);
+
+    internal static InstallationManifest RelocatedManifest(InstallationManifest restored, string target, string setSha256)
         => restored with
         {
             Journey = "relocate-authority",
             Mode = "control-plane",
             Target = target,
+            RelocatedFromSet = setSha256,
             UpdatedUtc = DateTime.UtcNow,
         };
 
@@ -104,25 +125,17 @@ internal static class RelocationGate
         HttpClient? client = null)
     {
         ProductSetup.ValidateUpstream(authorityUrl);
-        SetupSecrets.RequireProtected(tokenFile, "Authority management token file");
+        var token = await AuthorityApi.ReadTokenAsync(tokenFile, "Authority management token file");
         var backupId = Path.GetFileName(Path.TrimEndingDirectorySeparator(recoverySetPath));
         using var localInventory = JsonDocument.Parse(await File.ReadAllTextAsync(
             Path.Combine(recoverySetPath, "inventory.json")));
         var localSetHash = localInventory.RootElement.GetProperty("setSha256").GetString();
         using var owned = client is null ? new HttpClient { Timeout = TimeSpan.FromMinutes(15) } : null;
         var http = client ?? owned!;
-        var token = (await File.ReadAllTextAsync(tokenFile)).Trim();
-        if (token.Length == 0) throw new InvalidDataException("Authority management token is empty.");
         var endpoint = new Uri(new Uri(authorityUrl),
             $"/api/v1/management/backups/full/{Uri.EscapeDataString(backupId)}/");
-        async Task<JsonDocument> PostAsync(string action)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(endpoint, action));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            using var response = await http.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-            return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        }
+        Task<JsonDocument> PostAsync(string action)
+            => AuthorityApi.SendAsync(http, HttpMethod.Post, new Uri(endpoint, action), token);
         using var verification = await PostAsync("verify");
         var expectedIdentity = verification.RootElement.TryGetProperty("identitySha256", out var verifiedIdentity)
             ? verifiedIdentity.GetString() : null;

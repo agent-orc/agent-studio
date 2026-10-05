@@ -8,7 +8,10 @@ namespace AgentStudio.Setup;
 
 internal static class SetupApplication
 {
-    public static async Task<int> RunAsync(string[] args, InstallPaths? installationPaths = null)
+    /// <param name="releaseVerified">Runs once the selected release artifacts passed verification,
+    /// before any host change; the product installer records its release pin there.</param>
+    public static async Task<int> RunAsync(string[] args, InstallPaths? installationPaths = null,
+        Func<Task>? releaseVerified = null)
     {
         try
         {
@@ -31,7 +34,8 @@ internal static class SetupApplication
                 eventArgs.Cancel = true;
                 shutdown.Cancel();
             };
-            await RunSetupAsync(options, shutdown.Token, installationPaths ?? InstallPaths.Load());
+            await RunSetupAsync(options, shutdown.Token, installationPaths ?? InstallPaths.Load(),
+                releaseVerified ?? (() => Task.CompletedTask));
             return 0;
         }
         catch (OperationCanceledException)
@@ -49,7 +53,8 @@ internal static class SetupApplication
     private static async Task RunSetupAsync(
         SetupOptions original,
         CancellationToken cancellationToken,
-        InstallPaths paths)
+        InstallPaths paths,
+        Func<Task> releaseVerified)
     {
         PrintHeader();
         var prompter = new ConsolePrompter(original.NonInteractive);
@@ -97,6 +102,7 @@ internal static class SetupApplication
                 payload.ReleaseVersion,
                 options.ReleaseDirectory);
             var hostRelease = await hostArtifacts.ExtractHostAsync(cancellationToken);
+            await releaseVerified();
             await ConfigureAndInstallHostAsync(
                 options,
                 prompter,
@@ -125,6 +131,7 @@ internal static class SetupApplication
 
             await using var dockerArtifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
             var dockerOrchestratorRelease = await dockerArtifacts.ExtractOrchestratorAsync(cancellationToken);
+            await releaseVerified();
             var docker = new DockerInstaller(paths, processes, options.DryRun);
             var dockerControl = await docker.InstallControlPlaneAsync(
                 dockerOrchestratorRelease,
@@ -170,6 +177,7 @@ internal static class SetupApplication
         await using var artifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
         var orchestratorRelease = await artifacts.ExtractOrchestratorAsync(cancellationToken);
         var studioRelease = await artifacts.ExtractStudioAsync(cancellationToken);
+        await releaseVerified();
         var native = new NativeInstaller(paths, processes, options.DryRun);
         var control = await native.InstallControlPlaneAsync(
             orchestratorRelease,

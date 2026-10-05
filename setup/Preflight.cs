@@ -31,7 +31,8 @@ internal sealed record HostFacts(
     bool? BackupMountWritable,
     bool? ProviderCli,
     bool? ProtectedSecretFile,
-    bool? AuthorityReachable = null);
+    bool? AuthorityReachable = null,
+    bool? AuthorityUrlKnown = null);
 
 /// <summary>Pure preflight policy: observed facts in, findings with recovery actions out.</summary>
 internal static class PreflightPolicy
@@ -76,6 +77,8 @@ internal static class PreflightPolicy
                 : new("Storage", PreflightStatus.Fail, $"{facts.FreeDiskBytes / (1024 * 1024 * 1024)} GiB free",
                     "Free at least 20 GiB for repositories, run worktrees and backups, or choose --install-dir on a larger volume."));
 
+        findings.Add(Check("Authority URL", remote ? facts.AuthorityUrlKnown : null, "existing authority URL known",
+            "Pass --server-url with the authority's https URL; a join-host run reads it from the join token issued by that authority."));
         findings.Add(Check("DNS", remote ? facts.DnsResolves : null, "authority name resolves",
             "Add the private Task Server name to the WireGuard DNS resolver or /etc/hosts (C:\\Windows\\System32\\drivers\\etc\\hosts), then retry."));
         findings.Add(Check("WireGuard", remote ? facts.WireGuardInterface : null, "WireGuard interface up",
@@ -115,10 +118,15 @@ internal static class PreflightPolicy
 /// <summary>Side-effecting probes; each returns null when the journey does not need it.</summary>
 internal static class PreflightProbe
 {
+    /// <param name="authorityUrl">The existing authority this run contacts. It is the
+    /// join token's URL for join-host, never a URL the run is about to create.</param>
+    /// <param name="contactsAuthority">True when the run needs an existing authority;
+    /// a missing or unusable URL is then a failure, not a skipped probe.</param>
     public static async Task<HostFacts> ObserveAsync(
         InstallationJourney journey,
         string target,
         string? authorityUrl,
+        bool contactsAuthority,
         string? backupPath,
         string? secretFile,
         string installRoot,
@@ -126,10 +134,11 @@ internal static class PreflightProbe
     {
         var windows = OperatingSystem.IsWindows();
         var docker = target == "docker" && journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority);
-        var remote = journey is InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority;
-        var host = Uri.TryCreate(authorityUrl, UriKind.Absolute, out var uri) ? uri : null;
-        var tls = remote && host?.Scheme == Uri.UriSchemeHttps
-            ? await TlsTrustedAsync(host, cancellationToken) : (Reachable: (bool?)null, Trusted: (bool?)null);
+        var host = contactsAuthority && Uri.TryCreate(authorityUrl, UriKind.Absolute, out var uri)
+                   && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? uri : null;
+        var authority = host is not null
+            ? await AuthorityAsync(host, cancellationToken) : (Reachable: (bool?)null, Trusted: (bool?)null);
         var processes = new ProcessRunner(false);
 
         return new HostFacts(
@@ -141,12 +150,12 @@ internal static class PreflightProbe
             windows && docker ? await SucceedsAsync(processes, "wsl", ["--status"]) : null,
             journey is InstallationJourney.OneBox or InstallationJourney.JoinHost or InstallationJourney.RelocateAuthority
                 ? FreeBytes(installRoot) : null,
-            remote && host is not null && !host.IsLoopback ? await ResolvesAsync(host.Host, cancellationToken) : null,
+            host is not null && !host.IsLoopback ? await ResolvesAsync(host.Host, cancellationToken) : null,
             journey == InstallationJourney.RelocateAuthority
-                || (remote && host is not null && !host.IsLoopback && IsPrivate(host.Host))
+                || (host is not null && !host.IsLoopback && IsPrivate(host.Host))
                 ? WireGuardUp(windows)
                 : null,
-            tls.Trusted,
+            authority.Trusted,
             journey is (InstallationJourney.OneBox or InstallationJourney.RelocateAuthority) && backupPath is not null
                 ? Writable(backupPath) : null,
             journey == InstallationJourney.JoinHost
@@ -155,7 +164,8 @@ internal static class PreflightProbe
                 : null,
             journey is (InstallationJourney.JoinHost or InstallationJourney.AttachStudio or InstallationJourney.RelocateAuthority) && secretFile is not null
                 ? SetupSecrets.IsProtected(secretFile) : null,
-            tls.Reachable);
+            authority.Reachable,
+            contactsAuthority ? host is not null : null);
     }
 
     private static async Task<bool?> VirtualizationAsync(bool windows, ProcessRunner processes)
@@ -209,15 +219,20 @@ internal static class PreflightProbe
            || (!windows && Directory.Exists("/sys/class/net")
                && Directory.EnumerateDirectories("/sys/class/net", "wg*").Any());
 
-    private static async Task<(bool? Reachable, bool? Trusted)> TlsTrustedAsync(Uri uri, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reachability is probed for every authority URL; certificate trust only
+    /// applies to https and only after a TLS handshake happened.
+    /// </summary>
+    internal static async Task<(bool? Reachable, bool? Trusted)> AuthorityAsync(Uri uri, CancellationToken cancellationToken)
     {
+        var https = uri.Scheme == Uri.UriSchemeHttps;
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             using var response = await http.GetAsync(new Uri(uri, "/healthz"), cancellationToken);
-            return (true, true);
+            return (true, https ? true : null);
         }
-        catch (HttpRequestException error) when (error.InnerException is System.Security.Authentication.AuthenticationException)
+        catch (HttpRequestException error) when (https && error.InnerException is System.Security.Authentication.AuthenticationException)
         {
             return (true, false);
         }

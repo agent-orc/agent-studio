@@ -33,11 +33,15 @@ relocation; a setup release pin alone does not certify a running digest or a
 completed upgrade. The same setup identity file is at `/etc/agent-host` for a
 Linux runner host and at the selected Studio installation root for the other
 placements. On a one-box installation, setup records `awaiting-acceptance`
-after service health until identity, the provider canary and recovery are
-verified; that phase does not mean the D6 runtime updater is waiting for a
-canary. A relocation carries the setup identity file with the restored
-authority and compares its id, principals and project origin against the frozen
-source before the journey can finish. The runtime manifest remains with the
+after service health. Only `agent-studio-setup accept` sets `complete`, after
+it observes identity, a verified recovery set with its empty-target rehearsal
+receipt, and the canary in one run. It runs the same
+`AGENT_ORCHESTRATOR_CANARY_COMMAND` as the updater. The setup phase does not
+mean the D6 runtime updater is waiting for a canary. A relocation carries the
+setup identity file with the restored authority and compares its id,
+principals and project origin against the frozen source before the journey can
+finish. It records the restored set hash, so only a rerun with that same set
+skips the restore. The runtime manifest remains with the
 authority backup and is reconciled by its updater after restoration.
 
 `update-docker.sh` and `rollback-docker.sh` render

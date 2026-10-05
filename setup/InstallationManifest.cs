@@ -22,7 +22,8 @@ internal sealed record InstallationManifest(
     int? CodingSlots,
     int? ReviewSlots,
     DateTime CreatedUtc,
-    DateTime UpdatedUtc)
+    DateTime UpdatedUtc,
+    string? RelocatedFromSet = null)
 {
     public const int CurrentSchema = 1;
     public const string FileName = "installation.json";
