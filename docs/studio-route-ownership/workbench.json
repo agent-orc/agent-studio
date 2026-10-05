@@ -1,39 +1,63 @@
 {
   "schemaVersion": 1,
   "id": "studio-route-ownership",
+  "key": "AGT-W47",
   "title": "Studio route ownership and local connector",
-  "summary": "Route-counted ownership for the Angular Studio, a constrained local connector, and the remote Task Server, including the D4b migration estimate and Robert's decision gate.",
+  "summary": "Route-counted ownership for the Angular Studio, its local connector and the remote Task Server (B1, decided 7 September 2026). The AGT-3017 extension classifies 36 Git, checkout and repository routes plus 41 repository-document routes. It proposes immutable SHA-keyed diff objects computed on the runner host and served by the Task Server, retires the blocked manual commit routes, moves branch maintenance to a runner-host request, and leaves the Windows dev seat as an observer. Decisions D1 to D6 are pending.",
   "entrypoint": "index.html",
-  "status": "archived",
+  "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-09-07T05:00:00Z",
+  "updatedAt": "2026-10-05T19:30:00Z",
   "sourceTaskKeys": [
-    "AGT-2731"
+    "AGT-2731",
+    "AGT-3017"
   ],
+  "relatedTaskKeys": [
+    "AGT-2881",
+    "AGT-2954",
+    "AGT-2949",
+    "AGT-2737",
+    "AGT-2754",
+    "AGT-2755",
+    "AGT-2756",
+    "AGT-2757",
+    "AGT-2758"
+  ],
+  "statusReason": "Reopened by AGT-3017 on 2026-10-05 for the Git views and diffs extension (sections 07 to 17). The B1 decision of 2026-09-07 and its delivered P0 to P3 route migration stay recorded; AGT-W49 still owns the Operations Server destination.",
   "implementationTasks": [
     {
-      "title": "Create the OrchestratorApi connector profile",
-      "promptMarkdown": "Add an OrchestratorApi `connector` profile that binds only to `[::1]:5031`. Map only the 95 `dev-seat` operations in `docs/studio-route-ownership/routes.json`, proxy the Task Server operations, and fail startup if any unclassified `/api` or `/hubs` endpoint is exposed. Inject the Studio bearer from Windows Credential Manager in native mode or a read-only secret file in Docker mode. Enforce the Origin, Host, session, CSRF, header-stripping, health, protocol, and atomic upstream-switch contracts in the dossier. Add route-surface and security tests. Do not host task storage, schedulers, or Runner authority.\n\nAcceptance: Loopback listener, strict route allowlist, Studio credential injection, Origin and CSRF enforcement, health, and atomic upstream selection. No local task authority is hosted."
+      "title": "Interim guard for dev-seat Git views",
+      "promptMarkdown": "Implement card 1 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (section 12, decision D6).\n\nIn OrchestratorApi, `GET /api/tasks/{taskId}/git/status`, `/git/diff` and `/git/file` (`backend/Features/Tasks/TaskGitEndpoints.cs:25-45`) fall back to the main checkout through `GitService.ResolveRunLocation` when no local task worktree exists. Change them so that a task without a local `task/<id>` worktree answers a typed `unavailable` result with reason `no-local-worktree` instead of reading the main checkout. Add the resolved repository root kind (`task-worktree` or `main-checkout`) and HEAD SHA to every task commit, diff, status and hygiene response, and show that provenance in the Angular Git pane. Open a `GitProcessTelemetry.BeginRequest` scope for every route in section 08 so their spawns appear in `/api/admin/git-telemetry`.\n\nAcceptance: regression tests prove a task without a local worktree never returns main-checkout status or diff. A Playwright check shows the provenance label in light and dark themes. Telemetry lists the new route labels. No route classification changes."
     },
     {
-      "title": "Move the core attach routes to Task Server v1",
-      "promptMarkdown": "Implement the `core-attach` route IDs from `docs/studio-route-ownership/routes.json` in the standalone Task Server v1 API. Preserve stable workspace, project, task, and run identities; remove `watchPath` as authority; and provide the `/hubs/jobs` compatibility path through a replayable Task Server event stream. Prove login/session bootstrap, board load, task create/move/start/stop/continue, orchestrator chat, reconnect from a cursor, and Studio-detached execution through the connector.\n\nAcceptance: The 27 P0 operations in the core-attach bundle work through the remote connector, including resumable live updates."
+      "title": "Git object contract and Task Server store",
+      "promptMarkdown": "Implement card 2 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (sections 09 and 14, decisions D1 and D5, working option A for both).\n\nAdd versioned contracts in `contracts/TaskServer.Contracts` for immutable Git objects keyed by `repositoryId`, `baseSha`, `headSha`, diff options and renderer version. Supported kinds: `commit`, `reviewed-delivery`, `integration`, `run-checkpoint`. Each object has a manifest (path, status, rename source, numstat, binary flag, truncation flag) and one patch per file. Add a Task Server `git_objects` index table and store manifest and patch bodies in the existing artifact store with content hashing. Add read routes that never start Git: object by key, manifest page by cursor, and one file patch. They answer `ready`, `warming`, `unavailable` with a typed reason, or `too-large`. Retention follows the owning task and result ref, not memory pressure. Start limits at 5,000 manifest files and 256 KiB or 5,000 lines per file patch, configurable, and record the measured size distribution of the last 200 deliveries in the card result.\n\nAcceptance: contract tests for keys, states, paging and limits. Ingestion is idempotent per key. Reads spawn no process. Existing artifact limits are enforced."
     },
     {
-      "title": "Move task detail and host control routes",
-      "promptMarkdown": "Implement the `task-detail-and-hosts` route IDs from `docs/studio-route-ownership/routes.json`. Add versioned task history, attempts, artifacts, pipeline, host, workspace, and policy contracts. Split `GET /api/tasks/{taskId}/files/{path*}` so Task Server task files remain remote while `scope=code` becomes a separately named dev-seat route. Keep authorization, optimistic concurrency, idempotency, and artifact content tests at the versioned boundary.\n\nAcceptance: The 111 P1 operations use Task Server resources and Runner evidence without direct Studio access to a Runner or task workspace."
+      "title": "Runner publication of Git facts and diff objects",
+      "promptMarkdown": "Implement card 3 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (sections 09 and 14, decisions D1 and D5).\n\nExtend the runner so that the host that owns the canonical checkout and run worktrees publishes Git objects through the card 2 contract. Publish at run completion (one `commit` object per commit in the delivery range, first-parent for merges), at review material creation (`reviewed-delivery` with the merge-base, Result-SHA and review truncation state from `runner/RemoteReviewWorkspace.cs`), after each agent turn, before handoff, and on salvage (`run-checkpoint` of the worktree against the run base, including untracked files within limits). Add one fenced runner operation, `git.object`, that computes a missing object on request. Deduplicate requests per key and cap Git child processes per repository. Extend `DurableGitFactsPayload` or add a sibling outbox item; do not move Git into the Task Server.\n\nAcceptance: integration tests with a real repository prove that objects match `git diff` output byte for byte within limits, that truncation is explicit, that duplicate requests produce one computation, and that the review object records the same merge-base and Result-SHA the review prompt used."
     },
     {
-      "title": "Move operations and insight routes",
-      "promptMarkdown": "Implement the `operations-and-insight` route IDs from `docs/studio-route-ownership/routes.json`. Move bus, runtime, cycle-time, token, deployment, security-review, analysis, drift, supervisor, and recovery projections into Task Server v1. Where computation needs a checkout or CLI, dispatch a fenced Runner operation and persist the resulting events and artifacts in the Task Server. Do not let the connector become a workflow engine.\n\nAcceptance: The 102 P2 operations read durable Task Server projections and dispatch execution through fenced Runner contracts."
+      "title": "Central task commit, diff and run views",
+      "promptMarkdown": "Implement card 4 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (section 08 task rows, decisions D1 and D2).\n\nServe these through Task Server v1 from card 2 objects: the task commit, aggregate and per-SHA files, diff and file reads (fe-277 to fe-283), provenance (fe-314), task Git hygiene (fe-300), and the run commits, diff and files routes (fe-325, fe-327, fe-328). Serve the run-checkpoint view for status, diff and file (fe-301, fe-297, fe-298). Read the attributed `commits[]` from the Task Server task record, and add it to the completion projection if it is missing. Move the lazy attribution backfill out of GET handlers. In Angular, label every diff with its object kind and both SHAs, page by manifest cursor, and load one file patch at a time. Keep `reviewed-delivery` and attributed commits as separate, named views.\n\nAcceptance: the Studio task Git and commit views work through the connector with the Windows checkout absent. A Playwright proof covers light and dark themes, a truncated large diff and a `warming` state. No Angular task diff call reaches a dev-seat route."
     },
     {
-      "title": "Move administration and long-tail routes",
-      "promptMarkdown": "Resolve every `administration-and-tail` route ID in `docs/studio-route-ownership/routes.json`. Implement the route in Task Server v1 when it represents current product behavior; otherwise remove the Angular call and reclassify it as retired with evidence. Split mixed global search so task results are Task Server-owned and repository commit/file search has an explicit dev-seat boundary. Update the inventory and keep every frontend operation classified exactly once.\n\nAcceptance: The 24 P3 operations have explicit v1 contracts or are removed from Angular before cutover."
+      "title": "Central project Git views",
+      "promptMarkdown": "Implement card 5 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (section 08 project rows, decisions D1 and D5).\n\nPublish versioned project Git facts from the runner host's canonical checkout on every fetch that moves a ref: the ref inventory, history pages, integration state, and a commit and path index. Serve them from Task Server v1 to replace `/api/git/inventory`, `/history`, `/integration`, `/project-commit/files` and `/diff` (fe-090, fe-092 to fe-095), checkout history and file-at-SHA (fe-271, and fe-270 with `at`), wiki history and revisions (fe-194, fe-201), and `/api/search/repository` (fe-246). Use card 2 objects for commit diffs. Facts are immutable rows keyed by repository and ref signature. Reads never start Git, and a stale snapshot is labelled with its generation time.\n\nAcceptance: each replaced view works through the connector with the Windows checkout absent. Paging is bounded where today's `git log --follow` has no limit. Tests prove no read spawns a process."
+    },
+    {
+      "title": "Repository maintenance as a runner-host request",
+      "promptMarkdown": "Implement card 6 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (section 10, decision D3, working option A).\n\nReplace the Studio's Git cleanup and branch-sweep routes (fe-082 to fe-089) with one Task Server operator request, `repository-maintenance`, that has a plan phase and an execute phase. A fenced runner operation runs it on the runner host's canonical checkout under the AGT-W18 per-project ref-mutation lease. The plan is an operation artifact that the Task Server serves, so no GET fetches. Execution re-checks every ref tip and ancestry, deletes only planned refs with expected-old protection, and writes a receipt. Move branch-sweep settings to Task Server project settings, and serve reports from operation history. Requests carry operator identity, a request key and an expected generation.\n\nAcceptance: plan and execute work with the Studio detached. A moved ref tip aborts that ref's deletion. Every deletion has a receipt. The 24 h retention sweep and the operator request share one implementation."
+    },
+    {
+      "title": "Retire dev-seat Git routes and reclassify the inventory",
+      "promptMarkdown": "Implement card 7 of the AGT-3017 extension in `docs/studio-route-ownership/index.html` (sections 08 and 10, decisions D2, D3 and D4, working option A for each). Start after cards 4 to 6 have landed.\n\nRemove the Angular calls and OrchestratorApi Studio handlers for `POST /api/tasks/{taskId}/git/commit`, `/git/commit-accepted-evidence` and `/git/generate-message`, and for the routes the dossier marks Retire. Remove the dev-seat Git routes that cards 4 to 6 replaced from the connector allowlist. Update `docs/studio-route-ownership/build-inventory.mjs` classification rules so that regenerating `routes.json` yields the section 08 owners. Never hand-edit `routes.json`. Keep `routes-inventory.test.mjs` green and update the connector route checksum. If the operator selected D4 option B instead, keep only the labelled local status, diff, file and open-in-vscode routes, without task fallback.\n\nAcceptance: the regenerated `routes.json` has no dev-seat route that runs Git, other than any D4 option B routes. The connector startup check passes. No Angular call reaches a removed route."
+    },
+    {
+      "title": "Concept: repository document writes under the remote publisher",
+      "promptMarkdown": "Concept card for the follow-up named in section 11 of `docs/studio-route-ownership/index.html` (decision D4). Run in concept mode and deliver a Dossier.\n\nWiki writes commit directly to the Windows checkout's current branch (`ProjectDocsService.CommitWikiChange`). Dossier review, decision and document writes commit and queue a push through `ManagedRepositoryMutationService`. Catalogue reads can assign Dossier keys and commit (`WorkbenchCatalogueService.EnsureCanonicalKeys`). Security writes leave the checkout dirty. Design the repository-write contract that `docs/operations/remote-task-server-local-studio.md` plans for these producers under the AGT-W18 single-publisher rule. Cover reads from a published document snapshot, writes as operator requests that become platform commits, conflict handling against a moving integration branch, key assignment outside reads, and the interim while the Windows checkout still serves documents.\n\nAcceptance: a decision-pending Dossier with alternatives, recommendation, evidence and open decisions, and implementation cards sized as bounded slices."
     }
   ],
-  "key": "AGT-W47",
-  "statusReason": "Archived after AGT-2894 review: AGT-2755 to AGT-2758 delivered the P0-P3 route migration, and AGT-W49 absorbs the current route inventory and owns the Operations Server destination.",
   "review": {
     "verdict": "superseded",
     "supersededBy": [
