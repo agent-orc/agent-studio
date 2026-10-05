@@ -525,7 +525,7 @@ public sealed partial class ScenarioContext : IDisposable
             agent = "claude",
             kind = "task",
             cliType = "claude",
-            enteredLaneAt = DateTime.UtcNow,
+            enteredLaneAt = _task.CreatedAt,
         }));
         File.WriteAllText(Path.Combine(task, "prompt.md"), _fixture.Task.Body);
         File.WriteAllText(Path.Combine(task, "status.md"), "Result: pending.");
@@ -663,7 +663,7 @@ public sealed partial class ScenarioContext : IDisposable
 
         var userTurn = new OrchestratorContextTurnDto(
             $"turn-{Guid.NewGuid():N}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             "user",
             "What is the state of the fixture task?");
         await ReadAsync<OrchestratorContextTurnDto>(await _serverClient.PostAsJsonAsync(
@@ -678,12 +678,12 @@ public sealed partial class ScenarioContext : IDisposable
             $"receipt-{Guid.NewGuid():N}",
             userTurn.TurnId,
             $"{_project.ProjectId}/{_task.TaskKey}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             new OrchestratorContextBudgetReceiptDto(8000, 12000, 16000, 4200),
             [new OrchestratorContextSourceReceiptDto("task-body", "task", null, null, "fresh", 512, 128, "included")]);
         var assistantTurn = new OrchestratorContextTurnDto(
             $"turn-{Guid.NewGuid():N}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             "orchestrator",
             "The fixture task is in 4-auto-review after its coding attempt completed.",
             Receipt: receipt);

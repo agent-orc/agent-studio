@@ -9,6 +9,7 @@ using AgentStudio.TestSupport;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 using Xunit;
 
@@ -83,15 +84,16 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
         SeedReadyTask();
         using var factory = BuildFactory();
         using var http = factory.CreateClient();
+        var clock = factory.Services.GetRequiredService<TimeProvider>();
         var options = Options();
         using var client = new RClient(http, RunnerId, options: options);
         var ct = CancellationToken.None;
-        await RegisterCodingRunnerAsync(client, http, ct);
+        await RegisterCodingRunnerAsync(client, http, clock, ct);
         await PrepareRemoteProjectAsync(http, ct);
 
         // 1. Claim on the legacy plane. The claim carries the server's attempt
         //    id on the lease and no run id, exactly as production sees it.
-        var claim = await ClaimAsync(client, ct);
+        var claim = await ClaimAsync(client, clock, ct);
         Assert.Equal(RClaimStatus.Claimed, claim.Status);
         Assert.False(client.UsesDurableTaskServer);
         Assert.Null(claim.RunId);
@@ -179,7 +181,7 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
         Assert.Equal(lease.AttemptId, request.AttemptId);
     }
 
-    private static async Task<RClaimResponse> ClaimAsync(RClient client, CancellationToken ct)
+    private static async Task<RClaimResponse> ClaimAsync(RClient client, TimeProvider clock, CancellationToken ct)
     {
         var request = new RClaim(
             RunnerId, ProjectName, "legacy-contract-host", 4242, "remote-runner",
@@ -195,11 +197,11 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
             ProjectPreflight = new RPreflight(
                 offered.ProjectId!, offered.RegistrationFingerprint!, true,
                 "clone/fetch URLs match registration; write probe succeeded",
-                DateTime.UtcNow, offered.RepositoryUrl!, offered.RepositoryUrl!),
+                clock.GetUtcNow().UtcDateTime, offered.RepositoryUrl!, offered.RepositoryUrl!),
         }, ct);
     }
 
-    private static async Task RegisterCodingRunnerAsync(RClient client, HttpClient http, CancellationToken ct)
+    private static async Task RegisterCodingRunnerAsync(RClient client, HttpClient http, TimeProvider clock, CancellationToken ct)
     {
         await client.RegisterAsync(ProjectName, "service", ct);
         var instanceId = client.RunnerInstanceId;
@@ -219,9 +221,9 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
                 RunnerId,
                 instanceId,
                 Contract.CapabilityProtocol.CurrentSchemaVersion,
-                DateTime.UtcNow,
+                clock.GetUtcNow().UtcDateTime,
                 180,
-                DateTime.UtcNow.Ticks,
+                clock.GetUtcNow().Ticks,
                 [
                     new(Contract.CapabilityProtocol.CodingExecutor, "executor"),
                     new(Contract.CapabilityProtocol.GitFetch, "source"),
@@ -264,7 +266,6 @@ public sealed class LegacyRunnerCompletionContractTests : IDisposable
             agent = "claude",
             kind = TaskKinds.Task,
             cliType = "claude",
-            enteredLaneAt = DateTime.UtcNow,
         }));
         File.WriteAllText(Path.Combine(dir, "prompt.md"), "Make a trivial change.");
         File.WriteAllText(Path.Combine(dir, "status.md"), "Result: pending.");
