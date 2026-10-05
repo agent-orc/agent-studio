@@ -83,7 +83,7 @@ public class OrchestratorChatLog
         if (info == null) return false;
         // If the job folder no longer exists, the job was moved (or deleted)
         // between the caller's lookup and this append. Recreating the folder
-        // here would resurrect the source lane as a one-line skeleton —
+        // here would resurrect the source lane as a one-line skeleton:
         // exactly the residue that was littering 4-auto-review after every
         // accept-as-done. Refuse the write and let the caller treat it as
         // best-effort; the canonical record (decision journal, bus event)

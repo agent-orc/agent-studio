@@ -29,7 +29,7 @@
               <span class="decision-chain__step">{{ item.decisionLabel }}@if (item.occurrences > 1) { <span class="decision-chain__occurrence"> #{{ item.occurrence }}/{{ item.occurrences }}</span> }</span>
             </span>
             <span class="decision-chain__verdict" data-testid="overview-decision-verdict"
-                  [cacTooltip]="item.summary">{{ item.verdict ?? '—' }}</span>
+                  [cacTooltip]="item.summary">{{ item.verdict ?? 'n/a' }}</span>
             <span class="decision-chain__model" data-testid="overview-decision-model"
                   [cacTooltip]="modelTooltip(item)">{{ item.model ?? 'rule' }}@if (item.thinkingLevel) { · {{ item.thinkingLevel }} }</span>
             <span class="decision-chain__num decision-chain__duration">{{ formatStepDuration(item.durationMs) }}</span>
@@ -39,7 +39,7 @@
               <button type="button" class="decision-chain__link" data-testid="overview-decision-evidence"
                       (click)="documentRequested.emit(evidence)">Evidence</button>
             } @else {
-              <span class="decision-chain__link decision-chain__link--none">—</span>
+              <span class="decision-chain__link decision-chain__link--none">n/a</span>
             }
           </li>
         }

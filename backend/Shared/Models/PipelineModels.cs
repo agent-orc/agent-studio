@@ -338,7 +338,7 @@ public sealed record PipelineStepExecution
     /// </summary>
     public string? Verdict { get; init; }
     /// <summary>
-    /// Optional human-readable detail behind the verdict — for aspect
+    /// Optional human-readable detail behind the verdict; for aspect
     /// steps with a non-pass verdict, the concern summary lifted from the
     /// <c>aspect-{id}.md</c> frontmatter at read time. Lets the Overview
     /// pipeline render the concrete concern as a tooltip on the CONCERNS

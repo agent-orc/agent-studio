@@ -445,8 +445,8 @@ public sealed class AspectRunnerService
                 await File.WriteAllTextAsync(Path.Combine(inputs.JobFolderPath, mdName), report, ct);
                 _fileGenerationIndex?.Upsert(inputs.JobFolderPath, genMeta with { File = mdName });
 
-                // Structured JSON source of truth (one source, two renderings —
-                // concept doc §5). Strictly additive: the Files tab prefers it
+                // Structured JSON is the source of truth for two renderings
+                // (concept doc §5). Strictly additive: the Files tab prefers it
                 // and suppresses the markdown twin from the list, but the twin
                 // stays on disk for backend readers and older UIs.
                 var jsonBody = AspectVerdictParsing.RenderJson(verdict, resolvedModel, now);
@@ -598,7 +598,7 @@ public sealed class AspectRunnerService
         sb.AppendLf();
         sb.AppendLf("Reply with a short paragraph or two (under 200 words) plus EXACTLY one verdict sentinel on its own line.");
         sb.AppendLf();
-        sb.AppendLf("Required sentinel format (literal characters — do NOT wrap in code fences, blockquotes, or quotes):");
+        sb.AppendLf("Required sentinel format (literal characters; do NOT wrap in code fences, blockquotes, or quotes):");
         sb.AppendLf();
         sb.AppendLf("[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence, no semicolons or brackets>; evidence_checked=<comma-separated repository paths or none>; missing=<specific finding or none>]]");
         sb.AppendLf();
@@ -611,9 +611,9 @@ public sealed class AspectRunnerService
         sb.AppendLf("> [[TASK_DONE]]");
         sb.AppendLf();
         sb.AppendLf("Status values:");
-        sb.AppendLf("  pass     — aspect is fine, no follow-up needed");
-        sb.AppendLf("  concerns — aspect has issues a human should look at; not blocking");
-        sb.AppendLf("  block    — aspect has a defect that must be fixed before sign-off");
+        sb.AppendLf("  pass     - aspect is fine, no follow-up needed");
+        sb.AppendLf("  concerns - aspect has issues a human should look at; not blocking");
+        sb.AppendLf("  block    - aspect has a defect that must be fixed before sign-off");
         sb.AppendLf();
         sb.AppendLf("After the sentinel, end with [[TASK_DONE]] on its own line.");
         return sb.ToString();
@@ -701,7 +701,7 @@ public sealed class AspectRunnerService
             // can drill in. But tag it as `review:unparseable` (NOT
             // `{namespace}:concerns`) so the operator can distinguish
             // "model has a real concern" from "model didn't follow the
-            // verdict format" — these are very different signals when
+            // verdict format"; these are very different signals when
             // sorting / scanning the human-review lane. See F1 in the
             // 2026-05-21 probe findings.
             return new AspectVerdict(

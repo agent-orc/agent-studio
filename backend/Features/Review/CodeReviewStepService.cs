@@ -328,7 +328,7 @@ public sealed class CodeReviewStepService
         if (request.Mode == CodeReviewMode.Grade)
         {
             return
-                $"# Code review — quality grade\n\n" +
+                $"# Code review - quality grade\n\n" +
                 $"Grade the change set below for **{request.Project}/{request.JobId}** ({request.JobTitle}).\n" +
                 $"Commit: `{request.Commit ?? "(HEAD)"}`. Model: `{request.Model}`.\n\n" +
                 $"{cardMode}\n\n" +
@@ -337,9 +337,9 @@ public sealed class CodeReviewStepService
                 $"## results/ folder inventory\n\n```\n{resultsInventory}\n```\n\n" +
                 "Treat deliverables as missing only when the diff has no branch changes, the results/ inventory is empty, and no external deliverable is documented.\n\n" +
                 "Assign a single quality grade using this rubric:\n" +
-                "- **A** — solves the goal clearly, complete, with tests / evidence.\n" +
-                "- **B** — solid, small gaps.\n" +
-                "- **C** — concerns: half-done or unclear.\n" +
+                "- **A** - solves the goal clearly, complete, with tests / evidence.\n" +
+                "- **B** - solid, small gaps.\n" +
+                "- **C** - concerns: half-done or unclear.\n" +
                 "- **D**: misses the goal, or redundantly redoes already-present code.\n\n" +
                 "For every concrete deficiency named in the paragraph, emit one self-contained actionable finding on its own line:\n" +
                 "[[CODE_REVIEW_FINDING: text=<one concrete deficiency and its required outcome>]]\n" +
@@ -394,7 +394,7 @@ public sealed class CodeReviewStepService
                 $"summary: {safeSummary}\n" +
                 $"tag: {gradeTag}\n" +
                 "---\n\n" +
-                $"# Code Review — Quality Grade: {gradeToken}\n\n" +
+                $"# Code Review - Quality Grade: {gradeToken}\n\n" +
                 (string.IsNullOrWhiteSpace(summary) ? string.Empty : $"> {summary}\n\n") +
                 $"**Grade:** {gradeToken} &nbsp;·&nbsp; **Model:** `{request.Model}` (`{request.CliType}`) &nbsp;·&nbsp; **Commit:** `{request.Commit ?? "(HEAD)"}`\n\n" +
                 "| Grade | Meaning |\n" +
