@@ -447,7 +447,7 @@ public sealed partial class ScenarioContext : IDisposable
             "--git-remote", repositoryUrl,
             "--branch", _fixture.Repository.DefaultBranch,
             "--workdir", Path.Combine(legacyRoot, "runner-work"),
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "15",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
