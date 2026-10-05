@@ -245,6 +245,48 @@ public sealed class StepCostMeasurementTests : IDisposable
     }
 
     [Fact]
+    public void Aspect_receipts_are_reconciled_with_measured_aspect_executions_not_discarded_wholesale()
+    {
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [
+            // Matches the measured aspect execution below: priced once.
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt, JobId = "J1", ParticipantId = "support:aspect-code-quality",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 40_000, OutputTokens = 4_000,
+                },
+            },
+            // The partial log has no execution for this call; its tokens and
+            // cost must stay in the project totals.
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt.AddSeconds(1), JobId = "J1", ParticipantId = "support:aspect-requirement-fit",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 30_000, OutputTokens = 3_000,
+                },
+            },
+        ]);
+        var log = Record("J1", TestAt,
+            Step("aspect-code-quality", StepKind.Aspect, PricedModel, 40_000, 4_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(
+            receipts, new HashSet<string>(StringComparer.Ordinal), [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+
+        Assert.Equal(2, merged.Count); // measured execution plus the unmatched receipt
+        var aspect = Assert.Single(timeline.Kinds, kind => kind.Kind == "aspect");
+        Assert.Equal(77_000, aspect.TotalTokens);
+        Assert.Equal(1, Assert.Single(timeline.Steps, step => step.StepId == "aspect-code-quality").Runs);
+        Assert.Equal(
+            TokenPricing.Estimate(PricedModel, 40_000, 4_000, 0, 0, TestAt).Total
+            + TokenPricing.Estimate(PricedModel, 30_000, 3_000, 0, 0, TestAt).Total,
+            timeline.TotalCostUsd);
+    }
+
+    [Fact]
     public void An_orchestrator_only_receipt_does_not_erase_core_step_usage()
     {
         var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",

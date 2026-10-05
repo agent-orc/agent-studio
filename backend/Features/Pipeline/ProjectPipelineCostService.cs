@@ -352,26 +352,26 @@ public sealed class ProjectPipelineCostService
         IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
     {
         var merged = new List<PipelineExecutionRecord>();
-        var receiptTasksWithLog = new HashSet<string>(StringComparer.Ordinal);
-        // A receipt has no step id. Match each orchestrator call to one
-        // measured execution by model and all four token counters. Consume
-        // matches one at a time so repeated calls with identical usage are
-        // reconciled without hiding additional receipts.
-        var measuredOrchestratorCalls = new Dictionary<(string JobId, string Model, long Input, long Output, long CacheRead, long CacheCreation), int>();
+        // A receipt has no step id. Match each orchestrator or supporting
+        // (aspect) call to one measured execution of the same kind by model
+        // and all four token counters. Consume matches one at a time so
+        // repeated calls with identical usage are reconciled without hiding
+        // additional receipts, and a receipt with no measured execution in a
+        // partial log stays in the ledger.
+        var measuredCalls = new Dictionary<ReceiptMatch, int>();
         foreach (var (jobId, record) in taskLogs)
         {
-            receiptTasksWithLog.Add(jobId);
             var attempts = new List<PipelineExecutionRecord> { record };
             attempts.AddRange(record.PreviousAttempts);
             foreach (var step in attempts.SelectMany(attempt => attempt.Steps)
-                         .Where(step => step.Kind == StepKind.Orchestrator))
+                         .Where(step => IsReconciledKind(step.Kind)))
             {
                 foreach (var run in StepCostMeasurement.Executions(step))
                 {
                     if (StepCostMeasurement.Tokens(run) <= 0) continue;
-                    var key = ReceiptMatchKey(jobId, run.Model, run.InputTokens, run.OutputTokens,
+                    var key = ReceiptMatchKey(jobId, step.Kind, run.Model, run.InputTokens, run.OutputTokens,
                         run.CacheReadTokens, run.CacheCreationTokens);
-                    measuredOrchestratorCalls[key] = measuredOrchestratorCalls.GetValueOrDefault(key) + 1;
+                    measuredCalls[key] = measuredCalls.GetValueOrDefault(key) + 1;
                 }
             }
             if (coreReceiptJobIds.Contains(jobId))
@@ -380,20 +380,16 @@ public sealed class ProjectPipelineCostService
             }
             merged.AddRange(attempts);
         }
-        // A supporting-agent receipt row duplicates a step row the execution
-        // log already carries; drop it when that log was read.
         foreach (var receipt in receiptRecords)
         {
-            if (receiptTasksWithLog.Contains(receipt.JobId)
-                && receipt.Steps.Any(step => step.Kind == StepKind.Aspect)) continue;
             var call = receipt.Steps.Single();
-            if (call.Kind == StepKind.Orchestrator)
+            if (IsReconciledKind(call.Kind))
             {
-                var key = ReceiptMatchKey(receipt.JobId, call.Model, call.InputTokens,
+                var key = ReceiptMatchKey(receipt.JobId, call.Kind, call.Model, call.InputTokens,
                     call.OutputTokens, call.CacheReadTokens, call.CacheCreationTokens);
-                if (measuredOrchestratorCalls.TryGetValue(key, out var remaining) && remaining > 0)
+                if (measuredCalls.TryGetValue(key, out var remaining) && remaining > 0)
                 {
-                    measuredOrchestratorCalls[key] = remaining - 1;
+                    measuredCalls[key] = remaining - 1;
                     continue;
                 }
             }
@@ -402,9 +398,15 @@ public sealed class ProjectPipelineCostService
         return merged;
     }
 
-    private static (string JobId, string Model, long Input, long Output, long CacheRead, long CacheCreation)
-        ReceiptMatchKey(string jobId, string? model, long input, long output, long cacheRead, long cacheCreation)
-        => (jobId, ModelMetadataRegistry.NormalizeId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
+    private readonly record struct ReceiptMatch(
+        string JobId, StepKind Kind, string Model, long Input, long Output, long CacheRead, long CacheCreation);
+
+    private static bool IsReconciledKind(StepKind kind)
+        => kind is StepKind.Orchestrator or StepKind.Aspect;
+
+    private static ReceiptMatch ReceiptMatchKey(
+        string jobId, StepKind kind, string? model, long input, long output, long cacheRead, long cacheCreation)
+        => new(jobId, kind, ModelMetadataRegistry.NormalizeId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
 
     /// <summary>
     /// Zero the core rows' tokens so a receipt-backed task counts its agent
