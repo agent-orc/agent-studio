@@ -30,7 +30,7 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
     {
         var process = new ProcessResult(
             0,
-            "{\"type\":\"result\",\"result\":\"fallback reply\",\"is_error\":false,\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":1}}\n",
+            "{\"type\":\"result\",\"session_id\":\"claude-session-1\",\"result\":\"fallback reply\",\"is_error\":false,\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":1}}\n",
             "");
 
         var parsed = RemoteProjectChatRunner.ParseClaude(process, "claude-opus-5");
@@ -42,6 +42,7 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
         Assert.Equal(2, parsed.TokenUsage?.CacheReadTokens);
         Assert.Equal(1, parsed.TokenUsage?.CacheCreationTokens);
         Assert.False(parsed.TokenUsage?.InputIncludesCached);
+        Assert.Equal("claude-session-1", parsed.ProviderThreadId);
     }
 
     [Fact]
@@ -49,8 +50,9 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
     {
         var process = new ProcessResult(
             0,
+            "{\"type\":\"thread.started\",\"thread_id\":\"codex-thread-1\"}\n" +
             "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ok\"}}\n" +
-            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":14983295,\"output_tokens\":24305,\"cached_input_tokens\":14786304}}\n",
+            "{\"type\":\"turn.completed\",\"model\":\"gpt-5.6-sol\",\"usage\":{\"input_tokens\":14983295,\"output_tokens\":24305,\"cached_input_tokens\":14786304,\"reasoning_output_tokens\":123}}\n",
             "");
 
         var parsed = RemoteProjectChatRunner.ParseCodex(process, "gpt-5.6-sol");
@@ -59,6 +61,8 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
         Assert.Equal(196991, parsed.TokenUsage?.InputTokens);
         Assert.Equal(14786304, parsed.TokenUsage?.CacheReadTokens);
         Assert.True(parsed.TokenUsage?.InputIncludesCached);
+        Assert.Equal(123, parsed.TokenUsage?.ReasoningTokens);
+        Assert.Equal("codex-thread-1", parsed.ProviderThreadId);
     }
 
     [Fact]
@@ -120,6 +124,7 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
         using var completion = JsonDocument.Parse(handler.CompletionJson!);
         var root = completion.RootElement;
         Assert.True(root.GetProperty("success").GetBoolean());
+        Assert.Equal("thread-fixture", root.GetProperty("providerThreadId").GetString());
 
         var context = root.GetProperty("executionContext");
         var repoPath = context.GetProperty("repoPath").GetString();
@@ -164,6 +169,7 @@ public sealed class RemoteProjectChatRunnerTests : IDisposable
         await File.WriteAllTextAsync(path, """
             #!/bin/sh
             cat >/dev/null
+            printf '{"type":"thread.started","thread_id":"thread-fixture"}\n'
             printf '{"type":"item.completed","item":{"type":"agent_message","text":"tool-output cwd=%s"}}\n' "$PWD"
             printf '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":2,"cached_input_tokens":1}}\n'
             """);

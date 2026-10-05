@@ -30,6 +30,17 @@ public sealed class ProjectSettingsServiceTests : IDisposable
         Assert.True(settings.AutoCommit);
         Assert.True(settings.AutomaticFailureContinuationsEnabled);
         Assert.Equal(AutoPushStrategies.AlwaysImmediate, settings.AutoPushStrategy);
+        Assert.Null(settings.ChatMetadataEnabled);
+    }
+
+    [Fact]
+    public void ChatMetadataOverride_PersistsAndCanBeCleared()
+    {
+        var svc = Build();
+        svc.SetChatMetadataEnabled("new-project", false);
+        Assert.False(Build().Get("new-project").ChatMetadataEnabled);
+        svc.SetChatMetadataEnabled("new-project", null);
+        Assert.Null(Build().Get("new-project").ChatMetadataEnabled);
     }
 
     [Fact]

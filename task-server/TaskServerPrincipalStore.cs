@@ -101,7 +101,11 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         await using var command = Command(connection, """
             SELECT p.principal_id, p.kind, p.scopes_json, p.runner_id,
-                   p.revoked_at, c.secret_hash, c.revoked_at, c.expires_at
+                   p.revoked_at, c.secret_hash, c.revoked_at, c.expires_at,
+                   (SELECT r.operation_id FROM principal_rotations r
+                     WHERE r.credential_id = c.credential_id
+                       AND r.retired_at IS NULL AND r.recovery_closed_at IS NULL
+                       AND r.revoked_at IS NULL LIMIT 1)
               FROM principal_credentials c
               JOIN principals p ON p.principal_id = c.principal_id
              WHERE c.credential_id = $credential_id;
@@ -118,7 +122,9 @@ public sealed partial class TaskServerStore
             reader.GetString(0),
             reader.GetString(1),
             DeserializeScopes(reader.GetString(2)),
-            reader.IsDBNull(3) ? null : reader.GetString(3));
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            credentialId,
+            reader.IsDBNull(8) ? null : reader.GetString(8));
         await reader.DisposeAsync();
         await ExecuteAsync(
             connection,
@@ -153,6 +159,10 @@ public sealed partial class TaskServerStore
         var principalId = RequireIdentifier(request.PrincipalId, "Principal id");
         var kind = NormalizeKind(request.Kind);
         var scopes = ValidateScopes(kind, request.Scopes);
+        if (principalId.StartsWith("recovery:", StringComparison.Ordinal)
+            && (kind != TaskServerPrincipalKinds.Studio
+                || !scopes.SetEquals([TaskServerScopes.Management])))
+            throw new ArgumentException("A recovery principal must be a separate Studio identity with only management scope.");
         var runnerId = kind == TaskServerPrincipalKinds.Runner
             ? RequireIdentifier(request.RunnerId, "Runner id")
             : request.RunnerId is null
@@ -198,54 +208,7 @@ public sealed partial class TaskServerStore
         RotatePrincipalRequest request,
         string actorId,
         CancellationToken ct)
-    {
-        RequireWritable();
-        var overlap = request.OverlapSeconds ?? _options.PrincipalRotationOverlapSeconds;
-        if (overlap < 0 || overlap > _options.MaximumPrincipalRotationOverlapSeconds)
-            throw new ArgumentException(
-                $"OverlapSeconds must be between 0 and {_options.MaximumPrincipalRotationOverlapSeconds}.");
-        var now = UtcNow;
-        var validUntil = now.AddSeconds(overlap);
-        var credential = GenerateCredential();
-        PrincipalDto? principal = null;
-        await InWriteTransactionAsync(async (connection, transaction) =>
-        {
-            principal = await ReadPrincipalAsync(connection, transaction, principalId, ct)
-                        ?? throw new KeyNotFoundException("Principal was not found.");
-            if (principal.RevokedAt is not null)
-                throw new InvalidOperationException("A revoked principal cannot be rotated.");
-            await ExecuteAsync(connection, """
-                UPDATE principal_credentials
-                   SET expires_at = $expires
-                 WHERE principal_id = $id
-                   AND revoked_at IS NULL
-                   AND (expires_at IS NULL OR expires_at > $expires);
-                """, ct, transaction,
-                ("$expires", Iso(validUntil)),
-                ("$id", principalId));
-            await InsertCredentialAsync(
-                connection,
-                transaction,
-                principalId,
-                credential,
-                now,
-                ct);
-            await AuditAsync(
-                connection,
-                transaction,
-                actorId,
-                "principal.rotated",
-                "principal",
-                principalId,
-                JsonSerializer.Serialize(new { overlapSeconds = overlap }),
-                ct);
-        }, ct);
-        return new IssuedPrincipalCredential(
-            principal!,
-            credential,
-            now,
-            validUntil);
-    }
+        => await BeginPrincipalRotationAsync(principalId, request, actorId, ct);
 
     public async Task<PrincipalDto> RevokePrincipalAsync(
         string principalId,
@@ -259,6 +222,10 @@ public sealed partial class TaskServerStore
         {
             principal = await ReadPrincipalAsync(connection, transaction, principalId, ct)
                         ?? throw new KeyNotFoundException("Principal was not found.");
+            await ExecuteAsync(connection, """
+                UPDATE principal_rotations SET revoked_at = COALESCE(revoked_at, $now)
+                 WHERE principal_id = $id;
+                """, ct, transaction, ("$now", Iso(now)), ("$id", principalId));
             await ExecuteAsync(connection, """
                 UPDATE principals SET revoked_at = COALESCE(revoked_at, $now)
                  WHERE principal_id = $id;

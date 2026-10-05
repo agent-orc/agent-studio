@@ -42,6 +42,7 @@ import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orc
 import { OrchestratorContextReceiptComponent } from '../orchestrator-context-receipt/orchestrator-context-receipt.component';
 import { OrchestratorContextPickerComponent } from '../orchestrator-context-picker/orchestrator-context-picker.component';
 import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/orchestrator-chat-waiting.component';
+import { OrchestratorChatUsageHeaderComponent } from '../orchestrator-chat-usage-header/orchestrator-chat-usage-header.component';
 import { OrchestratorPanelStateService } from '../../state/orchestrator-panel-state.service';
 import { OrchestratorChatActivityService } from '../../state/orchestrator-chat-activity.service';
 import { OrchestratorContextDigestService } from '../../state/orchestrator-context-digest.service';
@@ -85,6 +86,7 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
     OrchestratorContextReceiptComponent,
     OrchestratorContextPickerComponent,
     OrchestratorChatWaitingComponent,
+    OrchestratorChatUsageHeaderComponent,
     ChatSwitcherRailComponent,
     OrchestratorPanelHeaderComponent,
     OrchestratorJumpLatestComponent,
@@ -473,6 +475,7 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.events(),
     this.effectiveProject(),
     this.contextKey() ?? this.effectiveProject() ?? 'orchestrator-chat',
+    this.uiPreferences.chatMetadataEnabled(),
   ));
 
   readonly contextChipText = computed<string | null>(() => {

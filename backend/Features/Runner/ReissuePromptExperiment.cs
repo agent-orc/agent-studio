@@ -63,7 +63,7 @@ public static class ReissuePromptExperiment
     /// verbatim from the common finding payload. References are extracted from
     /// that same text and no new domain claim is invented.
     /// </summary>
-    public static string BuildTreatmentFindings(IReadOnlyList<string> findings, bool escalate)
+    public static string BuildTreatmentFindings(IReadOnlyList<string> findings, bool escalate, string? nonce = null)
     {
         var effective = findings.Count == 0
             ? new[] { "Read the reissue evidence and resolve the open auto-review finding." }
@@ -76,15 +76,21 @@ public static class ReissuePromptExperiment
             sb.AppendLf();
         }
 
+        // AGT-2989: the deficiency text is reviewer output, so it is quoted in
+        // a nonce-fenced data block; the per-finding directions stay outside.
+        var data = new List<string>();
         for (var index = 0; index < effective.Count; index++)
         {
             var finding = effective[index];
-            sb.Append(index + 1).AppendLf(".");
-            sb.Append("   - Exact deficiency: ").AppendLf(finding);
-            sb.Append("   - File, symbol, or artifact: ").AppendLf(ExtractReference(finding));
-            sb.AppendLf("   - Required change: Resolve the exact deficiency above without unrelated scope.");
-            sb.AppendLf("   - Focused verification or acceptance evidence: Run or add the smallest focused check that proves this finding is resolved, and report the result.");
+            data.Add($"{index + 1}.");
+            data.Add("   - Exact deficiency: " + finding);
+            data.Add("   - File, symbol, or artifact: " + ExtractReference(finding));
         }
+        sb.AppendLf(AgentStudio.Review.ReviewFindingDataBlock.Render(data, nonce));
+        sb.AppendLf();
+        sb.AppendLf("For each numbered finding above:");
+        sb.AppendLf("   - Required change: Resolve the exact deficiency without unrelated scope.");
+        sb.AppendLf("   - Focused verification or acceptance evidence: Run or add the smallest focused check that proves this finding is resolved, and report the result.");
 
         return sb.ToString().TrimEnd();
     }

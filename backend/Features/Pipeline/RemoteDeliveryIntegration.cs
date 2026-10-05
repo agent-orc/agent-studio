@@ -123,6 +123,29 @@ public static class RemoteDeliveryIntegrationPolicy
                && string.Equals(verdict.Classification, "NoCommands", StringComparison.OrdinalIgnoreCase));
 }
 
+/// <summary>
+/// The Human Review park reason for an immediate Remote integration result
+/// (AGT-2995). A spent automatic recovery budget keeps its exact wording;
+/// otherwise a failed integration reads its typed code, e.g.
+/// <c>integration: source-needs-rebase</c>, and never falls back to the lane
+/// ledger's bare <c>review-verdict: Error</c>.
+/// </summary>
+public static class RemoteDeliveryParkReason
+{
+    public const string Prefix = "integration: ";
+
+    /// <summary>Null for a successful or deliberately deferred integration.</summary>
+    public static string? For(MergeIntoIntegrationResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        if (!string.IsNullOrWhiteSpace(result.AutomaticRecoveryDetail))
+            return result.AutomaticRecoveryDetail;
+        return AcceptedIntegrationFailureCodes.For(result) is { } code ? ForCode(code) : null;
+    }
+
+    public static string ForCode(string failureCode) => Prefix + failureCode;
+}
+
 public sealed record RemoteDeliveryIntegrationRequest(
     string Project,
     string JobId,
@@ -218,8 +241,16 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             "Remote delivery gate failed before integration.",
             detail);
 
+    /// <param name="request">The delivery to integrate.</param>
+    /// <param name="discardCompletedReplay">
+    /// True when the caller knows the last completed result for this delivery
+    /// is stale - an operator moved the card out of its integration park
+    /// (AGT-2995). An in-flight integration is still coalesced; only a finished
+    /// one is no longer handed back.
+    /// </param>
     public Task<MergeIntoIntegrationResult> EnqueueAsync(
-        RemoteDeliveryIntegrationRequest request)
+        RemoteDeliveryIntegrationRequest request,
+        bool discardCompletedReplay = false)
     {
         ArgumentNullException.ThrowIfNull(request);
         var deliveryKey = DeliveryKey(request);
@@ -230,6 +261,12 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         lock (_gate)
         {
             PruneCompletedReplays(DateTimeOffset.UtcNow);
+            if (discardCompletedReplay
+                && _deliveryReplays.TryGetValue(deliveryKey, out var finished)
+                && finished.CompletedAtUtc is not null)
+            {
+                _deliveryReplays.Remove(deliveryKey);
+            }
             if (_deliveryReplays.TryGetValue(deliveryKey, out var replay))
             {
                 _logger.LogInformation(
@@ -364,9 +401,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     AcceptedIntegrationFailureCodes.IntegrationError,
                     "Immediate Remote delivery integration failed.",
                     ex.Message);
-                CompleteDelivery(delivery, MergeIntoIntegrationResult.Of(
-                    MergeIntoIntegrationOutcome.Error,
-                    error: ex.Message));
+                CompleteDelivery(delivery, MergeIntoIntegrationResult.Failed(
+                    AcceptedIntegrationFailureCodes.IntegrationError,
+                    ex.Message));
             }
         }
     }
