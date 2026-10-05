@@ -202,6 +202,15 @@
   --studio-card-padding:         var(--studio-spacing-4);
   --studio-card-section-gap:     var(--studio-spacing-3);
   --studio-card-list-gap:        var(--studio-spacing-3);
+  // Board count treatment (HUC-S6): lane totals, review sub-group counts and
+  // the collapsed rail share one quiet badge. Colours read themed tokens.
+  --studio-count-height:         20px;
+  --studio-count-min-width:      22px;
+  --studio-count-radius:         10px;
+  --studio-count-padding-inline: var(--studio-spacing-2);
+  --studio-count-size:           var(--studio-lane-header-secondary-size);
+  --studio-count-bg:             var(--studio-bg-hover);
+  --studio-count-fg:             var(--studio-fg-dim);
   --studio-card-title-size:      15px;
   --studio-card-title-weight:    600;
   --studio-card-title-lh:        1.35;

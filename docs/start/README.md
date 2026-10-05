@@ -27,6 +27,7 @@ Use this page as the first stop when you need the right document quickly.
 | [mockups/](../concepts/mockups/) | Locked design references and click-dummies (under `concepts/`). |
 | [assets/](../assets) | Image assets referenced by documentation pages. |
 | [proposals/](../concepts/proposals/README.md) | Dated improvement proposals with durable approval status and implementation-card references. |
+| [docs-drift-audit-2026-09-29/](../docs-drift-audit-2026-09-29/index.html) | Documentation drift audit and its evidence inventory. |
 
 ## Code-Vertrag (`app/`)
 
@@ -234,6 +235,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
+| Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |
 | Admin CLI onboarding | [concepts/admin-cli-onboarding.html](../concepts/admin-cli-onboarding.html) |
 | Orchestrator supervision loop | [concepts/orchestrator-supervision-loop.html](../concepts/orchestrator-supervision-loop.html) |

@@ -54,3 +54,19 @@
   color: var(--studio-text-secondary);
   font-size: 12px;
 }
+
+// HUC-S3 harness: the phone row replaces the desktop row below 768 px.
+.gallery__row--phone {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .gallery__row--desktop {
+    display: none;
+  }
+
+  .gallery__row--phone {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+}

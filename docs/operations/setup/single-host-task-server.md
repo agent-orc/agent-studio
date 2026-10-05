@@ -89,15 +89,27 @@ the existing supervised SSH link; WireGuard is not required.
 2. **Issue or rotate the Studio credential.** List the principals with
    `GET /api/v1/management/principals` and pick the one of kind `studio`.
    Then call `POST /api/v1/management/principals/<studio-principal>/rotate`
-   with `{"overlapSeconds":300}`, as in
+   with a stable `operationId`, a declared Studio-edge consumer and an overlap
+   sized for installation and verification, as in
    [Rotate and revoke principals](task-server.md#rotate-and-revoke-principals).
-   Redirect the one-time response to a protected file.
+   If the principal serves more than one edge, set `deliveryConsumerId` for
+   each host. Install that host's private `.consumer-proof` beside its bearer;
+   each edge must present its own proof on scoped requests and acknowledgement.
+   Redirect the response to a protected file. If it is lost before delivery,
+   repeat the request with the same operation id to recover the same bearer
+   within the overlap deadline.
 3. **Store it in Credential Manager** as the Windows user who runs Studio:
 
    ```powershell
    .\deploy\windows\studio-connector\set-studio-credential.ps1 `
-       -FromFile C:\Users\<user>\studio-rotation.json -RemoveSourceFile
+       -FromFile C:\Users\<user>\studio-rotation.json
    ```
+
+   Keep the protected response file until the new bearer has called the
+   rotation's `delivered` endpoint, the connector has completed its scoped
+   attach with the new bearer, and that Studio-edge consumer has called `ack`. Confirm the
+   old bearer receives 401, then remove the response file. See the
+   [rotation sequence](task-server.md#rotate-and-revoke-principals).
 
    Without `-FromFile`, the script prompts for the credential as a
    SecureString. On a Linux connector, write the credential to the file named

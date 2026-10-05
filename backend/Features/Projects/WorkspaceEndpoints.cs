@@ -1,4 +1,5 @@
-
+using AgentStudio.Registry;
+using AgentStudio.Security;
 
 namespace AgentStudio.Projects;
 
@@ -29,16 +30,39 @@ public static class WorkspaceEndpoints
         // priced. windowHours defaults to 24 and accepts {1, 6, 24, 168};
         // bucketMinutes defaults to 60 and accepts {5, 15, 60}. Out-of-
         // range values snap to the defaults rather than failing - the
-        // status-bar entry into this view should always render.
+        // status-bar entry into this view should always render. Usage-detail
+        // links instead supply workspaceId and exact UTC boundaries; those
+        // reads are project-authorized and do not populate the trailing-window cache.
         group.MapGet("/tokens/timeline",
-            (int? windowHours, int? bucketMinutes, TaskScannerService scanner, ITokenAggregator tokens, BetterCandidateUsageReportService candidateUsage, WorkspaceTokensCacheStore cache) =>
+            (HttpContext context, int? windowHours, int? bucketMinutes, string? workspaceId,
+                DateTime? fromUtc, DateTime? toUtc, string? projectId,
+                TaskScannerService scanner, ITokenAggregator tokens, BetterCandidateUsageReportService candidateUsage,
+                WorkspaceTokensCacheStore cache, WorkspaceRegistry workspaces, ProjectRegistry registry) =>
             {
-                var projects = scanner.GetWatchPaths()
-                    .Select(e => (e.Name, e.Path))
-                    .ToList();
+                var scoped = !string.IsNullOrWhiteSpace(workspaceId);
+                if (scoped && (fromUtc == null || toUtc == null || fromUtc.Value.Kind != DateTimeKind.Utc
+                    || toUtc.Value.Kind != DateTimeKind.Utc || fromUtc >= toUtc
+                    || toUtc.Value - fromUtc.Value > TimeSpan.FromDays(8)))
+                    return Results.BadRequest(new { error = "A valid UTC ledger range of at most eight days is required." });
+                var workspace = scoped ? workspaces.Find(workspaceId!) : null;
+                if (scoped && workspace is null) return Results.NotFound(new { error = "Unknown workspace." });
+                var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
+                var visible = scoped
+                    ? registry.List().Where(p => !p.Archived && string.Equals(p.WorkspaceId, workspace!.Id, StringComparison.OrdinalIgnoreCase))
+                        .Where(p => human is null || ProjectAccessAuthorization.Allows(human.User, p.Id, registry)).ToList()
+                    : [];
+                if (scoped && human is not null && human.User.Role != StudioRoles.Owner
+                    && human.User.Projects.Count > 0 && visible.Count == 0)
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                var projects = scoped
+                    ? visible.Where(p => projectId == null || string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))
+                        .Select(p => (p.DisplayName, p.StorageLocation)).ToList()
+                    : scanner.GetWatchPaths().Select(e => (e.Name, e.Path)).ToList();
                 var resolvedWindowHours = windowHours ?? WorkspaceTokensTimelineService.DefaultWindowHours;
                 var resolvedBucketMinutes = bucketMinutes ?? WorkspaceTokensTimelineService.DefaultBucketMinutes;
-                var timeline = tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
+                var timeline = scoped
+                    ? tokens.WorkspaceTimelineRange(projects, fromUtc!.Value, toUtc!.Value, resolvedBucketMinutes)
+                    : tokens.WorkspaceTimeline(projects, resolvedWindowHours, resolvedBucketMinutes);
                 var result = timeline with
                 {
                     BetterCandidateUsage = candidateUsage.Build(
@@ -50,7 +74,7 @@ public static class WorkspaceEndpoints
                 // live aggregator has finished. Snapshot files are keyed by
                 // (windowHours, bucketMinutes) so the 24h and 7d views don't
                 // overwrite each other.
-                cache.WriteTimeline(result.WindowHours, result.BucketMinutes, result);
+                if (!scoped) cache.WriteTimeline(result.WindowHours, result.BucketMinutes, result);
                 return Results.Ok(result);
             });
 
