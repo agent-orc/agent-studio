@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { computed, Injectable, signal } from '@angular/core';
 
 /**
  * Cycle 9 shell feature service: durable user-interface preferences
@@ -35,6 +35,7 @@ const STORAGE_KEY_COMPACT_CARDS = 'compactCards';
 const STORAGE_KEY_SIDE_SHEET_WIDTH = 'sideSheetWidth';
 const STORAGE_KEY_GROUP_BY_EPIC = 'boardGroupByEpic';
 const STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY = 'atp.studio.openProjectChatOnEntry.v1';
+const STORAGE_KEY_CHAT_METADATA = 'atp.studio.chatMetadata.enabled.v1';
 // AGT-1812: the standalone Orchestrator-settings modal was retired into the
 // consolidated Settings view (Global → Orchestrator, deep-linkable by URL hash),
 // so its bespoke localStorage open-flag is no longer a live preference; the key
@@ -55,6 +56,13 @@ export class UiPreferencesService {
   readonly openProjectChatOnEntry = signal<boolean>(
     localStorage.getItem(STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY) !== '0',
   );
+  readonly chatMetadataOverride = signal<boolean | null>(
+    localStorage.getItem(STORAGE_KEY_CHAT_METADATA) === '0' ? false
+      : localStorage.getItem(STORAGE_KEY_CHAT_METADATA) === '1' ? true : null,
+  );
+  readonly chatMetadataProjectDefault = signal(true);
+  readonly chatMetadataEnabled = computed(() =>
+    this.chatMetadataOverride() ?? this.chatMetadataProjectDefault());
 
   /**
    * Board "Gruppieren nach Epic" toggle. When on, the board case renders the
@@ -125,6 +133,11 @@ export class UiPreferencesService {
   setOpenProjectChatOnEntry(open: boolean): void {
     this.openProjectChatOnEntry.set(open);
     localStorage.setItem(STORAGE_KEY_OPEN_PROJECT_CHAT_ON_ENTRY, open ? '1' : '0');
+  }
+
+  setChatMetadataOverride(enabled: boolean): void {
+    this.chatMetadataOverride.set(enabled);
+    localStorage.setItem(STORAGE_KEY_CHAT_METADATA, enabled ? '1' : '0');
   }
 
   toggleGroupByEpic(): void {

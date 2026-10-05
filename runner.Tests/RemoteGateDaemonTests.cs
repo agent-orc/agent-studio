@@ -224,8 +224,6 @@ public sealed class RemoteGateDaemonTests
             ReviewWorkDir = Path.Combine(_root, "gate-work"),
             StateDir = Path.Combine(_root, "state"),
             BaseBranch = "main",
-            CliBin = "sh",
-            CliArgs = "",
         };
 
         public GateAttempt Attempt => new("attempt-1", "subject-1", 1, GateStates.Claimed,

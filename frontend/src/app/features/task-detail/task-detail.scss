@@ -497,10 +497,7 @@
     }
     .detail__panes-toolbar-spacer { flex: 1; }
     .detail__panes {
-      // Panes claim the full host width so the splitter runs edge-to-
-      // edge. Use negative inline margins keyed to the host's inline
-      // padding so the panes still bleed through the parent padding
-      // without re-introducing per-pane outer margins.
+      // Panes bleed through the host padding.
       display: flex;
       flex: 1;
       align-items: stretch;
@@ -512,6 +509,7 @@
     .pane {
       display: flex;
       flex-direction: column;
+      flex: var(--pane-weight, 1 1 auto);
       // Pane contents own their responsive collapse. A fixed 240 px floor made
       // three visible panes wider than the editor at compact viewports and was
       // the upstream source of clipped headers and horizontal scroll ranges.
@@ -700,11 +698,7 @@
       align-items: flex-start;
       gap: 16px;
     }
-    /*
-     * Inspector tabs (Protocol / Activity) ride on `<app-pane-tabs
-     * variant="pill">` since F38; the legacy `.inspector__tab` /
-     * `.inspector__tab--active` BEM block was removed.
-     */
+    /* Inspector tabs render in the pane header. */
     .inspector__body {
       display: flex;
       flex: 1;
@@ -904,19 +898,17 @@
       gap: 4px;
     }
     .log__row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: 6.5ch minmax(0, 1fr);
+      gap: var(--studio-spacing-2);
       align-items: baseline;
-      padding: 6px 10px;
-      background: var(--alpha-black-16);
-      border-radius: 6px;
+      padding: var(--studio-spacing-2) var(--studio-spacing-3);
       font-size: 13px;
       line-height: 1.4;
     }
-    .log__time { font-size: 11px; color: var(--studio-fg-muted); min-width: 56px; font-variant-numeric: tabular-nums; }
+    .log__time { grid-column: 1; font-size: 11px; color: var(--studio-fg-muted); font-variant-numeric: tabular-nums; }
     .log__event { color: var(--studio-fg); font-weight: 600; }
-    .log__detail { color: var(--studio-fg-dim); font-size: 12px; }
+    .log__detail { grid-column: 2; color: var(--studio-fg-dim); font-size: 12px; }
 
     .btn-sm {
       background: var(--studio-bg-hover);
@@ -1107,21 +1099,7 @@
       border-top: 1px solid var(--alpha-white-08);
       margin: 8px 0 4px;
     }
-    /* Native <dialog> rendered via showModal(): lives in the browser top
-       layer, so we style the element itself rather than a wrapping flex
-       container. The dialog IS the panel; ::backdrop draws the dim layer.
-       Height is an explicit 92vh (not max-height) so the inner flex column
-       has a fixed track for `flex: 1` to claim. Width is generous: the
-       previous 1280px cap left the activity log noticeably cramped on
-       wide displays.
-
-       Explicit `position: fixed; inset: 0; margin: auto;` pins the dialog
-       to the viewport and centers it on both axes. UA defaults vary across
-       browsers for top-layer dialogs (Chromium's positioned-from-document-flow
-       behaviour left the panel anchored to its DOM ancestor and produced a
-       left-edge dock on wide viewports). Pinning matches the .overlay
-       pattern used by the rest of the app so every large modal lands in
-       the same place. */
+    /* Modal chrome belongs to the top-layer dialog. */
     .log-overlay {
       position: fixed;
       inset: 0;
@@ -1165,12 +1143,7 @@
       letter-spacing: 0.01em;
       color: var(--studio-fg-strong);
     }
-    /* Wider Activity log (the dense column), narrower Protocol (just timestamps).
-       Was 1.15fr / 0.85fr — now Activity gets ~70% of the room so the markdown
-       wraps at a comfortable measure instead of fighting with a half-empty
-       sidebar. Each section scrolls independently — overflow: hidden on the
-       grid + min-height: 0 inside the cards keeps the chrome from scrolling
-       with the content. */
+    /* Keep Activity wider than Protocol; both scroll internally. */
     .log-overlay__content {
       display: grid;
       grid-template-columns: minmax(0, 2.2fr) minmax(260px, 0.9fr);
@@ -1183,12 +1156,7 @@
       min-height: 0;
       overflow: hidden;
     }
-    /* The activity-log-view is a structural component (no host display
-       rule of its own). Inside the overlay we want it to fill the
-       sidebar-card so its body's `flex: 1 1 auto; overflow-y: auto`
-       claims the leftover vertical room and scrolls internally. Without
-       this the host is `display: inline` and the body collapses to its
-       content height. */
+    /* The structural activity component fills its overlay card. */
     .log-overlay__content > .sidebar-card > app-activity-log-view {
       display: flex;
       flex-direction: column;
@@ -1201,8 +1169,7 @@
       flex: 1;
       min-height: 0;
     }
-    /* Right column: protocol entry list should scroll inside its card
-       rather than push the modal taller. */
+    /* Protocol scrolls within its overlay column. */
     .log-overlay .log--overlay {
       flex: 1;
       min-height: 0;
@@ -1227,6 +1194,21 @@
     @media (max-width: 720px) {
       .detail {
         padding: 18px;
+      }
+      .detail__panes {
+        flex-direction: column;
+        overflow-y: auto;
+      }
+      .detail__panes .pane {
+        flex: 0 0 min(44vh, 352px);
+        min-height: 0;
+      }
+      .detail__panes--maximized .pane { flex: 1 1 auto; }
+      .detail__panes .pane--protocol {
+        border-top: 1px solid var(--studio-border);
+      }
+      .detail__panes .pane__splitter {
+        display: none;
       }
       .detail__header {
         flex-direction: column;

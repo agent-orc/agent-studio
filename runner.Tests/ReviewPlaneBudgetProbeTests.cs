@@ -14,8 +14,7 @@ public sealed class ReviewPlaneBudgetProbeTests
         BackendName = "test",
         WorkDir = "/tmp/review-budget-test",
         BaseBranch = "develop",
-        CliBin = "codex",
-        CliArgs = string.Empty,
+        ClaudeCliBin = "codex",
         HostCodingSlots = 2,
         HostReviewSlots = 2,
     };

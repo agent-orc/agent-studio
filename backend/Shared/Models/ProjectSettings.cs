@@ -2,6 +2,9 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Optional project override for chat metadata visibility.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("chat.metadata.enabled")]
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>
@@ -123,15 +126,6 @@ public record ProjectSettings
     /// <c>BenchmarkCapabilityClass</c> from the pinned package.
     /// </summary>
     public string? BenchmarkCapabilityClass { get; init; }
-
-    /// <summary>
-    /// Per-project override for the local CLI execution engine. One of
-    /// <see cref="CliExecutionEngines.Car"/> or
-    /// <see cref="CliExecutionEngines.Legacy"/>. Null inherits the owning
-    /// workspace default, then <see cref="CliExecutionEngines.Default"/>. The
-    /// process-wide rollback selector takes precedence when present.
-    /// </summary>
-    public string? CliExecutionEngine { get; init; }
 
     /// <summary>
     /// Per-topic cadence for scheduled analysis reports (project-level

@@ -1,6 +1,6 @@
-using System.Security.Cryptography;
-using System.Text;
+using System.Globalization;
 using System.Text.Json;
+using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
 
@@ -55,11 +55,14 @@ public static class IntegrationBounceObligationStore
     {
         var paths = (status.Failure?.ConflictReport?.ConflictedFiles ?? [])
             .OrderBy(path => path, StringComparer.Ordinal).ToArray();
-        var evidence = Hash(string.Join("\n", status.Status, status.Sha,
-            status.Failure?.Code, status.Failure?.FailureSignature,
-            attemptReason, string.Join("\n", paths)));
-        var key = Hash(string.Join("\n", job.TaskKey, subject.RunAttemptId,
-            epoch, subject.ResultRef, subject.ResultSha, evidence));
+        // AGT-2989: length-prefixed fields, not "\n"-joined ones. The attempt
+        // reason and conflict paths are free text, so a joined form could
+        // alias two different conflicts onto one idempotency key.
+        var evidence = CanonicalFields.Sha256Hex(
+            [status.Status, status.Sha, status.Failure?.Code, status.Failure?.FailureSignature,
+             attemptReason, .. CanonicalFields.List(paths)]);
+        var key = CanonicalFields.Sha256Hex(job.TaskKey, subject.RunAttemptId,
+            epoch.ToString(CultureInfo.InvariantCulture), subject.ResultRef, subject.ResultSha, evidence);
         return new IntegrationBounceObligation
         {
             IdempotencyKey = key,
@@ -144,9 +147,6 @@ public static class IntegrationBounceObligationStore
             latencies.Length == 0 ? null : latencies.Average(),
             lastSweepFalseEligibility);
     }
-
-    private static string Hash(string value)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 
 /// <summary>Chooses the bounded route; content conflicts remain agent work.</summary>

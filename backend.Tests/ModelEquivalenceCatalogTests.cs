@@ -1,4 +1,5 @@
 using AgentStudio.Cli;
+using AgentStudio.Pipeline;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -29,6 +30,21 @@ public sealed class ModelEquivalenceCatalogTests
         => Assert.DoesNotContain(_catalogue.Routes, route =>
             string.Equals(route.FromModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase)
             || string.Equals(route.ToModel, ModelIds.Gpt54Mini, StringComparison.OrdinalIgnoreCase));
+
+    [Fact]
+    public void AutomaticCodexFallbacks_StayWithinStudioPolicyTiers()
+    {
+        var policyModels = new ModelRoutingPolicyRegistry().Policy.Tiers
+            .Select(tier => tier.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.NotEmpty(_catalogue.Routes);
+        Assert.All(_catalogue.Routes, route =>
+        {
+            if (route.FromCliType == CliTypes.Codex)
+                Assert.Contains(route.FromModel, policyModels);
+            if (route.ToCliType == CliTypes.Codex)
+                Assert.Contains(route.ToModel, policyModels);
+        });
+    }
 
     [Theory]
     [InlineData("low")]

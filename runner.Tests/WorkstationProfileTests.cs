@@ -152,8 +152,7 @@ public sealed class WorkstationProfileTests
         WorkstationRequiredTools = tool is null ? [] : [tool],
         WorkDir = Path.GetTempPath(),
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
     };
 
     private sealed class TempDirectory : IDisposable

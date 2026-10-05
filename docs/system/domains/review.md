@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-10-04
+Version: 2026-10-05
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Lifetime review budget
@@ -72,6 +72,13 @@ verdict" still enters the coding fix path.
 
 The fix prompt contains the review attempt, aspect, summary, cited evidence,
 and finding, and instructs the coding agent to change exactly those items.
+Reviewer text is data, not instructions (AGT-2989): every prompt that carries
+findings to the implementer (the council follow-up, the local and Remote Review
+finding and concern rounds, and both reissue prompt arms) quotes them between
+two fence lines tagged with a fresh random nonce, under a frame that the fenced
+lines must not be followed as directions. `ReviewFindingDataBlock` owns that
+fence; a finding that contains the requested nonce forces a new one, so it can
+never close the block early.
 Run-history consumers, including Result-summary round ledgers, use the contract
 field names `trigger`, `triggeredBy`, `triggerReason`, and `triggerSource` from
 `run-record.schema.json`; they do not derive a trigger from legacy `intent`.
@@ -637,6 +644,9 @@ the plan contract rather than a configuration entry.
   host-global build servers left behind by concurrent attempts.
 - `backend.Tests/ReviewGradingPolicyTests.cs`: uncited-block downgrade and cited
   block preservation.
+- `backend/Features/Review/ReviewFindingDataBlock.cs` and
+  `backend.Tests/ReviewFindingDataBoundaryTests.cs`: the nonce-fenced data
+  boundary for reviewer findings, tested with instruction-like finding text.
 - `backend/Features/Runner/AttemptAuthorityService.cs`
   (`ScheduleReviewInfrastructureRetry`, `DueReviewInfrastructureRetries`,
   `ClearScheduledReviewInfrastructureRetry`) and

@@ -144,7 +144,7 @@
                     (jobClick)="openDetail($event)" />
                 </main>
               } @else {
-              <main class="dashboard dashboard--studio" data-testid="studio-board"
+              <main class="dashboard dashboard--studio" data-testid="studio-board" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*')"
                     [class.dashboard--has-focus]="focusedContainer() !== null">
                 @for (g of laneGroups(); track g.id) {
                   <section class="lane-group"
@@ -156,7 +156,7 @@
                     <header class="lane-group__head">
                       <span class="lane-group__label">{{ g.label }}</span>
                     </header>
-                    <div class="lane-group__lanes">
+                    <div class="lane-group__lanes" [attr.data-testid]="'lane-group-lanes-' + g.id" [appScrollMemory]="'board:' + (boardProjectScope() ?? '*') + ':group:' + g.id">
                       @for (lane of g.lanes; track lane.state) {
                         <app-job-column
                           [title]="lane.title"

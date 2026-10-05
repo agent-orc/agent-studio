@@ -48,7 +48,9 @@ public static class IntegrationContinuationPrompt
             + $"Delivery side: {deliveryRef ?? "not recorded"} at {deliverySha ?? conflict?.DeliverySha ?? "not recorded"}.\n"
             + $"Attempted stages: {stages}. Conflicted files: {files}.\n"
             + $"Failure evidence ref: {evidenceRef ?? "pipeline-execution.json"}.\n"
-            + (string.IsNullOrWhiteSpace(evidence) ? "" : $"Gate or review evidence: {evidence}.\n")
+            + (string.IsNullOrWhiteSpace(evidence) ? ""
+                : evidence.Contains('\n') ? $"Gate or review evidence:\n{evidence.TrimEnd()}\n"
+                : $"Gate or review evidence: {evidence}.\n")
             + "Preserve the card's model, CLI, and reasoning pins. " + taskDirection
             + "In the delivery report, identify this failed stage and link the evidence you resolved. "
             + "Do not move or push the integration branch. Finish with the normal task terminal sentinel.";

@@ -12,6 +12,7 @@ public sealed class RemoteReviewDaemon
     private readonly TaskServerClient _client;
     private readonly Action<string> _log;
     private readonly Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? _telemetryProbe;
+    private readonly ReviewPlaneBudgetProbe? _planeBudgetProbe;
 
     /// <param name="telemetryProbe">
     /// Test seam: deterministic host telemetry (active slots, connectivity ->
@@ -22,16 +23,22 @@ public sealed class RemoteReviewDaemon
     /// can be exactly 0.00 (a gate that should close never does). Null keeps
     /// the production sampler.
     /// </param>
+    /// <param name="planeBudgetProbe">
+    /// Test seam for the review role's CPU quota. Production reads the host
+    /// cgroup; daemon tests can supply a fixed quota independent of their host.
+    /// </param>
     public RemoteReviewDaemon(
         RunnerOptions options,
         TaskServerClient client,
         Action<string> log,
-        Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? telemetryProbe = null)
+        Func<int, TaskServerConnectivitySnapshot?, HostTelemetrySample?>? telemetryProbe = null,
+        ReviewPlaneBudgetProbe? planeBudgetProbe = null)
     {
         _options = options;
         _client = client;
         _log = log;
         _telemetryProbe = telemetryProbe;
+        _planeBudgetProbe = planeBudgetProbe;
     }
 
     public async Task RunAsync(CancellationToken shutdown)
@@ -66,7 +73,7 @@ public sealed class RemoteReviewDaemon
             ReviewRestartGuardPolicy.IsBusyPhase(slot.Phase)));
         var connectivity = new TaskServerConnectivityMonitor(_log);
         var telemetry = new HostTelemetrySampler();
-        var planeBudgetProbe = new ReviewPlaneBudgetProbe();
+        var planeBudgetProbe = _planeBudgetProbe ?? new ReviewPlaneBudgetProbe();
         HostTelemetrySample? latestTelemetry = null;
         var nextSlotHygieneLog = DateTime.MinValue;
         var nextSlotReconciliation = DateTime.MinValue;

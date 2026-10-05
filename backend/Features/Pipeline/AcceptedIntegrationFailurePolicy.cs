@@ -43,6 +43,59 @@ public static class AcceptedIntegrationFailureCodes
     /// the same delivery SHA without a new review (AGT-2849).
     /// </summary>
     public const string GateInterrupted = "gate-interrupted";
+
+    // AGT-2995: one typed code per MergeIntoDevelopRunner Error site. Before
+    // these existed every such result logged "outcome=Error" and the card read
+    // "not yet integrated", so a delivery that only needed a rebase sat
+    // unexplained for hours.
+
+    /// <summary>The project's watch path resolves to no repository root.</summary>
+    public const string RepositoryRootUnavailable = "repository-root-unavailable";
+
+    /// <summary>The reviewed delivery is no longer the task's current settled run attempt.</summary>
+    public const string StaleAttempt = "stale-attempt";
+
+    /// <summary>The Studio-owned integration worktree could not be prepared (AGT-2832).</summary>
+    public const string WorktreeUnavailable = "worktree-unavailable";
+
+    /// <summary>The integration branch could not be synchronized with origin before the merge.</summary>
+    public const string BranchSyncFailed = "branch-sync-failed";
+
+    /// <summary>
+    /// The main/develop lineage forbids advancing the release line (main is not
+    /// an ancestor of develop). Distinct from <see cref="IntegrationPushBlocked"/>,
+    /// which is the push step's lineage block after a successful merge.
+    /// </summary>
+    public const string LineageBlocked = "lineage-blocked";
+
+    /// <summary>A mechanical rebase merged, but its commit attribution could not be persisted; the merge was rolled back.</summary>
+    public const string RebaseAttributionFailed = "rebase-attribution-failed";
+
+    /// <summary>An exact branch, tip, or merge-result SHA the merge needs could not be resolved.</summary>
+    public const string IntegrationRefUnresolved = "integration-ref-unresolved";
+
+    /// <summary>The mandatory pre-main test gate is not wired, so main is not advanced.</summary>
+    public const string GateUnavailable = "gate-unavailable";
+
+    /// <summary>
+    /// Maps a non-successful merge result onto its typed code. An
+    /// <see cref="MergeIntoIntegrationOutcome.Error"/> result carries its own
+    /// <see cref="MergeIntoIntegrationResult.FailureCode"/>; a legacy Error
+    /// without one is inferred from its reason. Successful and deliberately
+    /// deferred outcomes have no failure code.
+    /// </summary>
+    public static string? For(MergeIntoIntegrationResult result)
+        => result.Outcome switch
+        {
+            MergeIntoIntegrationOutcome.Error =>
+                result.FailureCode ?? AcceptedIntegrationFailurePolicy.InferErrorCode(result.Error),
+            MergeIntoIntegrationOutcome.Conflict => MergeConflict,
+            MergeIntoIntegrationOutcome.AgentRoundRequired => DeliveryAttributionAmbiguous,
+            MergeIntoIntegrationOutcome.GateFailed => BuildGateFailed,
+            MergeIntoIntegrationOutcome.GateEnvironmentFailure => GateEnvironmentFailure,
+            MergeIntoIntegrationOutcome.NoTaskBranch => NoTaskBranch,
+            _ => null,
+        };
 }
 
 /// <summary>
@@ -184,6 +237,61 @@ public static class AcceptedIntegrationFailurePolicy
                     verdictSummary,
                     "The integration build gate was interrupted before it reached a verdict."),
                 RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.RepositoryRootUnavailable => new(
+                code,
+                "Repository unavailable",
+                FirstNonBlank(reason, verdictSummary, "The project's repository root could not be resolved."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.StaleAttempt => new(
+                code,
+                "Stale attempt",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The reviewed delivery no longer matches the task's current authoritative run."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.WorktreeUnavailable => new(
+                code,
+                "Integration worktree unavailable",
+                FirstNonBlank(reason, verdictSummary, "The integration worktree is unavailable."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.BranchSyncFailed => new(
+                code,
+                "Branch sync failed",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The integration branch could not be synchronized with origin."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.LineageBlocked => new(
+                code,
+                "Lineage blocked",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "The release line cannot advance because main is not an ancestor of develop."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.RebaseAttributionFailed => new(
+                code,
+                "Rebase attribution failed",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "Mechanical rebase attribution could not be persisted."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => new(
+                code,
+                "Integration ref unresolved",
+                FirstNonBlank(
+                    reason,
+                    verdictSummary,
+                    "An exact branch or commit the integration needs could not be resolved."),
+                RebaseRecoveryAvailable: false),
+            AcceptedIntegrationFailureCodes.GateUnavailable => new(
+                code,
+                "Gate unavailable",
+                FirstNonBlank(reason, verdictSummary, "The mandatory integration gate is not available."),
+                RebaseRecoveryAvailable: false),
             _ => new(
                 AcceptedIntegrationFailureCodes.IntegrationError,
                 "Integration failed",
@@ -227,6 +335,16 @@ public static class AcceptedIntegrationFailurePolicy
             return AcceptedIntegrationFailureCodes.IntegrationPushBlocked;
         }
 
+        return InferErrorCode(reason);
+    }
+
+    /// <summary>
+    /// Infers the code of an Error whose writer predates typed codes (or of a
+    /// Git primitive that only reports prose). Anything unrecognized stays the
+    /// generic <see cref="AcceptedIntegrationFailureCodes.IntegrationError"/>.
+    /// </summary>
+    public static string InferErrorCode(string? reason)
+    {
         var detail = reason ?? string.Empty;
         if (detail.Contains(
                 "no stable key for review-subject validation",
@@ -234,8 +352,12 @@ public static class AcceptedIntegrationFailurePolicy
         {
             return AcceptedIntegrationFailureCodes.ReviewSubjectTaskKeyUnavailable;
         }
-        if (detail.Contains("must be rebased onto", StringComparison.OrdinalIgnoreCase))
+        if (detail.Contains("must be rebased onto", StringComparison.OrdinalIgnoreCase)
+            || detail.Contains("is not a fast-forward of", StringComparison.OrdinalIgnoreCase)
+            || detail.Contains("moved after the pre-main test run", StringComparison.OrdinalIgnoreCase))
+        {
             return AcceptedIntegrationFailureCodes.SourceNeedsRebase;
+        }
         if (detail.Contains("review subject", StringComparison.OrdinalIgnoreCase)
             || detail.Contains("review-subject", StringComparison.OrdinalIgnoreCase))
         {
@@ -262,6 +384,14 @@ public static class AcceptedIntegrationFailurePolicy
             AcceptedIntegrationFailureCodes.IntegrationPushBlocked => AcceptedIntegrationFailureCodes.IntegrationPushBlocked,
             AcceptedIntegrationFailureCodes.GateEnvironmentFailure => AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
             AcceptedIntegrationFailureCodes.GateInterrupted => AcceptedIntegrationFailureCodes.GateInterrupted,
+            AcceptedIntegrationFailureCodes.RepositoryRootUnavailable => AcceptedIntegrationFailureCodes.RepositoryRootUnavailable,
+            AcceptedIntegrationFailureCodes.StaleAttempt => AcceptedIntegrationFailureCodes.StaleAttempt,
+            AcceptedIntegrationFailureCodes.WorktreeUnavailable => AcceptedIntegrationFailureCodes.WorktreeUnavailable,
+            AcceptedIntegrationFailureCodes.BranchSyncFailed => AcceptedIntegrationFailureCodes.BranchSyncFailed,
+            AcceptedIntegrationFailureCodes.LineageBlocked => AcceptedIntegrationFailureCodes.LineageBlocked,
+            AcceptedIntegrationFailureCodes.RebaseAttributionFailed => AcceptedIntegrationFailureCodes.RebaseAttributionFailed,
+            AcceptedIntegrationFailureCodes.IntegrationRefUnresolved => AcceptedIntegrationFailureCodes.IntegrationRefUnresolved,
+            AcceptedIntegrationFailureCodes.GateUnavailable => AcceptedIntegrationFailureCodes.GateUnavailable,
             _ => null,
         };
     }
