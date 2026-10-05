@@ -160,7 +160,6 @@ public class OrchestratorChatRejectionRecoveryTests : IDisposable
 
         public RejectThenSucceedRunner(string rejectionError, string freshSessionId, string replyText)
             : base(
-                claude: null!,
                 logger: NullLogger<OrchestratorRunner>.Instance,
                 parsers: null,
                 modelRegistry: null,

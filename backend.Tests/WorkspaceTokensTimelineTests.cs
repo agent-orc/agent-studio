@@ -11,6 +11,28 @@ namespace AgentStudio.Tests;
 /// </summary>
 public class WorkspaceTokensTimelineTests
 {
+    [Fact]
+    public void BuildFromEntries_ExactCalendarInterval_UsesUtcBoundariesAndSelectedProjects()
+    {
+        var from = new DateTime(2026, 9, 24, 22, 30, 0, DateTimeKind.Utc);
+        var to = from.AddHours(24);
+        var selected = new (string Project, IReadOnlyList<OrchestratorLogEntry> Entries)[]
+        {
+            ("selected", [Entry(from.AddMinutes(-1), "unknown", 99, 0),
+                Entry(from.AddMinutes(15), "unknown", 10, 0),
+                Entry(to.AddMinutes(-1), "unknown", 20, 0),
+                Entry(to, "unknown", 99, 0)]),
+        };
+
+        var timeline = WorkspaceTokensTimelineService.BuildFromEntries(selected, from, to, 60);
+
+        Assert.Equal(from.ToString("o"), timeline.WindowStart);
+        Assert.Equal(to.ToString("o"), timeline.WindowEnd);
+        Assert.Equal(30, Assert.Single(timeline.Projects).Total);
+        Assert.Equal(from.ToString("o"), timeline.Cells[0].BucketStart);
+        Assert.All(timeline.Cells, cell => Assert.Equal("selected", cell.Project));
+    }
+
     private static OrchestratorLogEntry Entry(DateTime ts, string model, long input, long output, long cacheRead = 0, long cacheCreate = 0)
         => new()
         {

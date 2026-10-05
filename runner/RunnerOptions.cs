@@ -43,6 +43,7 @@ public sealed class RunnerOptions
 
     /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>
     public string? AuthToken { get; init; }
+    public string? AuthTokenFile { get; init; }
 
     /// <summary>
     /// Explicit opt-in (<c>RUNNER_ALLOW_INSECURE_HTTP=1|true</c>) that allows a
@@ -130,37 +131,14 @@ public sealed class RunnerOptions
     /// <summary>Fallback branch when the task branch is absent or unspecified.</summary>
     public required string BaseBranch { get; init; }
 
-    /// <summary>
-    /// Which execution engine drives the coding CLI inside the detached worker
-    /// (<c>RUNNER_EXEC_ENGINE</c>). <c>car</c> (default) drives it through the
-    /// CodingAgentRunner library: descriptor-built argv, structured events,
-    /// permission-mode injection, clean config home. <c>legacy</c> keeps the
-    /// pre-AGT-2370 raw spawn. The switch is a rollout instrument for the T1
-    /// canary cohorts and is deleted in AGT-2373 together with the legacy path.
-    /// </summary>
-    public string ExecEngine { get; init; } = ExecEngineCar;
-
-    public const string ExecEngineCar = "car";
-    public const string ExecEngineLegacy = "legacy";
-
-    /// <summary>Agent CLI binary to spawn (claude, codex, ...).</summary>
-    public required string CliBin { get; init; }
+    /// <summary>Default provider used when a run spec does not select one.</summary>
+    public string CliType { get; init; } = CliSelection.ClaudeCli;
 
     /// <summary>Codex binary used by the GPT-only project chat work path.</summary>
     public string CodexCliBin { get; init; } = "codex";
 
     /// <summary>Claude binary used when a Claude-pinned card runs on a host whose primary CLI is Codex.</summary>
     public string ClaudeCliBin { get; init; } = "claude";
-
-    /// <summary>Extra CLI arguments inserted before the prompt is streamed on stdin (space-split, shell-unaware).</summary>
-    public required string CliArgs { get; init; }
-
-    /// <summary>
-    /// Optional provider-specific arguments for resuming a captured session.
-    /// The value must contain <c>{sessionId}</c>. When absent, the provider is
-    /// treated as not supporting same-session recovery on this host.
-    /// </summary>
-    public string? CliResumeArgs { get; init; }
 
     /// <summary>
     /// Lease TTL requested on acquire/renew; the server clamps to its own
@@ -442,6 +420,7 @@ public sealed class RunnerOptions
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
             AuthToken = authToken.Length > 0 ? authToken : null,
+            AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,
             TlsServerCertificateSha256 = Val(
                 "tls-certificate-sha256",
                 "RUNNER_TLS_CERTIFICATE_SHA256").Trim() is { Length: > 0 } certificateSha
@@ -483,14 +462,9 @@ public sealed class RunnerOptions
                 Val("preview-lifetime-seconds", "RUNNER_PREVIEW_LIFETIME_SECONDS", "3600")),
             Branch = Val("branch", "RUNNER_BRANCH") is { Length: > 0 } b ? b : null,
             BaseBranch = Val("base-branch", "RUNNER_BASE_BRANCH", "main"),
-            ExecEngine = Val("exec-engine", "RUNNER_EXEC_ENGINE", ExecEngineCar).Trim().ToLowerInvariant(),
-            CliBin = Val("cli", "RUNNER_CLI_BIN", "claude"),
+            CliType = Val("cli-type", "RUNNER_CLI_TYPE", CliSelection.ClaudeCli).Trim().ToLowerInvariant(),
             CodexCliBin = Val("codex-cli", "RUNNER_CODEX_CLI_BIN", "codex"),
             ClaudeCliBin = Val("claude-cli", "RUNNER_CLAUDE_CLI_BIN", "claude"),
-            CliArgs = Val("cli-args", "RUNNER_CLI_ARGS", "-p"),
-            CliResumeArgs = Val("cli-resume-args", "RUNNER_CLI_RESUME_ARGS").Trim() is { Length: > 0 } resumeArgs
-                ? resumeArgs
-                : null,
             TtlSeconds = overrides.TryGetValue("ttl", out var ttl) && int.TryParse(ttl, out var ttlV) ? ttlV : EnvInt("RUNNER_TTL_SECONDS", 900),
             HeartbeatSeconds = EnvInt("RUNNER_HEARTBEAT_SECONDS", 30),
             HandoffLeaseTtlSeconds = EnvInt("RUNNER_HANDOFF_LEASE_TTL_SECONDS", 300),
@@ -566,13 +540,15 @@ public sealed class RunnerOptions
                 Path.GetFullPath(options.ReviewWorkDir),
                 StringComparison.Ordinal))
             throw new ArgumentException("Review and coding workspace roots must be different.");
-        if (options.CliResumeArgs is not null
-            && !options.CliResumeArgs.Contains("{sessionId}", StringComparison.Ordinal))
-            throw new ArgumentException("RUNNER_CLI_RESUME_ARGS must contain the {sessionId} placeholder.");
+        if (CliSelection.NormalizeCliType(options.CliType) is null)
+            throw new ArgumentException("RUNNER_CLI_TYPE must be 'claude' or 'codex'.");
+        foreach (var removed in new[] { "RUNNER_EXEC_ENGINE", "RUNNER_CLI_BIN", "RUNNER_CLI_ARGS", "RUNNER_CLI_RESUME_ARGS" })
+        {
+            if (!string.IsNullOrWhiteSpace(Env(removed)))
+                throw new ArgumentException($"{removed} was removed in AGT-2373; use RUNNER_CLI_TYPE and provider-specific CLI paths.");
+        }
         if (options.ReviewCredentialEnvironment.Any(WorkerEdgeCredentialBoundary.IsProtectedName))
             throw new ArgumentException("RUNNER_REVIEW_CREDENTIAL_ENV cannot include Task Server or browser-edge credentials.");
-        if (options.ExecEngine is not (ExecEngineCar or ExecEngineLegacy))
-            throw new ArgumentException("RUNNER_EXEC_ENGINE must be 'car' or 'legacy'.");
         if (!options.IsWorkstation && (options.WorkstationRepositoryRoots.Count > 0
                                        || options.WorkstationRequiredTools.Count > 0
                                        || options.WorkstationPreview is not null))
@@ -582,7 +558,7 @@ public sealed class RunnerOptions
         return (options, string.IsNullOrWhiteSpace(taskKey) ? null : taskKey.Trim(), once, help);
     }
 
-    private static string ReadAuthTokenFile(string path)
+    internal static string ReadAuthTokenFile(string path)
     {
         if (!File.Exists(path)) throw new ArgumentException($"RUNNER_AUTH_TOKEN_FILE does not exist: {path}");
         if (!OperatingSystem.IsWindows())
