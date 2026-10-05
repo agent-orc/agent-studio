@@ -1562,14 +1562,19 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             && line.Contains("decision=refuse", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task An_env_unset_wrapped_compose_scenario_is_refused_before_it_starts()
+    [Theory]
+    [InlineData("-u FOO")]
+    [InlineData("-a scenario-run")]
+    [InlineData("--argv0 scenario-run")]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task An_env_operand_wrapped_compose_scenario_is_refused_before_it_starts(string envOptions)
     {
         var sha = await SeedOriginAsync();
-        var marker = Path.Combine(_root, "compose-scenario-env-unset");
-        var command = await FakeComposeScenarioCommandAsync(marker, viaEnvUnset: true);
+        var marker = Path.Combine(_root, "compose-scenario-env-operand");
+        var command = await FakeComposeScenarioCommandAsync(marker, envOptions: envOptions);
         var (workspace, _) = Workspace(
-            "attempt-scenario-env-unset",
+            "attempt-scenario-env-operand",
             sha,
             [command],
             27006,
@@ -1651,7 +1656,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(
         string marker,
         bool viaCommandSubstitution = false,
-        bool viaEnvUnset = false)
+        string? envOptions = null)
     {
         var script = Path.Combine(_root, "fake-scenario", "scripts", "scenario.sh");
         Directory.CreateDirectory(Path.GetDirectoryName(script)!);
@@ -1662,7 +1667,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             PosixShell.RequirePath(),
             ["-lc", viaCommandSubstitution
                 ? $"out=$(SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full) && echo \"$out\""
-                : $"SCENARIO_PROVIDER_REVIEW=1 {(viaEnvUnset ? "env -u FOO " : "")}sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
+                : $"SCENARIO_PROVIDER_REVIEW=1 {(envOptions is not null ? $"env {envOptions} " : "")}sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
     }
 
     /// <summary>
