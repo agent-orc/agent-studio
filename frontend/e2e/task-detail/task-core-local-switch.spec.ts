@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { loadavg, cpus } from 'node:os';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/dev-backend';
@@ -47,7 +48,6 @@ async function stepToOtherTask(page: Page): Promise<string> {
 }
 
 test('measures local end-to-end core switches against the legacy detail wait', async ({ page, devBackend }) => {
-  void devBackend;
   const watchPath = (await api<WatchPath[]>('/api/watch-paths'))[0]?.path;
   if (!watchPath) throw new Error('The dev backend exposes no watch path');
   const stamp = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
@@ -176,7 +176,8 @@ test('measures local end-to-end core switches against the legacy detail wait', a
     const coreRead = summary(reads.core);
     const legacyRead = summary(reads.legacy);
     const report = {
-      environment: 'shared Linux runner, headless Chromium, ng serve proxy to the worktree dev backend on :5030; real task API transport',
+      environment: `shared Linux runner, headless Chromium, ng serve proxy to the worktree dev backend on :${devBackend.port}; real task API transport`,
+      hostLoad: { cpus: cpus().length, loadAverage1m: Math.round(loadavg()[0] * 10) / 10 },
       fixture: 'two human-review tasks with a 220 KB prompt in the fixture workspace; not the production-shaped snapshot of the dossier baseline',
       coldOpenMs: Math.round(coldOpenMs * 10) / 10,
       coldOpenFirstView: firstView,
