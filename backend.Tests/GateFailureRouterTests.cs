@@ -47,7 +47,6 @@ public sealed class GateFailureRouterTests : IDisposable
     [Theory]
     [InlineData("environment-worker-crash.AGT-2724.log", TaskStates.AutoReview)]
     [InlineData("environment-run-budget.AGT-2839.log", TaskStates.AutoReview)]
-    [InlineData("environment-transport.derived.log", TaskStates.AutoReview)]
     [InlineData("environment-worker-crash.AGT-2724.log", TaskStates.HumanReview)]
     public async Task EnvironmentClass_NeverReachesHumanReview_AndIsHandedToTheReplayLadder(
         string fixture, string lane)
@@ -94,6 +93,22 @@ public sealed class GateFailureRouterTests : IDisposable
     }
 
     [Fact]
+    public async Task TransportFailure_DoesNotEnterIntegrationReplayLadder()
+    {
+        var stack = Build();
+        var id = SeedRedGate(stack, "transport", "environment-transport.derived.log", TaskStates.AutoReview);
+
+        await stack.Reconciler.RunOnceAsync();
+
+        var card = Card(stack, id);
+        Assert.Equal(TaskStates.Escalated, card.State);
+        Assert.Equal(GateFailureParkCategories.EnvironmentExhausted, card.ParkedBlocker?.BlockerType);
+        Assert.Equal("transport-gate-retry-spent", GateFailureRouter.ReadReceipt(card.FolderPath)!.Route!.Reason);
+        Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure,
+            stack.Integration.ReadLatestMergeStep(card)!.FailureCode);
+    }
+
+    [Fact]
     public async Task UndecidableClass_ParksForAPerson_StatingClassAndMissingEvidence()
     {
         var stack = Build();
@@ -126,6 +141,46 @@ public sealed class GateFailureRouterTests : IDisposable
         Assert.Empty(stack.Interventions.List(_watchPath));
         var receipt = GateFailureRouter.ReadReceipt(card.FolderPath)!;
         Assert.Equal("fix-round-could-not-start", receipt.Route!.Reason);
+    }
+
+    [Fact]
+    public async Task ProductClass_StartsFixRound_WithFailingItemAndReason()
+    {
+        string? startedPrompt = null;
+        var stack = Build((_, prompt, _) =>
+        {
+            startedPrompt = prompt;
+            return Task.CompletedTask;
+        });
+        var id = SeedRedGate(stack, "product", "product.AGT-2722.log", TaskStates.AutoReview);
+
+        await stack.Reconciler.RunOnceAsync();
+
+        var card = Card(stack, id);
+        Assert.Equal(TaskStates.AutoReview, card.State);
+        Assert.Null(card.ParkedBlocker);
+        Assert.Contains("AutoPushStrategyTests.CompletedPushWorker_PushesQueuedCommitToMain", startedPrompt);
+        Assert.Contains("The merge gate failed on", startedPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(GateFailureRouteAction.FixRound, GateFailureRouter.ReadReceipt(card.FolderPath)!.Route!.Action);
+        Assert.Contains(stack.Timeline.ReadAll(card.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.IntegrationRecoveryQueued
+            && entry.Details?.GetValueOrDefault("source") == GateFailureRouter.FixRoundSource);
+    }
+
+    [Fact]
+    public async Task FailedCauseCreation_LeavesCardUnparkedAndDoesNotSaveAReceipt()
+    {
+        var stack = Build(withoutInterventions: true);
+        var id = SeedRedGate(stack, "red baseline", "integration-branch.derived-from-AGT-2752.log",
+            TaskStates.AutoReview);
+
+        await stack.Reconciler.RunOnceAsync();
+        await stack.Reconciler.RunOnceAsync();
+
+        var card = Card(stack, id);
+        Assert.Equal(TaskStates.AutoReview, card.State);
+        Assert.Null(card.ParkedBlocker);
+        Assert.Null(GateFailureRouter.ReadReceipt(card.FolderPath));
     }
 
     [Fact]
@@ -279,7 +334,9 @@ public sealed class GateFailureRouterTests : IDisposable
         return stack.Scanner.FindJob(id, _watchPath)!;
     }
 
-    private Stack Build()
+    private Stack Build(
+        Func<TaskInfo, string, CancellationToken, Task>? fixRoundStarter = null,
+        bool withoutInterventions = false)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -317,7 +374,8 @@ public sealed class GateFailureRouterTests : IDisposable
             pipelineLog: pipeline);
         var counter = new InMemoryFingerprintCounter();
         var router = new GateFailureRouter(integration, pipeline, settings, timeline, configuration,
-            NullLogger<GateFailureRouter>.Instance, counter, interventions);
+            NullLogger<GateFailureRouter>.Instance, counter,
+            withoutInterventions ? null : interventions, fixRoundStarter: fixRoundStarter);
         var reconciler = new DeliveryChainReconciler(scanner, integration, transitions, configuration,
             NullLogger<DeliveryChainReconciler>.Instance, router);
         return new Stack(scanner, mutations, timeline, pipeline, integration, interventions, counter, reconciler);

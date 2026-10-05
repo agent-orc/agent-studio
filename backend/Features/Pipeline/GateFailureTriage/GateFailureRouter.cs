@@ -62,6 +62,7 @@ public sealed class GateFailureRouter
     private readonly IGateFailureFingerprintCounter? _counter;
     private readonly FailureInterventionService? _interventions;
     private readonly TaskRunnerService? _continuations;
+    private readonly Func<TaskInfo, string, CancellationToken, Task>? _fixRoundStarter;
     private readonly TimeProvider _time;
 
     public GateFailureRouter(
@@ -74,7 +75,8 @@ public sealed class GateFailureRouter
         IGateFailureFingerprintCounter? counter = null,
         FailureInterventionService? interventions = null,
         TaskRunnerService? continuations = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        Func<TaskInfo, string, CancellationToken, Task>? fixRoundStarter = null)
     {
         _integrationStatus = integrationStatus;
         _pipelineLog = pipelineLog;
@@ -85,6 +87,7 @@ public sealed class GateFailureRouter
         _counter = counter;
         _interventions = interventions;
         _continuations = continuations;
+        _fixRoundStarter = fixRoundStarter;
         _time = time ?? TimeProvider.System;
     }
 
@@ -107,7 +110,9 @@ public sealed class GateFailureRouter
         var receipt = ReadReceipt(card.FolderPath);
         var settled = receipt?.Triage is not null && receipt.Route is not null
             && string.Equals(receipt.LogName, logName, StringComparison.Ordinal)
-            && string.Equals(receipt.DeliverySha, deliverySha, StringComparison.OrdinalIgnoreCase);
+            && string.Equals(receipt.DeliverySha, deliverySha, StringComparison.OrdinalIgnoreCase)
+            && (receipt.Route.Action != GateFailureRouteAction.AttachToCause
+                || !string.IsNullOrWhiteSpace(receipt.CauseKey));
         // The receipt already holds the verdict for this exact log, so a
         // reconciler tick does not re-read a 100 KB log every 30 seconds.
         var triage = settled ? receipt!.Triage! : Classify(status, newest);
@@ -147,6 +152,15 @@ public sealed class GateFailureRouter
             case GateFailureRouteAction.AttachToCause:
                 causeKey = await AttachToCauseAsync(card, triage, otherCards ?? [], logName, ct)
                     .ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(causeKey))
+                {
+                    // A cause creation failure has no durable owner. Leave the
+                    // card in place and retry on the next reconciler tick.
+                    // In particular, never save an AttachToCause receipt here.
+                    return new GateFailureRouting(triage,
+                        new GateFailureRoute(GateFailureRouteAction.WaitForCause, null,
+                            "cause-card-unavailable"), null);
+                }
                 break;
         }
 
@@ -252,7 +266,7 @@ public sealed class GateFailureRouter
     private async Task<bool> StartFixRoundAsync(
         TaskInfo card, TaskIntegrationStatus status, GateFailureTriage triage, string? deliverySha, CancellationToken ct)
     {
-        if (_continuations is null || deliverySha is null) return false;
+        if ((_continuations is null && _fixRoundStarter is null) || deliverySha is null) return false;
         var step = _integrationStatus.ReadLatestMergeStep(card);
         var subject = ReviewSubjectStore.Read(card.FolderPath);
         var items = string.Join("; ", triage.FailingItems);
@@ -266,10 +280,13 @@ public sealed class GateFailureRouter
             step?.EvidenceRef);
         try
         {
-            await _continuations.ContinueJobAsync(
-                card.Id, prompt, card.WatchPath, mode: ContinueModes.Extend, ct: ct,
-                reason: "Merge gate failed on the delivery's own items.", triggeredBy: FixRoundSource)
-                .ConfigureAwait(false);
+            if (_fixRoundStarter is not null)
+                await _fixRoundStarter(card, prompt, ct).ConfigureAwait(false);
+            else
+                await _continuations!.ContinueJobAsync(
+                    card.Id, prompt, card.WatchPath, mode: ContinueModes.Extend, ct: ct,
+                    reason: "Merge gate failed on the delivery's own items.", triggeredBy: FixRoundSource)
+                    .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

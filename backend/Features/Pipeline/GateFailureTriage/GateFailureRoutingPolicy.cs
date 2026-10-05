@@ -27,6 +27,9 @@ public enum GateFailureRouteAction
     /// <summary>Open or join the cause card for this fingerprint and wait on it.</summary>
     AttachToCause,
 
+    /// <summary>Cause creation failed; leave the card in place and retry on the next sweep.</summary>
+    WaitForCause,
+
     /// <summary>Park for a person, stating the class and the missing evidence.</summary>
     ParkUndecidable,
 
@@ -82,6 +85,9 @@ public static class GateFailureRoutingPolicy
         switch (triage.Class)
         {
             case GateFailureClasses.Environment:
+                if (triage.Kind == GateEnvironmentKinds.Transport)
+                    return new(GateFailureRouteAction.ParkExhausted,
+                        GateFailureParkCategories.EnvironmentExhausted, "transport-gate-retry-spent");
                 return facts.ReplayBudgetLeft
                     ? new(GateFailureRouteAction.ReplayGate, null, "environment-replay")
                     : new(GateFailureRouteAction.ParkExhausted,
@@ -125,6 +131,8 @@ public static class GateFailureRoutingPolicy
                 $"Missing evidence: {triage.MissingEvidence ?? "unknown"}. Decide whether the delivery or the environment caused the red gate.",
             _ when route.Reason == "environment-replay-budget-spent" =>
                 "The bounded environment replay ladder is spent or disabled for this project; repair the gate host, then use Retry integration.",
+            _ when route.Reason == "transport-gate-retry-spent" =>
+                "The same exact-subject gate was retried after a transport failure and remains unavailable; repair the gate transport, then retry the gate.",
             _ when route.Reason == "automatic-fix-rounds-disabled" =>
                 "Automatic fix rounds are disabled for this project; start a steer round with the failing items.",
             _ => "The bounded fix round is spent and the gate is still red on the same delivery.",

@@ -93,10 +93,17 @@ public static partial class GateFailureTriagePolicy
         ("ETIMEDOUT", GateEnvironmentKinds.Transport),
         ("unable to access", GateEnvironmentKinds.Transport),
         ("Could not resolve host", GateEnvironmentKinds.Transport),
+        ("Remote gate transport failure", GateEnvironmentKinds.Transport),
         ("Worker exited unexpectedly", GateEnvironmentKinds.WorkerCrash),
         ("JavaScript heap out of memory", GateEnvironmentKinds.WorkerCrash),
         ("violated gate-run budget", GateEnvironmentKinds.RunBudget),
     ];
+
+    /// <summary>Network evidence that can be retried against the same exact gate subject.</summary>
+    public static bool ContainsTransportMarker(string? evidence)
+        => !string.IsNullOrEmpty(evidence) && EnvironmentMarkers.Any(entry =>
+            entry.Kind == GateEnvironmentKinds.Transport
+            && evidence.Contains(entry.Marker, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The verdict for a card whose gate process died before it wrote a verdict.</summary>
     public static GateFailureTriage Interrupted() => Environment(
