@@ -535,6 +535,91 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Per_task_fallback_interrupted_by_a_restart_resumes_on_the_next_tick()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-CRASH", "docs/crash.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        // The previous process persisted the active marker and stopped before
+        // the per-task gate returned.
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true, FallbackGateStarts: 1));
+        _gate.Fallback = request => Red(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Equal(0, _gate.BatchRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Null(Ownership(member.Key));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_whose_gate_throws_is_retried_on_the_next_tick()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-THROW", "docs/throw.md");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetBatchGate(ProjectName, new BatchGateFormationOptions(Enabled: false));
+        var calls = 0;
+        _gate.Fallback = request => ++calls == 1
+            ? throw new IOException("gate host dropped the connection")
+            : Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.AutoReview);
+        var marker = Assert.IsType<BatchGateOwnership>(Ownership(member.Key));
+        Assert.True(marker.FallbackGateActive);
+        Assert.Equal(1, marker.FallbackGateStarts);
+        // Re-enabled, the batch route would exclude the member as an active
+        // per-task gate; only the interrupted-gate recovery can resume it.
+        EnableBatchGate(factory, closeSize: 4);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(2, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Null(Ownership(member.Key));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
+    public async Task Per_task_fallback_interrupted_past_its_start_budget_escalates_as_gate_infra()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-BUDGET", "docs/budget.md");
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var pending = Assert.Single(store.ListPending());
+        BatchGateOwnershipStore.Write(Path.Combine(_watchPath, TaskStates.AutoReview, member.Key),
+            new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+                FallbackGateActive: true,
+                FallbackGateStarts: BatchGatePilotService.FallbackGateStartBudget));
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        await factory.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.FallbackRuns);
+        AssertLane(member.Key, TaskStates.Escalated);
+        Assert.Null(Ownership(member.Key));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
     public async Task Review_settlement_that_cannot_enqueue_runs_the_per_task_gate_before_answering()
     {
         using var factory = BuildFactory();

@@ -117,7 +117,10 @@ a lone aged member use the ordinary per-card
 gate on the same immutable result subject. Within one backend process that
 per-card gate runs at most once at a time per review generation: a retried
 review report or a tick that meets a running fallback waits for it instead of
-starting a second gate. A batch that pauses (a second
+starting a second gate. The card marker records that per-card gate as active
+with a start count; a marker still active with no gate running in the process
+(restart, or a gate that threw) is resumed on the next tick, and after two
+interrupted starts the card escalates as `GateInfra`. A batch that pauses (a second
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
