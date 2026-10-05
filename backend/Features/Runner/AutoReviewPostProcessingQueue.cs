@@ -519,8 +519,8 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     /// <c>4-auto-review</c> and the boot/backstop sweep re-drives it anyway, so
     /// this only shortens the wait; exhausting it leaves the card resting in
     /// <c>awaiting-review</c> and never blocks it. A wait whose blocking
-    /// condition is observably satisfied resets the counter instead of
-    /// exhausting it - see <see cref="ScheduleDeferralRetry"/>.
+    /// condition has another registered owner stays scheduled with backoff.
+    /// Delivery resume retains its separate retry cycle - see <see cref="ScheduleDeferralRetry"/>.
     /// </summary>
     internal const int MaxDeferralRetries = 5;
 
@@ -531,14 +531,15 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
     internal static readonly TimeSpan DeferralRetryMaxDelay = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Tighter cap applied instead of <see cref="DeferralRetryMaxDelay"/> once a
-    /// review executor is registered for the canonical-review-executor wait
-    /// (<see cref="PostProcessingCardResult.IsCanonicalReviewWait"/>):
-    /// the wait is healthy and self-resolving, so the card should keep
-    /// re-checking - and keep its liveStatus queue reason fresh - at least once
-    /// a minute rather than backing off to a ten-minute silence (AGT-2842).
+    /// A registered executor keeps a verdict wait scheduled, but registration
+    /// alone does not prove progress. Back off repeated waits to five minutes
+    /// so polling does not continually rewrite lifecycle state and invalidate
+    /// the task index. The executor can settle its verdict independently.
     /// </summary>
-    internal static readonly TimeSpan CanonicalReviewExecutorRegisteredMaxDelay = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan CanonicalReviewExecutorRegisteredMaxDelay = TimeSpan.FromMinutes(5);
+
+    /// <summary>Existing cadence for other waits owned by a registered executor.</summary>
+    private static readonly TimeSpan OtherRegisteredOwnerMaxDelay = TimeSpan.FromSeconds(60);
 
     internal static TimeSpan DeferralRetryDelay(int attempt) => DeferralRetryDelay(attempt, DeferralRetryMaxDelay);
 
@@ -675,20 +676,22 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
         CancellationToken ct)
     {
         var availability = ResolveReviewExecutorAvailability(reason);
-        var maxDelay = availability?.AnyRegistered == true
+        var registeredVerdictWait = availability?.AnyRegistered == true
+            && string.Equals(reason, PostProcessingCardResult.AwaitingCanonicalReviewVerdict, StringComparison.Ordinal);
+        var maxDelay = registeredVerdictWait
             ? CanonicalReviewExecutorRegisteredMaxDelay
-            : DeferralRetryMaxDelay;
+            : availability?.AnyRegistered == true
+                ? OtherRegisteredOwnerMaxDelay
+                : DeferralRetryMaxDelay;
 
-        // AGT-2860: the budget exists for a wait nobody is resolving. Neither of
-        // these is that. A registered executor means the blocking condition the
-        // budget was counting against is observably satisfied, and a card with a
-        // terminal Pass attempt is owed work by this backend, not by anyone
-        // else. In both cases the counter resets rather than stranding the card
-        // in 4-auto-review with nothing left to pick it up. The genuinely idle
-        // executor keeps AGT-2842's growing backoff and its exhaustion.
-        var blockingConditionResolved = availability?.AnyRegistered == true
-                                        || PostProcessingCardResult.IsDeliveryResumeWait(reason);
-        if (request.Attempt >= MaxDeferralRetries && !blockingConditionResolved)
+        // Keep registered-owner waits and earned delivery work scheduled. A
+        // registration is not verdict progress, so that wait retains its
+        // attempt count and capped backoff instead of restarting at 30s.
+        // Missing executors retain their bounded retry budget; delivery resume
+        // keeps the existing retry cycle because this backend owes that work.
+        var continueBeyondBudget = availability?.AnyRegistered == true
+                                   || PostProcessingCardResult.IsDeliveryResumeWait(reason);
+        if (request.Attempt >= MaxDeferralRetries && !continueBeyondBudget)
         {
             _logger.LogInformation(
                 "auto-review-postprocessing-deferral-exhausted project={Project} job={JobId} reason={Reason} attempts={Attempts}",
@@ -700,7 +703,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
             return;
         }
 
-        var attempt = request.Attempt >= MaxDeferralRetries ? 0 : request.Attempt;
+        var attempt = request.Attempt >= MaxDeferralRetries && !registeredVerdictWait ? 0 : request.Attempt;
         var delay = DeferralDelayOverride?.Invoke(attempt) ?? DeferralRetryDelay(attempt, maxDelay);
         _logger.LogInformation(
             "auto-review-postprocessing-deferred project={Project} job={JobId} reason={Reason} attempt={Attempt} retryInMs={RetryInMs}",
@@ -717,7 +720,7 @@ public sealed class AutoReviewPostProcessingWorker : BackgroundService
                 await Task.Delay(delay, ct);
                 _queue.Enqueue(request with
                 {
-                    Attempt = attempt + 1,
+                    Attempt = attempt == int.MaxValue ? int.MaxValue : attempt + 1,
                     EnqueuedAtUtc = DateTime.UtcNow,
                     Source = "deferral-retry",
                 });

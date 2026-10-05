@@ -26,7 +26,7 @@ class JobsHubClientStub {
  * knows the ADR-0025 lane names, so it never matches on a bare URL.
  */
 const groupedRequest = (request: HttpRequest<unknown>) =>
-  request.url === '/api/tasks/grouped'
+  request.url === '/api/v1/studio/board'
   && request.params.get('includeLegacyReviewLane') === 'false';
 
 const emptyGrouped = {
@@ -95,13 +95,13 @@ describe('TaskService', () => {
     });
 
     const projectRequest = http.expectOne((request) =>
-      request.url === '/api/tasks/epic-a' &&
+      request.url === '/api/v1/projects/PROJ-002/tasks/epic-a' &&
       request.params.get('project') === 'PROJ-002' &&
       !request.params.has('watchPath'));
     projectRequest.flush(null, { status: 404, statusText: 'Not Found' });
 
     const fallbackRequest = http.expectOne((request) =>
-      request.url === '/api/tasks/epic-a' &&
+      request.url === '/api/v1/projects/-/tasks/epic-a' &&
       request.params.get('watchPath') === 'C:/projects/demo' &&
       !request.params.has('project'));
     fallbackRequest.flush({ info: { id: 'epic-a' } });
@@ -141,7 +141,7 @@ describe('TaskService', () => {
 
     http.expectOne(groupedRequest).flush(emptyGrouped);
     http.expectNone('/api/tasks');
-    http.expectOne('/api/runner/status').flush({
+    http.expectOne('/api/v1/studio/runner/status').flush({
       projects: {
         demo: {
           projectName: 'demo',
@@ -176,7 +176,7 @@ describe('TaskService', () => {
     };
     http.expectOne(groupedRequest).flush(grouped);
     http.expectNone('/api/tasks');
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     expect(service.grouped().autoReview).toEqual([task]);
     expect(service.jobs()).toEqual([task]);
@@ -200,7 +200,7 @@ describe('TaskService', () => {
     first.flush(
       { ...emptyGrouped, autoReview: [task] },
       { headers: { ETag: '"board-v1"' } });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     expect(service.grouped().autoReview).toEqual([task]);
 
@@ -209,7 +209,7 @@ describe('TaskService', () => {
     const second = http.expectOne(groupedRequest);
     expect(second.request.headers.get('If-None-Match')).toBe('"board-v1"');
     second.flush(null, { status: 304, statusText: 'Not Modified', headers: { ETag: '"board-v1"' } });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     // The rendered board survives the empty body untouched.
     expect(service.grouped().autoReview).toEqual([task]);
@@ -220,7 +220,7 @@ describe('TaskService', () => {
     const third = http.expectOne(groupedRequest);
     expect(third.request.headers.get('If-None-Match')).toBe('"board-v1"');
     third.flush(emptyGrouped, { headers: { ETag: '"board-v2"' } });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     expect(service.grouped().autoReview).toEqual([]);
 
@@ -228,13 +228,13 @@ describe('TaskService', () => {
     const fourth = http.expectOne(groupedRequest);
     expect(fourth.request.headers.get('If-None-Match')).toBe('"board-v2"');
     fourth.flush(emptyGrouped);
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
   });
 
   it('drops the board validator when a response is rejected or fails', () => {
     service.refresh();
     http.expectOne(groupedRequest).flush(emptyGrouped, { headers: { ETag: '"board-v1"' } });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     // An in-flight optimistic persist makes the service discard the snapshot.
     // The rendered board then matches no server tag, so offering one would let
@@ -244,20 +244,20 @@ describe('TaskService', () => {
     const rejected = http.expectOne(groupedRequest);
     expect(rejected.request.headers.get('If-None-Match')).toBe('"board-v1"');
     rejected.flush(emptyGrouped, { headers: { ETag: '"board-v2"' } });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     service.refresh();
     const afterReject = http.expectOne(groupedRequest);
     expect(afterReject.request.headers.has('If-None-Match')).toBe(false);
     // A failed read leaves nothing to validate against either.
     afterReject.flush(null, { status: 500, statusText: 'Server Error' });
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
 
     service.refresh();
     const afterFailure = http.expectOne(groupedRequest);
     expect(afterFailure.request.headers.has('If-None-Match')).toBe(false);
     afterFailure.flush(emptyGrouped);
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
   });
 
   it('coalesces overlapping board and runner refreshes into one trailing request', () => {
@@ -266,15 +266,15 @@ describe('TaskService', () => {
     service.refresh(true);
 
     const firstGrouped = http.expectOne(groupedRequest);
-    const firstRunner = http.expectOne('/api/runner/status');
+    const firstRunner = http.expectOne('/api/v1/studio/runner/status');
 
     firstGrouped.flush(emptyGrouped);
     firstRunner.flush({ projects: {} });
 
     http.expectOne(groupedRequest).flush(emptyGrouped);
-    http.expectOne('/api/runner/status').flush({ projects: {} });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
     http.expectNone(groupedRequest);
-    http.expectNone('/api/runner/status');
+    http.expectNone('/api/v1/studio/runner/status');
   });
 
   it('calls the file-source history endpoints with encoded paths and source params', () => {
@@ -400,7 +400,7 @@ describe('TaskService', () => {
       digest = value.digest;
     });
 
-    const req = http.expectOne('/api/orchestrator/context/project:Agent%20Studio');
+    const req = http.expectOne('/api/v1/studio/orchestrator/context/project:Agent%20Studio');
     expect(req.request.method).toBe('GET');
     req.flush({
       contextKey: 'project:Agent Studio',
@@ -414,7 +414,7 @@ describe('TaskService', () => {
 
   it('force-refreshes global and task orchestrator context digests explicitly', () => {
     service.refreshOrchestratorContextDigest('global').subscribe();
-    const global = http.expectOne('/api/orchestrator/context/global/refresh');
+    const global = http.expectOne('/api/v1/studio/orchestrator/context/global/refresh');
     expect(global.request.method).toBe('POST');
     expect(global.request.body).toBeNull();
     global.flush({
@@ -425,7 +425,7 @@ describe('TaskService', () => {
     });
 
     service.refreshOrchestratorContextDigest('task:Agent Studio/AGT-2047').subscribe();
-    const task = http.expectOne('/api/orchestrator/context/task:Agent%20Studio/AGT-2047/refresh');
+    const task = http.expectOne('/api/v1/studio/orchestrator/context/task:Agent%20Studio/AGT-2047/refresh');
     expect(task.request.method).toBe('POST');
     task.flush({
       contextKey: 'task:Agent Studio/AGT-2047',
@@ -447,7 +447,7 @@ describe('TaskService', () => {
       .subscribe();
 
     const req = http.expectOne((request) =>
-      request.url === '/api/tasks/AGT-2355/move'
+      request.url === '/api/v1/projects/-/tasks/AGT-2355/move'
       && request.params.get('watchPath') === 'C:/projects/demo');
     expect(req.request.method).toBe('POST');
     expect(req.request.body).toEqual({
@@ -470,7 +470,7 @@ describe('TaskService', () => {
       .subscribe();
 
     const req = http.expectOne((request) =>
-      request.url === '/api/tasks/AGT-2543/move'
+      request.url === '/api/v1/projects/-/tasks/AGT-2543/move'
       && request.params.get('watchPath') === 'C:/projects/demo');
     expect(req.request.body).toEqual({
       targetState: '6-completed',

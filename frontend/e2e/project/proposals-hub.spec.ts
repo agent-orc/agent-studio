@@ -8,10 +8,10 @@ const evidence = fs.readFileSync(path.join(process.cwd(), '..', 'docs', 'proposa
 
 async function routes(page: Page, evidenceDelayMs = 0): Promise<void> {
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));
-  await page.route('**/api/workspaces**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'WS-PROP', displayName: 'Review', sortOrder: 0, isDefault: true, projects: [{ id: 'PROJ-PROP', displayName: projectName, shortCode: 'PRP', workspaceId: 'WS-PROP', storageLocation: 'C:/fixtures/proposals', archived: false, urls: [] }] }]) }));
+  await page.route('**/api/v1/workspaces**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'WS-PROP', displayName: 'Review', sortOrder: 0, isDefault: true, projects: [{ id: 'PROJ-PROP', displayName: projectName, shortCode: 'PRP', workspaceId: 'WS-PROP', storageLocation: 'C:/fixtures/proposals', archived: false, urls: [] }] }]) }));
   await page.route('**/api/watch-paths**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ name: projectName, path: 'C:/fixtures/proposals', rootPath: 'C:/fixtures/proposals' }]) }));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ backlog: [], preparation: [], ready: [], progress: [], autoReview: [], humanReview: [], completed: [], archive: [] }) }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ backlog: [], preparation: [], ready: [], progress: [], autoReview: [], humanReview: [], completed: [], archive: [] }) }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/cli/quota**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-11T08:00:00Z', ttlSeconds: 600, snapshots: [] }) }));
   await page.route('**/api/cli/usage**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-11T08:00:00Z', sessions: [] }) }));
   await page.route('**/api/projects/Proposal%20Demo/proposals', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [

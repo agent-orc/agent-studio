@@ -68,7 +68,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   // Register the broad fallback first. Playwright gives later routes priority.
   await page.route('**/api/**', route => json(route, []));
 
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local',
     bootstrapRequired: false,
     authenticated: true,
@@ -80,7 +80,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     rootPath: WATCH_PATH,
     repositoryPath: WATCH_PATH,
   }]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'ws-evidence',
     displayName: 'Evidence',
     sortOrder: 0,
@@ -100,7 +100,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     isDev: false,
     devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
-  await page.route('**/api/runner/status**', route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-07-23T10:00:00Z',
     snapshots: [],
@@ -143,7 +143,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       merge: null, reviewGrade: null,
     }] : [],
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, created
+  await page.route('**/api/v1/studio/board**', route => json(route, created
     ? {
         ...EMPTY_GROUPED,
         preparation: [{
@@ -182,7 +182,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
       watchPath: WATCH_PATH,
     }] : []);
   });
-  await page.route(/\/api\/tasks\/workbench-feature-1(?:\?.*)?$/, route => json(route, {
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/workbench-feature-1(?:\?.*)?$/, route => json(route, {
     info: {
       id: 'workbench-feature-1', key: 'AGT-2400', displayKey: 'AGT-2400',
       taskKey: `${PROJECT}::AGT-2400`, title: 'Implement Action Bar Dossier',
@@ -448,7 +448,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     }
     return json(route, { project: contextKey, turns: [] });
   });
-  await page.route(/\/api\/orchestrator\/context\/project:.+$/, route => json(route, {
+  await page.route(/\/api\/v1\/studio\/orchestrator\/context\/project:.+$/, route => json(route, {
     contextKey: `project:${PROJECT}`,
     capturedAt: '2026-07-23T10:00:00Z',
     digest: 'page action evidence',

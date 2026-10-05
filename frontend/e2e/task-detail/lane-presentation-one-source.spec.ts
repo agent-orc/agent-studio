@@ -99,7 +99,7 @@ async function installMocks(page: Page): Promise<void> {
   });
   // The shell renders behind an auth gate; without this the mocked board never
   // mounts and every assertion below fails on a sign-in card instead.
-  await page.route('**/api/auth/status', async (route) => {
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
     await route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }),
@@ -114,13 +114,13 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) });
   });
-  await page.route('**/api/tasks/grouped', async (route) => {
+  await page.route('**/api/v1/studio/board', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) });
   });
-  await page.route(`**/api/tasks/${TASK_ID}?**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${TASK_ID}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(taskDetail()) });
   });
-  await page.route('**/api/runner/status', async (route) => {
+  await page.route('**/api/v1/studio/runner/status', async (route) => {
     await route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({ projects: { [FIXTURE_PROJECT]: {

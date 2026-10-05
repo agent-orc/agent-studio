@@ -35,7 +35,7 @@ function unknownClaudeQuotaReport() {
 test.describe('Status bar quota: Claude 2.1.202 unknown utilization', () => {
   test.beforeEach(async ({ page }) => {
     mkdirSync(SHOT_DIR, { recursive: true });
-    await page.route('**/api/auth/status', async (route) => {
+    await page.route('**/api/v1/studio/auth/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

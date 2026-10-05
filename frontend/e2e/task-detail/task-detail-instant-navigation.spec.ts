@@ -64,14 +64,14 @@ function grouped() {
 
 async function mockApplication(page: Page): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { id: 'fixture', name: 'fixture', shortCode: 'FIX', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, [{
     id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true,
     color: null, createdAt: '2026-08-11T08:00:00Z',
     projects: [{
@@ -85,9 +85,9 @@ async function mockApplication(page: Page): Promise<void> {
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-08-11T10:00:00Z', snapshots: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/tasks', route => json(route, [task()]));
-  await page.route('**/api/tasks/grouped**', route => json(route, grouped()));
+  await page.route('**/api/v1/studio/board**', route => json(route, grouped()));
   await page.route(`**/api/tasks/${TASK_ID}/pipeline**`, route => json(route, {
     pipeline: { id: 'fixture', displayName: 'Fixture', version: 1, pre: [], core: [], post: [], allSteps: [] },
     execution: null,
@@ -121,7 +121,7 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
   let detailRequested = false;
   let releaseDetail!: () => void;
   const detailGate = new Promise<void>(resolve => { releaseDetail = resolve; });
-  await page.route(new RegExp(`/api/tasks/${TASK_ID}(\\?|$)`), async route => {
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${TASK_ID}(\\?|$)`), async route => {
     detailRequested = true;
     await detailGate;
     await json(route, detail());
@@ -184,7 +184,7 @@ test('opens the task head before heavy detail data resolves', async ({ page }) =
 test('keeps the task head and gives every failed section a retry', async ({ page }) => {
   await mockApplication(page);
   let attempt = 0;
-  await page.route(new RegExp(`/api/tasks/${TASK_ID}(\\?|$)`), route => {
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${TASK_ID}(\\?|$)`), route => {
     attempt++;
     return attempt === 1
       ? json(route, { title: 'Temporary failure' }, 503)
