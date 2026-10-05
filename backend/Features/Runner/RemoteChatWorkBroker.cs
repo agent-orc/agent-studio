@@ -311,6 +311,9 @@ public sealed class RemoteChatWorkBroker
             QueuedAt = item.CreatedAt,
             StartedAt = item.ClaimedAt,
             FinishedAt = DateTime.UtcNow,
+            ProviderThreadId = request.ProviderThreadId,
+            ThinkingLevel = item.ThinkingLevel,
+            HostName = item.ClaimedHost ?? item.Route.RunnerId,
         };
         item.Completion.TrySetResult(result);
         _logger.LogInformation(
@@ -527,7 +530,8 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderThreadId = null);
 
 public sealed record RemoteChatWorkResult(
     bool Success,
@@ -544,6 +548,9 @@ public sealed record RemoteChatWorkResult(
     public DateTime? QueuedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? FinishedAt { get; init; }
+    public string? ProviderThreadId { get; init; }
+    public string? ThinkingLevel { get; init; }
+    public string? HostName { get; init; }
 }
 
 public sealed record ChatExecutionContext(

@@ -20,6 +20,7 @@ public sealed record ProjectChatTurn
     public DateTime? QueuedAt { get; init; }
     public DateTime? StartedAt { get; init; }
     public DateTime? FinishedAt { get; init; }
+    public AgentStudio.Runner.ChatTurnMetadata? Metadata { get; init; }
     public IReadOnlyList<string>? Refs { get; init; }
     public string Body { get; init; } = "";
 }
@@ -88,6 +89,9 @@ public static class ProjectChatTurnSerializer
         AppendTimestamp(sb, "queuedAt", turn.QueuedAt);
         AppendTimestamp(sb, "startedAt", turn.StartedAt);
         AppendTimestamp(sb, "finishedAt", turn.FinishedAt);
+        if (turn.Metadata is not null)
+            sb.Append("metadataJson: ").Append(Convert.ToBase64String(
+                Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(turn.Metadata)))).Append('\n');
         if (turn.Refs is { Count: > 0 })
         {
             sb.Append("refs: [");
@@ -156,6 +160,7 @@ public static class ProjectChatTurnSerializer
         string? turnId = null, author = null, kind = null;
         DateTime? ts = null, queuedAt = null, startedAt = null, finishedAt = null;
         List<string>? refs = null;
+        AgentStudio.Runner.ChatTurnMetadata? metadata = null;
 
         foreach (var rawLine in fmBlock.Split('\n'))
         {
@@ -177,6 +182,11 @@ public static class ProjectChatTurnSerializer
                 case "queuedAt": queuedAt = ParseTimestamp(value); break;
                 case "startedAt": startedAt = ParseTimestamp(value); break;
                 case "finishedAt": finishedAt = ParseTimestamp(value); break;
+                case "metadataJson":
+                    try { metadata = System.Text.Json.JsonSerializer.Deserialize<AgentStudio.Runner.ChatTurnMetadata>(
+                        Encoding.UTF8.GetString(Convert.FromBase64String(value))); }
+                    catch (Exception ex) { SilentCatch.Note(ex, "ProjectChatTurn: optional metadata"); }
+                    break;
                 case "refs":
                     refs = ParseRefsList(value);
                     break;
@@ -193,6 +203,7 @@ public static class ProjectChatTurnSerializer
             QueuedAt = queuedAt,
             StartedAt = startedAt,
             FinishedAt = finishedAt,
+            Metadata = metadata,
             Refs = refs,
             Body = body
         };

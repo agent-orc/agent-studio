@@ -87,7 +87,7 @@ public sealed class TopologyTests
             "--hostname", "topology-host",
             "--git-remote", bareRepository,
             "--workdir", runnerWork.Path,
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "15",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
@@ -229,7 +229,7 @@ public sealed class TopologyTests
             "--hostname", "outage-host",
             "--git-remote", bareRepository,
             "--workdir", runnerWork.Path,
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "10",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
@@ -311,7 +311,7 @@ public sealed class TopologyTests
             "--hostname", "replacement-host",
             "--git-remote", bareRepository,
             "--workdir", replacementRunnerWork.Path,
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "10",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
@@ -392,7 +392,7 @@ public sealed class TopologyTests
             "--hostname", "transport-host",
             "--git-remote", bareRepository,
             "--workdir", runnerWork.Path,
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "20",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
@@ -557,7 +557,7 @@ public sealed class TopologyTests
             "--hostname", "tls-host",
             "--git-remote", bareRepository,
             "--workdir", runnerWork.Path,
-            "--cli", fakeCli,
+            "--claude-cli", fakeCli,
             "--ttl", "15",
             "--max-parallelism", "1",
             "--poll-seconds", "1");
