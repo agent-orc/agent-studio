@@ -30,7 +30,7 @@ const SKIPPED = 4;
 
 // The isolated backend may need a cold compile on a busy review host before
 // the browser part of this full-stack evidence test can begin.
-test.setTimeout(480_000);
+test.setTimeout(720_000);
 
 function slugFor(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
