@@ -141,15 +141,17 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     {
         const string slug = "spent-card-budget";
         SeedReviewJobWithNeedsInput(slug, "which column is primary?");
+        // The budget counts records, not their age; the history is dated data.
+        var seededAt = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
         for (var index = 0; index < CardRoundBudget.DefaultRoundsPerCard; index++)
             ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
-                DateTime.UtcNow.AddMinutes(-10 + index), slug, Project,
+                seededAt.AddMinutes(index), slug, Project,
                 ReviewDecisionKind.Reissue, "prior automatic round", "(seed)", "(seed)", string.Empty));
 
         // A fresh operator epoch leaves the local reissue count at zero, but
         // cannot replenish the card's lifetime allowance.
         ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
-            DateTime.UtcNow, slug, Project, ReviewDecisionKind.OperatorRequeue,
+            seededAt.AddMinutes(CardRoundBudget.DefaultRoundsPerCard), slug, Project, ReviewDecisionKind.OperatorRequeue,
             "operator reopened the card", "(seed)", "(seed)", string.Empty)
         {
             AttemptEpoch = 1,

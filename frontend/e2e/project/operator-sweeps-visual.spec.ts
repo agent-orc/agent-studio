@@ -86,13 +86,20 @@ test('operator sweeps render beside pipeline health in both themes', async ({ pa
   await expect(page.getByTestId('pipeline-health')).toBeVisible();
   await expect(page.getByTestId('operator-sweeps-waiting')).toContainText('AGT-2955');
   await expect(page.getByTestId('operator-sweeps-budget')).toContainText('3 of 4 left');
-  if (await page.getByTestId('error-dialog').isVisible()) {
-    console.log(`Visual fixture error: ${await page.getByTestId('error-dialog-message').textContent()}`);
-    await page.getByTestId('error-dialog-close').click();
-  }
+  // The page shell polls unrelated endpoints; any fixture gap must not cover the evidence.
+  const dismissErrors = async () => {
+    const dialog = page.getByTestId('error-dialog');
+    if (await dialog.isVisible()) {
+      console.log(`Visual fixture error: ${await page.getByTestId('error-dialog-message').textContent()}`);
+      await page.getByTestId('error-dialog-close').click();
+      await expect(dialog).toBeHidden();
+    }
+  };
 
   await setTheme(page, 'light');
+  await dismissErrors();
   await block.screenshot({ path: path.join(directory, 'operator-sweeps--light--mocked.png') });
   await setTheme(page, 'dark');
+  await dismissErrors();
   await block.screenshot({ path: path.join(directory, 'operator-sweeps--dark--mocked.png') });
 });

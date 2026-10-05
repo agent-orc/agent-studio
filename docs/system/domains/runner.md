@@ -1600,7 +1600,7 @@ next tick runs on schedule.
 
 | Sweep | Trigger | Side effect (internal path) |
 |---|---|---|
-| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round sequence: guarded move to the top of Ready, `prompt.md` note, orchestrator follow-up, reissue tag. The prompt carries the non-pass verdicts and the failed or planned verification commands. |
+| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round material (`prompt.md` note, orchestrator follow-up, reissue tag), written and checked in the Human Review folder first, then the guarded move to the top of Ready. A failed write or a refused move restores the folder, so a Ready card never lacks its fix instructions and the next tick retries the card. The prompt carries the non-pass verdicts and the failed or planned verification commands. |
 | `gate-triage` | Card in `5-human-review` or `5e-escalated`; its current failure is the merge gate | Product failure: `TaskFailureContinuationService`, the service the operator failure panel calls. Environment failure: held for the gate-environment retry ladder (AGT-2824). Unclassified: waits for a person. The domain comes from the gate runner verdict, then the run-failure taxonomy, then `FailureInterventionPolicy`. |
 | `salvage` | Card in `5e-escalated`; its latest `agent_run_finished` is non-terminal and names a salvage pair | `continuation-base.json` plus the AGT-2861 continuation prompt, queued through `TaskRunnerService.ContinueJobAsync`. |
 
