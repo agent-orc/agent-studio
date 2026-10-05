@@ -76,7 +76,9 @@ public sealed record BuildTestGateRequest(
     /// </summary>
     public string? TimeoutBudgetSource { get; init; }
 
+    [System.Text.Json.Serialization.JsonIgnore]
     public Action? OnMachineGateWaiting { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
     public Action? OnMachineGateAcquired { get; init; }
 
     /// <summary>
