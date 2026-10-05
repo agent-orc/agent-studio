@@ -209,6 +209,12 @@ public static class ProjectRepositoryPolicy
             throw new ArgumentException("SSH repository URL may name only the 'git' user and no password.");
         var host = value[(at + 1)..colon].ToLowerInvariant();
         var path = value[(colon + 1)..].TrimEnd('/');
+        // Same contract as the URL form: no query, fragment, or second userinfo
+        // may survive into the stored origin or the host probe.
+        if (path.IndexOfAny(['?', '#']) >= 0)
+            throw new ArgumentException("Repository URL must not carry a query or fragment.");
+        if (Uri.CheckHostName(host) is not (UriHostNameType.Dns or UriHostNameType.IPv4))
+            throw new ArgumentException("Repository URL must name a valid host.");
         if (host.Length == 0 || path.Length == 0 || path.StartsWith('/') && path.Length == 1)
             throw new ArgumentException("Repository URL must name a host and repository path.");
         return $"ssh://git@{host}/{path.TrimStart('/')}";
