@@ -42,9 +42,9 @@ jq -er '.issued.credential | select(type == "string" and length > 0)' "$work/res
     { echo "enrolment response carried no credential for principal=$principal; rotate or revoke it explicitly" >&2; exit 6; }
 chmod 600 "$staged"
 # link(2) fails when the target exists; mv -n can skip the install silently.
-if ! ln -T "$staged" "$credential_file" 2>/dev/null; then
+if ! ln -T "$staged" "$credential_file"; then
     keep_staged=1
-    echo "credential file appeared during enrolment; the issued credential for principal=$principal is kept in $staged." \
+    echo "could not install the credential without replacing $credential_file; the issued credential for principal=$principal is kept in $staged." \
         "Install it or revoke the principal explicitly; the code file is left in place." >&2
     exit 7
 fi

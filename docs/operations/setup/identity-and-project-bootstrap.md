@@ -88,7 +88,7 @@ credential mode 600 and deletes the spent code. Set
 
 The credential is staged beside the target and installed with an exclusive
 link, so an existing credential is never replaced. If a credential file
-appears while the exchange runs, the script exits 7, keeps the spent code
+appears while the exchange runs, or the link otherwise fails, the script exits 7, keeps the spent code
 file, and leaves the issued credential in a mode-600
 `.enrol-credential.*` file in the same directory. Install that file or revoke
 the principal explicitly. A response without a principal or credential exits 6
