@@ -281,7 +281,7 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
         public string? LastResumeSessionId { get; private set; }
 
         public BlockingFakeOrchestratorRunner(bool block = true)
-            : base(null!, NullLogger<OrchestratorRunner>.Instance)
+            : base(NullLogger<OrchestratorRunner>.Instance)
         {
             if (!block)
                 _release.SetResult();
