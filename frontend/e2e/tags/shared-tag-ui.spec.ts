@@ -147,6 +147,38 @@ test('area and facet selection follows board, Dossier list and wiki at desktop a
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });
 
+test('wiki tree and search navigation close an open area glossary', async ({ page }) => {
+  await page.route('**/api/projects/*/wiki/files/guide.md', route => route.fulfill({ json: {
+    relPath: 'guide.md', content: '# Runner guide\n',
+  } }));
+  await page.route('**/api/projects/*/wiki/history/guide.md', route => route.fulfill({ json: {
+    relPath: 'guide.md', model: 'fixture', metadata: {
+      model: 'fixture', updatedAt: '2026-09-25T12:00:00Z', reason: 'test fixture', taskKey: null,
+      status: null, runCount: null, hasFrontmatter: false,
+    }, commits: [],
+  } }));
+  await page.goto(`/#/projects/${slug(TAG_PROJECT)}/wiki`);
+  const glossary = page.getByTestId('area-glossary');
+  const openGlossary = async () => {
+    await page.getByTestId('area-glossary-open').click();
+    await expect(glossary).toBeVisible();
+  };
+
+  await openGlossary();
+  await page.getByTestId('project-wiki-file-guide.md').click();
+  await expect(glossary).toHaveCount(0);
+  await expect(page.getByTestId('project-wiki-viewer-path')).toContainText('guide.md');
+
+  await openGlossary();
+  await page.getByTestId('project-wiki-overview-node').click();
+  await expect(glossary).toHaveCount(0);
+
+  await openGlossary();
+  await page.getByTestId('project-wiki-search').fill('runner');
+  await expect(glossary).toHaveCount(0);
+  await expect(page.getByTestId('wiki-search-results')).toBeVisible();
+});
+
 test('glossary keeps the latest area after a slower response arrives', async ({ page }) => {
   const project = TAG_PROJECT;
   let releaseRunner!: () => void;

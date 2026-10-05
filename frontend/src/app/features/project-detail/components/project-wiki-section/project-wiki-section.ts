@@ -252,10 +252,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   readonly filterOpen = signal(false);
   readonly glossaryOpen = signal(false);
   openGlossaries(): void { this.glossaryOpen.set(true); }
-  openGlossaryPage(rel: string): void {
-    this.glossaryOpen.set(false);
-    this.openFile(rel, this.wikiTypeForRel(rel));
-  }
+  openGlossaryPage(rel: string): void { this.openFile(rel, this.wikiTypeForRel(rel)); }
 
   readonly expanded = signal<ReadonlySet<string>>(new Set());
   readonly focusedRowId = signal<string | null>(null);
@@ -689,6 +686,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
     const target: WikiDeepLinkTarget = relPath
       ? { kind: 'folder', relPath, title: this.findNode(this.roots(), relPath)?.title }
       : { kind: 'overview' };
+    this.glossaryOpen.set(false);
     if (!inPlace && this.requestStudioTab(target, reuse)) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
@@ -727,6 +725,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
    * the same state as the initial view.
    */
   openOverview(inPlace = false): void {
+    this.glossaryOpen.set(false);
     if (!inPlace && this.requestStudioTab({ kind: 'overview' })) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
@@ -738,6 +737,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
   // ---- wiki search (WikiSearchService owns the debounce and sequencing) ----
 
   onSearchQueryChange(value: string): void {
+    this.glossaryOpen.set(false);
     this.search.onQueryChange(this.projectName(), value);
   }
 
@@ -853,6 +853,7 @@ export class ProjectWikiSectionComponent implements OnDestroy {
 
   openFile(rel: string, type: WikiNodeType = 'md', tab: WikiViewerTab = 'doc', reportAnchor: string | null = null,
     reuse: 'replace-current' | 'new' = 'replace-current'): void {
+    this.glossaryOpen.set(false);
     if (this.requestStudioTab({ kind: 'page', relPath: rel, title: this.findNode(this.roots(), rel)?.title }, reuse)) return;
     this.resetSearchState();
     this.deepLinkMissing.set(null);
