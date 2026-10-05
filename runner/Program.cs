@@ -77,18 +77,19 @@ ProviderAuthProbe.Shared.UseLauncher(
     },
     Log);
 
-// A real request uses the same configured CLI resolution as coding work. It
-// runs in the probe's protected empty context with no repository prompt.
+// A real request uses the same configured CLI selection and CAR execution
+// route as coding work, read-only and in the probe's protected clean context
+// with no repository prompt.
 using var providerStatusHttp = new HttpClient();
 ProviderAuthProbe.Shared.UseRealRequest(
-    async (fileName, _, ct) =>
+    async (fileName, statusArguments, ct) =>
     {
         var provider = RunnerCapabilityProbe.Provider(fileName);
         var context = AuthProbeContext(provider);
         if (context is null)
             return new ProcessResult(1, "", "probe isolation unavailable");
-        var invocation = AgentCliProcess.Resolve(options, new RunSpecDto(CliType: provider));
-        if (!string.Equals(invocation.FileName, fileName, StringComparison.Ordinal))
+        var selection = CliSelection.Resolve(options, new RunSpecDto(CliType: provider));
+        if (!string.Equals(selection.FileName, fileName, StringComparison.Ordinal))
             return new ProcessResult(1, "", "configured CLI mismatch");
         FileStream hostFlight;
         try
@@ -101,26 +102,52 @@ ProviderAuthProbe.Shared.UseRealRequest(
         {
             return new ProcessResult(1, "", "another host-local provider probe is in progress");
         }
-        await using (hostFlight)
+        Task<(ProcessResult Result, bool TimedOut, bool LaunchFailed)> run;
+        try
         {
-            var argsForProbe = invocation.Arguments.ToList();
-            if (provider == "codex")
+            // An empty scratch repository: codex exec refuses a working
+            // directory outside Git, and no application checkout is exposed.
+            var root = Path.Combine(context.HomePath, ".provider-real-probe");
+            var workspace = Path.Combine(root, "workspace");
+            var worker = Path.Combine(root, "worker");
+            Directory.CreateDirectory(workspace);
+            Directory.CreateDirectory(worker);
+            if (!Directory.Exists(Path.Combine(workspace, ".git")))
             {
-                // The canary needs only the result code. Older configured JSON
-                // stream flags vary by CLI version and add no access evidence.
-                argsForProbe.RemoveAll(arg => arg is "--experimental-json" or "--json");
-                argsForProbe.InsertRange(1, ["--sandbox", "read-only", "--skip-git-repo-check"]);
+                var init = await ProcessRunner.RunAsync("git", ["init", "-q"],
+                    workingDirectory: workspace, ct: ct);
+                if (init.ExitCode != 0)
+                {
+                    await hostFlight.DisposeAsync();
+                    return new ProcessResult(1, "", "probe workspace unavailable");
+                }
             }
-            else if (provider == "claude")
-                argsForProbe.AddRange(["--tools", ""]);
-            var lowPriority = ProviderAuthProbe.LowPriorityInvocation(fileName, argsForProbe);
-            return await ProcessRunner.RunAsync(
-                lowPriority.FileName, lowPriority.Arguments,
-                workingDirectory: context.HomePath,
-                stdin: "Reply with OK. Do not use tools or access files.",
-                environment: context.Environment.ToDictionary(kv => kv.Key, kv => (string?)kv.Value),
-                ct: ct);
+            run = CarWorkerExecution.RunAsync(
+                new DetachedJobSpec(
+                    fileName, [], workspace,
+                    "Reply with OK. Do not use tools or access files.",
+                    worker,
+                    (int)ProviderAuthProbe.DefaultTimeout.TotalSeconds - 5,
+                    selection.CliType, selection.Model, selection.ThinkingLevel,
+                    CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
+                    CodingAgentRunner.Model.CliContextModes.Clean,
+                    RunId: ProviderAuthProbe.CleanContextIdentity,
+                    CleanContextKey: ProviderAuthProbe.CleanContextIdentity),
+                worker,
+                (_, _) => { });
         }
+        catch
+        {
+            await hostFlight.DisposeAsync();
+            throw;
+        }
+        // The host-local lock lives until CAR has stopped the CLI, even when
+        // the probe deadline returns first.
+        _ = run.ContinueWith(_ => hostFlight.Dispose(), TaskScheduler.Default);
+        var (result, timedOut, _) = await run.WaitAsync(ct);
+        // CAR reports its own watchdog as "Runner timeout"; that is a slow
+        // CLI, not network evidence.
+        return timedOut ? new ProcessResult(1, "", "real request deadline exceeded") : result;
     },
     ProviderStatusIncidentAdapter.Official(providerStatusHttp),
     client.ReadProviderComparisonAsync,

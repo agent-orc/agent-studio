@@ -36,8 +36,9 @@ can still establish `credential_invalid` from local evidence.
 The official feed is cached per provider and inaccessible, stale, or unrelated
 status data remains unknown.
 
-The real check uses the configured CLI execution route in an isolated probe
-context with a 30-second deadline, one in-flight check per provider, a daily
+The real check uses the configured CLI selection and the CAR execution route,
+read-only, in an isolated probe context and an empty scratch repository. It
+has a 30-second deadline, one in-flight check per provider, a daily
 48-request ceiling, and a 30-minute maximum interval after a successful real
 check. When that ceiling passes and the request budget is exhausted, the
 outcome becomes `indeterminate`; the original real-success time is retained.
