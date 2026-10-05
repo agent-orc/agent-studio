@@ -19,7 +19,6 @@ public class OrchestratorRunnerTests
     {
         var oneShot = new CapturingCodexOneShot();
         var runner = new OrchestratorRunner(
-            claude: null!,
             logger: NullLogger<OrchestratorRunner>.Instance,
             oneShotRegistry: new CliOneShotRegistry([oneShot]));
 

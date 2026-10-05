@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace AgentRunner;
 
@@ -14,9 +13,8 @@ public sealed record ProcessResult(
 }
 
 /// <summary>
-/// Minimal cross-platform process spawner. Used for git plumbing and for the
-/// agent CLI. Streaming callbacks let the caller tee output to the console and
-/// ship it to the server as it arrives, rather than buffering the whole run.
+/// Minimal cross-platform process spawner for Git, verification, SSH, and
+/// operational probes. Coding-agent CLIs run only through CodingAgentRunner.
 /// </summary>
 public static class ProcessRunner
 {
@@ -41,7 +39,6 @@ public static class ProcessRunner
         bool clearEnvironment = false,
         bool isolateProcessGroup = false,
         Action<int>? onStarted = null,
-        bool captureTerminationSignal = false,
         CancellationToken ct = default)
     {
         var actualFileName = fileName;
@@ -50,21 +47,10 @@ public static class ProcessRunner
         {
             var setsid = File.Exists("/usr/bin/setsid") ? "/usr/bin/setsid"
                 : File.Exists("/bin/setsid") ? "/bin/setsid"
-                : throw new InvalidOperationException(
-                    "Agent CLI process-group isolation requires the Linux 'setsid' utility.");
+                : throw new InvalidOperationException("Process-group isolation requires the Linux 'setsid' utility.");
             actualFileName = setsid;
             actualArguments = [fileName, .. arguments];
         }
-
-        string? signalStatusPath = null;
-        if (captureTerminationSignal && OperatingSystem.IsLinux())
-        {
-            var wrapped = ProcessTermination.Wrap(actualFileName, actualArguments);
-            actualFileName = wrapped.FileName;
-            actualArguments = wrapped.Arguments;
-            signalStatusPath = wrapped.StatusPath;
-        }
-
         var psi = new ProcessStartInfo
         {
             FileName = actualFileName,
@@ -131,29 +117,18 @@ public static class ProcessRunner
 
         try
         {
-            try
-            {
-                await process.WaitForExitAsync(ct);
-            }
-            catch (OperationCanceledException)
-            {
-                TryKill(process, isolateProcessGroup);
-                throw;
-            }
-
-            // WaitForExitAsync returns before the async readers have flushed the
-            // last buffered lines. The synchronous wait drains both readers.
-            process.WaitForExit();
-            return new ProcessResult(
-                process.ExitCode,
-                outBuf.ToString(),
-                errBuf.ToString(),
-                ProcessTermination.ReadRecordedSignal(signalStatusPath, process.ExitCode));
+            await process.WaitForExitAsync(ct);
         }
-        finally
+        catch (OperationCanceledException)
         {
-            ProcessTermination.DeleteStatusFile(signalStatusPath);
+            TryKill(process, isolateProcessGroup);
+            throw;
         }
+
+        // WaitForExitAsync returns before the async readers have flushed the
+        // last buffered lines. The synchronous wait drains both readers.
+        process.WaitForExit();
+        return new ProcessResult(process.ExitCode, outBuf.ToString(), errBuf.ToString());
     }
 
     private static void TryKill(Process process, bool isolatedProcessGroup)
@@ -162,28 +137,17 @@ public static class ProcessRunner
         {
             try
             {
-                // AGT-2870: the process group is this child's own, because the
-                // caller asked for an isolated one, but kill(-pgid) is a
-                // broadcast for any pgid below 2 and Process.Id is 0 for a
-                // start that failed. The guard refuses both; the runtime's
-                // descendant-tree kill below still runs.
                 if (!process.HasExited)
-                    ProcessSignalGuard.TrySignalProcessGroup(
-                        process.Id, SigKill, "process-runner-group");
+                    ProcessSignalGuard.TrySignalProcessGroup(process.Id, 9, "process-runner-group");
             }
             catch (InvalidOperationException)
             {
-                // Fall through to the runtime's descendant-tree kill.
+                // The runtime descendant-tree kill below remains available.
             }
         }
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch { /* best effort: the run is already being torn down */ }
     }
-
-    private const int SigKill = 9;
-
-    [DllImport("libc", SetLastError = true)]
-    private static extern int kill(int pid, int signal);
 }
 
 /// <summary>
