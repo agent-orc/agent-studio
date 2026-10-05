@@ -402,6 +402,25 @@ public sealed class IdentityBootstrapTests
             Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId))).StatusCode);
         var otherWorkspace = await (await ownerClient.PostAsJsonAsync("/api/v1/workspaces",
             new CreateWorkspaceRequest("Other"))).Content.ReadFromJsonAsync<WorkspaceDto>();
+        var existingProject = await ownerClient.PostAsJsonAsync("/api/v1/projects",
+            new CreateProjectRequest(workspace.WorkspaceId, "Existing", "EXIST", "prj-existing"));
+        Assert.Equal(HttpStatusCode.Created, existingProject.StatusCode);
+        var firstRegistration = Registration("prj-existing", "https://github.com/org/existing.git",
+            workspace.WorkspaceId, prefix: "EXIST") with { Name = "Existing" };
+        foreach (var changedProject in new[]
+                 {
+                     firstRegistration with { WorkspaceId = otherWorkspace!.WorkspaceId },
+                     firstRegistration with { Name = "Changed name" },
+                     firstRegistration with { TaskKeyPrefix = "CHANGED" }
+                 })
+        {
+            Assert.Equal("project-repository-registered", await ErrorCodeAsync(await ownerClient.PostAsJsonAsync(
+                "/api/v1/projects/registrations", changedProject), HttpStatusCode.Conflict));
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await ownerClient.GetAsync("/api/v1/projects/prj-existing/repository")).StatusCode);
+        }
+        Assert.Equal(HttpStatusCode.Created,
+            (await ownerClient.PostAsJsonAsync("/api/v1/projects/registrations", firstRegistration)).StatusCode);
         var identicalRepository = Registration("prj-alpha", "https://github.com/org/alpha.git", workspace.WorkspaceId);
         foreach (var changedProject in new[]
                  {

@@ -1,7 +1,7 @@
 # Identity and Project Bootstrap (standalone Task Server)
 
 This page is the I05 contract from the
-[deployment story Dossier](../../deployment-story/index.html) (D5, option A:
+[deployment story Dossier](../deployment-story/index.html) (D5, option A:
 one installer-owned bootstrap feeding server-owned human, principal and
 project records). It applies to the standalone Task Server plane
 (`/api/v1`), which is the selected owner for the installed profile. The
@@ -118,7 +118,8 @@ POST /api/v1/projects/registrations
 - An identical repeat returns `200`; the check includes the stored workspace,
   project name and task key prefix as well as the repository fields. Any
   differing value is `409 project-repository-registered`, never an implicit
-  change.
+  change. The same metadata check applies when the project already exists but
+  has no repository registration; a rejected request leaves it unregistered.
 
 ## Prove the repository from the host
 

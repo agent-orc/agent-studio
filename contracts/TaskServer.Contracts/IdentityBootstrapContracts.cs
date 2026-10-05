@@ -1,7 +1,7 @@
 namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
-/// I05 human identity and project bootstrap (docs/deployment-story/index.html,
+/// I05 human identity and project bootstrap (docs/operations/deployment-story/index.html,
 /// D5 option A). One installer-owned bootstrap feeds server-owned human,
 /// principal and project records. Every one-time secret in this file is
 /// returned exactly once and stored only as a hash.

@@ -3,7 +3,7 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// Pure I05 decisions (docs/deployment-story/index.html, D5 option A). The
+/// Pure I05 decisions (docs/operations/deployment-story/index.html, D5 option A). The
 /// store reads current state, asks one of these functions, and then performs
 /// the bounded write. No I/O happens here.
 /// </summary>

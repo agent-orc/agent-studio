@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// I05 human identity and project bootstrap (docs/deployment-story/index.html,
+/// I05 human identity and project bootstrap (docs/operations/deployment-story/index.html,
 /// D5 option A): installation identity, installer-armed owner bootstrap,
 /// owner recovery custody, ordinary operator accounts, one-time enrolment of
 /// separately revocable service principals, and API registration of each
@@ -396,16 +396,25 @@ public sealed partial class TaskServerStore
             // Otherwise concurrent identical requests can both see no row and
             // the second request reports a false ownership conflict.
             existing = await ReadProjectRepositoryAsync(connection, transaction, projectId, ct);
-            if (existing is not null)
+            bool projectExists;
+            bool projectMatches;
+            await using (var projectCommand = Command(connection, """
+                SELECT workspace_id, name, task_key_prefix FROM projects WHERE id = $project;
+                """, transaction, ("$project", projectId)))
             {
-                await using var projectCommand = Command(connection, """
-                    SELECT workspace_id, name, task_key_prefix FROM projects WHERE id = $project;
-                    """, transaction, ("$project", projectId));
                 await using var projectReader = await projectCommand.ExecuteReaderAsync(ct);
-                var projectMatches = await projectReader.ReadAsync(ct)
+                projectExists = await projectReader.ReadAsync(ct);
+                projectMatches = projectExists
                     && projectReader.GetString(0) == request.WorkspaceId
                     && projectReader.GetString(1) == request.Name.Trim()
                     && projectReader.GetString(2) == request.TaskKeyPrefix.Trim().ToUpperInvariant();
+            }
+            if (projectExists && !projectMatches)
+                throw new TaskServerConflictException(
+                    "project-repository-registered",
+                    $"Project '{projectId}' already has different project metadata.");
+            if (existing is not null)
+            {
                 if (projectMatches && existing.RepositoryUrl == url && existing.IntegrationRef == integrationRef
                     && existing.ReleaseRef == releaseRef && existing.DeliveryPolicy == policy)
                     return;
@@ -419,8 +428,6 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "repository-owned-by-other-project",
                     $"Repository is already registered to project '{owner}'.");
-            var projectExists = Convert.ToInt64(await ScalarAsync(connection,
-                "SELECT count(*) FROM projects WHERE id = $project;", ct, transaction, ("$project", projectId))) > 0;
             if (!projectExists)
                 await CreateProjectInTransactionAsync(connection, transaction,
                     new CreateProjectRequest(request.WorkspaceId, request.Name, request.TaskKeyPrefix, projectId),

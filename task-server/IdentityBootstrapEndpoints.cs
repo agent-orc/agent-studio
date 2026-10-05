@@ -3,7 +3,7 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentStudio.TaskServer;
 
 /// <summary>
-/// I05 routes (docs/deployment-story/index.html, D5 option A). Identity
+/// I05 routes (docs/operations/deployment-story/index.html, D5 option A). Identity
 /// administration and project registration require an owner human session
 /// on every authenticated installation, in addition to the edge principal's
 /// scope. <c>X-Client-Id</c> and <c>X-Actor-Id</c> are never consulted here:
