@@ -11,6 +11,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: fixed timestamps are ledger data used by pure readers and pricing.
+
 /// <summary>
 /// AGT-3012: AGT-3004's receipt held one Claude session's usage 22 times
 /// (5.6 billion tokens over 23 calls instead of about 260 million over two).
@@ -62,10 +64,21 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     {
         using var frame = JsonDocument.Parse(ResultFrame(turnInput: 54, session: "s-1"));
 
-        var usage = Assert.Single(new ClaudeUsageParser().ParseAll(frame.RootElement, "claude-opus-5-5", new CliModelRegistry()));
+        var usage = Assert.Single(new ClaudeUsageParser().ParseAll(frame.RootElement, "claude-opus-5", new CliModelRegistry()));
 
         Assert.Equal("claude-session:s-1", usage.CumulativeScope);
         Assert.Equal(SessionCacheRead, usage.CacheRead);
+    }
+
+    [Fact]
+    public void Claude_modelUsage_without_session_id_has_no_cumulative_scope()
+    {
+        using var frame = JsonDocument.Parse(ResultFrame(turnInput: 54, session: "s-1")
+            .Replace("\"session_id\":\"s-1\",", string.Empty, StringComparison.Ordinal));
+
+        var usage = Assert.Single(new ClaudeUsageParser().ParseAll(frame.RootElement, "claude-opus-5", new CliModelRegistry()));
+
+        Assert.Null(usage.CumulativeScope);
     }
 
     [Fact]
@@ -103,21 +116,120 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         var (_, mutations, _) = BuildWriteServices();
         WriteTask(tokenSummary: null);
         var folder = Path.GetDirectoryName(TaskJsonPath())!;
-        var session = SessionCall(participant: null);
-        var codex = CodexCall(participant: null);
+        var session = SessionCall($"agent:remote-runner:{Attempt}:usage:scope:session-a");
+        var repeatedSession = session with { ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:scope:session-a" };
+        var codex = CodexCall($"agent:remote-runner:{LaterAttempt}:usage:turn:00000001:00");
 
         Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, Attempt, Summary(session)));
-        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(session, session, codex)));
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(repeatedSession, repeatedSession, codex)));
 
         var receipt = ReadReceipt();
         Assert.Equal(2, receipt.Calls);
         Assert.Equal(SessionTotal + CodexTotal, receipt.TotalTokens);
-        Assert.Equal($"agent:remote-runner:{Attempt}", receipt.Entries[0].ParticipantId);
-        Assert.Equal($"agent:remote-runner:{LaterAttempt}", receipt.Entries[1].ParticipantId);
+        Assert.Equal(session.ParticipantId, receipt.Entries[0].ParticipantId);
+        Assert.Equal(codex.ParticipantId, receipt.Entries[1].ParticipantId);
 
         var bytes = File.ReadAllText(TaskJsonPath());
-        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(session, codex)));
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(repeatedSession, codex)));
         Assert.Equal(bytes, File.ReadAllText(TaskJsonPath()));
+    }
+
+    [Fact]
+    public void Receipt_store_preserves_distinct_equal_turns_and_replay_is_a_noop()
+    {
+        var (_, mutations, _) = BuildWriteServices();
+        WriteTask(tokenSummary: null);
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var first = SessionCall($"agent:remote-runner:{Attempt}:usage:turn:00000001:00");
+        var second = first with { ParticipantId = $"agent:remote-runner:{Attempt}:usage:turn:00000002:00" };
+
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, Attempt, Summary(first, second)));
+        Assert.Equal(2, ReadReceipt().Calls);
+        var bytes = File.ReadAllText(TaskJsonPath());
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, Attempt, Summary(first, second)));
+        Assert.Equal(bytes, File.ReadAllText(TaskJsonPath()));
+
+        var reattached = first with { ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:turn:00000001:00" };
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(reattached)));
+        Assert.Equal(bytes, File.ReadAllText(TaskJsonPath()));
+
+        var third = first with { ParticipantId = $"agent:remote-runner:{LaterAttempt}:usage:turn:00000003:00" };
+        Assert.True(mutations.SetRemoteTokenSummaryOnFolder(folder, LaterAttempt, Summary(reattached, third)));
+        Assert.Equal(3, ReadReceipt().Calls);
+        Assert.Equal(3 * SessionTotal, ReadReceipt().TotalTokens);
+        var read = new ProjectTokenReceiptReader().Read(_watchPath);
+        Assert.Equal(3, read.Entries.Count);
+        Assert.Equal(0, read.CollapsedDuplicates.Entries);
+        Assert.Equal(3, BuildProjectReader().BuildLifetimeSummary(ProjectName, _watchPath).OrchestratorLlmCalls);
+    }
+
+    [Fact]
+    public void Remote_receipt_preserves_equal_modelUsage_frames_without_session_id()
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(tokenSummary: null);
+        var frame = ResultFrame(turnInput: 54, session: "s-1")
+            .Replace("\"session_id\":\"s-1\",", string.Empty, StringComparison.Ordinal);
+        WriteCliLog([frame, frame]);
+
+        var task = scanner.FindJob(JobId, _watchPath)!;
+        Assert.True(receipts.PersistFromLog(task, Attempt, "agent-runner-01").Persisted);
+        var receipt = ReadReceipt();
+        Assert.Equal(2, receipt.Calls);
+        Assert.Equal(2 * SessionTotal, receipt.TotalTokens);
+        Assert.NotEqual(receipt.Entries[0].ParticipantId, receipt.Entries[1].ParticipantId);
+
+        var bytes = File.ReadAllText(TaskJsonPath());
+        Assert.True(receipts.PersistFromLog(task, Attempt, "agent-runner-01").Persisted);
+        Assert.Equal(bytes, File.ReadAllText(TaskJsonPath()));
+    }
+
+    [Fact]
+    public void Reattach_keeps_turn_identity_when_its_attempt_window_widens()
+    {
+        var (scanner, _, receipts) = BuildWriteServices();
+        WriteTask(tokenSummary: null);
+        var frame = ResultFrame(turnInput: 54, session: "s-1")
+            .Replace("\"session_id\":\"s-1\",", string.Empty, StringComparison.Ordinal);
+        var folder = Path.GetDirectoryName(TaskJsonPath())!;
+        var log = TaskPaths.CliOutputLog(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        File.WriteAllLines(log,
+        [
+            $"[13:29:40.000] [stdout] {frame}",
+            $"[13:29:54.050] [stdout] {frame}",
+        ]);
+        File.SetLastWriteTimeUtc(log, SessionAt);
+        var eventsPath = TaskPaths.SessionEventsLog(folder);
+        void WriteEvents()
+        {
+            File.WriteAllLines(eventsPath,
+            [
+                JsonSerializer.Serialize(new SessionEvent
+                {
+                    Ts = SessionAt.AddSeconds(-1),
+                    FinishedAt = SessionAt.AddSeconds(1),
+                    RunAttemptId = Attempt,
+                }),
+                JsonSerializer.Serialize(new SessionEvent
+                {
+                    Ts = SessionAt.AddSeconds(-16),
+                    FinishedAt = SessionAt.AddSeconds(1),
+                    RunAttemptId = LaterAttempt,
+                }),
+            ]);
+        }
+        WriteEvents();
+        var task = scanner.FindJob(JobId, _watchPath)!;
+
+        Assert.True(receipts.PersistFromLog(task, Attempt, "agent-runner-01").Persisted);
+        var first = Assert.Single(ReadReceipt().Entries);
+        Assert.EndsWith(":usage:turn:00000001:00", first.ParticipantId);
+
+        Assert.True(receipts.PersistFromLog(task, LaterAttempt, "agent-runner-01").Persisted);
+        var receipt = ReadReceipt();
+        Assert.Equal(2, receipt.Calls);
+        Assert.Equal(2 * SessionTotal, receipt.TotalTokens);
     }
 
     [Fact]
@@ -125,12 +237,18 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     {
         var at = SessionAt;
         var turn = new ParsedTurnUsage("gpt-6-sol", 10, 1, 0, 0, null, null);
-        var early = new ParsedTurnUsage("claude-opus-5-5", 1, 1, 100, 0, null, null, CumulativeScope: "claude-session:a");
+        var early = new ParsedTurnUsage("claude-opus-5", 1, 1, 100, 0, null, null, CumulativeScope: "claude-session:a");
         var late = early with { CacheRead = 300 };
         var other = early with { CumulativeScope = "claude-session:b", CacheRead = 50 };
 
         var kept = RemoteTokenReceiptService.LatestCumulativeSnapshots(
-            [(at, turn), (at, early), (at.AddSeconds(1), turn), (at.AddSeconds(2), late), (at, other)]);
+        [
+            new(at, turn, "turn:1"),
+            new(at, early, "scope:a"),
+            new(at.AddSeconds(1), turn, "turn:2"),
+            new(at.AddSeconds(2), late, "scope:a"),
+            new(at, other, "scope:b"),
+        ]);
 
         Assert.Equal(4, kept.Count);
         Assert.Equal(2, kept.Count(item => item.Usage.CumulativeScope is null));
@@ -193,7 +311,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
 
         var day = timeline.DayCosts.Single(cell => cell.Day == "2026-09-29");
         Assert.Equal(SessionTotal, day.TotalTokens);
-        var once = TokenPricing.Estimate("claude-opus-5-5", SessionInput, SessionOutput, SessionCacheRead, SessionCacheWrite, SessionAt);
+        var once = TokenPricing.Estimate("claude-opus-5", SessionInput, SessionOutput, SessionCacheRead, SessionCacheWrite, SessionAt);
         Assert.Equal(decimal.Round(once.Total, 2), decimal.Round(day.CostUsd, 2));
     }
 
@@ -336,7 +454,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
     private static TaskTokenCall SessionCall(string? participant) => new()
     {
         Ts = SessionAt,
-        Model = "claude-opus-5-5",
+        Model = "claude-opus-5",
         ParticipantId = participant,
         InputTokens = SessionInput,
         OutputTokens = SessionOutput,
@@ -386,7 +504,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
             ["usage"] = new { input_tokens = turnInput, output_tokens = 33, cache_read_input_tokens = 86_854 },
             ["modelUsage"] = new Dictionary<string, object>
             {
-                ["claude-opus-5-5"] = new
+                ["claude-opus-5"] = new
                 {
                     inputTokens = SessionInput,
                     outputTokens = SessionOutput,
@@ -406,7 +524,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Project = ProjectName,
         JobId = JobId,
         RunId = runId,
-        Tokens = new AgentMessageTokens(SessionInput, SessionOutput, CacheRead: cacheRead, CacheWrite: SessionCacheWrite, Model: "claude-opus-5-5"),
+        Tokens = new AgentMessageTokens(SessionInput, SessionOutput, CacheRead: cacheRead, CacheWrite: SessionCacheWrite, Model: "claude-opus-5"),
     };
 
     private string TaskJsonPath() => Path.Combine(_watchPath, "6-completed", JobId, "task.json");
@@ -423,7 +541,7 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
             ["order"] = 1,
             ["agent"] = "claude",
             ["cliType"] = "claude",
-            ["model"] = "claude-opus-5-5",
+            ["model"] = "claude-opus-5",
             ["tokenSummary"] = tokenSummary,
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
     }

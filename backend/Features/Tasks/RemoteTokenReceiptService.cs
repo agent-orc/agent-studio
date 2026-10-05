@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.Cli;
 using AgentStudio.Runner;
 
@@ -43,7 +45,11 @@ public sealed class RemoteTokenReceiptService
             return new RemoteTokenReceiptResult(false, 0, "No usage parser is registered for the task CLI.");
 
         var path = TaskPaths.CliOutputLog(task.FolderPath);
-        var lines = CliOutputLogParser.ParseFile(path);
+        // Keep each frame's original log position through attempt filtering;
+        // a re-attach can select a wider window without renumbering a turn.
+        var lines = CliOutputLogParser.ParseFile(path)
+            .Select((line, index) => (Line: line, Index: index))
+            .ToList();
         var run = _sessions.ReadSessionEvents(task.Id, task.WatchPath)
             .LastOrDefault(entry => string.Equals(
                 entry.RunAttemptId,
@@ -57,24 +63,33 @@ public sealed class RemoteTokenReceiptService
             var from = run.Ts.AddSeconds(-5);
             var through = (run.FinishedAt ?? DateTime.UtcNow).AddSeconds(5);
             lines = lines
-                .Where(line => line.Timestamp >= from && line.Timestamp <= through)
+                .Where(item => item.Line.Timestamp >= from && item.Line.Timestamp <= through)
                 .ToList();
         }
-        var observed = new List<(DateTime Ts, ParsedTurnUsage Usage)>();
-        foreach (var line in lines.Where(line =>
-                     string.Equals(line.Stream, "stdout", StringComparison.OrdinalIgnoreCase)))
+        var observed = new List<ObservedUsage>();
+        foreach (var (line, lineIndex) in lines)
         {
+            if (!string.Equals(line.Stream, "stdout", StringComparison.OrdinalIgnoreCase)) continue;
             if (!line.Text.AsSpan().TrimStart().StartsWith("{")) continue;
             try
             {
                 using var document = JsonDocument.Parse(line.Text);
+                var modelIndex = 0;
                 foreach (var usage in parser.ParseAll(
                              document.RootElement,
                              effectiveModel ?? task.Model,
                              _models))
                 {
                     if (usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite <= 0) continue;
-                    observed.Add((line.Timestamp == default ? DateTime.UtcNow : line.Timestamp, usage));
+                    var identity = usage.CumulativeScope is { } scope
+                        ? "scope:" + Convert.ToHexString(SHA256.HashData(
+                            Encoding.UTF8.GetBytes(scope + "\n" + usage.Model?.Trim().ToLowerInvariant())))[..24]
+                        : $"turn:{lineIndex:D8}:{modelIndex:D2}";
+                    observed.Add(new ObservedUsage(
+                        line.Timestamp == default ? DateTime.UtcNow : line.Timestamp,
+                        usage,
+                        identity));
+                    modelIndex++;
                 }
             }
             catch (JsonException ex)
@@ -95,7 +110,7 @@ public sealed class RemoteTokenReceiptService
                     ? "Remote coding-agent token usage (model mismatch)."
                     : "Remote coding-agent token usage.",
                 JobId = task.Id,
-                ParticipantId = $"agent:remote-runner:{runAttemptId}",
+                ParticipantId = $"agent:remote-runner:{runAttemptId}:usage:{item.Identity}",
                 TokenUsage = new OrchestratorTokenUsage
                 {
                     // Observed usage is authoritative. Never replace it
@@ -142,8 +157,8 @@ public sealed class RemoteTokenReceiptService
     /// total on every frame, so only the last snapshot per scope and model is
     /// a call; summing them counted one Claude session 22 times (AGT-3004).
     /// </summary>
-    internal static IReadOnlyList<(DateTime Ts, ParsedTurnUsage Usage)> LatestCumulativeSnapshots(
-        IReadOnlyList<(DateTime Ts, ParsedTurnUsage Usage)> observed)
+    internal static IReadOnlyList<ObservedUsage> LatestCumulativeSnapshots(
+        IReadOnlyList<ObservedUsage> observed)
     {
         var lastIndex = new Dictionary<(string Scope, string Model), int>();
         for (var index = 0; index < observed.Count; index++)
@@ -159,6 +174,8 @@ public sealed class RemoteTokenReceiptService
             .Where((item, index) => item.Usage.CumulativeScope is null || keep.Contains(index))
             .ToList();
     }
+
+    internal sealed record ObservedUsage(DateTime Ts, ParsedTurnUsage Usage, string Identity);
 
     private static int SafeInt(long value)
     {

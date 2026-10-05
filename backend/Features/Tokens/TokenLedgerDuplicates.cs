@@ -3,10 +3,10 @@ namespace AgentStudio.Tokens;
 /// <summary>
 /// Pure duplicate policy for the token ledger (AGT-3012). One recorded usage
 /// is identified by its run, job, timestamp, canonical model and the four
-/// token counts. Rows that agree on all of these are re-emissions of the same
-/// usage (a completion replay, a re-attach, or a CLI that repeats a
-/// cumulative frame), never two distinct calls, so every reader keeps only
-/// the first occurrence and every writer treats the repeat as a no-op.
+/// token counts. New remote receipt participants also carry a per-session or
+/// per-turn usage identity, allowing equal-sized turns in one millisecond to
+/// remain distinct. Historical rows without that identity use the best
+/// available fingerprint; readers keep the first occurrence.
 /// </summary>
 /// <remarks>
 /// Collapsing preserves the order of the surviving rows and returns the input
@@ -63,6 +63,20 @@ internal static class TokenLedgerDuplicates
             call.OutputTokens,
             call.CacheReadTokens,
             call.CacheCreationTokens);
+
+    public static string? UsageIdentity(TaskTokenCall call)
+    {
+        const string marker = ":usage:";
+        var participant = call.ParticipantId;
+        var index = participant?.IndexOf(marker, StringComparison.Ordinal) ?? -1;
+        return index < 0 ? null : participant![(index + marker.Length)..];
+    }
+
+    public static Fingerprint CallIdentityFingerprint(TaskTokenCall call)
+        => CallFingerprint(call, includeParticipant: false) with
+        {
+            ParticipantId = UsageIdentity(call) ?? string.Empty,
+        };
 
     public static long TotalTokens(TaskTokenCall call)
         => call.InputTokens + call.OutputTokens + call.CacheReadTokens + call.CacheCreationTokens;

@@ -93,11 +93,13 @@ undo this:
 - **Write path.** `ClaudeUsageParser` marks `modelUsage` usages with a
   cumulative scope (`claude-session:<session_id>`);
   `RemoteTokenReceiptService` keeps only the last snapshot per scope and model.
-  `TaskMutationService.SetRemoteTokenSummaryOnFolder` does not append a call
-  whose usage fingerprint (timestamp, canonical model, four token counts) is
-  already recorded under another attempt or repeated within the attempt, and
-  does not rewrite an unchanged receipt. A completion replay is a no-op; new
-  usage is appended.
+  `TaskMutationService.SetRemoteTokenSummaryOnFolder` uses a stable session or
+  log-turn identity in the existing participant field plus timestamp, model,
+  and counts. This makes completion replay a no-op while preserving separate
+  turns that happen to have equal counts in one millisecond. Turn ordinals use
+  the original CLI log position before attempt filtering. Without a Claude
+  `session_id`, result frames remain separate because they have no safe
+  cumulative scope. The writer does not rewrite an unchanged receipt.
 - **Read path.** `TokenLedgerDuplicates` collapses identical rows: bus
   messages by job, run id, participant, timestamp, model and counts (in
   `BusTokenEntryConverter`), receipt calls by participant (which carries the

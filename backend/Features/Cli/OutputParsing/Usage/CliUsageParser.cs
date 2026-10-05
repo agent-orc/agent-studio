@@ -148,7 +148,11 @@ public sealed class ClaudeUsageParser : ICliUsageParser
         var sessionId = frame.TryGetProperty("session_id", out var sid) && sid.ValueKind == JsonValueKind.String
             ? sid.GetString()
             : null;
-        var scope = $"claude-session:{sessionId?.Trim() ?? string.Empty}";
+        // Without a session id, separate result frames cannot safely be
+        // assumed to describe the same running total. Preserve each call.
+        var scope = string.IsNullOrWhiteSpace(sessionId)
+            ? null
+            : $"claude-session:{sessionId.Trim()}";
         var result = new List<ParsedTurnUsage>();
         foreach (var property in modelUsage.EnumerateObject())
         {
