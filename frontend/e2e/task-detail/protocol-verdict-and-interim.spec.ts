@@ -43,7 +43,7 @@ async function installCompletedJobMocks(
 ): Promise<void> {
   const detailBody = JSON.stringify(detailOverride ?? buildCompletedJobDetail(target.id, target.watchPath, statusMarkdown));
 
-  await page.route(`**/api/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
+  await page.route(`**/api/v1/projects/*/tasks/${encodeURIComponent(target.id)}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: detailBody });
   });
   await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/output?**`, async (route) => {
@@ -189,7 +189,7 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     await page.route('**/api/**', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
     });
-    await page.route('**/api/auth/status', async (route) => {
+    await page.route('**/api/v1/studio/auth/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -206,7 +206,7 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     await page.route('**/api/tasks**', async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([detail.info]) });
     });
-    await page.route('**/api/tasks/grouped**', async (route) => {
+    await page.route('**/api/v1/studio/board**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -217,7 +217,7 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
         }),
       });
     });
-    await page.route('**/api/runner/status', async (route) => {
+    await page.route('**/api/v1/studio/runner/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -269,7 +269,7 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     test.setTimeout(60_000);
     void devBackend;
     await page.setViewportSize({ width: 1600, height: 1100 });
-    await page.route('**/api/auth/status', async (route) => {
+    await page.route('**/api/v1/studio/auth/status', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -360,7 +360,8 @@ test.describe('Protocol pane - verdict chip + interim status', () => {
     await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/summary/regenerate?**`, async (route) => {
       await route.fulfill({ status: 202, contentType: 'application/json', body: '{}' });
     });
-    await page.route((url) => url.pathname === `/api/tasks/${encodeURIComponent(target.id)}`, async (route) => {
+    await page.route((url) => /^\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+$/.test(url.pathname)
+      && url.pathname.endsWith(`/tasks/${encodeURIComponent(target.id)}`), async (route) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) });
     });
     await page.route(`**/api/tasks/${encodeURIComponent(target.id)}/output?**`, async (route) => {

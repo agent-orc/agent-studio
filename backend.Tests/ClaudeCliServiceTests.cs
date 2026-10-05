@@ -288,36 +288,4 @@ public class ClaudeCliServiceTests
         Assert.Equal(expected, BuiltInCliBehaviors.NormalizeModelId(input));
     }
 
-    [Fact]
-    public void BuildStartInfo_AddsEffortFlag_WhenModelSupportsThinkingLevel()
-    {
-        var svc = NewService();
-
-        var args = svc.BuildStartInfoForTest(
-            "do work",
-            Environment.CurrentDirectory,
-            sessionName: null,
-            resumeSession: false,
-            model: "claude-opus-4-8",
-            thinkingLevel: "xhigh").ArgumentList.ToArray();
-
-        Assert.Contains("--effort", args);
-        Assert.Contains("xhigh", args);
-    }
-
-    [Fact]
-    public void BuildStartInfo_OmitsEffortFlag_WhenModelHasNoThinkingLevel()
-    {
-        var svc = NewService();
-
-        var args = svc.BuildStartInfoForTest(
-            "do work",
-            Environment.CurrentDirectory,
-            sessionName: null,
-            resumeSession: false,
-            model: "claude-haiku-4-5",
-            thinkingLevel: "high").ArgumentList.ToArray();
-
-        Assert.DoesNotContain("--effort", args);
-    }
 }

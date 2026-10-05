@@ -103,7 +103,7 @@ async function installMocks(page: Page, jobs: JobInfoStub[]): Promise<void> {
       });
     }
 
-    if (p === '/api/tasks/grouped') {
+    if (p === '/api/v1/studio/board') {
       const body = {
         backlog: jobs.filter(j => j.state === '0-backlog'),
         preparation: jobs.filter(j => j.state === '1-preparation'),
@@ -161,7 +161,7 @@ async function installMocks(page: Page, jobs: JobInfoStub[]): Promise<void> {
     if (p === '/api/settings/cli/models') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ models: [] }) });
     }
-    if (p.startsWith('/api/runner')) {
+    if (p.startsWith('/api/runner') || p.startsWith('/api/v1/studio/runner')) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });

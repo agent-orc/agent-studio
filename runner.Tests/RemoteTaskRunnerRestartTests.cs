@@ -20,7 +20,7 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
         await CreateOriginAsync(origin, seed);
         var work = Path.Combine(_root, "runner-work");
         var stateRoot = Path.Combine(_root, "state");
-        var options = Options(work, stateRoot, origin);
+        var options = Options(work, stateRoot, origin, useCarStub: true);
         var lease = Lease();
         var workspace = new GitWorkspace(options, lease.TaskKey, _ => { });
         await workspace.PrepareAsync(CancellationToken.None);
@@ -111,7 +111,7 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
         await CreateOriginAsync(origin, seed);
         var work = Path.Combine(_root, "runner-work");
         var stateRoot = Path.Combine(_root, "state");
-        var options = Options(work, stateRoot, origin);
+        var options = Options(work, stateRoot, origin, useCarStub: true);
         var lease = Lease(attemptId: "rat-reattach-envelope");
         var workspace = new GitWorkspace(options, lease.TaskKey, _ => { });
         await workspace.PrepareAsync(CancellationToken.None);
@@ -294,7 +294,7 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
         Assert.Empty(store.LoadAll());
     }
 
-    private static RunnerOptions Options(string work, string stateRoot, string origin) => new()
+    private static RunnerOptions Options(string work, string stateRoot, string origin, bool useCarStub = false) => new()
     {
         ServerUrl = "http://task-server",
         RunnerId = "runner-restart-test",
@@ -306,11 +306,9 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
         WorkDir = work,
         StateDir = stateRoot,
         BaseBranch = "main",
-        // Fakes the CLI through CliBin/CliArgs, which only the legacy engine
-        // consumes; the reattach protocol under test is engine-independent.
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
-        CliArgs = "-c \"sleep 1; printf 'reattached-output\\n[[TASK_DONE]]\\n'\"",
+        ClaudeCliBin = useCarStub
+            ? CarStubCli.Write(stateRoot, "sleep 1; printf 'reattached-output\\n[[TASK_DONE]]\\n'")
+            : "claude-not-started",
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         RunTimeoutSeconds = 10,

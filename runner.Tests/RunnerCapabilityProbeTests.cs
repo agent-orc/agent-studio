@@ -33,8 +33,6 @@ public sealed class RunnerCapabilityProbeTests
             Role = "gate",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "sh",
-            CliArgs = "",
         };
 
         var registered = RunnerCapabilityProbe.GateRegistrationCapabilities(options);
@@ -90,8 +88,7 @@ public sealed class RunnerCapabilityProbeTests
             Role = "review",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "sh",
-            CliArgs = "",
+            ClaudeCliBin = "sh",
         };
 
         var everything = RunnerCapabilityProbe.ReviewRegistrationCapabilities(options, onPath: _ => true);
@@ -141,10 +138,9 @@ public sealed class RunnerCapabilityProbeTests
             WorkDir = temp.Path,
             GitRemote = "https://example.invalid/repo.git",
             BaseBranch = "main",
-            CliBin = codex,
+            CliType = CliSelection.CodexCli,
             ClaudeCliBin = claude,
             CodexCliBin = codex,
-            CliArgs = "",
         };
 
         var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: true);
@@ -263,8 +259,7 @@ public sealed class RunnerCapabilityProbeTests
             GitRemote = "https://github.com/example/repo.git",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "codex",
-            CliArgs = "",
+            ClaudeCliBin = "codex",
         };
 
         var advertised = RunnerCapabilityProbe.Advertise(
@@ -307,10 +302,9 @@ public sealed class RunnerCapabilityProbeTests
             GitRemote = "https://github.com/example/repo.git",
             WorkDir = temp.Path,
             BaseBranch = "main",
-            CliBin = codex,
+            CliType = CliSelection.CodexCli,
             ClaudeCliBin = claude,
             CodexCliBin = codex,
-            CliArgs = "",
         };
         var probe = new ProviderAuthProbe(
             (binary, _, _) => Task.FromResult(
@@ -372,9 +366,7 @@ public sealed class RunnerCapabilityProbeTests
             GitRemote = "https://github.com/example/repo.git",
             WorkDir = temp.Path,
             BaseBranch = "main",
-            CliBin = claude,
             ClaudeCliBin = claude,
-            CliArgs = "",
         };
         var probe = new ProviderAuthProbe(
             (_, _, _) => Task.FromResult(
@@ -400,9 +392,9 @@ public sealed class RunnerCapabilityProbeTests
     }
 
     [Fact]
-    public void Car_engine_is_advertised_as_the_canary_capability_and_legacy_is_not()
+    public void Car_engine_is_the_only_advertised_execution_capability()
     {
-        RunnerOptions Options(string engine) => new()
+        var options = new RunnerOptions
         {
             ServerUrl = "http://task-server",
             RunnerId = "runner-test",
@@ -412,19 +404,15 @@ public sealed class RunnerCapabilityProbeTests
             GitRemote = "https://github.com/example/repo.git",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            ExecEngine = engine,
-            CliBin = "codex",
-            CliArgs = "",
+            ClaudeCliBin = "codex",
         };
 
-        // The canary mechanism of the CAR migration (plan §4): cohort cards
-        // request exactly this key via RequiredCapabilities, so only CAR-engined
-        // hosts claim them - no special routing path.
-        var car = RunnerCapabilityProbe.Advertise(Options(RunnerOptions.ExecEngineCar), gitPushReady: true);
-        Assert.Equal("ready", Assert.Single(car, item => item.Key == "exec-engine:car").Status);
-
-        var legacy = RunnerCapabilityProbe.Advertise(Options(RunnerOptions.ExecEngineLegacy), gitPushReady: true);
-        Assert.DoesNotContain(legacy, item => item.Key == "exec-engine:car");
+        var capabilities = RunnerCapabilityProbe.Advertise(options, gitPushReady: true);
+        Assert.Equal("ready", Assert.Single(capabilities, item => item.Key == "exec-engine:car").Status);
+        Assert.DoesNotContain(
+            capabilities,
+            item => item.Key.StartsWith("exec-engine:", StringComparison.Ordinal)
+                    && item.Key != "exec-engine:car");
     }
 
     [Fact]
@@ -440,11 +428,10 @@ public sealed class RunnerCapabilityProbeTests
             GitRemote = "https://github.com/example/repo.git",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "/bin/sh",
+            ClaudeCliBin = "/bin/sh",
             CodexCliBin = Path.Combine(
                 Path.GetTempPath(),
                 $"missing-codex-{Guid.NewGuid():N}"),
-            CliArgs = "",
         };
 
         var advertised = RunnerCapabilityProbe.Advertise(options, gitPushReady: true);
@@ -468,8 +455,7 @@ public sealed class RunnerCapabilityProbeTests
             BackendName = "test",
             WorkDir = Path.GetTempPath(),
             BaseBranch = "main",
-            CliBin = "/bin/sh",
-            CliArgs = "",
+            ClaudeCliBin = "/bin/sh",
         };
         var failureAt = new DateTime(2026, 8, 1, 15, 30, 0, DateTimeKind.Utc);
 

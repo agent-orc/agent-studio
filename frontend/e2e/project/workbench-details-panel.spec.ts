@@ -51,13 +51,13 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   let fingerprint = 'a'.repeat(64);
 
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/watch-paths', route => json(route, [{
     name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
   }]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route('**/api/v1/workspaces**', route => json(route, [{
     id: 'workspace-evidence', displayName: 'Evidence', sortOrder: 0, isDefault: true,
     projects: [{
       id: 'project-naming', displayName: PROJECT, shortCode: 'NDS',
@@ -68,7 +68,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   await page.route('**/api/environment**', route => json(route, {
     isDev: false, devTools: { updateStableEnabled: false, deleteE2EJobsEnabled: false },
   }));
-  await page.route('**/api/runner/status**', route => json(route, { projects: {} }));
+  await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: {} }));
   await page.route('**/api/cli/quota**', route => json(route, {
     at: '2026-08-11T10:00:00Z', snapshots: [], ttlSeconds: 600,
   }));
@@ -131,7 +131,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
   await page.route('**/api/tasks/archive**', route => json(route, {
     items: [], total: 0, offset: 0, limit: 50,
   }));
-  await page.route('**/api/tasks/grouped**', route => json(route, taskCreated ? {
+  await page.route('**/api/v1/studio/board**', route => json(route, taskCreated ? {
     ...EMPTY_GROUPED,
     ready: [{
       id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
@@ -154,7 +154,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     taskCreated = true;
     return json(route, { id: 'naming-feature-1' });
   });
-  await page.route(/\/api\/tasks\/naming-feature-1(?:\?.*)?$/, route => json(route, {
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/naming-feature-1(?:\?.*)?$/, route => json(route, {
     info: {
       id: 'naming-feature-1', key: 'AGT-2611', displayKey: 'AGT-2611',
       taskKey: `${PROJECT}::AGT-2611`, title: 'Implement the stable naming contract',
@@ -214,7 +214,7 @@ async function installMocks(page: Page): Promise<CapturedCalls> {
     },
   );
   await page.route(
-    `**/api/orchestrator/sessions/workbench:${encodeURIComponent(PROJECT)}/${WORKBENCH_KEY}/turns`,
+    `**/api/v1/studio/orchestrator/sessions/workbench:${encodeURIComponent(PROJECT)}/${WORKBENCH_KEY}/turns`,
     route => {
       captured.steerBodies.push(JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>);
       return json(route, { status: 'queued', contextKey: `workbench:${PROJECT}/${WORKBENCH_KEY}` });

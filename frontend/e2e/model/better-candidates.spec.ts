@@ -86,10 +86,10 @@ async function stubApis(page: Page): Promise<void> {
       body: JSON.stringify(body),
     });
 
-    if (url.pathname === '/api/auth/status') {
+    if (url.pathname === '/api/v1/studio/auth/status') {
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.pathname === '/api/workspaces') return json([{
+    if (url.pathname === '/api/v1/workspaces') return json([{
       id: 'WS-1', displayName: 'Default', sortOrder: 0, isDefault: true,
       color: null, createdAt: '2026-09-13T07:00:00Z',
       projects: [{
@@ -106,9 +106,10 @@ async function stubApis(page: Page): Promise<void> {
         rootPath: WATCH_PATH, repositoryPath: WATCH_PATH,
       }]);
     }
-    if (url.pathname === '/api/tasks/grouped') return json(GROUPED);
+    if (url.pathname === '/api/v1/studio/board') return json(GROUPED);
     if (url.pathname === '/api/tasks') return json([TASK, BROKEN_TASK]);
-    if (url.pathname === `/api/tasks/${TASK_REFERENCE}` || url.pathname === `/api/tasks/${TASK_ID}`) {
+    const detailId = /^\/api\/v1\/projects\/[^/]+\/tasks\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (detailId === TASK_REFERENCE || detailId === TASK_ID) {
       return json({
         info: TASK,
         promptMarkdown: '# Better candidates\n\nKeep the selected route unchanged.',
@@ -126,7 +127,7 @@ async function stubApis(page: Page): Promise<void> {
       ],
     });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
-    if (url.pathname === '/api/runner/status') return json({ projects: {} });
+    if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
     if (url.pathname === '/api/v1/management/runner-infrastructure-failures') return json([{
@@ -158,7 +159,7 @@ async function stubApis(page: Page): Promise<void> {
     if (url.pathname === '/api/epics') return json([]);
     if (url.pathname.startsWith('/api/bus/')) return json([]);
     if (url.pathname === '/api/tags' || url.pathname === '/api/clients'
-        || url.pathname === '/api/projects') return json([]);
+        || url.pathname === '/api/v1/projects') return json([]);
     return json([]);
   });
 }

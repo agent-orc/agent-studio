@@ -94,7 +94,7 @@ async function stubBoard(page: Page, jobs: JobInfoStub[], projectNames: string[]
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname;
-    if (p === '/api/tasks/grouped') {
+    if (p === '/api/v1/studio/board') {
       const body = {
         preparation: jobs.filter((j) => j.state === '1-preparation'),
         ready: jobs.filter((j) => j.state === '2-ready'),
@@ -128,7 +128,7 @@ async function stubBoard(page: Page, jobs: JobInfoStub[], projectNames: string[]
     if (p === '/api/cli/usage') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: new Date().toISOString(), sections: [] }) });
     }
-    if (p.startsWith('/api/runner')) {
+    if (p.startsWith('/api/runner') || p === '/api/v1/studio/runner/status') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) });
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });

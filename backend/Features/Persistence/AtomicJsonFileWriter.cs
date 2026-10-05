@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace AgentStudio.Persistence;
 
 /// <summary>
@@ -7,6 +9,14 @@ namespace AgentStudio.Persistence;
 public interface IAtomicJsonFileWriter
 {
     void Write(string path, string content);
+
+    /// <summary>
+    /// Writes structured state without requiring a complete JSON string.
+    /// The default preserves existing adapters and failure-injection writers;
+    /// the filesystem implementation streams directly to its atomic temp file.
+    /// </summary>
+    void WriteJson<T>(string path, T value, JsonSerializerOptions? options = null)
+        => Write(path, JsonSerializer.Serialize(value, options));
 
     /// <summary>
     /// Rewrites a file whose directory must already exist, and fails instead of
@@ -52,6 +62,20 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
     }
 
     /// <inheritdoc />
+    public void WriteJson<T>(string path, T value, JsonSerializerOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        Swap(path, temporaryPath =>
+        {
+            using var stream = new FileStream(
+                temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            JsonSerializer.Serialize(stream, value, options);
+        });
+    }
+
+    /// <inheritdoc />
     public void ReplaceExisting(string path, string content)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -63,11 +87,14 @@ public sealed class AtomicJsonFileWriter : IAtomicJsonFileWriter
     }
 
     private static void Swap(string path, string content)
+        => Swap(path, temporaryPath => File.WriteAllText(temporaryPath, content));
+
+    private static void Swap(string path, Action<string> writeTemporary)
     {
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            File.WriteAllText(tempPath, content);
+            writeTemporary(tempPath);
             MoveWithRetry(tempPath, path);
         }
         finally
