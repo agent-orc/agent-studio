@@ -63,6 +63,13 @@ public sealed record OperatorSweepTickReport(
 /// folder; the last tick's per-card reasons live in memory for the projection
 /// and are rebuilt by the next tick after a restart.
 /// </para>
+/// <para>
+/// Run state has two scopes. Timing and a failure of the whole tick (the
+/// scan itself) are fleet-wide, because every project missed that tick. Card
+/// counters and card evaluation failures belong to the project the card is
+/// in, so one project's unreadable card never puts another project's
+/// projection into alarm or inflates its counts.
+/// </para>
 /// </summary>
 public sealed class OperatorSweepService : IOperatorSweepRunner
 {
@@ -144,7 +151,6 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         var failed = 0;
         string? firstCardError = null;
         var cards = 0;
-        var perSweep = OperatorSweepKinds.All.ToDictionary(kind => kind, _ => new SweepCounters(), StringComparer.Ordinal);
         try
         {
             var options = Options;
@@ -167,6 +173,9 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 var journal = ReadJournal(workspace, project);
                 var cardStates = new List<OperatorSweepCardState>();
                 var projectState = _projects.GetOrAdd(project, _ => new ProjectTickState());
+                var projectCounters = OperatorSweepKinds.All.ToDictionary(
+                    kind => kind, _ => new SweepCounters(), StringComparer.Ordinal);
+                string? projectCardError = null;
 
                 foreach (var job in projectJobs)
                 {
@@ -185,7 +194,9 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                     catch (Exception ex)
                     {
                         failed++;
-                        firstCardError ??= $"{job.Id}: {ex.GetType().Name}: {ex.Message}";
+                        var cardError = $"{job.Id}: {ex.GetType().Name}: {ex.Message}";
+                        firstCardError ??= cardError;
+                        projectCardError ??= cardError;
                         _logger.LogWarning(ex,
                             "operator-sweep-card-failed project={Project} job={JobId}",
                             job.ProjectName, job.Id);
@@ -198,7 +209,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
 
                     foreach (var decision in card.Decisions)
                     {
-                        if (!perSweep.TryGetValue(decision.Sweep, out var counters)) continue;
+                        if (!projectCounters.TryGetValue(decision.Sweep, out var counters)) continue;
                         switch (decision.Action)
                         {
                             case nameof(OperatorSweepAction.Act):
@@ -222,6 +233,10 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 }
 
                 projectState.Cards = cardStates;
+                projectState.Results = OperatorSweepKinds.All.ToDictionary(
+                    kind => kind,
+                    kind => projectCounters[kind].ToResult(projectCardError),
+                    StringComparer.Ordinal);
                 projectState.CapturedAtUtc = Now();
             }
 
@@ -232,6 +247,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
             {
                 if (seen.Contains(project)) continue;
                 state.Cards = [];
+                state.Results = ProjectTickState.NoResults;
                 state.CapturedAtUtc = Now();
             }
         }
@@ -254,17 +270,9 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         var finished = Now();
         foreach (var sweep in OperatorSweepKinds.All)
         {
-            var counters = perSweep[sweep];
             _runs.AddOrUpdate(sweep,
-                _ => new OperatorSweepRunState(),
-                (_, state) => state with
-                {
-                    LastFinishedAtUtc = finished,
-                    LastError = firstCardError,
-                    LastActed = counters.Acted,
-                    LastHeld = counters.Held,
-                    LastWaitingForPerson = counters.Waiting,
-                });
+                _ => new OperatorSweepRunState { LastFinishedAtUtc = finished },
+                (_, state) => state with { LastFinishedAtUtc = finished, LastError = null });
         }
         _logger.LogInformation(
             "operator-sweep-tick cards={Cards} acted={Acted} held={Held} waiting={Waiting} failed={Failed} durationMs={DurationMs}",
@@ -461,6 +469,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         {
             _runs.TryGetValue(sweep, out var run);
             run ??= new OperatorSweepRunState();
+            var result = state?.Result(sweep) ?? ProjectSweepResult.Empty;
             pauses.TryGetValue(sweep, out var pause);
             var overdue = options.Enabled && OperatorSweepHealthPolicy.IsOverdue(
                 run.LastFinishedAtUtc, _startedAtUtc, options, now);
@@ -472,11 +481,11 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 pause?.Reason,
                 run.LastStartedAtUtc,
                 run.LastFinishedAtUtc,
-                run.LastError,
+                run.LastError ?? result.Error,
                 overdue,
-                run.LastActed,
-                run.LastHeld,
-                run.LastWaitingForPerson,
+                result.Acted,
+                result.Held,
+                result.WaitingForPerson,
                 state?.RecentActions(sweep) ?? []);
         }).ToList();
         var waiting = cards
@@ -524,16 +533,22 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         public int Acted;
         public int Held;
         public int Waiting;
+
+        public ProjectSweepResult ToResult(string? error) => new(Acted, Held, Waiting, error);
     }
 
+    /// <summary>Fleet-wide tick timing and a failure of the whole tick.</summary>
     private sealed record OperatorSweepRunState
     {
         public DateTime? LastStartedAtUtc { get; init; }
         public DateTime? LastFinishedAtUtc { get; init; }
         public string? LastError { get; init; }
-        public int LastActed { get; init; }
-        public int LastHeld { get; init; }
-        public int LastWaitingForPerson { get; init; }
+    }
+
+    /// <summary>One sweep's outcome on one project in the project's latest tick.</summary>
+    private sealed record ProjectSweepResult(int Acted, int Held, int WaitingForPerson, string? Error)
+    {
+        public static readonly ProjectSweepResult Empty = new(0, 0, 0, null);
     }
 
     private sealed class ProjectTickState
@@ -541,8 +556,15 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         private readonly ConcurrentDictionary<string, List<OperatorSweepRecentAction>> _recent =
             new(StringComparer.Ordinal);
 
+        public static readonly IReadOnlyDictionary<string, ProjectSweepResult> NoResults =
+            new Dictionary<string, ProjectSweepResult>(StringComparer.Ordinal);
+
         public IReadOnlyList<OperatorSweepCardState> Cards { get; set; } = [];
+        public IReadOnlyDictionary<string, ProjectSweepResult> Results { get; set; } = NoResults;
         public DateTime? CapturedAtUtc { get; set; }
+
+        public ProjectSweepResult Result(string sweep)
+            => Results.GetValueOrDefault(sweep) ?? ProjectSweepResult.Empty;
 
         public void RecordAction(string sweep, OperatorSweepRecentAction action, int limit)
         {

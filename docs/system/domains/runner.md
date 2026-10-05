@@ -1638,8 +1638,10 @@ second round. The orchestrator also applies its per-epoch cap
 - The per-subject receipt is an `operator_sweep_round_started` timeline event in the task folder.
 - The budget charge is the decision journal record.
 - The last tick's per-card reasons are kept in memory and rebuilt by the next tick.
-- A card evaluation failure is retained in the last-run error and alarms the
-  projection until a later tick succeeds.
+- Run state has two scopes. Tick timing and a failure of the whole tick
+  (the scan itself) are fleet-wide. Per-sweep counts and card evaluation
+  failures are kept per project: a card failure alarms only its own
+  project's projection, until that project's next tick evaluates cleanly.
 
 **API.**
 

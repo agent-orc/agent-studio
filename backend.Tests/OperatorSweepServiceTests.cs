@@ -19,16 +19,22 @@ namespace AgentStudio.Tests;
 public sealed class OperatorSweepServiceTests : IDisposable
 {
     private const string Project = "Fixture";
+    private const string OtherProject = "Neighbour";
     private readonly string _root;
     private readonly string _watchPath;
+    private readonly string _otherWatchPath;
     private readonly FakeTimeProvider _clock = new(DateTimeOffset.Parse("2026-10-04T12:00:00Z"));
 
     public OperatorSweepServiceTests()
     {
         _root = Path.Combine(Path.GetTempPath(), "operator-sweeps-" + Guid.NewGuid().ToString("N"));
         _watchPath = Path.Combine(_root, "project-store");
+        _otherWatchPath = Path.Combine(_root, "neighbour-store");
         foreach (var state in TaskStates.All)
+        {
             Directory.CreateDirectory(Path.Combine(_watchPath, state));
+            Directory.CreateDirectory(Path.Combine(_otherWatchPath, state));
+        }
     }
 
     public void Dispose()
@@ -205,6 +211,41 @@ public sealed class OperatorSweepServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CardFailureAndCounters_StayInTheirOwnProject()
+    {
+        var stack = Build();
+        SeedCard(stack, "AGT-9011", Sha('5'));
+        SettleReview(stack, "AGT-9011", Sha('5'), ReviewTerminalOutcome.ProductFailure);
+        SeedCard(stack, "AGT-9012", Sha('6'), project: OtherProject);
+        SettleReview(stack, "AGT-9012", Sha('6'), ReviewTerminalOutcome.ProductFailure);
+        stack.GateFacts.ThrowFor.Add("AGT-9012");
+
+        var report = await stack.Service.RunOnceAsync();
+
+        Assert.Equal(1, report.Acted);
+        Assert.Equal(1, report.Failed);
+        var healthy = stack.Service.Project(Project);
+        Assert.Equal(OperatorSweepHealthPolicy.Healthy, healthy.Status);
+        Assert.All(healthy.Sweeps, sweep => Assert.Null(sweep.LastRunError));
+        Assert.Equal(1, Assert.Single(healthy.Sweeps, sweep => sweep.Sweep == OperatorSweepKinds.FixRounds).LastActed);
+        var alarm = stack.Service.Project(OtherProject);
+        Assert.Equal(OperatorSweepHealthPolicy.Alarm, alarm.Status);
+        Assert.All(alarm.Sweeps, sweep => Assert.Contains("AGT-9012", sweep.LastRunError));
+        Assert.All(alarm.Sweeps, sweep => Assert.Equal(0, sweep.LastActed));
+
+        // The neighbour's card recovers; its alarm clears and the first
+        // project's counters reflect only its own (now idempotent) card.
+        stack.GateFacts.ThrowFor.Clear();
+        await stack.Service.RunOnceAsync();
+
+        Assert.Equal(OperatorSweepHealthPolicy.Healthy, stack.Service.Project(OtherProject).Status);
+        Assert.Equal(1, Assert.Single(stack.Service.Project(OtherProject).Sweeps,
+            sweep => sweep.Sweep == OperatorSweepKinds.FixRounds).LastActed);
+        Assert.Equal(0, Assert.Single(stack.Service.Project(Project).Sweeps,
+            sweep => sweep.Sweep == OperatorSweepKinds.FixRounds).LastActed);
+    }
+
+    [Fact]
     public async Task HostedLoop_KeepsTickingAfterATickThrows()
     {
         var runner = new ScriptedRunner();
@@ -288,6 +329,8 @@ public sealed class OperatorSweepServiceTests : IDisposable
         {
             ["WatchPaths:0:Name"] = Project,
             ["WatchPaths:0:Path"] = _watchPath,
+            ["WatchPaths:1:Name"] = OtherProject,
+            ["WatchPaths:1:Path"] = _otherWatchPath,
             ["TaskRepository"] = _root,
         }).Build();
         var scanner = new TaskScannerService(
@@ -306,9 +349,11 @@ public sealed class OperatorSweepServiceTests : IDisposable
         return new Stack(scanner, timeline, authority, actions, gateFacts, service);
     }
 
-    private string SeedCard(Stack stack, string id, string deliverySha, string state = TaskStates.HumanReview)
+    private string SeedCard(
+        Stack stack, string id, string deliverySha, string state = TaskStates.HumanReview, string project = Project)
     {
-        var folder = Path.Combine(_watchPath, state, id);
+        var watchPath = project == OtherProject ? _otherWatchPath : _watchPath;
+        var folder = Path.Combine(watchPath, state, id);
         Directory.CreateDirectory(folder);
         File.WriteAllText(
             Path.Combine(folder, "task.json"),
@@ -323,7 +368,7 @@ public sealed class OperatorSweepServiceTests : IDisposable
                     agent = "codex",
                     cliType = "codex",
                     mode = TaskModes.Coding,
-                    projectName = Project,
+                    projectName = project,
                     ownerClientId = DefaultClientIdentity.Id,
                 },
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
@@ -333,7 +378,7 @@ public sealed class OperatorSweepServiceTests : IDisposable
             TaskKey = id,
             RunAttemptId = "run-" + id,
             AttemptChainId = "chain-" + id,
-            Project = Project,
+            Project = project,
             Repository = _root,
             ResultSha = deliverySha,
             ResultRef = "refs/heads/task/" + id,
@@ -433,11 +478,12 @@ public sealed class OperatorSweepServiceTests : IDisposable
     private sealed class FakeGateFacts : IOperatorSweepGateFacts
     {
         public bool Throw { get; set; }
+        public HashSet<string> ThrowFor { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, OperatorSweepGateFailure> Failures { get; } = new(StringComparer.Ordinal);
 
         public OperatorSweepGateFailure? Read(TaskInfo job)
         {
-            if (Throw) throw new IOException("integration projection unavailable");
+            if (Throw || ThrowFor.Contains(job.Id)) throw new IOException("integration projection unavailable");
             return Failures.GetValueOrDefault(job.Id);
         }
     }

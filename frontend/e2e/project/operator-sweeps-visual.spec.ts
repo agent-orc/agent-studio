@@ -40,6 +40,10 @@ test('operator sweeps render beside pipeline health in both themes', async ({ pa
     }],
   }])));
   await page.route('**/api/v1/projects', route => route.fulfill(json([])));
+  await page.route('**/api/projects/*/workbenches**', route => route.fulfill(json({
+    projectName: project, includesHistory: false, count: 0, items: [],
+  })));
+  await page.route('**/api/v1/management/provider-refusals**', route => route.fulfill(json([])));
   await page.route('**/api/v1/studio/board**', route => route.fulfill(json({
     archive: [], autoReview: [], backlog: [], codeNotComplete: [], completed: [],
     failedPickup: [], humanReview: [], orchestratorPrep: [], preparation: [],
