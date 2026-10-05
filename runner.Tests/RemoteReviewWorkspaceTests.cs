@@ -206,9 +206,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var quoted = Assert.IsType<AspectVerdictMarker>(AspectVerdictMarkerParser.ParseLast(testLog));
         Assert.Equal("concerns", quoted.Status);
         Assert.Equal([AspectVerdictMarkerParser.DuplicateKey], quoted.Malformed);
+        var sha = await SeedOriginAsync();
         var logPath = Path.Combine(_root, "aspect-runner-tests.log");
         await File.WriteAllTextAsync(logPath, testLog);
-        var sha = await SeedOriginAsync();
         var (workspace, _) = Workspace(
             "attempt-quoted-marker", sha,
             [new ReviewCommandDto("verify-3", "build-tests", PosixShell.RequirePath(), ["-c", $"cat '{logPath}'"])],

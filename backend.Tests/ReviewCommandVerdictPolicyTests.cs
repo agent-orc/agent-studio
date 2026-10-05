@@ -155,7 +155,12 @@ public sealed class ReviewCommandVerdictPolicyTests
         var verify3 = normalized.Verdicts[2];
         Assert.Equal("pass", verify3.Status);
         Assert.Equal("command:verify-3", verify3.EvidenceChecked);
-        Assert.DoesNotContain(normalized.Verdicts, ReviewCommandVerdictPolicy.IsMarkerDerived);
+        // Command aspects carry exit-status verdicts only; the four agent
+        // aspects keep the verdicts their own replies' markers produced.
+        Assert.DoesNotContain(
+            normalized.Verdicts.Where(verdict => verdict.Aspect is "build-tests" or "lint"),
+            ReviewCommandVerdictPolicy.IsMarkerDerived);
+        Assert.Equal(request.Verdicts.Skip(7), normalized.Verdicts.Skip(7));
         var decision = RemoteDeliveryIntegrationPolicy.Decide(true, normalized.Outcome, plan, normalized.Verdicts);
         Assert.True(decision.ShouldIntegrate);
         Assert.Equal(RemoteBuildTestGateClass.Passed, decision.BuildTestGate);
