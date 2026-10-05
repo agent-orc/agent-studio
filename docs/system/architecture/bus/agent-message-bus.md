@@ -64,6 +64,19 @@ Every message is small (target under 4 KB), append-only, and immutable once writ
 - **Supporting agent** writes `observation`, `artifact`, and `decision` messages keyed to its skill. A council member writes one `observation` per critique pass; the council coordinator writes one final `decision`.
 - **User** writes `question` messages when the UI sends a prompt or follow-up. The runtime is the actual writer; `participantId` is `user`.
 
+#### Orchestrator decision payload
+
+`AgentMessageBusBridge` mirrors an `OrchestratorChatLog` decision, reissue, fallback or give-up line as `kind: decision`. Its envelope carries the project, job, topic, summary, body and a log-slice artifact. The payload records the authority behind that line:
+
+| Payload field | Meaning |
+|---|---|
+| `decidedBy` | `model` when a model call made the decision; `rule` when the line came from deterministic policy or a human gate. |
+| `decidedByModel` | Effective model id from the call receipt, or `null` for a rule decision. |
+| `decidedByThinkingLevel` | Effective thinking level when known, otherwise `null`. |
+| `decidedByModelSource` | Resolution path that chose the model when known, otherwise `null`. |
+
+The decision executor passes the same `StepModelUsage` to its pipeline step row and this bus payload. The model fields describe who decided; token counts and estimated cost live in the step execution and token receipt. A missing model on a model-backed step remains a visible measurement gap, never a measured zero.
+
 ### 3.2 Consumers
 
 - **Frontend project view**: subscribes to a per-project SignalR stream and renders the timeline + participant graph.

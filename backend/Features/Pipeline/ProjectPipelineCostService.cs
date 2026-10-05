@@ -63,9 +63,10 @@ public sealed class ProjectPipelineCostService
         var receiptRead = _receipts.Read(watchPath);
         if (receiptRead.SourceAvailable) sources.Add("task-token-receipts");
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
-        var receiptJobIds = receiptRead.Entries
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.JobId))
-            .Select(entry => entry.JobId!)
+        var receiptRecords = BuildReceiptRecords(projectName, receiptRead.Entries);
+        var coreReceiptJobIds = receiptRecords
+            .Where(record => record.Steps.Any(step => step.Kind == StepKind.Core))
+            .Select(record => record.JobId)
             .ToHashSet(StringComparer.Ordinal);
 
         var taskLogs = new List<(string JobId, PipelineExecutionRecord Record)>();
@@ -88,8 +89,8 @@ public sealed class ProjectPipelineCostService
             }
         }
         records.AddRange(MergeSources(
-            BuildReceiptRecords(projectName, receiptRead.Entries),
-            receiptJobIds,
+            receiptRecords,
+            coreReceiptJobIds,
             taskLogs));
 
         var timeline = BuildFromRecords(projectName, records, d, nowUtc);
@@ -347,29 +348,63 @@ public sealed class ProjectPipelineCostService
     /// </summary>
     internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(
         IReadOnlyList<PipelineExecutionRecord> receiptRecords,
-        IReadOnlySet<string> receiptJobIds,
+        IReadOnlySet<string> coreReceiptJobIds,
         IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
     {
         var merged = new List<PipelineExecutionRecord>();
         var receiptTasksWithLog = new HashSet<string>(StringComparer.Ordinal);
+        // A receipt has no step id. Match each orchestrator call to one
+        // measured execution by model and all four token counters. Consume
+        // matches one at a time so repeated calls with identical usage are
+        // reconciled without hiding additional receipts.
+        var measuredOrchestratorCalls = new Dictionary<(string JobId, string Model, long Input, long Output, long CacheRead, long CacheCreation), int>();
         foreach (var (jobId, record) in taskLogs)
         {
+            receiptTasksWithLog.Add(jobId);
             var attempts = new List<PipelineExecutionRecord> { record };
             attempts.AddRange(record.PreviousAttempts);
-            if (receiptJobIds.Contains(jobId))
+            foreach (var step in attempts.SelectMany(attempt => attempt.Steps)
+                         .Where(step => step.Kind == StepKind.Orchestrator))
             {
-                receiptTasksWithLog.Add(jobId);
+                foreach (var run in StepCostMeasurement.Executions(step))
+                {
+                    if (StepCostMeasurement.Tokens(run) <= 0) continue;
+                    var key = ReceiptMatchKey(jobId, run.Model, run.InputTokens, run.OutputTokens,
+                        run.CacheReadTokens, run.CacheCreationTokens);
+                    measuredOrchestratorCalls[key] = measuredOrchestratorCalls.GetValueOrDefault(key) + 1;
+                }
+            }
+            if (coreReceiptJobIds.Contains(jobId))
+            {
                 attempts = attempts.Select(WithoutCoreTokens).ToList();
             }
             merged.AddRange(attempts);
         }
         // A supporting-agent receipt row duplicates a step row the execution
         // log already carries; drop it when that log was read.
-        merged.AddRange(receiptRecords.Where(record =>
-            !receiptTasksWithLog.Contains(record.JobId)
-            || record.Steps.All(step => step.Kind != StepKind.Aspect)));
+        foreach (var receipt in receiptRecords)
+        {
+            if (receiptTasksWithLog.Contains(receipt.JobId)
+                && receipt.Steps.Any(step => step.Kind == StepKind.Aspect)) continue;
+            var call = receipt.Steps.Single();
+            if (call.Kind == StepKind.Orchestrator)
+            {
+                var key = ReceiptMatchKey(receipt.JobId, call.Model, call.InputTokens,
+                    call.OutputTokens, call.CacheReadTokens, call.CacheCreationTokens);
+                if (measuredOrchestratorCalls.TryGetValue(key, out var remaining) && remaining > 0)
+                {
+                    measuredOrchestratorCalls[key] = remaining - 1;
+                    continue;
+                }
+            }
+            merged.Add(receipt);
+        }
         return merged;
     }
+
+    private static (string JobId, string Model, long Input, long Output, long CacheRead, long CacheCreation)
+        ReceiptMatchKey(string jobId, string? model, long input, long output, long cacheRead, long cacheCreation)
+        => (jobId, ModelMetadataRegistry.NormalizeId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
 
     /// <summary>
     /// Zero the core rows' tokens so a receipt-backed task counts its agent

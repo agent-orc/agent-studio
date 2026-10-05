@@ -15,6 +15,8 @@ public sealed class StepCostMeasurementTests : IDisposable
 {
     private const string PricedModel = "claude-haiku-4-5";
     private const string UnpricedModel = "unpriced-test-model";
+    // clock-independent: all dated rows and price windows use an injected date.
+    private static readonly DateTime TestAt = new(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
 
     private readonly string _folder = Path.Combine(
         Path.GetTempPath(), "agt-3015-" + Guid.NewGuid().ToString("N"));
@@ -98,14 +100,14 @@ public sealed class StepCostMeasurementTests : IDisposable
     public void Model_backed_step_without_a_model_is_a_measurement_gap()
     {
         var log = NewLog();
-        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1");
+        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1", TestAt);
         log.RecordStep(_folder, new PipelineStepExecution
         {
             StepId = PipelineCatalogue.CodeReviewGradeStepId,
             Kind = StepKind.Orchestrator,
             Status = PipelineStepStatus.Passed,
-            StartedAt = DateTime.UtcNow,
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = TestAt,
+            CompletedAt = TestAt,
         });
 
         var row = Row(log, PipelineCatalogue.CodeReviewGradeStepId);
@@ -118,15 +120,15 @@ public sealed class StepCostMeasurementTests : IDisposable
     public void Decision_recorded_inside_a_model_scope_names_model_tokens_and_cost()
     {
         var log = NewLog();
-        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1");
+        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1", TestAt);
         var usage = new StepModelUsage(PricedModel, "low", "config", InputTokens: 1_000_000, OutputTokens: 200_000);
         var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.OrchestratorDecisionStepId,
             Kind = StepKind.Orchestrator,
             Status = PipelineStepStatus.Passed,
-            StartedAt = DateTime.UtcNow,
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = TestAt,
+            CompletedAt = TestAt,
             Verdict = "accept",
             CostBasis = StepCostBasis.Deterministic,
         };
@@ -199,6 +201,70 @@ public sealed class StepCostMeasurementTests : IDisposable
         var orchestrator = Assert.Single(timeline.Kinds, kind => kind.Kind == "orchestrator");
         Assert.Equal(1_200_000, orchestrator.TotalTokens);
         Assert.Contains(timeline.Steps, step => step.StepId == PipelineCatalogue.TaskSpawnerStepId);
+    }
+
+    [Fact]
+    public void Matching_orchestrator_receipt_and_step_execution_are_priced_once()
+    {
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt, JobId = "J1", ParticipantId = "orchestrator:P",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 1_000_000, OutputTokens = 200_000,
+                },
+            },
+            // A different call has no measured step yet and must remain in
+            // the ledger rather than disappearing with the matched receipt.
+            new OrchestratorLogEntry
+            {
+                Ts = TestAt.AddSeconds(1), JobId = "J1", ParticipantId = "orchestrator:P",
+                TokenUsage = new OrchestratorTokenUsage
+                {
+                    Model = PricedModel, InputTokens = 50_000, OutputTokens = 5_000,
+                },
+            },
+        ]);
+        var log = Record("J1", TestAt,
+            Step(PipelineCatalogue.TaskSpawnerStepId, StepKind.Orchestrator, PricedModel, 1_000_000, 200_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(
+            receipts, new HashSet<string>(StringComparer.Ordinal), [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+
+        Assert.Equal(2, merged.Count); // measured step plus the unmatched receipt
+        var spawner = Assert.Single(timeline.Steps, step => step.StepId == PipelineCatalogue.TaskSpawnerStepId);
+        Assert.Equal(1, spawner.Runs);
+        Assert.Equal(1_200_000, spawner.TotalTokens);
+        Assert.Equal(1_255_000, timeline.TotalTokens);
+        Assert.Equal(
+            2.00m + TokenPricing.Estimate(PricedModel, 50_000, 5_000, 0, 0, TestAt).Total,
+            timeline.DecisionCost!.Deciding.PricedCostUsd);
+    }
+
+    [Fact]
+    public void An_orchestrator_only_receipt_does_not_erase_core_step_usage()
+    {
+        var receipts = ProjectPipelineCostService.BuildReceiptRecords("P",
+        [new OrchestratorLogEntry
+        {
+            Ts = TestAt, JobId = "J1", ParticipantId = "orchestrator:P",
+            TokenUsage = new OrchestratorTokenUsage
+            {
+                Model = PricedModel, InputTokens = 50_000, OutputTokens = 5_000,
+            },
+        }]);
+        var log = Record("J1", TestAt,
+            Step(PipelineCatalogue.CoreAgentRunStepId, StepKind.Core, PricedModel, 100_000, 10_000));
+
+        var merged = ProjectPipelineCostService.MergeSources(
+            receipts, new HashSet<string>(StringComparer.Ordinal), [("J1", log)]);
+        var timeline = ProjectPipelineCostService.BuildFromRecords("P", merged, days: 7, nowUtc: TestAt);
+
+        Assert.Equal(110_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "core").TotalTokens);
+        Assert.Equal(55_000, Assert.Single(timeline.Kinds, kind => kind.Kind == "orchestrator").TotalTokens);
     }
 
     // ---- 3. an unpriced model is unpriced, never zero --------------------
@@ -338,20 +404,25 @@ public sealed class StepCostMeasurementTests : IDisposable
     // ---- 5. a deterministic step records an explicit zero ----------------
 
     [Theory]
+    // These four orchestrator catalogue rows are actual rule checks or human
+    // wait gates in the executors; no LLM call returns a usage receipt there.
     [InlineData(PipelineCatalogue.OrchestratorReviewStepId, StepKind.Orchestrator)]
+    [InlineData(PipelineCatalogue.ConceptReviewStepId, StepKind.Orchestrator)]
+    [InlineData(PipelineCatalogue.ConceptSightReviewGateStepId, StepKind.Orchestrator)]
+    [InlineData(PipelineCatalogue.UiHumanReviewGateStepId, StepKind.Orchestrator)]
     [InlineData(PipelineCatalogue.BuildTestGateStepId, StepKind.Tool)]
     [InlineData(PipelineCatalogue.ModelQualificationStepId, StepKind.Module)]
     public void Deterministic_step_records_an_explicit_zero(string stepId, StepKind kind)
     {
         var log = NewLog();
-        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1");
+        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1", TestAt);
         log.RecordStep(_folder, new PipelineStepExecution
         {
             StepId = stepId,
             Kind = kind,
             Status = PipelineStepStatus.Passed,
-            StartedAt = DateTime.UtcNow,
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = TestAt,
+            CompletedAt = TestAt,
             // Model qualification names the model it selected for the core
             // run; it did not run on it.
             Model = kind == StepKind.Module ? PricedModel : null,
@@ -383,8 +454,8 @@ public sealed class StepCostMeasurementTests : IDisposable
     public void Unreached_step_terminalized_at_completion_records_not_run()
     {
         var log = NewLog();
-        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1");
-        log.Complete(_folder);
+        log.Begin(_folder, PipelineCatalogue.Standard, "P", "J1", TestAt);
+        log.Complete(_folder, TestAt.AddMinutes(1));
         var row = Row(log, PipelineCatalogue.TaskSpawnerStepId);
         Assert.Equal(PipelineStepStatus.Skipped, row.Status);
         Assert.Equal(StepCostBasis.NotRun, row.CostBasis);

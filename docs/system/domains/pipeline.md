@@ -270,7 +270,12 @@ only what ran; the log owns the arithmetic.
   `post-drift-code-pattern`. Module, tool and analysis steps are
   deterministic, except `post-analysis-model-review`. Model qualification,
   prompt enrichment and orchestrator prep name a model but run rule-based
-  selectors.
+  selectors. The four orchestrator exceptions have concrete non-model
+  executors: post-orchestrator-review records the static completeness check;
+  post-concept-review calls `ConceptWorkbenchContract.ReviewDirectory`;
+  post-concept-sight-review and post-ui-human-review-gate wait for a human
+  verdict. The separate `post-orchestrator-decision` and visual verdict rows
+  carry the model calls when those calls occur.
 - **Cost stamp.** A terminal row gets `costBasis`, `estimatedCostUsd` and
   `modelPriced`:
   - `costBasis` is `model`, `deterministic` (a measured zero) or `not-run`.
@@ -303,11 +308,17 @@ Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
 
 - `ProjectPipelineCostService.MergeSources` now reads the execution log of a
   receipt-backed (remote) task as well.
-- The receipt still prices that task's agent run. The log adds the aspect,
-  orchestrator and drift rows, plus the core run count.
+- A core receipt prices that task's agent run. The log adds the aspect,
+  orchestrator and drift rows, plus the core run count. Orchestrator receipts
+  matching a measured step execution by job, model and all four token
+  counters are consumed one at a time; unmatched receipts remain visible.
+  A task with only an orchestrator receipt retains its log's core usage.
 - Before this change, the log of a receipt-backed task was skipped entirely.
   That is why no orchestrator step appeared in the ledger.
 - Kinds and steps carry `runs`; steps also carry `tasks` and `models`.
+- The project Token Usage panel renders this pipeline cost timeline even when
+  its separate token-activity summary has no entries. The execution log can
+  be the only source for a measured decision on an older card.
 - `decisionCost` compares deciding (orchestrator kind) against agent runs
   (core) and other, with the unpriced tokens stated.
 

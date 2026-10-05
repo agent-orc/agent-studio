@@ -13,7 +13,7 @@
  * PipelineStepStatus Passed=2, Skipped=4.
  */
 import { expect, test } from '../fixtures/dev-backend';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
@@ -27,6 +27,10 @@ const ASPECT = 2;
 const ORCHESTRATOR = 3;
 const PASSED = 2;
 const SKIPPED = 4;
+
+// The isolated backend may need a cold compile on a busy review host before
+// the browser part of this full-stack evidence test can begin.
+test.setTimeout(480_000);
 
 function slugFor(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -55,14 +59,19 @@ function row(base: number, partial: Record<string, unknown> & { start: number; e
 
 function writeCard(projectPath: string): void {
   const base = Date.now() - 2 * 60 * 60_000;
-  const folder = path.join(projectPath, 'tasks', '003', TASK_ID);
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(path.join(folder, 'task.json'), JSON.stringify({
-    id: TASK_ID,
-    title: 'Measure the cost of deciding',
-    state: '5-human-review',
-    order: 1,
-  }), 'utf8');
+  const tasksRoot = path.join(projectPath, 'tasks');
+  const folder = readdirSync(tasksRoot, { withFileTypes: true })
+    .filter(bucket => bucket.isDirectory())
+    .flatMap(bucket => readdirSync(path.join(tasksRoot, bucket.name), { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => path.join(tasksRoot, bucket.name, entry.name)))
+    .find(candidate => {
+      const taskFile = path.join(candidate, 'task.json');
+      if (!existsSync(taskFile)) return false;
+      const task = JSON.parse(readFileSync(taskFile, 'utf8')) as { id?: string };
+      return task.id === TASK_ID;
+    });
+  if (!folder) throw new Error(`Created task ${TASK_ID} has no folder`);
   writeFileSync(path.join(folder, 'code-review-grade-2026-10-04.md'), '# Quality grade B\n', 'utf8');
   const haiku = 'claude-haiku-4-5';
   writeFileSync(path.join(folder, 'pipeline-execution.json'), JSON.stringify({
@@ -111,7 +120,7 @@ function writeCard(projectPath: string): void {
       }),
       row(base, {
         stepId: 'post-task-spawner', kind: ORCHESTRATOR, status: SKIPPED, start: 45.5, end: 46,
-        model: 'gpt-6-sol', modelSource: 'runtime', inputTokens: 20_000, outputTokens: 2_000,
+        model: 'unpriced-test-model', modelSource: 'runtime', inputTokens: 20_000, outputTokens: 2_000,
         verdict: 'not-relevant', costBasis: 'model', modelPriced: false,
       }),
     ],
@@ -123,11 +132,33 @@ test('decision chain and cost of deciding render on the card and in project usag
   expect(pathsResponse.ok).toBe(true);
   const project = (await pathsResponse.json() as Array<{ name: string; path: string }>)[0];
   expect(project).toBeTruthy();
+  const create = await fetch(`${devBackend.baseUrl}/api/tasks`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'X-Client-Id': 'local-default' },
+    body: JSON.stringify({
+      id: TASK_ID,
+      title: 'Measure the cost of deciding',
+      watchPath: project.path,
+      targetState: '0-backlog',
+      taskType: 'chore',
+      mode: 'coding',
+      cliType: 'codex',
+      model: 'gpt-5.6-luna',
+      thinkingLevel: 'medium',
+      promptMarkdown: '# Measure the cost of deciding',
+    }),
+  });
+  const createBody = await create.text();
+  expect(create.ok, `Task create returned ${create.status}: ${createBody}`).toBe(true);
+  expect((JSON.parse(createBody) as { id: string }).id).toBe(TASK_ID);
   writeCard(project.path);
 
   // The backend computes the card rollup over every attempt.
-  const pipelineResponse = await fetch(
-    `${devBackend.baseUrl}/api/tasks/${TASK_ID}/pipeline?watchPath=${encodeURIComponent(project.path)}`);
+  const pipelineUrl = `${devBackend.baseUrl}/api/tasks/${TASK_ID}/pipeline?watchPath=${encodeURIComponent(project.path)}`;
+  // The task index publishes filesystem changes asynchronously. Wait for the
+  // fixture card to enter that index before asking for its pipeline.
+  await expect.poll(async () => (await fetch(pipelineUrl)).status, { timeout: 30_000 }).toBe(200);
+  const pipelineResponse = await fetch(pipelineUrl);
   expect(pipelineResponse.ok).toBe(true);
   const pipeline = await pipelineResponse.json() as {
     decisionCost: { deciding: { runs: number; unpricedTokens: number; pricedCostUsd: number }; agentRuns: { runs: number } };
@@ -138,7 +169,8 @@ test('decision chain and cost of deciding render on the card and in project usag
 
   mkdirSync(resultsDir, { recursive: true });
   await page.setViewportSize({ width: 1600, height: 1100 });
-  await page.goto(`/?job=${TASK_ID}&watchPath=${encodeURIComponent(project.path)}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`/?job=${TASK_ID}&watchPath=${encodeURIComponent(project.path)}`,
+    { waitUntil: 'domcontentloaded', timeout: 90_000 });
   const recovery = page.getByTestId('crash-recovery-prompt-overlay');
   if (await recovery.isVisible().catch(() => false)) await page.getByTestId('crash-recovery-dismiss-all').click();
   const overviewTab = page.getByTestId('prompt-tab-overview');
@@ -165,6 +197,13 @@ test('decision chain and cost of deciding render on the card and in project usag
   await expect(chain.getByTestId('overview-decision-cost-deciding')).toHaveText('$0.17+');
   await expect(chain.getByTestId('overview-decision-cost-agent')).toHaveText('$2.50');
   await expect(chain.getByTestId('overview-decision-cost-unpriced')).toHaveText('22,000 tokens on 1 run without a price');
+  const chainBounds = await chain.boundingBox();
+  const costBounds = await decisions.nth(1).getByTestId('overview-decision-cost-cell').boundingBox();
+  const evidenceBounds = await chain.locator('[data-step-id="post-code-review-grade"]')
+    .getByTestId('overview-decision-evidence').boundingBox();
+  expect(chainBounds && costBounds && evidenceBounds).toBeTruthy();
+  expect(costBounds!.x + costBounds!.width).toBeLessThanOrEqual(chainBounds!.x + chainBounds!.width + 1);
+  expect(evidenceBounds!.x + evidenceBounds!.width).toBeLessThanOrEqual(chainBounds!.x + chainBounds!.width + 1);
 
   await dismissDevErrorDialog(page);
   for (const theme of ['light', 'dark'] as const) {
@@ -174,7 +213,8 @@ test('decision chain and cost of deciding render on the card and in project usag
   }
 
   // Project usage: the orchestrator steps are in the ledger under their own kind.
-  await page.goto(`/#/projects/${slugFor(project.name)}/token-usage`);
+  await page.goto(`/#/projects/${slugFor(project.name)}/token-usage`,
+    { waitUntil: 'domcontentloaded', timeout: 90_000 });
   await expect(page.getByTestId('project-token-usage-panel')).toBeVisible({ timeout: 30_000 });
   const leaveRecoveryUncommitted = page.getByRole('button', { name: 'Leave all uncommitted' });
   if (await leaveRecoveryUncommitted.isVisible().catch(() => false)) await leaveRecoveryUncommitted.click();
@@ -187,7 +227,7 @@ test('decision chain and cost of deciding render on the card and in project usag
   await expect(page.locator('[data-testid="pipeline-cost-decision-step"][data-step-id="post-orchestrator-decision"]'))
     .toContainText('claude-haiku-4-5');
   await expect(page.locator('[data-testid="pipeline-cost-decision-step"][data-step-id="post-task-spawner"]'))
-    .toContainText('gpt-6-sol');
+    .toContainText('unpriced-test-model');
 
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
