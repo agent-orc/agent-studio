@@ -267,7 +267,7 @@ export class UsageCockpitHeaderComponent {
     }
   }
 
-  /** A control hidden by a narrower fit hands focus to Details or More. */
+  /** A hidden destination hands focus to the control that still reaches it. */
   private restoreLostFocus(): void {
     const last = this.lastFocusedInside;
     if (!last) return;
@@ -276,7 +276,10 @@ export class UsageCockpitHeaderComponent {
     const gone = !last.isConnected || last.getClientRects().length === 0;
     if (!gone) return;
     this.lastFocusedInside = null;
-    const target = this.plan().showDetails ? this.detailsButton()?.nativeElement : this.moreTrigger()?.nativeElement;
+    const wasNavigation = !!last.closest('.cockpit-header__nav-content');
+    const target = wasNavigation || !this.plan().showDetails
+      ? this.moreTrigger()?.nativeElement
+      : this.detailsButton()?.nativeElement;
     target?.focus();
   }
 }

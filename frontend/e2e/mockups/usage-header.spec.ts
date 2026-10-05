@@ -390,6 +390,24 @@ test.describe('@mockup header usage cockpit: keyboard and focus', () => {
     await settle(page);
     await expect(page.getByTestId('cockpit-header-more')).toBeFocused();
   });
+
+  test('focus on navigation moved into More follows its destination', async ({ page }) => {
+    await open(page, { width: 1728 });
+    await page.getByTestId('nav-theme').focus();
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await settle(page);
+    await expect(page.getByTestId('nav-theme')).toBeHidden();
+    await expect(page.getByTestId('cockpit-header-more')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-testid^="cockpit-header-more-menu-item-"]').first()).toHaveText('Switch theme');
+    await page.keyboard.press('Escape');
+
+    await page.getByTestId('nav-chat').focus();
+    await page.setViewportSize({ width: 390, height: 700 });
+    await settle(page);
+    await expect(page.getByTestId('nav-chat')).toBeHidden();
+    await expect(page.getByTestId('cockpit-header-more')).toBeFocused();
+  });
 });
 
 test.describe('@mockup header usage cockpit: coarse pointer', () => {
