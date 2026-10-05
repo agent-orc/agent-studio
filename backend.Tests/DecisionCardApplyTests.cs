@@ -327,11 +327,16 @@ public sealed class DecisionCardApplyTests : IDisposable
             Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
             Decision = LockFileDecision(),
         })!;
-        var decisionKey = h.Scanner.FindJob(decisionId, _watchPath)!.Key!;
+        var decisionCard = h.Scanner.FindJob(decisionId, _watchPath)!;
+        var decisionKey = decisionCard.Key!;
+        var decisionFolder = Path.GetFileName(decisionCard.FolderPath);
         var writes = 0;
+        // The decision's own task.json: the recorded choice, then the apply outcome.
+        // The folder name survives the lane move to the completed lane.
         writer.ShouldFail = (path, _) =>
         {
-            if (!path.EndsWith("task.json", StringComparison.Ordinal)) return false;
+            if (!path.EndsWith("task.json", StringComparison.Ordinal)
+                || Path.GetFileName(Path.GetDirectoryName(path)) != decisionFolder) return false;
             return ++writes == 2;
         };
 
@@ -471,6 +476,107 @@ public sealed class DecisionCardApplyTests : IDisposable
         var resumed = h.Scanner.FindJob(originId, _watchPath)!;
         Assert.Equal(TaskStates.Ready, resumed.State);
         Assert.Contains("- Chosen option: a · Lock file", File.ReadAllText(Path.Combine(resumed.FolderPath, "prompt.md")));
+    }
+
+    [Fact]
+    public void Request_WhenDependencyWriteFails_ReportsNoCard_ThenRetryReusesItAndWritesTheEdge()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var originId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Blocked release card", WatchPath = _watchPath, TargetState = TaskStates.Escalated,
+        })!;
+        var origin = h.Scanner.FindJob(originId, _watchPath)!;
+        var originJson = Path.Combine(origin.FolderPath, "task.json");
+        writer.ShouldFail = (path, _) => string.Equals(path, originJson, StringComparison.OrdinalIgnoreCase);
+        var request = new DecisionCardRequest
+        {
+            Title = "Decision: Blocked release card", WatchPath = _watchPath,
+            Content = LockFileDecision(), BlockedCard = origin,
+        };
+
+        Assert.Null(h.Requests.Request(request));
+
+        // The decision exists and names the card, but the card is not held yet.
+        var orphan = Assert.Single(h.Scanner.ScanAllJobs(), card => TaskKinds.IsDecision(card.Kind));
+        Assert.Equal([origin.Key!], orphan.Decision!.AppliesTo);
+        Assert.Empty(h.Scanner.FindJob(originId, _watchPath)!.References.DependsOn);
+
+        writer.ShouldFail = null;
+        var retry = h.Requests.Request(request)!;
+
+        Assert.False(retry.Created);
+        Assert.Equal(orphan.Key, retry.Key);
+        Assert.Single(h.Scanner.ScanAllJobs(), card => TaskKinds.IsDecision(card.Kind));
+        Assert.Contains(h.Scanner.FindJob(originId, _watchPath)!.References.DependsOn, edge => edge.Key == orphan.Key);
+        var refused = h.States.MoveJob(originId, TaskStates.Ready, _watchPath);
+        Assert.Equal(MoveJobStatus.Failure, refused.Status);
+    }
+
+    [Fact]
+    public void SetTaskReferences_FailedWrite_ReturnsFalse()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var id = h.Mutations.CreateJob(new CreateTaskRequest { Title = "Card", WatchPath = _watchPath })!;
+        var card = h.Scanner.FindJob(id, _watchPath)!;
+        writer.ShouldFail = (path, _) => path.EndsWith("task.json", StringComparison.Ordinal);
+
+        Assert.False(h.Mutations.SetTaskReferences(id,
+            new TaskReferences { DependsOn = [new TaskDependencyReference("AGT-1")] }, _watchPath));
+        Assert.Empty(h.Scanner.FindJob(id, _watchPath)!.References.DependsOn);
+    }
+
+    [Fact]
+    public async Task Attach_ToADecisionTakenAfterTheRead_DoesNotOverwriteItOrHoldTheCard()
+    {
+        var h = Build();
+        var firstId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "First blocked card", WatchPath = _watchPath, TargetState = TaskStates.Escalated,
+        })!;
+        var secondId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Second blocked card", WatchPath = _watchPath, TargetState = TaskStates.Escalated,
+        })!;
+        var raised = h.Requests.Request(new DecisionCardRequest
+        {
+            Title = "Decision", WatchPath = _watchPath, Content = LockFileDecision(),
+            BlockedCard = h.Scanner.FindJob(firstId, _watchPath),
+        })!;
+        var stale = h.Scanner.FindJob(raised.JobId, _watchPath)!;
+        await h.Decisions.DecideAsync(raised.JobId, _watchPath, new DecideCardRequest { OptionId = "a" }, "operator");
+
+        Assert.False(h.Requests.Attach(stale, h.Scanner.FindJob(secondId, _watchPath)!));
+
+        var decided = h.Scanner.FindJob(raised.JobId, _watchPath)!.Decision!;
+        Assert.Equal(DecisionStatuses.Decided, decided.Status);
+        Assert.Equal("a", decided.ChosenOptionId);
+        Assert.DoesNotContain(h.Scanner.FindJob(secondId, _watchPath)!.Key!, decided.AppliesTo);
+        Assert.Empty(h.Scanner.FindJob(secondId, _watchPath)!.References.DependsOn);
+    }
+
+    [Fact]
+    public async Task Decide_WhenApplyFeedLineCannotBeWritten_KeepsThePersistedApplyOutcome()
+    {
+        var h = Build();
+        var decisionId = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = "Stable release contract", WatchPath = _watchPath, Kind = TaskKinds.Decision,
+            Decision = LockFileDecision(),
+        })!;
+        var feedFolder = Path.Combine(_watchPath, ".orchestrator");
+        if (Directory.Exists(feedFolder)) Directory.Delete(feedFolder, recursive: true);
+        File.WriteAllText(feedFolder, "A file at the feed directory path blocks append.");
+
+        var outcome = await h.Decisions.DecideAsync(decisionId, _watchPath,
+            new DecideCardRequest { OptionId = "b", Rationale = "Use the manifest." }, "alice");
+
+        Assert.Equal(DecisionCardStatus.Success, outcome.Status);
+        var stored = h.Scanner.FindJob(decisionId, _watchPath)!.Decision!;
+        Assert.Equal(DecisionApplyOutcomes.CreatedCards, stored.History[^1].ApplyOutcome);
+        Assert.Equal(2, stored.History[^1].AppliedTaskKeys.Count);
     }
 
     // ---- creation path: Dossier promotion ----

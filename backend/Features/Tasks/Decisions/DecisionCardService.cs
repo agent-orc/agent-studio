@@ -179,14 +179,17 @@ public sealed class DecisionCardService
                 ["taskKeys"] = string.Join(",", result.TaskKeys),
                 ["notes"] = notes ?? "",
             });
-        _activityFeed.Append(card.WatchPath, new OrchestratorLogEntry
+        // The outcome is already persisted on the card and its record; a lost
+        // feed line is reported instead of failing the recorded decision.
+        if (!_activityFeed.Append(card.WatchPath, new OrchestratorLogEntry
         {
             Kind = result.Outcome == DecisionApplyOutcomes.Failed ? OrchestratorLogKinds.Alert : OrchestratorLogKinds.Decision,
             Topic = OrchestratorLogTopics.DecisionCard,
             Summary = summary,
             Reasoning = notes,
             JobId = card.Id,
-        });
+        }))
+            _logger.LogWarning("decision-apply-feed-failed job={JobId} outcome={Outcome}", card.Id, result.Outcome);
         return new(DecisionCardStatus.Success, applied, TaskStates.Completed);
     }
 

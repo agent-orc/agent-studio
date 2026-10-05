@@ -1073,7 +1073,7 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
-        TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
         _logger.LogInformation(
             "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,

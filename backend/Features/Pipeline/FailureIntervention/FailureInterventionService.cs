@@ -222,25 +222,16 @@ public sealed class FailureInterventionService
     /// <summary>
     /// A later origin that hits the same open decision becomes one of its
     /// dependants and apply targets, and waits on it through <c>dependsOn</c>.
+    /// A failed link write throws before the record is saved, so the origin is
+    /// not counted as affected and the next raise retries the link.
     /// </summary>
     private void AttachToDecision(TaskInfo followUp, TaskInfo origin)
     {
         if (!TaskKinds.IsDecision(followUp.Kind) || followUp.Decision is not { } decision
-            || !DecisionStatuses.IsOpen(decision.Status)) return;
-        var key = followUp.Key ?? followUp.Id;
-        var originKey = origin.Key ?? origin.Id;
-        _mutations.SetDecisionContent(followUp.Id, decision with
-        {
-            Dependants = decision.Dependants.Append(originKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            AppliesTo = decision.AppliesTo.Append(originKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-        }, followUp.WatchPath);
-        var current = _scanner.FindJob(origin.Id, origin.WatchPath) ?? origin;
-        var refs = current.References ?? new TaskReferences();
-        if (!refs.DependsOn.Any(edge => string.Equals(edge.Key, key, StringComparison.OrdinalIgnoreCase)))
-            _mutations.SetTaskReferences(current.Id, refs with
-            {
-                DependsOn = [.. refs.DependsOn, new TaskDependencyReference(key)],
-            }, current.WatchPath);
+            || !DecisionStatuses.IsOpen(decision.Status) || _decisionRequests is null) return;
+        if (!_decisionRequests.Attach(followUp, origin))
+            throw new InvalidOperationException(
+                $"The orchestrator could not make {origin.Key ?? origin.Id} wait on decision {followUp.Key ?? followUp.Id}.");
     }
 
     private async Task<FailureClassificationResult> ClassifyAmbiguousAsync(

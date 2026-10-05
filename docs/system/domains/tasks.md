@@ -236,6 +236,13 @@ agent turn that owns the final Blocked or NeedsInput sentinel is read, so crash
 output or build logs never become a decision; gate and review-plane failures carry
 no agent turn and keep the prose intervention. The blocked card becomes a
 dependant and apply target and gets a `dependsOn` edge to the decision card.
+A request counts as raised only once that edge is written. When the write fails
+the request reports no card; the decision already names the blocked card in
+`appliesTo`, so the next request for the same question reuses it and writes the
+missing edge instead of raising a second card. A failure that a further card hits
+attaches it to the open decision under the decision write gate, so a choice
+taken meanwhile is never overwritten; a failed attach is not recorded as an
+affected card and is retried on the next raise.
 
 `DecisionReminderSweep` runs every 30 minutes
 (`Supervisor:DecisionReminderSweepIntervalMinutes`). Once a pending decision
