@@ -222,7 +222,10 @@ concept promotion uses. The history entry records `applyOutcome` and
 decision recorded and posts an activity feed alert. If the apply receipt or
 outcome cannot be saved after the choice is recorded, the endpoint returns a
 conflict; repeating the same choice resumes the apply step without adding
-another decision entry or duplicating cards.
+another decision entry or duplicating cards. A linked card counts as applied
+only once its block and its move to `2-ready` both landed; a refused move or an
+unwritten block records `applyOutcome: failed`, and repeating the same choice
+resumes a failed apply the same way.
 
 Decision cards are also raised automatically through `DecisionCardRequests`:
 by the runner's Blocked outcome when the agent's final message states a question
@@ -239,7 +242,10 @@ dependant and apply target and gets a `dependsOn` edge to the decision card.
 A request counts as raised only once that edge is written. When the write fails
 the request reports no card; the decision already names the blocked card in
 `appliesTo`, so the next request for the same question reuses it and writes the
-missing edge instead of raising a second card. A failure that a further card hits
+missing edge instead of raising a second card. The Blocked outcome has already
+moved its card to Escalated, so no later request comes for it; the decision
+sweep (`DecisionCardRequests.RepairLinks`) writes the missing edge of every
+escalated card an open decision names as dependant and apply target. A failure that a further card hits
 attaches it to the open decision under the decision write gate, so a choice
 taken meanwhile is never overwritten; a failed attach is not recorded as an
 affected card and is retried on the next raise.
