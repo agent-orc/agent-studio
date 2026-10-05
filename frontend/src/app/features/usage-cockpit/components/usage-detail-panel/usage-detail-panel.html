@@ -1,0 +1,139 @@
+@let v = view();
+<div class="usage-detail" data-testid="usage-detail-panel">
+  <nav class="usage-detail__jump" aria-label="Usage sections">
+    @for (cli of v.clis; track cli.cliId) {
+      <a class="usage-detail__jump-link"
+         [href]="'#' + sectionId(cliFocus(cli.cliId))"
+         [attr.aria-current]="isSelected(cliFocus(cli.cliId)) ? 'location' : null"
+         [attr.data-testid]="'usage-detail-jump-' + cli.cliId"
+         (click)="$event.preventDefault(); jumpTo(cliFocus(cli.cliId))">{{ cli.name }}</a>
+    }
+    <a class="usage-detail__jump-link"
+       [href]="'#' + sectionId(costFocus)"
+       [attr.aria-current]="isSelected(costFocus) ? 'location' : null"
+       data-testid="usage-detail-jump-cost"
+       (click)="$event.preventDefault(); jumpTo(costFocus)">Cost</a>
+  </nav>
+
+  @for (cli of v.clis; track cli.cliId) {
+    <section class="usage-detail__section"
+             [id]="sectionId(cliFocus(cli.cliId))"
+             [attr.data-testid]="'usage-detail-cli-' + cli.cliId"
+             [attr.aria-labelledby]="sectionId(cliFocus(cli.cliId)) + '-title'">
+      <h3 class="usage-detail__title" tabindex="-1" [id]="sectionId(cliFocus(cli.cliId)) + '-title'">
+        {{ cli.name }}@if (cli.plan) {<span class="usage-detail__muted"> ({{ cli.plan }})</span>}
+      </h3>
+      <p class="usage-detail__meta">
+        @if (cli.stateLabel) {
+          <span class="usage-detail__badge" [attr.data-state]="cli.state" data-testid="usage-detail-cli-state">{{ cli.stateLabel }}</span>
+          @if (cli.stateReason) { <span>{{ cli.stateReason }}</span> }
+        }
+        @if (cli.updated; as u) {
+          <span>Updated <time [attr.datetime]="u.iso">{{ u.local }}</time> <span class="usage-detail__utc">({{ u.utc }})</span></span>
+        } @else {
+          <span>Never updated</span>
+        }
+        @if (cli.source) { <span class="usage-detail__muted">Source {{ cli.source }}</span> }
+      </p>
+
+      <table class="usage-detail__table" [attr.data-testid]="'usage-detail-windows-' + cli.cliId">
+        <caption class="usage-detail__caption">Quota windows, percentage used</caption>
+        <thead>
+          <tr><th scope="col">Window</th><th scope="col" class="usage-detail__num">Used</th><th scope="col">Resets ({{ v.timeZone }})</th><th scope="col">UTC</th></tr>
+        </thead>
+        <tbody>
+          @for (w of cli.windows; track w.id) {
+            <tr [attr.data-window-id]="w.id">
+              <th scope="row">{{ w.label }}</th>
+              <td class="usage-detail__num" [class.usage-detail__muted]="!w.reported">{{ w.value }}</td>
+              <td>
+                @if (w.reset; as r) {
+                  <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-local">{{ r.local }}</time>
+                  @if (w.countdown) { <span class="usage-detail__muted">{{ w.countdown }}</span> }
+                } @else {
+                  <span class="usage-detail__muted">{{ w.resetLabel ?? 'Not reported' }}</span>
+                }
+              </td>
+              <td>
+                @if (w.reset; as r) {
+                  <time [attr.datetime]="r.iso" data-testid="usage-detail-reset-utc">{{ r.utc }}</time>
+                } @else {
+                  <span class="usage-detail__muted">Not reported</span>
+                }
+              </td>
+            </tr>
+            @if (w.suspiciousReason) {
+              <tr><td colspan="4" class="usage-detail__note">Unverified: {{ w.suspiciousReason }}</td></tr>
+            }
+          } @empty {
+            <tr><td colspan="4" class="usage-detail__muted">No quota window reported</td></tr>
+          }
+        </tbody>
+      </table>
+
+      <h4 class="usage-detail__subtitle">Models in active runs</h4>
+      @if (cli.modelGroups.length === 0) {
+        <p class="usage-detail__muted">No active runs on {{ cli.name }}.</p>
+      } @else {
+        <ul class="usage-detail__groups" [attr.data-testid]="'usage-detail-models-' + cli.cliId">
+          @for (g of cli.modelGroups; track g.key) {
+            <li class="usage-detail__group" data-testid="usage-detail-model-group">
+              <p class="usage-detail__group-head">
+                <span [class.usage-detail__muted]="!g.modelKnown" data-testid="usage-detail-model">{{ g.model }}</span>
+                <span class="usage-detail__muted">reasoning</span>
+                <span [class.usage-detail__muted]="!g.reasoningKnown" data-testid="usage-detail-reasoning">{{ g.reasoning }}</span>
+                <span class="usage-detail__muted">{{ g.runs.length }} {{ g.runs.length === 1 ? 'run' : 'runs' }}</span>
+              </p>
+              <ul class="usage-detail__runs">
+                @for (r of g.runs; track r.id) {
+                  <li [attr.data-run-id]="r.id">
+                    <span class="usage-detail__key">{{ r.taskKey }}</span>
+                    <span class="usage-detail__muted">{{ r.projectName }}</span>
+                    @if (r.configuredDifference) {
+                      <span class="usage-detail__route" data-testid="usage-detail-route-diff">{{ r.configuredDifference }}</span>
+                    }
+                    @if (r.fallbackReason) {
+                      <span class="usage-detail__muted">{{ r.fallbackReason }}</span>
+                    }
+                  </li>
+                }
+              </ul>
+            </li>
+          }
+        </ul>
+      }
+      <p class="usage-detail__muted">Quota is reported per CLI account. It is not divided between models.</p>
+
+      <p class="usage-detail__links">
+        @if (cli.ledgerHref) {
+          <a [href]="cli.ledgerHref" [attr.data-testid]="'usage-detail-cli-ledger-' + cli.cliId">Open {{ cli.name }} token ledger, this week</a>
+        }
+        <a [href]="cliManagementHref" data-testid="usage-detail-manage-clis">Manage CLIs</a>
+      </p>
+    </section>
+  }
+
+  @if (v.unknownCliGroups.length > 0) {
+    <section class="usage-detail__section" data-testid="usage-detail-unknown-cli">
+      <h3 class="usage-detail__title" tabindex="-1">Runs without a reported CLI</h3>
+      <ul class="usage-detail__groups">
+        @for (g of v.unknownCliGroups; track g.key) {
+          <li class="usage-detail__group">
+            <p class="usage-detail__group-head">
+              <span [class.usage-detail__muted]="!g.modelKnown">{{ g.model }}</span>
+              <span class="usage-detail__muted">reasoning</span>
+              <span [class.usage-detail__muted]="!g.reasoningKnown">{{ g.reasoning }}</span>
+            </p>
+            <ul class="usage-detail__runs">
+              @for (r of g.runs; track r.id) {
+                <li><span class="usage-detail__key">{{ r.taskKey }}</span> <span class="usage-detail__muted">{{ r.projectName }}</span></li>
+              }
+            </ul>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
+  <app-usage-cost-detail [cost]="v.cost" [sectionId]="sectionId(costFocus)" />
+</div>
