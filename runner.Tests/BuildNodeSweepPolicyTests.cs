@@ -163,6 +163,29 @@ public sealed class BuildNodeSweepPolicyTests
     }
 
     [Fact]
+    public void A_node_beneath_a_live_driver_further_up_the_chain_is_kept()
+    {
+        // dotnet test -> MSBuild node -> VBCSCompiler, the driver untracked by this daemon.
+        var driver = new BuildProcessObservation(700, 1, RunnerUid, "dotnet", "dotnet test backend.Tests", Now.AddHours(-1), "/review/x");
+        var parentNode = Node(pid: 400, parent: 700, cwd: null);
+        var compiler = Node(pid: 500, parent: 400, command: CompilerCommand, cwd: null);
+        Assert.Equal(BuildNodeVerdict.LiveDriver, Decide(compiler, Context(), driver, parentNode));
+
+        var grandparentNode = Node(pid: 450, parent: 700, cwd: null);
+        var deeperNode = Node(pid: 400, parent: 450, cwd: null);
+        Assert.Equal(BuildNodeVerdict.LiveDriver, Decide(compiler, Context(), driver, grandparentNode, deeperNode));
+    }
+
+    [Fact]
+    public void A_node_chain_ending_in_process_managers_only_is_stale()
+    {
+        var systemd = new BuildProcessObservation(701, 1, RunnerUid, "systemd", "/lib/systemd/systemd --user", Now.AddHours(-200), "/");
+        var parentNode = Node(pid: 400, parent: 701, cwd: null);
+        var compiler = Node(pid: 500, parent: 400, command: CompilerCommand, cwd: null);
+        Assert.Equal(BuildNodeVerdict.Stale, Decide(compiler, Context(), systemd, parentNode));
+    }
+
+    [Fact]
     public void The_dotnet_process_count_includes_hosts_and_build_nodes()
     {
         Assert.True(BuildNodeSweepPolicy.IsDotnetProcess("dotnet", "dotnet build"));

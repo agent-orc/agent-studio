@@ -1053,9 +1053,10 @@ seconds. Three measures now keep the host free of them:
   `dotnet build-server` command. The sweep identifies the executable or .NET
   entry point. The process must belong to the runner user, be at least 30
   minutes old, have no ancestor among runs this daemon tracks, have no working
-  directory inside an active workspace, and have no live build driver as its
-  parent (only nodes reparented to init or the systemd manager, or parented by
-  another node, qualify). If any parent in the chain is unavailable, the
+  directory inside an active workspace, and have no live build driver
+  anywhere in its ancestry (only nodes whose chain up to init consists of
+  init, the systemd manager and other build nodes qualify, so a compiler
+  server under an MSBuild node under a running `dotnet test` is kept). If any parent in the chain is unavailable, the
   sweep keeps the node because it cannot rule out an active run ancestor.
   Each kill logs `build-node-reaped`; each pass logs
   `build-node-sweep dotnetProcesses=<n> staleNodes=<n> terminated=<n>`.

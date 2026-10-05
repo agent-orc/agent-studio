@@ -88,11 +88,12 @@ public static class BuildNodeSweepPolicy
     }
 
     /// <summary>
-    /// A node whose parent is still a live build driver (a <c>dotnet build</c>,
-    /// a shell, another role's worker) is part of a running build even when this
-    /// daemon does not own it, so it is <see cref="BuildNodeVerdict.LiveDriver"/>.
-    /// Only a node reparented to init or the systemd manager, or parented by
-    /// another build node, can be stale.
+    /// A node with a live build driver anywhere in its ancestry (a
+    /// <c>dotnet build</c> or <c>dotnet test</c>, a shell, another role's
+    /// worker) is part of a running build even when this daemon does not own it,
+    /// so it is <see cref="BuildNodeVerdict.LiveDriver"/>. Only a node whose
+    /// whole ancestry up to init consists of process managers (init, the systemd
+    /// manager) and other build nodes can be stale.
     /// </summary>
     public static BuildNodeVerdict Decide(
         BuildProcessObservation process,
@@ -106,6 +107,7 @@ public static class BuildNodeSweepPolicy
             return BuildNodeVerdict.TooYoung;
         if (IsUnder(process.Cwd, context.ActiveRunPaths)) return BuildNodeVerdict.ActiveRun;
         var seen = new HashSet<int>();
+        var liveDriver = false;
         var parentPid = process.ParentPid;
         while (parentPid > 1)
         {
@@ -113,15 +115,12 @@ public static class BuildNodeSweepPolicy
             if (context.ActiveRunPids.Contains(parentPid)) return BuildNodeVerdict.ActiveRun;
             var ancestor = lookup(parentPid);
             if (ancestor is null) return BuildNodeVerdict.UnresolvedAncestry;
+            liveDriver |= !IsProcessManager(ancestor.Comm)
+                          && Classify(ancestor.Comm, ancestor.CommandLine) == BuildNodeKind.None;
             parentPid = ancestor.ParentPid;
         }
         if (parentPid != 1) return BuildNodeVerdict.UnresolvedAncestry;
-        var parent = process.ParentPid > 1 ? lookup(process.ParentPid) : null;
-        if (parent is not null
-            && !IsProcessManager(parent.Comm)
-            && Classify(parent.Comm, parent.CommandLine) == BuildNodeKind.None)
-            return BuildNodeVerdict.LiveDriver;
-        return BuildNodeVerdict.Stale;
+        return liveDriver ? BuildNodeVerdict.LiveDriver : BuildNodeVerdict.Stale;
     }
 
     private static bool IsProcessManager(string comm)
