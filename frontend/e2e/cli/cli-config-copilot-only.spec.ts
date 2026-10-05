@@ -23,7 +23,7 @@ test.describe('CLI configuration card', () => {
     });
 
     try {
-      await page.route('**/api/tasks/*/start**', async (route) => {
+      await page.route('**/api/v1/projects/*/tasks/*/start**', async (route) => {
         await route.fulfill({
           status: 400,
           contentType: 'application/json',
@@ -57,7 +57,7 @@ test.describe('CLI configuration card', () => {
     });
 
     try {
-      await page.route('**/api/tasks/*/start**', async (route) => {
+      await page.route('**/api/v1/projects/*/tasks/*/start**', async (route) => {
         await route.fulfill({
           status: 400,
           contentType: 'application/json',

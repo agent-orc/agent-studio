@@ -57,6 +57,26 @@ public sealed partial class TaskServerStore
         return new OrchestratorChatResponse(transcript.Context.ProjectName, turn, transcript.Turns);
     }
 
+    public async Task<StudioOrchestratorTurnResponse> AppendStudioWorkbenchTurnAsync(
+        string projectIdentity,
+        string workbenchIdentity,
+        StudioOrchestratorTurnRequest request,
+        string actorId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Prompt))
+            throw new ArgumentException("prompt is required");
+        var project = await RequireProjectAsync(projectIdentity, ct);
+        var turn = await AppendOrchestratorWorkbenchContextTurnAsync(
+            projectIdentity,
+            workbenchIdentity,
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                $"turn_{Guid.NewGuid():N}", UtcNow, "user", request.Prompt, request.Model)),
+            actorId,
+            ct);
+        return new StudioOrchestratorTurnResponse($"workbench:{project.Name}/{workbenchIdentity.Trim()}", turn);
+    }
+
     public async Task<StudioOrchestratorContextDigestResponse> BuildStudioOrchestratorDigestAsync(
         string rawContextKey, string actorId, CancellationToken ct)
     {

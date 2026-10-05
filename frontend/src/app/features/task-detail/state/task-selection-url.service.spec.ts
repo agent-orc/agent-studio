@@ -132,7 +132,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.restoreFromUrl();
 
-    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
     expect(request.request.params.get('watchPath')).toBe('C:\\private\\project');
     request.flush(detail);
 
@@ -144,7 +144,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   it('resolves a public task URL after projects arrive without prior board state', async () => {
     history.replaceState(null, '', '/#/tasks/AGT-2124');
     selection.restoreFromUrl();
-    http.expectNone(req => req.url.includes('/api/tasks/AGT-2124'));
+    http.expectNone(req => req.url.includes('/tasks/AGT-2124'));
     projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
       displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
       ) as unknown as RegistryWorkspaceListItem[]);
@@ -520,7 +520,7 @@ describe('TaskSelectionService · stable task URLs', () => {
       selection.restoreFromUrl(true);
 
       http.expectNone(req => req.url.endsWith('/core'));
-      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
       expect(selection.selected()?.info.key).toBe('AGT-2124');
       expect(selection.selectedCore()).toBeNull();
       expect(selection.detailPreview()).toBeNull();
@@ -537,7 +537,7 @@ describe('TaskSelectionService · stable task URLs', () => {
       selection.restoreFromUrl();
 
       http.expectNone(req => req.url.endsWith('/core'));
-      http.expectOne(req => req.url.endsWith('/api/tasks/TWO')).flush(detail);
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/TWO')).flush(detail);
       expect(selection.selected()?.info.id).toBe(info.id);
     });
 
@@ -549,7 +549,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
       http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
         .flush({ state: 'missing' }, { status: 404, statusText: 'Not Found' });
-      http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
       expect(selection.selected()?.info.id).toBe(info.id);
       expect(selection.detailLoadError()).toBeNull();
     });
@@ -559,11 +559,11 @@ describe('TaskSelectionService · stable task URLs', () => {
       try {
         history.replaceState(null, '', '/#/tasks/AGT-2124');
         selection.restoreFromUrl();
-        http.expectNone(req => req.url.includes('/api/tasks/AGT-2124'));
+        http.expectNone(req => req.url.includes('/tasks/AGT-2124'));
 
         await vi.advanceTimersByTimeAsync(3_000);
 
-        http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124')).flush(detail);
+        http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
         expect(selection.selected()?.info.key).toBe('AGT-2124');
       } finally {
         vi.useRealTimers();
@@ -579,7 +579,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
       expect(selection.pagerStep(1)).toBe(true);
 
-      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
       expect(selection.selected()?.info.id).toBe('next-task');
       expect(selection.detailLoadError()).toBeNull();
       expect(selection.triageLaneState).toBe(info.state);
@@ -595,7 +595,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
       expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
 
-      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
       expect(selection.selected()?.info.id).toBe('next-task');
       expect(selection.consumeTaskTabReplacement(nextInfo.taskKey)).toBe(true);
     });
@@ -816,7 +816,7 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     expect(selection.selectedCore()).toBeNull();
     expect(selection.detailPreview()).toBeNull();
-    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug')).flush(detail);
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
     expect(selection.selected()?.info.id).toBe(info.id);
     expect(selection.detailLoadError()).toBeNull();
   });

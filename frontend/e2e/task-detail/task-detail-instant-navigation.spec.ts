@@ -101,14 +101,14 @@ function grouped(includePeer = false) {
 
 async function mockApplication(page: Page, includePeer = false): Promise<void> {
   await page.route('**/api/**', route => json(route, []));
-  await page.route('**/api/auth/status', route => json(route, {
+  await page.route('**/api/v1/studio/auth/status', route => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
   await page.route('**/api/environment**', route => json(route, { isDev: false, devTools: {} }));
   await page.route('**/api/watch-paths**', route => json(route, [
     { id: 'fixture', name: 'fixture', shortCode: 'FIX', path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
   ]));
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, [{
     id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true,
     color: null, createdAt: '2026-08-11T08:00:00Z',
     projects: [{
@@ -123,9 +123,9 @@ async function mockApplication(page: Page, includePeer = false): Promise<void> {
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-08-11T10:00:00Z', snapshots: [] }));
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
-  await page.route(/\/api\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => json(route, { projects: {} }));
   await page.route('**/api/tasks', route => json(route, includePeer ? [task(), peerTask()] : [task()]));
-  await page.route('**/api/tasks/grouped**', route => json(route, grouped(includePeer)));
+  await page.route('**/api/v1/studio/board**', route => json(route, grouped(includePeer)));
   await page.route(`**/api/tasks/${TASK_ID}/runs**`, route => json(route, {
     runCount: 0, firstStartedAt: null, lastActivityAt: null,
     hasActiveRun: false, runs: [], promptEntries: [], refinements: [], runnerEvents: [],
@@ -322,7 +322,7 @@ test('opens a public task URL before any board response arrives', async ({ page 
   await mockApplication(page);
   let releaseBoard!: () => void;
   const boardGate = new Promise<void>(resolve => { releaseBoard = resolve; });
-  await page.route('**/api/tasks/grouped**', async route => {
+  await page.route('**/api/v1/studio/board**', async route => {
     await boardGate;
     await json(route, grouped());
   });
@@ -356,14 +356,14 @@ test('resolves a public task URL on the server when no project owns its key pref
     storageLocation: storage, repositoryPath: storage, rootPath: storage,
     repositoryUrl: null, urls: [], archived: false, createdAt: '2026-08-11T08:00:00Z',
   });
-  await page.route('**/api/workspaces**', route => json(route, [{
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => json(route, [{
     id: 'workspace', displayName: 'Workspace', sortOrder: 0, isDefault: true,
     color: null, createdAt: '2026-08-11T08:00:00Z',
     projects: [project('fixture', 'FIX', WATCH_PATH), project('other', 'OTH', 'C:/fixtures/other')],
   }]));
   let coreRequests = 0;
   await page.route('**/api/tasks/*/core**', route => { coreRequests++; return json(route, core()); });
-  await page.route('**/api/tasks/AGT-2577', route => json(route, {
+  await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/AGT-2577(\?|$)/, route => json(route, {
     info: task(), promptMarkdown: '# Heavy task\n\nResolved by the server.', promptHistory: [],
     titleHistory: [], statusMarkdown: 'Ready for review.', contextUsage: null, log: [],
     summaryState: null, reviewEvidence: [],

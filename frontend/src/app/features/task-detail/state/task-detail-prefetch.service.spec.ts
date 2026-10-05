@@ -45,7 +45,7 @@ describe('TaskDetailPrefetchService', () => {
     service.prefetchCore('job-a', 'PROJ-001');
     const first = http.expectOne(r => r.url.endsWith('/api/tasks/job-a/core'));
     expect(first.request.params.get('project')).toBe('PROJ-001');
-    http.expectNone(r => r.url.endsWith('/api/tasks/job-a'));
+    http.expectNone(r => r.url.endsWith('/tasks/job-a'));
     service.keepLookahead(new Set());
     expect(first.cancelled).toBe(true);
 

@@ -149,18 +149,18 @@ async function stubProjectsAndJobs(page: Page) {
   await page.route(/\/api\//, async (route) => {
     const requestPath = new URL(route.request().url()).pathname;
     let body = '{}';
-    if (/\/api\/(?:tags|workspaces|projects|clients|epics)\/?$/.test(requestPath)) body = '[]';
-    if (requestPath === '/api/runner/status') body = '{"projects":{}}';
+    if (/\/api\/(?:tags|v1\/workspaces|v1\/projects|clients|epics)\/?$/.test(requestPath)) body = '[]';
+    if (requestPath === '/api/v1/studio/runner/status') body = '{"projects":{}}';
     if (requestPath === '/api/cli/quota') body = '{"snapshots":[]}';
     if (requestPath.startsWith('/api/tasks/archive')) body = '{"items":[],"total":0,"offset":0,"limit":50}';
     if (requestPath === '/api/tasks/reference-status') body = '{"items":[]}';
-    if (requestPath === '/api/orchestrator/sessions') body = '{"sessions":[]}';
+    if (requestPath === '/api/v1/studio/orchestrator/sessions') body = '{"sessions":[]}';
     if (requestPath.startsWith('/api/bus/')) body = '[]';
     if (requestPath === '/api/v1/management/remote-hosts') body = '[]';
     if (/\/api\/cli\/(?:codex|claude|gemini)\/models$/.test(requestPath)) body = '{"models":[],"source":"fixture"}';
     await route.fulfill({ status: 200, contentType: 'application/json', body });
   });
-  await page.route(/\/api\/auth\/status$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/auth\/status$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -183,7 +183,7 @@ async function stubProjectsAndJobs(page: Page) {
     review: [], completed: [], archive: []
   };
 
-  await page.route(/\/api\/tasks\/grouped(?:\?.*)?$/, async (route) => {
+  await page.route(/\/api\/v1\/studio\/board(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -208,7 +208,7 @@ async function stubJobDetail(page: Page) {
   // The active tab and footer context switch synchronously. Keep the detail
   // request pending to reproduce the selectedJob catch-up window without
   // mounting the unrelated task-detail view.
-  await page.route(new RegExp(`/api/tasks/${TASK_ID}(\\?.*)?$`), () => undefined);
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${TASK_ID}(\\?.*)?$`), () => undefined);
 }
 
 async function openSideSheet(page: Page) {

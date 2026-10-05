@@ -127,7 +127,7 @@ test.describe('Completed lane primary is "Archive & Next"', () => {
     const wp = await getFirstWatchPath();
     const tasks = await plantCompletedTasks(wp, 2);
     try {
-      await page.route(new RegExp(`/api/tasks/${tasks[0].id}(\\?|$)`), async route => {
+      await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${tasks[0].id}(\\?|$)`), async route => {
         const response = await route.fetch();
         const detail = await response.json();
         detail.info.requiresIntegration = true;

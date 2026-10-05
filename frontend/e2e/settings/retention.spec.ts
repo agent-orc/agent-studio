@@ -35,7 +35,7 @@ test('operator edits, previews, runs, inspects, and restores retention data', as
   const plan = { plannedAt: '2026-09-06T12:00:00Z', policyVersion: 1, actionCount: 1, totalBytes: 4096, affectedTasks: 1, actions: [action] };
   const manifest = { taskId: task.id, taskKey: task.id, project: 'Agent Studio Worktree', archivedAt: '2026-09-06T12:00:00Z', state: 'cold', totalBytes: 4096, restoredAt: null, tombstonedAt: null, stages: [{ stage: 1, archivedAt: '2026-09-06T12:00:00Z', payloadPath: 'cold.zip', payloadSha256: 'feed', totalBytes: 4096, files: [{ name: 'cli-output.log', size: 4096, sha256: 'abc123' }], policyVersion: 1, archivedBy: 'operator' }] };
 
-  await page.route('**/api/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
   await page.route('**/api/crash-recovery/pending', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ pending: [] }) }));
   await page.route('**/api/v1/management/status', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ maintenance: { mode: 'normal' } }) }));
   await page.route('**/api/tasks/archive**', async route => {
