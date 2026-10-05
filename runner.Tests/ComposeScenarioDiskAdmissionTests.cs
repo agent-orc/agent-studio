@@ -89,6 +89,13 @@ public sealed class ComposeScenarioDiskAdmissionTests
         { "sh", ["-lc", "echo \"$(scripts/scenario.sh --target compose)\""], true },
         { "sh", ["-lc", "cat <(scripts/scenario.sh --target compose)"], true },
         { "sh", ["-lc", "echo $(echo '$(scripts/scenario.sh --target compose)')"], false },
+        // Review round 7: an arithmetic expansion executes the substitutions it contains.
+        { "sh", ["-lc", "echo $(( $(scripts/scenario.sh --target compose) + 1 ))"], true },
+        { "sh", ["-lc", "echo $(( `scripts/compose-smoke-test.sh` ))"], true },
+        { "sh", ["-lc", "echo \"$(( $(scripts/scenario.sh --target compose | wc -l) ))\""], true },
+        { "sh", ["-lc", "n=$(( 1 + $(( $(scripts/compose-smoke-test.sh) * 2 )) ))"], true },
+        { "sh", ["-lc", "echo $(( 1 + $(echo scripts/scenario.sh --target compose) ))"], false },
+        { "sh", ["-lc", "echo $(( scenario + compose ))"], false },
     };
 
     [Theory]

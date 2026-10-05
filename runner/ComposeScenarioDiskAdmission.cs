@@ -388,12 +388,13 @@ internal static class ShellWords
         return index;
     }
 
-    // Appends "$( ... )" verbatim, records its body (not that of an arithmetic
-    // "$(( ... ))") and returns the index after the closing paren. Quoted and
-    // escaped parens do not count towards the nesting. Quotes are skipped only
-    // to find the closing paren; SimpleCommands re-parses the recorded body,
-    // including substitutions inside double quotes (see the review round 3
-    // rows in ComposeScenarioDiskAdmissionTests.Commands).
+    // Appends "$( ... )" verbatim, records its body (for an arithmetic
+    // "$(( ... ))" only the substitutions nested in it) and returns the index
+    // after the closing paren. Quoted and escaped parens do not count towards
+    // the nesting. Quotes are skipped only to find the closing paren;
+    // SimpleCommands re-parses the recorded body, including substitutions
+    // inside double quotes (see the review round 3 and round 7 rows in
+    // ComposeScenarioDiskAdmissionTests.Commands).
     private static int AppendSubstitution(
         string script,
         int index,
@@ -431,7 +432,32 @@ internal static class ShellWords
         var arithmetic = start + 2 < script.Length && script[start + 2] == '(';
         if (!arithmetic)
             substitutions.Add(script[(start + 2)..(closed ? index - 1 : index)]);
+        else
+            RecordArithmeticSubstitutions(script[(start + 3)..index], substitutions);
         return index;
+    }
+
+    // The words of an arithmetic expansion are operands, not commands, but the
+    // shell still runs the command substitutions inside it ("$(( $(cmd) + 1 ))"),
+    // so record those bodies (nested arithmetic recurses via AppendSubstitution).
+    private static void RecordArithmeticSubstitutions(string expression, List<string> substitutions)
+    {
+        var ignored = new System.Text.StringBuilder();
+        var index = 0;
+        while (index < expression.Length)
+        {
+            var character = expression[index];
+            if (character == '\\')
+                index += 2;
+            else if (character == '\'')
+                index = SkipQuoted(expression, index);
+            else if (character == '$' && index + 1 < expression.Length && expression[index + 1] == '(')
+                index = AppendSubstitution(expression, index, ignored, substitutions);
+            else if (character == '`')
+                index = AppendBackquoted(expression, index, ignored, substitutions);
+            else
+                index++;
+        }
     }
 
     // Appends "`...`" verbatim, records its body with the backslash escapes
