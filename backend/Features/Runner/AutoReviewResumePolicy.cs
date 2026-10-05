@@ -52,6 +52,13 @@ public static class AutoReviewResumePolicy
         public const string NoSettlementRecord = "no-delivery-settlement-record";
         public const string GateRecoveryPending = "integration-gate-recovery-pending";
         public const string DeliveryGateFailed = "delivery-gate-failed";
+
+        /// <summary>
+        /// The delivery already left Auto Review once and an operator moved it
+        /// back out of its park: the integration verdict that parked it is
+        /// stale and the integration decision runs again (AGT-2995).
+        /// </summary>
+        public const string OperatorReentry = "operator-reentry-reintegration";
     }
 
     /// <summary>
@@ -127,6 +134,19 @@ public static class AutoReviewResumePolicy
         {
             return new AutoReviewResumeDecision(
                 AutoReviewResumeAction.CompleteTransition, Reasons.DeliveryGateFailed);
+        }
+
+        // AGT-2995: LaneSettled means this delivery already left Auto Review
+        // through its normal transition. Seeing it here again, still unmerged,
+        // means an operator moved it out of its park (to Auto Review, or to
+        // Ready and through the idempotent review handoff). The integration
+        // verdict that parked it describes the branch as it was then; replaying
+        // it would only park the card again with the same stale reason (QS-106,
+        // 28.09.2026). Re-run the integration decision instead.
+        if (settlementStage == RemoteDeliverySettlementStage.LaneSettled)
+        {
+            return new AutoReviewResumeDecision(
+                AutoReviewResumeAction.StartIntegration, Reasons.OperatorReentry);
         }
 
         return settlementStage == RemoteDeliverySettlementStage.IntegrationPending

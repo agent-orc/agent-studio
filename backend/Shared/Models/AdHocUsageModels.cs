@@ -30,6 +30,7 @@ public sealed record AdHocUsageRecord
     public int OutputTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
+    public bool? InputIncludesCached { get; init; }
 
     /// <summary>Wall-clock duration of the subprocess in milliseconds.</summary>
     public long DurationMs { get; init; }
@@ -51,6 +52,7 @@ public sealed record AdHocUsageRecord
 /// </summary>
 public static class AdHocUsageSources
 {
+    public const string ChatTurn = "chat-turn";
     public const string TitleGeneration   = "title-generation";
     public const string SummaryGeneration = "summary-generation";
     public const string PromptEnhancement = "prompt-enhancement";
