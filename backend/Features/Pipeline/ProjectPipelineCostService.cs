@@ -64,10 +64,6 @@ public sealed class ProjectPipelineCostService
         if (receiptRead.SourceAvailable) sources.Add("task-token-receipts");
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
         var receiptRecords = BuildReceiptRecords(projectName, receiptRead.Entries);
-        var coreReceiptJobIds = receiptRecords
-            .Where(record => record.Steps.Any(step => step.Kind == StepKind.Core))
-            .Select(record => record.JobId)
-            .ToHashSet(StringComparer.Ordinal);
 
         var taskLogs = new List<(string JobId, PipelineExecutionRecord Record)>();
         if (!string.IsNullOrWhiteSpace(watchPath))
@@ -88,10 +84,7 @@ public sealed class ProjectPipelineCostService
                 }
             }
         }
-        records.AddRange(MergeSources(
-            receiptRecords,
-            coreReceiptJobIds,
-            taskLogs));
+        records.AddRange(MergeSources(receiptRecords, taskLogs));
 
         var timeline = BuildFromRecords(projectName, records, d, nowUtc);
         var distinctWarnings = warnings.Distinct(StringComparer.Ordinal).ToList();
@@ -348,10 +341,21 @@ public sealed class ProjectPipelineCostService
     /// </summary>
     internal static IReadOnlyList<PipelineExecutionRecord> MergeSources(
         IReadOnlyList<PipelineExecutionRecord> receiptRecords,
-        IReadOnlySet<string> coreReceiptJobIds,
         IEnumerable<(string JobId, PipelineExecutionRecord Record)> taskLogs)
     {
         var merged = new List<PipelineExecutionRecord>();
+        // Core receipts are written per agent turn and do not repeat the
+        // logged core row's cumulative counters, so they are reconciled per
+        // attempt by time: an attempt whose window holds a core receipt is
+        // priced by its receipts, and an attempt without one keeps its
+        // logged core tokens.
+        var coreReceiptTimes = receiptRecords
+            .Where(record => record.Steps.Any(step => step.Kind == StepKind.Core))
+            .GroupBy(record => record.JobId, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(record => record.StartedAt).ToList(),
+                StringComparer.Ordinal);
         // A receipt has no step id. Match each orchestrator or supporting
         // (aspect) call to one measured execution of the same kind by model
         // and all four token counters. Consume matches one at a time so
@@ -374,9 +378,9 @@ public sealed class ProjectPipelineCostService
                     measuredCalls[key] = measuredCalls.GetValueOrDefault(key) + 1;
                 }
             }
-            if (coreReceiptJobIds.Contains(jobId))
+            if (coreReceiptTimes.TryGetValue(jobId, out var receiptTimes))
             {
-                attempts = attempts.Select(WithoutCoreTokens).ToList();
+                attempts = WithoutReceiptBackedCoreTokens(attempts, receiptTimes);
             }
             merged.AddRange(attempts);
         }
@@ -409,7 +413,36 @@ public sealed class ProjectPipelineCostService
         => new(jobId, kind, ModelMetadataRegistry.NormalizeId(model ?? string.Empty), input, output, cacheRead, cacheCreation);
 
     /// <summary>
-    /// Zero the core rows' tokens so a receipt-backed task counts its agent
+    /// Zero the logged core tokens only in the attempts a core receipt covers.
+    /// Attempt i owns the window from its start to the next attempt's start;
+    /// the first window is open towards the past and the last towards the
+    /// future, so every receipt lands in exactly one attempt.
+    /// </summary>
+    private static List<PipelineExecutionRecord> WithoutReceiptBackedCoreTokens(
+        IReadOnlyList<PipelineExecutionRecord> attempts, IReadOnlyList<DateTime> receiptTimes)
+    {
+        var ordered = attempts
+            .Select((attempt, index) => (Attempt: attempt, Index: index))
+            .OrderBy(entry => entry.Attempt.StartedAt)
+            .ToList();
+        var backed = new HashSet<int>();
+        foreach (var at in receiptTimes)
+        {
+            var owner = ordered[0].Index;
+            foreach (var entry in ordered)
+            {
+                if (entry.Attempt.StartedAt > at) break;
+                owner = entry.Index;
+            }
+            backed.Add(owner);
+        }
+        return attempts
+            .Select((attempt, index) => backed.Contains(index) ? WithoutCoreTokens(attempt) : attempt)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Zero the core rows' tokens so a receipt-backed attempt counts its agent
     /// runs from the log while the receipt alone prices them.
     /// </summary>
     private static PipelineExecutionRecord WithoutCoreTokens(PipelineExecutionRecord record)

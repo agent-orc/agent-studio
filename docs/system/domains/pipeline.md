@@ -308,7 +308,9 @@ Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
 
 - `ProjectPipelineCostService.MergeSources` now reads the execution log of a
   receipt-backed (remote) task as well.
-- A core receipt prices that task's agent run. The log adds the aspect,
+- A core receipt prices the agent run of the attempt whose time window holds
+  it (an attempt owns the span from its start to the next attempt's start).
+  An attempt with no core receipt keeps its logged core tokens. The log adds the aspect,
   orchestrator and drift rows, plus the core run count. Orchestrator receipts
   matching a measured step execution by job, model and all four token
   counters are consumed one at a time; unmatched receipts remain visible.
