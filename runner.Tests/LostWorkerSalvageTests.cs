@@ -230,11 +230,11 @@ public sealed class LostWorkerSalvageTests : IDisposable
         WorkDir = Path.Combine(_root, "work"),
         StateDir = Path.Combine(_root, "state"),
         BaseBranch = "main",
-        ExecEngine = RunnerOptions.ExecEngineLegacy,
-        CliBin = PosixShell.RequirePath(),
+        ClaudeCliBin = CarStubCli.Write(
+            Path.Combine(_root, "stubs"),
+            "printf 'work in progress\\n' > salvaged.txt; sleep 120"),
         // Writes the "nearly finished delivery" into the worktree, then waits to
         // be killed like the observed worker was.
-        CliArgs = "-c \"printf 'work in progress\\n' > salvaged.txt; sleep 120\"",
         TtlSeconds = 300,
         HeartbeatSeconds = 30,
         RunTimeoutSeconds = 300,
@@ -371,6 +371,12 @@ public sealed class LostWorkerSalvageTests : IDisposable
                     break;
                 case "/api/runner/logs":
                     response = new LogIngestResponse(lease.TaskKey, 0);
+                    break;
+                case "/api/runner/artifacts/limits":
+                    response = new ArtifactTransferLimitsResponse(
+                        25L * 1024 * 1024,
+                        18L * 1024 * 1024,
+                        100L * 1024 * 1024);
                     break;
                 case "/api/runner/lease/release":
                     response = await ObserveReleaseAsync(request, cancellationToken);

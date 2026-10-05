@@ -112,13 +112,13 @@
 <p class="dim">Das ist kein Bugfix, sondern eine Produkt-Richtung. Sie stärkt genau den Marketing-Kern „sicher / isoliert", der bisher nur durch Worktree-Grenzen belegt war. Der Preis ist die Repo-/Credential-Erreichbarkeit im Container — der in der Distributable-Analyse als „the hard part" markierte Punkt (siehe §5).</p>
 
 <h2 id="ist"><span class="no">2</span>Baseline from 26 July, with CAR adoption status</h2>
-<p>The three read-only probes below preserve the pre-migration baseline. As of 2 August, T1 and the T2 implementation have moved the runner and local Claude/Codex paths onto CodingAgentRunner. Host-direct execution and the missing container boundary remain current; the former claim that Studio does not use CAR is historical.</p>
+<p>The three read-only probes below preserve the pre-migration baseline. As of 24 September, T1-T4 are complete: all local and Runner card launches use CodingAgentRunner. Host-direct execution and the missing container boundary remain current; the former claim that Studio does not use CAR is historical.</p>
 <table>
   <tr><th>Fläche</th><th>Was heute gilt</th><th>Beleg</th></tr>
   <tr>
     <td><b>Code</b></td>
-    <td>CLI processes still run directly on the host, with no container in the execution path. Claude and Codex now use CAR in both the runner and local backend. Local Antigravity remains on the explicit legacy <code>agentapi</code> adapter. There is still no placement or container concept.</td>
-    <td class="ev">Local: <code>GenericCliExecutionService</code> selects <code>car|legacy</code>; <code>BackendCarExecution.cs</code> drives Claude/Codex through <code>ICliDriver</code>. Remote: <code>CarWorkerExecution.cs</code> drives the detached worker through CAR. Studio's former <code>WindowsHandleScrubSpawner</code> copy is removed. The existing <code>NpmShimHealer</code> remains only for the local legacy rollback and non-agent one-shot path until T4; CAR owns repair on CAR-backed runs. CAR remains host-direct until the later container tranche.</td>
+    <td>CLI processes still run directly on the host, with no container in the execution path. Claude, Codex, and Antigravity card runs use CAR in both the Runner and local backend. There is still no placement or container concept.</td>
+    <td class="ev">Local: <code>BackendCarExecution.cs</code> drives typed requests through <code>ICliDriver</code>. Remote: <code>CarWorkerExecution.cs</code> does the same inside the detached worker. Raw card-run spawn, engine rollback settings, and Studio's copied Windows spawner are removed. <code>NpmShimHealer</code> remains only for the bounded non-card Claude one-shot utility. CAR remains host-direct until the later container tranche.</td>
   </tr>
   <tr>
     <td><b>Doku / Wiki</b></td>
@@ -177,7 +177,7 @@
 <table>
   <tr><th>Arbeitspaket</th><th>Was</th><th>Status</th></tr>
   <tr><td><b>Placement-Konzept</b></td><td>Neues ExecutionPlacement (container / host / mixed) je Host; heute existiert nur OrchestrationExecutionMode {Monolith, Engine}. Spawn-Pfad verzweigt danach.</td><td><span class="pill new">zu schneiden</span></td></tr>
-  <tr><td><b>CAR adoption prerequisite</b></td><td>T1 moved the detached runner worker to CAR. T2 implements the local Claude/Codex CAR path with project and workspace rollback settings. Antigravity remains legacy because of its <code>agentapi</code> protocol. T3 parity evidence and T4 cleanup still gate removal of rollback code.</td><td><span class="pill queued">2370 done, 2371 implemented, 2372 and 2373 open</span></td></tr>
+  <tr><td><b>CAR adoption prerequisite</b></td><td>T1-T4 are complete. Detached and local card runs use the single CAR execution layer; parity evidence preceded deletion of rollback code and settings.</td><td><span class="pill done">2370-2373 done</span></td></tr>
   <tr><td><b>Container-Spawn</b></td><td>CLI im Container starten statt direkt — in der dann gemeinsamen CAR-Ausführungsschicht, gewählt per Placement. Agent-Image bauen (CLIs vorinstalliert).</td><td><span class="pill new">zu schneiden, nach 2370/2371</span></td></tr>
   <tr><td><b>Repo &amp; Credentials</b></td><td>„The hard part": Volume-Mount je Projekt-Repo + Credential-Durchreichung (Git, CLI-Tokens) in den Container. Mount-Konvention definieren.</td><td><span class="pill open">Konzept offen</span></td></tr>
   <tr><td><b>Host-Verwaltung UI</b></td><td>Modus je Host editierbar; lokaler Host als Ausführungs-Host mit Typ <code>local</code>; Umbenennung „Remote Hosts" → Ausführungs-Hosts; Statusleiste verlinkt dorthin.</td><td><span class="pill queued">Hosts-Rename-Karte</span></td></tr>
@@ -190,7 +190,7 @@
 <div class="box accent">
   <h4>The target is clear, and adoption is now in progress</h4>
   <p><code>docs/concepts/distributed-agent-studio-target-architecture.md</code> führt in §4 „CodingAgentRunner integration" als Eigentum des Deployables <b>Agent Runner</b> und schreibt in §10 wörtlich: <em>„CodingAgentRunner remains the process and CLI-protocol library used by <code>agent-runner</code>. The standalone Runner must not recreate a second unstructured Codex invocation path."</em> §13.6 verlangt zusätzlich strukturierte CAR-Events, fenced commands und typed outcomes.</p>
-  <p>The original drift is partly closed: <b>AGT-2370</b> moved the runner worker to CAR, and <b>AGT-2371</b> implements the local Claude/Codex bridge. <b>AGT-2372</b> still owns parity evidence and the guard ratchet; <b>AGT-2373</b> still owns final rollback removal, ADR, and end-state documentation. <span class="pill queued">coordinated chain active</span></p>
+  <p>The original drift is closed: <b>AGT-2370</b> moved the runner worker to CAR, <b>AGT-2371</b> added the local bridge, <b>AGT-2372</b> supplied parity evidence and the guard ratchet, and <b>AGT-2373</b> removed rollback code and settings. <span class="pill done">adoption complete</span></p>
 </div>
 
 <div class="box ok">
@@ -202,7 +202,7 @@
   </ul>
 </div>
 
-<p><b>Adoptionsstand - der eigentliche Punkt.</b> Das Studio nutzt von CAR heute nur <code>Model</code>, <code>Events</code> und <code>Adapters</code> (Typ-Aliase in <code>OrchestratorApi.csproj</code>), <b>nicht</b> die Ausführungs-Engine <code>CliRunEngine</code>. Gespawnt wird an zwei eigenen Stellen im Studio (lokal / Remote-Daemon); <code>ICliProcessSpawner</code> ist ein Hook in einem Codepfad, den das Produkt gar nicht durchläuft - im Studio existiert keine einzige Implementierung davon. <b>Folge: Ein Container-Spawner allein in CAR liefert dem Produkt heute nichts.</b> Er nützt den Library-Konsumenten (z. B. dem Chat-Dossier), nicht dem Ausführungspfad des Studios.</p>
+<p><b>Adoption status.</b> Studio and Agent Runner now use CAR's execution engine for every card run. The local bridge and detached worker retain host durability and projection, while CAR owns descriptor argv, process lifecycle, and protocol events. A future container spawner therefore has one integration boundary.</p>
 
 <table>
   <tr><th>Frage</th><th>Antwort</th><th>Beleg / Status</th></tr>
@@ -219,7 +219,7 @@
       <td>Die Config-Home-Isolation ist bereits die richtige Granularität für die Credential-Frage: <code>CleanContextPreparation</code> legt ein Temp-Verzeichnis an, verlinkt die erneuerbare Credential-Datei und kopiert nur die statische Basiskonfiguration. In den Container muss also <em>dieses</em> Verzeichnis, nicht das ganze <code>~/.codex</code>. Ein fertiger, minimaler Träger für E2.</td>
       <td class="ev"><code>CleanContextPreparation.cs</code>, <code>CleanContextSpec</code></td></tr>
 </table>
-<p class="dim">Kurz: Der Satz „der Spawner ist die zentrale Stelle" stimmt inzwischen für die standardmäßigen Claude- und Codex-Läufe in Runner und lokalem Backend: beide gehen durch CAR. Der explizite lokale Rollback, der detached-worker-Rollback und Antigravity bleiben bis T4 als benannte Altpfade. Nach der vollständigen Adoptions-Kette wird der Container-Spawn einmal gebaut statt zweimal. <span class="pill queued">AGT-2372 · 2373 offen</span></p>
+<p class="dim">The spawner is now the central card-run boundary: local and detached Runner execution go through CAR, including Antigravity. The container spawn can be implemented once. <span class="pill done">AGT-2372 · 2373 done</span></p>
 
 <h3>Docs / Wiki (agent-taskboard/docs)</h3>
 <p>Umschrift nötig — die Doku dokumentiert heute das Gegenteil: <code>sandbox-and-yolo.md</code> („out of scope" → Container ist jetzt in-scope), <code>distributable.html</code> §8.2/§8.8 (Docker vom Demo-Kanal zum lokalen Default), <code>decision-history.md</code> (Entscheidungswechsel eintragen), <code>linux-runner-host.md</code> + <code>resource-governance.md</code> (Container-Pfad ergänzen). <span class="pill new">zu schneiden</span></p>
@@ -239,7 +239,7 @@
   <tr><th>Phase</th><th>Inhalt</th><th>Vorbedingung</th></tr>
   <tr><td><b>0 · Entscheidung sichtbar</b></td><td>Dieses Dossier-Doc; Docs/Marketing-Umschrift-Karten schneiden; Entscheidungswechsel in decision-history.</td><td>-</td></tr>
   <tr><td><b>1 · Mount-Konzept</b></td><td>Repo-/Credential-Durchreichung lösen (Konzept + Prototyp). Der kritische Pfad — hier entscheidet sich Machbarkeit.</td><td>Phase 0</td></tr>
-  <tr><td><b>1b · CAR adoption</b></td><td>The execution layer converges on CodingAgentRunner. T1 is complete and T2 is implemented; T3 parity and T4 cleanup remain. This continues in parallel with the mount concept and remains a prerequisite for phase 2.</td><td>T3 and T4</td></tr>
+  <tr><td><b>1b · CAR adoption</b></td><td>The execution layer has converged on CodingAgentRunner. T1-T4 are complete.</td><td>done</td></tr>
   <tr><td><b>2 · Placement + Spawn</b></td><td>ExecutionPlacement-Konzept, Container-Spawn <em>einmal</em> in der CAR-Ausführungsschicht, Agent-Image. Host-direkt bleibt Default bis grün.</td><td>Phase 1 + 1b</td></tr>
   <tr><td><b>3 · Host-Verwaltung</b></td><td>Modus editierbar, lokaler Host sichtbar, Umbenennung, Statusleisten-Link.</td><td>parallel zu 2</td></tr>
   <tr><td><b>4 · Installer</b></td><td>Modus-Dialog + Docker-Default; Multi-Machine-Guide.</td><td>Phase 2 + Release-Archive</td></tr>
@@ -355,11 +355,11 @@
 <p class="ev"><b>Blockiert:</b> nichts technisch — steuert die Reihenfolge und die Außendarstellung (§5 Marketing/Website).</p>
 
 <h3>E5 · Spawn-Pfade — Konvergenz auf CAR <span class="pill done">entschieden 26.07.</span></h3>
-<p>Der Code-Befund vom 26.07. zeigte drei Spawn-Implementierungen: lokal im Backend, im Remote-Daemon und in CAR. T1 und T2 haben die standardmäßigen Claude- und Codex-Läufe auf CAR konvergiert. T3 muss die Parität belegen; T4 entfernt die verbleibenden Rollback- und Ausnahmewege.</p>
+<p>Der Code-Befund vom 26.07. zeigte drei Spawn-Implementierungen. T1-T3 converged the paths and proved parity; T4 removed the raw local and Runner card-run paths, rollback settings, and duplicate argv construction. CAR is now the single execution layer.</p>
 <div class="box accent">
   <h4>Entscheidung: CAR wird benutzt (Option C)</h4>
   <p>Diese Frage war streng genommen nie offen — das Zielbild (§4/§10/§13.6 der Target-Architecture) legt CAR als Ausführungsschicht des Runner-Deployables fest. Der Ist-Zustand ist ein Drift, kein Entwurfsspielraum. Robert am 26.07.: <em>„CAR ist eine hilfreiche, sinnvolle Abstraktion — ich möchte, dass CAR genutzt wird."</em></p>
-  <p>Getaktet als Kette: <b>AGT-2370</b> Runner-Daemon auf CAR ist abgeschlossen; <b>AGT-2371</b> implementiert die lokale Ausführungsschicht; <b>AGT-2372</b> erweitert die Parity-Suite und den Guard; <b>AGT-2373</b> räumt Rollback-Code auf und schließt ADR und Doku ab. Erst nach belegter Parity wird alter Code entfernt; die Adoption bleibt bis dahin flag-gated.</p>
+  <p>Completed as a coordinated chain: <b>AGT-2370</b> Runner adoption, <b>AGT-2371</b> local adoption, <b>AGT-2372</b> parity and guard, and <b>AGT-2373</b> rollback removal plus ADR and end-state documentation. The execution path is no longer flag-gated.</p>
 </div>
 <p class="dim">Die Optionen bleiben als Begründung stehen — sie zeigen, warum die teurere Variante die richtige ist.</p>
 <table>
@@ -395,7 +395,7 @@
   <tr><td><b>E2</b></td><td>Credential-Weg</td><td>Sicherheit</td><td>CLI-Auth über isolierten Config-Home; kein Push-Recht im Container</td><td>Ergebnisvertrag</td><td>vor Phase 1</td></tr>
   <tr><td><b>E3</b></td><td>Image-Herkunft</td><td>Erlebnis</td><td>A (Pull), B als Fallback; CLI-Versionsbindung mitentscheiden</td><td>Installer</td><td>vor Phase 2</td></tr>
   <tr><td><b>E4</b></td><td>Rollout-Zeitpunkt</td><td>Tempo/Risiko</td><td>Opt-in → Default mit prüfbarer Umschaltbedingung</td><td>Außendarstellung</td><td>vor Phase 4/5</td></tr>
-  <tr><td><b>E5</b></td><td>Spawn-Pfad-Konvergenz</td><td>Architektur</td><td><b>entschieden:</b> Konvergenz auf CAR (AGT-2370 … 2373)</td><td>Phase 2</td><td><span class="pill done">26.07.</span></td></tr>
+  <tr><td><b>E5</b></td><td>Spawn-Pfad-Konvergenz</td><td>Architektur</td><td><b>completed:</b> one CAR card-run layer (AGT-2370 … 2373)</td><td>Phase 2 unblocked</td><td><span class="pill done">24.09.</span></td></tr>
   <tr><td><b>E6</b></td><td>Gate im Container</td><td>Architektur</td><td>C (getrennte Images, gemeinsames Placement)</td><td>AGT-2229</td><td>vor AGT-2229</td></tr>
 </table>
 <p class="dim">E1 und E2 sind die Sicherheitssubstanz — sie entscheiden, ob „isoliert" ein ehrlicher Claim wird. E3 und E4 sind Erlebnis und Tempo. E5 und E6 sind Architekturhygiene: Sie bestimmen nicht <em>ob</em> Container kommt, sondern ob am Ende ein Mechanismus dasteht oder drei. Sobald diese sechs beantwortet sind, wird Phase 1/2 zu konkreten Karten; bis dahin ist dieses Dokument die gemeinsame Grundlage — änderbar, sobald sich das Zielbild schärft.</p>

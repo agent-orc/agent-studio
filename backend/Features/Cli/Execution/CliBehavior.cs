@@ -13,10 +13,9 @@ namespace AgentStudio.Cli;
 /// <para>
 /// Every delegate receives the live engine instance as <c>ctx</c> so the
 /// behavior can read engine state (config, logger, tracked processes) and call
-/// engine helpers (RaiseRunEvent, BuildConventionContext, DefaultSpawnChildAsync,
-/// ...). A null nullable-delegate means "use the engine's built-in default";
-/// the two required delegates (<see cref="GetCliPath"/>,
-/// <see cref="BuildStartInfo"/>) have no default and must be supplied.
+/// engine helpers (RaiseRunEvent, BuildConventionContext, ...). A null
+/// nullable-delegate means "use the engine's built-in default". The
+/// <see cref="GetCliPath"/> delegate is required.
 /// </para>
 /// </summary>
 internal sealed class CliBehavior
@@ -40,9 +39,6 @@ internal sealed class CliBehavior
     /// <summary>Resolve the executable path/name this CLI runs.</summary>
     public required Func<GenericCliExecutionService, string> GetCliPath { get; init; }
 
-    /// <summary>Build the command-line for one spawn. Required.</summary>
-    public required BuildStartInfoDelegate BuildStartInfo { get; init; }
-
     // ── Optional delegates (null => engine default) ─────────────────────
 
     /// <summary>Session-name compatibility. Default: any non-empty name.</summary>
@@ -50,12 +46,6 @@ internal sealed class CliBehavior
 
     /// <summary>Probe the CLI version/availability. Default: a <c>--version</c> probe.</summary>
     public Func<GenericCliExecutionService, string?, (bool Available, string? Version, string Path)>? TestCliPath { get; init; }
-
-    /// <summary>Pre-spawn health/self-heal. Default: a fast <c>--version</c> probe with no repair.</summary>
-    public Func<GenericCliExecutionService, CancellationToken, Task<(bool Ok, string? Error)>>? EnsureCliHealthy { get; init; }
-
-    /// <summary>Text to write to the child's stdin. Default null: close stdin immediately.</summary>
-    public Func<GenericCliExecutionService, string, string?, bool, string?, string?>? GetPromptStdinPayload { get; init; }
 
     /// <summary>Normalize a persisted model before invocation. Default: trim / null-if-blank.</summary>
     public Func<GenericCliExecutionService, string?, string?>? NormalizeModelForInvocation { get; init; }
@@ -82,9 +72,6 @@ internal sealed class CliBehavior
     /// <summary>Return the model catalog. Default: empty default-only catalog.</summary>
     public Func<GenericCliExecutionService, bool, CancellationToken, Task<CliModelCatalog>>? GetModelCatalog { get; init; }
 
-    /// <summary>Spawn the child process. Default: <see cref="Process"/> with redirected pipes.</summary>
-    public SpawnChildDelegate? SpawnChild { get; init; }
-
     /// <summary>Acquire a task-stable clean-context config home. Default: null (shared-only).</summary>
     public Func<GenericCliExecutionService, string, string, CleanContextPreparation?>? PrepareCleanContext { get; init; }
 
@@ -93,27 +80,9 @@ internal sealed class CliBehavior
 
     // ── Named delegate types for the awkward signatures ─────────────────
 
-    internal delegate ProcessStartInfo BuildStartInfoDelegate(
-        GenericCliExecutionService ctx,
-        string prompt,
-        string workingDirectory,
-        string? sessionName,
-        bool resumeSession,
-        string? model,
-        string? thinkingLevel,
-        string? permissionMode);
-
     internal delegate IEnumerable<CliRunEvent> MapLineToRunEventsDelegate(
         GenericCliExecutionService ctx,
         string jobKey,
         CliOutputLine line);
 
-    internal delegate Task<ChildHandle> SpawnChildDelegate(
-        GenericCliExecutionService ctx,
-        ProcessStartInfo psi,
-        string prompt,
-        string? sessionName,
-        bool resumeSession,
-        string? model,
-        CancellationToken ct);
 }

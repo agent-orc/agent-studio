@@ -226,8 +226,6 @@ export function buildCliChipView(
   const weekly = windowView(weeklyWindow, 'weekly', timeZone);
   const session = windowView(sessionWindow, 'session', timeZone);
   const status = cli.availability?.status;
-  const suspiciousReason = cli.suspiciousReason
-    ?? weeklyWindow?.suspiciousReason ?? sessionWindow?.suspiciousReason ?? null;
   const suspicious = cli.suspicious || status === 'suspicious'
     || !!weeklyWindow?.suspiciousReason || !!sessionWindow?.suspiciousReason;
   const stale = status === 'stale' || !!cli.probeFailedAt
@@ -236,13 +234,7 @@ export function buildCliChipView(
   const state: UsageChipState = unknown ? 'unknown' : suspicious ? 'suspicious' : stale ? 'stale' : 'normal';
 
   const updated = formatLocalWithUtc(cli.fetchedAt, timeZone);
-  const reason = state === 'unknown'
-    ? cli.availability?.reason ?? 'The provider reported no usage window'
-    : state === 'suspicious'
-      ? suspiciousReason ?? 'The latest snapshot is not yet confirmed'
-      : state === 'stale'
-        ? cli.probeFailedAt ? 'The latest probe failed; showing the last good values' : 'The snapshot is older than its refresh interval'
-        : null;
+  const reason = cliStateReason(cli, state);
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const spokenWindows = state === 'unknown'
@@ -259,6 +251,19 @@ export function buildCliChipView(
   ].filter(Boolean).join('\n');
 
   return { cliId, name, state, stateLabel, weekly, session, ariaLabel, detail };
+}
+
+/** Structured provider state explanation shared by chip text and detail. */
+export function cliStateReason(cli: UsageCli, state: UsageChipState): string | null {
+  if (state === 'unknown') return cli.availability?.reason ?? 'The provider reported no usage window';
+  if (state === 'suspicious') return cli.suspiciousReason
+    ?? findWindow(cli.windows, 'weekly')?.suspiciousReason
+    ?? findWindow(cli.windows, 'session')?.suspiciousReason
+    ?? 'The latest snapshot is not yet confirmed';
+  if (state === 'stale') return cli.probeFailedAt
+    ? 'The latest probe failed; showing the last good values'
+    : 'The snapshot is older than its refresh interval';
+  return null;
 }
 
 // ------------------------------------------------------------ cost chip
@@ -295,13 +300,7 @@ export function buildCostChipView(cost: UsageCostProjection | null, now: number)
       : stale ? 'stale'
         : status === 'partial' ? 'partial'
           : 'normal';
-  const reason = state === 'unknown'
-    ? coverage?.reason ?? 'The token ledger is unavailable'
-    : state === 'partial'
-      ? coverage?.reason ?? 'Some usage is not priced or not yet received'
-      : state === 'stale'
-        ? 'The ledger snapshot is older than its refresh interval'
-        : state === 'suspicious' ? coverage?.reason ?? 'The ledger snapshot is not yet confirmed' : null;
+  const reason = costStateReason(cost, state);
   const stateLabel = stateWording(state);
   const stateClause = stateLabel && reason ? `${stateLabel}: ${sentence(reason)}` : '';
   const dayStart = formatLocalWithUtc(cost.calendar?.dayStartUtc, zone);
@@ -319,6 +318,15 @@ export function buildCostChipView(cost: UsageCostProjection | null, now: number)
       stateClause || null,
     ].filter(Boolean).join('\n'),
   };
+}
+
+/** Structured ledger coverage explanation shared by chip text and detail. */
+export function costStateReason(cost: UsageCostProjection, state: UsageChipState): string | null {
+  if (state === 'unknown') return cost.coverage?.reason ?? 'The token ledger is unavailable';
+  if (state === 'partial') return cost.coverage?.reason ?? 'Some usage is not priced or not yet received';
+  if (state === 'stale') return 'The ledger snapshot is older than its refresh interval';
+  if (state === 'suspicious') return cost.coverage?.reason ?? 'The ledger snapshot is not yet confirmed';
+  return null;
 }
 
 // ------------------------------------------------------------ slot chip
