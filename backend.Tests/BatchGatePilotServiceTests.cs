@@ -129,6 +129,51 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Superseded_pending_review_does_not_block_its_replacement_from_the_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-REREVIEW", "docs/rereview.md");
+        // A newer review of the same delivery passes and is enqueued while the
+        // first pending record is still in the queue.
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var plan = new Contract.ReviewPlanDto(
+            [new Contract.ReviewCommandDto("aspect-requirement-fit", "requirement-fit", "claude", [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect, Prompt: "Review the delivery.")],
+            ["requirement-fit"], BuildTestDeferredToBatch: true);
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            member.Key, RepositoryId, member.ResultSha, member.RunAttemptId, "requirements",
+            "policy", [], "create-again-" + member.Key,
+            ResultRef: "refs/heads/agent-studio/results/" + member.Key, Plan: plan));
+        Assert.True(created.Accepted, created.Message);
+        var reviewId = created.ReviewAttempt!.AttemptId;
+        var claimed = authority.ClaimReview(reviewId, "review-executor", "review-host", 600,
+            "claim-again-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var passed = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(reviewId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "pass-again-" + member.Key),
+            member.ResultSha, ReviewTerminalOutcome.Pass));
+        Assert.True(passed.Accepted, passed.Message);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(member.Key, _watchPath)!;
+        pilot.Enqueue(task, passed.ReviewAttempt!, authority.GetRun(member.RunAttemptId)!, _clock);
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        Assert.Equal(2, store.ListPending().Count);
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
+        Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
     public async Task Paused_batch_returns_its_members_to_the_per_task_gate()
     {
         using var factory = BuildFactory();

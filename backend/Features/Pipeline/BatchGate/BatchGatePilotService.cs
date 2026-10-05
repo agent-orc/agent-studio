@@ -219,6 +219,16 @@ public sealed class BatchGatePilotService
                 ct.ThrowIfCancellationRequested();
                 await RunPerTaskFallbackAsync(item, ct).ConfigureAwait(false);
             }
+            // A newer passed review of the same task supersedes any older
+            // pending record. Left in the queue, the older record would share
+            // the task key with its replacement and break member selection.
+            foreach (var stale in _store.ListPending()
+                         .GroupBy(item => item.Subject.TaskKey, StringComparer.Ordinal)
+                         .SelectMany(group => group
+                             .OrderByDescending(item => item.Subject.EnqueueSequence)
+                             .Skip(1))
+                         .ToArray())
+                ResolveSuperseded(stale, "superseded-by-newer-review");
             // Refresh before choosing the scope. A queued subject may have
             // outlived a project gate profile change or a platform upgrade.
             // Grouping on the stored values would exclude it from its own
