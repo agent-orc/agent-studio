@@ -989,6 +989,9 @@ public sealed class ProviderAuthProbe
             }
             _realBudgets[provider] = (budget.Window, budget.Used + 1);
         }
+        // One deadline spans the real request, the incident lookup and the
+        // comparison wait, so a probe holds this provider's single flight for
+        // at most _timeout. Evidence the deadline cuts off stays unknown.
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
         bounded.CancelAfter(_timeout);
         ProcessResult? result;
@@ -999,7 +1002,13 @@ public sealed class ProviderAuthProbe
         }
         var official = new ProviderIncidentSnapshot([], _clock(), false, "not-retrieved");
         if (result.ExitCode != 0 && incidents is not null)
-            official = await incidents.GetAsync(RunnerCapabilityProbe.Provider(cliBinary), ct);
+        {
+            try { official = await incidents.GetAsync(RunnerCapabilityProbe.Provider(cliBinary), bounded.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                official = new ProviderIncidentSnapshot([], _clock(), false, "official-status-deadline-exceeded");
+            }
+        }
         var unauthorizedSignature = result.ExitCode != 0
             ? ProviderProbeClassifier.Classify(new ProviderProbeRequest(
                 RunnerCapabilityProbe.Provider(cliBinary), "configured", RunnerCapabilityProbe.Provider(cliBinary) == "codex" ? "codex-exec" : "claude-code",
@@ -1015,13 +1024,11 @@ public sealed class ProviderAuthProbe
         {
             try
             {
-                using var comparisonDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                comparisonDeadline.CancelAfter(_timeout);
                 comparison = await comparisons(new ProviderComparisonQuery(provider,
                     provider == "codex" ? "codex-exec" : "claude-code",
                     "minimal-text-v1", unauthorizedSignature, status.EffectiveSource,
                     status.CredentialGeneration),
-                    comparisonDeadline.Token);
+                    bounded.Token);
             }
             catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
             {

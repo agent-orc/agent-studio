@@ -432,6 +432,46 @@ public sealed class ProviderProbeEvidenceTests
         Assert.Equal(1, peak);
     }
 
+    [Fact]
+    public async Task Real_request_incident_lookup_and_comparison_share_one_deadline()
+    {
+        // Each step alone fits the deadline; together they must not exceed it.
+        // Separate deadlines would let the slow feed wait out its own 5 s timeout.
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(1, "", "HTTP 401 Unauthorized")),
+            executableExists: _ => true,
+            clock: () => At,
+            timeout: TimeSpan.FromMilliseconds(400),
+            credentialFreshness: G1);
+        var comparisonCancelled = false;
+        probe.UseRealRequest(
+            async (_, _, _) =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300));
+                return new ProcessResult(1, "", "HTTP 401 Unauthorized");
+            },
+            new ProviderStatusIncidentAdapter(async (_, ct) =>
+            {
+                await Task.Delay(Timeout.Infinite, ct);
+                return "{\"incidents\":[]}";
+            }, () => At),
+            async (_, ct) =>
+            {
+                try { await Task.Delay(Timeout.Infinite, ct); }
+                catch (OperationCanceledException) { comparisonCancelled = true; throw; }
+                return new ProviderComparisonSnapshot(null, null);
+            }, "local-host");
+
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        var observed = await probe.RefreshAsync("codex", CancellationToken.None);
+        elapsed.Stop();
+
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(3), $"probe held single flight for {elapsed.Elapsed}");
+        Assert.True(comparisonCancelled);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, observed.Outcome);
+        Assert.Equal("unauthorized", observed.EvidenceExcerpt);
+    }
+
     private static ProviderCredentialFreshness G1(string _) => new(null, null, "native store",
         EffectiveSource: "native-cli-store", CredentialGeneration: "g1");
 
