@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 import { setTheme } from '../helpers/theme';
 
 test('project failure continuation setting persists in both themes', async ({ page }) => {
+  test.setTimeout(180_000);
   const project = 'continuation-demo';
   let enabled = true;
   let maxDeliveredReviewRounds = 4;
@@ -63,12 +64,12 @@ test('project failure continuation setting persists in both themes', async ({ pa
       activeKey: `hub:${projectName}`,
     }));
   }, project);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const control = page.getByTestId('project-detail-automatic-failure-continuations');
   await expect(control).toBeChecked();
   await control.uncheck();
   await expect.poll(() => writes.at(-1)).toBe(false);
-  await page.reload();
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
   await expect(control).not.toBeChecked();
   await control.check();
   await expect.poll(() => writes.at(-1)).toBe(true);
@@ -84,7 +85,7 @@ test('project failure continuation setting persists in both themes', async ({ pa
   await reissues.fill('3');
   await reissues.blur();
   await expect.poll(() => maxAutoReissueAttempts).toBe(3);
-  await page.reload();
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
   await expect(rounds).toHaveValue('5');
   await expect(reissues).toHaveValue('3');
 

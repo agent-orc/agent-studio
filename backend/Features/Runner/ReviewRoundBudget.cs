@@ -97,6 +97,7 @@ public static class ReviewRoundBudgetPolicy
         }
         var reissuesSpent = priorAutomaticReissues is not null
                             && maximumAutomaticReissues is not null
+                            && priorAutomaticReissues > 0
                             && priorAutomaticReissues >= maximumAutomaticReissues;
         var lifetimeSpent = roundNumber >= maximumRounds || reissuesSpent;
         var spentBy = recurrent ?? (lifetimeSpent ? blocked.FirstOrDefault() : null);

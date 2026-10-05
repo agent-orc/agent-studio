@@ -17,7 +17,9 @@ that spent the budget. Operator automation uses the same counter.
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the
 lifetime round or reissue budget is spent, a further non-build aspect block is
-recorded as `concerns`. One linked follow-up card carries all open findings;
+recorded as `concerns`. With zero automatic reissues allowed, an initial block
+still follows the ordinary escalation path until the aspect streak or lifetime
+round limit binds. One linked follow-up card carries all open findings;
 `references.raisedFollowUps` points to it from the delivery. The card has one
 review-budget follow-up; later degraded rounds append their findings to it.
 The delivery then follows the ordinary acceptance

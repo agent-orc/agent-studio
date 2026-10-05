@@ -119,7 +119,7 @@ public class ReissueLoopBreakerTests
         var records = new[]
         {
             new ReviewDecisionRecord(
-                DateTime.UtcNow,
+                DateTime.UnixEpoch,
                 "AGT-1",
                 "Project",
                 ReviewDecisionKind.Reissue,
@@ -157,7 +157,7 @@ public class ReissueLoopBreakerTests
         var records = new[]
         {
             new ReviewDecisionRecord(
-                DateTime.UtcNow,
+                DateTime.UnixEpoch,
                 "AGT-2",
                 "Project",
                 ReviewDecisionKind.Reissue,
@@ -196,7 +196,7 @@ public class ReissueLoopBreakerTests
         var first = RepeatedAspectBlockPolicy.Diagnose(
             firstReport, [], "AGT-3", attemptEpoch: 0, maximumRounds: 2)!;
         var record = new ReviewDecisionRecord(
-            DateTime.UtcNow, "AGT-3", "Project", ReviewDecisionKind.Reissue,
+            DateTime.UnixEpoch, "AGT-3", "Project", ReviewDecisionKind.Reissue,
             "blocked", "prompt", "response", "follow-up")
         {
             AttemptEpoch = 0,
@@ -208,7 +208,7 @@ public class ReissueLoopBreakerTests
         ]);
 
         var boundary = new ReviewDecisionRecord(
-            DateTime.UtcNow, "AGT-3", "Project", ReviewDecisionKind.OperatorRequeue,
+            DateTime.UnixEpoch, "AGT-3", "Project", ReviewDecisionKind.OperatorRequeue,
             "continue", "", "", "") { AttemptEpoch = 1 };
         var second = RepeatedAspectBlockPolicy.Diagnose(
             changedReport, [record, boundary], "AGT-3", attemptEpoch: 1, maximumRounds: 2)!;

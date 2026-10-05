@@ -1,14 +1,5 @@
 @use '../../../styles/lane-tone';
-
-.detail__review-budget {
-  padding: var(--studio-spacing-1) var(--studio-spacing-3);
-  color: var(--studio-fg-strong);
-  background: var(--studio-surface-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
+@use './review-budget';
     .session-usage {
       display: flex;
       flex-direction: column;
