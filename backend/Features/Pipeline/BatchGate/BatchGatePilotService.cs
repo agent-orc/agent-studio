@@ -205,7 +205,11 @@ public sealed class BatchGatePilotService
                     && ownership.FallbackIntegrated)
                     _store.ResolvePending(item.ReviewAttemptId, "per-task-gate");
             }
-            waiting = _store.ListPending();
+            // Refresh before choosing the scope. A queued subject may have
+            // outlived a project gate profile change or a platform upgrade.
+            // Grouping on the stored values would exclude it from its own
+            // batch on every subsequent tick.
+            waiting = _store.ListPending().Select(Refresh).ToArray();
             foreach (var group in waiting.GroupBy(item =>
                          (item.Subject.Project, item.Subject.Repository,
                              item.Subject.IntegrationBranch, item.Subject.GateProfileDigest,
@@ -222,7 +226,7 @@ public sealed class BatchGatePilotService
                     continue;
                 }
                 var scope = Scope(first.Subject);
-                var current = group.Select(Refresh).ToArray();
+                var current = group.ToArray();
                 var baseSha = _git.FetchBatchIntegrationTip(
                     first.RepositoryPath, scope.IntegrationBranch, ct);
                 if (baseSha is null) continue;

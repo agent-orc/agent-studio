@@ -108,8 +108,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         var member = SeedMember(factory, "DOC-VERSION", "docs/version.md");
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         var pending = Assert.Single(store.ListPending());
-        var path = Path.Combine(Path.GetDirectoryName(store.BatchDirectory("unused"))!,
-            "pending", pending.ReviewAttemptId + ".json");
+        var path = Assert.Single(Directory.GetFiles(Path.Combine(
+            Path.GetDirectoryName(store.BatchDirectory("unused"))!, "pending"), "*.json"));
         File.WriteAllText(path, JsonSerializer.Serialize(pending with
         {
             Subject = pending.Subject with { PlatformVersion = "previous-version" },
