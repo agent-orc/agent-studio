@@ -124,9 +124,13 @@ public sealed partial class TaskServerStore
         return revoked;
     }
 
-    /// <summary>Revokes one restored client's old credentials and issues a fresh one while in Maintenance.</summary>
+    /// <summary>
+    /// Revokes one restored client's old credentials and issues a fresh one while in Maintenance.
+    /// <paramref name="deliver"/> runs inside the transaction before commit; when it throws, the rotation
+    /// rolls back and the old credential stays valid, so a credential is never activated undelivered.
+    /// </summary>
     internal async Task<IssuedPrincipalCredential> ReissueRecoveredClientCredentialAsync(
-        string principalId, string actorId, CancellationToken ct)
+        string principalId, string actorId, Func<string, CancellationToken, Task>? deliver, CancellationToken ct)
     {
         RequireRecoveryMaintenance();
         var credential = GenerateCredential();
@@ -145,6 +149,7 @@ public sealed partial class TaskServerStore
                 """, ct, transaction, ("$now", Iso(now)), ("$id", principalId));
             await InsertCredentialAsync(connection, transaction, principalId, credential, now, ct);
             await AuditAsync(connection, transaction, actorId, "recovery.client-reenrolled", "principal", principalId, "{}", ct);
+            if (deliver is not null) await deliver(credential, ct);
         }, ct);
         return new IssuedPrincipalCredential(principal!, credential, now);
     }

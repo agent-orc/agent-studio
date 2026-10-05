@@ -554,7 +554,49 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
     {
         if (await ReadReceiptAsync(ct) is null)
             throw new InvalidOperationException("No recovery restore receipt; re-enrol clients only on a restored target.");
-        return await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, ct);
+        return await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, null, ct);
+    }
+
+    /// <summary>
+    /// Re-enrols a client and delivers the new credential to <paramref name="credentialPath"/>. The credential
+    /// is written and flushed to an owner-only staging file created with that mode before the rotation commits;
+    /// a failed write rolls the rotation back, and the committed credential is then moved into place.
+    /// </summary>
+    public async Task<IssuedPrincipalCredential> ReenrolClientToFileAsync(
+        string principalId, string credentialPath, string actorId, CancellationToken ct)
+    {
+        if (await ReadReceiptAsync(ct) is null)
+            throw new InvalidOperationException("No recovery restore receipt; re-enrol clients only on a restored target.");
+        var target = Path.GetFullPath(credentialPath);
+        var staging = Path.Combine(Path.GetDirectoryName(target)!, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}.tmp");
+        IssuedPrincipalCredential issued;
+        try
+        {
+            issued = await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, async (credential, token) =>
+            {
+                var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+                if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                await using var stream = new FileStream(staging, options);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(credential), token);
+                stream.Flush(flushToDisk: true);
+            }, ct);
+        }
+        catch
+        {
+            File.Delete(staging);
+            throw;
+        }
+        try
+        {
+            File.Move(staging, target, overwrite: true);
+        }
+        catch (Exception exception)
+        {
+            throw new IOException(
+                $"The new credential is active and was written to '{staging}' but could not be moved to '{target}': {exception.Message}",
+                exception);
+        }
+        return issued;
     }
 
     /// <summary>Evaluates the resume gate and, when it passes and not only checking, releases Maintenance.</summary>

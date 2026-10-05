@@ -371,6 +371,43 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Reenrol_to_file_writes_owner_only_before_commit_and_keeps_old_credential_on_failed_delivery()
+    {
+        using var temp = new TempDirectory("recovery-reenrol-file");
+        var drill = await CaptureAsync(temp.Path, includeLostStudio: true);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        Assert.True((await workflow.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Undeliverable output: the rotation rolls back, so the old credential still authenticates.
+        var unreachable = Path.Combine(temp.Path, "missing-directory", "studio.credential");
+        await Assert.ThrowsAnyAsync<IOException>(
+            () => workflow.ReenrolClientToFileAsync("studio:recovery", unreachable, "drill", default));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+
+        // A pre-existing world-readable file is replaced by an owner-only file holding the active credential.
+        var credentialPath = Path.Combine(temp.Path, "studio.credential");
+        await File.WriteAllTextAsync(credentialPath, "stale");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(credentialPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        var issued = await workflow.ReenrolClientToFileAsync("studio:recovery", credentialPath, "drill", default);
+
+        Assert.Equal(issued.Credential, await File.ReadAllTextAsync(credentialPath));
+        if (!OperatingSystem.IsWindows())
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(credentialPath));
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
+        Assert.Null(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(issued.Credential, default));
+    }
+
+    [Fact]
     public async Task Empty_target_rebuilds_from_the_retained_set_and_resumes_behind_the_gate()
     {
         using var temp = new TempDirectory("recovery-drill");
