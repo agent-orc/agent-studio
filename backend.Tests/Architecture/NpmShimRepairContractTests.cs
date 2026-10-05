@@ -5,23 +5,22 @@ using Xunit;
 namespace AgentStudio.Tests;
 
 /// <summary>
-/// Pins the temporary npm-shim repair ownership during the CAR rollout. CAR
-/// owns repair for CAR-backed runs; only the explicit legacy rollback and the
-/// non-agent Claude one-shot may retain the Studio helper until AGT-2373.
+/// Pins npm-shim repair ownership after the CAR migration. CAR owns repair for
+/// card runs; only the bounded non-agent Claude one-shot uses the Studio helper.
 /// </summary>
-public class LegacyNpmShimRepairContractTests
+public class NpmShimRepairContractTests
 {
     [Fact]
-    public void Repair_helper_is_wired_only_to_legacy_and_one_shot_paths()
+    public void Repair_helper_is_wired_only_to_the_non_agent_one_shot_path()
     {
         var root = RepoRoot();
         var helper = Source(root, "backend/Features/Cli/Execution/NpmShimHealer.cs");
-        var legacy = Source(root, "backend/Features/Cli/Execution/BuiltInCliBehaviors.cs");
+        var behaviors = Source(root, "backend/Features/Cli/Execution/BuiltInCliBehaviors.cs");
         var oneShot = Source(root, "backend/Features/Cli/Routing/OneShot/ClaudeOneShot.cs");
         var car = Source(root, "backend/Features/Cli/Execution/BackendCarExecution.cs");
 
         Assert.Contains("TryHealClaudeAsync", helper, StringComparison.Ordinal);
-        Assert.Equal(1, Count(legacy, "NpmShimHealer.TryHealClaudeAsync"));
+        Assert.DoesNotContain("NpmShimHealer", behaviors, StringComparison.Ordinal);
         Assert.Equal(1, Count(oneShot, "NpmShimHealer.TryHealClaudeAsync"));
         Assert.DoesNotContain("NpmShimHealer", car, StringComparison.Ordinal);
     }
