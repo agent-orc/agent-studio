@@ -1,6 +1,4 @@
-using AgentStudio.TaskServer.Contracts;
-
-namespace AgentStudio.Runner;
+namespace AgentStudio.TaskServer.Contracts;
 
 /// <summary>
 /// Fail closed when a concept report omits its content aspect or judges a

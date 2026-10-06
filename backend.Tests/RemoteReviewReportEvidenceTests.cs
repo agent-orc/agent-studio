@@ -24,7 +24,7 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
 
         var file = await RemoteReviewReportEvidence.WriteAsync(
             _root, "concept-review", "concept-subject", request,
-            new string('c', 64), DateTime.UtcNow, default);
+            new string('c', 64), new DateTime(2026, 10, 6, 7, 0, 0, DateTimeKind.Utc), default);
 
         var grade = await File.ReadAllTextAsync(Path.Combine(_root, file));
         Assert.Contains($"briefSha256: \"{new string('b', 64)}\"", grade);

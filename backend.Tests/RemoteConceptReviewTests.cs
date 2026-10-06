@@ -85,6 +85,21 @@ public sealed class RemoteConceptReviewTests : IDisposable
             disabled, disabled.BriefSha256, disabled.BriefSha256, EmptyPassingReport()).Outcome);
     }
 
+    [Fact]
+    public void Concept_brief_input_is_bounded_while_version_covers_complete_file()
+    {
+        Directory.CreateDirectory(_folder);
+        var brief = new string('x', 70_000) + "Follow the final operator direction.";
+        File.WriteAllText(Path.Combine(_folder, "prompt.md"), brief);
+
+        var plan = BuildPlan();
+        var prompt = Assert.Single(plan.Commands, command => command.Aspect == "concept-fit").Prompt!;
+
+        Assert.Equal(AttemptAuthorityService.Hash(brief), plan.BriefSha256);
+        Assert.Contains("Follow the final operator direction.", prompt);
+        Assert.DoesNotContain(new string('x', 70_000), prompt);
+    }
+
     private ReviewPlanDto BuildPlan(ProjectSettings? settings = null)
     {
         var config = new ConfigurationBuilder().Build();

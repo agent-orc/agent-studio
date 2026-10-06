@@ -862,20 +862,11 @@ public sealed partial class TaskServerStore
             {
                 var currentBriefHash = await CurrentBriefHashAsync(
                     connection, transaction, subject.TaskId, ct);
-                conceptCoverageFailure = !string.Equals(
-                    reviewedBriefHash, currentBriefHash, StringComparison.OrdinalIgnoreCase)
-                    ? $"The concept brief changed after review planning: reviewed prompt.md SHA-256 {reviewedBriefHash}, current prompt.md SHA-256 {currentBriefHash ?? "missing"}. A new review is required."
-                    : request.Outcome is "ReviewInfra" or "Cancellation"
-                        ? null
-                    : !subject.Plan.RequiredAspects.Contains("concept-fit", StringComparer.OrdinalIgnoreCase)
-                      || !subject.Plan.Commands.Any(command =>
-                          string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
-                          && ReviewCommandKinds.IsAgent(command.ExecutionKind))
-                        ? "Applicable concept-fit was skipped by the frozen review plan."
-                        : !request.Verdicts.Any(verdict => string.Equals(
-                            verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase))
-                            ? "The concept-fit aspect supplied no verdict; build and lint alone cannot pass this concept."
-                            : null;
+                var checkedReport = ConceptRemoteReviewPolicy.Enforce(
+                    subject.Plan, reviewedBriefHash, currentBriefHash,
+                    request with { FailureClassification = null });
+                if (checkedReport.FailureClassification == "ConceptReviewIncomplete")
+                    conceptCoverageFailure = checkedReport.Summary;
             }
             var classified = ClassifyReviewReport(subject, request, attempt);
             if (conceptCoverageFailure is not null)
@@ -1292,14 +1283,15 @@ public sealed partial class TaskServerStore
                         ? ReviewFailureOwner.Tolerated
                         : ReviewFailureOwner.None))
             .ToArray();
-        var semanticAspects = subject.Plan.Commands
-            .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
-            .Select(command => command.Aspect)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var hasConceptFit = subject.Plan.Commands.Any(command =>
+            ReviewCommandKinds.IsAgent(command.ExecutionKind)
+            && string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase));
         if (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
             || ReviewGradingPolicy.Grade(request.Verdicts
-                .Where(verdict => semanticAspects.Contains(verdict.Aspect)
-                                  && verdict.Diagnosis?.ChargesCard != false)
+                .Where(verdict => verdict.Diagnosis?.ChargesCard == true
+                                  || (hasConceptFit
+                                      && string.Equals(verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                                      && verdict.Diagnosis?.ChargesCard is null))
                 .Select(verdict => verdict.Status))
                 == ReviewGrade.ProductFailure)
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");

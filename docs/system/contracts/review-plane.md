@@ -28,7 +28,8 @@ applying.
 ## Concept brief and aspect coverage
 
 For a concept delivery, `ReviewPlanDto.briefSha256` records the SHA-256 of the
-complete `prompt.md` used to render the frozen `aspect-concept-fit` prompt. The
+complete `prompt.md`; the frozen `aspect-concept-fit` prompt receives its bounded
+64,000-character brief excerpt. The
 monolith ReviewSubject also carries this value as `taskRequirementsHash`.
 The review report echoes `briefSha256`. At settlement, the server compares the
 subject hash with the card's current brief and requires a `concept-fit`
@@ -36,6 +37,9 @@ verdict. A changed or missing brief, omitted aspect, or missing verdict is
 `Inconclusive / ConceptReviewIncomplete` with a reason naming the gap; it is
 never accepted as `Pass`. A cited semantic `block` uses the common aspect
 grading policy and reaches `ProductFailure`.
+The standalone Task Server rejects subject creation with `concept-brief-changed`
+when the plan hash differs from the current `prompt.md`. Both review stores use
+`ConceptRemoteReviewPolicy` for settlement coverage and brief identity.
 
 `ReviewPlanDto.skippedAspects` and `ReviewReportRequest.skippedAspects` list
 each applicable aspect omitted by configuration or run condition and its

@@ -1916,6 +1916,70 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Coding_agent_verdict_citing_changed_file_keeps_existing_delivery_grade()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "aspect-requirements", "requirements", "codex", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect,
+                Prompt: "Review the implementation.",
+                CliType: "codex", Model: "gpt-5.4-mini")],
+            ["requirements"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim) with
+        {
+            Workspace = PassingReport(claim).Workspace with
+            {
+                ChangedPaths = ["docs/implementation.md"],
+            },
+            Verdicts = [new ReviewVerdictDto(
+                "requirements", "block", "RemoteAspectVerdict",
+                "The implementation needs another check.",
+                EvidenceChecked: "docs/implementation.md",
+                Missing: "specified behavior")],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("ProductFailure", report.Outcome);
+        Assert.Equal("ReviewFinding", report.FailureClassification);
+    }
+
+    [Fact]
+    public async Task Charged_non_agent_verdict_still_counts_toward_coding_grade()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-build", "build-tests", "git", ["rev-parse", "HEAD"])],
+            ["build-tests"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim) with
+        {
+            Verdicts = [new ReviewVerdictDto(
+                "build-tests", "block", "NewTestFailures", "A new test failed.",
+                Diagnosis: new DeliveryFailureDiagnosisResult(
+                    DeliveryFailureDiagnosis.Product, 1, ["new failure on delivery"]))],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("ProductFailure", report.Outcome);
+    }
+
+    [Fact]
     public async Task Stale_review_subject_cannot_overwrite_a_newer_task_lifecycle()
     {
         using var temp = new TempDirectory();

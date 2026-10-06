@@ -741,7 +741,7 @@ public static class V1ReviewPlaneEndpoints
                             FailureClassification = "ConceptReviewIncomplete",
                             Summary = "The concept ReviewSubject has no frozen aspect plan; build and lint alone cannot pass this delivery.",
                         }
-                        : ConceptRemoteReviewPolicy.Enforce(
+                        : Contract.ConceptRemoteReviewPolicy.Enforce(
                             frozenPlan,
                             currentReview.Subject.TaskRequirementsHash,
                             currentBriefHash,

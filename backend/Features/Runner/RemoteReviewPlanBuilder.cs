@@ -359,9 +359,7 @@ public sealed class RemoteReviewPlanBuilder
     private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef)
     {
         var briefPath = Path.Combine(task.FolderPath, "prompt.md");
-        var taskBody = TaskModes.IsConcept(task.Mode) && File.Exists(briefPath)
-            ? File.ReadAllText(briefPath)
-            : Read(briefPath, 64_000, task.Id);
+        var taskBody = Read(briefPath, 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
         var status = Read(Path.Combine(task.FolderPath, "status.md"), 16_000, string.Empty);
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;

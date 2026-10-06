@@ -84,7 +84,8 @@ Concept cards on the remote plane receive one semantic `concept-fit` aspect in
 addition to the existing build and lint commands. It uses the shared aspect
 runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
 compares the delivered Dossier in the Result-SHA diff with the current
-`prompt.md`: required sections, operator directions, recommendations for open
+`prompt.md` (bounded to 64,000 characters in the rendered prompt): required
+sections, operator directions, recommendations for open
 decisions, and implementation-card source data. A contradiction is a blocking
 finding. The project pipeline-step setting `aspect-concept-fit` resolves its
 enabled state, prompt override, CLI, model, and thinking level like other
