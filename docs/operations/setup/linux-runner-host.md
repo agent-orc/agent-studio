@@ -1873,7 +1873,9 @@ heartbeating, checks out the branch from origin, fetches `prompt.md` over the
 API, spawns the CLI in the working tree, journals and ships stdout/stderr,
 snapshots `results/` under attempt evidence, secures the exact result on an immutable
 remote ref, obtains the durable Task Server acknowledgement, removes the
-worktree, posts the idempotent fenced completion, and releases the lease.
+worktree, transfers bounded artifacts and any partial-transfer receipt while
+the lease is still active, posts the idempotent fenced completion, and releases
+the lease.
 Exit code `0` means a clean handoff; `1` a
 blocked/needs-input outcome; `2` lease not granted; `3` lease lost mid-run; `4`
 the task server was unreachable or rejected a call.
@@ -1883,22 +1885,30 @@ For unattended operation, run `agent-host --health-check` as a readiness probe
 a service. Both are covered in
 [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md).
 
-### Durable result handoff before teardown
+### Durable result handoff and artifacts
 
 Result evidence is uploaded one file per request after the runner has pushed
-the delivery ref and the Task Server has accepted completion. The Task Server
-advertises the request, file, and total byte limits. The default per-file cap
-is 8 MiB; the request cap remains 25 MiB. Playwright `trace.zip` files and
-videos are withheld even when smaller than the cap. Screenshots and reports
-within budget are transported. The artifact manifest records each withheld
-file's `results/` path, byte size, SHA-256 digest, and reason. The runner keeps
-those files under `<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/`
-on the host, where a later attempt cannot clear them.
+the delivery ref and the Task Server has acknowledged that delivery, but before
+the RunAttempt is settled. The Task Server advertises the request, file, and
+total byte limits. The default per-file cap is 8 MiB; the request cap remains
+25 MiB. Playwright `trace.zip` files and videos are withheld even when smaller
+than the cap. Screenshots and reports within budget are transported. The
+artifact manifest records each withheld file's `results/` path, byte size,
+SHA-256 digest, and reason. The runner keeps those files under
+`<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/` on the host, where
+a later attempt cannot clear them.
 `results/deliverables.md` lists them for the reviewer. A partial artifact
-transfer is a typed card fact and does not undo a completed delivery.
-Transient file uploads are retried three times. The versioned Task Server
-runner records remaining transfer failures as `artifact-replay` in its durable
-outbox and replays from the attempt evidence copy without rerunning the worker.
+transfer is a typed card fact with retry details and does not block code
+delivery. Transient file uploads are retried three times. If the host crashes
+before settlement, durable recovery replays from the attempt evidence copy.
+If an upload or its partial-transfer report still fails, the outbox retains
+`artifact-replay` after completion. Later recovery sends any persisted report
+and retries the bounded files with the original exact runner, lease, and fence.
+The same artifact idempotency keys prevent duplicate storage, and a newer
+fence denies stale replay. If the host stopped after the server accepted the
+completion but before the local acknowledgement, the next recovery replays that
+completion under the same fence and settles the outbox as `completed`. The
+worker is not rerun.
 
 While completion is being retried, the runner reports its persisted terminal
 attempt in the active task set even though the coding process has exited. This

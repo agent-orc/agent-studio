@@ -82,13 +82,24 @@ rollout decision.
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery
-  result evidence transport. Git result or salvage publication and fenced
-  completion happen first. The server advertises its base64-safe request
+  result evidence transport. Git result or salvage publication completes first,
+  then the runner transfers the bounded artifact set and its partial-transfer
+  receipt while the RunAttempt is still leased, and only then settles the run.
+  A bounded artifact failure never blocks code delivery. The runner reports a
+  typed `ArtifactTransferFailed` / `artifacts: partial` operator fact with its
+  retry count before settlement when the route is available. If an upload or
+  partial-outcome report fails,
+  the runner keeps `artifact-replay` in the durable outbox and persists any
+  unsent report. Recovery retries both under the original exact fence after
+  completion; a newer fence denies the old attempt. If the server accepted a
+  journaled completion before the runner persisted its acknowledgement,
+  recovery treats the 409 lease renewal as completed authority in any handoff
+  state (`transferring` or `artifact-replay`) and replays the completion
+  idempotently. Artifact idempotency keys prevent duplicate storage. The server advertises its base64-safe request
   budget plus project file and total caps (8 MiB per file by default). On the
-  v1 plane, post-completion artifact ingest, event ingest, and
-  result finalization require the exact runner, instance, and lease id alongside
-  the fence; the server admits them only while that completed lease remains the
-  current authority. A completed lease needs no later release request.
+  v1 plane, each artifact, event, and result-finalization write carries the
+  exact runner, instance, lease id, and fence. A completed lease needs no later
+  release request.
   The runner selects bounded files, excludes Playwright traces, videos,
   dependency trees, and build output, then uploads one manifest-bound file per
   request. The attempt-scoped host evidence copy survives a later task results

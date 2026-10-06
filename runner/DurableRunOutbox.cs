@@ -48,6 +48,7 @@ public sealed class DurableRunOutbox
     private string _finalHandoffState = "collecting";
     private string? _envelopeDigest;
     private ResultHandoffAck? _handoffAcknowledgement;
+    private ArtifactTransferReportRequest? _pendingArtifactReport;
 
     private DurableRunOutbox(
         string directory,
@@ -67,6 +68,7 @@ public sealed class DurableRunOutbox
             _finalHandoffState = ack.FinalHandoffState;
             _envelopeDigest = ack.EnvelopeDigest;
             _handoffAcknowledgement = ack.HandoffAcknowledgement;
+            _pendingArtifactReport = ack.PendingArtifactReport;
         }
     }
 
@@ -80,6 +82,10 @@ public sealed class DurableRunOutbox
         {
             lock (_gate) return _handoffAcknowledgement;
         }
+    }
+    public ArtifactTransferReportRequest? PendingArtifactReport
+    {
+        get { lock (_gate) return _pendingArtifactReport; }
     }
     public long? OldestUnacknowledgedSequence
     {
@@ -238,6 +244,25 @@ public sealed class DurableRunOutbox
         }
     }
 
+    public void RecordPendingArtifactReport(ArtifactTransferReportRequest report)
+    {
+        lock (_gate)
+        {
+            _pendingArtifactReport = report;
+            _finalHandoffState = "artifact-replay";
+            PersistAck();
+        }
+    }
+
+    public void ClearPendingArtifactReport()
+    {
+        lock (_gate)
+        {
+            _pendingArtifactReport = null;
+            PersistAck();
+        }
+    }
+
     public void RecordHandoffAcknowledgement(ResultHandoffAck acknowledgement)
     {
         lock (_gate)
@@ -303,7 +328,8 @@ public sealed class DurableRunOutbox
                 _finalHandoffState,
                 _envelopeDigest,
                 _handoffAcknowledgement,
-                DateTime.UtcNow),
+                DateTime.UtcNow,
+                _pendingArtifactReport),
             Json));
 
     private static void AppendAndFlush(string path, string text)
@@ -355,7 +381,8 @@ public sealed class DurableRunOutbox
         string FinalHandoffState,
         string? EnvelopeDigest,
         ResultHandoffAck? HandoffAcknowledgement,
-        DateTime PersistedAt);
+        DateTime PersistedAt,
+        ArtifactTransferReportRequest? PendingArtifactReport = null);
 
     private sealed class ActiveRunRegistration(string runId) : IDisposable
     {

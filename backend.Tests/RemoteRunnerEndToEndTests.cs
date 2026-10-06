@@ -106,7 +106,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     public async Task Server_advertises_artifact_limit_and_records_partial_board_fact()
     {
         SeedTask(TaskStates.Progress, TaskKey, "Artifact policy", "Deliver bounded evidence.");
-        using var factory = BuildFactory();
+        // Keep the seeded Progress card stable while this endpoint acceptance
+        // inspects the operator timeline, rather than allowing the unrelated
+        // boot liveness sweep to move it during server startup.
+        var authorityNow = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        using var factory = BuildFactory(authorityNow: () => authorityNow);
         using var http = factory.CreateClient();
         using var client = new RClient(http, RunnerId);
         var ct = CancellationToken.None;
@@ -125,15 +129,27 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             [new RArtifactIssue(
                 "results/playwright/archive/trace.zip",
                 18L * 1024 * 1024,
-                "exceeded the 25 MB upload limit")],
+                "upload failed after 3 attempt(s) (HTTP 503)",
+                "ArtifactTransferFailed",
+                Attempts: 3)],
             lease.Lease!.RunnerId,
             lease.Lease.LeaseId,
             lease.Lease.FencingToken,
             lease.Lease.AttemptId), ct);
 
-        // The endpoint acceptance proves the fenced report reached the backend;
-        // ArtifactIngestionEndpointsTests pins the exact board-fact wording and
-        // typed outcome written by this route.
+        var reportedTask = Assert.Single(factory.Services
+            .GetRequiredService<ITaskScanner>()
+            .ScanAllJobs()
+            .Where(task => string.Equals(task.TaskKey, TaskKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(task.Id, TaskKey, StringComparison.OrdinalIgnoreCase)));
+        var partial = Assert.Single(ReadTimelineAt(reportedTask.FolderPath)
+            .Where(entry => entry.GetProperty("kind").GetString()
+                            == TimelineEventKinds.ResultArtifactsPartial));
+        var details = partial.GetProperty("details");
+        Assert.Equal("ArtifactTransferFailed", details.GetProperty("typedOutcome").GetString());
+        Assert.Equal("3", details.GetProperty("attempts").GetString());
+        Assert.Equal("2", details.GetProperty("retryAttempts").GetString());
+        Assert.Equal("1", details.GetProperty("notTransferredCount").GetString());
     }
 
     [Fact]
@@ -5882,6 +5898,14 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     private List<JsonElement> ReadTimeline(string state)
     {
         var path = Path.Combine(_watchPath, state, TaskKey, "logs", "timeline.jsonl");
+        return ReadTimelineAt(path);
+    }
+
+    private static List<JsonElement> ReadTimelineAt(string jobFolderOrTimelinePath)
+    {
+        var path = jobFolderOrTimelinePath.EndsWith("timeline.jsonl", StringComparison.OrdinalIgnoreCase)
+            ? jobFolderOrTimelinePath
+            : Path.Combine(jobFolderOrTimelinePath, "logs", "timeline.jsonl");
         if (!File.Exists(path)) return [];
         return File.ReadAllLines(path)
             .Where(line => !string.IsNullOrWhiteSpace(line))
