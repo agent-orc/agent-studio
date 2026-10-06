@@ -18,6 +18,76 @@ public sealed class GitWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Salvage_scans_staged_diff_and_next_claim_repairs_retained_worktree()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 21);
+        await first.PrepareAsync(CancellationToken.None);
+        var fake = "key-" + new string('a', 32);
+        await File.WriteAllTextAsync(Path.Combine(first.RepoPath, "fixture.cs"),
+            $"var value = \"{fake}\";\n" + new string('x', 2_200_000));
+
+        var error = await Assert.ThrowsAsync<WorktreeSalvageException>(() =>
+            first.TeardownAsync("Done", "run_a", CancellationToken.None));
+        Assert.Equal(new PushProtectionCause("Mailgun API Key", null, "fixture.cs", 1), error.PushProtection);
+        Assert.True(Directory.Exists(first.RepoPath));
+        Assert.False((await RunGitAsync(_origin, "show-ref", "--verify", "--quiet",
+            "refs/heads/runner/runner-test/AGT-2147")).Success);
+
+        var second = CreateWorkspace(sourceRunAttemptId: "run_b", fencingToken: 22);
+        await second.PrepareAsync(CancellationToken.None);
+        Assert.Equal(error.PushProtection, second.PushProtectionRecovery);
+        Assert.Equal(fake, (await File.ReadAllTextAsync(Path.Combine(second.RepoPath, "fixture.cs"))).Split('"')[1]);
+
+        await File.WriteAllTextAsync(Path.Combine(second.RepoPath, "fixture.cs"),
+            "var value = \"key-\" + new string('a', 32);\n");
+        var secured = await second.TeardownAsync("Done", "run_b", CancellationToken.None);
+        Assert.True(secured.SecuredWork);
+        Assert.False(Directory.Exists(second.RepoPath));
+    }
+
+    [Fact]
+    public async Task Github_rejection_in_unpushed_commit_resumes_for_history_rewrite()
+    {
+        await SeedOriginAsync();
+        var first = CreateWorkspace(sourceRunAttemptId: "run_a", fencingToken: 31);
+        await first.PrepareAsync(CancellationToken.None);
+        var fake = "key-" + new string('a', 32);
+        await CommitFileAsync(first.RepoPath, "fixture.cs", $"var value = \"{fake}\";\n", "fixture");
+        var commit = (await GitAsync(first.RepoPath, "rev-parse", "HEAD")).StdOut;
+        var hook = Path.Combine(_origin, "hooks", "pre-receive");
+        await File.WriteAllTextAsync(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n" +
+            "error: GH013: Repository rule violations\n" +
+            "- GITHUB PUSH PROTECTION\n" +
+            "Push cannot contain secrets\n" +
+            "-- Mailgun API Key --\n" +
+            $"- commit: {commit}\n" +
+            "  path: fixture.cs:1\n" +
+            "EOF\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var rejected = await Assert.ThrowsAsync<WorktreeSalvageException>(() =>
+            first.TeardownAsync("Done", "run_a", CancellationToken.None));
+        Assert.Equal(commit, rejected.PushProtection?.Commit);
+        var second = CreateWorkspace(sourceRunAttemptId: "run_b", fencingToken: 32);
+        await second.PrepareAsync(CancellationToken.None);
+        Assert.Equal(commit, second.PushProtectionRecovery?.Commit);
+        Assert.Equal(commit, (await GitAsync(second.RepoPath, "rev-parse", "HEAD")).StdOut);
+
+        await File.WriteAllTextAsync(Path.Combine(second.RepoPath, "fixture.cs"),
+            "var value = \"key-\" + new string('a', 32);\n");
+        await GitAsync(second.RepoPath, "add", "fixture.cs");
+        await GitAsync(second.RepoPath, "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "--amend", "--no-edit");
+        File.Delete(hook);
+        var secured = await second.TeardownAsync("Done", "run_b", CancellationToken.None);
+        Assert.True(secured.SecuredWork);
+        Assert.DoesNotContain(fake,
+            (await GitAsync(_origin, "show", $"refs/heads/{secured.Branch}:fixture.cs")).StdOut);
+    }
+
+    [Fact]
     public async Task New_project_clone_sets_fetch_and_push_urls_from_registry()
     {
         await SeedOriginAsync();
