@@ -848,6 +848,8 @@ public class TaskRunnerService : BackgroundService
                 watchPath: watchPath,
                 author: author,
                 triggerMetadata: triggerMetadata);
+            if (savedIntent is null)
+                throw new TaskOperationException("Could not save the follow-up intent.", 500);
 
             var fromState = info.State;
             // A user follow-up queued behind the busy project: the lane change is
@@ -856,6 +858,19 @@ public class TaskRunnerService : BackgroundService
                 jobId, watchPath,
                 transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
                 transitionDetail: "follow-up-queued-project-busy");
+
+            if (position == 0)
+                return new ContinueJobResponse
+                {
+                    Status = "saved",
+                    Queued = new ContinueJobQueuedInfo
+                    {
+                        Reason = FollowUpQueueReasons.ProjectBusy,
+                        ActiveJobId = rej.BusyJobId,
+                        ActiveJobTitle = rej.BusyJobTitle,
+                        PromotedFromState = fromState
+                    }
+                };
 
             try
             {
@@ -946,13 +961,15 @@ public class TaskRunnerService : BackgroundService
         var hasPrompt = !string.IsNullOrWhiteSpace(prompt);
         if (hasPrompt)
         {
-            _mutations.SavePendingIntent(
+            var savedIntent = _mutations.SavePendingIntent(
                 jobId, mode, prompt,
                 reason: reason,
                 activeJobId: null,
                 watchPath: watchPath,
                 author: author,
                 triggerMetadata: triggerMetadata);
+            if (savedIntent is null)
+                throw new TaskOperationException("Could not save the follow-up intent.", 500);
         }
 
         var fromState = info.State;
@@ -960,6 +977,13 @@ public class TaskRunnerService : BackgroundService
             jobId, watchPath,
             transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
             transitionDetail: $"follow-up-queued-{reason}");
+
+        if (position == 0)
+            return new ContinueJobResponse
+            {
+                Status = "saved",
+                Queued = new ContinueJobQueuedInfo { Reason = reason, PromotedFromState = fromState }
+            };
 
         var refreshed = _scanner.FindJob(jobId, watchPath) ?? info;
         _logger.LogInformation(

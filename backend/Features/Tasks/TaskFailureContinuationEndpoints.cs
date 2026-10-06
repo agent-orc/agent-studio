@@ -21,11 +21,17 @@ public static class TaskFailureContinuationEndpoints
             if (job is null) return Results.NotFound(new { error = "Task not found." });
 
             var result = await continuations.ContinueAsync(job, "operator-failure-panel", automatic: false, ct);
-            if (!result.Started)
+            if (!result.Accepted)
                 return result.Status == StatusCodes.Status409Conflict
                     ? Results.Conflict(new { error = result.Error })
                     : Results.Json(new { error = result.Error }, statusCode: result.Status);
-            return Results.Accepted(value: new { status = result.RunStatus, stage = result.Stage, taskKey = result.TaskKey });
+            return Results.Accepted(value: new
+            {
+                status = result.RunStatus,
+                stage = result.Stage,
+                taskKey = result.TaskKey,
+                savedReason = result.SavedReason,
+            });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
     }
 
