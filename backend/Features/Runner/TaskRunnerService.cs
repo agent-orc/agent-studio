@@ -815,7 +815,8 @@ public class TaskRunnerService : BackgroundService
     /// saved as a draft on the target job, the job is promoted to the top of
     /// <c>2-ready</c>, the chat receives an orchestrator <c>[queued]</c>
     /// meta line, and the response is shaped as <c>status: "queued"</c>
-    /// (the endpoint returns 202). Other rejection reasons surface as
+    /// (the endpoint returns 202) after promotion; a failed promotion returns
+    /// <c>saved</c>. Other rejection reasons surface as
     /// <see cref="TaskOperationException"/>.
     /// </summary>
     private ContinueJobResponse ShapeOutcome(
@@ -939,7 +940,8 @@ public class TaskRunnerService : BackgroundService
     /// Queues a follow-up the admission refused to start locally: persist the
     /// prompt as <c>pending-intent.json</c>, promote the card to the top of
     /// <c>2-ready</c> so the next local pickup or remote claim consumes it, and
-    /// shape the <c>202 {"status":"queued"}</c> answer.
+    /// shape a <c>202</c> answer: <c>queued</c> after promotion, or
+    /// <c>saved</c> if the persisted intent cannot be promoted.
     ///
     /// <para>
     /// A manual start carries no prompt. Nothing is persisted then - saving an
@@ -979,11 +981,15 @@ public class TaskRunnerService : BackgroundService
             transitionDetail: $"follow-up-queued-{reason}");
 
         if (position == 0)
+        {
+            if (!hasPrompt)
+                throw new TaskOperationException("Could not move the task to Ready.", 409);
             return new ContinueJobResponse
             {
                 Status = "saved",
                 Queued = new ContinueJobQueuedInfo { Reason = reason, PromotedFromState = fromState }
             };
+        }
 
         var refreshed = _scanner.FindJob(jobId, watchPath) ?? info;
         _logger.LogInformation(

@@ -82,6 +82,13 @@ or commit attribution.
   escalation also moves to Ready and keeps the same task selected. When a new
   run parks again, the escalation header uses the newest run and current park
   marker to show when that attempt ended and why.
+- The general `POST /api/tasks/{id}/continue` and `/start` endpoints return
+  `200` with `started` when execution begins, or `202` with `queued` after
+  promotion to Ready. If a follow-up prompt was saved but that promotion failed,
+  `/continue` returns `202` with `saved` and requires an operator Ready move.
+  The `queued.reason` field is a string reason code, including
+  `project-busy`, `lane-not-runnable`, `remote-execution`, and
+  `delivery-under-review`; clients must not assume only `project-busy`.
 
 ## Entry Points
 

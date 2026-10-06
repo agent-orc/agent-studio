@@ -12,9 +12,9 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// End-to-end over a temp workspace for the follow-up admission contract
 /// (AGT-2747): a user follow-up is never accepted with <c>started</c> and then
-/// thrown away. Every non-runnable case answers <c>queued</c>, persists the
-/// prompt as <c>pending-intent.json</c>, and promotes the card to the top of
-/// <c>2-ready</c>; a run that is killed while carrying an unconsumed follow-up
+/// thrown away. Non-runnable cases persist the prompt as
+/// <c>pending-intent.json</c> and answer <c>queued</c> after promotion to
+/// <c>2-ready</c>, or <c>saved</c> if promotion fails; a run killed with a follow-up
 /// writes it back before the process dies.
 /// </summary>
 public sealed class FollowUpAdmissionServiceTests : IDisposable
@@ -75,6 +75,24 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
         Assert.True(steered.Order < other.Order, $"steered order {steered.Order} must beat {other.Order}");
 
         Assert.Contains(TimelineEventKinds.FollowUpQueued, ReadTimelineKinds(readyFolder));
+    }
+
+    [Fact]
+    public async Task ContinueOnEscalatedCard_WhenReadyMoveFails_ReturnsSavedIntent()
+    {
+        WriteJob("blocked", TaskStates.Escalated);
+        File.WriteAllText(Path.Combine(_watchPath, TaskStates.Ready, "blocked"), "conflicting path");
+        var harness = Build();
+
+        var response = await harness.Service.ContinueJobAsync(
+            "blocked", "Retry with the review findings.", _watchPath);
+
+        Assert.Equal("saved", response.Status);
+        Assert.Equal(FollowUpQueueReasons.LaneNotRunnable, response.Queued!.Reason);
+        Assert.Null(response.Execution);
+        var parkedFolder = Path.Combine(_watchPath, TaskStates.Escalated, "blocked");
+        Assert.True(Directory.Exists(parkedFolder));
+        Assert.Equal(FollowUpQueueReasons.LaneNotRunnable, ReadIntent(parkedFolder)!.SavedReason);
     }
 
     [Fact]

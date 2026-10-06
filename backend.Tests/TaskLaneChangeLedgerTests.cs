@@ -239,6 +239,14 @@ public class TaskLaneChangeLedgerTests : IDisposable
     }
 
     [Fact]
+    public void PromoteToReadyTop_MissingTask_ReturnsZero()
+    {
+        var (machine, _, _) = BuildMachine();
+
+        Assert.Equal(0, machine.PromoteToReadyTop("missing", _watchPath));
+    }
+
+    [Fact]
     public void ArchiveFolder_AndFailedPickupMoves_NameTheirCause()
     {
         SeedJob(TaskStates.Progress, "stale-one");

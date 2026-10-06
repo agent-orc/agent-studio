@@ -482,15 +482,16 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         deps.Mutations.SetJobModel(Slug, "pinned-model", _watchPath);
         deps.Mutations.SetJobThinkingLevel(Slug, "high", _watchPath);
         var folder = Path.Combine(_watchPath, parkedLane, Slug);
+        var recordedAt = DateTime.UtcNow;
         ParkedBlockerMarker.Write(folder, ParkedBlockerCatalog.Build(
-            parkedLane, "Parked for an operator decision.", DateTime.UtcNow)!);
+            parkedLane, "Parked for an operator decision.", recordedAt)!);
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Original task direction.\n");
         File.WriteAllText(Path.Combine(folder, PipelineExecutionLog.FileName),
             JsonSerializer.Serialize(new PipelineExecutionRecord
             {
                 PipelineId = PipelineCatalogue.Standard.Id,
                 JobId = Slug,
-                StartedAt = DateTime.UtcNow,
+                StartedAt = recordedAt,
                 Steps = [new PipelineStepExecution
                 {
                     StepId = "review-aspects",

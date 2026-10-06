@@ -354,7 +354,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
 async function dismissAppErrorDialog(page: Page): Promise<void> {
   const dialog = page.getByTestId('error-dialog');
   for (let i = 0; i < 3 && (await dialog.isVisible().catch(() => false)); i++) {
-    await page.getByTestId('error-dialog-close').click();
+    await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined);
   }
 }

@@ -1093,9 +1093,8 @@ export interface PendingIntent {
 
 /**
  * Discriminated response for `POST /api/tasks/{id}/continue` and `/start`.
- * `started` means the run is live; `queued` means the project was busy
- * with another job, the user's intent has been saved on the target task,
- * and the target task is now at the top of `2-ready`. The frontend treats
+ * `started` means the run is live; `queued` means the user's intent has
+ * been saved on the target task and it is now in `2-ready`. The frontend treats
  * `queued` as success-with-info (no modal); the chat carries the
  * orchestrator's `[queued]` line. `saved` means the intent persisted but
  * the move to Ready failed, so the operator must move the card.

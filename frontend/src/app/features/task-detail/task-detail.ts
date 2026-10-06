@@ -870,10 +870,8 @@ export class TaskDetailComponent implements OnDestroy {
           } else if (resp.status === 'saved') {
             this.chatError.set(`Continuation saved (${resp.queued?.reason ?? 'reason unavailable'}). Move this task to Ready to run it.`);
           }
-          // status === 'queued': the project was busy. The backend already
-          // saved the user's intent + posted a [queued] orchestrator line
-          // into the chat. The optimistic user-message echo above and the
-          // queued status band keep the conversation readable until pickup.
+          // Queued follow-ups remain visible until pickup; saved follow-ups
+          // show the Ready move needed to run them.
         },
         error: (err) => {
           this.continuing.set(false);

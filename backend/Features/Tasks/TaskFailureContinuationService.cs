@@ -2,7 +2,7 @@ namespace AgentStudio.Tasks;
 
 /// <summary>Why a failure continuation did or did not start.</summary>
 /// <param name="Status">HTTP-shaped status: 202 started, queued, or saved; 404 or 409 refused; or the runner's error status.</param>
-/// <param name="Error">Operator-facing refusal text, null when the continuation was queued.</param>
+/// <param name="Error">Operator-facing refusal text, null when the continuation was accepted.</param>
 /// <param name="RunStatus">The runner's <c>started</c>, <c>queued</c>, or <c>saved</c> answer.</param>
 /// <param name="Stage">The failed stage the continuation addresses.</param>
 public sealed record TaskFailureContinuationResult(
