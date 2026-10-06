@@ -94,8 +94,21 @@ public sealed class BatchGateReviewPlanTests
         }
         finally
         {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+            DeleteDirectory(root);
         }
+    }
+
+    // Git for Windows writes object files read-only, and Directory.Delete
+    // refuses read-only files there; clear the attribute first so cleanup
+    // cannot fail the test on the Windows merge gate.
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path)) return;
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+        {
+            try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+        }
+        try { Directory.Delete(path, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     private static string Git(string repo, params string[] args)
