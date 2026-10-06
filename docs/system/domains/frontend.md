@@ -310,15 +310,21 @@ occur. It is not a claim about tunnel transfer time.
   treatment. Diff, patch, Markdown, JSON, and log results have typed on-demand
   previews, while HTML delegates to the shared task artifact viewer route and
   unknown extensions keep the canonical chat row.
-  Escalated tasks render a borderless, collapsible decision section that
+  Escalated tasks render a lightly tinted, collapsible decision section that
   keeps one bounded essence line visible: typed review-round count, latest
   grade, open-finding count, and escalation-reason class. Markdown bodies never
   feed that line. The expanded section renders structured council findings,
   complete council reactions and `orchestrator-follow-up.md`, every
   `code-review-grade-*.md` artifact with file history, reissue history, and
-  delivery context. Long artifact blocks scroll within their own container and
-  never truncate the source text. The primary reissue, accept-as-is, and abort
-  decisions remain beside the recommendation. When findings, review artifacts,
+  delivery context. Known follow-up gate items become labelled fields with
+  shortened refs, copyable SHAs, a concise cause, and collapsed raw tool output;
+  the source and file history remain available. The follow-up can fill the
+  viewport for reading. Standalone task keys become microcards, while paths,
+  refs, URLs, and code stay literal. Long artifact blocks scroll within their
+  own container. The park block has a per-task persisted disclosure and keeps
+  its badge, age, and one-line reason visible when closed. The reissue action
+  is primary beside the recommendation; accept-as-is and abort are secondary
+  decisions. When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
   The Runs modal also shows the current operator-owned review-attempt epoch and
   the closed cycle history, including requeue reason, lane crossing, and rotated

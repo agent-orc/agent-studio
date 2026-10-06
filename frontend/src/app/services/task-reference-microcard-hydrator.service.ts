@@ -112,6 +112,13 @@ export function taskReferenceCandidates(text: string): { start: number; end: num
   let match: RegExpExecArray | null;
   while ((match = KEY_PATTERN.exec(text))) {
     const start = match.index + (match[1]?.length || 0);
+    // A key inside a path, ref or URL is data, even when slash is adjacent to
+    // the key. Markdown code spans are excluded by collectOccurrences above.
+    const tokenStart = Math.max(0, text.lastIndexOf(' ', start - 1) + 1, text.lastIndexOf('\n', start - 1) + 1);
+    const nextSpace = text.slice(start).search(/\s/);
+    const tokenEnd = nextSpace < 0 ? text.length : start + nextSpace;
+    const token = text.slice(tokenStart, tokenEnd);
+    if (/[\\/=`]|https?:/.test(token)) continue;
     result.push({ start, end: start + match[2].length, key: match[2].toUpperCase() });
   }
   return result;
