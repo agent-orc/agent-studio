@@ -124,6 +124,15 @@ rollout decision.
   (AGT-2869). The reconciler runs on the ordinary daemon poll loop and re-uses
   the startup reconciliation step; the staleness policy is the single source of
   the `remote-running` / `remote-disconnected` / `remote-stale` distinction.
+- `runner/SalvageRetentionPolicy.cs`, `SalvageRetentionSweeper.cs`,
+  `SalvageTarballStore.cs`, `SalvageRefStore.cs`, and
+  `SalvageCardDirectory.cs`: the coding host's salvage store retention
+  (AGT-2999). The pure policy keeps tarballs while their card is open and for
+  14 days after completion, at most 3 per card, and deletes a salvage ref only
+  when its card is completed and its commit is on the integration branch. An
+  active run protects its card. The sweep runs on its own daemon timer and
+  reports `telemetry.salvageStore` in the remote-hosts report. See
+  [Salvage store retention](../../operations/setup/linux-runner-host.md#salvage-store-retention).
 - `runner/TaskServerConnectivityMonitor.cs`, `DaemonIdleWatchdog.cs`,
   `RemoteRunnerDaemon.cs`, and `RemoteReviewDaemon.cs`: host-side Task Server
   route and loop liveness. Poll failures use bounded backoff and transition
