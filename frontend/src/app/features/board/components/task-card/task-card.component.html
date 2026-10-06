@@ -267,6 +267,14 @@
         [watchPath]="job().watchPath"
         testId="task-card-model-migration" />
       <app-execution-location-badge [execution]="displayedExecutionLocation()" />
+      @if (job().state !== '3-progress' && displayedExecutionLocation()?.state === 'remote-running') {
+        <span class="task-card__tag-chip task-card__tag-chip-warn"
+              data-testid="task-card-live-remote-outside-progress">Remote run still live</span>
+      }
+      @if (job().olderBriefDelivery?.status === 'pending') {
+        <span class="task-card__tag-chip task-card__tag-chip-warn"
+              data-testid="task-card-older-brief-offer">Older brief delivery</span>
+      }
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge
           [integration]="integ"

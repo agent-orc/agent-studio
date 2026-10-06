@@ -287,3 +287,8 @@ public sealed record CompleteRunRequest(
     // older runner omits the field and the server records no gate item.
     IReadOnlyList<string>? GateItems = null,
     SessionContinuationLedgerEntry? SessionContinuation = null);
+
+/// <summary>Non-authoritative reference to work quarantined after an operator revoked its lease.</summary>
+public sealed record RevokedRunReferenceRequest(
+    string RunnerId, string InstanceId, string LeaseId, long Fence,
+    string Branch, string CommitSha);

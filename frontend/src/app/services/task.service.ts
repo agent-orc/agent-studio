@@ -836,7 +836,7 @@ export class TaskService {
   updateState(jobId: string, state: string, watchPath?: string) {
     return this.http.put(
       `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/state`,
-      { targetState: state },
+      { targetState: state, runIntent: 'revoke' },
       this.withWatchPath(watchPath),
     );
   }
@@ -854,7 +854,8 @@ export class TaskService {
       targetIndex?: number;
       reason?: string;
       operatorOverride?: boolean;
-    } = { targetState };
+      runIntent: 'revoke';
+    } = { targetState, runIntent: 'revoke' };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
@@ -863,6 +864,14 @@ export class TaskService {
       body,
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath, targetState));
+  }
+
+  decideOlderBriefDelivery(jobId: string, decision: 'accept' | 'starting-point' | 'discard', watchPath?: string) {
+    return this.http.post(
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/older-brief-delivery/decision`,
+      { decision },
+      this.withWatchPath(watchPath),
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /** Queue independent task moves and return the server-side job handle. */

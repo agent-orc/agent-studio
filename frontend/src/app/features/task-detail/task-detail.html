@@ -48,6 +48,33 @@
        detail snapshot frozen at open time. -->
   <app-task-live-status [task]="liveRunInfo()" variant="detail" />
 
+  @if (detail().info.olderBriefDelivery?.status === 'pending') {
+    <section class="older-brief-offer" data-testid="older-brief-delivery-offer"
+             aria-label="Older brief delivery">
+      <strong>Delivered against an older brief</strong>
+      <p>This run used an earlier version of the task prompt. Its result is retained for your decision.</p>
+      @if (detail().info.olderBriefDelivery?.resultRef || detail().info.olderBriefDelivery?.salvageBranch) {
+        <p class="older-brief-offer__reference">Retained reference:
+          <code>{{ detail().info.olderBriefDelivery?.resultRef ?? detail().info.olderBriefDelivery?.salvageBranch }}</code>
+        </p>
+      }
+      <div class="older-brief-offer__actions" role="group" aria-label="Older brief delivery decisions">
+        <button type="button" [disabled]="olderBriefDecisionPending() !== null"
+                [appPendingButton]="olderBriefDecisionPending() === 'accept'"
+                pendingLabel="Accepting…" data-testid="older-brief-accept"
+                (click)="decideOlderBriefDelivery('accept')">Accept</button>
+        <button type="button" [disabled]="olderBriefDecisionPending() !== null"
+                [appPendingButton]="olderBriefDecisionPending() === 'starting-point'"
+                pendingLabel="Preparing…" data-testid="older-brief-starting-point"
+                (click)="decideOlderBriefDelivery('starting-point')">Use as a starting point</button>
+        <button type="button" [disabled]="olderBriefDecisionPending() !== null"
+                [appPendingButton]="olderBriefDecisionPending() === 'discard'"
+                pendingLabel="Discarding…" data-testid="older-brief-discard"
+                (click)="decideOlderBriefDelivery('discard')">Discard</button>
+      </div>
+    </section>
+  }
+
   @if (detail().info.epicId && detail().info.kind !== 'epic') {
     <app-epic-membership-banner
       [epicId]="detail().info.epicId!"

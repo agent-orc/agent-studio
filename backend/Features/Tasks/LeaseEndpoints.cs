@@ -26,11 +26,47 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public static class LeaseEndpoints
 {
-    private static readonly SemaphoreSlim ClaimGate = new(1, 1);
+    internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
 
     public static void MapLeaseEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/runner/lease");
+
+        group.MapPost("/{attemptId}/revoked-reference", (
+            string attemptId, AgentStudio.TaskServer.Contracts.RevokedRunReferenceRequest req,
+            HttpContext context, AttemptAuthorityService authority, ITaskScanner scanner,
+            TimelineLog timeline) =>
+        {
+            if (!RunnerMatches(context, req.RunnerId)) return Results.Unauthorized();
+            var run = authority.GetRun(attemptId);
+            if (run is null) return Results.NotFound();
+            if (run.State != AttemptLifecycleState.Superseded
+                || run.TerminalOutcome != "operator-revoked"
+                || run.Lease?.ExecutorId != req.RunnerId
+                || run.Lease?.LeaseInstanceId != req.InstanceId
+                || run.Lease?.LeaseId != req.LeaseId
+                || run.Lease?.Fence != req.Fence)
+                return Results.Conflict(new { error = "Run is not an operator-revoked attempt held by this runner." });
+            if (string.IsNullOrWhiteSpace(req.Branch)
+                || string.IsNullOrWhiteSpace(req.CommitSha)
+                || !req.Branch.StartsWith("agent-studio/quarantine/", StringComparison.Ordinal)
+                || req.CommitSha.Length is not (40 or 64)
+                || !req.CommitSha.All(Uri.IsHexDigit)
+                || !req.Branch.EndsWith("/" + req.CommitSha, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "A generation-scoped quarantine ref and commit SHA are required." });
+            var task = FindTask(scanner, run.TaskKey);
+            if (task is null) return Results.NotFound();
+            timeline.Append(task.FolderPath, TimelineEventKinds.RunAttemptRevoked,
+                TimelineActors.System,
+                $"Revoked run {attemptId} retained its work at {req.Branch} ({req.CommitSha}).",
+                attemptId,
+                details: new Dictionary<string, string>
+                {
+                    ["quarantineRef"] = req.Branch,
+                    ["commitSha"] = req.CommitSha,
+                });
+            return Results.Ok(new { status = "recorded" });
+        });
 
         group.MapPost("/acquire", async (
             RunLeaseAcquireRequest req,
@@ -1091,6 +1127,8 @@ public static class LeaseEndpoints
                 var claimKey = string.IsNullOrWhiteSpace(req.IdempotencyKey)
                     ? $"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}"
                     : req.IdempotencyKey.Trim();
+                var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
+                runSpec = runSpec with { BriefVersion = briefVersion };
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,
@@ -1100,6 +1138,7 @@ public static class LeaseEndpoints
                 {
                     ClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
                     LeaseInstanceId = req.CapabilityInstanceId,
+                    BriefVersion = briefVersion,
                 });
                 if (!acquire.Granted || acquire.Lease is null)
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
@@ -1612,6 +1651,50 @@ public static class LeaseEndpoints
                     req.TaskKey,
                     attemptId,
                     tokenReceipt.Warning);
+            }
+            var currentBriefVersion = BriefVersionStore.ReadOrCreate(task.FolderPath);
+            if (RunDispositionPolicy.DecideCompletion(
+                    settledRun?.BriefVersion, currentBriefVersion)
+                == RemoteCompletionDisposition.OfferOlderBrief)
+            {
+                // The result is a terminal attempt fact, but it is not this
+                // card's delivery. Keep its immutable ref for an explicit
+                // decision and park the card outside automated review.
+                var offerMove = await transitions.MoveAsync(
+                    task.Id, TaskStates.Escalated, task.WatchPath, ct,
+                    cause: "remote-older-brief-offer",
+                    reason: "Delivered against an older brief; choose accept, use as a starting point, or discard.",
+                    authorityWrite: new AttemptWriteReference(
+                        attemptId, req.FencingToken, epoch, $"older-brief-offer:{completionKey}"),
+                    suppressProductExecution: true,
+                    transitionDetail: "older-brief-offer");
+                if (offerMove.Status != MoveJobStatus.Success)
+                    return Results.Conflict(new RemoteRunCompletionResponse(
+                        req.TaskKey, reportedOutcome, task.State,
+                        $"Older-brief offer lane move refused: {offerMove.Status} {offerMove.Message}",
+                        RunAttemptId: attemptId));
+                var offerFolder = offerMove.NewFolderPath ?? scanner.FindJob(task.Id, task.WatchPath)?.FolderPath ?? task.FolderPath;
+                var offer = new OlderBriefDeliveryOffer(
+                    attemptId, settledRun?.BriefVersion ?? "unknown", currentBriefVersion,
+                    req.ResultSha, req.ImmutableResultRef, req.SalvageBranch, req.SalvageCommitSha,
+                    DateTime.UtcNow);
+                OlderBriefDeliveryStore.Write(offerFolder, offer);
+                timeline.Append(offerFolder, TimelineEventKinds.OlderBriefDeliveryOffered,
+                    TimelineActors.System,
+                    $"Run {attemptId} delivered against an older brief. Its result is retained for an operator decision.",
+                    attemptId,
+                    payloadRef: "results/older-brief-delivery.json",
+                    details: new Dictionary<string, string>
+                    {
+                        ["attemptId"] = attemptId,
+                        ["briefVersion"] = offer.BriefVersion,
+                        ["currentBriefVersion"] = currentBriefVersion,
+                    });
+                scanner.InvalidateCache();
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, reportedOutcome, TaskStates.Escalated,
+                    "Delivered against an older brief; operator decision required.",
+                    RunAttemptId: attemptId));
             }
             RemoteDeliveryFailureDecision? deliveryFailure = null;
             if (envelopeDecision.ShouldFailDelivery)

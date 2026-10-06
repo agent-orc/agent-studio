@@ -971,10 +971,24 @@ public sealed class RemoteTaskRunner
                 try
                 {
                     teardownAttempted = true;
-                    await workspace.TeardownToQuarantineAsync(
+                    var quarantined = await workspace.TeardownToQuarantineAsync(
                         outcome.Kind.ToString(),
                         slot.RunId ?? lease.AttemptId ?? lease.LeaseId,
                         CancellationToken.None);
+                    if (heartbeat.LeaseLossReason?.Contains("revoked", StringComparison.OrdinalIgnoreCase) == true
+                        && quarantined.Branch is { } quarantineBranch
+                        && quarantined.CommitSha is { } quarantineSha)
+                    {
+                        try
+                        {
+                            await _client.ReportRevokedReferenceAsync(
+                                lease, quarantineBranch, quarantineSha, CancellationToken.None);
+                        }
+                        catch (Exception reportError)
+                        {
+                            _log($"revoked-run-reference-report-failed task={taskKey} attempt={lease.AttemptId} error={reportError.Message}");
+                        }
+                    }
                     _log(
                         $"lease-loss worktree quarantined task={taskKey} " +
                         $"attempt={slot.RunId ?? lease.AttemptId ?? lease.LeaseId} " +
@@ -1192,6 +1206,12 @@ public sealed class RemoteTaskRunner
         {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
+            if (runSpec?.BriefVersion is { Length: > 0 } claimedBrief
+                && !string.Equals(
+                    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(taskPrompt))).ToLowerInvariant(),
+                    claimedBrief,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The task brief changed after claim; this attempt cannot start.");
             var followUpApplication = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, runSpec?.FollowUp);
             acknowledgedFollowUp = followUpApplication.AcknowledgedFollowUp;
             prompt = RemoteRunPrompt.Build(

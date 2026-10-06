@@ -766,6 +766,7 @@ public class TaskScannerService : ITaskScanner
                 CodeActivityDetected = DetectCodeActivity(raw, jobDir, scanSessionLog: !isArchive),
                 SessionChain = ReadSessionChain(raw),
                 PendingIntent = ReadPendingIntent(jobDir),
+                OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
                 OutcomeIssue = isArchive ? null : ResolveOutcomeIssue(jobDir, resolvedState),
                 Fixture = raw.TryGetProperty("fixture", out var fix)
                     && fix.ValueKind is JsonValueKind.True,
@@ -2273,6 +2274,7 @@ public class TaskScannerService : ITaskScanner
             QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
             QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
+            OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
             ParkedBlocker = ReadParkedBlocker(jobDir, cached.State),

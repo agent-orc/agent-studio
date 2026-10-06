@@ -1202,7 +1202,8 @@ public class TaskRunnerService : BackgroundService
                 : null,
         };
 
-        if (job.State == AgentStudio.Shared.TaskStates.Progress && lease is not null)
+        if (lease is not null
+            && (job.State == AgentStudio.Shared.TaskStates.Progress || inspection.State == "active"))
         {
             var remote = localIdentity is null
                 || !string.Equals(lease.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase);
@@ -1246,7 +1247,9 @@ public class TaskRunnerService : BackgroundService
                         => "The heartbeat of this run stopped before its fenced lease ran out; no authority is driving it.",
                     AgentStudio.Shared.RemoteRunLiveness.Disconnected
                         => "The last fenced run lease owner is retained, but its heartbeat is stale or the lease expired.",
-                    _ => "The task server currently holds a fenced run lease for this runner and has a recent heartbeat.",
+                    _ => job.State == AgentStudio.Shared.TaskStates.Progress
+                        ? "The task server currently holds a fenced run lease for this runner and has a recent heartbeat."
+                        : "A remote run remains live while this card is outside Progress for an explicit steer.",
                 },
             };
         }
