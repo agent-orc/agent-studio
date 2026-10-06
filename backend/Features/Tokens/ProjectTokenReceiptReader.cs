@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tokens;
 
@@ -7,6 +8,13 @@ namespace AgentStudio.Tokens;
 /// Remote runner completions do not pass through the legacy project bus emit,
 /// so this receipt is the current source for their token calls.
 /// </summary>
+/// <remarks>
+/// Receipts written before AGT-3012 can hold the same usage several times
+/// (one Claude session repeated its cumulative usage on every result frame).
+/// Each task's calls collapse through <see cref="TokenLedgerDuplicates"/>
+/// before the totals are derived, so history no longer inflates the
+/// project rollups.
+/// </remarks>
 public sealed class ProjectTokenReceiptReader
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -30,6 +38,7 @@ public sealed class ProjectTokenReceiptReader
         var summaries = new Dictionary<string, TaskTokenSummary>(StringComparer.Ordinal);
         var seenTaskIds = new HashSet<string>(StringComparer.Ordinal);
         var failed = 0;
+        var collapsed = TokenLedgerCollapseCount.None;
 
         try
         {
@@ -63,7 +72,8 @@ public sealed class ProjectTokenReceiptReader
                         continue;
                     }
 
-                    var normalized = NormalizeSummary(summary);
+                    var normalized = NormalizeSummary(summary, out var taskCollapsed);
+                    collapsed = collapsed.Add(taskCollapsed);
                     summaries[jobId] = normalized;
                     if (normalized.TotalTokens > 0 && normalized.Entries.Count == 0)
                     {
@@ -85,13 +95,14 @@ public sealed class ProjectTokenReceiptReader
                 summaries,
                 SourceAvailable: false,
                 FailedTaskCount: failed,
-                Warning: "The task receipt source could not be enumerated. Token values may be incomplete.");
+                Warning: "The task receipt source could not be enumerated. Token values may be incomplete.",
+                CollapsedDuplicates: collapsed);
         }
 
         var warning = failed > 0
             ? $"Token receipts for {failed} task{(failed == 1 ? "" : "s")} could not be read. Values may be incomplete."
             : null;
-        return new ProjectTokenReceiptReadResult(entries, summaries, true, failed, warning);
+        return new ProjectTokenReceiptReadResult(entries, summaries, true, failed, warning, collapsed);
     }
 
     internal static IReadOnlyList<OrchestratorLogEntry> MergeWithoutDuplicates(
@@ -125,8 +136,11 @@ public sealed class ProjectTokenReceiptReader
         return merged.OrderBy(entry => entry.Ts).ToList();
     }
 
-    private static TaskTokenSummary NormalizeSummary(TaskTokenSummary summary)
+    internal static TaskTokenSummary NormalizeSummary(
+        TaskTokenSummary summary,
+        out TokenLedgerCollapseCount collapsed)
     {
+        summary = CollapseDuplicateCalls(summary, out collapsed);
         var entries = (summary.Entries ?? [])
             .Where(call => call.Ts != default)
             .OrderBy(call => call.Ts)
@@ -164,10 +178,43 @@ public sealed class ProjectTokenReceiptReader
         return summary with { Entries = entries };
     }
 
+    /// <summary>
+    /// Drops repeated calls and subtracts exactly what was dropped from the
+    /// receipt totals. Keeping the persisted totals would turn the collapsed
+    /// tokens into a residual row and undo the collapse; a genuine residual
+    /// (totals not covered by per-call rows) survives unchanged.
+    /// </summary>
+    internal static TaskTokenSummary CollapseDuplicateCalls(
+        TaskTokenSummary summary,
+        out TokenLedgerCollapseCount collapsed)
+    {
+        var calls = summary.Entries ?? [];
+        var kept = TokenLedgerDuplicates.CollapseCalls(calls, out collapsed);
+        if (collapsed.Entries == 0) return summary;
+
+        long Dropped(Func<TaskTokenCall, long> value) => calls.Sum(value) - kept.Sum(value);
+        var droppedCost = calls.Sum(call => call.EstimatedApiCostUsd) - kept.Sum(call => call.EstimatedApiCostUsd);
+        return summary with
+        {
+            Calls = Math.Max(kept.Count, summary.Calls - collapsed.Entries),
+            InputTokens = Math.Max(0, summary.InputTokens - Dropped(call => call.InputTokens)),
+            OutputTokens = Math.Max(0, summary.OutputTokens - Dropped(call => call.OutputTokens)),
+            CacheReadTokens = Math.Max(0, summary.CacheReadTokens - Dropped(call => call.CacheReadTokens)),
+            CacheCreationTokens = Math.Max(0, summary.CacheCreationTokens - Dropped(call => call.CacheCreationTokens)),
+            TotalTokens = Math.Max(0, summary.TotalTokens - collapsed.Tokens),
+            EstimatedApiCostUsd = Math.Max(0m, summary.EstimatedApiCostUsd - droppedCost),
+            Entries = kept.ToList(),
+        };
+    }
+
     private static IEnumerable<OrchestratorLogEntry> ToEntries(string jobId, TaskTokenSummary summary)
     {
-        foreach (var call in summary.Entries ?? [])
+        foreach (var stored in summary.Entries ?? [])
         {
+            // A legacy Codex receipt the AGT-2882 repair has not rewritten
+            // still counts cached input twice; normalize it before pricing,
+            // exactly like immutable bus rows.
+            var call = StoredUsageNormalization.Normalize(stored);
             var total = call.InputTokens + call.OutputTokens + call.CacheReadTokens + call.CacheCreationTokens;
             if (call.Ts == default || total <= 0) continue;
             yield return new OrchestratorLogEntry
@@ -268,4 +315,5 @@ public sealed record ProjectTokenReceiptReadResult(
     IReadOnlyDictionary<string, TaskTokenSummary> Summaries,
     bool SourceAvailable,
     int FailedTaskCount,
-    string? Warning);
+    string? Warning,
+    TokenLedgerCollapseCount CollapsedDuplicates = default);

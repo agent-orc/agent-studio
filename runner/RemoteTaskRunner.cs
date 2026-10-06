@@ -19,6 +19,7 @@ using AgentStudio.TaskServer.Contracts;
 public sealed class RemoteTaskRunner
 {
     internal const int MaxEnvironmentPreparationAttempts = 3;
+    private const int MaxArtifactTransferAttempts = 3;
 
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
@@ -262,7 +263,7 @@ public sealed class RemoteTaskRunner
     /// Inventory whatever evidence the stopped run already wrote without
     /// allowing result-file I/O to block the code handoff. The empty manifest
     /// remains a valid immutable-envelope identity; the inventory failure is
-    /// reported after delivery as a partial artifact outcome.
+    /// reported before settlement as a partial artifact outcome.
     /// </summary>
     private async Task<ArtifactTransferPlan> PrepareResultsSafeAsync(
         string taskKey,
@@ -689,6 +690,12 @@ public sealed class RemoteTaskRunner
                 shipper.Add("system", delivered);
                 await shipper.FlushAsync(stopRun.Token);
             }
+            // Artifacts and their partial-transfer receipt are run writes. They
+            // must finish while this attempt is leased: settling first turns a
+            // later upload into a fenced 409 and loses otherwise eligible
+            // evidence. Transfer faults remain non-fatal for the code handoff.
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+
             if (outbox is not null)
             {
                 // The isolated checkout has now either been removed after a
@@ -735,7 +742,11 @@ public sealed class RemoteTaskRunner
                     completion,
                     stopRun.Token);
                 outbox.Acknowledge(completion.Sequence);
-                outbox.RecordHandoffState("completed", envelopeDigest);
+                outbox.RecordHandoffState(
+                    outbox.Snapshot.FinalHandoffState == "artifact-replay"
+                        ? "artifact-replay"
+                        : "completed",
+                    envelopeDigest);
                 await ReportOutboxSafeAsync(outbox, stopRun.Token);
             }
             else
@@ -761,7 +772,6 @@ public sealed class RemoteTaskRunner
                 + (finalizationRetries > 0
                     ? $"; finalizationRetries={finalizationRetries}"
                     : string.Empty));
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -953,6 +963,7 @@ public sealed class RemoteTaskRunner
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -967,7 +978,6 @@ public sealed class RemoteTaskRunner
                 sourceMutated,
                 CancellationToken.None);
             handedBack = true;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
             return 0;
         }
@@ -1087,6 +1097,7 @@ public sealed class RemoteTaskRunner
                         && artifactManifest is not null)
                     {
                         outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
                         await CompleteOrReconcileAsync(
                             taskKey,
                             lease,
@@ -1960,13 +1971,25 @@ public sealed class RemoteTaskRunner
                 _log($"artifact-transfer outcome=ArtifactTooLarge task={taskKey} {fact}");
                 shipper.Add("system", $"[runner] {fact}");
             }
+            catch (ArtifactUploadFailedException ex)
+            {
+                var issue = new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    $"upload failed after {ex.Attempts} attempt(s) ({OneLine(ex.InnerException?.Message ?? ex.Message)})",
+                    ArtifactTransferOutcomes.TransferFailed,
+                    ex.Attempts);
+                issues.Add(issue);
+                _log($"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} {ArtifactFact(issue)}");
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 var issue = new ArtifactTransferIssue(
                     file.RelativePath,
                     file.SizeBytes,
                     $"upload failed ({OneLine(ex.Message)})",
-                    ArtifactTransferOutcomes.TransferFailed);
+                    ArtifactTransferOutcomes.TransferFailed,
+                    Attempts: 1);
                 issues.Add(issue);
                 _log($"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} {ArtifactFact(issue)}");
             }
@@ -1995,17 +2018,20 @@ public sealed class RemoteTaskRunner
         var reportFailed = false;
         if (issues.Count > 0)
         {
+            var report = new ArtifactTransferReportRequest(
+                taskKey,
+                "partial",
+                issues,
+                lease.RunnerId,
+                lease.LeaseId,
+                lease.FencingToken,
+                lease.AttemptId);
+            outbox?.RecordPendingArtifactReport(report);
             try
             {
                 await shipper.FlushAsync(CancellationToken.None);
-                await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
-                    taskKey,
-                    "partial",
-                    issues,
-                    lease.RunnerId,
-                    lease.LeaseId,
-                    lease.FencingToken,
-                    lease.AttemptId), CancellationToken.None);
+                await _client.ReportArtifactTransferAsync(report, CancellationToken.None);
+                outbox?.ClearPendingArtifactReport();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -2016,7 +2042,11 @@ public sealed class RemoteTaskRunner
         if (reportFailed || issues.Any(issue => issue.Outcome == ArtifactTransferOutcomes.TransferFailed))
         {
             outbox?.RecordHandoffState("artifact-replay");
-            _log($"artifact replay retained task={taskKey} attempt={lease.AttemptId}");
+            _log($"artifact transfer remains partial task={taskKey} attempt={lease.AttemptId}");
+        }
+        else if (outbox?.Snapshot.FinalHandoffState == "artifact-replay")
+        {
+            outbox.RecordHandoffState("transferring");
         }
         _log($"artifact-transfer task={taskKey} artifacts={(issues.Count == 0 ? "complete" : "partial")} uploaded={uploaded} notTransferred={issues.Count}");
     }
@@ -2024,23 +2054,35 @@ public sealed class RemoteTaskRunner
     private async Task<ArtifactIngestResponse?> UploadArtifactWithRetryAsync(
         ArtifactIngestRequest request)
     {
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1; attempt <= MaxArtifactTransferAttempts; attempt++)
         {
             try
             {
                 return await _client.UploadArtifactsAsync(request, CancellationToken.None);
             }
-            catch (Exception ex) when (attempt < 3 && IsRetryableArtifactFault(ex))
+            catch (Exception ex) when (attempt < MaxArtifactTransferAttempts && IsRetryableArtifactFault(ex))
             {
-                _log($"artifact upload retry task={request.TaskKey} attempt={attempt + 1}/3 reason={OneLine(ex.Message)}");
+                _log($"artifact upload retry task={request.TaskKey} attempt={attempt + 1}/{MaxArtifactTransferAttempts} reason={OneLine(ex.Message)}");
                 await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt));
             }
+            catch (Exception ex) when (IsRetryableArtifactFault(ex))
+            {
+                throw new ArtifactUploadFailedException(attempt, ex);
+            }
         }
+
+        throw new InvalidOperationException("Artifact upload retry loop exited without a result.");
     }
 
     private static bool IsRetryableArtifactFault(Exception exception)
         => exception is HttpRequestException or TimeoutException
            || exception is TaskServerException { StatusCode: 408 or 429 or >= 500 };
+
+    private sealed class ArtifactUploadFailedException(int attempts, Exception innerException)
+        : Exception("Artifact upload retry budget was exhausted.", innerException)
+    {
+        public int Attempts { get; } = attempts;
+    }
 
     internal static List<(string FullPath, string RelativePath, long SizeBytes)> ObserveResultFiles(
         string resultsDirectory)

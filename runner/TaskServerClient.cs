@@ -25,7 +25,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
-    // Per-run caches, evicted on release after post-completion evidence transport
+    // Per-run caches, evicted on release after pre-settlement evidence transport
     // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _v1CompletedLeases = new(StringComparer.OrdinalIgnoreCase);
@@ -956,6 +956,29 @@ public sealed class TaskServerClient : IDisposable
         return JsonSerializer.Deserialize<Contract.GateStatus>(detail, Json);
     }
 
+    /// <summary>Registered projects, used to map a card key prefix to its project (salvage retention).</summary>
+    public async Task<IReadOnlyList<Contract.ProjectDto>> ListProjectsAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("/api/v1/projects", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+    }
+
+    /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
+    public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskKey)}",
+            ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Task lookup failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.TaskDto>(detail, TaskServerContractJson);
+    }
+
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(
         string attemptId,
         Contract.ReviewLeaseRenewRequest request,
@@ -1346,9 +1369,9 @@ public sealed class TaskServerClient : IDisposable
     }
 
     /// <summary>
-    /// Restore the original fence for artifact-only replay after completion.
-    /// The Task Server validates that fence and permits completed-run artifact
-    /// writes; renewing a completed lease would correctly be rejected.
+    /// Restore the exact completed lease for bounded artifact replay. The Task
+    /// Server checks runner, instance, lease, and fence on each write and
+    /// rejects replay after a successor fence is issued.
     /// </summary>
     public void RestoreCompletedOutboxAuthority(RunOutboxAuthority authority)
     {
@@ -1564,11 +1587,9 @@ public sealed class TaskServerClient : IDisposable
     public async Task<ArtifactIngestResponse?> UploadArtifactsAsync(ArtifactIngestRequest req, CancellationToken ct)
     {
         if (!_useV1) return await PostJsonAsync<ArtifactIngestRequest, ArtifactIngestResponse>("/api/runner/artifacts", req, ct);
-        // Result evidence is uploaded after the fenced completion (AGT-2890), so
-        // the lease is already "completed" on the v1 plane. The Task Server admits
-        // that only with the exact outbox authority (runner, instance, lease),
-        // exactly as the durable outbox replay sends it; the fence alone is
-        // answered with 409 lease-not-active and the artifact is lost.
+        // Result evidence is uploaded before the fenced completion. The exact
+        // runner, instance, lease, and fence still bind every write so a stale
+        // host cannot add evidence to a successor attempt.
         var authority = OutboxAuthority(req.TaskKey);
         var files = new List<string>();
         foreach (var artifact in req.Artifacts)

@@ -1,0 +1,13 @@
+.area-glossary { display: grid; align-content: start; gap: var(--studio-spacing-3); padding: var(--studio-spacing-4); color: var(--studio-fg-strong); }
+.area-glossary label { display: grid; gap: var(--studio-spacing-1); }
+.area-glossary select { min-height: 36px; padding: var(--studio-spacing-2); border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-bg-editor); color: inherit; }
+.area-glossary h2, .area-glossary h3, .area-glossary p { margin: 0; }
+.area-glossary p, .area-glossary small { color: var(--studio-fg-muted); }
+.area-glossary dl { display: grid; gap: var(--studio-spacing-2); margin: 0; }
+.area-glossary dt { font-weight: 700; }
+.area-glossary dd { margin: 0; }
+.area-glossary dd small { display: block; }
+.area-glossary ul { margin: 0; padding-left: var(--studio-spacing-4); }
+.area-glossary li { margin-bottom: var(--studio-spacing-2); }
+.area-glossary button { padding: 0; border: 0; background: transparent; color: var(--studio-accent); font: inherit; text-align: left; cursor: pointer; }
+.area-glossary button:focus-visible, .area-glossary select:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

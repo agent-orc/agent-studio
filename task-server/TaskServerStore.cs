@@ -1367,7 +1367,7 @@ public sealed partial class TaskServerStore
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
-                    PlacementReason: "host-capability-unavailable",
+                    PlacementReason: capabilityAdmission.Reason ?? "host-capability-unavailable",
                     ReprobeCapabilities: capabilityAdmission.Required
                         .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
                         .ToArray());
@@ -1381,6 +1381,23 @@ public sealed partial class TaskServerStore
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: "host-slots-unavailable");
+                return;
+            }
+            var envelopeAdmission = await EvaluateHostEnvelopeAsync(
+                connection,
+                transaction,
+                capabilityRunner.HostId,
+                HostRoles.Coding,
+                request.RunnerId,
+                ct);
+            if (!envelopeAdmission.Admitted)
+            {
+                response = new ClaimResponse(
+                    "empty",
+                    Message: envelopeAdmission.Message,
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: envelopeAdmission.Reason);
                 return;
             }
             var occupiedHostSlots = await CountOccupiedHostSlotsAsync(
@@ -3566,6 +3583,22 @@ public sealed partial class TaskServerStore
                 response_json TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 PRIMARY KEY(runner_id, idempotency_key)
+            );
+            CREATE TABLE IF NOT EXISTS host_enrolments(
+                host_id TEXT PRIMARY KEY,
+                host_class TEXT NOT NULL,
+                status TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                enrolled_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                removed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS host_enrolment_principals(
+                principal_id TEXT PRIMARY KEY,
+                host_id TEXT NOT NULL REFERENCES host_enrolments(host_id),
+                role TEXT NOT NULL,
+                UNIQUE(host_id, role)
             );
             CREATE TABLE IF NOT EXISTS host_admission(
                 host_id TEXT PRIMARY KEY,

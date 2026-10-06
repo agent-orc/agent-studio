@@ -100,9 +100,61 @@ public sealed class RemoteBuildTestGateRunnerTests
         var transport = new RecordingTransport { Exception = exception };
         var result = await Runner(transport).RunAsync(Request(), [], null, PostStepMode.Fail,
             TimeSpan.FromMinutes(1), CancellationToken.None);
-        Assert.Equal(1, transport.Calls);
+        Assert.Equal(failure == "cancel" ? 1 : RemoteBuildTestGateRunner.MaxTransportAttempts, transport.Calls);
         Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
         Assert.Equal(expected, result.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("ECONNRESET")]
+    [InlineData("ETIMEDOUT")]
+    [InlineData("unable to access")]
+    public async Task Transport_marker_retries_same_gate_subject_until_success(string marker)
+    {
+        var request = Request();
+        var transport = new RecordingTransport
+        {
+            Result = Passed(),
+            TransientResult = RemoteBuildTestGateRunner.Failure(request,
+                BuildTestGateFailureKind.Environment, marker),
+        };
+
+        var result = await Runner(transport).RunAsync(request, [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        Assert.Equal(2, transport.Calls);
+        Assert.All(transport.Requests, actual => Assert.Same(request, actual));
+        Assert.Equal(BuildTestGateVerdict.Ok, result.Verdict);
+        Assert.Equal(Sha, result.TestedSha);
+    }
+
+    [Fact]
+    public async Task Persistent_transport_marker_stops_at_budget_without_accepting_delivery()
+    {
+        var transport = new RecordingTransport
+        {
+            Result = RemoteBuildTestGateRunner.Failure(Request(),
+                BuildTestGateFailureKind.Environment, "ECONNRESET"),
+        };
+        var result = await Runner(transport).RunAsync(Request(), [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(RemoteBuildTestGateRunner.MaxTransportAttempts, transport.Calls);
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
+    }
+
+    [Fact]
+    public async Task Product_failure_with_transport_text_does_not_retry()
+    {
+        var transport = new RecordingTransport
+        {
+            Result = RemoteBuildTestGateRunner.Failure(Request(),
+                BuildTestGateFailureKind.Code, "ECONNRESET") with
+            { Output = "Failed Product.Tests.TransportRule [1 ms]" },
+        };
+        var result = await Runner(transport).RunAsync(Request(), [], null, PostStepMode.Fail,
+            TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(1, transport.Calls);
+        Assert.Equal(BuildTestGateVerdict.Fail, result.Verdict);
     }
 
     [Fact]
@@ -166,6 +218,8 @@ public sealed class RemoteBuildTestGateRunnerTests
     private sealed class RecordingTransport : IRemoteGateTransport
     {
         public int Calls { get; private set; }
+        public List<BuildTestGateRequest> Requests { get; } = [];
+        public BuildTestGateResult? TransientResult { get; init; }
         public BuildTestGateRequest? Request { get; private set; }
         public IReadOnlyList<string>? ChangedFiles { get; private set; }
         public BuildProfile? Profile { get; private set; }
@@ -177,6 +231,8 @@ public sealed class RemoteBuildTestGateRunnerTests
             TimeSpan timeout, CancellationToken ct)
         {
             Calls++;
+            Requests.Add(request);
+            if (Calls == 1 && TransientResult is not null) return Task.FromResult(TransientResult);
             Request = request;
             ChangedFiles = changedFiles;
             Profile = profile;

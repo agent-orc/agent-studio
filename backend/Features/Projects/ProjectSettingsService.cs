@@ -123,6 +123,33 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// AGT-3011: pause or resume one operator sweep for one project. The sweep
+    /// id is validated by the calling boundary; resuming a sweep that is not
+    /// paused is a no-op write.
+    /// </summary>
+    public void SetOperatorSweepPaused(
+        string projectName, string sweep, bool paused, string actor, string? reason, DateTime nowUtc)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            var pauses = (current.OperatorSweepPauses ?? [])
+                .Where(item => !string.Equals(item.Sweep, sweep, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (paused)
+                pauses.Add(new OperatorSweepPause(
+                    sweep,
+                    nowUtc,
+                    string.IsNullOrWhiteSpace(actor) ? "operator" : actor.Trim(),
+                    string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()));
+            _cache[key] = current with { OperatorSweepPauses = pauses.Count == 0 ? null : pauses };
+            Persist();
+        }
+    }
+
     public void SetAutoTag(string projectName, bool enabled)
     {
         EnsureLoaded();

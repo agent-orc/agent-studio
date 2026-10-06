@@ -500,7 +500,8 @@ public sealed record ArtifactTransferIssue(
     string Path,
     long SizeBytes,
     string Reason,
-    string Outcome = ArtifactTransferOutcomes.ArtifactTooLarge);
+    string Outcome = ArtifactTransferOutcomes.ArtifactTooLarge,
+    int Attempts = 0);
 
 public sealed record ArtifactTransferReportRequest(
     string TaskKey,

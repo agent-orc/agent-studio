@@ -37,4 +37,13 @@ export type {
   PipelineLaneDrainHealth,
   PipelineHealthSnapshot,
 } from './models/pipeline-health.model';
+export type {
+  OperatorSweepKind,
+  OperatorSweepRecentAction,
+  OperatorSweepStatus,
+  OperatorSweepCardDecision,
+  OperatorSweepCardState,
+  OperatorSweepWaitingCard,
+  OperatorSweepProjection,
+} from './models/operator-sweeps.model';
 export { stepKindLabel } from './step-kind-display.util';

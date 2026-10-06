@@ -68,7 +68,7 @@ export class TagManagerDialogComponent implements OnInit {
   readonly addBusy = signal<boolean>(false);
 
   readonly tags = computed<TagRegistryEntry[]>(() => {
-    return [...this.store.tags()].sort((a, b) => a.id.localeCompare(b.id));
+    return [...this.store.workspaceTags()].sort((a, b) => a.id.localeCompare(b.id));
   });
 
   ngOnInit(): void {
@@ -127,7 +127,7 @@ export class TagManagerDialogComponent implements OnInit {
         next: (created) => {
           // Update the store in place; the rest of the app (cards, filter)
           // re-renders synchronously via the signal.
-          this.store.set([...this.store.tags(), created]);
+          this.store.set([...this.store.workspaceTags(), created]);
           this.addBusy.set(false);
           this.addOpen.set(false);
         },
@@ -181,7 +181,7 @@ export class TagManagerDialogComponent implements OnInit {
           .subscribe({
             next: (created) => {
               const next = this.store
-                .tags()
+                .workspaceTags()
                 .filter((t) => t.id !== id)
                 .concat(created);
               this.store.set(next);
@@ -226,7 +226,7 @@ export class TagManagerDialogComponent implements OnInit {
     if (!ok) return;
     this.tasks.deleteTag(tag.id).subscribe({
       next: () => {
-        this.store.set(this.store.tags().filter((t) => t.id !== tag.id));
+        this.store.set(this.store.workspaceTags().filter((t) => t.id !== tag.id));
       },
       error: (err) => {
         // Surface as a top-of-list banner; the row stays so the user can

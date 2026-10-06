@@ -319,13 +319,6 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         var recovery = new DurableHandoffRecovery(options, client, _ => { });
 
         await recovery.RecoverAllAsync(default);
-        if (!artifactUploadWasAcknowledged)
-        {
-            // A completed run can reopen its artifact-only outbox without
-            // trying to renew the completed lease or executing coding again.
-            DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority)
-                .RecordHandoffState("artifact-replay");
-        }
         await recovery.RecoverAllAsync(default);
 
         var envelope = Assert.IsType<ImmutableResultEnvelope>(handler.LastEnvelope);
@@ -335,7 +328,10 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         Assert.Equal(1, handler.HandoffCalls);
         Assert.Equal(1, handler.CompletionCalls);
         Assert.Equal(1, handler.RenewalCalls);
-        Assert.Equal(artifactUploadWasAcknowledged ? 0 : 2, handler.ArtifactCalls);
+        // One artifact write happens before the one fenced completion. Result
+        // finalization has its own endpoint. A second recovery observes the
+        // settled outbox and does not duplicate either operation.
+        Assert.Equal(artifactUploadWasAcknowledged ? 0 : 1, handler.ArtifactCalls);
         Assert.Equal(0, handler.CodingProcessCalls);
 
         var reader = Path.Combine(_root, "read-only-reconstruction");
@@ -348,6 +344,214 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         Assert.Equal(
             envelope.ResultSha,
             (await GitAsync(reader, "rev-parse", "FETCH_HEAD")).StdOut);
+    }
+
+    [Fact]
+    public async Task Failed_upload_and_outcome_report_replay_after_completion_without_duplicate_artifacts()
+    {
+        var authority = new RunOutboxAuthority(
+            "run-artifact-replay", "TASK-13", "runner-a", "old-host:45", "lease-e", 13);
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _root, authority.TaskKey, authority.RunId);
+        Directory.CreateDirectory(evidence);
+        var bytes = Encoding.UTF8.GetBytes("replay evidence");
+        await File.WriteAllBytesAsync(Path.Combine(evidence, "evidence.txt"), bytes);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+            .ToLowerInvariant();
+        var manifest = RemoteTaskRunner.BuildArtifactManifest(
+        [
+            new ArtifactManifestEntry("results/evidence.txt", sha, bytes.LongLength),
+        ]);
+        var resultSha = new string('6', 40);
+        var outbox = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        outbox.Enqueue("run-context", JsonSerializer.Serialize(
+            new DurableRunContextPayload("repo-13", null, "main", new string('5', 40)),
+            WebJson));
+        outbox.Enqueue("terminal", JsonSerializer.Serialize(
+            new DurableTerminalPayload("Done", null), WebJson));
+        outbox.Enqueue("artifact-manifest", manifest.Json);
+        outbox.Enqueue("final-result", JsonSerializer.Serialize(
+            new ImmutableResultEnvelope(
+                "repo-13", authority.RunId, new string('5', 40), resultSha,
+                FencedGitRefs.ImmutableResult(authority.RunId, authority.Fence, resultSha),
+                null, manifest.Digest), WebJson));
+
+        var handler = new RecordingHandler(
+            loseFirstArtifactAcknowledgement: true,
+            failFirstPartialReport: true);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(
+            http, "runner-a", usesDurableTaskServer: true);
+        var recovery = new DurableHandoffRecovery(Options(), client, _ => { });
+
+        await recovery.RecoverAllAsync(default);
+        var partial = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("artifact-replay", partial.Snapshot.FinalHandoffState);
+        Assert.NotNull(partial.PendingArtifactReport);
+        Assert.Equal(1, handler.CompletionCalls);
+        Assert.Equal(1, handler.StoredArtifactCount);
+        Assert.Equal(1, handler.PartialReportCalls);
+
+        await recovery.RecoverAllAsync(default);
+        var completed = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("completed", completed.Snapshot.FinalHandoffState);
+        Assert.Null(completed.PendingArtifactReport);
+        Assert.Equal(1, handler.CompletionCalls);
+        Assert.Equal(1, handler.RenewalCalls);
+        Assert.Equal(2, handler.ArtifactCalls);
+        Assert.Equal(1, handler.StoredArtifactCount);
+        Assert.Equal(2, handler.PartialReportCalls);
+        Assert.Equal(1, handler.ArtifactCallsAfterCompletion);
+        Assert.Equal(authority.RunnerId, handler.LastArtifact!.RunnerId);
+        Assert.Equal(authority.InstanceId, handler.LastArtifact.InstanceId);
+        Assert.Equal(authority.LeaseId, handler.LastArtifact.LeaseId);
+        Assert.Equal(authority.Fence, handler.LastArtifact.Fence);
+        var reported = JsonSerializer.Deserialize<ArtifactTransferReportRequest>(
+            handler.LastPartialReport!.PayloadJson, WebJson)!;
+        Assert.Equal(ArtifactTransferOutcomes.TransferFailed, Assert.Single(reported.Issues).Outcome);
+        Assert.Equal(1, reported.Issues[0].Attempts);
+
+        await recovery.RecoverAllAsync(default);
+        Assert.Equal(2, handler.ArtifactCalls);
+    }
+
+    [Fact]
+    public async Task Failed_pending_report_does_not_skip_artifact_transfer_before_completion()
+    {
+        var authority = new RunOutboxAuthority(
+            "run-pending-report", "TASK-14", "runner-a", "old-host:46", "lease-f", 14);
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _root, authority.TaskKey, authority.RunId);
+        Directory.CreateDirectory(evidence);
+        var bytes = Encoding.UTF8.GetBytes("evidence after report failure");
+        await File.WriteAllBytesAsync(Path.Combine(evidence, "evidence.txt"), bytes);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+            .ToLowerInvariant();
+        var manifest = RemoteTaskRunner.BuildArtifactManifest(
+        [
+            new ArtifactManifestEntry("results/evidence.txt", sha, bytes.LongLength),
+        ]);
+        var resultSha = new string('7', 40);
+        var outbox = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        outbox.Enqueue("run-context", JsonSerializer.Serialize(
+            new DurableRunContextPayload("repo-14", null, "main", new string('5', 40)),
+            WebJson));
+        outbox.Enqueue("terminal", JsonSerializer.Serialize(
+            new DurableTerminalPayload("Done", null), WebJson));
+        outbox.Enqueue("artifact-manifest", manifest.Json);
+        outbox.Enqueue("final-result", JsonSerializer.Serialize(
+            new ImmutableResultEnvelope(
+                "repo-14", authority.RunId, new string('5', 40), resultSha,
+                FencedGitRefs.ImmutableResult(authority.RunId, authority.Fence, resultSha),
+                null, manifest.Digest), WebJson));
+        outbox.RecordPendingArtifactReport(new ArtifactTransferReportRequest(
+            authority.TaskKey,
+            "partial",
+            [new ArtifactTransferIssue(
+                "results/evidence.txt", bytes.LongLength, "previous upload failed",
+                ArtifactTransferOutcomes.TransferFailed, Attempts: 1)],
+            authority.RunnerId,
+            authority.LeaseId,
+            authority.Fence,
+            authority.RunId));
+
+        var handler = new RecordingHandler(failFirstPartialReport: true);
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(
+            http, "runner-a", usesDurableTaskServer: true);
+        var recovery = new DurableHandoffRecovery(Options(), client, _ => { });
+
+        await recovery.RecoverAllAsync(default);
+
+        var partial = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("artifact-replay", partial.Snapshot.FinalHandoffState);
+        Assert.NotNull(partial.PendingArtifactReport);
+        Assert.Equal(1, handler.PartialReportCalls);
+        Assert.Equal(1, handler.ArtifactCalls);
+        Assert.Equal(0, handler.ArtifactCallsAfterCompletion);
+        Assert.Equal(1, handler.StoredArtifactCount);
+        Assert.Equal(1, handler.CompletionCalls);
+
+        await recovery.RecoverAllAsync(default);
+
+        var completed = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("completed", completed.Snapshot.FinalHandoffState);
+        Assert.Null(completed.PendingArtifactReport);
+        Assert.Equal(2, handler.PartialReportCalls);
+        Assert.Equal(1, handler.CompletionCalls);
+        Assert.Equal(2, handler.ArtifactCalls);
+        Assert.Equal(1, handler.StoredArtifactCount);
+    }
+
+    [Fact]
+    public async Task Accepted_completion_without_local_ack_recovers_from_a_transferring_outbox()
+    {
+        var authority = new RunOutboxAuthority(
+            "run-unacked-completion", "TASK-15", "runner-a", "old-host:47", "lease-g", 15);
+        var evidence = RemoteTaskRunner.AttemptEvidenceDir(
+            _root, authority.TaskKey, authority.RunId);
+        Directory.CreateDirectory(evidence);
+        var bytes = Encoding.UTF8.GetBytes("evidence transferred before completion");
+        await File.WriteAllBytesAsync(Path.Combine(evidence, "evidence.txt"), bytes);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+            .ToLowerInvariant();
+        var manifest = RemoteTaskRunner.BuildArtifactManifest(
+        [
+            new ArtifactManifestEntry("results/evidence.txt", sha, bytes.LongLength),
+        ]);
+        var resultSha = new string('8', 40);
+        var envelope = new ImmutableResultEnvelope(
+            "repo-15", authority.RunId, new string('5', 40), resultSha,
+            FencedGitRefs.ImmutableResult(authority.RunId, authority.Fence, resultSha),
+            null, manifest.Digest);
+        var outbox = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        outbox.Enqueue("run-context", JsonSerializer.Serialize(
+            new DurableRunContextPayload("repo-15", null, "main", new string('5', 40)),
+            WebJson));
+        outbox.Enqueue("terminal", JsonSerializer.Serialize(
+            new DurableTerminalPayload("Done", null), WebJson));
+        outbox.Enqueue("artifact-manifest", manifest.Json);
+        var finalItem = outbox.Enqueue("final-result", JsonSerializer.Serialize(envelope, WebJson));
+        var envelopeDigest = ResultEnvelopeDigest.Compute(envelope);
+        outbox.Acknowledge(finalItem.Sequence);
+        outbox.RecordHandoffAcknowledgement(new ResultHandoffAck(
+            authority.RunId, finalItem.Sequence, envelopeDigest, "acknowledged",
+            new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc), // clock-independent: fixed journal fact
+            new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc), // clock-independent: fixed journal fact
+            false));
+        // The artifact stage succeeded and the completion item was journaled
+        // and accepted by the server, but the runner stopped before it
+        // persisted the local acknowledgement.
+        outbox.RecordHandoffState("transferring", envelopeDigest);
+        outbox.Enqueue("completion", JsonSerializer.Serialize(
+            new DurableCompletionPayload("Done", null, envelopeDigest), WebJson));
+
+        var handler = new RecordingHandler(
+            HttpStatusCode.Conflict,
+            completedOnServer: true);
+        // The artifact was stored before completion; only its idempotent
+        // replay is accepted now.
+        handler.SeedStoredArtifact($"runner-artifact:{authority.RunId}:results/evidence.txt:{sha}");
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(
+            http, "runner-a", usesDurableTaskServer: true);
+        var recovery = new DurableHandoffRecovery(Options(), client, _ => { });
+
+        await recovery.RecoverAllAsync(default);
+
+        var completed = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        Assert.Equal("completed", completed.Snapshot.FinalHandoffState);
+        Assert.Empty(completed.Pending);
+        Assert.Null(completed.PendingArtifactReport);
+        Assert.Equal(1, handler.RenewalCalls);
+        Assert.Equal(1, handler.CompletionCalls);
+        Assert.Equal(0, handler.RejectedArtifactCalls);
+        Assert.Equal(0, handler.PartialReportCalls);
+        Assert.Equal(1, handler.StoredArtifactCount);
+
+        await recovery.RecoverAllAsync(default);
+        Assert.Equal(1, handler.RenewalCalls);
+        Assert.Equal(1, handler.CompletionCalls);
     }
 
     private RunnerOptions Options(string? gitRemote = null) => new()
@@ -415,12 +619,23 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
     }
 
     private sealed class RecordingHandler(
-        HttpStatusCode renewalStatus = HttpStatusCode.OK) : HttpMessageHandler
+        HttpStatusCode renewalStatus = HttpStatusCode.OK,
+        bool loseFirstArtifactAcknowledgement = false,
+        bool failFirstPartialReport = false,
+        bool completedOnServer = false) : HttpMessageHandler
     {
+        private readonly HashSet<string> _storedArtifactKeys = new(StringComparer.Ordinal);
+        public void SeedStoredArtifact(string idempotencyKey) => _storedArtifactKeys.Add(idempotencyKey);
+        public int RejectedArtifactCalls { get; private set; }
         public int RenewalCalls { get; private set; }
         public int HandoffCalls { get; private set; }
         public int CompletionCalls { get; private set; }
         public int ArtifactCalls { get; private set; }
+        public int ArtifactCallsAfterCompletion { get; private set; }
+        public int StoredArtifactCount => _storedArtifactKeys.Count;
+        public int PartialReportCalls { get; private set; }
+        public EventIngestRequest? LastPartialReport { get; private set; }
+        public AgentStudio.TaskServer.Contracts.ArtifactIngestRequest? LastArtifact { get; private set; }
         public int EventCalls { get; private set; }
         public int OutboxStatusCalls { get; private set; }
         public int CodingProcessCalls { get; private set; }
@@ -518,11 +733,26 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
             if (path.EndsWith("/artifacts", StringComparison.Ordinal))
             {
                 ArtifactCalls++;
+                if (CompletionCalls > 0) ArtifactCallsAfterCompletion++;
                 var body = await request.Content!.ReadAsStringAsync(cancellationToken);
                 var artifact = JsonSerializer.Deserialize<
                     AgentStudio.TaskServer.Contracts.ArtifactIngestRequest>(
                     body,
                     WebJson)!;
+                LastArtifact = artifact;
+                if (completedOnServer && !_storedArtifactKeys.Contains(artifact.IdempotencyKey))
+                {
+                    // The server checks idempotency before attempt state, so
+                    // only a replay of an already-stored write is accepted.
+                    RejectedArtifactCalls++;
+                    return Json(HttpStatusCode.Conflict, new
+                    {
+                        error = "RunAttempt is Completed and no longer has write authority.",
+                    });
+                }
+                var firstDelivery = _storedArtifactKeys.Add(artifact.IdempotencyKey);
+                if (firstDelivery && loseFirstArtifactAcknowledgement)
+                    return Json(HttpStatusCode.ServiceUnavailable, new { error = "acknowledgement lost" });
                 return Json(HttpStatusCode.Created, new ArtifactDto(
                     artifact.ArtifactId,
                     path.Split('/', StringSplitOptions.RemoveEmptyEntries)[3],
@@ -538,6 +768,15 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
             if (path.EndsWith("/events", StringComparison.Ordinal))
             {
                 EventCalls++;
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                var ingest = JsonSerializer.Deserialize<EventIngestRequest>(body, WebJson)!;
+                if (ingest.Kind == "runner.artifact-partial")
+                {
+                    PartialReportCalls++;
+                    LastPartialReport = ingest;
+                    if (failFirstPartialReport && PartialReportCalls == 1)
+                        return Json(HttpStatusCode.ServiceUnavailable, new { error = "report refused" });
+                }
                 return Json(HttpStatusCode.Created, new EventDto(
                     1,
                     $"event-{Guid.NewGuid():N}",

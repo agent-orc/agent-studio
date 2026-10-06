@@ -46,28 +46,48 @@ public sealed class DurableHandoffRecovery
                     outbox.Snapshot.FinalHandoffState,
                     "completed",
                     StringComparison.Ordinal)
-                && outbox.Pending.Count == 0)
+                && outbox.Pending.Count == 0
+                && outbox.PendingArtifactReport is null)
                 continue;
 
             var reconciled = false;
             try
             {
-                var artifactReplay = string.Equals(
-                    outbox.Snapshot.FinalHandoffState, "artifact-replay", StringComparison.Ordinal);
-                if (artifactReplay)
+                var completion = outbox.Items.LastOrDefault(item => item.Kind == "completion");
+                if (completion is not null
+                    && completion.Sequence <= outbox.LastAcknowledgedSequence)
                 {
                     _client.RestoreCompletedOutboxAuthority(outbox.Authority);
                     _log($"completed artifact authority restored run={outbox.Authority.RunId} fence={outbox.Authority.Fence}");
                 }
                 else
                 {
-                    var lease = await _client.ReconcileOutboxAuthorityAsync(
-                        outbox.Authority,
-                        Math.Max(30, _options.TtlSeconds),
-                        ct);
-                    _log(
-                        $"outbox authority reconciled run={outbox.Authority.RunId} " +
-                        $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
+                    try
+                    {
+                        var lease = await _client.ReconcileOutboxAuthorityAsync(
+                            outbox.Authority,
+                            Math.Max(30, _options.TtlSeconds),
+                            ct);
+                        _log(
+                            $"outbox authority reconciled run={outbox.Authority.RunId} " +
+                            $"fence={outbox.Authority.Fence} expires={lease.ExpiresAt:o}");
+                    }
+                    catch (TaskServerException ex) when (
+                        ex.StatusCode == 409
+                        && completion is not null)
+                    {
+                        // Completion may have reached the server just before
+                        // the local acknowledgement was persisted, whether the
+                        // artifact stage left the outbox in "transferring" or
+                        // "artifact-replay". A completion item is journaled only
+                        // after that stage, and the exact fenced authority still
+                        // permits idempotent replay; the server rejects it if
+                        // the attempt was superseded instead.
+                        _client.RestoreCompletedOutboxAuthority(outbox.Authority);
+                        _log(
+                            $"unacknowledged completion authority restored run={outbox.Authority.RunId} " +
+                            $"fence={outbox.Authority.Fence} state={outbox.Snapshot.FinalHandoffState}");
+                    }
                 }
                 reconciled = true;
                 await RecoverAsync(outbox, ct);
@@ -76,7 +96,8 @@ public sealed class DurableHandoffRecovery
             {
                 if (reconciled)
                 {
-                    outbox.RecordHandoffState("transfer-recovery");
+                    if (outbox.Snapshot.FinalHandoffState != "artifact-replay")
+                        outbox.RecordHandoffState("transfer-recovery");
                     await ReportSafeAsync(outbox, CancellationToken.None);
                 }
                 _log($"outbox recovery deferred run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} error={ex.Message}");
@@ -199,6 +220,35 @@ public sealed class DurableHandoffRecovery
                 ct);
         }
 
+        // The previous implementation completed here and attempted artifact
+        // writes afterward. That crosses the attempt-authority terminal and
+        // turns a recoverable upload failure into a 409. Recover the bounded
+        // artifact set before settlement, just as the live runner does.
+        var artifactPartial = false;
+        try
+        {
+            await ReplayPendingArtifactReportAsync(outbox, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            artifactPartial = true;
+            _log(
+                $"artifact-report replay remained non-fatal run={outbox.Authority.RunId} "
+                + $"artifacts=partial error={ex.Message}");
+        }
+        try
+        {
+            artifactPartial |= await TransferArtifactsBeforeSettlementAsync(outbox, manifest, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            artifactPartial = true;
+            _log(
+                $"artifact-transfer recovery remained non-fatal run={outbox.Authority.RunId} "
+                + $"artifacts=partial error={ex.Message}");
+        }
+        outbox.RecordHandoffState(artifactPartial ? "artifact-replay" : "transferring", envelopeDigest);
+
         var completion = outbox.Items.LastOrDefault(item => item.Kind == "completion")
                          ?? outbox.Enqueue(
                              "completion",
@@ -213,21 +263,19 @@ public sealed class DurableHandoffRecovery
             await _client.SendOutboxItemAsync(outbox.Authority, completion, ct);
             outbox.Acknowledge(completion.Sequence);
         }
-        outbox.RecordHandoffState("completed", envelopeDigest);
+        outbox.RecordHandoffState(artifactPartial ? "artifact-replay" : "completed", envelopeDigest);
         await ReportSafeAsync(outbox, ct);
-        try
-        {
-            var retry = await TransferArtifactsAfterDeliveryAsync(outbox, manifest, ct);
-            outbox.RecordHandoffState(retry ? "artifact-replay" : "completed", envelopeDigest);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            outbox.RecordHandoffState("artifact-replay", envelopeDigest);
-            _log(
-                $"artifact-transfer recovery remained non-fatal run={outbox.Authority.RunId} "
-                + $"artifacts=partial error={ex.Message}");
-        }
-        _log($"outbox recovery completed run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} resultSha={envelope.ResultSha}");
+        _log(
+            $"outbox recovery completed run={outbox.Authority.RunId} task={outbox.Authority.TaskKey} "
+            + $"resultSha={envelope.ResultSha} artifacts={(artifactPartial ? "partial" : "complete")}");
+    }
+
+    private async Task ReplayPendingArtifactReportAsync(DurableRunOutbox outbox, CancellationToken ct)
+    {
+        var report = outbox.PendingArtifactReport;
+        if (report is null) return;
+        await _client.ReportArtifactTransferAsync(report, ct);
+        outbox.ClearPendingArtifactReport();
     }
 
     private async Task<DurableArtifactManifest> JournalArtifactsAsync(
@@ -265,7 +313,7 @@ public sealed class DurableHandoffRecovery
         return manifest;
     }
 
-    private async Task<bool> TransferArtifactsAfterDeliveryAsync(
+    private async Task<bool> TransferArtifactsBeforeSettlementAsync(
         DurableRunOutbox outbox,
         DurableArtifactManifest manifest,
         CancellationToken ct)
@@ -319,7 +367,8 @@ public sealed class DurableHandoffRecovery
                 missing.Path,
                 missing.SizeBytes,
                 "was unavailable after artifact manifest preparation",
-                ArtifactTransferOutcomes.TransferFailed));
+                ArtifactTransferOutcomes.TransferFailed,
+                Attempts: 1));
         }
         foreach (var file in files)
         {
@@ -339,7 +388,8 @@ public sealed class DurableHandoffRecovery
                         expectedByPath.ContainsKey(file.RelativePath)
                             ? "changed after artifact manifest preparation; skipped to preserve manifest integrity"
                             : "was created after artifact manifest preparation; skipped to preserve manifest integrity",
-                        ArtifactTransferOutcomes.TransferFailed));
+                        ArtifactTransferOutcomes.TransferFailed,
+                        Attempts: 1));
                     continue;
                 }
                 var upload = new RunnerArtifactUpload(file.RelativePath, Convert.ToBase64String(bytes));
@@ -372,7 +422,8 @@ public sealed class DurableHandoffRecovery
                     file.RelativePath,
                     file.SizeBytes,
                     $"upload failed ({ex.Message})",
-                    ArtifactTransferOutcomes.TransferFailed));
+                    ArtifactTransferOutcomes.TransferFailed,
+                    Attempts: 1));
             }
         }
         try
@@ -393,14 +444,17 @@ public sealed class DurableHandoffRecovery
             _log($"artifact finalization recovery was non-fatal run={outbox.Authority.RunId}: {ex.Message}");
         }
         if (issues.Count == 0) return false;
-        await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
+        var report = new ArtifactTransferReportRequest(
             outbox.Authority.TaskKey,
             "partial",
             issues,
             outbox.Authority.RunnerId,
             outbox.Authority.LeaseId,
             outbox.Authority.Fence,
-            outbox.Authority.RunId), ct);
+            outbox.Authority.RunId);
+        outbox.RecordPendingArtifactReport(report);
+        await _client.ReportArtifactTransferAsync(report, ct);
+        outbox.ClearPendingArtifactReport();
         _log(
             $"artifact-transfer recovery run={outbox.Authority.RunId} artifacts=partial "
             + $"notTransferred={issues.Count}");

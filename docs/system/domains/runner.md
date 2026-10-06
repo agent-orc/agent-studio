@@ -85,13 +85,24 @@ rollout decision.
 - `runner/ArtifactTransferPolicy.cs`, `runner/RemoteTaskRunner.cs`,
   `backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs`, and
   `task-server/TaskServerEndpoints.cs`: post-delivery
-  result evidence transport. Git result or salvage publication and fenced
-  completion happen first. The server advertises its base64-safe request
+  result evidence transport. Git result or salvage publication completes first,
+  then the runner transfers the bounded artifact set and its partial-transfer
+  receipt while the RunAttempt is still leased, and only then settles the run.
+  A bounded artifact failure never blocks code delivery. The runner reports a
+  typed `ArtifactTransferFailed` / `artifacts: partial` operator fact with its
+  retry count before settlement when the route is available. If an upload or
+  partial-outcome report fails,
+  the runner keeps `artifact-replay` in the durable outbox and persists any
+  unsent report. Recovery retries both under the original exact fence after
+  completion; a newer fence denies the old attempt. If the server accepted a
+  journaled completion before the runner persisted its acknowledgement,
+  recovery treats the 409 lease renewal as completed authority in any handoff
+  state (`transferring` or `artifact-replay`) and replays the completion
+  idempotently. Artifact idempotency keys prevent duplicate storage. The server advertises its base64-safe request
   budget plus project file and total caps (8 MiB per file by default). On the
-  v1 plane, post-completion artifact ingest, event ingest, and
-  result finalization require the exact runner, instance, and lease id alongside
-  the fence; the server admits them only while that completed lease remains the
-  current authority. A completed lease needs no later release request.
+  v1 plane, each artifact, event, and result-finalization write carries the
+  exact runner, instance, lease id, and fence. A completed lease needs no later
+  release request.
   The runner selects bounded files, excludes Playwright traces, videos,
   dependency trees, and build output, then uploads one manifest-bound file per
   request. The attempt-scoped host evidence copy survives a later task results
@@ -116,6 +127,15 @@ rollout decision.
   (AGT-2869). The reconciler runs on the ordinary daemon poll loop and re-uses
   the startup reconciliation step; the staleness policy is the single source of
   the `remote-running` / `remote-disconnected` / `remote-stale` distinction.
+- `runner/SalvageRetentionPolicy.cs`, `SalvageRetentionSweeper.cs`,
+  `SalvageTarballStore.cs`, `SalvageRefStore.cs`, and
+  `SalvageCardDirectory.cs`: the coding host's salvage store retention
+  (AGT-2999). The pure policy keeps tarballs while their card is open and for
+  14 days after completion, at most 3 per card, and deletes a salvage ref only
+  when its card is completed and its commit is on the integration branch. An
+  active run protects its card. The sweep runs on its own daemon timer and
+  reports `telemetry.salvageStore` in the remote-hosts report. See
+  [Salvage store retention](../../operations/setup/linux-runner-host.md#salvage-store-retention).
 - `runner/TaskServerConnectivityMonitor.cs`, `DaemonIdleWatchdog.cs`,
   `RemoteRunnerDaemon.cs`, and `RemoteReviewDaemon.cs`: host-side Task Server
   route and loop liveness. Poll failures use bounded backoff and transition
@@ -1591,6 +1611,73 @@ the stalled-progress verdict, and whether any returned card has rejection
 evidence. The board mentions a latest rejection only when that evidence exists.
 The watchdog emits the rate-limited `remote-ready-starvation` warning event and
 clears the acute signal when claim progress, the queue, or capacity recovers.
+
+## Operator sweeps (AGT-3011)
+
+`backend/Features/Runner/OperatorSweeps/` replaces the night-shift scripts
+(`auto-fix-rounds.mjs`, `gate-triage.mjs`, `salvage-sweep.mjs`, `sweeper.sh`)
+with one hosted service. `OperatorSweepHostedService` ticks every
+`OperatorSweeps:TickSeconds` seconds (default 600, after `InitialDelaySeconds`, default 60).
+`OperatorSweeps:Enabled` turns the service off. A failed tick is logged and the
+next tick runs on schedule.
+
+| Sweep | Trigger | Side effect (internal path) |
+|---|---|---|
+| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round material (`prompt.md` note, orchestrator follow-up, reissue tag), written and checked in the Human Review folder first, then the guarded move to the top of Ready. A failed write or a refused move restores the folder, so a Ready card never lacks its fix instructions and the next tick retries the card. The prompt carries the non-pass verdicts and the failed or planned verification commands. |
+| `gate-triage` | Card in `5-human-review` or `5e-escalated`; its current failure is the merge gate | Product failure: `TaskFailureContinuationService`, the service the operator failure panel calls. Environment failure: held for the gate-environment retry ladder (AGT-2824). Unclassified: waits for a person. The domain comes from the gate runner verdict, then the run-failure taxonomy, then `FailureInterventionPolicy`. |
+| `salvage` | Card in `5e-escalated`; its latest `agent_run_finished` is non-terminal and names a salvage pair | `continuation-base.json` plus the AGT-2861 continuation prompt, queued through `TaskRunnerService.ContinueJobAsync`. |
+
+`OperatorSweepPolicy` applies these guards in order:
+
+1. An active review attempt (`Pending` or `Leased`) holds.
+2. An active run attempt holds.
+3. A paused sweep holds.
+4. Disabled `AutomaticFailureContinuationsEnabled` holds.
+5. An already-handled subject holds.
+6. An exhausted budget waits for a person.
+
+At most one sweep acts on a card per tick.
+
+**Round budget.** `CardRoundBudget` is shared with the orchestrator and is
+counted per card across every review-attempt epoch. Default 4, set by
+`OperatorSweeps:MaxRoundsPerCard`. It counts each of these once:
+
+- `Reissue` decision-journal records (orchestrator and sweep rounds)
+- Remote Review finding and concern reopens
+- automatic `continuation_round_started` events
+
+A sweep round appends a `Reissue` record, so the orchestrator's
+epoch-scoped count sees it as well. A requeue, a `/continue`, or a sweep never
+refills the budget. Every orchestrator path that starts a new reissue checks
+this lifetime budget at its common Ready move, including deterministic gates;
+an exhausted card moves to Escalated with a decision-journal and timeline reason.
+A recorded reissue whose lane move is only being backfilled does not charge a
+second round. The orchestrator also applies its per-epoch cap
+(`MaxAutoReissueAttempts`).
+
+**State.** The service has no state file:
+
+- Pause state is `ProjectSettings.OperatorSweepPauses`, which survives a restart.
+- The per-subject receipt is an `operator_sweep_round_started` timeline event in the task folder.
+- The budget charge is the decision journal record.
+- The last tick's per-card reasons are kept in memory and rebuilt by the next tick.
+- Run state has two scopes. Tick timing and a failure of the whole tick
+  (the scan itself) are fleet-wide. Per-sweep counts and card evaluation
+  failures are kept per project: a card failure alarms only its own
+  project's projection, until that project's next tick evaluates cleanly.
+
+**API.**
+
+- `GET /api/projects/{project}/operator-sweeps` returns the projection:
+  - per sweep: last run, counts, recent actions, error, and whether it is paused or overdue
+  - per card: rounds left and every sweep's action and reason
+  - the cards waiting for a person
+- `POST .../operator-sweeps/{sweep}/pause` with body `{ reason? }` pauses a sweep.
+- `POST .../operator-sweeps/{sweep}/resume` resumes it.
+
+The UI renders the projection directly under the pipeline health block.
+
+**Out of scope.** The night-shift watchdog and start wrapper are not part of this service.
 
 ## Follow-ups: admission, queueing, preservation
 
