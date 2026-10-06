@@ -29,7 +29,7 @@ public static class TaskRunnerEndpoints
             try
             {
                 var resp = await runner.StartJobAsync(jobId, watchPath, req?.Model, req?.CliType, req?.ThinkingLevel, ct);
-                return resp.Status == "queued"
+                return resp.Status is "queued" or "saved"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);
             }
@@ -159,7 +159,7 @@ public static class TaskRunnerEndpoints
                     ?? context.Request.Headers["X-Client-Id"].FirstOrDefault()
                     ?? "local-default";
                 var resp = await runner.ContinueJobAsync(jobId, req.Prompt, watchPath, req.Model, req.CliType, req.ThinkingLevel, mode, req.ModeOverride, author: TimelineActors.Human(caller), ct: ct, reason: req.Reason, triggeredBy: caller);
-                return resp.Status == "queued"
+                return resp.Status is "queued" or "saved"
                     ? Results.Accepted(value: resp)
                     : Results.Ok(resp);
             }

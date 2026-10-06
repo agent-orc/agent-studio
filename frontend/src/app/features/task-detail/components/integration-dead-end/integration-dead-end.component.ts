@@ -21,6 +21,7 @@ export class IntegrationDeadEndComponent {
   readonly recheckRequested = output<void>();
   readonly model = computed(() => integrationDeadEnd(this.status(), this.containmentUnknown(), this.review()));
   readonly busy = signal(false);
+  readonly savedReason = signal<string | null>(null);
   private readonly tasks = inject(TaskService);
   private readonly notifications = inject(NotificationService);
 
@@ -28,14 +29,38 @@ export class IntegrationDeadEndComponent {
     if (this.busy()) return;
     this.busy.set(true);
     this.tasks.continueFromFailure(this.jobId(), this.watchPath() ?? undefined).subscribe({
-      next: () => {
+      next: (response) => {
         this.busy.set(false);
-        this.notifications.success('Continuation queued on this task.');
+        if (response.status === 'saved') {
+          this.savedReason.set(response.savedReason || 'reason unavailable');
+        } else {
+          this.savedReason.set(null);
+          this.notifications.success(response.status === 'started'
+            ? 'Continuation started on this task.'
+            : 'Continuation queued. Task moved to Ready.');
+        }
         this.tasks.refresh(true);
       },
       error: () => {
         this.busy.set(false);
         this.notifications.error('Could not queue the continuation.');
+      },
+    });
+  }
+
+  moveSavedToReady(): void {
+    if (this.busy()) return;
+    this.busy.set(true);
+    this.tasks.moveJob(this.jobId(), '2-ready', this.watchPath() ?? undefined).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.savedReason.set(null);
+        this.notifications.success('Task moved to Ready. The saved continuation can run on pickup.');
+        this.tasks.refresh(true);
+      },
+      error: () => {
+        this.busy.set(false);
+        this.notifications.error('Could not move the task to Ready.');
       },
     });
   }

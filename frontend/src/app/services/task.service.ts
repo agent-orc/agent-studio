@@ -909,7 +909,7 @@ export class TaskService {
 
   /** Ask the orchestrator to extend the same card with its recorded failure evidence. */
   continueFromFailure(jobId: string, watchPath?: string) {
-    return this.http.post<{ status: string; stage: string; taskKey: string }>(
+    return this.http.post<{ status: 'started' | 'queued' | 'saved'; stage: string; taskKey: string; savedReason: string | null }>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/failure/continue`,
       {},
       this.withWatchPath(watchPath),

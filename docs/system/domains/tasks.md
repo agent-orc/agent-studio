@@ -74,6 +74,14 @@ or commit attribution.
   mode back on `ContinueJobRequest.ModeOverride`; any other value, including a
   mismatched mode, does not bypass it. The guard runs before the follow-up is
   written to disk, so a rejected continue leaves no trace on the card.
+- `POST /api/tasks/{id}/failure/continue` on a parked delivered card saves the
+  failure-aware follow-up and promotes the card to `2-ready` for pickup. Its
+  response reports `queued` and the saved reason only after that move succeeds.
+  If promotion fails, the intent remains saved and the response reports `saved`
+  with the reason; the task detail offers a direct Ready move. Reissue from an
+  escalation also moves to Ready and keeps the same task selected. When a new
+  run parks again, the escalation header uses the newest run and current park
+  marker to show when that attempt ended and why.
 
 ## Entry Points
 

@@ -1097,16 +1097,17 @@ export interface PendingIntent {
  * with another job, the user's intent has been saved on the target task,
  * and the target task is now at the top of `2-ready`. The frontend treats
  * `queued` as success-with-info (no modal); the chat carries the
- * orchestrator's `[queued]` line.
+ * orchestrator's `[queued]` line. `saved` means the intent persisted but
+ * the move to Ready failed, so the operator must move the card.
  */
 export interface ContinueTaskResponse {
-  status: 'started' | 'queued';
+  status: 'started' | 'queued' | 'saved';
   execution?: CliExecution | null;
   queued?: ContinueTaskQueuedInfo | null;
 }
 
 export interface ContinueTaskQueuedInfo {
-  reason: 'project-busy';
+  reason: string;
   activeJobId?: string | null;
   activeJobTitle?: string | null;
   position: number;

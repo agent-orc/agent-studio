@@ -1,18 +1,20 @@
 namespace AgentStudio.Tasks;
 
 /// <summary>Why a failure continuation did or did not start.</summary>
-/// <param name="Status">HTTP-shaped status: 202 started or queued, 404 or 409 refused, or the runner's error status.</param>
+/// <param name="Status">HTTP-shaped status: 202 started, queued, or saved; 404 or 409 refused; or the runner's error status.</param>
 /// <param name="Error">Operator-facing refusal text, null when the continuation was queued.</param>
-/// <param name="RunStatus">The runner's <c>started</c> or <c>queued</c> answer.</param>
+/// <param name="RunStatus">The runner's <c>started</c>, <c>queued</c>, or <c>saved</c> answer.</param>
 /// <param name="Stage">The failed stage the continuation addresses.</param>
 public sealed record TaskFailureContinuationResult(
     int Status,
     string? Error,
     string? RunStatus = null,
     string? Stage = null,
-    string? TaskKey = null)
+    string? TaskKey = null,
+    string? SavedReason = null)
 {
-    public bool Started => Error is null;
+    public bool Accepted => Error is null;
+    public bool Started => Accepted && (RunStatus is "started" or "queued");
 }
 
 /// <summary>
@@ -122,12 +124,14 @@ public sealed class TaskFailureContinuationService
             };
             foreach (var (key, value) in extraDetails ?? new Dictionary<string, string>())
                 details[key] = value;
-            _timeline.Append(current.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued,
-                TimelineActors.System,
-                $"Continuation queued from {stage}: {reason}",
-                payloadRef: LatestExtension(current.FolderPath),
-                details: details);
-            return new TaskFailureContinuationResult(202, null, response.Status, stage, job.Key);
+            if (response.Status != "saved")
+                _timeline.Append(current.FolderPath, TimelineEventKinds.IntegrationRecoveryQueued,
+                    TimelineActors.System,
+                    $"Continuation queued from {stage}: {reason}",
+                    payloadRef: LatestExtension(current.FolderPath),
+                    details: details);
+            return new TaskFailureContinuationResult(202, null, response.Status, stage, job.Key,
+                response.Queued?.Reason);
         }
         catch (TaskOperationException ex)
         {

@@ -183,6 +183,7 @@ export class TriageController {
     ev: { targetState: string; actionId: string },
     reason?: string,
   ): void {
+    const keepTaskOpen = ev.actionId === 'reissue-escalated';
     const lane = this.jobSelection.triageLaneState ?? info.state;
     const peers = this.jobSelection.triageLanePeers();
     // Capture prev lane + slot BEFORE the optimistic move so undo can
@@ -205,8 +206,10 @@ export class TriageController {
     // pager snapshot (the lane iteration the user opened detail in)
     // and the prefetch cache, so the new panel paints without a
     // roundtrip.
-    if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
-      this.advanceToNextInLane(lane, info.taskKey, peers);
+    if (!keepTaskOpen) {
+      if (!this.jobSelection.advanceAfterMutation(info.taskKey)) {
+        this.advanceToNextInLane(lane, info.taskKey, peers);
+      }
     }
 
     let persistResolve!: () => void;
@@ -237,6 +240,14 @@ export class TriageController {
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
+        if (keepTaskOpen) {
+          this.jobService.getDetail(info.id, info.watchPath).subscribe({
+            next: detail => {
+              if (this.jobSelection.selected()?.info.taskKey === info.taskKey)
+                this.jobSelection.selectResolvedDetail(detail, 'replace');
+            },
+          });
+        }
         this.clearActing();
       },
       error: (err) => {

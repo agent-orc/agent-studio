@@ -221,7 +221,8 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
             }).ConfigureAwait(false);
         return result.Started
             ? new OperatorSweepActionResult(true, $"Fix round queued from {result.Stage} ({result.RunStatus}).")
-            : new OperatorSweepActionResult(false, result.Error ?? "The failure continuation was refused.");
+            : new OperatorSweepActionResult(false, result.Error
+                ?? $"Continuation saved ({result.SavedReason}) but the Ready move did not complete.");
     }
 
     public async Task<OperatorSweepActionResult> ContinueSalvageAsync(

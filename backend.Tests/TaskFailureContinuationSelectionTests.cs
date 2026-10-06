@@ -4,6 +4,19 @@ namespace AgentStudio.Tests;
 
 public sealed class TaskFailureContinuationSelectionTests
 {
+    [Theory]
+    [InlineData("started", true)]
+    [InlineData("queued", true)]
+    [InlineData("saved", false)]
+    public void ContinuationDisposition_OnlyRunnableAnswersCountAsStarted(string status, bool started)
+    {
+        var result = new TaskFailureContinuationResult(202, null, status, "delivery-pending", "AGT-3023",
+            "lane-not-runnable");
+
+        Assert.True(result.Accepted);
+        Assert.Equal(started, result.Started);
+    }
+
     [Fact]
     public void CurrentFailureStep_DoesNotReviveOldFailureAfterDeliveryIsIntegrated()
     {

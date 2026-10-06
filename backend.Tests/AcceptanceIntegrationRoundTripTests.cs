@@ -472,14 +472,18 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.False(gate.Entered.IsCompleted);
     }
 
-    [Fact]
-    public async Task FailureContinueHttp_ExtendsSameCardWithPinsAndTimelineEvidence()
+    [Theory]
+    [InlineData(TaskStates.HumanReview)]
+    [InlineData(TaskStates.Escalated)]
+    public async Task FailureContinueHttp_ExtendsSameCardWithPinsAndTimelineEvidence(string parkedLane)
     {
         var deliverySha = PublishDelivery("continuation.txt", "pending delivery\n");
-        var deps = Build(deliverySha);
+        var deps = Build(deliverySha, initialState: parkedLane);
         deps.Mutations.SetJobModel(Slug, "pinned-model", _watchPath);
         deps.Mutations.SetJobThinkingLevel(Slug, "high", _watchPath);
-        var folder = Path.Combine(_watchPath, TaskStates.HumanReview, Slug);
+        var folder = Path.Combine(_watchPath, parkedLane, Slug);
+        ParkedBlockerMarker.Write(folder, ParkedBlockerCatalog.Build(
+            parkedLane, "Parked for an operator decision.", DateTime.UtcNow)!);
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Original task direction.\n");
         File.WriteAllText(Path.Combine(folder, PipelineExecutionLog.FileName),
             JsonSerializer.Serialize(new PipelineExecutionRecord
@@ -527,11 +531,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         Assert.True(response.StatusCode == HttpStatusCode.Accepted,
             $"Expected 202 but got {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("queued", payload.RootElement.GetProperty("status").GetString());
+        Assert.Equal("lane-not-runnable", payload.RootElement.GetProperty("savedReason").GetString());
         var queued = factory.Services.GetRequiredService<TaskScannerService>()
             .FindJob(Slug, _watchPath);
         Assert.NotNull(queued);
         Assert.Equal(TaskKey, queued!.Key);
         Assert.Equal(TaskStates.Ready, queued.State);
+        Assert.Null(ParkedBlockerMarker.TryRead(queued.FolderPath));
         Assert.Equal("pinned-model", queued.Model);
         Assert.Equal("high", queued.ThinkingLevel);
         Assert.Equal("codex", queued.CliType);

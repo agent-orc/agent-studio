@@ -255,9 +255,17 @@ const TIMELINE = [
   },
 ];
 
-async function installRoutes(page: Page, state: string, emptyContext = false): Promise<void> {
-  const info = buildInfo(state, emptyContext);
+async function installRoutes(page: Page, state: string, emptyContext = false, recentAttempt = false): Promise<void> {
+  const info = {
+    ...buildInfo(state, emptyContext),
+    ...(recentAttempt ? {
+      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+    } : {}),
+  };
   const detail = buildDetail(state, emptyContext);
+  if (recentAttempt) {
+    detail.info = info;
+  }
   const grouped = {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [],
     failedPickup: [], codeNotComplete: [], review: [], autoReview: [],
@@ -324,6 +332,17 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
       body: GRADE_DOCUMENTS.get(fileName) ?? '# Missing grade fixture',
     });
   });
+  await page.route(/\/api\/tasks\/[^/]+\/runs(\?|$)/, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      runCount: recentAttempt ? 1 : 0,
+      firstStartedAt: recentAttempt ? '2026-10-06T04:21:54Z' : null,
+      lastActivityAt: recentAttempt ? '2026-10-06T04:22:53Z' : null,
+      hasActiveRun: false,
+      runs: recentAttempt ? [{
+        index: 1, startedAt: '2026-10-06T04:21:54Z', endedAt: '2026-10-06T04:22:53Z',
+        status: 'failed', reason: 'Push protection rejected the branch.',
+      }] : [],
+    }) }));
   await page.route('**/timeline**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(TIMELINE) }));
 }
@@ -335,7 +354,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
 async function dismissAppErrorDialog(page: Page): Promise<void> {
   const dialog = page.getByTestId('error-dialog');
   for (let i = 0; i < 3 && (await dialog.isVisible().catch(() => false)); i++) {
-    await page.keyboard.press('Escape');
+    await page.getByTestId('error-dialog-close').click();
     await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined);
   }
 }
@@ -347,9 +366,9 @@ async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
   }, theme);
 }
 
-async function openDetail(page: Page, state: string, emptyContext = false): Promise<void> {
+async function openDetail(page: Page, state: string, emptyContext = false, recentAttempt = false): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 960 });
-  await installRoutes(page, state, emptyContext);
+  await installRoutes(page, state, emptyContext, recentAttempt);
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
   await expect(page.getByTestId('escalation-summary')).toBeVisible({ timeout: 20_000 });
 }
@@ -375,6 +394,14 @@ async function shootBothThemes(page: Page, testInfo: TestInfo, baseName: string)
 
 test.describe('Escalation summary panel — collapsible + compact', () => {
   test.beforeEach(() => test.setTimeout(90_000));
+
+  test('shows the latest continued attempt in the parked header', async ({ page }, testInfo) => {
+    await openDetail(page, '5e-escalated', true, true);
+    await expect(page.getByTestId('escalation-essence')).toContainText(
+      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+    );
+    await shootBothThemes(page, testInfo, 'escalation-latest-attempt');
+  });
 
   test('keeps the MKT-20 three-round essence bounded and every artifact readable', async ({ page }, testInfo) => {
     await openDetail(page, '5e-escalated');
