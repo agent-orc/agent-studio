@@ -16,7 +16,7 @@
 
 .studio {
   display: grid;
-  grid-template-rows: var(--studio-titlebar-h) 1fr auto;
+  grid-template-rows: calc(var(--studio-titlebar-h) + var(--studio-row-min-h-interactive-compact) + var(--studio-spacing-2)) 1fr auto;
   // Single-column track, but explicit minmax(0, 1fr) so the column does
   // NOT grow to the intrinsic min-content of its children. Without
   // this, the implicit `auto` single-column expanded to the
@@ -40,7 +40,7 @@
   // If a button-class modifier wants a non-zero padding-left, it must
   // bump specificity (e.g. `.studio .studio-tree-row--child`) or this
   // reset will silently win.
-  button {
+  button:not(.usage-cli-chip):not(.usage-cost-chip) {
     font-family: inherit;
     color: inherit;
     background: none;
@@ -67,14 +67,29 @@
 // -------------------------------------------------------------------------
 .studio-titlebar {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  flex-direction: column;
+  min-width: 0;
   background: var(--studio-bg-titlebar);
   border-bottom: 1px solid var(--studio-border);
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
+
+  &__main {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-spacing-2);
+    width: 100%;
+    height: var(--studio-titlebar-h);
+    min-width: 0;
+    padding-inline: var(--studio-spacing-3);
+  }
+
+  &__usage {
+    width: 100%;
+    min-width: 0;
+    padding-inline: var(--studio-spacing-3);
+  }
 
   &__brand {
     display: flex;
@@ -219,6 +234,25 @@
       background: var(--studio-bg-hover);
       border-color: var(--studio-accent);
       color: var(--studio-fg-strong);
+    }
+  }
+}
+
+@media (max-width: 600px) {
+  .studio { grid-template-rows: calc(var(--studio-row-min-h-interactive-cozy) + var(--studio-spacing-2)) 1fr auto; }
+  .studio-titlebar {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--studio-spacing-1);
+    &__main { flex: 0 1 auto; width: auto; padding-inline-end: 0; }
+    &__usage { flex: 1 1 auto; width: auto; padding-inline-start: 0; }
+    &__crumbs, &__separator, &__search, &__actions { display: none; }
+    &__picker .studio-pill__label,
+    &__picker .studio-pill__count,
+    &__picker .studio-auto-toggle { display: none; }
+    &__usage .usage-cli-chip,
+    &__usage .usage-cost-chip {
+      min-height: calc(var(--studio-row-min-h-interactive-cozy) + var(--studio-spacing-1));
     }
   }
 }

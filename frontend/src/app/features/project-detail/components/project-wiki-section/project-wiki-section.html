@@ -92,7 +92,7 @@
          [class.pwiki__body--resizing]="resizingPanel() === 'nav'"
          [style.--pwiki-nav-width]="navWidthStyle()">
       @if (!navCollapsed()) {
-      <nav class="pwiki__tree" id="project-wiki-tree" data-testid="project-wiki-tree" aria-label="Knowledge categories">
+      <nav class="pwiki__tree" id="project-wiki-tree" data-testid="project-wiki-tree" aria-label="Knowledge categories"><app-wiki-tag-controls [projectName]="projectName()" (openGlossaries)="openGlossaries()" />
         <label class="pwiki__filter-wrap">
           <app-studio-icon name="search" [size]="13"></app-studio-icon>
           <input class="pwiki__filter"
@@ -218,7 +218,7 @@
                     <app-studio-icon [name]="pageIcon(row.node)" [size]="13"></app-studio-icon>
                   </span>
                   <span class="pwiki__label-copy">
-                    <span class="pwiki__label-text">{{ row.node.title }}</span>
+                    <span class="pwiki__label-text">{{ row.node.title }}</span><app-tag-chips [ids]="row.node.tags ?? []" [projectName]="projectName()" /><app-tag-proposals [projectName]="projectName()" subjectKind="wiki" [subjectId]="row.node.relPath ?? ''" [taggingStatus]="row.node.taggingStatus ?? null" />
                     <span class="pwiki__metric-strip"
                           [attr.data-testid]="'project-wiki-ratings-' + row.node.relPath">
                       @for (chip of documentMetricChips(row.node); track chip.key) {
@@ -238,10 +238,10 @@
                         </button>
                       }
                     </span>
-                    @if (classificationBadges(row.node.classification).length || row.node.taggingStatus === 'tagged' || row.node.taggingStatus === 'tags-proposed') {
+                    @if (classificationBadges(row.node.classification).length || row.node.taggingStatus === 'tagged') {
                       <span class="pwiki__class-strip" [attr.data-testid]="'project-wiki-class-' + row.node.relPath">
-                        @if (row.node.taggingStatus === 'tagged' || row.node.taggingStatus === 'tags-proposed') {
-                          <span class="pwiki__class-chip" [attr.data-testid]="'project-wiki-tagging-' + row.node.relPath" [cacTooltip]="row.node.taggingStatus === 'tags-proposed' ? 'Low-confidence tag suggestions await review' : 'Auto-tagged article'">{{ row.node.taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Tagged' }}</span>
+                        @if (row.node.taggingStatus === 'tagged') {
+                          <span class="pwiki__class-chip" [attr.data-testid]="'project-wiki-tagging-' + row.node.relPath" cacTooltip="Auto-tagged article">Tagged</span>
                         }
                         @for (badge of classificationBadges(row.node.classification); track badge.key) {
                           <span class="pwiki__class-chip" [attr.data-kind]="badge.key" [attr.data-tone]="badge.tone"
@@ -282,11 +282,11 @@
       </div>
       }
       <div class="pwiki__viewer">
-        @if (searchActive()) {
+        @if (glossaryOpen()) { <app-area-glossary [projectName]="projectName()" [roots]="roots()" (openPage)="openGlossaryPage($event)" (openDossier)="openWorkbench.emit($event)" /> } @else if (searchActive()) {
           <app-wiki-search-results
               [projectName]="projectName()"
               [query]="searchQuery()"
-              [response]="searchResponse()" [documentOrder]="wikiDocumentOrder()"
+              [response]="filteredSearchResponse()" [documentOrder]="wikiDocumentOrder()"
               [loading]="searchLoading()"
               [semanticLoading]="semanticLoading()"
               [semanticRequested]="semanticRequested()"

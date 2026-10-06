@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Collections.Concurrent;
 
 namespace AgentRunner;
 
@@ -311,6 +312,29 @@ public sealed class RemoteRunnerDaemon
         }
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
+        // Claim admission and salvage deletion share this gate. A claim is
+        // protected from the server mutation until its card is visible here.
+        var salvageAdmissionGate = new SemaphoreSlim(1, 1);
+        var admittedCardKeys = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        foreach (var slot in active.Where(slot => slot.TaskKey is not null))
+            admittedCardKeys.TryAdd(slot.TaskKey!, 0);
+        foreach (var accepted in hostJournal.RecoverAcceptedWork())
+            admittedCardKeys.TryAdd(accepted.Task.TaskKey, 0);
+        // AGT-2999: the coding host owns its salvage store. The sweep runs on its
+        // own timer. Deletion and claim admission meet only at the final boundary.
+        var salvage = _options.Role == "coding" && !string.IsNullOrWhiteSpace(_options.SalvageDir)
+            ? new SalvageRetentionSweeper(
+                _options,
+                new TaskServerSalvageCardDirectory(_client),
+                new GitSalvageRefStore(_options),
+                () => ActiveTaskKeys(inventory.Snapshot(), state)
+                    .Concat(admittedCardKeys.Keys)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                _log,
+                runAdmissionGate: salvageAdmissionGate)
+            : null;
+        var salvageSweep = salvage?.RunAsync(shutdown) ?? Task.CompletedTask;
         HostTelemetrySample? latestTelemetry = telemetry.SampleIfDue(
             active.Count,
             connectivity.Snapshot);
@@ -325,7 +349,7 @@ public sealed class RemoteRunnerDaemon
                         gitCapability.CanPushWorkflows,
                         gitCapability.Detail,
                         connectivity: connectivity.Snapshot),
-                    RunnerCapabilityProbe.Telemetry(latestTelemetry),
+                    RunnerCapabilityProbe.Telemetry(latestTelemetry, salvageStore: salvage?.Current),
                     capabilityGeneration,
                     ct);
             },
@@ -395,6 +419,8 @@ public sealed class RemoteRunnerDaemon
                 try { _log($"slot completed with exit code {await active[i].Execution}"); }
                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
                 catch (Exception ex) { _log($"slot failed: {ex}"); }
+                if (active[i].TaskKey is { } completedKey)
+                    admittedCardKeys.TryRemove(completedKey, out _);
                 active.RemoveAt(i);
             }
             idleWatchdog.RecordActiveSlots(active.Count);
@@ -413,6 +439,7 @@ public sealed class RemoteRunnerDaemon
                              shutdown))
                 {
                     active.Add(new ActiveSlot(redrive.TaskKey, redrive.Execution));
+                    admittedCardKeys.TryAdd(redrive.TaskKey, 0);
                     idleWatchdog.RecordActiveSlots(active.Count);
                 }
                 var cliUpdate = await _client.GetCliUpdateAsync(shutdown);
@@ -489,7 +516,7 @@ public sealed class RemoteRunnerDaemon
                                 gitCapability.CanPushWorkflows,
                                 gitCapability.Detail,
                                 connectivity: connectivity.Snapshot),
-                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry),
+                            RunnerCapabilityProbe.Telemetry(capabilityTelemetry, salvageStore: salvage?.Current),
                             generation,
                             ct),
                         async ct =>
@@ -573,17 +600,26 @@ public sealed class RemoteRunnerDaemon
                         {
                             try
                             {
-                                var acceptance = await _client.AcceptWorkPermitAsync(
-                                    permit,
-                                    hostReport.AcceptedSequence,
-                                    hostReport.PolicyVersion,
-                                    CancellationToken.None);
-                                hostJournal.Enqueue(acceptance);
-                                claimedAny = true;
-                                _log(
-                                    $"accepted host permit {permit.PermitId} for " +
-                                    $"{acceptance.Task.ProjectId}/{acceptance.Task.TaskKey}; " +
-                                    $"queued={hostJournal.QueuedCount}");
+                                await salvageAdmissionGate.WaitAsync(shutdown);
+                                try
+                                {
+                                    var acceptance = await _client.AcceptWorkPermitAsync(
+                                        permit,
+                                        hostReport.AcceptedSequence,
+                                        hostReport.PolicyVersion,
+                                        CancellationToken.None);
+                                    hostJournal.Enqueue(acceptance);
+                                    admittedCardKeys.TryAdd(acceptance.Task.TaskKey, 0);
+                                    claimedAny = true;
+                                    _log(
+                                        $"accepted host permit {permit.PermitId} for " +
+                                        $"{acceptance.Task.ProjectId}/{acceptance.Task.TaskKey}; " +
+                                        $"queued={hostJournal.QueuedCount}");
+                                }
+                                finally
+                                {
+                                    salvageAdmissionGate.Release();
+                                }
                             }
                             catch (TaskServerException ex) when (ex.StatusCode == 409)
                             {
@@ -701,105 +737,114 @@ public sealed class RemoteRunnerDaemon
 
                     inventorySnapshot = inventory.Snapshot();
                     activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
-                    var claim = await ClaimWithProjectPreflightAsync(new RunnerClaimRequest(
-                        _options.RunnerId, _options.RunnerName, _options.Hostname,
-                        Environment.ProcessId, _options.BackendName, _options.TtlSeconds,
-                        TakeTelemetry(),
-                        AvailableSlots: InteractiveChatAdmission.FreeCodingSlots(
-                            _client.HostMaxParallelism, active.Count,
-                            interactiveChat.HeavyCount),
-                        ActiveSlots: active.Count,
-                        IdempotencyKey: $"claim:{_options.RunnerId}:{Guid.NewGuid():N}",
-                        ActiveTaskKeys: activeTaskKeys,
-                        Inventory: inventorySnapshot),
-                        // A claim is an atomic server-side mutation. Once sent,
-                        // do not cancel the HTTP request on SIGTERM.
-                        CancellationToken.None,
-                        shutdown);
-                    AcknowledgeInventory(inventory, inventorySnapshot, claim);
-                    if (claim.ReprobeCapabilities is { Count: > 0 })
+                    await salvageAdmissionGate.WaitAsync(shutdown);
+                    try
                     {
-                        foreach (var capability in claim.ReprobeCapabilities.Distinct(StringComparer.Ordinal))
-                        {
-                            var match = RunnerCapabilityProbe.CodingCliBinaries(_options)
-                                .FirstOrDefault(item => string.Equals(
-                                    AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(item.CliType),
-                                    capability,
-                                    StringComparison.Ordinal));
-                            if (string.IsNullOrWhiteSpace(match.Binary)) continue;
-                            var refreshed = await ProviderAuthProbe.Shared.RefreshAsync(match.Binary, shutdown);
-                            _log(
-                                $"provider-auth reprobe-request capability={capability} "
-                                + $"status={refreshed.Status} detail={refreshed.Detail}");
-                        }
-                        // Publish the forced verdict before the next claim poll,
-                        // so retry-dispatch cannot bounce against stale memory.
-                        nextCapabilityAdvertisement = DateTime.MinValue;
-                    }
-                    if (claim.Status != RunnerClaimStatus.Claimed
-                        || string.IsNullOrWhiteSpace(claim.TaskKey)
-                        || claim.Lease is null)
-                    {
-                        if (claim.Status is RunnerClaimStatus.PreflightFailed or RunnerClaimStatus.Invalid)
-                            _log($"claim refused status={claim.Status} project={claim.ProjectName ?? "unknown"} reason={claim.Message ?? "no detail"}");
-                        break;
-                    }
-
-                    var taskRunner = new RemoteTaskRunner(
-                        _options,
-                        _client,
-                        _log,
-                        state,
-                        inventory);
-                    if (shutdown.IsCancellationRequested)
-                    {
-                        var workspace = new GitWorkspace(
-                            _options, claim.TaskKey, _log,
-                            claim.ProjectId, claim.RepositoryUrl, claim.DefaultBranch,
-                            sourceRunAttemptId: claim.RunId
-                                ?? claim.Lease.AttemptId
-                                ?? claim.Lease.LeaseId,
-                            fencingToken: claim.Lease.FencingToken);
-                        var slot = state.Create(
-                            claim.TaskKey, claim.Lease, workspace.RepoPath,
-                            claim.RunId, claim.LeaseInstanceId, claim.ProjectId,
-                            claim.RepositoryUrl, claim.DefaultBranch, claim.TaskKind,
-                            claim.RunSpec);
-                        const string reason = "planned daemon shutdown completed an in-flight claim before worker start";
-                        _log($"releasing claim completed during shutdown task={claim.TaskKey} lease={claim.Lease.LeaseId}");
-                        if (!await taskRunner.ReleaseDeadAsync(slot, reason))
-                            throw new InvalidOperationException(
-                                $"Claim '{claim.Lease.LeaseId}' completed during shutdown but could not be released. " +
-                                "Durable state was retained for replacement startup.");
-                        break;
-                    }
-
-                    claimedAny = true;
-                    _log($"claimed {claim.ProjectName}/{claim.TaskKey} using project cache {claim.ProjectId ?? "legacy fallback"} into slot {active.Count + 1}/{_client.HostMaxParallelism}");
-                    active.Add(new ActiveSlot(
-                        claim.TaskKey,
-                        taskRunner.RunClaimedAsync(
-                            claim.TaskKey,
-                            claim.Lease,
+                        var claim = await ClaimWithProjectPreflightAsync(new RunnerClaimRequest(
+                            _options.RunnerId, _options.RunnerName, _options.Hostname,
+                            Environment.ProcessId, _options.BackendName, _options.TtlSeconds,
+                            TakeTelemetry(),
+                            AvailableSlots: InteractiveChatAdmission.FreeCodingSlots(
+                                _client.HostMaxParallelism, active.Count,
+                                interactiveChat.HeavyCount),
+                            ActiveSlots: active.Count,
+                            IdempotencyKey: $"claim:{_options.RunnerId}:{Guid.NewGuid():N}",
+                            ActiveTaskKeys: activeTaskKeys,
+                            Inventory: inventorySnapshot),
+                            // A claim is an atomic server-side mutation. Once sent,
+                            // do not cancel the HTTP request on SIGTERM.
                             CancellationToken.None,
-                            claim.ProjectId,
-                            claim.RepositoryUrl,
-                            claim.DefaultBranch,
-                            claim.TaskKind,
-                            claim.RunId,
-                            claim.LeaseInstanceId,
-                            // T0b: the card's execution spec. Null from a server
-                            // that predates it - the runner then falls back to
-                            // its RUNNER_CLI_* configuration as before.
-                            claim.RunSpec,
-                            shutdown,
-                            claim.ContinuationBaseRef,
-                            claim.ContinuationBaseSha,
-                            claim.PreviousSession,
-                            claim.MechanicalDelta,
-                            claim.FreshRunReason,
-                            claim.RequiredCapabilities)));
-                    idleWatchdog.RecordActiveSlots(active.Count);
+                            shutdown);
+                        AcknowledgeInventory(inventory, inventorySnapshot, claim);
+                        if (claim.ReprobeCapabilities is { Count: > 0 })
+                        {
+                            foreach (var capability in claim.ReprobeCapabilities.Distinct(StringComparer.Ordinal))
+                            {
+                                var match = RunnerCapabilityProbe.CodingCliBinaries(_options)
+                                    .FirstOrDefault(item => string.Equals(
+                                        AgentStudio.TaskServer.Contracts.CapabilityProtocol.ProviderAuthentication(item.CliType),
+                                        capability,
+                                        StringComparison.Ordinal));
+                                if (string.IsNullOrWhiteSpace(match.Binary)) continue;
+                                var refreshed = await ProviderAuthProbe.Shared.RefreshAsync(match.Binary, shutdown);
+                                _log(
+                                    $"provider-auth reprobe-request capability={capability} "
+                                    + $"status={refreshed.Status} detail={refreshed.Detail}");
+                            }
+                            // Publish the forced verdict before the next claim poll,
+                            // so retry-dispatch cannot bounce against stale memory.
+                            nextCapabilityAdvertisement = DateTime.MinValue;
+                        }
+                        if (claim.Status != RunnerClaimStatus.Claimed
+                            || string.IsNullOrWhiteSpace(claim.TaskKey)
+                            || claim.Lease is null)
+                        {
+                            if (claim.Status is RunnerClaimStatus.PreflightFailed or RunnerClaimStatus.Invalid)
+                                _log($"claim refused status={claim.Status} project={claim.ProjectName ?? "unknown"} reason={claim.Message ?? "no detail"}");
+                            break;
+                        }
+
+                        var taskRunner = new RemoteTaskRunner(
+                            _options,
+                            _client,
+                            _log,
+                            state,
+                            inventory);
+                        if (shutdown.IsCancellationRequested)
+                        {
+                            var workspace = new GitWorkspace(
+                                _options, claim.TaskKey, _log,
+                                claim.ProjectId, claim.RepositoryUrl, claim.DefaultBranch,
+                                sourceRunAttemptId: claim.RunId
+                                    ?? claim.Lease.AttemptId
+                                    ?? claim.Lease.LeaseId,
+                                fencingToken: claim.Lease.FencingToken);
+                            var slot = state.Create(
+                                claim.TaskKey, claim.Lease, workspace.RepoPath,
+                                claim.RunId, claim.LeaseInstanceId, claim.ProjectId,
+                                claim.RepositoryUrl, claim.DefaultBranch, claim.TaskKind,
+                                claim.RunSpec);
+                            const string reason = "planned daemon shutdown completed an in-flight claim before worker start";
+                            _log($"releasing claim completed during shutdown task={claim.TaskKey} lease={claim.Lease.LeaseId}");
+                            if (!await taskRunner.ReleaseDeadAsync(slot, reason))
+                                throw new InvalidOperationException(
+                                    $"Claim '{claim.Lease.LeaseId}' completed during shutdown but could not be released. " +
+                                    "Durable state was retained for replacement startup.");
+                            break;
+                        }
+
+                        claimedAny = true;
+                        _log($"claimed {claim.ProjectName}/{claim.TaskKey} using project cache {claim.ProjectId ?? "legacy fallback"} into slot {active.Count + 1}/{_client.HostMaxParallelism}");
+                        active.Add(new ActiveSlot(
+                            claim.TaskKey,
+                            taskRunner.RunClaimedAsync(
+                                claim.TaskKey,
+                                claim.Lease,
+                                CancellationToken.None,
+                                claim.ProjectId,
+                                claim.RepositoryUrl,
+                                claim.DefaultBranch,
+                                claim.TaskKind,
+                                claim.RunId,
+                                claim.LeaseInstanceId,
+                                // T0b: the card's execution spec. Null from a server
+                                // that predates it - the runner then falls back to
+                                // its RUNNER_CLI_* configuration as before.
+                                claim.RunSpec,
+                                shutdown,
+                                claim.ContinuationBaseRef,
+                                claim.ContinuationBaseSha,
+                                claim.PreviousSession,
+                                claim.MechanicalDelta,
+                                claim.FreshRunReason,
+                                claim.RequiredCapabilities)));
+                        admittedCardKeys.TryAdd(claim.TaskKey, 0);
+                        idleWatchdog.RecordActiveSlots(active.Count);
+                    }
+                    finally
+                    {
+                        salvageAdmissionGate.Release();
+                    }
                 }
 
                 if (!claimedAny)
@@ -850,6 +895,7 @@ public sealed class RemoteRunnerDaemon
         if (codingHandoffs.Length > 0)
             await Task.WhenAll(codingHandoffs);
         await interactivePoll;
+        await salvageSweep;
         try { await interactiveChat.DrainAsync(); }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
         catch (Exception ex) { _log($"interactive chat drain ended with error: {ex.Message}"); }

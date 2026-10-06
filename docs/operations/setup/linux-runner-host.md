@@ -235,6 +235,164 @@ and does not silently switch to a source build. The source-publish procedure
 below remains a troubleshooting and development fallback, not the product
 onboarding path.
 
+### Host enrolment and capacity record
+
+AGT-W63 I03 (Dossier decision D3, option A: one runner-host family) gives
+each host one identity and one owned desired record. The Coding and Review
+role services stay separate processes with separate principals and token
+files, but they share one bounded slot envelope. Review aspects, gates and
+verification remain pipeline-library steps run by these roles; there is no
+separate quality agent.
+
+**The record.** `/etc/agent-host/host.json` (schema version 1) states the host
+facts once:
+
+```json
+{
+  "schemaVersion": 1,
+  "hostId": "build-02",
+  "hostClass": "linux",
+  "serverUrl": "http://127.0.0.1:15031",
+  "gitRemote": "git@example.invalid:team/project.git",
+  "envelope": { "totalSlots": 3, "codingSlots": 2, "reviewSlots": 1 },
+  "roles": [
+    { "role": "coding", "principalId": "rnr-build-02-coding", "tokenFile": "/etc/agent-runner/coding.token" },
+    { "role": "review", "principalId": "rnr-build-02-review", "tokenFile": "/etc/agent-runner/review.token" }
+  ],
+  "resources": { "REVIEW_MEMORY_MAX": "6G" }
+}
+```
+
+`totalSlots` is conserved across both roles; each role cap is a sub-limit and
+may not exceed it. Two roles may not share a principal or a token file. The
+record holds paths to secrets, never the secrets. An ordinary workstation host
+adds `"workstation": { "roots": [...], "tools": [...] }` and keeps the same
+role services.
+
+**Generate, never hand-edit.** From the immutable release:
+
+```bash
+agent-host host-record check --record /etc/agent-host/host.json
+agent-host host-record render --record /etc/agent-host/host.json --out-dir /tmp/host-render
+# coding  agent-runner.service         /etc/agent-runner/runner.env
+# review  agent-runner-review.service  /etc/agent-runner/review.env
+```
+
+`render` writes `runner.env`, `review.env` and `profile.conf` (mode `600`),
+each stamped with the record digest. Unit names stay static
+(`agent-runner.service`, `agent-runner-review.service`). Every role file pins
+`RUNNER_HOSTNAME`, so a restart or a machine rename keeps the enrolled
+identity. Each file declares both `RUNNER_HOST_CODING_SLOTS` and
+`RUNNER_HOST_REVIEW_SLOTS`, so a value inherited from the service environment
+cannot leak in. `remote-runner-onboard.sh --host-record host.json --role
+<coding|review>` reads the same record and refuses any flag that disagrees
+with it, including an explicit coding or review slot count. The controller
+installs the record at `/etc/agent-host/host.json` on the selected host, runs
+the installed `agent-host host-record render`, then installs the selected role's
+generated EnvironmentFile and generated `profile.conf`. The managed unit's
+resource policy reads that profile. Legacy resource directives in that unit's
+drop-ins are removed so they cannot override the record; unrelated drop-in
+settings remain. Repeat onboarding for each enrolled role service. A record
+without the requested role or with an invalid envelope fails before service
+replacement. Keep each role's token file provisioned separately on that host.
+
+**Migrating an existing host.** Build the first record from the files already
+in place, review the notes, then render and compare:
+
+```bash
+agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
+  --review-env /etc/agent-runner/review.env --profile /etc/agent-host/profile.conf \
+  --host-class linux --out /etc/agent-host/host.json
+```
+
+The import refuses disagreeing shared facts (server URL, origin, push origin,
+host id) and shared principals instead of choosing one. A shared fact set in
+one role file but absent from the other is also refused, because the record
+would apply it to both roles. After building the record, migration renders it
+and compares every setting each role file declares with the generated file. A
+value the generated file would rewrite stops migration. This includes a
+`RUNNER_HOST_CODING_SLOTS` or `RUNNER_HOST_REVIEW_SLOTS` that disagrees with the
+other role's slot count, in either file. A peer slot count above zero for a
+role whose file was not supplied is refused too. A setting the record cannot
+carry also stops migration, for example a TLS pin, a workstation key, a
+non-standard work or state directory, or a custom CLI path. The importer names
+the file, key and generated value. Remove or align the setting, or keep that
+host on legacy onboarding. The generated service files carry the same CLI
+lines as legacy onboarding (`RUNNER_CLI_TYPE`, `RUNNER_CLAUDE_CLI_BIN`,
+`RUNNER_CODEX_CLI_BIN`). `host-record` refuses an unknown or repeated option,
+and a record field it does not know. Every file named by `--runner-env`,
+`--review-env` or `--profile` must exist; a missing named file stops migration
+before the record is written. Omit `--review-env` only for a coding-only host,
+or omit `--runner-env` only for a review-only host. Omit `--profile` only when
+there is no existing resource profile to import. A missing `RUNNER_HOSTNAME` is
+pinned to the current machine name. Migration preserves `HOST_TOTAL_SLOTS` from
+an existing profile, including a shared ceiling below the sum of the role caps;
+an invalid ceiling or a profile role cap that conflicts with a role file is
+refused. Without that key, the envelope starts at the sum of today's role
+slots. The legacy default of two role slots applies only when
+`RUNNER_MAX_PARALLELISM` is absent from a role file. An explicit value that is
+not an integer stops migration before a record is written. Review the imported
+resource values, then use `--host-record` on the normal onboarding controller. The
+controller replaces the old `runner.env`, `review.env` (one role at a time)
+and `profile.conf` from the record. Legacy onboarding without `--host-record`
+continues to import unit resource drop-ins into the existing profile.
+
+**Enrolment on the Task Server.** The Task Server owns the enrolment. With an
+administrator principal:
+
+```bash
+agent-host host-record enrolment --record /etc/agent-host/host.json --expected-generation 0 \
+  | curl -fsS -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+      --data @- "$TASK_SERVER/api/v1/management/remote-hosts/build-02/enrolment"
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$TASK_SERVER/api/v1/management/remote-hosts/enrolments"
+```
+
+Each change carries the current `generation`; a stale or replayed request
+fails with `host-enrolment-generation-mismatch`. A principal can be enrolled
+on only one host. Enrolling a second host with the first host's principal
+fails with `principal-enrolled-elsewhere`, and a copied first-host token
+claiming from another host is refused with `principal-not-enrolled`. Every
+new host therefore needs its own enrolled principals. Hosts without an
+enrolment keep the earlier runtime-capacity behaviour. Enrolment never
+changes a project's parallelism or placement.
+
+**Drain, removal and re-enrolment.** Drain stays on the existing
+`POST .../remote-hosts/{hostId}/operator-drain`. Removal is
+`POST .../remote-hosts/{hostId}/enrolment/remove` with `{ "expectedGeneration": n,
+"reason": "..." }`. It releases the host's principals and refuses new claims
+with `host-removed`; in-flight work settles through leases and fences. To
+re-enrol, issue a new `PUT` at the removed generation, normally with freshly
+enrolled principals.
+
+**Typed claim refusals.** No lease or review attempt is minted when a claim
+is refused. Coding claims report `placementReason`; review claims report
+`admissionReason`:
+
+| Reason | Cause |
+|---|---|
+| `capability-stale` | A required capability advertisement is past its freshness window. |
+| `provider-login-missing` | A required `provider-auth:*` capability is missing or not ready. |
+| `repository-proof-failed` | `repository:access`, `git:fetch`, `git:push`, `git:workflow-push` or `repository:filesystem` is missing or failed. |
+| `capability-missing` / `capability-unavailable` / `capability-draining` | Another required capability is absent, not claimable, or in recovery. |
+| `host-draining` | Operator or automatic whole-host drain. |
+| `host-removed` | The host enrolment was removed. |
+| `principal-not-enrolled` / `role-not-enrolled` | The caller is not this host's enrolled service for that role. |
+| `slot-budget-full` | Coding leases plus review attempts on the host fill `totalSlots`. |
+| `role-slot-budget-full` | This role's cap is full. |
+
+A review re-claim is a repair, not a new admission. It reattaches authority to
+a worker that is still running, or delivers that worker's loss report. The
+envelope therefore does not refuse it, even when the expired lease's slot was
+reused meanwhile. The repaired attempt counts again at once, so fresh claims
+get `slot-budget-full` until the host is back inside its envelope.
+
+**Offline hosts.** A host that stops renewing keeps its expired lease: it is
+not free capacity and the task is not reassigned silently. After the
+authority marks the attempt `process-unknown`, an administrator records
+containment proof with `resolve-unknown`. Only then does another host claim
+the task, under a higher fence. A reconnecting host's late completion with
+the old fence is rejected.
+
 ## 1. Provision the host
 
 Ubuntu LTS. Install the runtime the runner and the agent CLIs need:
@@ -613,6 +771,11 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_LOAD_GATE_SUSTAINED_SECONDS` | none | `120` | Continuous high-load duration before Coding claim admission closes. Review admission does not use this delay. |
 | `RUNNER_DOCKER_DATA_ROOT` | none | `/var/lib/docker` | Filesystem the Review executor measures before a compose scenario step. Falls back to the review workspace when the path does not exist. See [Docker scenario image retention](#docker-scenario-image-retention). |
 | `RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT` | none | `10` | A compose scenario review step (`scripts/scenario.sh --target compose`, `scripts/compose-smoke-test.sh`) is refused as `ReviewInfra` / `ComposeScenarioDiskLow` when `RUNNER_DOCKER_DATA_ROOT` has less free space than this. `0` keeps the `review-compose-scenario-disk` log line and disables the refusal. |
+| `RUNNER_SALVAGE_DIR` | `--salvage-dir` | `~/salvage` | Host salvage store owned by the coding daemon's retention sweep. See [Salvage store retention](#salvage-store-retention). |
+| `RUNNER_SALVAGE_RETENTION` | `--salvage-retention` | `apply` | `apply` deletes what the policy selects, `report` only logs `would-delete` lines, `off` only measures the store for the host report. |
+| `RUNNER_SALVAGE_RETENTION_DAYS` | none | `14` | Days a salvage entry survives after its card became completed or archived. |
+| `RUNNER_SALVAGE_MAX_PER_CARD` | none | `3` | Newest tarballs kept per card regardless of card state; for refs, applies only to eligible refs. |
+| `RUNNER_SALVAGE_SWEEP_HOURS` | none | `6` | Hours between retention sweeps. The first sweep runs five minutes after the daemon starts. |
 
 ### Sanctioned role configuration changes
 
@@ -1123,6 +1286,84 @@ then the same without `--dry-run`.
 there the Review executor refuses compose scenarios. At the alert, check that
 the timer ran and that `docker system df` shows no reclaimable scenario
 images, then look for other residue.
+
+### Salvage store retention
+
+The coding daemon owns the host salvage store and sweeps it on its own timer
+(AGT-2999). There is no host cron for it. The store has two parts:
+
+- **Tarballs** in `RUNNER_SALVAGE_DIR` (default `~/salvage`), named
+  `[<project>-]<card>[-<suffix>]-<HHMM>.tgz` or
+  `<card>-<yyyyMMdd>-<HHmmss>.tgz`. They were written by the retired host
+  snapshot script `~/salvage/snap.sh`. Do not reinstall that script: durable
+  salvage is the Git ref below. Other files and directories in the store
+  (`snap.sh`, `snap.log`, `*.bundle`, `runner-state-quarantine/`) are measured
+  but never deleted.
+- **Salvage refs** `agent-studio/salvage/<runner-id>/<card>/<attempt>/fence-<n>/<sha>`
+  on each project origin. The sweep lists only this runner's namespace, so
+  another runner's refs are never touched.
+
+Policy, decided per entry by `SalvageRetentionPolicy`:
+
+| Entry | Kept | Deleted |
+|---|---|---|
+| Any entry of a card with an active run on this host | Always | Never |
+| Name without a recognizable card key | Always | Never |
+| Tarball | While the card is open, missing, or its state is unknown, and for `RUNNER_SALVAGE_RETENTION_DAYS` after the card became completed or archived | After that window, or when it is older than the card's newest `RUNNER_SALVAGE_MAX_PER_CARD` tarballs |
+| Salvage ref | While the card is not completed or archived, or its commit is not contained in the integration branch, or containment is unknown | When the card is completed or archived **and** the commit is on the integration branch, after the window or beyond the newest `RUNNER_SALVAGE_MAX_PER_CARD` integrated refs of the card. Refs not on the integration branch do not consume these slots. |
+
+Card state comes from the Task Server (`GET /api/v1/projects/{project}/tasks/{card}`
+with the runner's `tasks:read` scope). The project is taken from the tarball
+prefix or the clone directory, else from the project whose task key prefix
+matches. The completion time is the later of the card's last update and its
+archive time, so a late edit only extends retention. A Task Server that cannot
+answer leaves the card state unknown; only the per-card limit applies then. The
+integration branch is the branch the project's stable checkout
+(`$RUNNER_WORKDIR/<project>/repo`) was last prepared on. The sweep fetches that
+clone under the same Git metadata lock as task preparation. A ref is deleted
+with a lease-guarded push (`--force-with-lease=<ref>:<sha>`), so a ref that
+moved since it was read is rejected rather than deleted. The Git credential on
+the host therefore needs delete permission on
+`refs/heads/agent-studio/salvage/<runner-id>/**`; without it, deletion fails
+visibly and the ref is kept.
+
+The active-run set (accepted permits, running workers, and persisted attempts
+awaiting finalization) is read before the decision and at each deletion
+boundary. Claim admission and deletion share a gate: a claim cannot become
+active during a tarball deletion or a salvage-ref push. A run that starts
+between deletions protects its card from the remaining deletions.
+
+Each sweep writes one journal line per deletion and one summary:
+
+```text
+salvage-retention deleted kind=tarball entry=PROJ-002-AGT-2177-1430.tgz card=AGT-2177 bytes=40033694 reason=retention-elapsed
+salvage-retention deleted kind=ref ref=agent-studio/salvage/agent-runner-01/AGT-2869/attempt-1/fence-2/8c3c943... card=AGT-2869 sha=8c3c943... integration=main reason=over-per-card-limit
+salvage-retention sweep mode=apply status=completed tarballs=2050 tarballsEligible=... tarballsDeleted=... bytesDeleted=... refs=... refsDeleted=... protectedByActiveRun=... failures=0 kept=[active-run:..,card-open:..,within-retention:..]
+```
+
+```bash
+journalctl -u agent-runner --since '-1 day' | grep salvage-retention
+```
+
+The host report shows the store without a shell on the host.
+`GET /api/v1/management/remote-hosts` carries `telemetry.salvageStore` for each
+coding host: `path`, `sizeBytes`, `entryCount`, `tarballCount`,
+`unrecognizedCount`, `oldestEntry`, `oldestEntryAt`, the effective `mode`,
+`retentionDays`, `maxPerCard`, and `lastSweep` (start and end, status, eligible
+and deleted tarball and ref counts, deleted bytes, `protectedByActiveRun`,
+`failures`). The store is measured every 15 minutes. The last sweep is persisted
+in `$RUNNER_STATE_DIR/salvage-retention.json`, so it survives a daemon restart.
+
+```bash
+curl -sS https://tasks.example.com/api/v1/management/remote-hosts \
+  | jq '.[] | {hostId, salvage: .telemetry.salvageStore}'
+```
+
+Rollout on a host with a large backlog: set `RUNNER_SALVAGE_RETENTION=report`,
+restart the coding daemon, and review the `would-delete` lines and
+`lastSweep.tarballBytesEligible` after the first sweep. Then remove the setting
+to return to `apply`. Moving old tarballs into Git refs is out of scope; copy a
+tarball out of the store before a sweep if it must be kept.
 
 ### Baseline verify result cache
 
@@ -1793,7 +2034,9 @@ heartbeating, checks out the branch from origin, fetches `prompt.md` over the
 API, spawns the CLI in the working tree, journals and ships stdout/stderr,
 snapshots `results/` under attempt evidence, secures the exact result on an immutable
 remote ref, obtains the durable Task Server acknowledgement, removes the
-worktree, posts the idempotent fenced completion, and releases the lease.
+worktree, transfers bounded artifacts and any partial-transfer receipt while
+the lease is still active, posts the idempotent fenced completion, and releases
+the lease.
 Exit code `0` means a clean handoff; `1` a
 blocked/needs-input outcome; `2` lease not granted; `3` lease lost mid-run; `4`
 the task server was unreachable or rejected a call.
@@ -1803,22 +2046,30 @@ For unattended operation, run `agent-host --health-check` as a readiness probe
 a service. Both are covered in
 [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md).
 
-### Durable result handoff before teardown
+### Durable result handoff and artifacts
 
 Result evidence is uploaded one file per request after the runner has pushed
-the delivery ref and the Task Server has accepted completion. The Task Server
-advertises the request, file, and total byte limits. The default per-file cap
-is 8 MiB; the request cap remains 25 MiB. Playwright `trace.zip` files and
-videos are withheld even when smaller than the cap. Screenshots and reports
-within budget are transported. The artifact manifest records each withheld
-file's `results/` path, byte size, SHA-256 digest, and reason. The runner keeps
-those files under `<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/`
-on the host, where a later attempt cannot clear them.
+the delivery ref and the Task Server has acknowledged that delivery, but before
+the RunAttempt is settled. The Task Server advertises the request, file, and
+total byte limits. The default per-file cap is 8 MiB; the request cap remains
+25 MiB. Playwright `trace.zip` files and videos are withheld even when smaller
+than the cap. Screenshots and reports within budget are transported. The
+artifact manifest records each withheld file's `results/` path, byte size,
+SHA-256 digest, and reason. The runner keeps those files under
+`<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/` on the host, where
+a later attempt cannot clear them.
 `results/deliverables.md` lists them for the reviewer. A partial artifact
-transfer is a typed card fact and does not undo a completed delivery.
-Transient file uploads are retried three times. The versioned Task Server
-runner records remaining transfer failures as `artifact-replay` in its durable
-outbox and replays from the attempt evidence copy without rerunning the worker.
+transfer is a typed card fact with retry details and does not block code
+delivery. Transient file uploads are retried three times. If the host crashes
+before settlement, durable recovery replays from the attempt evidence copy.
+If an upload or its partial-transfer report still fails, the outbox retains
+`artifact-replay` after completion. Later recovery sends any persisted report
+and retries the bounded files with the original exact runner, lease, and fence.
+The same artifact idempotency keys prevent duplicate storage, and a newer
+fence denies stale replay. If the host stopped after the server accepted the
+completion but before the local acknowledgement, the next recovery replays that
+completion under the same fence and settles the outbox as `completed`. The
+worker is not rerun.
 
 While completion is being retried, the runner reports its persisted terminal
 attempt in the active task set even though the coding process has exited. This
