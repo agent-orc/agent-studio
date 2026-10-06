@@ -7,7 +7,7 @@
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-10-06T04:17:44Z",
+  "updatedAt": "2026-10-06T13:45:00Z",
   "sourceTaskKeys": [
     "AGT-3018"
   ],
@@ -60,7 +60,7 @@
     {
       "id": "OD-S6",
       "title": "ORCH-3 rules editor and periodic capacity seam",
-      "promptMarkdown": "Read this Dossier and the Fluid capacity related card before implementation. Add API-owned immutable workspace rule versions and project overlays under .metadata, with actor/reason/diff/activation, dry-run replay and floor-refusal reasons. Support periodic project/workspace DecisionGroundsV1 with nullable card, configured model, full occurrence content/tokens/cost and typed actions; let Fluid capacity own scheduling/allocation/utilization. Acceptance: version pin and rollback survive restart, dangerous edits are refused, dry run labels counterfactual model results, and a card-free capacity occurrence appears in project roll-up.",
+      "promptMarkdown": "Read this Dossier and the Fluid capacity related card before implementation. Add API-owned immutable workspace rule versions and project overlays under .metadata, with actor/reason/diff/activation, dry-run replay and floor-refusal reasons. Support host-scoped periodic DecisionGroundsV1 with nullable card, configured model, full occurrence content/tokens/cost, and zero to three actions from the shared union; host-wide actions use workspace rules. Match Fluid capacity's 48 scheduled plus 12 event calls per host-day and 180,000 input/90,000 output token contingent; let that card own scheduling/allocation/utilization. Acceptance: version pin and rollback survive restart, dangerous edits are refused, dry run labels counterfactual model results, and a card-free capacity occurrence appears in host history and workspace roll-up.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
         "slice": "ORCH-3 rules editor and periodic capacity seam"
