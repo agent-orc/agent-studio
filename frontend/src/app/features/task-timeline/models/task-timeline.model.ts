@@ -64,6 +64,7 @@ export const TIMELINE_KIND = {
   integrationRecoveryQueued: 'integration_recovery_queued',
   followUpConsumed: 'follow_up_consumed',
   followUpSuperseded: 'follow_up_superseded',
+  steeringFeedback: 'steering_feedback',
 } as const;
 
 /** The three terminals of the completion loop. */

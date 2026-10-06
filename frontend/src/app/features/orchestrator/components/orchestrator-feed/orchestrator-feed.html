@@ -117,6 +117,10 @@
               </dd>
             </div>
           }
+          @if (entry.commandId) { <div><dt>Command</dt><dd>{{ entry.commandId }}</dd></div> }
+          @if (entry.attemptId) { <div><dt>Attempt</dt><dd>{{ entry.attemptId }}</dd></div> }
+          @if (entry.incidentId) { <div><dt>Incident</dt><dd>{{ entry.incidentId }}</dd></div> }
+          @if (entry.settlementId) { <div><dt>Settlement</dt><dd>{{ entry.settlementId }}</dd></div> }
           @if (entry.tokenUsage; as tu) {
             <div><dt>Model</dt><dd>{{ tu.model || '?' }}</dd></div>
             <div><dt>Tokens</dt><dd>↑{{ tu.inputTokens }} / ↓{{ tu.outputTokens }}</dd></div>

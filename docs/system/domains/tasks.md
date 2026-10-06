@@ -228,6 +228,37 @@ The local file-backed monolith remains a separate compatibility authority; its
 store. A deployment must route both continue and runner claim through the
 standalone Task Server to obtain this D6 receipt contract.
 
+### Correlated steering feedback (AGT-2938, D10)
+
+The decided D10 option is the recommended correlated feedback projection.
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/steering-feedback` returns a
+read-only `current` receipt and ordered `history` from SQLite steering actions,
+continuation intents, runs and review attempts. Each fact carries a stable
+identity, command and attempt when present, owning run, bounded reason, and
+incident identity for route loss. Review receipts carry their report idempotency
+key as `settlementId`. The task timeline adds `steering-receipt`
+entries carrying the same fact; the cross-project orchestrator feed adds quiet
+`steering-receipt` history and one `incident` row for a current unresolved
+incident. Retries reuse the authority row, so a process restart rebuilds all
+three reads without a second mutable verdict. A fact is current only while its
+task version or attempt generation remains current. The task lane remains the
+server's own state.
+The incident row summarizes affected attempts and recovered or still unresolved
+dispositions; each task timeline keeps the underlying attempt receipt.
+
+Route incident identity groups failures from the same runner host in a 15-minute
+UTC window. This is a bounded correlation key derived from authority timestamps,
+not a measured outage start or end; individual task receipts retain their own
+attempt identities for drill-down.
+
+The file-backed compatibility API exposes
+`GET /api/tasks/{id}/steering-feedback?project={projectId}`. Its task timeline
+adds `steering_feedback` rows and `/api/runner/orchestrator-feed` adds quiet
+receipt observations from durable stop receipts, run/review authority and the
+review settlement journal. The Overview status row reads the current timeline
+fact; historical rows remain in Timeline. This compatibility projection does
+not convert `pending-intent.json` into the standalone D6 command contract.
+
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
 - [docs/system/contracts/agent-task.md](../contracts/agent-task.md) defines what the app

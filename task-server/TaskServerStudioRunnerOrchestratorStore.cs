@@ -505,12 +505,54 @@ public sealed partial class TaskServerStore
              ORDER BY occurred_at DESC
              LIMIT $limit;
             """, ("$limit", boundedLimit));
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            entries.Add(new OrchestratorFeedEntryDto(
-                reader.GetString(1), reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), Parse(reader.GetString(0))));
-        return new OrchestratorFeedResponse(entries);
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                entries.Add(new OrchestratorFeedEntryDto(
+                    reader.GetString(1), reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), Parse(reader.GetString(0))));
+        var tasksWithReceipts = new List<TaskDto>();
+        await using (var taskCommand = Command(connection, """
+            SELECT id, project_id, task_key, title, state, version, created_at, updated_at,
+                   body, archive_state, archived_at
+              FROM tasks t
+             WHERE EXISTS (SELECT 1 FROM continuation_intents c WHERE c.task_id = t.id)
+                OR EXISTS (SELECT 1 FROM steering_actions s WHERE s.task_id = t.id)
+                OR EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id)
+             ORDER BY updated_at DESC LIMIT 100;
+            """))
+        await using (var taskReader = await taskCommand.ExecuteReaderAsync(ct))
+            while (await taskReader.ReadAsync(ct)) tasksWithReceipts.Add(ReadTask(taskReader));
+
+        var receiptRows = new List<(TaskDto Task, SteeringFeedbackReceiptDto Fact)>();
+        foreach (var task in tasksWithReceipts)
+        {
+            var feedback = await ReadSteeringFeedbackAsync(connection, task, ct);
+            receiptRows.AddRange(feedback.History.Select(fact => (task, fact)));
+        }
+        // An outage has one actionable identity across affected task rows.
+        // Its per-task observations remain available in the task timeline.
+        var projected = receiptRows
+            .GroupBy(row => row.Fact.IncidentId is { Length: > 0 } incident
+                ? $"incident:{incident}" : $"{row.Task.TaskId}:{row.Fact.Identity}", StringComparer.Ordinal)
+            .Select(group => new
+            {
+                Latest = group.OrderByDescending(row => row.Fact.OccurredAt).First(),
+                Incident = group.Key.StartsWith("incident:", StringComparison.Ordinal),
+                Key = group.Key,
+                Affected = group.Select(row => row.Fact.AttemptId).Where(id => id is not null).Distinct().Count(),
+                Unresolved = group.Count(row => row.Fact.State == "unresolved" && row.Fact.Current),
+                Recovered = group.Count(row => row.Fact.State == "recovered"),
+            })
+            .Select(group => new OrchestratorFeedEntryDto(
+                group.Incident && group.Unresolved > 0 ? "incident" : "steering-receipt",
+                group.Incident ? group.Key : group.Latest.Fact.Identity,
+                group.Latest.Task.ProjectId,
+                group.Incident
+                    ? $"Route incident: {group.Affected} affected, {group.Unresolved} unresolved, {group.Recovered} recovered"
+                    : $"{group.Latest.Task.TaskKey}: {group.Latest.Fact.Kind} {group.Latest.Fact.State}",
+                group.Latest.Fact.OccurredAt, group.Latest.Fact));
+        return new OrchestratorFeedResponse(entries.Concat(projected)
+            .OrderByDescending(entry => entry.OccurredAt).Take(boundedLimit).ToArray());
     }
 
     // ---- queue starvation (computed live) --------------------------------------------------------
