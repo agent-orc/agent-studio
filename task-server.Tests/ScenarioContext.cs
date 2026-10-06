@@ -26,6 +26,11 @@ public sealed partial class ScenarioContext : IDisposable
     private const string ReviewExecutorId = "scenario-review-executor";
     private const string ReviewHostId = "scenario-review-host";
     private const string OrchestrationEngineId = "scenario-orchestration-engine";
+    private const string LegacyRunnerId = "scenario-legacy-runner";
+    private const string LegacyHostId = "scenario-legacy-host";
+    private const string LegacyProjectName = "scenario-legacy";
+    private const string LegacyTaskFolder = "SCN-LEGACY-1";
+    private const string LegacyHarnessClientId = "scenario-harness";
 
     private readonly string _root;
     private readonly ScenarioFixture _fixture;
@@ -83,6 +88,7 @@ public sealed partial class ScenarioContext : IDisposable
         "create-task" => CreateTaskAsync(),
         "claim-task" => ClaimTaskAsync(),
         "run-coding-attempt" => RunCodingAttemptAsync(),
+        "run-coding-attempt-legacy-plane" => RunLegacyPlaneCodingAttemptAsync(),
         "auto-review" => AutoReviewAsync(),
         "orchestrator-chat-turn" => OrchestratorChatTurnAsync(),
         "backup" => BackupAsync(),
@@ -374,6 +380,180 @@ public sealed partial class ScenarioContext : IDisposable
         return $"task reached 4-auto-review with Studio disconnected; {afterCommits - beforeCommits} new commit(s) pushed to run {_codingRun.RunId}";
     }
 
+    /// <summary>
+    /// AGT-2985: the coding attempt again, on the legacy runner plane the
+    /// production fleet uses. The backend monolith serves that plane
+    /// (<c>/api/runner/claim</c>, <c>/api/runner/completion</c>); the claim
+    /// carries no run id, so this is the plane where the runner's slot id and the
+    /// server's fenced attempt id can drift (0.9.3 rejected every completion).
+    /// The backend, a second real runner, and a smart-HTTP fixture repository
+    /// run as sibling processes on the host for every target: neither the
+    /// monolith nor its runner is part of the distributed Compose stack.
+    /// </summary>
+    private async Task<string?> RunLegacyPlaneCodingAttemptAsync()
+    {
+        var legacyRoot = NewTempDirectory();
+        var bare = await SeedRepositoryAsync(legacyRoot);
+        var checkout = Path.Combine(legacyRoot, "seed");
+        using var repository = new GitSmartHttpServer(legacyRoot);
+        var repositoryUrl = repository.UrlFor(Path.GetFileName(bare));
+
+        var watchPath = Path.Combine(legacyRoot, "workspace", "projects", LegacyProjectName);
+        SeedLegacyTask(watchPath);
+        var backendHome = Path.Combine(legacyRoot, "backend-home");
+        Directory.CreateDirectory(backendHome);
+        var backendUrl = $"http://127.0.0.1:{FreePort()}";
+        using var backend = StartBuiltIn(
+            _root,
+            backendHome,
+            "backend",
+            "OrchestratorApi.dll",
+            null,
+            "--urls", backendUrl,
+            "--TaskRepository", Path.Combine(legacyRoot, "workspace"),
+            "--WatchPaths:0:Name", LegacyProjectName,
+            "--WatchPaths:0:Path", watchPath,
+            "--WatchPaths:0:RootPath", checkout,
+            "--WatchPaths:0:RepositoryPath", checkout,
+            "--ReviewDecisionOrchestrator:Enabled", "false");
+        await WaitForHttpAsync(backendUrl + "/healthz", backend);
+        using var backendClient = new HttpClient { BaseAddress = new Uri(backendUrl), Timeout = TimeSpan.FromSeconds(10) };
+        (await ReadJsonAsync(await backendClient.PostAsJsonAsync(
+            "/api/clients/register", new { displayName = LegacyHarnessClientId, kind = "service" }))).Dispose();
+        backendClient.DefaultRequestHeaders.Add("X-Client-Id", LegacyHarnessClientId);
+
+        using var projects = await ReadJsonAsync(await backendClient.GetAsync("/api/projects"));
+        var projectId = projects.RootElement.EnumerateArray()
+            .Single(project => project.GetProperty("displayName").GetString() == LegacyProjectName)
+            .GetProperty("id").GetString()!;
+        (await ReadJsonAsync(await backendClient.PostAsJsonAsync(
+            $"/api/projects/{projectId}/urls", new { label = "repo", url = repositoryUrl }))).Dispose();
+        (await ReadJsonAsync(await backendClient.PutAsJsonAsync(
+            $"/api/projects/{LegacyProjectName}/integration-branch",
+            new { branch = _fixture.Repository.DefaultBranch }))).Dispose();
+
+        var releaseFile = Path.Combine(legacyRoot, "release");
+        var fakeCli = await CreateFakeCodingCliAsync(legacyRoot);
+        using var runner = StartBuilt(
+            _root,
+            "runner",
+            "agent-host.dll",
+            LegacyRunnerEnvironment(releaseFile),
+            "--poll",
+            "--server", backendUrl,
+            "--runner-id", LegacyRunnerId,
+            "--runner-name", LegacyRunnerId,
+            "--hostname", LegacyHostId,
+            "--git-remote", repositoryUrl,
+            "--branch", _fixture.Repository.DefaultBranch,
+            "--workdir", Path.Combine(legacyRoot, "runner-work"),
+            "--claude-cli", fakeCli,
+            "--ttl", "15",
+            "--max-parallelism", "1",
+            "--poll-seconds", "1");
+
+        // The project names its execution runner only once that runner has
+        // registered its host identity.
+        await WaitForConditionAsync(
+            async () => (await backendClient.GetAsync($"/api/clients/{LegacyRunnerId}")).IsSuccessStatusCode,
+            runner,
+            TimeSpan.FromSeconds(30),
+            $"legacy runner '{LegacyRunnerId}' registered with the backend");
+        (await ReadJsonAsync(await backendClient.PutAsJsonAsync(
+            $"/api/projects/{LegacyProjectName}/execution-runner",
+            new { executionRunner = LegacyRunnerId, remoteExecutionEnabled = true }))).Dispose();
+
+        await WaitForConditionAsync(
+            () => Task.FromResult(Directory.Exists(Path.Combine(watchPath, "3-progress", LegacyTaskFolder))),
+            runner,
+            TimeSpan.FromSeconds(30),
+            "the legacy runner claimed the task over /api/runner/claim");
+        var beforeCommits = await CountCommitsAsync(bare);
+        await File.WriteAllTextAsync(releaseFile, "continue");
+        var completed = Path.Combine(watchPath, "4-auto-review", LegacyTaskFolder);
+        await WaitForConditionAsync(
+            () =>
+            {
+                // The 0.9.3 incident: fail on the rejection itself instead of
+                // waiting out the deadline for a lane move that cannot come.
+                var rejected = runner.OutputLines.FirstOrDefault(line =>
+                    line.Contains("Session continuation evidence does not match", StringComparison.Ordinal));
+                Assert.True(rejected is null, $"The backend rejected the legacy-plane completion: {rejected}");
+                // The backend moves the folder while it answers; the runner logs
+                // the accepted response only afterwards.
+                return Task.FromResult(Directory.Exists(completed) && runner.OutputLines.Any(line =>
+                    line.Contains("remote-runner-completion recorded: outcome Done, state 4-auto-review", StringComparison.Ordinal)));
+            },
+            runner,
+            TimeSpan.FromSeconds(60),
+            "the legacy-plane completion was accepted and the task reached 4-auto-review");
+
+        // The continuation evidence travelled with the completion and names the
+        // attempt the server fenced, which on this plane is not the lease id.
+        var ledgerLine = Assert.Single(await File.ReadAllLinesAsync(
+            Path.Combine(completed, "session-continuation-ledger.jsonl")));
+        using var ledger = JsonDocument.Parse(ledgerLine);
+        var evidenceAttemptId = ledger.RootElement.GetProperty("attemptId").GetString();
+        var taskKey = ledger.RootElement.GetProperty("taskKey").GetString()!;
+        using var attempts = await ReadJsonAsync(await backendClient.GetAsync($"/api/attempts/tasks/{taskKey}"));
+        var run = attempts.RootElement.GetProperty("currentRunAttempt");
+        Assert.Equal("completed", run.GetProperty("state").GetString());
+        Assert.Equal(run.GetProperty("attemptId").GetString(), evidenceAttemptId);
+        Assert.NotEqual(run.GetProperty("lease").GetProperty("leaseId").GetString(), evidenceAttemptId);
+
+        var afterCommits = await CountCommitsAsync(bare);
+        Assert.True(afterCommits > beforeCommits, "The legacy-plane coding attempt did not push a new commit.");
+        return $"legacy plane: {taskKey} reached 4-auto-review; completion accepted with continuation evidence for {evidenceAttemptId}";
+    }
+
+    private void SeedLegacyTask(string watchPath)
+    {
+        foreach (var lane in new[]
+                 {
+                     "0-backlog", "1-refining", "2-ready", "3-progress", "4-auto-review",
+                     "5-human-review", "6-completed", "7-archive", "8-escalated",
+                 })
+            Directory.CreateDirectory(Path.Combine(watchPath, lane));
+        var task = Path.Combine(watchPath, "2-ready", LegacyTaskFolder);
+        Directory.CreateDirectory(task);
+        File.WriteAllText(Path.Combine(task, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = LegacyTaskFolder,
+            title = _fixture.Task.Title,
+            state = "2-ready",
+            order = 1,
+            agent = "claude",
+            kind = "task",
+            cliType = "claude",
+            enteredLaneAt = _task.CreatedAt,
+        }));
+        File.WriteAllText(Path.Combine(task, "prompt.md"), _fixture.Task.Body);
+        File.WriteAllText(Path.Combine(task, "status.md"), "Result: pending.");
+    }
+
+    /// <summary>
+    /// A managed runner host exports its own RUNNER_* configuration (client id,
+    /// server URL, CLI arguments). The scenario runner must not inherit it.
+    /// </summary>
+    private static Dictionary<string, string?> LegacyRunnerEnvironment(string releaseFile)
+    {
+        var environment = Environment.GetEnvironmentVariables().Keys
+            .Cast<string>()
+            .Where(name => name.StartsWith("RUNNER_", StringComparison.Ordinal))
+            .ToDictionary(name => name, string? (_) => null, StringComparer.Ordinal);
+        environment["RUNNER_HEARTBEAT_SECONDS"] = "5";
+        environment["RUNNER_RUN_TIMEOUT_SECONDS"] = "45";
+        environment["SCENARIO_RELEASE_FILE"] = releaseFile;
+        return environment;
+    }
+
+    private static async Task<JsonDocument> ReadJsonAsync(HttpResponseMessage response)
+    {
+        var detail = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"{response.RequestMessage?.RequestUri} returned {(int)response.StatusCode}: {detail}");
+        return JsonDocument.Parse(detail.Length == 0 ? "null" : detail);
+    }
+
     private async Task<string?> AutoReviewAsync()
     {
         var reviewTask = _task;
@@ -483,7 +663,7 @@ public sealed partial class ScenarioContext : IDisposable
 
         var userTurn = new OrchestratorContextTurnDto(
             $"turn-{Guid.NewGuid():N}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             "user",
             "What is the state of the fixture task?");
         await ReadAsync<OrchestratorContextTurnDto>(await _serverClient.PostAsJsonAsync(
@@ -498,12 +678,12 @@ public sealed partial class ScenarioContext : IDisposable
             $"receipt-{Guid.NewGuid():N}",
             userTurn.TurnId,
             $"{_project.ProjectId}/{_task.TaskKey}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             new OrchestratorContextBudgetReceiptDto(8000, 12000, 16000, 4200),
             [new OrchestratorContextSourceReceiptDto("task-body", "task", null, null, "fresh", 512, 128, "included")]);
         var assistantTurn = new OrchestratorContextTurnDto(
             $"turn-{Guid.NewGuid():N}",
-            DateTime.UtcNow,
+            _codingRun.FinishedAt ?? _task.UpdatedAt,
             "orchestrator",
             "The fixture task is in 4-auto-review after its coding attempt completed.",
             Receipt: receipt);

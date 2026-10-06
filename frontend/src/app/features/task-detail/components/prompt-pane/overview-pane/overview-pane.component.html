@@ -465,7 +465,7 @@
           </button>
         </div>
       }
-
+      <app-pipeline-decision-chain [execution]="selectedPipelineExecution()" [response]="pipelinePoll.pipeline()" [current]="selectedPipelineIsCurrent()" (documentRequested)="documentRequested.emit($event)" />
       }
     </section>
   }

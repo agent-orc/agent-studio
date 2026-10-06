@@ -2122,8 +2122,10 @@ public class ProjectRunner
             string.Equals(s.Id, AgentStudio.Pipeline.PipelineCatalogue.ConflictResolutionStepId, StringComparison.OrdinalIgnoreCase));
         var resolverCliType = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveCliType(settings, step)
             ?? AgentStudio.Pipeline.PipelineStepModelDefaults.DefaultCli;
-        var resolverModel = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModel(
+        var resolverModelResolution = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModelWithSource(
             settings, step, AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+        var resolverModel = resolverModelResolution.Model;
+        var resolverModelSource = resolverModelResolution.Source;
         var resolverThinkingLevel = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveThinkingLevel(
             settings,
             step,
@@ -2186,6 +2188,18 @@ public class ProjectRunner
             }
 
             var final = resolver.GetExecution(resolverJobKey) ?? execution;
+            // Read the resolver's own turn usage before its output buffers are
+            // released; the step row is the only ledger entry for this run.
+            var resolverTurnUsage = ResolveCoreAgentUsage(resolver, resolverJobKey, footerUsage: null);
+            var resolverUsage = new AgentStudio.Pipeline.StepModelUsage(
+                Model: resolverTurnUsage?.Model ?? final.Model ?? resolverModel,
+                ThinkingLevel: resolverThinkingLevel,
+                ModelSource: resolverModelSource,
+                InputTokens: resolverTurnUsage?.InputTokens ?? 0,
+                OutputTokens: resolverTurnUsage?.OutputTokens ?? 0,
+                CacheReadTokens: resolverTurnUsage?.CacheReadTokens ?? 0,
+                CacheCreationTokens: resolverTurnUsage?.CacheCreationTokens ?? 0,
+                InputIncludesCached: resolverTurnUsage?.InputIncludesCached);
             resolver.ReleaseOutputResources(resolverJobKey);
             resolver.DiscardPersistedOutput(resolverJobKey);
 
@@ -2195,7 +2209,7 @@ public class ProjectRunner
                 var timedOut = new IntegrationResult(IntegrationOutcome.Conflict, null,
                     "Codex conflict resolver timed out.", _git.ListUnmergedFiles(run.WorktreePath!));
                 RecordConflictResolutionStep(info, PipelineStepStatus.Failed, "merge-blocked",
-                    IntegrationSummary(timedOut.Error!, run, workBranch, timedOut), started, model: final.Model ?? resolverModel);
+                    IntegrationSummary(timedOut.Error!, run, workBranch, timedOut), started, model: final.Model ?? resolverModel, usage: resolverUsage);
                 return timedOut;
             }
 
@@ -2205,7 +2219,7 @@ public class ProjectRunner
                 RecordConflictResolutionStep(info, PipelineStepStatus.Failed, "lease-lost",
                     IntegrationSummary("Integration lease was lost during conflict-resolution.", run, workBranch, lost),
                     started,
-                    model: final.Model ?? resolverModel);
+                    model: final.Model ?? resolverModel, usage: resolverUsage);
                 return lost;
             }
 
@@ -2226,7 +2240,7 @@ public class ProjectRunner
                 RecordConflictResolutionStep(info, PipelineStepStatus.Passed, "resolved",
                     $"Conflict resolved and `{run.Branch}` merged into `{workBranch}` at `{retry.IntegratedSha ?? "<unknown>"}`.",
                     started,
-                    model: final.Model ?? resolverModel);
+                    model: final.Model ?? resolverModel, usage: resolverUsage);
                 return retry;
             }
 
@@ -2239,7 +2253,7 @@ public class ProjectRunner
             RecordConflictResolutionStep(info, PipelineStepStatus.Failed, "merge-blocked",
                 IntegrationSummary("Integration blocked.", run, workBranch, blocked),
                 started,
-                model: final.Model ?? resolverModel);
+                model: final.Model ?? resolverModel, usage: resolverUsage);
             return blocked;
         }
         catch (Exception ex)
@@ -2354,7 +2368,8 @@ public class ProjectRunner
         string verdict,
         string summary,
         DateTime startedAt,
-        string? model = null)
+        string? model = null,
+        AgentStudio.Pipeline.StepModelUsage? usage = null)
         => RecordPipelineStep(
             info,
             AgentStudio.Pipeline.PipelineCatalogue.ConflictResolutionStepId,
@@ -2363,7 +2378,8 @@ public class ProjectRunner
             verdict,
             summary,
             startedAt,
-            model);
+            model,
+            usage);
 
     private void RecordPipelineStep(
         TaskInfo info,
@@ -2373,13 +2389,14 @@ public class ProjectRunner
         string? verdict,
         string? summary,
         DateTime startedAt,
-        string? model)
+        string? model,
+        AgentStudio.Pipeline.StepModelUsage? usage = null)
     {
         if (_pipelineLog == null) return;
         try
         {
             var completedAt = status == PipelineStepStatus.Running ? (DateTime?)null : DateTime.UtcNow;
-            _pipelineLog.RecordStep(info.FolderPath, new PipelineStepExecution
+            var row = new PipelineStepExecution
             {
                 StepId = stepId,
                 Kind = kind,
@@ -2391,7 +2408,8 @@ public class ProjectRunner
                 Verdict = verdict,
                 VerdictSummary = summary,
                 Reason = status == PipelineStepStatus.Failed ? summary : null,
-            });
+            };
+            _pipelineLog.RecordStep(info.FolderPath, usage is null ? row : usage.ApplyTo(row));
         }
         catch (Exception ex)
         {
@@ -4725,8 +4743,11 @@ public class ProjectRunner
                 _stuckLoops[jobId] = nextLoopSteer;
 
                 var formatted = OrchestratorReplyParser.FormatSteerForChat(parsed);
-                _chatLog.Append(info, OrchestratorMessageKind.Steer,
-                    $"[orchestrator] {formatted}");
+                using (AgentStudio.Pipeline.DecisionModelContext.Use(OrchestratorTurnUsage(result)))
+                {
+                    _chatLog.Append(info, OrchestratorMessageKind.Steer,
+                        $"[orchestrator] {formatted}");
+                }
 
                 _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
                 {
@@ -4784,8 +4805,11 @@ public class ProjectRunner
                 now: DateTime.UtcNow);
             _stuckLoops[jobId] = nextLoop;
 
-            _chatLog.Append(info, OrchestratorMessageKind.Decision,
-                $"[orchestrator] Auto-mode decision (loop {nextLoop.IterationCount}/{_stuckLoopBudget.MaxIterations}): {Truncate(reply, 200)}");
+            using (AgentStudio.Pipeline.DecisionModelContext.Use(OrchestratorTurnUsage(result)))
+            {
+                _chatLog.Append(info, OrchestratorMessageKind.Decision,
+                    $"[orchestrator] Auto-mode decision (loop {nextLoop.IterationCount}/{_stuckLoopBudget.MaxIterations}): {Truncate(reply, 200)}");
+            }
             _orchestratorLog.Append(info.WatchPath, new OrchestratorLogEntry
             {
                 Kind = OrchestratorLogKinds.Decision,
@@ -5127,6 +5151,34 @@ public class ProjectRunner
     /// Best-effort: the record is observability, never a state-machine input,
     /// so any write failure is swallowed with a debug log.
     /// </summary>
+    /// <summary>
+    /// Resolution path of the core run's model: the model-qualification
+    /// selection source when that pre-step chose it (<c>policy</c>,
+    /// <c>policy-economy</c>, <c>task-override</c>), otherwise <c>task</c>
+    /// for a card-pinned model or <c>client-default</c> when the CLI's own
+    /// default ran.
+    /// </summary>
+    /// <summary>
+    /// The project orchestrator turn's model and receipt, for the
+    /// <c>decidedByModel</c> field on the decision line. A quota fallback
+    /// reports the model that actually answered.
+    /// </summary>
+    private static AgentStudio.Pipeline.StepModelUsage OrchestratorTurnUsage(OrchestratorDecisionResult result)
+        => AgentStudio.Pipeline.StepModelUsage.From(
+            result.TokenUsage,
+            result.Model,
+            thinkingLevel: null,
+            modelSource: result.QuotaFallback ? "quota-fallback" : "project-orchestrator");
+
+    private static string CoreModelSource(PipelineExecutionRecord record, TaskInfo? info)
+    {
+        var qualification = record.Steps.FirstOrDefault(step =>
+            string.Equals(step.StepId, AgentStudio.Pipeline.PipelineCatalogue.ModelQualificationStepId, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(step.SelectionSource));
+        if (qualification is not null) return qualification.SelectionSource!;
+        return string.IsNullOrWhiteSpace(info?.Model) ? "client-default" : "task";
+    }
+
     private void RecordCoreRunStart(TaskInfo info, CliExecution execution)
     {
         if (_pipelineLog == null) return;
@@ -5156,6 +5208,7 @@ public class ProjectRunner
                 Kind = StepKind.Core,
                 Model = execution.Model ?? info.Model,
                 ThinkingLevel = execution.ThinkingLevel ?? info.ThinkingLevel,
+                ModelSource = CoreModelSource(record, info),
                 Status = PipelineStepStatus.Running,
                 StartedAt = execution.StartedAt,
                 DurationMs = accumulatedMs,
@@ -5609,6 +5662,7 @@ public class ProjectRunner
                 Kind = StepKind.Core,
                 Model = execution.Model ?? info?.Model,
                 ThinkingLevel = execution.ThinkingLevel ?? info?.ThinkingLevel,
+                ModelSource = CoreModelSource(record, info),
                 Status = coreStatus,
                 StartedAt = startedAt,
                 CompletedAt = completedAt,
@@ -7186,15 +7240,20 @@ public class ProjectRunner
                 ? $"Captured {visualQa.ScreenshotPaths.Count} affected view(s); manifest: {visualQa.CaptureManifestPath}."
                 : "Visual QA was not applicable to this card.",
         });
-        _pipelineLog?.RecordStep(info.FolderPath, new PipelineStepExecution
+        var visualVerdictRow = new PipelineStepExecution
         {
             StepId = AgentStudio.Pipeline.PipelineCatalogue.UiVisualVerdictStepId,
             Kind = StepKind.Orchestrator,
             Status = !visualQa.Applicable || visualQa.Verdict.Status == VisualQaVerdictStatus.Acceptable
                 ? PipelineStepStatus.Passed
                 : PipelineStepStatus.Failed,
-            StartedAt = visualStartedAt,
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = visualQa.ReviewStartedAt ?? visualStartedAt,
+            CompletedAt = visualQa.ReviewStartedAt?.AddMilliseconds(visualQa.ReviewDurationMs) ?? DateTime.UtcNow,
+            DurationMs = visualQa.ReviewDurationMs,
+            EvidenceRef = visualQa.VerdictPath is null ? null : $"results/{visualQa.VerdictPath}",
+            // No reviewer call (not applicable, capture failed, CLI missing)
+            // is a measured zero; a call overwrites this from its receipt.
+            CostBasis = AgentStudio.Pipeline.StepCostBasis.Deterministic,
             Model = visualQa.Applicable ? visualQa.Model : null,
             ThinkingLevel = visualQa.Applicable ? visualQa.ThinkingLevel : null,
             Verdict = visualQa.Verdict.Status switch
@@ -7207,7 +7266,12 @@ public class ProjectRunner
             Reason = visualQa.Decision.Action == VisualQaAction.ProceedToHumanReview
                 ? null
                 : visualQa.Decision.Reason,
-        });
+        };
+        _pipelineLog?.RecordStep(info.FolderPath, visualQa.Usage is { } visualUsage
+            ? AgentStudio.Pipeline.StepModelUsage
+                .From(visualUsage, visualQa.Model, visualQa.ThinkingLevel, visualQa.ModelSource)
+                .ApplyTo(visualVerdictRow)
+            : visualVerdictRow with { Model = null, ThinkingLevel = null });
 
         if (visualQa.Decision.Action == VisualQaAction.RetryWithSteer)
         {
@@ -7679,10 +7743,11 @@ public class ProjectRunner
             activeInfo)!;
         var used = _abortReviewRerunsUsed.TryGetValue(jobId, out var u) ? u : 0;
         var budgetRemaining = Math.Max(0, PostAbortReviewDecider.DefaultRerunBudget - used);
-        var model = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModel(
+        var modelResolution = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveModelWithSource(
             settings,
             AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep,
             runtimeDefault: AgentStudio.Pipeline.PipelineStepModelDefaults.SupportModel);
+        var model = modelResolution.Model;
         var reviewCliType = AgentStudio.Pipeline.PipelineStepConfigResolver.ResolveCliType(
             settings,
             AgentStudio.Pipeline.PipelineCatalogue.AbortReviewStep)
@@ -7725,7 +7790,10 @@ public class ProjectRunner
             return false;
         }
 
-        RecordAbortReviewStep(activeInfo.FolderPath, report);
+        var decisionUsage = AgentStudio.Pipeline.StepModelUsage.From(
+            report.Usage, report.Model, report.ThinkingLevel, modelResolution.Source);
+        RecordAbortReviewStep(activeInfo.FolderPath, report, decisionUsage);
+        using var decisionScope = AgentStudio.Pipeline.DecisionModelContext.Use(decisionUsage);
         var recToken = report.Verdict is null
             ? "unparseable"
             : PostAbortReviewStepService.RecommendationToken(report.Verdict.Recommendation);
@@ -7806,14 +7874,17 @@ public class ProjectRunner
     /// <summary>Records the abort-review verdict + decided action into
     /// <c>pipeline-execution.json</c> so the job-detail pipeline view can
     /// render the step like the auto-review aspects (req 4). Best-effort.</summary>
-    private void RecordAbortReviewStep(string jobFolderPath, PostAbortReviewStepReport report)
+    private void RecordAbortReviewStep(
+        string jobFolderPath,
+        PostAbortReviewStepReport report,
+        AgentStudio.Pipeline.StepModelUsage usage)
     {
         if (_pipelineLog == null) return;
         try
         {
             var parsed = report.Verdict != null;
             var reasoning = report.Verdict?.Reasoning;
-            _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+            _pipelineLog.RecordStep(jobFolderPath, usage.ApplyTo(new PipelineStepExecution
             {
                 StepId = AgentStudio.Pipeline.PipelineCatalogue.PostAbortReviewStepId,
                 Kind = StepKind.Orchestrator,
@@ -7828,7 +7899,8 @@ public class ProjectRunner
                 VerdictSummary = $"action={PostAbortReviewStepService.ActionToken(report.Action)}" +
                     (string.IsNullOrWhiteSpace(reasoning) ? string.Empty : $"; {reasoning}"),
                 Reason = parsed ? null : "CLI failure / unparseable reply; failed closed to operator escalation",
-            });
+                EvidenceRef = string.IsNullOrWhiteSpace(report.FileName) ? null : report.FileName,
+            }));
         }
         catch (Exception ex)
         {

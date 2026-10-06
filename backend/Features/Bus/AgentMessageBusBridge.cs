@@ -122,8 +122,18 @@ public sealed class AgentMessageBusBridge
     /// Mirror an orchestrator chat-log line. Mapping:
     /// <c>Decision -&gt; decision/Info</c>, <c>Reissue -&gt; decision/Warn</c>,
     /// <c>HeuristicFallback -&gt; decision/Warn</c>, <c>GiveUp -&gt; decision/High</c>.
+    /// When <paramref name="decidedBy"/> is supplied the message payload names
+    /// the deciding model (<c>decidedByModel</c>), its level and which
+    /// resolution path chose it, so two supervisors are distinguishable in the
+    /// feed. Without it the payload states <c>decidedBy = "rule"</c>: no model
+    /// call stood behind the line.
     /// </summary>
-    public Task EmitOrchestratorChatAsync(TaskInfo info, OrchestratorMessageKind kind, string text, CancellationToken ct = default)
+    public Task EmitOrchestratorChatAsync(
+        TaskInfo info,
+        OrchestratorMessageKind kind,
+        string text,
+        CancellationToken ct = default,
+        StepModelUsage? decidedBy = null)
     {
         if (info == null) return Task.CompletedTask;
         var severity = kind switch
@@ -159,11 +169,25 @@ public sealed class AgentMessageBusBridge
             topic: topic,
             summary: TruncateSummary(text),
             body: text,
+            payload: DecisionPayload(decidedBy),
             artifacts: new[] { LogSliceArtifact(info) },
             tags: new[] { "orchestrator-chat", topic });
 
         return EmitAsync(msg, ct);
     }
+
+    /// <summary>
+    /// Decision-message payload: the deciding model when one was called,
+    /// otherwise an explicit rule marker. Public for the wire-shape tests.
+    /// </summary>
+    public static OrchestratorDecisionPayload DecisionPayload(StepModelUsage? decidedBy)
+        => decidedBy is null || string.IsNullOrWhiteSpace(decidedBy.Model)
+            ? new OrchestratorDecisionPayload("rule", null, null, null)
+            : new OrchestratorDecisionPayload(
+                "model",
+                decidedBy.Model,
+                string.IsNullOrWhiteSpace(decidedBy.ThinkingLevel) ? null : decidedBy.ThinkingLevel,
+                string.IsNullOrWhiteSpace(decidedBy.ModelSource) ? null : decidedBy.ModelSource);
 
     /// <summary>
     /// Mirror a supervisor chat-log line (the <c>[supervisor]</c>-stream lines
@@ -1172,3 +1196,14 @@ public sealed class AgentMessageBusBridge
         return s.Length == 0 ? "unknown" : s;
     }
 }
+
+/// <summary>
+/// Payload of an orchestrator <c>decision</c> bus message (AGT-3015).
+/// <see cref="DecidedBy"/> is <c>model</c> or <c>rule</c>;
+/// <see cref="DecidedByModel"/> names the model that made the call.
+/// </summary>
+public sealed record OrchestratorDecisionPayload(
+    string DecidedBy,
+    string? DecidedByModel,
+    string? DecidedByThinkingLevel,
+    string? DecidedByModelSource);
