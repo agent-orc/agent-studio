@@ -1,5 +1,5 @@
 <section class="pane pane--protocol"
-         [style.flex]="maximized() ? '1 1 100%' : weight()"
+         [style.--pane-weight]="maximized() ? '1 1 100%' : weight()"
          [appTaskArtifactLinks]="artifactLinkContext()"
          data-testid="pane-protocol">
   <!--

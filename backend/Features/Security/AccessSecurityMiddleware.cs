@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Primitives;
+
 namespace AgentStudio.Security;
 
 /// <summary>Fail-closed authentication and the intentionally small owner/operator/viewer authorization model.</summary>
@@ -79,9 +81,11 @@ public sealed class AccessSecurityMiddleware
         // A service bearer presented to the proxied versioned plane belongs to
         // the standalone Task Server. Do not interpret it against the monolith's
         // credential store; the upstream remains fail-closed and authoritative.
-        if (TaskServerPlaneProxy.IsConfigured(_configuration)
-            && path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
-            && context.Request.Headers.ContainsKey("Authorization"))
+        // The skip holds only when routing selected the proxy endpoint and the
+        // Authorization header is one well-formed bearer; any other shape falls
+        // through to local authentication.
+        if (IsProxiedTaskServerPlane(context, path)
+            && IsWellFormedBearer(context.Request.Headers.Authorization))
         {
             await _next(context);
             return;
@@ -121,6 +125,7 @@ public sealed class AccessSecurityMiddleware
         if (path.StartsWith("/hubs/", StringComparison.OrdinalIgnoreCase))
         {
             if (human is null) { await Reject(context, 401, "authentication-required", "An authenticated Studio session is required for event streams."); return; }
+            if (human.User.MustChangePassword) { await Reject(context, 403, "password-change-required", "Change the temporary password before continuing."); return; }
             await _next(context);
             return;
         }
@@ -260,38 +265,98 @@ public sealed class AccessSecurityMiddleware
         return path.Length > 1 ? path.TrimEnd('/') : path;
     }
 
+    private bool IsProxiedTaskServerPlane(HttpContext context, string path)
+        => TaskServerPlaneProxy.IsConfigured(_configuration)
+           && path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
+           && context.GetEndpoint()?.Metadata.GetMetadata<TaskServerPlaneProxyEndpoint>() is not null;
+
+    private const int MaxBearerLength = 4096;
+
+    /// <summary>
+    /// Exactly one <c>Authorization: Bearer &lt;b64token&gt;</c> value (RFC 6750
+    /// section 2.1), bounded in length. Empty, multi-valued, non-bearer, or
+    /// whitespace-bearing shapes are not well formed.
+    /// </summary>
+    internal static bool IsWellFormedBearer(StringValues authorization)
+    {
+        if (authorization.Count != 1) return false;
+        var value = authorization[0];
+        if (value is null || !value.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return false;
+        var token = value.AsSpan("Bearer ".Length);
+        if (token.Length is 0 or > MaxBearerLength) return false;
+        var index = 0;
+        while (index < token.Length && IsB64TokenChar(token[index])) index++;
+        if (index == 0) return false;
+        while (index < token.Length && token[index] == '=') index++;
+        return index == token.Length;
+    }
+
+    private static bool IsB64TokenChar(char ch)
+        => ch is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9')
+            or '-' or '.' or '_' or '~' or '+' or '/';
+
     private static string? ReadBearer(string? authorization)
         => authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true ? authorization[7..].Trim() : null;
 
     private bool ProjectAllowed(StudioUser user, HttpRequest request, string path)
     {
-        if (user.Role == StudioRoles.Owner || user.Projects.Count == 0) return true;
+        if (ProjectAccessAuthorization.HasUnrestrictedProjectAccess(user)) return true;
+        return ProjectScopePolicy.Allows(
+            ResolveRouteAddress(request, path),
+            request.Query["project"].FirstOrDefault(),
+            project => ProjectAccessAuthorization.Allows(user, project, _projects));
+    }
+
+    /// <summary>
+    /// Derives the project(s) a request addresses from its route or addressed
+    /// task. <c>?project=</c> is read here only where the query is itself the
+    /// task address (<c>/core</c>); everywhere else it can only narrow.
+    /// </summary>
+    private ProjectRouteAddress ResolveRouteAddress(HttpRequest request, string path)
+    {
+        if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase))
+            return ProjectRouteAddress.WorkspaceWide;
         if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase)
             && path.EndsWith("/core", StringComparison.OrdinalIgnoreCase))
-            return !string.IsNullOrWhiteSpace(request.Query["project"])
-                && ProjectAccessAuthorization.Allows(user, request.Query["project"].FirstOrDefault(), _projects);
-        if (path.StartsWith("/api/runner/global", StringComparison.OrdinalIgnoreCase)) return false;
-        string? requested = request.Query["project"].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(requested) && path.StartsWith("/api/projects/", StringComparison.OrdinalIgnoreCase))
-            requested = path["/api/projects/".Length..].Split('/', 2)[0];
-        if (requested is "settings" or "pipeline-catalogue") requested = null;
-        if (string.IsNullOrWhiteSpace(requested) && path.StartsWith("/api/runner/", StringComparison.OrdinalIgnoreCase))
+        {
+            // The core read looks the task up only inside the named project,
+            // so the query is part of the task address and is mandatory.
+            return ProjectRouteAddress.Addressed(request.Query["project"].FirstOrDefault());
+        }
+        if (path.StartsWith("/api/projects/", StringComparison.OrdinalIgnoreCase))
+        {
+            var segment = path["/api/projects/".Length..].Split('/', 2)[0];
+            return segment is "settings" or "pipeline-catalogue"
+                ? ProjectRouteAddress.Unaddressed
+                : ProjectRouteAddress.Addressed(Uri.UnescapeDataString(segment));
+        }
+        if (path.StartsWith("/api/runner/", StringComparison.OrdinalIgnoreCase))
         {
             var candidate = path["/api/runner/".Length..].Split('/', 2)[0];
-            if (candidate is not ("status" or "global" or "orchestrator-feed" or "token-summary-aggregate"
-                or "claim" or "lease" or "logs" or "events" or "artifacts" or "completion"))
-                requested = candidate;
+            return candidate is "status" or "orchestrator-feed" or "token-summary-aggregate"
+                or "claim" or "lease" or "logs" or "events" or "artifacts" or "completion"
+                ? ProjectRouteAddress.Unaddressed
+                : ProjectRouteAddress.Addressed(Uri.UnescapeDataString(ContextRouteProject(path, candidate)));
         }
-        if (string.IsNullOrWhiteSpace(requested) && path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
+        if (path.StartsWith("/api/orchestrator/", StringComparison.OrdinalIgnoreCase))
         {
-            var marker = path.Contains("/project:", StringComparison.OrdinalIgnoreCase)
-                ? "/project:"
-                : path.Contains("/task:", StringComparison.OrdinalIgnoreCase) ? "/task:" : null;
-            if (marker is null) return false;
-            var start = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase) + marker.Length;
-            requested = path[start..].Split('/', 2)[0];
+            // Context routes are task:{projectId}/{taskKey} and
+            // workbench:{projectId}/{workbenchKey}. The first segment after
+            // the colon is the project, never the task or workbench key. Read
+            // the prefix only at the start of the context key: a task key can
+            // itself contain text such as "project:mine".
+            var context = path.StartsWith("/api/orchestrator/context/", StringComparison.OrdinalIgnoreCase)
+                ? path["/api/orchestrator/context/".Length..]
+                : path.StartsWith("/api/orchestrator/sessions/", StringComparison.OrdinalIgnoreCase)
+                    ? path["/api/orchestrator/sessions/".Length..]
+                    : null;
+            if (context is null) return ProjectRouteAddress.WorkspaceWide;
+            foreach (var prefix in new[] { "project:", "task:", "workbench:" })
+                if (context.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return ProjectRouteAddress.Addressed(Uri.UnescapeDataString(context[prefix.Length..].Split('/', 2)[0]));
+            return ProjectRouteAddress.WorkspaceWide;
         }
-        if (string.IsNullOrWhiteSpace(requested) && path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
+        if (path.StartsWith("/api/tasks/", StringComparison.OrdinalIgnoreCase))
         {
             var taskId = path["/api/tasks/".Length..].Split('/', 2)[0];
             // Body-addressed and workspace-collection task routes carry their task
@@ -301,19 +366,61 @@ public sealed class AccessSecurityMiddleware
             // FilterTasks, so the middleware defers instead of inferring a single
             // project from the literal path segment.
             if (taskId is "reorder" or "batch-move" or "reference-status" or "archive")
-                return true;
+                return ProjectRouteAddress.DeferredToHandler;
             // Every other /api/tasks/{id}/... route is single-task addressed. A
             // scoped account may act only on a task whose project it belongs to. If
             // that project cannot be resolved (unknown id or the scanner is
-            // unavailable), fail closed rather than allow the request through — this
-            // closes the path-/body-addressed mutation gap (move-to-top,
-            // change-project, orphan-folder, …) the review flagged.
-            var project = _scanner?.FindJob(Uri.UnescapeDataString(taskId), request.Query["watchPath"].FirstOrDefault())?.ProjectName;
-            return !string.IsNullOrWhiteSpace(project)
-                   && ProjectAccessAuthorization.Allows(user, project, _projects);
+            // unavailable), fail closed rather than allow the request through.
+            return ProjectRouteAddress.Addressed(ResolveTaskProjects(Uri.UnescapeDataString(taskId), request));
         }
-        return string.IsNullOrWhiteSpace(requested)
-               || ProjectAccessAuthorization.Allows(user, Uri.UnescapeDataString(requested), _projects);
+        return ProjectRouteAddress.Unaddressed;
+    }
+
+    private static string ContextRouteProject(string path, string candidate)
+    {
+        // Only the concrete context-chat routes interpret these prefixes.
+        // Other runner routes may address a project whose literal name starts
+        // with the same text and must keep checking that full name.
+        var segments = path["/api/runner/".Length..].Split('/');
+        if (segments.Length == 2
+            && segments[1].Equals("orchestrator-chat", StringComparison.OrdinalIgnoreCase)
+            && candidate.StartsWith("project:", StringComparison.OrdinalIgnoreCase))
+            return candidate["project:".Length..];
+        if (segments.Length == 3
+            && segments[2].Equals("orchestrator-chat", StringComparison.OrdinalIgnoreCase))
+        {
+            if (candidate.StartsWith("task:", StringComparison.OrdinalIgnoreCase))
+                return candidate["task:".Length..];
+            if (candidate.StartsWith("workbench:", StringComparison.OrdinalIgnoreCase))
+                return candidate["workbench:".Length..];
+        }
+        return candidate;
+    }
+
+    /// <summary>
+    /// Every project a single-task handler could act on: the unscoped lookup
+    /// plus the lookups scoped by <c>?project=</c> and <c>?watchPath=</c>, the
+    /// way task handlers resolve their scope. A query value therefore cannot
+    /// steer authorization towards a member project while the handler acts on
+    /// a foreign task.
+    /// </summary>
+    private string?[] ResolveTaskProjects(string taskId, HttpRequest request)
+    {
+        var task = _scanner?.FindJob(taskId);
+        if (task is null) return [null];
+        var projects = new List<string?> { task.ProjectName };
+        var watchPath = request.Query["watchPath"].FirstOrDefault();
+        var scopes = new[]
+        {
+            watchPath,
+            _projects is null ? null : AgentStudio.Tasks.TaskEndpointHelpers.ResolveWatchPath(_projects, request.Query["project"].FirstOrDefault(), watchPath),
+        };
+        foreach (var scope in scopes.Where(scope => !string.IsNullOrWhiteSpace(scope)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var scoped = _scanner!.FindJob(taskId, scope);
+            if (scoped is not null) projects.Add(scoped.ProjectName);
+        }
+        return [.. projects];
     }
 
     private static async Task Reject(

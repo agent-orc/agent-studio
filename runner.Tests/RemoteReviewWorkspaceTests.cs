@@ -128,7 +128,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             baselineExitCode: 0);
         var index = new ReviewFlakyTestIndex(methods: [marked]);
 
-        var retried = initial.Reclassify([], index);
+        var retried = initial.Reclassify([], index, repeatPassed: true);
         var verdict = RemoteReviewWorkspace.BaselineVerdict(
             BaselineCommand("exit 0"),
             retried);
@@ -154,7 +154,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
 
         var retried = initial.Reclassify(
             [marked],
-            new ReviewFlakyTestIndex(methods: [marked]));
+            new ReviewFlakyTestIndex(methods: [marked]), repeatPassed: false);
         var verdict = RemoteReviewWorkspace.BaselineVerdict(
             BaselineCommand("exit 1"),
             retried);
@@ -163,6 +163,18 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Empty(retried.FlakyQuarantinedFailures);
         Assert.Equal("block", verdict.Status);
         Assert.Equal("NewTestFailures", verdict.Classification);
+    }
+
+    [Fact]
+    public void Failed_retry_without_test_output_does_not_prove_a_flake()
+    {
+        const string marked = "Product.Tests.ProcessTiming";
+        var initial = BaselineComparison.Create(new string('a', 40), [], [marked],
+            cacheHit: false, baselineExitCode: 0);
+        var retried = initial.Reclassify([], new ReviewFlakyTestIndex(methods: [marked]),
+            repeatPassed: false);
+        Assert.Empty(retried.FlakyQuarantinedFailures);
+        Assert.Equal([marked], retried.InitialFailures);
     }
 
     [Fact]

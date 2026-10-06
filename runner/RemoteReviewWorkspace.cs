@@ -631,7 +631,8 @@ public sealed class RemoteReviewWorkspace
                         }
                         comparison = comparison.Reclassify(
                             SubjectFailures(command, cleanRepeat.Process),
-                            reviewFlakyTests);
+                            reviewFlakyTests,
+                            repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
                     comparison = requiredComparison with
@@ -2899,7 +2900,8 @@ internal sealed record BaselineComparison(
 
     public BaselineComparison Reclassify(
         IReadOnlyList<string> subjectFailures,
-        ReviewFlakyTestIndex reviewFlakyTests)
+        ReviewFlakyTestIndex reviewFlakyTests,
+        bool repeatPassed)
     {
         var retried = Create(
             BaselineSha,
@@ -2913,7 +2915,7 @@ internal sealed record BaselineComparison(
         return retried with
         {
             InitialFailures = InitialFailures,
-            FlakyQuarantinedFailures = NewFailures
+            FlakyQuarantinedFailures = (repeatPassed ? NewFailures : [])
                 .Where(failure => !retriedFailures.Contains(failure) && reviewFlakyTests.Contains(failure))
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
