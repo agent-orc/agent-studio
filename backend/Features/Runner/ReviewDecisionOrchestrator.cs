@@ -1557,21 +1557,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
         var reason = "Agent emitted [[TASK_NOOP]] but the task description is real; reissuing with sharpened framing.";
 
-        _chatLog.Append(current, OrchestratorMessageKind.Reissue,
+        var moved = MoveReissueToReadyTop(current, entry, "noop-recovery", workspace);
+        if (moved == null) return;
+        _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
             $"Decision: reissue (NOOP recovery). Reason: {reason}");
-
-        var moved = MoveReissueToReadyTop(current, entry, "noop-recovery");
-        if (moved != null)
-        {
-            var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
-            var steering = new SteeringContext("noop-recovery", "reissue", priorReissues, reason);
-            followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
-            EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
-                TimelineActors.QualityLoop,
-                "Reopened: NOOP recovery, reissued with sharpened framing.",
-                BuildReopenDetails("noop-recovery", priorReissues, reason,
-                    followUpPrompt: followUp, context: steering));
-        }
+        var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var steering = new SteeringContext("noop-recovery", "reissue", priorReissues, reason);
+        followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
+        EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            "Reopened: NOOP recovery, reissued with sharpened framing.",
+            BuildReopenDetails("noop-recovery", priorReissues, reason,
+                followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
@@ -1583,7 +1580,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Response: "(no fast-model call)",
             FollowUp: followUp),
             current.FolderPath,
-            moved?.FolderPath);
+            moved.FolderPath);
     }
 
     private Task EscalateNoOpAsync(
@@ -1792,28 +1789,25 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ? $"Run finished without a terminal sentinel and its own close-out lists {gateFindings} unfinished item(s); reissuing with them foregrounded."
             : "Run finished without a terminal sentinel; reissuing and demanding a deterministic close-out signal.";
 
-        _chatLog.Append(current, OrchestratorMessageKind.Reissue,
+        var moved = MoveReissueToReadyTop(current, entry, "no-completion-signal", workspace);
+        if (moved == null) return;
+        _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
             $"Decision: reissue (no completion signal). Reason: {reason}");
-
-        var moved = MoveReissueToReadyTop(current, entry, "no-completion-signal");
-        if (moved != null)
-        {
-            // Post-core Orchestrator-Review row: the silent-finish reissue is the
-            // same completeness gate firing without a sentinel, so record it for
-            // the Overview pipeline.
-            RecordOrchestratorReviewStep(moved.FolderPath, PipelineStepStatus.Failed,
-                DecisionVerdictReissue, reason);
-            var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
-            var priorCommits = RunOutcomePolicy.PriorCommitLines(current);
-            var steering = new SteeringContext("no-completion-signal", "reissue", priorReissues, reason,
-                PriorCommits: priorCommits);
-            followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
-            EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
-                TimelineActors.QualityLoop,
-                "Reopened: run finished without a terminal sentinel, reissued demanding one.",
-                BuildReopenDetails("no-completion-signal", priorReissues, reason,
-                    followUpPrompt: followUp, context: steering));
-        }
+        // Post-core Orchestrator-Review row: the silent-finish reissue is the
+        // same completeness gate firing without a sentinel, so record it for
+        // the Overview pipeline.
+        RecordOrchestratorReviewStep(moved.FolderPath, PipelineStepStatus.Failed,
+            DecisionVerdictReissue, reason);
+        var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var priorCommits = RunOutcomePolicy.PriorCommitLines(current);
+        var steering = new SteeringContext("no-completion-signal", "reissue", priorReissues, reason,
+            PriorCommits: priorCommits);
+        followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
+        EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            "Reopened: run finished without a terminal sentinel, reissued demanding one.",
+            BuildReopenDetails("no-completion-signal", priorReissues, reason,
+                followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
@@ -1825,7 +1819,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Response: "(no fast-model call)",
             FollowUp: followUp),
             current.FolderPath,
-            moved?.FolderPath);
+            moved.FolderPath);
     }
 
     private Task EscalateNoCompletionSignalAsync(
@@ -1964,6 +1958,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private void ProcessUnworkedCard(string workspace, WatchPathEntry entry, PendingDecision pending)
     {
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
+        if (EscalateIfCardRoundBudgetSpent(workspace, entry, current, UnworkedNoCoreRunCause))
+            return;
         var move = GuardedMoveJob(
             current.Id, TaskStates.Ready, entry.Path,
             transitionCause: LaneChangeCauses.QualityLoop, transitionDetail: UnworkedNoCoreRunCause);
@@ -2037,7 +2033,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (verdict == ReviewDecisionKind.Reissue)
         {
-            var moved = MoveReissueToReadyTop(current, entry, "stale-verdict-backfill");
+            var moved = MoveReissueToReadyTop(current, entry, "stale-verdict-backfill", workspace, alreadyCharged: true);
             if (moved == null)
             {
                 _logger.LogWarning(
@@ -2859,7 +2855,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "code-review-council",
                 reaction.Summary,
                 evidence: AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction));
-            var moved = MoveReissueToReadyTop(current, entry, "code-review-council");
+            var moved = MoveReissueToReadyTop(current, entry, "code-review-council", workspace);
             if (moved is null) return true;
 
             AgentStudio.Review.CouncilReviewReactionStore.Write(moved.FolderPath, reaction);
@@ -2970,7 +2966,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "then re-run the task and end with [[TASK_DONE]]:\n\n" +
             report.FollowUpSummary;
 
-        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-block");
+        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-block", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing "sent back to ready" banner.
@@ -3077,6 +3073,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ReviewFollowUpDecision decision,
         CancellationToken ct)
     {
+        // The concern ledger must only be consumed for a round that can start.
+        if (EscalateIfCardRoundBudgetSpent(workspace, entry, current, "multi-aspect-concern"))
+            return;
         var maximum = ConfiguredMaxConcernRounds(entry.Name);
         var attempt = _pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1;
         var attemptId = $"local-review-{attempt}";
@@ -3108,7 +3107,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
 
         var followUp = BuildConcernFollowUp(decision.Findings, attemptId);
-        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-concern");
+        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-concern", workspace);
         if (moved is null)
         {
             var latest = _scanner.FindJob(current.Id, entry.Path);
@@ -3760,7 +3759,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Reissue: foreground the verification demand so the next run proves the
         // result instead of re-asserting it.
         var followUp = EvidenceGate.BuildFollowUp(gate);
-        var moved = MoveReissueToReadyTop(current, entry, "evidence-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "evidence-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -3886,7 +3885,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "solution-quality-gate",
             gate.Reason,
             evidence: SolutionQualityGate.BuildFollowUp(gate));
-        var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -4633,7 +4632,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Reissue: foreground the gate's findings so the next run finishes the
         // open work instead of restarting blind.
         var followUp = CompletionGate.BuildFollowUp(gate.Findings);
-        var moved = MoveReissueToReadyTop(current, entry, "completion-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "completion-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -6180,7 +6179,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause);
+        var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause, workspace);
         if (moved == null) return;
         if (SessionContinuationLedgerStore.Latest(moved.FolderPath)?.MechanicalResumesUsed >= 1)
             SessionContinuationLedgerStore.SaveFreshReason(
@@ -6329,7 +6328,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var moved2 = MoveReissueToReadyTop(current, entry, "lint-scss-fail");
+        var moved2 = MoveReissueToReadyTop(current, entry, "lint-scss-fail", workspace);
         if (moved2 == null) return;
 
         // Final verdict step: reissue (lint-scss gate failed once).
@@ -7146,7 +7145,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Move first so the operator-visible "sent back to ready" notification
         // only fires once the folder has actually left 4-auto-review. A failed
         // move must not produce a banner that claims the task moved.
-        var moved = MoveReissueToReadyTop(current, entry, "needs-input");
+        var moved = MoveReissueToReadyTop(current, entry, "needs-input", workspace);
         if (moved == null)
         {
             return;
@@ -7881,8 +7880,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// is also stamped onto the lane row: a build/test gate failure is its own
     /// ledger cause, every other reopen is a quality-loop reopen.
     /// </param>
-    private TaskInfo? MoveReissueToReadyTop(TaskInfo current, WatchPathEntry entry, string reopenCause)
+    private TaskInfo? MoveReissueToReadyTop(
+        TaskInfo current, WatchPathEntry entry, string reopenCause, string workspace,
+        bool alreadyCharged = false)
     {
+        // Backfilling a recorded verdict completes an already charged round.
+        // Every new reissue, including deterministic gates, spends the same
+        // lifetime budget as an operator sweep regardless of attempt epoch.
+        if (!alreadyCharged && EscalateIfCardRoundBudgetSpent(workspace, entry, current, reopenCause))
+            return null;
         var move = GuardedMoveJob(
             current.Id, TaskStates.Ready, entry.Path,
             transitionCause: ReopenLaneChangeCause(reopenCause),
@@ -7914,6 +7920,52 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ConcernTagWriter.MergeConcernTags(moved.FolderPath, new[] { ReissueTagId }, _logger);
         _scanner.InvalidateCache();
         return moved;
+    }
+
+    private bool EscalateIfCardRoundBudgetSpent(
+        string workspace, WatchPathEntry entry, TaskInfo current, string reopenCause)
+    {
+        var budget = CardRoundBudget.Evaluate(
+            ReviewDecisionLog.ReadAll(workspace, entry.Name),
+            _timeline?.ReadAll(current.FolderPath) ?? [],
+            current.Id,
+            CardRoundBudget.ResolveAllowed(_configuration));
+        if (!budget.Exhausted) return false;
+
+        var reason = $"Automatic round budget spent ({budget.Used} of {budget.Allowed}); " +
+                     $"{reopenCause} needs a person to decide the next step.";
+        var move = GuardedMoveJob(
+            current.Id, TaskStates.Escalated, entry.Path,
+            transitionCause: LaneChangeCauses.Escalated,
+            transitionDetail: "card-round-budget");
+        if (move.Status != MoveJobStatus.Success)
+        {
+            _logger.LogWarning(
+                "ReviewDecisionOrchestrator: failed to escalate {Project}/{JobId} at card round budget: {Status} {Message}",
+                entry.Name, current.Id, move.Status, move.Message);
+            return true;
+        }
+
+        var folder = move.NewFolderPath ?? current.FolderPath;
+        var moved = current with { FolderPath = folder, State = TaskStates.Escalated };
+        _chatLog.AppendSupervisor(moved, "escalate", reason);
+        EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
+            TimelineActors.Orchestrator, reason,
+            BuildEscalateDetails("card-round-budget", reason,
+                CountPriorReissues(workspace, entry.Name, current.Id)));
+        AppendReviewDecision(workspace, new ReviewDecisionRecord(
+            CreatedAt: DateTime.UtcNow,
+            JobId: current.Id,
+            Project: entry.Name,
+            Kind: ReviewDecisionKind.Escalate,
+            Reason: reason,
+            Prompt: "(shared card round budget)",
+            Response: string.Empty,
+            FollowUp: string.Empty),
+            current.FolderPath,
+            folder);
+        _statusSnapshot.RecordEscalate();
+        return true;
     }
 
     /// <summary>Quality-loop reopen cause id of the ledger row to the lane-change cause of the same row.</summary>

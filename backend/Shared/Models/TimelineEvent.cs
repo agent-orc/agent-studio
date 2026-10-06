@@ -350,6 +350,14 @@ public static class TimelineEventKinds
     /// </summary>
     public const string ContinuationRoundStarted = "continuation_round_started";
     /// <summary>
+    /// AGT-3011: an operator sweep (<c>fix-rounds</c>, <c>gate-triage</c>,
+    /// <c>salvage</c>) opened a round on this card. The receipt names the sweep
+    /// and the exact failure (<c>subjectKey</c>) so the sweep never opens a
+    /// second round for the same failure, across ticks and restarts, and the
+    /// round budget it charged (<c>roundsUsed</c>/<c>roundsAllowed</c>).
+    /// </summary>
+    public const string OperatorSweepRoundStarted = "operator_sweep_round_started";
+    /// <summary>
     /// A provider refused the model request and the platform continued a
     /// salvaged run on the explicitly declared sibling model.
     /// </summary>

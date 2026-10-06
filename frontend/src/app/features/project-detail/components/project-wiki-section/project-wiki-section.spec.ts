@@ -263,6 +263,7 @@ async function setup(
   flushWikiPulse(http, pulse);
   flushGradingContext(http);
   fixture.detectChanges();
+  for (const request of http.match('/api/projects/Demo/tags')) request.flush({ items: [] });
   flushStyleGuidesIfRendered(http);
   flushWikiHomeIfRendered(http);
   fixture.detectChanges();
@@ -1994,6 +1995,47 @@ describe('ProjectWikiSectionComponent', () => {
     expect(push).not.toHaveBeenCalled();
     push.mockRestore();
     replace.mockRestore();
+    http.verify();
+  });
+
+  it('leaves the area glossary when navigating to a tree page, folder, or search', async () => {
+    const { fixture, http } = await setup();
+    const root = el(fixture);
+    const openGlossary = (): void => {
+      fixture.componentInstance.openGlossaries();
+      fixture.detectChanges();
+      http.expectOne('/api/projects/Demo/areas').flush({ items: [] });
+      http.expectOne(r => r.url === '/api/projects/Demo/workbenches').flush({ items: [] });
+      fixture.detectChanges();
+      expect(root.querySelector('[data-testid="area-glossary"]')).toBeTruthy();
+    };
+
+    expandConcepts(fixture);
+    openGlossary();
+    root.querySelector<HTMLElement>('[data-testid="project-wiki-file-concepts/overview.md"]')!.click();
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Demo/wiki/files/concepts/overview.md')
+      .flush({ relPath: 'concepts/overview.md', content: '# Overview\n' });
+    http.expectOne('/api/projects/Demo/wiki/history/concepts/overview.md').flush(HISTORY);
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="area-glossary"]')).toBeNull();
+    expect(root.querySelector('[data-testid="project-wiki-viewer-path"]')?.textContent)
+      .toContain('concepts/overview.md');
+
+    openGlossary();
+    root.querySelector<HTMLButtonElement>('[data-testid="project-wiki-folder-label-concepts"]')!.click();
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Demo/wiki/folder/concepts')
+      .flush({ path: 'concepts', name: 'concepts', children: [] });
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="area-glossary"]')).toBeNull();
+
+    openGlossary();
+    fixture.componentInstance.onSearchQueryChange('overview');
+    fixture.detectChanges();
+    expect(root.querySelector('[data-testid="area-glossary"]')).toBeNull();
+    expect(root.querySelector('[data-testid="wiki-search-results"]')).toBeTruthy();
+    fixture.componentInstance.clearSearch();
     http.verify();
   });
 

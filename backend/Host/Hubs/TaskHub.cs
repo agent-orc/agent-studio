@@ -39,9 +39,10 @@ public class TaskHub : Hub
         // The public demo has no unscoped catch-all group: every visible
         // project is already enumerated and allowlist-checked below, and the
         // demo has no non-public project whose broadcasts an unscoped
-        // connection could otherwise pick up.
+        // connection could otherwise pick up. An empty membership list never
+        // widens a scoped role into the unscoped group.
         if (!isPublicDemo
-            && (principal is null || principal.User.Role == StudioRoles.Owner || principal.User.Projects.Count == 0))
+            && (principal is null || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(principal.User)))
             await Groups.AddToGroupAsync(Context.ConnectionId, UnscopedSecurityGroup);
         foreach (var project in _projects.List())
         {
@@ -101,8 +102,19 @@ public class TaskHub : Hub
         if (!SecurityProfiles.IsNetworked(_configuration)) return null;
         var http = Context.GetHttpContext();
         var principal = _security.AuthenticateSession(http?.Request.Cookies[AccessSecurityStore.SessionCookieName], touch: false);
-        if (principal is not null) return principal;
-        Context.Abort();
-        throw new HubException("Studio session expired.");
+        if (principal is null)
+        {
+            Context.Abort();
+            throw new HubException("Studio session expired.");
+        }
+        // The HTTP gate already refuses hub requests for a forced password
+        // change; the hub re-checks on connect and on every subscription so the
+        // rule holds even if the gate is bypassed.
+        if (principal.User.MustChangePassword)
+        {
+            Context.Abort();
+            throw new HubException("Change the temporary password before continuing.");
+        }
+        return principal;
     }
 }

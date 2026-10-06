@@ -5,6 +5,7 @@
      data-studio="root">
   <!-- ============ Titlebar ============ -->
   <header class="studio-titlebar" data-testid="studio-titlebar">
+    <div class="studio-titlebar__main">
     <nav class="studio-titlebar__crumbs" aria-label="Breadcrumb" data-testid="studio-titlebar-crumbs">
       @if (activeWorkspaceName(); as workspaceName) {
         <span class="studio-titlebar__crumb studio-titlebar__crumb--ws"
@@ -107,6 +108,9 @@
         <app-studio-icon name="bell" [size]="14"></app-studio-icon>
       </button>
     </div>
+    </div>
+    <app-usage-cockpit-host class="studio-titlebar__usage" [workspaceName]="activeWorkspaceName()" [workspaces]="registryWorkspaces()"
+      (openUsage)="openUsageSheet.emit()" />
   </header>
 
   <!-- ============ Body ============ -->

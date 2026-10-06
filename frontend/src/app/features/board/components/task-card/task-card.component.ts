@@ -8,6 +8,7 @@ import { CodeReviewActivityStore } from '../../../../services/code-review-activi
 import { cliTypeIcon } from '../../../../services/format.util';
 import { projectIdentity } from '../../../../services/project-identity.util';
 import { TagRegistryStore } from '../../../../services/tag-registry.store';
+import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-proposals.component';
 import {
   buildCardCtxMenuItems,
   buildCodeReviewGradeBadge,
@@ -83,7 +84,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -123,12 +124,11 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly gitSummary = inject(GitSummaryService);
   private readonly clients = inject(ClientService);
   private readonly tagRegistry = inject(TagRegistryStore);
+  private readonly projectTagsEffect = effect(() => { if (this.job().tags?.length) this.tagRegistry.ensureProject(this.job().projectName); });
   private readonly codeReviewActivity = inject(CodeReviewActivityStore);
   private readonly providerAuthStatus = inject(ProviderAuthStatusService); readonly codexSignIn = inject(CodexSignInDialogService); readonly claudeSignIn = inject(ClaudeSignInDialogService);
   private stopPolling: (() => void) | null = null;
-
   readonly taskTypeChip = computed(() => buildTaskTypeChip(this.job().taskType));
-
   taskTypeIconName(kind: string): StudioIconName {
     if (kind === 'bug') return 'warn';
     if (kind === 'feature') return 'plus';
@@ -147,7 +147,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly decisionBadge = computed(() => buildDecisionBadge(this.job(), (id) => this.clients.byId().get(id)?.displayName));
   readonly decisionBlockTooltip = computed(() => decisionBlockReason(decisionBlockers(this.job())));
 
-  readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byId(), this.job().state));
+  readonly tagChips = computed(() => buildTagChips(this.job().tags, this.tagRegistry.byIdForProject(this.job().projectName), this.job().state));
 
   readonly publishableChip = computed(() => {
     if (this.job().state !== TaskState.Completed) return null;

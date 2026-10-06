@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
+
 /**
  * Card mode badge (planning / research / concept recognizable at a glance).
  *
@@ -149,7 +151,7 @@ async function seedBoardTab(page: Page): Promise<void> {
 async function gotoBoard(page: Page): Promise<void> {
   await seedBoardTab(page);
   await installRoutes(page);
-  await page.goto('/?includeFixtures=true');
+  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.waitForLoadState('domcontentloaded');
   await expect(page.locator('[data-testid="studio-board"], [data-testid="kanban-dashboard"]').first())
     .toBeVisible({ timeout: 15_000 });
@@ -163,9 +165,10 @@ function cardByTitle(page: Page, title: string) {
 test.describe('Card mode badge (planning / research / concept recognizable on the board)', () => {
   test('auto-tag markers distinguish a proposal from applied tags in both themes', async ({ page }) => {
     await gotoBoard(page);
-    const proposal = cardByTitle(page, PLANNING_TASK.title).getByTestId('task-card-tagging-status');
+    const proposal = cardByTitle(page, PLANNING_TASK.title).getByTestId('tags-proposed');
     const tagged = cardByTitle(page, RESEARCH_TASK.title).getByTestId('task-card-tagging-status');
-    await expect(proposal).toHaveText('Tags proposed');
+    await expect(proposal).toHaveCount(1);
+    await expect(proposal).toContainText('Tags proposed');
     await expect(tagged).toHaveText('Auto-tagged');
     await expect(cardByTitle(page, CODING_TASK.title).getByTestId('task-card-tagging-status')).toHaveCount(0);
     for (const theme of ['light', 'dark'] as const) {
@@ -174,7 +177,7 @@ test.describe('Card mode badge (planning / research / concept recognizable on th
       await expect(tagged).toBeVisible();
       await expect(page.getByTestId('error-dialog')).toHaveCount(0);
       const path = `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-card-${theme}--mocked.png`;
-      await cardByTitle(page, PLANNING_TASK.title).screenshot({ path });
+      await cardByTitle(page, PLANNING_TASK.title).screenshot({ path, timeout: 30_000 });
     }
   });
   test('planning card shows a planning mode pill that names the mode', async ({ page }) => {
