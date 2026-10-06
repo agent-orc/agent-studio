@@ -114,6 +114,10 @@ internal static class PromptUsageCatalog
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Requirement-fit review aspect."),
         },
+        ["review-aspect-concept-fit.md"] = new[]
+        {
+            new PromptUsageRef("RemoteReviewPlanBuilder", "Build", "Concept Dossier fit against prompt.md."),
+        },
         ["review-aspect-tests-and-evidence.md"] = new[]
         {
             new PromptUsageRef("AspectRunnerService", "RenderAspectPrompt", "Tests-and-evidence review aspect."),

@@ -406,7 +406,7 @@ public sealed class RemoteReviewExecutor
             workspace,
             evidence,
             result.FailureClassification,
-            result.Summary ?? ExecutionSummary(evidence),
+            result.Summary ?? ExecutionSummary(evidence, slot.Claim.Subject!.Plan),
             ct);
     }
 
@@ -532,7 +532,9 @@ public sealed class RemoteReviewExecutor
                     evidence.Commands,
                     evidence.Artifacts,
                     evidence.Verdicts,
-                    AuthorityEpoch: lease.AuthorityEpoch);
+                    AuthorityEpoch: lease.AuthorityEpoch,
+                    BriefSha256: slot.Claim.Subject?.Plan.BriefSha256,
+                    SkippedAspects: slot.Claim.Subject?.Plan.SkippedAspects);
                 var submittedAt = DateTime.UtcNow;
                 slot = SaveSlot(slot with
                 {
@@ -1278,17 +1280,21 @@ public sealed class RemoteReviewExecutor
             "The immutable subject must be retried because no unproven process may retain review authority.";
     }
 
-    private static string ExecutionSummary(ReviewExecutionEvidence evidence)
+    private static string ExecutionSummary(ReviewExecutionEvidence evidence, ReviewPlanDto plan)
     {
         var baseline = evidence.Verdicts
             .Where(verdict => verdict.Classification is
                 "BaselineCompared" or "NewTestFailures" or ReviewFlakyTestIndex.VerdictClassification)
             .Select(verdict => $"{verdict.Aspect}: {verdict.Summary}")
             .ToArray();
-        if (baseline.Length > 0) return string.Join(" ", baseline);
+        var skipped = plan.SkippedAspects is { Count: > 0 }
+            ? " Skipped aspects: " + string.Join("; ", plan.SkippedAspects.Select(item =>
+                $"{item.Aspect} ({item.Reason})"))
+            : string.Empty;
+        if (baseline.Length > 0) return string.Join(" ", baseline) + skipped;
         return evidence.Outcome == "Pass"
-            ? "All applicable remote review aspects passed."
-            : "At least one remote review aspect found a product concern.";
+            ? "All executed remote review aspects passed." + skipped
+            : "At least one remote review aspect found a product concern." + skipped;
     }
 
     private static ReviewExecutionEvidence InfrastructureEvidence(

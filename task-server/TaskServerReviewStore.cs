@@ -186,6 +186,16 @@ public sealed partial class TaskServerStore
                 ValidateOptionalSourceField(reader, 7, request.SourceBundleSha256, "source bundle digest");
             }
 
+            if (request.Plan.BriefSha256 is { } briefHash)
+            {
+                var currentBriefHash = await CurrentBriefHashAsync(
+                    connection, transaction, request.TaskId, ct);
+                if (!string.Equals(briefHash, currentBriefHash, StringComparison.OrdinalIgnoreCase))
+                    throw new TaskServerConflictException(
+                        "concept-brief-changed",
+                        $"The concept review plan targets prompt.md SHA-256 {briefHash}, but the current brief is {currentBriefHash ?? "missing"}.");
+            }
+
             var subjectId = $"rsub_{Guid.NewGuid():N}";
             var attemptId = $"rat_{Guid.NewGuid():N}";
             var now = UtcNow;
@@ -847,7 +857,29 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "review-step-digest-mismatch",
                     "Review command evidence does not match the leased library step digest.");
+            string? conceptCoverageFailure = null;
+            if (subject.Plan.BriefSha256 is { } reviewedBriefHash)
+            {
+                var currentBriefHash = await CurrentBriefHashAsync(
+                    connection, transaction, subject.TaskId, ct);
+                conceptCoverageFailure = !string.Equals(
+                    reviewedBriefHash, currentBriefHash, StringComparison.OrdinalIgnoreCase)
+                    ? $"The concept brief changed after review planning: reviewed prompt.md SHA-256 {reviewedBriefHash}, current prompt.md SHA-256 {currentBriefHash ?? "missing"}. A new review is required."
+                    : request.Outcome is "ReviewInfra" or "Cancellation"
+                        ? null
+                    : !subject.Plan.RequiredAspects.Contains("concept-fit", StringComparer.OrdinalIgnoreCase)
+                      || !subject.Plan.Commands.Any(command =>
+                          string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)
+                          && ReviewCommandKinds.IsAgent(command.ExecutionKind))
+                        ? "Applicable concept-fit was skipped by the frozen review plan."
+                        : !request.Verdicts.Any(verdict => string.Equals(
+                            verdict.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase))
+                            ? "The concept-fit aspect supplied no verdict; build and lint alone cannot pass this concept."
+                            : null;
+            }
             var classified = ClassifyReviewReport(subject, request, attempt);
+            if (conceptCoverageFailure is not null)
+                classified = ("Inconclusive", "ConceptReviewIncomplete");
             var received = UtcNow;
             await RecordUnprovenFlakeFailuresAsync(
                 connection, transaction, request, attemptId, subject.TaskId, received, ct);
@@ -867,7 +899,7 @@ public sealed partial class TaskServerStore
                 """, ct, transaction,
                 ("$report", reportId), ("$json", payloadJson), ("$hash", payloadHash),
                 ("$key", request.IdempotencyKey), ("$outcome", classified.Outcome),
-                ("$classification", classified.Classification), ("$summary", request.Summary),
+                ("$classification", classified.Classification), ("$summary", conceptCoverageFailure ?? request.Summary),
                 ("$now", Iso(received)), ("$attempt", attemptId), ("$state", taskState),
                 ("$task", attempt.TaskId));
             if (retry)
@@ -900,7 +932,8 @@ public sealed partial class TaskServerStore
                 }), ct);
             result = new ReviewReportDto(
                 reportId, attemptId, attempt.SubjectId, classified.Outcome,
-                classified.Classification, request.Summary, payloadHash, received, retry, taskState);
+                classified.Classification, conceptCoverageFailure ?? request.Summary,
+                payloadHash, received, retry, taskState);
         }, ct);
         return result!;
     }
@@ -1259,9 +1292,14 @@ public sealed partial class TaskServerStore
                         ? ReviewFailureOwner.Tolerated
                         : ReviewFailureOwner.None))
             .ToArray();
+        var semanticAspects = subject.Plan.Commands
+            .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
+            .Select(command => command.Aspect)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (attributions.Any(item => item.Owner == ReviewFailureOwner.Delivery)
             || ReviewGradingPolicy.Grade(request.Verdicts
-                .Where(verdict => verdict.Diagnosis?.ChargesCard == true)
+                .Where(verdict => semanticAspects.Contains(verdict.Aspect)
+                                  && verdict.Diagnosis?.ChargesCard != false)
                 .Select(verdict => verdict.Status))
                 == ReviewGrade.ProductFailure)
             return ("ProductFailure", request.FailureClassification ?? "ReviewFinding");
@@ -1368,6 +1406,28 @@ public sealed partial class TaskServerStore
             string.Equals(artifact.Sha256, digest, StringComparison.OrdinalIgnoreCase)
             && artifact.ContentBase64 is not null
             && ValidArtifact(artifact));
+
+    private static async Task<string?> CurrentBriefHashAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string taskId,
+        CancellationToken ct)
+    {
+        var encoded = await ScalarAsync(connection, """
+            SELECT content_base64 FROM task_files
+             WHERE task_id = $task AND path = 'prompt.md';
+            """, ct, transaction, ("$task", taskId)) as string;
+        if (string.IsNullOrWhiteSpace(encoded)) return null;
+        try
+        {
+            return Hash(Encoding.UTF8.GetString(Convert.FromBase64String(encoded))
+                .TrimStart('\uFEFF'));
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
 
     private async Task InsertReviewRetryAsync(
         SqliteConnection connection,

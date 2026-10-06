@@ -20,6 +20,13 @@ public sealed class RemoteReviewPlanBuilder
         "tests-and-evidence",
     ];
 
+    private static readonly AspectDefinition ConceptFitDefinition = new(
+        Id: "concept-fit",
+        ConcernNamespace: "requirement",
+        PromptTemplate: "review-aspect-concept-fit.md",
+        Title: "Concept fit",
+        FallbackSystem: "Compare the delivered Dossier with the current prompt.md. Block a missing required section, contradicted operator direction, open decision without a recommendation, or absent implementation cards. Cite the exact brief direction and Dossier location.");
+
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
 
@@ -72,15 +79,36 @@ public sealed class RemoteReviewPlanBuilder
                 PipelineStepModelDefaults.DefaultCli));
 
         var commands = toolPlan.Commands.ToList();
-        foreach (var step in pipeline.Post.Where(step => step.Kind == StepKind.Aspect))
+        var skipped = new List<Contract.ReviewSkippedAspectDto>();
+        var isConcept = TaskModes.IsConcept(task.Mode);
+        PipelineStep[] aspectSteps = isConcept
+            ? [PipelineCatalogue.RemoteConceptFitStep]
+            : pipeline.Post.Where(step => step.Kind == StepKind.Aspect).ToArray();
+        foreach (var step in aspectSteps)
         {
             var aspectId = step.Id.StartsWith("aspect-", StringComparison.OrdinalIgnoreCase)
                 ? step.Id["aspect-".Length..]
                 : step.Id;
-            if (!configured.Contains(aspectId)
-                || !AspectRunnerService.Catalogue.TryGetValue(aspectId, out var definition)
-                || !PipelineStepConfigResolver.ShouldRun(settings, step, condition))
+            if (!isConcept && !configured.Contains(aspectId))
+            {
+                skipped.Add(new(aspectId, "Not selected by ReviewDecisionOrchestrator:AspectRunners."));
                 continue;
+            }
+            if (!PipelineStepConfigResolver.ShouldRun(settings, step, condition))
+            {
+                var configuredCondition = PipelineStepConfigResolver.ResolveCondition(settings, step);
+                var reason = !PipelineStepConfigResolver.IsEnabled(settings, step)
+                    ? "Disabled by the project pipeline-step setting."
+                    : $"Project pipeline-step condition '{configuredCondition?.When ?? "unknown"}'"
+                      + (string.IsNullOrWhiteSpace(configuredCondition?.Value)
+                          ? string.Empty : $" = '{configuredCondition.Value}'")
+                      + " did not match this card.";
+                skipped.Add(new(aspectId, reason));
+                continue;
+            }
+            var definition = isConcept
+                ? ConceptFitDefinition
+                : AspectRunnerService.Catalogue[aspectId];
 
             var model = PipelineStepConfigResolver.ResolveModel(settings, step, defaultModel);
             var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? defaultCli;
@@ -126,7 +154,10 @@ public sealed class RemoteReviewPlanBuilder
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
+            BriefSha256 = isConcept ? BriefHash(task.FolderPath) : null,
+            SkippedAspects = skipped,
         };
+        if (isConcept) return plan;
         return ApplyScopedReview(
             plan,
             task,
@@ -134,6 +165,12 @@ public sealed class RemoteReviewPlanBuilder
             projectSettings,
             integrationRef,
             expectedResultSha);
+    }
+
+    private static string? BriefHash(string folder)
+    {
+        var path = Path.Combine(folder, "prompt.md");
+        return File.Exists(path) ? AttemptAuthorityService.Hash(File.ReadAllText(path)) : null;
     }
 
     private static Contract.ReviewPlanDto ApplyScopedReview(
@@ -321,7 +358,10 @@ public sealed class RemoteReviewPlanBuilder
 
     private static AspectRunInputs Inputs(TaskInfo task, string? integrationRef)
     {
-        var taskBody = Read(Path.Combine(task.FolderPath, "prompt.md"), 64_000, task.Id);
+        var briefPath = Path.Combine(task.FolderPath, "prompt.md");
+        var taskBody = TaskModes.IsConcept(task.Mode) && File.Exists(briefPath)
+            ? File.ReadAllText(briefPath)
+            : Read(briefPath, 64_000, task.Id);
         var recentLog = Read(Path.Combine(task.FolderPath, "cli-output.log"), 16_000, string.Empty);
         var status = Read(Path.Combine(task.FolderPath, "status.md"), 16_000, string.Empty);
         var baseline = string.IsNullOrWhiteSpace(integrationRef) ? "the configured integration ref" : integrationRef;

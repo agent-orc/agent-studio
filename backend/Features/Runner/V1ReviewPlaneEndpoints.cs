@@ -711,6 +711,48 @@ public static class V1ReviewPlaneEndpoints
                 };
             }
 
+            var submittedReportHash = RemoteReviewSettlementJournal.Hash(request);
+            var reviewTask = FindTask(scanner, currentReview.TaskKey);
+            var frozenPlan = currentReview.Subject.Plan;
+            var acceptedReplay = currentReview.Reports.Any(report => report.AuthorityStatus == AttemptWriteStatus.Accepted
+                && string.Equals(report.IdempotencyKey, request.IdempotencyKey, StringComparison.Ordinal));
+            var priorReport = acceptedReplay && reviewTask is not null
+                ? RemoteReviewSettlementJournal.Read(reviewTask.FolderPath, attemptId).Entry
+                : null;
+            if (priorReport?.SubmittedReportSha256 is { } originalHash)
+            {
+                if (!string.Equals(originalHash, submittedReportHash, StringComparison.Ordinal))
+                    return Results.Conflict(new Contract.ApiError(
+                        "idempotency-conflict", "The review report key is bound to a different payload."));
+                request = priorReport.Report;
+            }
+            if (reviewTask is not null && !acceptedReplay)
+            {
+                if (TaskModes.IsConcept(reviewTask.Mode))
+                {
+                    var briefPath = Path.Combine(reviewTask.FolderPath, "prompt.md");
+                    var currentBriefHash = File.Exists(briefPath)
+                        ? AttemptAuthorityService.Hash(File.ReadAllText(briefPath))
+                        : null;
+                    request = frozenPlan is null
+                        ? request with
+                        {
+                            Outcome = "Inconclusive",
+                            FailureClassification = "ConceptReviewIncomplete",
+                            Summary = "The concept ReviewSubject has no frozen aspect plan; build and lint alone cannot pass this delivery.",
+                        }
+                        : ConceptRemoteReviewPolicy.Enforce(
+                            frozenPlan,
+                            currentReview.Subject.TaskRequirementsHash,
+                            currentBriefHash,
+                            request);
+                }
+                else if (frozenPlan is not null)
+                {
+                    request = request with { SkippedAspects = frozenPlan.SkippedAspects };
+                }
+            }
+
             var reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
                 request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                     verdict.Aspect,
@@ -818,6 +860,7 @@ public static class V1ReviewPlaneEndpoints
                             TaskKey = currentReview.TaskKey,
                             IdempotencyKey = request.IdempotencyKey,
                             ReportSha256 = preparedHash,
+                            SubmittedReportSha256 = submittedReportHash,
                             Report = request,
                             Delivery = preparedDelivery,
                             ReceivedAtUtc = DateTime.UtcNow,

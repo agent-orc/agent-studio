@@ -357,6 +357,10 @@ public static class ProjectSettingsEndpoints
                 .SelectMany(p => p.Pre.Select(s => (Step: s, Phase: "pre", PipelineId: p.Id))
                     .Concat(p.Core.Select(s => (Step: s, Phase: "core", PipelineId: p.Id)))
                     .Concat(p.Post.Select(s => (Step: s, Phase: PhaseForPostStep(s), PipelineId: p.Id))))
+                .Append((Step: PipelineCatalogue.RemoteConceptFitStep,
+                    Phase: "aspect", PipelineId: PipelineCatalogue.ConceptPipelineId))
+                .Where(item => type != PipelineTypes.Planning
+                    || item.Step.Id != PipelineCatalogue.RemoteConceptFitStepId)
                 .GroupBy(x => x.Step.Id, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();
@@ -1312,7 +1316,11 @@ public static class ProjectSettingsEndpoints
             : PipelineCatalogue.All.Where(candidate =>
                 !string.Equals(candidate.Id, PipelineCatalogue.ReadOnlyPipelineId, StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(candidate.Id, PipelineCatalogue.ConceptPipelineId, StringComparison.OrdinalIgnoreCase));
-        return pipelines.SelectMany(p => p.AllSteps).Append(PipelineCatalogue.AbortReviewStep);
+        var steps = pipelines.SelectMany(p => p.AllSteps)
+            .Append(PipelineCatalogue.AbortReviewStep);
+        return PipelineTypes.Normalize(pipelineType) == PipelineTypes.Planning
+            ? steps
+            : steps.Append(PipelineCatalogue.RemoteConceptFitStep);
     }
 
     private static string CacheVariable(string block) => block switch

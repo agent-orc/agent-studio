@@ -1474,8 +1474,13 @@ operator changes cause the step to fail before its writer runs.
   `concept`. The template includes the canonical append-only Implementation
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
-  open-ended all-recommendations entry. The concept pipeline deliberately does not run
-  build, test, code aspects, or integration.
+  open-ended all-recommendations entry. The local concept pipeline does not run
+  build, test, code aspects, or integration. A concept delivery entering Remote
+  Review retains its project build and lint commands and adds the read-only
+  `aspect-concept-fit` content check. Its project pipeline-step setting controls
+  model, thinking level, CLI, and prompt. The frozen ReviewSubject records the
+  `prompt.md` SHA-256; a missing content verdict or a changed brief cannot
+  settle as `Pass`. The grade lists skipped applicable aspects with reasons.
   A complete Dossier moves to `5-human-review` with a durable
   `concept-sight-review` marker. The agent delivers with `DONE` even when
   recommendations await sight review, decision acceptance, or operator approval;

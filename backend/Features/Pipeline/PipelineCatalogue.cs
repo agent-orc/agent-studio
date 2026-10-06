@@ -56,6 +56,18 @@ public static class PipelineCatalogue
     public const string ConceptReviewStepId = "post-concept-review";
     public const string ConceptSightReviewGateStepId = "post-concept-sight-review";
     public const string ConceptPromotionStepId = "post-concept-promotion";
+    public const string RemoteConceptFitStepId = "aspect-concept-fit";
+
+    /// <summary>Remote Review content check for concept deliveries; the local concept pipeline stays unchanged.</summary>
+    public static readonly PipelineStep RemoteConceptFitStep = new()
+    {
+        Id = RemoteConceptFitStepId,
+        DisplayName = "Concept fit (Remote Review)",
+        Kind = StepKind.Aspect,
+        RunMode = StepRunMode.Parallel,
+        PromptTemplate = "review-aspect-concept-fit.md",
+        DefaultEnabled = true,
+    };
 
     /// <summary>
     /// The four aspect step ids ship as parallel post-steps. Kept in

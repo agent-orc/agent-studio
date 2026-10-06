@@ -1877,6 +1877,45 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Cited_semantic_block_uses_shared_grade_even_without_delivery_diagnosis()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "aspect-concept-fit", "concept-fit", "codex", [],
+                ExecutionKind: ReviewCommandKinds.AgentAspect,
+                Prompt: "Compare the Dossier with prompt.md.",
+                CliType: "codex", Model: "gpt-5.4-mini")],
+            ["concept-fit"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim) with
+        {
+            Outcome = "ProductFailure",
+            FailureClassification = "ReviewFinding",
+            Workspace = PassingReport(claim).Workspace with
+            {
+                ChangedPaths = ["docs/concept/workbench.json"],
+            },
+            Verdicts = [new ReviewVerdictDto(
+                "concept-fit", "block", "RemoteAspectVerdict",
+                "Dossier contradicts the brief.",
+                EvidenceChecked: "docs/concept/workbench.json and prompt.md",
+                Missing: "one card per independently reviewable slice")],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal("ProductFailure", report.Outcome);
+        Assert.Equal("ReviewFinding", report.FailureClassification);
+    }
+
+    [Fact]
     public async Task Stale_review_subject_cannot_overwrite_a_newer_task_lifecycle()
     {
         using var temp = new TempDirectory();

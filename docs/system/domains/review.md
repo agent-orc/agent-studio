@@ -1,6 +1,6 @@
 # Review Domain Map
 
-Version: 2026-09-29
+Version: 2026-10-06
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
 ## Concern fix and scoped re-review contract
@@ -79,6 +79,28 @@ one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
 
 ## Versioned review-library steps
+
+Concept cards on the remote plane receive one semantic `concept-fit` aspect in
+addition to the existing build and lint commands. It uses the shared aspect
+runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
+compares the delivered Dossier in the Result-SHA diff with the current
+`prompt.md`: required sections, operator directions, recommendations for open
+decisions, and implementation-card source data. A contradiction is a blocking
+finding. The project pipeline-step setting `aspect-concept-fit` resolves its
+enabled state, prompt override, CLI, model, and thinking level like other
+aspects. Its default route is the bounded support aspect route from
+`PipelineStepModelDefaults`; build and lint keep their existing plans.
+
+The concept ReviewSubject stores the SHA-256 of the complete `prompt.md` in
+both its requirements identity and frozen review plan. Report settlement
+compares that hash with the card's current brief. A missing concept verdict,
+missing brief, or changed brief settles as `Inconclusive` with a named reason,
+never `Pass`. A fresh attempt must judge the current brief. Concept verdicts
+are always rerun; scoped carry-over does not apply to `concept-fit`.
+The remote grade prints the brief hash and every applicable aspect skipped by
+configuration or condition, with its reason. Passing summaries cover executed
+aspects only, so a command-only report cannot claim that all applicable content
+checks passed.
 
 `RemoteReviewPlanBuilder` resolves verification, gate, and semantic aspect
 commands on the server. New plans set `ReviewPlanDto.LibraryVersion = 1`. When

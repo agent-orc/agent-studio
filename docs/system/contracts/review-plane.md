@@ -25,6 +25,24 @@ a request whose fence or epoch does not match the current record fails closed
 (`StaleFence`, `AuthorityEpochMismatch`, `Superseded`) rather than silently
 applying.
 
+## Concept brief and aspect coverage
+
+For a concept delivery, `ReviewPlanDto.briefSha256` records the SHA-256 of the
+complete `prompt.md` used to render the frozen `aspect-concept-fit` prompt. The
+monolith ReviewSubject also carries this value as `taskRequirementsHash`.
+The review report echoes `briefSha256`. At settlement, the server compares the
+subject hash with the card's current brief and requires a `concept-fit`
+verdict. A changed or missing brief, omitted aspect, or missing verdict is
+`Inconclusive / ConceptReviewIncomplete` with a reason naming the gap; it is
+never accepted as `Pass`. A cited semantic `block` uses the common aspect
+grading policy and reaches `ProductFailure`.
+
+`ReviewPlanDto.skippedAspects` and `ReviewReportRequest.skippedAspects` list
+each applicable aspect omitted by configuration or run condition and its
+reason. The task-folder grade renders these rows separately from verdicts.
+`Pass` summaries say only that executed aspects passed. The new fields are
+optional on the wire so older non-concept attempts remain readable.
+
 ## Two-phase report hand-off (AGT-2762)
 
 `POST .../report` used to settle the attempt authority and project the
@@ -41,7 +59,8 @@ The file-backed endpoint has these durable and asynchronous parts:
 1. **Prepare and settle (synchronous, durable).** The monolith validates and
    normalizes the report, then atomically writes
    `logs/remote-review-settlement-{attemptId}.json` with the canonical payload,
-   its hash, and any delivery gate decision with its own digest before calling
+   its hash, the submitted payload hash for normalized report replay, and any
+   delivery gate decision with its own digest before calling
    `AttemptAuthorityService.SettleReview`. The ReviewAttempt remains the sole
    verdict authority. A prepared journal without an accepted authority report
    grants no projection or integration authority.
