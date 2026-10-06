@@ -127,6 +127,7 @@ async function stubApis(page: Page): Promise<void> {
       ],
     });
     if (url.pathname === '/api/cli/quota') return json({ snapshots: [], ttlSeconds: 600 });
+    if (url.pathname === '/api/usage/cockpit') return route.fulfill({ status: 503 });
     if (url.pathname === '/api/v1/studio/runner/status') return json({ projects: {} });
     if (url.pathname === '/api/runner/queue-starvation') return json({ active: false, items: [] });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
