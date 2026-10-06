@@ -609,9 +609,11 @@ steer the pipeline in this policy version.
   from the repository path and reset before each integration, never in the
   registered developer checkout: uncommitted changes there no longer refuse a
   merge, and integration no longer switches that checkout's branch. The worktree
-  stays detached and the integration branch is advanced afterwards - preferring a
-  fast-forward asked of the checkout that holds the branch, which git refuses
-  rather than overwriting local modifications. Repository identity (default
+  stays detached and merges onto the integration lane
+  `refs/agent-studio/integration/<branch>` (AGT-2996); only the integration push
+  worker publishes `develop`, and the developer checkout's local branch is
+  fast-forwarded only after that push (never over commits made there).
+  Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See
   [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md)

@@ -115,6 +115,9 @@ internal static class ReadOnlyGitRefFingerprint
 
         AddSafeRefPath(commonDir, Path.Combine("refs", "heads"), branch, paths);
         AddSafeRefPath(commonDir, Path.Combine("refs", "remotes", "origin"), branch, paths);
+        // The Studio integration lane (AGT-2996) carries merges before the
+        // local branch does.
+        AddSafeRefPath(commonDir, Path.Combine("refs", "agent-studio", "integration"), branch, paths);
     }
 
     private static bool AddSymbolicTarget(
