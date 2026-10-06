@@ -704,6 +704,12 @@ the files of a running daemon. The CLR can load metadata and method bodies
 lazily, so replacing only part of a live multi-file application can corrupt the
 running process even before systemd receives the planned restart.
 
+After the restart the helper records the promotion in
+`/var/lib/agent-runner/deploy/last-promotion` and runs its post-restart
+completion check: within ten minutes of the activation at least one completion
+must be accepted, otherwise it prints the rollback command and exits nonzero.
+See [Post-restart completion check](#post-restart-completion-check).
+
 The root-owned deploy helper rejects an invalid or incomplete publish before
 changing `current`. It resolves the selected target in `agent-host.deps.json`
 and requires every managed runtime assembly by its flattened publish name. It
@@ -1565,7 +1571,8 @@ slots. The server only returns pickup-eligible `2-ready` cards from assigned,
 remote-capable projects and moves a successful fenced claim to `3-progress`.
 Before the first lease for each host/project pair, the server offers the
 registered repository without moving the card. The daemon creates or refreshes
-`$RUNNER_WORKDIR/<project-id>/repo`, sets both `origin` URLs to the registered
+`$RUNNER_WORKDIR/<project-id>/repo` (a full clone, the same checkout the first
+claim prepares), sets both `origin` URLs to the registered
 URL, verifies them with `git remote get-url`, fetches, and runs
 a real write probe that creates and removes a temporary
 `runner/<runner-id>/delivery-preflight-*` ref. It reports that result in a
@@ -1830,7 +1837,9 @@ first, or the helper refuses. The helper records the previous release,
 validates the dependency closure, runs the
 service-user boot smoke check, atomically switches `/opt/agent-host/current`,
 starts the already-drained Review role, restarts Coding, waits for both
-replacement processes, and watches for an immediate restart loop.
+replacement processes, and watches for an immediate restart loop. It then runs
+the [post-restart completion check](#post-restart-completion-check), which can
+take up to ten minutes.
 
 ```bash
 sudo /usr/local/sbin/agent-runner-deploy drain
@@ -1842,6 +1851,45 @@ sudo journalctl -u agent-host --since '-2 minutes' \
 
 sudo journalctl -u agent-runner-review --since '-2 minutes' \
   | grep -E 'planned shutdown|review daemon draining|review handoff lease extended|review daemon handoff|persisted review accepted|adopting persisted review|review adoption lease verified|review lease re-claimed|review adoption failed'
+```
+
+#### Post-restart completion check
+
+A clean restart does not prove a working release. Stable 0.9.3 restarted
+without a fault and then had every completion rejected with
+`400 Session continuation evidence does not match the fenced attempt.` for
+almost two hours, while each rejected run was requeued and re-run (AGT-2985).
+After every promotion the helper records the new Coding service invocation ID
+after the restart checks finish, then watches that invocation's journal for up
+to ten minutes. It limits journal evidence to the ten-minute deadline,
+including when the check is rerun later. A
+completion logged by the outgoing daemon during restart cannot satisfy the
+check:
+
+- The first `task '<key>' handed back to the local board: <outcome>` line
+  passes the check. The runner logs it only after the Task Server accepted the
+  completion, on the legacy and the v1 plane alike.
+- If the window closes without one, the helper reports how many completions
+  were rejected (`/completion -> 4xx`) or that none was attempted, prints the
+  previous release and the rollback command, writes an
+  `action=verify-completions ... result=failed` journal record, and exits
+  nonzero. The new release stays active; the operator decides.
+
+```text
+agent-runner-deploy: release <new> is active, but no completion was accepted within 600s of its activation; 14 completion(s) were rejected
+agent-runner-deploy: previous release: <previous>
+agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/<previous> /opt/agent-host/current && /usr/local/sbin/agent-runner-deploy restart-review --force && systemctl restart agent-runner.service'
+```
+
+Rejected completions mean the release is broken for this fleet: run the printed
+command. "No completion was attempted" means the host had no finished work in
+the window, so the release is unproven rather than broken. Rerun the check once
+cards are flowing; it reads only the recorded Coding invocation's journal
+through the original deadline and waits only for the rest of the window. A
+completion after that deadline cannot make a later rerun pass:
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy verify-completions
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
@@ -2157,6 +2205,19 @@ proof.
   intentionally skips the same assigned project.
 - **`lease not granted: Held` in one-task mode** - another runner already holds
   the task. The daemon claim path normally avoids this before launch.
+- **`POST /api/runner/completion -> 400: Session continuation evidence does not
+  match the fenced attempt.`** - the runner's continuation evidence names an
+  attempt the server did not fence. Runner 0.9.3 built it from the slot's
+  attempt id, which on the legacy plane was the lease id; every completion
+  failed and was requeued. Roll the host back with the command the deploy
+  helper printed (or to the last release before 0.9.3), then deploy 0.9.4 or
+  later. The server-side check is correct; do not relax it.
+- **`Stable checkout '<path>' has local changes and cannot be updated.` on the
+  first claim of a project** - a runner up to 0.9.4 created the shared clone
+  during the delivery preflight with `--no-checkout`, leaving an empty index.
+  Remove `$RUNNER_WORKDIR/<project-id>/repo` while the host holds no claim for
+  that project, or deploy a later release, whose preflight makes a full clone
+  (AGT-2985).
 - **`Project delivery preflight failed`** - read the full reason on both the
   Execution Hosts card and the project's Execution card. Run the printed failing
   Git operation on the host against the registered repository URL and confirm
