@@ -44,6 +44,16 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/v1/studio/runner/status', r => r.fulfill(json({ projects: {} })));
   await page.route('**/api/cli/quota', r => r.fulfill(json({ at: '2026-09-27T16:00:00Z', snapshots: [], ttlSeconds: 600 })));
   await page.route('**/api/cli/usage', r => r.fulfill(json({ snapshots: [], ttlSeconds: 600 })));
+  await page.route('**/api/usage/cockpit**', r => r.fulfill(json({
+    snapshotVersion: 1, workspaceId: 'ws1', timeZone: 'UTC', weekStart: 1,
+    generatedAt: '2026-09-27T15:50:00Z',
+    calendar: {
+      timeZone: 'UTC', weekStart: 1, dayStartUtc: '2026-09-27T00:00:00Z',
+      dayEndUtc: '2026-09-28T00:00:00Z', weekStartUtc: '2026-09-22T00:00:00Z',
+      weekEndUtc: '2026-09-29T00:00:00Z',
+    },
+    clis: [], cost: null, runs: [], slots: [], sources: {},
+  })));
   await page.route('**/api/watch-paths', r => r.fulfill(json([{ name: PROJECT, path: STORAGE, rootPath: STORAGE }])));
   await page.route('**/api/v1/workspaces**', r => r.fulfill(json([{
     id: 'ws1', displayName: 'Default', sortOrder: 0, isDefault: true, color: null,
