@@ -89,7 +89,36 @@ public sealed partial class TaskServerStoreTests
             "human:owner", default);
         await store.CompleteRunAsync(claim.Run!.RunId, Completion(claim, "steered-completion"), "runner-a", default);
 
-        Assert.Equal("4-auto-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        // The newer ordered continuation protocol keeps the queued round in
+        // Ready after this attempt settles, while allowing its completion.
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+    }
+
+    [Fact]
+    public async Task Operator_move_after_steer_revokes_the_lease_from_ready()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await store.ContinueTaskAsync(project.ProjectId, task.TaskId,
+            new ContinueTaskRequest("Continue with this correction.", Mode: "steer"),
+            "human:owner", default);
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("2-ready", RunIntent: "steer"), "human:owner", default);
+
+        var missingIntent = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.MoveTaskAsync(
+            project.ProjectId, task.TaskId, new MoveTaskRequest("0-backlog"), "human:owner", default));
+        Assert.Equal("run-intent-required", missingIntent.Code);
+
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("0-backlog", RunIntent: "revoke"), "human:owner", default);
+        var denied = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.CompleteRunAsync(
+            claim.Run!.RunId, Completion(claim, "old-after-steer"), "runner-a", default));
+        Assert.Contains(denied.Code, new[] { "lease-not-active", "stale-fence" });
+        Assert.Equal("0-backlog", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
     }
 
     [Fact]

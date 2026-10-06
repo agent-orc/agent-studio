@@ -72,9 +72,8 @@ import {
 } from './services/task-detail-formatters';
 import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
-
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import { PendingButtonDirective } from '../../components/async-feedback';
+import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -96,7 +95,7 @@ import { PendingButtonDirective } from '../../components/async-feedback';
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
-    PendingButtonDirective,
+    OlderBriefOfferComponent,
   ],
   providers: [
     LayoutPanesService,
@@ -310,23 +309,7 @@ export class TaskDetailComponent implements OnDestroy {
   readonly elapsedTime = this.cliPoll.elapsedTime;
   readonly errorMsg = signal<string | null>(null);
   readonly starting = signal(false);
-  readonly olderBriefDecisionPending = signal<'accept' | 'starting-point' | 'discard' | null>(null);
-
-  decideOlderBriefDelivery(decision: 'accept' | 'starting-point' | 'discard'): void {
-    if (this.olderBriefDecisionPending() !== null) return;
-    const card = this.detail().info;
-    this.olderBriefDecisionPending.set(decision);
-    this.jobService.decideOlderBriefDelivery(card.id, decision, card.watchPath).subscribe({
-      next: () => {
-        this.olderBriefDecisionPending.set(null);
-        this.fileSaved.emit();
-      },
-      error: (error) => {
-        this.olderBriefDecisionPending.set(null);
-        this.showError(error);
-      },
-    });
-  }
+  onOlderBriefDecisionError(error: unknown): void { this.showError(error); }
   readonly continuing = signal(false);
   readonly regeneratingSummary = signal(false);
   private regenPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -339,12 +322,10 @@ export class TaskDetailComponent implements OnDestroy {
   readonly availableModels = signal<CliModelInfo[]>([]);
   readonly cliTypes = CLI_TYPES;
   readonly cliTypeDraft = signal<CliType>('claude');
-
   modelMultiplier(id: string | null | undefined): number | null {
     if (!id) return null;
     return this.availableModels().find((m) => m.id === id)?.multiplier ?? null;
   }
-
   formatMultiplier(mult: number | null): string {
     return formatMultiplier(mult);
   }

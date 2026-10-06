@@ -30,18 +30,21 @@ public sealed partial class TaskServerStore
                  WHERE task_id = $task AND status IN ('active', 'process-unknown')
                  ORDER BY acquired_at DESC LIMIT 1;
                 """, ct, transaction, ("$task", existing.TaskId)) as string;
-            if (existing.State == StudioTaskLanes.Progress
-                && request.TargetState != StudioTaskLanes.Progress
+            if (request.TargetState != existing.State
                 && activeRunId is not null)
             {
                 if (request.RunIntent is not ("revoke" or "steer"))
                     throw new TaskServerConflictException("run-intent-required",
-                        "Moving a live run out of Progress requires runIntent: revoke or steer.");
+                        "Moving a card with a live run requires runIntent: revoke or steer.");
                 if (request.RunIntent == "steer")
                 {
                     var queued = await ScalarAsync(connection, """
                         SELECT 1 FROM pending_follow_ups
-                         WHERE task_id = $task AND state = 'queued';
+                         WHERE task_id = $task AND state = 'queued'
+                        UNION ALL
+                        SELECT 1 FROM continuation_intents
+                         WHERE task_id = $task AND status = 'queued'
+                        LIMIT 1;
                         """, ct, transaction, ("$task", existing.TaskId));
                     if (queued is null)
                         throw new TaskServerConflictException("steer-follow-up-required",

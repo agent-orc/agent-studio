@@ -56,13 +56,14 @@ public sealed class FullBackupServiceTests
                 "art-full-cold", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
                 Convert.ToHexStringLower(SHA256.HashData(bytes)), "full-backup-ingest", seed.Fence),
             "runner-full", default);
-        var terminal = await source.UpdateTaskAsync(
-            seed.ProjectId, seed.Task.TaskId,
-            new UpdateTaskRequest(null, null, "7-archive", seed.Task.Version), "test", default);
         await source.ReleaseLeaseAsync(
             seed.RunId,
             new LeaseReleaseRequest("runner-full", seed.InstanceId, seed.LeaseId, seed.Fence, "completed"),
             "test", default);
+        var released = await source.GetTaskAsync(seed.ProjectId, seed.Task.TaskId, default);
+        var terminal = await source.UpdateTaskAsync(
+            seed.ProjectId, seed.Task.TaskId,
+            new UpdateTaskRequest(null, null, "7-archive", released!.Version), "test", default);
         clock.Advance(TimeSpan.FromDays(31));
         Assert.Equal(1, (await source.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default)).AppliedActions);
 

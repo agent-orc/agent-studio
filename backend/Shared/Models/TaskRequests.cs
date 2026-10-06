@@ -243,6 +243,8 @@ public record BatchMoveItem
     public string TargetState { get; init; } = "";
     public int? TargetIndex { get; init; }
     public string? Reason { get; init; }
+    /// <summary>Explicit disposition of a live remote attempt for this item.</summary>
+    public string? RunIntent { get; init; }
 }
 
 public record BatchMoveRequest

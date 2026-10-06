@@ -1341,7 +1341,7 @@ public static class TaskCrudEndpoints
         {
             var card = scanner.FindJob(jobId, watchPath);
             if (card is null) return Results.NotFound();
-            var live = card.State == TaskStates.Progress && request.TargetState != TaskStates.Progress
+            var live = request.TargetState != card.State
                 ? leases.Peek(card.TaskKey).Lease : null;
             var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
             if (live is not null && intent is null)
@@ -1358,18 +1358,20 @@ public static class TaskCrudEndpoints
             if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
                 && intent == RunMoveIntent.Revoke)
             {
-                authority.RevokeRunForOperatorMove(card.TaskKey, attemptId,
-                    request.Reason ?? "Operator moved the card out of Progress.");
-                var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
-                timeline.Append(folder, TimelineEventKinds.RunAttemptRevoked, OperatorActor(context),
-                    $"Run {attemptId} was revoked by the operator move. Its result remains reference material; it cannot deliver this card.",
-                    attemptId,
-                    details: new Dictionary<string, string>
-                    {
-                        ["attemptId"] = attemptId,
-                        ["fence"] = live.FencingToken.ToString(),
-                        ["runIntent"] = "revoke",
-                    });
+                if (authority.RevokeRunForOperatorMove(card.TaskKey, attemptId,
+                        request.Reason ?? "Operator moved a card with a live run."))
+                {
+                    var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
+                    timeline.Append(folder, TimelineEventKinds.RunAttemptRevoked, OperatorActor(context),
+                        $"Run {attemptId} was revoked by the operator move. Its result remains reference material; it cannot deliver this card.",
+                        attemptId,
+                        details: new Dictionary<string, string>
+                        {
+                            ["attemptId"] = attemptId,
+                            ["fence"] = live.FencingToken.ToString(),
+                            ["runIntent"] = "revoke",
+                        });
+                }
             }
             return MoveResult(moved);
         }

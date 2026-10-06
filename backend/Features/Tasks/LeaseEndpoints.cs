@@ -66,7 +66,7 @@ public static class LeaseEndpoints
                     ["commitSha"] = req.CommitSha,
                 });
             return Results.Ok(new { status = "recorded" });
-        });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         group.MapPost("/acquire", async (
             RunLeaseAcquireRequest req,

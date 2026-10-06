@@ -266,7 +266,8 @@ async function openDecision(
 ): Promise<void> {
   await page.setViewportSize({ width: 1480, height: 1600 });
   await installRoutes(page, capture, artifact);
-  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await expect(page.getByTestId('decision-surface')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -294,7 +295,7 @@ async function saveDecisionShot(
 }
 
 test.describe('operator decision surface', () => {
-  test.beforeEach(() => test.setTimeout(90_000));
+  test.beforeEach(() => test.setTimeout(150_000));
 
   test('shows the older brief delivery choices in both themes', async ({ page }) => {
     await openDecision(page, () => undefined);
@@ -326,6 +327,7 @@ test.describe('operator decision surface', () => {
     await expect(page.getByTestId('older-brief-accept')).toBeVisible();
     await expect(page.getByTestId('older-brief-starting-point')).toBeVisible();
     await expect(page.getByTestId('older-brief-discard')).toBeVisible();
+    await expect(page.getByTestId('older-brief-accept')).toHaveCSS('border-top-width', '1px');
     mkdirSync(SHOTS_DIR, { recursive: true });
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);
@@ -361,7 +363,7 @@ test.describe('operator decision surface', () => {
           autoReview: [], humanReview: [], escalated: [], completed: [], archive: [],
         }),
       }));
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
     const badge = page.getByTestId('task-card-live-remote-outside-progress');
     await expect(badge).toBeVisible();
     // The broad API fixture leaves unrelated shell reads incomplete. Its

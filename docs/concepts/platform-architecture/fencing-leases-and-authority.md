@@ -3,9 +3,9 @@ id: platform-architecture-fencing-leases-authority
 title: "Fencing, leases, and attempt authority"
 status: active
 category: concept
-updatedAt: 2026-08-17
-last-updated: 2026-08-17
-reason: "Transfer the durable single-writer contract out of the hardening dossier so the architecture survives the dossier lifecycle"
+updatedAt: 2026-10-06
+last-updated: 2026-10-06
+reason: "Document operator revocation, brief-version offers, and their public routes"
 taskKey: AGT-2671
 tags: [fencing, lease, attempt-authority, single-writer, idempotency, distributed]
 related-tasks: [AGT-2147, AGT-2222, AGT-2370, AGT-2371, AGT-2372, AGT-2373, AGT-2631, AGT-2633]
@@ -115,6 +115,31 @@ Routes are asymmetric by history and worth knowing exactly:
 | Run lease | `POST /api/runner/lease/acquire` | `POST /api/runner/lease/renew` | `POST /api/runner/lease/release` | `GET /api/runner/lease/{taskKey}` |
 | Integration lease | `.../integration-lease/acquire` | `.../integration-lease/heartbeat` | `.../integration-lease/release` | `.../{projectName}/{integrationBranch}` |
 | Attempts | `POST /api/attempts/reviews/{id}/claim` | `.../renew` | settle via `.../settle` | `GET /api/attempts/tasks/{taskKey}` |
+
+Revoked attempt references are recorded through
+`POST /api/runner/lease/{attemptId}/revoked-reference` on the legacy backend
+and `POST /api/v1/runs/{runId}/revoked-reference` on Task Server. These routes
+retain the quarantine ref and SHA for the card history; they do not restore
+write authority or change the lane.
+
+For a live run, `POST /api/tasks/{jobId}/move` and
+`PUT /api/tasks/{jobId}/state` require `runIntent: revoke|steer` when changing
+lanes; the project-scoped routes have the same requirement. Task Server's
+`POST /api/v1/projects/{projectId}/tasks/{taskIdentity}/move` returns
+`run-intent-required` without that field. A steer requires a queued follow-up.
+An operator move after a steer still needs explicit intent while the lease is
+live. The legacy card detail includes an older-brief offer; Task Server also
+exposes `GET /api/v1/projects/{projectId}/tasks/{taskIdentity}/older-brief-delivery`.
+Legacy `POST /api/tasks/batch-move` applies the same rule per item and reports
+`run-intent-required` on an item whose live run has no explicit intent.
+The corresponding decision routes are
+`POST /api/tasks/{jobId}/older-brief-delivery/decision` and
+`POST /api/v1/projects/{projectId}/tasks/{taskIdentity}/older-brief-delivery/decision`.
+Their `decision` body accepts `accept`, `starting-point`, or `discard`.
+
+The legacy timeline records `run_attempt_revoked` and
+`older_brief_delivery_offered` for those boundaries. Task Server schema 28
+stores the brief version on each run and the pending older-brief offer.
 
 Registered in `backend/Features/Tasks/LeaseEndpoints.cs`,
 `IntegrationLeaseEndpoints.cs` and `AttemptAuthorityEndpoints.cs`. There is no

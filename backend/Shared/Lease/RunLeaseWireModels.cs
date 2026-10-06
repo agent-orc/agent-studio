@@ -34,7 +34,7 @@ public sealed record RunLeaseAcquireRequest(
     public string? ClientId { get; init; }
     /// <summary>Daemon generation that originally received this lease.</summary>
     public string? LeaseInstanceId { get; init; }
-    /// <summary>SHA-256 of the prompt.md bytes captured when this attempt was claimed.</summary>
+    /// <summary>SHA-256 version of the authored brief captured when this attempt was claimed.</summary>
     public string? BriefVersion { get; init; }
 }
 

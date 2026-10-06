@@ -1206,12 +1206,6 @@ public sealed class RemoteTaskRunner
         {
             var taskPrompt = await _client.ReadTaskFileAsync(taskKey, "prompt.md", shutdown)
                              ?? throw new InvalidOperationException($"Task '{taskKey}' has no prompt.md to run.");
-            if (runSpec?.BriefVersion is { Length: > 0 } claimedBrief
-                && !string.Equals(
-                    Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(taskPrompt))).ToLowerInvariant(),
-                    claimedBrief,
-                    StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The task brief changed after claim; this attempt cannot start.");
             var followUpApplication = RemoteRunPrompt.ApplyClaimedFollowUp(taskPrompt, runSpec?.FollowUp);
             acknowledgedFollowUp = followUpApplication.AcknowledgedFollowUp;
             prompt = RemoteRunPrompt.Build(

@@ -452,6 +452,7 @@ public static class TaskServerEndpoints
                 await store.RecordRevokedRunReferenceAsync(runId, request, Actor(context), ct);
                 return new { status = "recorded" };
             }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
             .RequireTaskServerScope(TaskServerScopes.EventsWrite);
         runs.MapPut("/{runId}/result-handoff", async (
             HttpContext context,

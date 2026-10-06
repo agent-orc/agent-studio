@@ -2533,6 +2533,9 @@ public sealed partial class TaskServerStoreTests
             acknowledgement.RetainUntil);
 
         clock.Advance(TimeSpan.FromDays(10));
+        await store.ReleaseLeaseAsync(claim.Run.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, "completed"), "runner-a", default);
         var current = await store.GetTaskAsync(
             project.ProjectId,
             task.TaskKey,

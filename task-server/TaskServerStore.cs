@@ -39,9 +39,9 @@ public sealed partial class TaskServerStore
     // 26 adds ordered continuation rounds with immutable acceptance and fenced
     // consumption receipts.
     // 27 adds authenticated per-consumer rotation delivery.
+    // 28 adds brief-bound attempts, operator revocation, and older-brief offers.
     // The migration block is idempotent; the number guards downgrades from
     // binaries that do not know this state.
-    // 28 adds brief-bound attempts, operator revocation, and older-brief offers.
     public const int CurrentSchemaVersion = 28;
 
     /// <summary>
@@ -563,8 +563,8 @@ public sealed partial class TaskServerStore
             if (existing is null) return;
             if (existing.Version != request.ExpectedVersion)
                 throw new TaskServerConflictException("resource-version-mismatch", $"Expected task version {request.ExpectedVersion}, current version is {existing.Version}.");
-            if (existing.State == "3-progress" && request.State is { } requestedState
-                && requestedState != "3-progress"
+            if (request.State is { } requestedState
+                && requestedState != existing.State
                 && await ScalarAsync(connection, """
                     SELECT 1 FROM leases WHERE task_id = $task
                      AND status IN ('active', 'process-unknown') LIMIT 1;

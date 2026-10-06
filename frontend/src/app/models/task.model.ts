@@ -35,6 +35,7 @@ export interface BatchMoveItemInput {
   jobId: string;
   watchPath: string;
   targetState: string;
+  runIntent?: 'revoke' | 'steer';
 }
 
 /** Final outcome for one batch item, available as soon as that item finishes. */

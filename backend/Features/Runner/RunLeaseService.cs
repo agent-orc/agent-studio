@@ -91,11 +91,7 @@ public sealed class RunLeaseService
 
         var result = _authority.RenewRun(
             reference, request.RunnerId, request.RequestedTtlSeconds, request.LeaseId, beforeRenew);
-        var response = MapMutation(result, "Renewed");
-        return !response.Granted
-            && _authority.GetRun(reference.AttemptId)?.TerminalOutcome == "operator-revoked"
-                ? response with { Message = "The operator revoked this run." }
-                : response;
+        return MapMutation(result, "Renewed");
     }
 
     public RunLeaseResponse Release(RunLeaseReleaseRequest request)
