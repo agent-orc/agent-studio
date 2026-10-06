@@ -31,6 +31,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
@@ -716,6 +717,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvid
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
@@ -887,6 +892,7 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
+    builder.Services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
 }
 // AGT-3011: the fix-round, gate-triage and salvage sweeps that used to run from
 // an operator shell loop. One supervised tick, the shared per-card round

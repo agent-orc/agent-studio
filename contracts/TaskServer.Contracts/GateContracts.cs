@@ -53,7 +53,10 @@ public sealed record GatePlan(
     int OverallTimeoutSeconds,
     IReadOnlyList<string> RequiredCapabilities,
     int MaxOutputBytes,
-    string CleanupPolicy);
+    string CleanupPolicy,
+    [property: System.Text.Json.Serialization.JsonIgnore(
+        Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? SubjectBindingDigest = null);
 
 public sealed record GateSubject(
     string SubjectId,
@@ -72,7 +75,11 @@ public sealed record GateSubject(
     GatePlan Plan,
     DateTime CreatedAt,
     DateTime DispatchDeadline,
-    int MaxAttempts);
+    int MaxAttempts,
+    string? BatchId = null,
+    string? MembershipDigest = null,
+    string? BaseSha = null,
+    IReadOnlyList<string>? MemberRunIds = null);
 
 public sealed record CreateGateSubjectRequest(
     string TaskId,
@@ -89,7 +96,11 @@ public sealed record CreateGateSubjectRequest(
     string TestSelectionAuditDigest,
     GatePlan Plan,
     DateTime DispatchDeadline,
-    int MaxAttempts = 2);
+    int MaxAttempts = 2,
+    string? BatchId = null,
+    string? MembershipDigest = null,
+    string? BaseSha = null,
+    IReadOnlyList<string>? MemberRunIds = null);
 
 public sealed record GateAttempt(
     string AttemptId,
