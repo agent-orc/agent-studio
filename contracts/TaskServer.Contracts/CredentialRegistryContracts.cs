@@ -67,7 +67,12 @@ public sealed record CredentialRegistryRecordDto(
     DateTime? RotationDueAt,
     DateTime? AccessTokenExpiresAt,
     DateTime? LastRealSuccessAt,
-    DateTime? NextProbeAt);
+    DateTime? NextProbeAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? GitHubKeyId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ProvisioningCredentialId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RepositoryPurpose = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? RepositoryWriteGrant = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TokenSubtype = null);
 
 /// <summary>Expected generation and source instance fence an observation before storage.</summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]

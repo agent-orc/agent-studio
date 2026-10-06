@@ -744,6 +744,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |
 | `RUNNER_GIT_REMOTE` | `--git-remote` | (none) | Startup push-probe repository and legacy one-shot fallback. It is never inherited by a project clone. |
+| `RUNNER_WORKSPACE_GIT_REMOTE` | `--workspace-git-remote` | (none) | Exact private workspace origin to check independently at daemon startup. Use a credential-free GitHub URL. |
+| `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH` | `--workspace-git-requires-push` | `false` | Require a managed temporary-ref push and delete proof for the workspace origin. |
 | `RUNNER_GIT_PUSH_REMOTE` | `--git-push-remote` | (fetch URL) | Startup push-probe and legacy one-shot write URL. It is never inherited by a project clone. |
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
@@ -1379,6 +1381,15 @@ before storing it in the runner user's credential helper. Keep the HTTPS URL
 free of embedded secrets. Do not put a token in `runner.env`, a command line,
 task output, or evidence.
 
+When a private workspace repository is part of the installation, set
+`RUNNER_WORKSPACE_GIT_REMOTE` to its exact origin. The daemon checks that origin
+separately from `RUNNER_GIT_REMOTE`. A product fallback success does not make a
+failed workspace fetch healthy. Set `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH=true`
+only when workspace policy permits publication. The push proof creates and
+deletes a temporary ref. A failed cleanup remains a failed proof and needs
+operator cleanup. This startup check is host diagnostics; project claim
+admission still uses its own registered repository preflight.
+
 ### Token requirements
 
 The coding runner must be able to publish ordinary source changes and changes
@@ -1432,8 +1443,9 @@ standard input so it does not enter shell history. On a headless host, make sure
 the selected credential helper persists for the runner user and protects its
 storage with user-only permissions.
 
-Set an expiration date and record the owner, repositories, permissions, expiry,
-and runner hosts in the operator inventory. Rotate before expiry:
+Record token subtype, owner, exact repository grants, repository purpose, and
+runner hosts separately. Use issuer expiry when known; leave it unknown when
+the issuer does not supply it. Rotate before a known expiry:
 
 1. Create and approve the replacement token with the same repository selection
    and permissions.
@@ -1453,8 +1465,21 @@ and runner hosts in the operator inventory. Rotate before expiry:
    `Fallback repo: ok` plus `Fallback workflow: ok` in
    **Workspace Settings -> Execution Hosts**.
 4. Revoke the old token only after every assigned repository and runner is
-   green. A token owner's departure or repository-access removal also
-   invalidates the runner identity and requires immediate rotation.
+   green and all deploy keys created with that token have been checked.
+   GitHub deletes deploy keys created with a personal access token when that
+   token is deleted, and deletes keys created with an OAuth app token when
+   that token is revoked. A token owner's departure or repository-access
+   removal also invalidates the runner identity and requires immediate
+   rotation.
+
+The renewal adapter stages a replacement in a host-only 0600 Git helper file,
+proves fetch and required push against the exact origin with that generation,
+then updates the active helper after active transports drain. A denied grant,
+failed proof or interruption leaves the old helper generation in place. The
+host journal keeps only operation IDs, generations and proof states. Protected
+human consent remains necessary to obtain a new bearer; it is never written
+to a task command, prompt or result. Revocation is a separate authorized
+step because the provisioning token may own deploy keys.
 
 The guided installer tracked by AGT-2334 must link to this section and include a
 **Create token** step before credential storage. That step shows the
@@ -1498,6 +1523,123 @@ The exact rewrite keeps `remote.origin.url` and `remote.origin.pushurl` equal to
 the registry value while Git uses the deploy-key SSH transport. Add one exact
 rewrite per assigned repository. The `RUNNER_GIT_PUSH_REMOTE` value above is
 still only the startup probe input.
+
+For managed replacement, the host adapter creates a new ed25519 key under a
+protected directory and journals its public fingerprint. An authorized
+administration session registers only the public key and records the GitHub
+key ID and the provisioning credential ID. Missing administration permission
+is a guided repository-administrator step. Before switching the exact
+repository rewrite, the platform Git layer proves fetch with the candidate
+identity alone and, when policy requires write access, proves a real
+temporary-ref push and delete. Active transports must drain first. The old
+GitHub key and known host-local private key are retired only after proof and
+switch. A retry searches GitHub by fingerprint before creating a key, so a
+lost registration receipt does not duplicate the key. The host must supply
+its active-transport drain check and old key path to complete an automatic
+rotation; otherwise the receipt stays pending for guided retirement.
+
+The `agent-host --renew-repository-access` maintenance command is the host
+entry point for these two flows. Put a metadata-only JSON request outside any
+checkout and run it as the target host's runner account. Use the
+`RepositoryHttpsRotationRequest` or `RepositoryRotationRequest` fields in the
+runner contract. The request includes the exact origin, repository purpose,
+expected generation and stable operation ID; it must contain no bearer or
+private key. The command writes a redacted status and exit code `0` when
+complete, `3` when a guided step or proof is pending, or `2` on a failed
+operation. Reuse the same operation ID on retry.
+
+The host operation has a five-minute deadline; each workstation
+administration command has a two-minute deadline.
+
+A deploy-key request has this shape; replace each fixture identifier with the
+current registry and GitHub values. `OldHostLocalRef` is the existing host
+key path outside the checkout. The host generates the replacement path.
+
+```json
+{
+  "OperationId": "rotation-2026-10-fixture",
+  "HostId": "runner-host-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Owner": "example",
+  "Repository": "private-workspace",
+  "Purpose": "workspace",
+  "Origin": "git@github.com:example/private-workspace.git",
+  "RequiresPush": true,
+  "OldGitHubKeyId": 42,
+  "ProvisioningCredentialId": "workstation-oauth-record",
+  "OldHostLocalRef": "/protected/old-deploy-key"
+}
+```
+
+Use `agent-host --renew-repository-access discover-https
+/protected/discovery-request.json` before R4 when subtype or grants need
+discovery. The metadata request names the credential ID, exact origin,
+repository purpose, required push policy, and issuer subtype or expiry if
+actually known. Supply the current bearer on protected standard input. The
+command queries the exact GitHub repository and prints subtype, fetch and
+push grants, and issuer expiry as separate metadata fields. Unknown issuer
+expiry remains unknown. Never put the bearer in the JSON request.
+
+```json
+{
+  "CredentialId": "runner-https-record",
+  "RepositoryPurpose": "workspace",
+  "Origin": "https://github.com/example/private-workspace.git",
+  "RequiresPush": true,
+  "IssuerSubtype": null,
+  "IssuerExpiresAt": null
+}
+```
+
+An HTTPS renewal request uses the discovered metadata as its `Metadata`
+object. Unknown issuer expiry is represented by `null` and `unknown`:
+
+```json
+{
+  "OperationId": "https-rotation-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Metadata": {
+    "CredentialId": "runner-https-record",
+    "TokenSubtype": "unknown",
+    "RepositoryPurpose": "workspace",
+    "Origin": "https://github.com/example/private-workspace.git",
+    "RequiresPush": true,
+    "FetchGrant": true,
+    "PushGrant": true,
+    "IssuerExpiresAt": null,
+    "ExpiryKnowledge": "unknown"
+  },
+  "OldCredentialId": "prior-runner-https-record"
+}
+```
+
+For HTTPS renewal, supply the new token through protected standard input to
+`agent-host --renew-repository-access https /protected/request.json`. The token
+input must be closed after the value so the command can continue. The token
+is staged in a host-only Git credential file and never appears in the request
+or result. For deploy-key renewal, run
+`agent-host --renew-repository-access deploy-key /protected/request.json` on
+the target host. Configure `RUNNER_GITHUB_ADMIN_SSH_HOST` to a trusted SSH
+alias for the provisioning workstation. The fixed workstation command uses
+that account's authorized `gh` provisioning session for GitHub administration;
+only the public key and repository metadata cross SSH. The workstation must
+have `agent-host` on `PATH`, `RUNNER_WORKSTATION=1`, and a comma-separated
+`RUNNER_GITHUB_ADMIN_REPOSITORIES` allowlist of exact `owner/repository`
+names in its SSH command environment. Restrict the SSH identity to this
+administration command. A workstation that is itself the target host may use its local
+`gh` session with `RUNNER_WORKSTATION=1`. Record the actual provisioning-token
+subtype from its issuance receipt; do not infer OAuth from `gh auth token`.
+If no protected administration
+session is available, the command returns `administrator-action-required`
+without creating a host key. After the runner has completed active Git
+transports, repeat the same command with `--drained` to permit the switch and
+retirement. The flag is an operator assertion that active transports have
+finished; do not set it while a Git operation is in flight. Keep the old
+GitHub key and host key until the exact-origin fetch and required push proof
+have passed. Subsequent rotations fence the active HTTPS generation with a
+host-local marker and the active deploy-key generation with the resolved
+managed SSH alias. Token revocation remains a separate administrator action after
+checking its dependent deploy keys.
 
 At daemon startup, the runner first performs `git push --dry-run` to
 `refs/heads/runner-capability-probe/<runner-id>`. It then commits a disabled
