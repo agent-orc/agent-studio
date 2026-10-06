@@ -24,5 +24,7 @@
       "promptMarkdown": "Use PUT /api/projects/PROJ-002/workbenches/{id}/review with X-Client-Id and reviewedBy=AGT-2900 to restore AGT-W18 as partially-superseded by AGT-W59 and AGT-W57, review AGT-W55 as current, and reclassify AGT-W11 as historical with no supersededBy target because AGT-W46 is archived. Preserve reviewHistory through the API. Then GET /api/projects/PROJ-002/workbenches and inspect lifecycleState, not only descriptor status. The 3 October read-only response had 16 review-requested entries, five unchanged after cluster review: AGT-W14, W41, W56, W58 and W60. Diagnose and process those through the documented Dossier lifecycle and operator review lane; do not treat relevance-review metadata as a substitute for operator decision acceptance. Require no review-requested September Dossier except ones changed after the round before closing this acceptance check. Verify every supersededBy key exists and is not archived, every archived descriptor has statusReason, and docs/operations/README.md does not claim a stale current set. Report API response and corrected counts; do not start the dev backend outside the approved Playwright fixture."
     }
   ],
-  "key": "AGT-W72"
+  "key": "AGT-W72",
+  "tags": [],
+  "taggingStatus": "tags-proposed"
 }
