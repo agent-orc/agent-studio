@@ -7,6 +7,7 @@ cpu_count=""
 profile="/etc/agent-host/profile.conf"
 drop_in_dir=""
 migrate_drop_ins=0
+replace_drop_in_resources=0
 coding_slots=2
 review_slots=2
 
@@ -21,6 +22,7 @@ usage() {
     "  --profile <path>      agent-host profile (default: /etc/agent-host/profile.conf)" \
     "  --drop-in-dir <path>  Existing service drop-in directory to inspect" \
     "  --migrate-drop-ins    Adopt resource values and remove them from drop-ins" \
+    "  --replace-drop-in-resources  Remove old resource overrides; profile is authoritative" \
     "  -h, --help            Show this help"
 }
 
@@ -38,6 +40,7 @@ while (($#)); do
     --profile) profile="${2:-}"; shift 2 ;;
     --drop-in-dir) drop_in_dir="${2:-}"; shift 2 ;;
     --migrate-drop-ins) migrate_drop_ins=1; shift ;;
+    --replace-drop-in-resources) replace_drop_in_resources=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac
@@ -57,6 +60,8 @@ if [[ -n "$drop_in_dir" ]]; then
   [[ "$drop_in_dir" == /* ]] || die "--drop-in-dir must be an absolute path"
 fi
 ((migrate_drop_ins == 0)) || [[ -n "$drop_in_dir" ]] || die "--migrate-drop-ins requires --drop-in-dir"
+((replace_drop_in_resources == 0)) || [[ -n "$drop_in_dir" ]] || die "--replace-drop-in-resources requires --drop-in-dir"
+((migrate_drop_ins == 0 || replace_drop_in_resources == 0)) || die "choose one drop-in migration mode"
 
 declare -A configured=()
 declare -A profile_explicit=()
@@ -210,6 +215,9 @@ fi
 
 if ((migrate_drop_ins == 1)); then
   write_adopted_profile_values
+  remove_resource_lines_from_drop_ins
+fi
+if ((replace_drop_in_resources == 1)); then
   remove_resource_lines_from_drop_ins
 fi
 

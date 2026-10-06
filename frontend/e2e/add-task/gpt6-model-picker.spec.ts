@@ -82,6 +82,22 @@ test.describe('GPT-6 model picker', () => {
     await page.route('**/api/environment*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json',
         body: '{"isDev":false,"devTools":{}}' }));
+    await page.route('**/api/usage/cockpit*', (route) => {
+      const calendar = {
+        timeZone: 'UTC', weekStart: 1, dayStartUtc: '2026-09-25T00:00:00Z',
+        dayEndUtc: '2026-09-26T00:00:00Z', weekStartUtc: '2026-09-21T00:00:00Z',
+        weekEndUtc: '2026-09-28T00:00:00Z',
+      };
+      const unavailable = { status: 'unavailable', observedAt: null, ttlSeconds: null };
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        snapshotVersion: 1, workspaceId: 'ws-gpt6', timeZone: 'UTC', weekStart: 1,
+        generatedAt: '2026-09-25T00:00:00Z', calendar, clis: [],
+        cost: { currency: 'USD', calendar, todayUsd: null, weekUsd: null, projects: [],
+          coverage: unavailable, pricingVersion: 'fixture', normalizationVersion: 'fixture',
+          ledgerEndpointTemplate: '' },
+        runs: [], slots: [], sources: {},
+      }) });
+    });
     await page.route('**/hubs/v1/studio/negotiate*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         negotiateVersion: 1, connectionId: 'gpt6-picker', connectionToken: 'gpt6-picker',

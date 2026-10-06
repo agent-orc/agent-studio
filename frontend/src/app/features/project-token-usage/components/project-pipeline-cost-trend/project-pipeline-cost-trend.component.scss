@@ -95,3 +95,43 @@
 .trend__swatch--tool, .trend__segment--tool { background: var(--studio-accent-strong); }
 .trend__swatch--orchestrator, .trend__segment--orchestrator { background: var(--severity-pending); }
 .trend__swatch--module, .trend__segment--module { background: var(--studio-fg-muted); }
+
+// AGT-3015: cost of deciding and the decision-step table.
+.trend__legend-runs { color: var(--studio-fg-muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.trend__num { font-variant-numeric: tabular-nums; }
+.trend__deciding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin-bottom: var(--studio-spacing-2);
+  color: var(--studio-fg-dim);
+  font-size: 0.74rem;
+
+  strong { color: var(--studio-fg); font-weight: 600; }
+}
+.trend__decisions {
+  width: 100%;
+  margin-bottom: var(--studio-spacing-2);
+  border-collapse: collapse;
+  font-size: 0.72rem;
+
+  th {
+    padding: var(--studio-spacing-1);
+    color: var(--studio-fg-muted);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  td {
+    padding: 2px var(--studio-spacing-1);
+    border-top: 1px solid var(--studio-border);
+    color: var(--studio-fg);
+  }
+
+  th:nth-child(n + 2):not(:nth-child(4)),
+  td.trend__num { text-align: right; }
+}
+.trend__step-id,
+.trend__step-model { font-family: var(--font-mono); font-size: 0.68rem; }
+.trend__step-model { color: var(--studio-fg-dim); }

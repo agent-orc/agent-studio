@@ -31,6 +31,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
@@ -888,6 +889,17 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
 }
+// AGT-3011: the fix-round, gate-triage and salvage sweeps that used to run from
+// an operator shell loop. One supervised tick, the shared per-card round
+// budget, per-project pause in project settings, projection next to pipeline
+// health. The failure-continuation service is shared with the failure panel.
+builder.Services.AddSingleton<TaskFailureContinuationService>();
+builder.Services.AddSingleton<IOperatorSweepGateFacts, OperatorSweepGateFacts>();
+builder.Services.AddSingleton<IOperatorSweepActions, OperatorSweepActions>();
+builder.Services.AddSingleton<OperatorSweepService>();
+builder.Services.AddSingleton<IOperatorSweepRunner>(sp => sp.GetRequiredService<OperatorSweepService>());
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<OperatorSweepHostedService>();
 // Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
 // detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),
 // same convention as Supervisor:SoftReasoningEnabled - it drafts real task

@@ -29,6 +29,10 @@ export type {
   StepPromptEntry,
   StepPromptsResponse,
   PipelineAspectEvidence,
+  PipelineStepRunSummary,
+  StepCostBasis,
+  DecisionCostBucket,
+  DecisionCostRollup,
 } from './models/task-pipeline.model';
 export type {
   PipelineHealthAlert,
@@ -37,4 +41,14 @@ export type {
   PipelineLaneDrainHealth,
   PipelineHealthSnapshot,
 } from './models/pipeline-health.model';
+export type {
+  OperatorSweepKind,
+  OperatorSweepRecentAction,
+  OperatorSweepStatus,
+  OperatorSweepCardDecision,
+  OperatorSweepCardState,
+  OperatorSweepWaitingCard,
+  OperatorSweepProjection,
+} from './models/operator-sweeps.model';
 export { stepKindLabel } from './step-kind-display.util';
+export { summarizeDecisionCost, type DecisionCostSummaryVm } from './decision-cost.util';

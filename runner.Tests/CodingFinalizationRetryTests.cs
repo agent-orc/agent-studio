@@ -213,7 +213,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
 
     [SkippableFact]
     [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
-    public async Task Artifact_413_after_completion_is_partial_and_does_not_fail_the_slot()
+    public async Task Artifact_413_before_settlement_is_partial_and_does_not_fail_the_slot()
     {
         PlatformGate.LinuxOnly("the detached worker and Git delivery use Linux process boundaries");
 
@@ -252,7 +252,10 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         Assert.DoesNotContain("none", server.ResultShas);
         var requests = server.RequestOrder.ToList();
         Assert.True(
-            requests.IndexOf("/api/runner/completion") < requests.IndexOf("/api/runner/artifacts"),
+            requests.IndexOf("/api/runner/artifacts") < requests.IndexOf("/api/runner/artifacts/outcome"),
+            string.Join(Environment.NewLine, requests));
+        Assert.True(
+            requests.IndexOf("/api/runner/artifacts/outcome") < requests.IndexOf("/api/runner/completion"),
             string.Join(Environment.NewLine, requests));
         Assert.Contains(logs, line => line.Contains("outcome=ArtifactTooLarge", StringComparison.Ordinal));
         Assert.DoesNotContain(logs, line => line.Contains("slot failed", StringComparison.Ordinal));
@@ -279,6 +282,61 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         Assert.Contains(
             RemoteTaskRunner.BuildArtifactManifest(entries).Digest,
             server.ArtifactManifestDigests);
+    }
+
+    [SkippableFact]
+    [Trait(PlatformGate.TraitName, PlatformGate.Linux)]
+    public async Task Eligible_artifacts_transfer_before_settlement_and_a_retry_does_not_duplicate_them()
+    {
+        PlatformGate.LinuxOnly("the detached worker and Git delivery use Linux process boundaries");
+
+        var origin = Path.Combine(_root, "origin-completed-upload-race.git");
+        await CreateOriginAsync(origin, Path.Combine(_root, "seed-completed-upload-race"));
+        var options = Options(origin);
+        var lease = Lease(options) with
+        {
+            TaskKey = "AGT-COMPLETED-UPLOAD-RACE",
+            LeaseId = "lease-completed-upload-race",
+            AttemptId = "attempt-completed-upload-race",
+        };
+        // This reproduces the production race: a completed RunAttempt rejects
+        // writes. The first accepted artifact response is deliberately lost to
+        // prove its deterministic idempotency key makes the runner retry safe.
+        var server = new RestartingTaskServer(
+            lease,
+            refuseCompletions: 0,
+            rejectArtifactsAfterCompletion: true,
+            loseFirstArtifactAcknowledgement: true);
+        var logs = new ConcurrentQueue<string>();
+
+        using var client = Client(server, options);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var run = new RemoteRunnerDaemon(options, client, logs.Enqueue).RunAsync(stop.Token);
+
+        await AwaitCompletionAsync(server, logs, TimeSpan.FromSeconds(45));
+        await stop.CancelAsync();
+        try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+
+        var requests = server.RequestOrder.ToList();
+        var completionIndex = requests.IndexOf("/api/runner/completion");
+        Assert.True(completionIndex >= 0, string.Join(Environment.NewLine, requests));
+        Assert.All(
+            requests
+                .Select((path, index) => (path, index))
+                .Where(item => item.path == "/api/runner/artifacts"),
+            item => Assert.True(item.index < completionIndex, string.Join(Environment.NewLine, requests)));
+        Assert.Equal(0, server.RejectedArtifactsAfterCompletion);
+        Assert.Equal(
+            ["results/deliverables.md", "results/evidence.txt"],
+            server.StoredArtifactPaths.OrderBy(path => path, StringComparer.Ordinal));
+        Assert.Equal(2, server.StoredArtifactIdempotencyKeys.Count);
+        Assert.Contains(
+            server.ArtifactIdempotencyKeys.GroupBy(key => key, StringComparer.Ordinal),
+            group => group.Count() == 2);
+        Assert.Contains(logs, line => line.Contains("artifact upload retry", StringComparison.Ordinal));
+        Assert.Equal(0, server.PartialArtifactReports);
+        Assert.Equal(1, server.CompletionCount);
     }
 
     [SkippableFact]
@@ -473,13 +531,17 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         RunLeaseInfoDto initialLease,
         int refuseCompletions,
         int refusePromptReads = 0,
-        HttpStatusCode? artifactResponseStatus = null) : HttpMessageHandler
+        HttpStatusCode? artifactResponseStatus = null,
+        bool rejectArtifactsAfterCompletion = false,
+        bool loseFirstArtifactAcknowledgement = false) : HttpMessageHandler
     {
         private readonly object _gate = new();
         private int _claimCount;
         private int _artifactCount;
+        private int _nonEmptyArtifactAttemptCount;
         private int _promptReadCount;
         private int _releaseCount;
+        private readonly HashSet<string> _storedArtifactIdempotencyKeys = new(StringComparer.Ordinal);
 
         public TaskCompletionSource Completion { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -487,11 +549,14 @@ public sealed class CodingFinalizationRetryTests : IDisposable
         public List<string> ArtifactIdempotencyKeys { get; } = [];
         public List<string> CompletionIdempotencyKeys { get; } = [];
         public List<string> ArtifactManifestDigests { get; } = [];
+        public List<string> StoredArtifactPaths { get; } = [];
+        public List<string> StoredArtifactIdempotencyKeys { get; } = [];
         public List<string> ResultShas { get; } = [];
         public List<string> CompletedOutcomes { get; } = [];
         public ConcurrentQueue<string> RequestOrder { get; } = new();
         public int CompletionCount { get; private set; }
         public int PartialArtifactReports { get; private set; }
+        public int RejectedArtifactsAfterCompletion { get; private set; }
         public int ReleaseCount => Volatile.Read(ref _releaseCount);
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -519,13 +584,35 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                 };
             }
 
-            if (path == "/api/runner/artifacts" && artifactResponseStatus is { } rejectedStatus)
+            if (path == "/api/runner/artifacts")
             {
-                _ = Artifacts(body);
-                return new HttpResponseMessage(rejectedStatus)
+                var artifactResponse = Artifacts(body);
+                if (rejectArtifactsAfterCompletion && CompletionCount > 0)
                 {
-                    Content = new StringContent("artifact payload refused"),
-                };
+                    RejectedArtifactsAfterCompletion++;
+                    return new HttpResponseMessage(HttpStatusCode.Conflict)
+                    {
+                        Content = new StringContent(
+                            "RunAttempt is Completed and no longer has write authority"),
+                    };
+                }
+                if (artifactResponseStatus is { } rejectedStatus)
+                {
+                    return new HttpResponseMessage(rejectedStatus)
+                    {
+                        Content = new StringContent("artifact payload refused"),
+                    };
+                }
+                if (loseFirstArtifactAcknowledgement
+                    && artifactResponse.Uploaded > 0
+                    && Interlocked.Increment(ref _nonEmptyArtifactAttemptCount) == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    {
+                        Content = new StringContent("artifact persisted but acknowledgement was lost"),
+                    };
+                }
+                return JsonResponse(artifactResponse);
             }
 
             object? response = path switch
@@ -545,7 +632,6 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     25L * 1024 * 1024,
                     18L * 1024 * 1024,
                     100L * 1024 * 1024),
-                "/api/runner/artifacts" => Artifacts(body),
                 "/api/runner/artifacts/outcome" => ReportPartialArtifacts(),
                 "/api/runner/completion" => Complete(body),
                 "/api/runner/lease/release" => Release(),
@@ -553,13 +639,7 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     $"Unexpected fake Task Server request: {request.Method} {path}"),
             };
 
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    JsonSerializer.Serialize(response, Json),
-                    Encoding.UTF8,
-                    "application/json"),
-            };
+            return JsonResponse(response);
         }
 
         private RunnerClaimResponse Claim()
@@ -598,7 +678,16 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                     .Select(artifact => artifact.GetProperty("path").GetString() ?? string.Empty)
                     .ToList()
                 : [];
-            lock (_gate) ArtifactIdempotencyKeys.Add(Text(root, "idempotencyKey"));
+            var idempotencyKey = Text(root, "idempotencyKey");
+            lock (_gate)
+            {
+                ArtifactIdempotencyKeys.Add(idempotencyKey);
+                if (paths.Count > 0 && _storedArtifactIdempotencyKeys.Add(idempotencyKey))
+                {
+                    StoredArtifactIdempotencyKeys.Add(idempotencyKey);
+                    StoredArtifactPaths.AddRange(paths);
+                }
+            }
             Interlocked.Increment(ref _artifactCount);
 
             return new ArtifactIngestResponse(
@@ -645,5 +734,14 @@ public sealed class CodingFinalizationRetryTests : IDisposable
                && value.ValueKind == JsonValueKind.String
                 ? value.GetString() ?? "none"
                 : "none";
+
+        private static HttpResponseMessage JsonResponse(object? response)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(response, Json),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
     }
 }

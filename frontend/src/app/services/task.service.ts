@@ -78,6 +78,7 @@ import type {
   PipelineStepCondition,
   StepPromptsResponse,
   PipelineHealthSnapshot,
+  OperatorSweepProjection,
 } from '../features/task-pipeline';
 import type { TaskScreenshotsResponse, WorkspaceScreenshotsResponse } from '../features/screenshots';
 import type { ExecutiveSummaryResponse } from '../features/summary';
@@ -2430,6 +2431,21 @@ export class TaskService {
     return this.http.get<PipelineHealthSnapshot>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/pipeline-health`,
     );
+  }
+
+  /** AGT-3011: operator sweep health, per-card round budget and reasons. Read-only. */
+  getProjectOperatorSweeps(projectName: string) {
+    return this.http.get<OperatorSweepProjection>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/operator-sweeps`,
+    );
+  }
+
+  /** Pause or resume one operator sweep for one project; persisted across restarts. */
+  setOperatorSweepPaused(projectName: string, sweep: string, paused: boolean, reason?: string) {
+    const base = `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/operator-sweeps/${encodeURIComponent(sweep)}`;
+    return paused
+      ? this.http.post<OperatorSweepProjection>(`${base}/pause`, { reason: reason ?? null })
+      : this.http.post<OperatorSweepProjection>(`${base}/resume`, {});
   }
 
   probePipelineStep(projectName: string, stepId: string) {

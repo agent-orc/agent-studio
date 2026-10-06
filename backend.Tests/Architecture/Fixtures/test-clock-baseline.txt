@@ -283,7 +283,6 @@ wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
 wall-clock task-server.Tests/RetentionStoreTests.cs 3
 wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1
 wall-clock task-server.Tests/RuntimeCapacitySettingsTests.cs 2
-wall-clock task-server.Tests/ScenarioContext.cs 3
 wall-clock task-server.Tests/StudioEndpointsTests.cs 3
 wall-clock task-server.Tests/StudioHostsTests.cs 2
 wall-clock task-server.Tests/StudioP2ComplianceEndpointsTests.cs 1

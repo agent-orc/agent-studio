@@ -2453,7 +2453,7 @@ public static class V1ReviewPlaneEndpoints
         return createdKey;
     }
 
-    private static string BuildRemoteFindingFollowUp(
+    internal static string BuildRemoteFindingFollowUp(
         IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
         string reviewAttemptId)
     {

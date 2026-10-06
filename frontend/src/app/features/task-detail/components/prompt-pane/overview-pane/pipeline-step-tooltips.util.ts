@@ -136,3 +136,27 @@ export function buildDecisionTooltip(info: SteeringInfo): StructuredTooltip {
     body: body || info.verdictLabel,
   };
 }
+
+/**
+ * Human-readable label for a model's resolution path: the step resolver's
+ * levels before a run, and the recorded `modelSource` after one (AGT-3015).
+ */
+export function modelSourceLabel(source: string | null): string | null {
+  switch ((source ?? '').toLowerCase()) {
+    case 'step':                 return 'per-step override';
+    case 'project':              return 'project model';
+    case 'global':               return 'global default';
+    case 'catalogue':            return 'step default';
+    case 'runtime':              return 'built-in default';
+    case 'config':               return 'host configuration';
+    case 'economy':              return 'economy routing';
+    case 'task':                 return 'card model';
+    case 'client-default':       return 'CLI default';
+    case 'policy':               return 'routing policy';
+    case 'policy-economy':       return 'routing policy (economy)';
+    case 'task-override':        return 'card override';
+    case 'project-orchestrator': return 'project orchestrator model';
+    case 'quota-fallback':       return 'quota fallback';
+    default:                     return null;
+  }
+}

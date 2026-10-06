@@ -24,8 +24,8 @@ should explain when a pin is below the policy floor.
 |---|---|---|---|
 | `gpt-6-luna` / `medium` (`luna-medium`) | Trivial, mechanical, locally specified changes with a small expected diff and an obvious verification path. Examples: remove one control, rename a local label, update a narrow fixture. | Unclear bugs, cross-subsystem behavior, public contracts, migrations, security, concurrency, or distributed state. | No Luna cohort existed in the 2026-07-23 benchmark. This is therefore a cost-saving hypothesis, not a validated quality claim. The empirical uncertainty adds points and keeps borderline work on Terra. |
 | `gpt-6-sol` / `low` (`sonnet-low`; or `claude-sonnet-5` / `low`) | Added 2026-09-13 (AGT-2808). The economy floor for feature (and any coding/concept/planning/research) work: the weakest route economy mode may ever select for that class. Not a normal-mode default; only reached by an economy-mode downgrade. | Anything below the floor - economy mode must never fall through to a Haiku-class model for feature/bug work. Haiku-class models are only used by the separate pipeline-support/classification path (`ModelFamilyResolver`, not this registry). | No dedicated historical cohort; introduced to close the Haiku-fallback gap found in AGT-2793/AGT-2807 (economy mode landing Claude-CLI feature cards on `claude-haiku-4-5` via the old positional catalogue fallback). |
-| `gpt-5.6-terra` / `medium` (`terra-medium`) | Standard features, content, and reversible UI or service changes inside one subsystem. This is the default sweet spot when requirements and test seams are clear. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Keep Terra as the working default, but promote on substantive reissue until controlled data validates it. |
-| `gpt-6-sol` / `medium` (`sol-medium`) | Demanding implementation, investigation, or analysis with several interacting concepts, a broad context search, or two to three subsystems. | Correctness-critical control-plane work that meets a hard floor. | Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
+| `gpt-5.6-terra` / `medium` (`terra-medium`) | Economy downgrade for standard features and bugs when the correctness floor permits it; also suited to content and reversible UI or service changes inside one subsystem. | P0 work, fencing, distributed authority, data-loss paths, or changes that require broad architectural reconstruction. | The historical report contained eight Terra/medium records, but none had a known grade and none formed a trustworthy terminal cohort. Promote on substantive reissue until controlled data validates it. |
+| `gpt-6-sol` / `medium` (`sol-medium`) | Default for new feature and bug cards, including demanding implementation, investigation, or analysis with several interacting concepts. | Correctness-critical control-plane work that meets a hard floor. | The GPT-6 route is provisional. Its predecessor Sol/medium had seven standard chore/feature runs with zero reissues. Five had known grades and all five were A or B. This is the strongest favorable historical signal, although the sample is still small and observational. |
 | `gpt-6-sol` / `xhigh` (`sol-xhigh`) | Correctness-critical work: P0, fencing, leases, distributed authority, security boundaries, destructive migrations, data-loss prevention, or subtle concurrent state machines. | Routine work merely because quota is available. More thinking is not a substitute for tighter scope or deterministic tests. | The xhigh cohort was heavily selected for difficult and incident-driven work: 78 runs, 32 reissued, with only 22 known grades. Its high reissue rate is a warning about cohort and pipeline churn, not proof that xhigh causes poor outcomes. This tier is selected by the correctness floor while controlled benchmarks remain open. |
 
 `high` and `ultra` are supported reasoning levels but are not default core-task
@@ -164,6 +164,15 @@ Its `version` must match this page. The registry owns tier ids, concrete Codex
 routes, task-type intake defaults, and correctness floors; appsettings must not
 redefine them.
 
+The registry also lists canonical model ids permitted as explicit continuation
+pins for the `codex` and `claude` runner CLIs. This includes known untiered
+models; a tier is not required for an operator pin. The Task Server validates
+the CLI id, model id, and their pairing against that list when accepting a
+continuation intent. It preserves a valid explicit selection. The static
+catalogue does not prove that a particular runner offers the model; execution
+still depends on the host CLI. An unknown id is rejected rather than
+being silently replaced by a policy recommendation.
+
 A fresh coding claim after a resumed mechanical integration round is qualified
 again when the round found a semantic conflict or the deterministic gate failed.
 An integration recovery claim with a pending mechanical delta is qualified before
@@ -177,6 +186,11 @@ registry's provider route at the stronger of the task's correctness floor and
 Sol/medium for a semantic conflict, or Terra/medium for a gate failure. The
 fresh-run reason is visible in the task's continuation ledger; the selected
 model is visible in the run-session event.
+When the standalone Task Server issues a required mechanical fresh route for
+that claim, the route takes precedence over a continuation intent's route
+selection. The continuation instruction still reaches the claimed run. Without
+a mechanical route, only fields explicitly submitted in the continuation
+override normal route resolution.
 The standalone Task Server uses the same versioned policy document for both
 direct claims and accepted host permits. A pending mechanical delta gets at
 least Terra/medium before the runner checks session admission; a recorded
