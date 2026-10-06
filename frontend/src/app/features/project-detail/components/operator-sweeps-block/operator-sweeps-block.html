@@ -1,0 +1,71 @@
+@if (projection(); as p) {
+  <section class="os"
+           [class.os--alarm]="p.status === 'alarm'"
+           [attr.data-status]="p.status"
+           data-testid="operator-sweeps">
+    <header class="os__head">
+      <span class="os__title"><i aria-hidden="true"></i>Operator sweeps</span>
+      <span class="os__state">{{ stateLabel(p.status) }}</span>
+    </header>
+    <div class="os__grid">
+      @for (sweep of p.sweeps; track sweep.sweep) {
+        <section class="os__sweep"
+                 [class.os__sweep--alarm]="sweep.isOverdue || !!sweep.lastRunError"
+                 [class.os__sweep--paused]="sweep.paused"
+                 [attr.data-testid]="'operator-sweep-' + sweep.sweep">
+          <div class="os__sweep-head">
+            <span class="os__label">{{ sweepLabel(sweep.sweep) }}</span>
+            <button type="button"
+                    class="os__toggle"
+                    [disabled]="busySweep() !== null"
+                    [attr.data-testid]="'operator-sweep-toggle-' + sweep.sweep"
+                    (click)="toggle(sweep)">{{ sweep.paused ? 'Resume' : 'Pause' }}</button>
+          </div>
+          <small class="os__role">{{ sweepRole(sweep.sweep) }}</small>
+          @if (sweep.paused) {
+            <strong>Paused</strong>
+            <small>{{ sweep.pausedBy }}{{ sweep.pauseReason ? ' · ' + sweep.pauseReason : '' }}</small>
+          } @else if (sweep.lastRunError) {
+            <strong>Last tick failed</strong>
+            <small>{{ sweep.lastRunError }}</small>
+          } @else if (sweep.isOverdue) {
+            <strong>Overdue</strong>
+            <small>No finished tick for two intervals</small>
+          } @else {
+            <strong>{{ lastRun(sweep) }}</strong>
+            <small class="os__counts">{{ lastResult(sweep) }}</small>
+          }
+        </section>
+      }
+    </div>
+    @if (actionError(); as err) {
+      <p class="os__error" data-testid="operator-sweeps-error">{{ err }}</p>
+    }
+    @if (p.waitingForPerson.length > 0) {
+      <section class="os__list" data-testid="operator-sweeps-waiting">
+        <span class="os__label">Waiting for a person</span>
+        @for (card of p.waitingForPerson; track card.taskKey + card.sweep) {
+          <div class="os__row" [attr.data-task]="card.taskKey">
+            <strong>{{ card.taskKey }}</strong>
+            <span class="os__row-title">{{ card.title }}</span>
+            <small>{{ laneLabel(card.lane) }} · {{ sweepLabel(card.sweep) }}: {{ card.detail }}</small>
+          </div>
+        }
+      </section>
+    }
+    @if (budgetCards().length > 0) {
+      <section class="os__list" data-testid="operator-sweeps-budget">
+        <span class="os__label">Round budget · {{ p.maxRoundsPerCard }} per card</span>
+        @for (card of budgetCards(); track card.taskKey) {
+          <div class="os__row" [attr.data-task]="card.taskKey">
+            <strong>{{ card.taskKey }}</strong>
+            <span class="os__rounds" [class.os__rounds--spent]="card.roundsRemaining === 0">
+              {{ card.roundsRemaining }} of {{ card.roundsAllowed }} left
+            </span>
+            <small>{{ laneLabel(card.lane) }} · {{ latestDecision(card) }}</small>
+          </div>
+        }
+      </section>
+    }
+  </section>
+}

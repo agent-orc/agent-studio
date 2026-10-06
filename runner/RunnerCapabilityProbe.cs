@@ -234,7 +234,8 @@ internal static class RunnerCapabilityProbe
 
     public static HostTelemetrySnapshotDto? Telemetry(
         HostTelemetrySample? sample,
-        ReviewPlaneBudgetDto? reviewPlane = null)
+        ReviewPlaneBudgetDto? reviewPlane = null,
+        SalvageStoreDto? salvageStore = null)
         => sample is null
             ? null
             : new HostTelemetrySnapshotDto(
@@ -262,6 +263,7 @@ internal static class RunnerCapabilityProbe
                 sample.TaskServerConnectionLastRecoveredAt,
                 CliProcessReaper.ReapedCount,
                 reviewPlane,
+                salvageStore,
                 BuildNodeSweep.Latest?.DotnetProcesses,
                 BuildNodeSweep.Latest?.StaleBuildNodes,
                 BuildNodeSweep.Latest is null ? null : BuildNodeSweep.TerminatedTotal,

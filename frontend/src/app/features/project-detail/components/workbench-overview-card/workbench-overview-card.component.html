@@ -18,12 +18,13 @@
         <i aria-hidden="true"></i>{{ project().shortCode || project().displayName }}
       </span>
       <span class="workbench-overview__status" [attr.data-status]="item().workbench.status">{{ statusLabel() }}</span>
-      @if (item().workbench.taggingStatus === 'tagged' || item().workbench.taggingStatus === 'tags-proposed') {
-        @let taggingStatus = item().workbench.taggingStatus;
+      @if (item().workbench.taggingStatus === 'tagged') {
         <span class="workbench-overview__status" data-testid="workbench-tagging-status">
-          {{ taggingStatus === 'tags-proposed' ? 'Tags proposed' : 'Auto-tagged' }}
+          Auto-tagged
         </span>
       }
+      <app-tag-chips [ids]="item().workbench.tags ?? []" [projectName]="item().projectName" />
+      <app-tag-proposals [projectName]="item().projectName" subjectKind="dossier" [subjectId]="item().workbench.id" [taggingStatus]="item().workbench.taggingStatus ?? null" />
       @if (mode() !== 'invalid') {
         <app-workbench-review-tag [review]="item().workbench.review"
                                   [reviewDue]="item().workbench.reviewDue ?? false"
