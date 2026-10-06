@@ -1,0 +1,36 @@
+<section class="area-glossary" data-testid="area-glossary">
+  <label>Area glossary
+    <select data-testid="area-glossary-select" [value]="areaId() ?? ''" (change)="select($any($event.target).value)">
+      <option value="">Choose an area</option>
+      @for (area of areas(); track area.id) { <option [value]="area.id">{{ area.label }}</option> }
+    </select>
+  </label>
+  @if (area(); as selected) {
+    <h2>{{ selected.label }}</h2><p>{{ selected.description }}</p>
+    @if (glossary(); as page) {
+      @if (page.exists) {
+        <button type="button" (click)="openPage.emit(page.path.replace('docs/', ''))">Open wiki page</button>
+      }
+      <dl>
+        @for (term of page.terms; track term.term) {
+          <dt>{{ term.term }}</dt><dd>{{ term.definition }}
+            @if (term.synonyms.length) { <small>Also: {{ term.synonyms.join(', ') }}</small> }
+          </dd>
+        }
+      </dl>
+      @if (!page.terms.length) { <p>No glossary terms yet.</p> }
+    }
+    <h3>Tagged items</h3>
+    <ul>
+      @for (node of pages(); track node.relPath) {
+        <li><button type="button" (click)="openPage.emit(node.relPath!)">{{ node.title }}</button> <small>Wiki</small></li>
+      }
+      @for (dossier of linkedDossiers(); track dossier.id) {
+        <li><button type="button" (click)="openDossier.emit(dossier)">{{ dossier.title }}</button> <small>Dossier</small></li>
+      }
+      @for (card of cards(); track card.taskKey) {
+        <li><button type="button" (click)="openCard(card.taskKey)">{{ card.title }}</button> <small>Card</small></li>
+      }
+    </ul>
+  }
+</section>

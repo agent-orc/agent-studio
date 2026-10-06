@@ -5,6 +5,13 @@ public static class ReviewReportDiagnosisPolicy
 {
     public static ReviewReportRequest Normalize(ReviewReportRequest request, ReviewPlanDto? plan)
     {
+        // Report admission is shared by the Task Server and monolith. A retry
+        // flag alone cannot turn a failed or unobserved item into a flake.
+        var flakeChecked = ReviewFlakeEvidencePolicy.Normalize(request);
+        if (!ReferenceEquals(flakeChecked, request)
+            || (request.FailureClassification == DeliveryFailureDiagnosis.FirstOccurrence
+                && request.Summary == "Undecidable review failure. " + ReviewFlakeEvidencePolicy.MissingProof))
+            return flakeChecked;
         var semanticAspects = plan?.Commands
             .Where(command => ReviewCommandKinds.IsAgent(command.ExecutionKind))
             .Select(command => command.Aspect)

@@ -449,7 +449,12 @@ public class TaskMutationService
     /// <summary>
     /// Replaces one remote attempt's token rows while preserving receipts from
     /// earlier attempts. The attempt-scoped participant id makes completion
-    /// replay idempotent and keeps continuation costs visible.
+    /// replay idempotent and keeps continuation costs visible. New receipts
+    /// carry a provider session or log-turn identity in the participant field;
+    /// the identity and usage fingerprint distinguish equal-sized turns while
+    /// recognizing an earlier attempt's repeated frame. Only a cumulative
+    /// scope is compared to an untagged legacy row. An unchanged receipt is
+    /// not rewritten.
     /// </summary>
     public bool SetRemoteTokenSummaryOnFolder(
         string folderPath,
@@ -471,15 +476,46 @@ public class TaskMutationService
             }
 
             var participant = $"agent:remote-runner:{runAttemptId}";
-            var entries = (persisted?.Entries ?? [])
-                .Where(entry => !string.Equals(entry.ParticipantId, participant, StringComparison.Ordinal))
-                .Concat((attemptSummary.Entries ?? []).Select(entry => entry with
+            var retained = (persisted?.Entries ?? [])
+                .Where(entry => !string.Equals(entry.ParticipantId, participant, StringComparison.Ordinal)
+                    && !(entry.ParticipantId?.StartsWith(participant + ":usage:", StringComparison.Ordinal) ?? false))
+                .ToList();
+            var recorded = retained
+                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
+                .Select(TokenLedgerDuplicates.CallIdentityFingerprint)
+                .ToHashSet();
+            var legacy = retained
+                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is null
+                    && (entry.ParticipantId?.StartsWith("agent:remote-runner:", StringComparison.Ordinal) ?? false))
+                .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
+                .ToHashSet();
+            var attemptEntries = new List<TaskTokenCall>();
+            foreach (var source in attemptSummary.Entries ?? [])
+            {
+                var entry = source with
                 {
-                    ParticipantId = participant,
-                }))
+                    ParticipantId = source.ParticipantId?.StartsWith(participant + ":usage:", StringComparison.Ordinal) == true
+                        ? source.ParticipantId
+                        : participant,
+                };
+                var identity = TokenLedgerDuplicates.UsageIdentity(entry);
+                // The scope identifies one provider session across completion
+                // attempts. A turn ordinal identifies one frame in the log.
+                // Calls without either identity stay separate, even when their
+                // timestamp and token counts happen to match.
+                if (identity is not null
+                    && (!recorded.Add(TokenLedgerDuplicates.CallIdentityFingerprint(entry))
+                        || (identity.StartsWith("scope:", StringComparison.Ordinal)
+                            && legacy.Contains(TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false)))))
+                    continue;
+                attemptEntries.Add(entry);
+            }
+            var entries = retained
+                .Concat(attemptEntries)
                 .OrderBy(entry => entry.Ts)
                 .ToList();
             if (entries.Count == 0) return false;
+            if (persisted is not null && persisted.Entries.SequenceEqual(entries)) return true;
 
             var summary = new TaskTokenSummary
             {

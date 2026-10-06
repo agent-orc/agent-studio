@@ -12,6 +12,10 @@ release yet.
 
 ## [Unreleased]
 
+### Changed
+
+- A failed merge gate is classified (environment, product, integration branch, undecidable) and routed by the orchestrator: environment failures replay, product failures get one fix round, a fingerprint shared by two cards opens one cause card, and only undecidable failures park for a person (AGT-3009).
+
 ## [0.9.5] - 2026-10-04
 
 Catch-up release after the operations week: 189 commits on develop since 0.9.4
