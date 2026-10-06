@@ -230,6 +230,105 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal("concerns", Assert.Single(normalized.Verdicts).Status);
     }
 
+    [Theory]
+    [InlineData("missing-repeat")]
+    [InlineData("red-repeat")]
+    [InlineData("different-tree")]
+    [InlineData("different-head")]
+    [InlineData("different-command")]
+    [InlineData("different-item-filter")]
+    [InlineData("cancelled-repeat")]
+    public void Grade_rejects_unsupported_flake_and_preserves_failing_item(string gap)
+    {
+        var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
+        {
+            RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.Tests.Guard"],
+        };
+        var repeat = failed with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+            Diagnosis = null, FlakyQuarantinedFailures = [],
+        };
+        repeat = gap switch
+        {
+            "red-repeat" => repeat with { ExitCode = 1 },
+            "different-tree" => repeat with { TreeBefore = "different" },
+            "different-head" => repeat with { HeadBefore = "different" },
+            "different-command" => repeat with { FileName = "echo" },
+            "different-item-filter" => repeat with { Arguments = ["--filter", "other-test"] },
+            "cancelled-repeat" => repeat with { Signal = "cancelled" },
+            _ => repeat,
+        };
+        var report = EmptyReport("Pass") with
+        {
+            Commands = gap == "missing-repeat" ? [failed] : [failed, repeat],
+            Verdicts = [new ReviewVerdictDto("build-tests", "pass", ReviewFlakyQuarantine.Classification,
+                "Product.Tests.Guard is flaky.")],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+        Assert.Equal(["Product.Tests.Guard"], normalized.Commands[0].NewFailures);
+        Assert.Empty(normalized.Commands[0].FlakyQuarantinedFailures!);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, Assert.Single(normalized.Verdicts).Classification);
+        Assert.Contains(ReviewFlakeEvidencePolicy.MissingProof, normalized.Summary);
+        Assert.Equal(normalized, ReviewReportDiagnosisPolicy.Normalize(normalized, new ReviewPlanDto([], [])));
+    }
+
+    [Fact]
+    public void Grade_keeps_flake_only_with_green_repeat_of_same_command_and_tree()
+    {
+        var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
+        {
+            RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.Tests.Guard"],
+        };
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands = [failed, failed with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+                Diagnosis = null, FlakyQuarantinedFailures = [],
+            }],
+            Verdicts = [new ReviewVerdictDto("build-tests", "pass", ReviewFlakyQuarantine.Classification,
+                "Product.Tests.Guard passed its repeat.")],
+        };
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+        Assert.Equal(DeliveryFailureDiagnosis.Intermittent, normalized.FailureClassification);
+        Assert.Equal(["Product.Tests.Guard"], normalized.Commands[0].FlakyQuarantinedFailures);
+        Assert.Equal(ReviewFlakyQuarantine.Classification, Assert.Single(normalized.Verdicts).Classification);
+    }
+
+    [Fact]
+    public void Semantic_flake_claim_without_measured_repeat_cannot_pass_the_grade()
+    {
+        var report = EmptyReport("Pass") with
+        {
+            Verdicts = [new ReviewVerdictDto("requirements", "pass", "RemoteAspectVerdict",
+                "The failing pin test is a known flake.")],
+        };
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, normalized.FailureClassification);
+        Assert.Contains("Undecidable", Assert.Single(normalized.Verdicts).Summary);
+    }
+
+    [Theory]
+    [InlineData("The flake policy is covered by regression tests.")]
+    [InlineData("0 flaky quarantined failures; baseline comparison completed.")]
+    [InlineData("A failed retry is not a flake.")]
+    public void Discussing_flake_policy_is_not_a_failure_attribution(string summary)
+    {
+        var report = EmptyReport("Pass") with
+        {
+            Verdicts = [new ReviewVerdictDto("requirements", "pass", "RemoteAspectVerdict", summary)],
+        };
+        Assert.Equal("Pass", ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], [])).Outcome);
+    }
+
     private static ReviewReportRequest EmptyReport(string outcome)
         => new("executor", "instance", "lease", 1, "report-1", outcome,
             "legacy-classification", null,

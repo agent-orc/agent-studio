@@ -858,6 +858,12 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            if (context.RequestServices.GetService<IGateFailureFingerprintCounter>() is { } fingerprints)
+                foreach (var command in Contract.ReviewFlakeEvidencePolicy.UnprovenFailures(request))
+                    await fingerprints.RecordAndReadCardsAsync(
+                        Contract.FailureItemFingerprint.Compute(command.NewFailures!), task.Key ?? task.Id,
+                        $"review-unproven-flake:{attemptId}:{command.StepId}", ct);
+
             var receivedAt = settled.ReviewAttempt.Reports
                 .LastOrDefault(report => string.Equals(
                     report.IdempotencyKey,
@@ -2447,7 +2453,7 @@ public static class V1ReviewPlaneEndpoints
         return createdKey;
     }
 
-    private static string BuildRemoteFindingFollowUp(
+    internal static string BuildRemoteFindingFollowUp(
         IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
         string reviewAttemptId)
     {
