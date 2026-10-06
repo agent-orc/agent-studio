@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { HttpResponse, provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
@@ -163,7 +163,6 @@ describe('TriageController · optimistic navigation on Accept', () => {
     selection = TestBed.inject(TaskSelectionService);
     prefetch = TestBed.inject(TaskDetailPrefetchService);
     jobService = TestBed.inject(TaskService);
-    prefetch.clear();
   });
 
   it('advances synchronously to the prefetched next peer while the move POST is still in flight', () => {
@@ -205,8 +204,9 @@ describe('TriageController · optimistic navigation on Accept', () => {
       title: 'task-b', lane: '5-human-review', coreVersion: '3', runtimeVersion: 'v1',
       runtime: { attemptId: null }, pins: {}, prompt: { text: null }, statusSummary: { text: null },
     } as unknown as TaskCore;
-    const coreSpy = vi.spyOn(jobService, 'getCore').mockReturnValue(new Subject<TaskCore>().asObservable());
-    prefetch.storeCore(coreB, 'PROJ-P');
+    // The pager lookahead already warmed B's core.
+    const coreSpy = vi.spyOn(jobService, 'getCore').mockReturnValue(of(new HttpResponse({ status: 200, body: coreB })));
+    prefetch.prefetchCores([{ project: 'PROJ-P', id: 'task-b', taskKey: taskB.taskKey }]);
     const detailSpy = vi.spyOn(jobService, 'getDetail');
     TestBed.inject(LanePagerService).capture('5-human-review', [taskA, taskB], taskA.taskKey);
     selection.triageLaneState = '5-human-review';
@@ -220,8 +220,9 @@ describe('TriageController · optimistic navigation on Accept', () => {
 
     expect(selection.selectedCore()?.id).toBe('task-b');
     expect(selection.detailPreview()?.id).toBe('task-b');
-    // The cached core is revalidated through `/core`; the full-detail route stays unused.
-    expect(coreSpy).toHaveBeenCalledWith('task-b', 'PROJ-P');
+    // The current lookahead core paints without another `/core` read; the
+    // full-detail route stays unused.
+    expect(coreSpy).toHaveBeenCalledTimes(1);
     expect(detailSpy).not.toHaveBeenCalled();
     movePost.complete();
   });

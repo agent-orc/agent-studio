@@ -3,7 +3,7 @@ import { Observable, Subscription, timeout } from 'rxjs';
 import { TaskDetail, TaskInfo, TaskState } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { NotificationService } from '../../../services/notification.service';
-import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import { TaskDetailPrefetchService, type TaskCoreTarget } from './task-detail-prefetch.service';
 import { LanePagerService, type LanePagerEntry, type LanePagerSnapshot } from './lane-pager.service';
 import { BoardFiltersService } from '../../board/state/board-filters.service';
 import { laneLabelFor } from './triage-actions.model';
@@ -17,8 +17,9 @@ import {
 } from './task-url';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { parseStudioRoute } from '../../studio-shell/services/studio-route';
-import type { TaskCore, TaskDocumentData, TaskResource, ResourceName,
-  TaskUsageData, TaskReviewData, TaskHistoryData, TaskGitData } from '../../../models/task-core.model';
+import { taskCoreKey, type TaskCore, type TaskCoreResult, type TaskDocumentData, type TaskResource,
+  type ResourceName, type TaskUsageData, type TaskReviewData, type TaskHistoryData,
+  type TaskGitData } from '../../../models/task-core.model';
 import { emptyDetail, idleResources, type ResourcePhase, type ResourceStates } from './task-resource-states';
 
 export interface TaskDetailLoadError {
@@ -40,6 +41,13 @@ interface CoreOpenOptions {
 function httpStatus(error: unknown): number {
   return typeof error === 'object' && error !== null && 'status' in error
     ? Number((error as { status: unknown }).status) : 0;
+}
+
+/** A core read the server refused, as the HTTP status the selection handles; null otherwise. */
+function coreRejection(result: TaskCoreResult): { status: number } | null {
+  if (result.state === 'missing') return { status: 404 };
+  if (result.state === 'denied') return { status: 403 };
+  return null;
 }
 
 /** The 202 body of a resource read while the task index re-hydrates. */
@@ -150,22 +158,45 @@ export class TaskSelectionService {
     // entries in the current pager snapshot whenever it changes, and abort
     // lookahead requests that fell out of the window. This is what makes the
     // accept -> next-task navigation feel instant: by the time the user
-    // clicks Mark-as-Done, the next peer's core is already cached.
+    // clicks Mark-as-Done, the next peer's core is already cached. Project
+    // handles resolve exactly as `openPagerEntry` does, so both share a key.
     effect(() => {
       const snap = this.pager.snapshot();
-      if (!snap) return;
-      const lookahead = TaskSelectionService.PREFETCH_LOOKAHEAD;
-      const keep = new Set<string>();
-      for (let offset = 1; offset <= lookahead; offset++) {
-        const entry = snap.jobs[snap.index + offset];
-        if (!entry) break;
-        const project = this.projectHandleForStorageReference(entry.watchPath);
-        if (!project) continue;
-        keep.add(`${project}::${entry.id}`);
-        this.prefetch.prefetchCore(entry.id, project);
-      }
-      this.prefetch.keepLookahead(keep);
+      untracked(() => {
+        const targets: TaskCoreTarget[] = [];
+        for (let offset = 1; snap && offset <= TaskSelectionService.PREFETCH_LOOKAHEAD; offset++) {
+          const entry = snap.jobs[snap.index + offset];
+          if (!entry) break;
+          const live = this.jobService.jobs().find(task => task.taskKey === entry.taskKey);
+          const project = live ? this.projectFor(live) : this.projectHandleForStorageReference(entry.watchPath);
+          if (project) targets.push({ project, id: entry.id, taskKey: entry.taskKey });
+        }
+        this.prefetch.prefetchCores(targets);
+      });
     });
+
+    // Project access (AGT-2956): the registry lists only projects this viewer
+    // may see. A project leaving it evicts its cores, so no core of a revoked
+    // project can be painted from memory. An unloaded registry lists nothing
+    // yet and revokes nothing.
+    effect(() => {
+      if (!this.projectLookup.loaded()) return;
+      const projects = this.projectLookup.allProjects();
+      const ids = new Set(projects.map(project => project.id));
+      const names = new Set(projects.map(project => project.displayName));
+      untracked(() => this.prefetch.retainCoreProjects((id, name) => id ? ids.has(id) : names.has(name)));
+    });
+
+    // A board-store event (push, own mutation, reconnect) marked the painted
+    // core stale or evicted it: revalidate it conditionally. A 304 keeps the
+    // view; a new generation reloads its resources; 403 and 404 revoke.
+    const invalidated = this.prefetch.coreInvalidated.subscribe(key => {
+      const core = this.selectedCore();
+      const read = this.coreRead;
+      if (core && read && (key === null || key === taskCoreKey(read.project, read.id)))
+        this.refreshCore(this.openDetailToken, core, false);
+    });
+    this.destroyRef.onDestroy(() => invalidated.unsubscribe());
 
     // A public URL opened before the project registry arrived resumes on
     // the core path as soon as it lands (see `awaitRegistry`).
@@ -225,7 +256,10 @@ export class TaskSelectionService {
   readonly selectedCore = signal<TaskCore | null>(null);
   readonly resourceStates = signal<ResourceStates>(idleResources());
   private activeRequests: Subscription[] = [];
-  private coreRefreshInFlight = false;
+  /** The running core revalidation; `afterConflict` re-reads conflicted sections on an unchanged generation. */
+  private coreRefresh: { afterConflict: boolean } | null = null;
+  /** Cache address of the selected core: `taskCoreKey(project, id)` plus the board key. */
+  private coreRead: { project: string; id: string; taskKey: string } | null = null;
   /** Same-generation resource reloads after a conflict; bounded so a persistent mismatch cannot loop. */
   private conflictReloads = 0;
   /** The in-flight review read, so an evidence request can supersede a plain one. */
@@ -383,7 +417,7 @@ export class TaskSelectionService {
   private cancelRequests(): void {
     for (const request of this.activeRequests) request.unsubscribe();
     this.activeRequests = [];
-    this.coreRefreshInFlight = false;
+    this.coreRefresh = null;
     if (this.registryWait) clearTimeout(this.registryWait.timer);
     this.registryWait = null;
   }
@@ -429,12 +463,12 @@ export class TaskSelectionService {
       archiveState: core.archiveState, enteredLaneAt: core.enteredLaneAt,
       order: core.order, mode: core.mode as TaskInfo['mode'],
       kind: core.kind as TaskInfo['kind'], released: core.released,
-      model: core.pins.model, modelExplicit: core.pins.modelExplicit,
-      thinkingLevel: core.pins.thinkingLevel,
+      model: core.pins.model ?? null, modelExplicit: core.pins.modelExplicit,
+      thinkingLevel: core.pins.thinkingLevel ?? null,
       thinkingLevelExplicit: core.pins.thinkingLevelExplicit,
       cliType: core.pins.cliType as TaskInfo['cliType'],
-      contextMode: core.pins.contextMode,
-      useOwnSession: core.pins.useOwnSession,
+      contextMode: core.pins.contextMode ?? null,
+      useOwnSession: core.pins.useOwnSession ?? null,
       allowWebAccess: core.pins.allowWebAccess,
       noBranchExpected: core.pins.noBranchExpected,
     };
@@ -455,6 +489,7 @@ export class TaskSelectionService {
     this.detailLoading.set(true);
     this.activeProject = project;
     this.activeAttempt = null;
+    this.coreRead = { project, id: info.id, taskKey: info.taskKey };
     this.resourceStates.set(idleResources());
     const accept = (core: TaskCore): boolean => {
       if (token !== this.openDetailToken || core.state === 'warming') return false;
@@ -463,15 +498,37 @@ export class TaskSelectionService {
       this.acceptCore(core, info, project, token, opts);
       return true;
     };
-    const cached = this.prefetch.takeCore(info.id, project);
+    // A visited or lookahead core paints at once, current or stale. The read
+    // below answers from the shared cache when that core is current and
+    // revalidates it with its ETag otherwise.
+    const cached = this.prefetch.peekCore(project, info.id);
     if (cached) accept(cached);
+    const fail = (error: unknown) => {
+      if (token !== this.openDetailToken) return;
+      if (opts.onNotFound && httpStatus(error) === 404) {
+        this.prefetch.invalidate(info.id);
+        opts.onNotFound();
+        return;
+      }
+      if (this.revokeSelection(error, info.id)) return;
+      // Keep a painted cached core for transient read errors only.
+      if (this.selectedCore()) return;
+      this.detailLoading.set(false);
+      this.failDetailLoad(error, info.key || info.id, retry);
+    };
     const fetchCore = () => {
-      const request = this.jobService.getCore(info.id, project).pipe(
+      const request = this.prefetch.getCore(project, info.id, info.taskKey).pipe(
         timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
       ).subscribe({
-        next: core => {
+        next: result => {
           if (token !== this.openDetailToken) return;
-          if (core.state === 'warming') {
+          const rejected = coreRejection(result);
+          if (rejected) {
+            fail(rejected);
+            return;
+          }
+          const core = result.core;
+          if (!core) {
             // A cached core may already own the rich view and local edits.
             // Retry only the read, without resetting the painted selection.
             if (!this.selectedCore()) this.detailLoading.set(true);
@@ -480,9 +537,18 @@ export class TaskSelectionService {
             }, TaskSelectionService.WARMING_RETRY_MS);
             return;
           }
-          if (cached && cached.coreVersion === core.coreVersion && cached.runtimeVersion === core.runtimeVersion)
+          // The task changed while this read was in flight: paint the reply,
+          // then revalidate once instead of trusting it as current.
+          const revalidate = result.state === 'stale' && core.state === 'ready';
+          if (cached && cached.coreVersion === core.coreVersion && cached.runtimeVersion === core.runtimeVersion) {
+            if (revalidate && this.selectedCore() === cached) this.refreshCore(token, cached, false);
             return;
-          if (accept(core) || this.selectedCore()) return;
+          }
+          if (accept(core)) {
+            if (revalidate) this.refreshCore(token, core, false);
+            return;
+          }
+          if (this.selectedCore()) return;
           // The server answered for another task than the reference names.
           // Never leave the route loading without an outcome.
           if (opts.onNotFound) {
@@ -493,19 +559,7 @@ export class TaskSelectionService {
           this.detailLoading.set(false);
           this.failDetailLoad({ status: 404 }, info.key || info.id, retry);
         },
-        error: error => {
-          if (token !== this.openDetailToken) return;
-          if (opts.onNotFound && httpStatus(error) === 404) {
-            this.prefetch.invalidate(info.id);
-            opts.onNotFound();
-            return;
-          }
-          if (this.revokeSelection(error, info.id)) return;
-          // Keep a painted cached core for transient read errors only.
-          if (this.selectedCore()) return;
-          this.detailLoading.set(false);
-          this.failDetailLoad(error, info.key || info.id, retry);
-        },
+        error: fail,
       });
       // A long index warm-up can require many retries; retain only live reads.
       this.activeRequests = this.activeRequests.filter(active => !active.closed);
@@ -516,14 +570,13 @@ export class TaskSelectionService {
 
   private acceptCore(core: TaskCore, info: TaskInfo, project: string, token: number,
     opts: CoreOpenOptions = {}): void {
-    this.prefetch.storeCore(core, project);
     const previous = this.selectedCore();
     const generationChanged = !previous || previous.coreVersion !== core.coreVersion
       || previous.runtime.attemptId !== core.runtime.attemptId;
     // A new generation invalidates every enrichment reply still in flight.
     if (previous && generationChanged) this.cancelRequests();
     this.activeProject = core.projectId;
-    this.activeAttempt = core.runtime.attemptId;
+    this.activeAttempt = core.runtime.attemptId ?? null;
     this.selectedCore.set(core);
     this.detailLoading.set(false);
     this.clearDetailLoadFailure();
@@ -554,21 +607,39 @@ export class TaskSelectionService {
     }
   }
 
-  /** A 409 rejects the resource generation; fetch core before any resource retry. */
-  private refreshCoreAfterConflict(token: number, core: TaskCore): void {
-    if (!this.isCurrent(token, core) || this.coreRefreshInFlight) return;
+  /**
+   * Revalidate the painted core: after a 409 (a resource answered for another
+   * generation) and after a board-store event marked it stale. A new
+   * generation reloads every resource through `acceptCore`; an unchanged one
+   * re-reads only the sections a conflict left stale.
+   */
+  private refreshCore(token: number, core: TaskCore, afterConflict = true): void {
+    if (!this.isCurrent(token, core)) return;
+    if (this.coreRefresh) {
+      this.coreRefresh.afterConflict ||= afterConflict;
+      return;
+    }
     const project = this.activeProject;
+    const read = this.coreRead;
     const info = this.selected()?.info ?? this.detailPreview();
-    if (!project || !info) return;
-    this.coreRefreshInFlight = true;
-    const request = this.jobService.getCore(core.id, project).pipe(
+    if (!project || !read || !info) return;
+    const refresh = { afterConflict };
+    this.coreRefresh = refresh;
+    const settle = () => { if (this.coreRefresh === refresh) this.coreRefresh = null; };
+    const request = this.prefetch.revalidateCore(read.project, read.id, read.taskKey).pipe(
       timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
     ).subscribe({
-      next: fresh => {
-        this.coreRefreshInFlight = false;
+      next: result => {
+        settle();
         if (!this.isCurrent(token, core)) return;
-        if (fresh.state === 'warming') {
-          setTimeout(() => this.refreshCoreAfterConflict(token, core),
+        const rejected = coreRejection(result);
+        if (rejected) {
+          this.revokeSelection(rejected, core.id);
+          return;
+        }
+        const fresh = result.core;
+        if (!fresh) {
+          setTimeout(() => this.refreshCore(token, core, refresh.afterConflict),
             TaskSelectionService.WARMING_RETRY_MS);
           return;
         }
@@ -579,10 +650,11 @@ export class TaskSelectionService {
         this.acceptCore(fresh, info, project, token);
         // An unchanged generation resets nothing in acceptCore, so the
         // conflicted sections would stay stale. Re-read them once.
-        if (sameGeneration && this.conflictReloads++ === 0) this.reloadConflictedResources(token);
+        if (refresh.afterConflict && sameGeneration && this.conflictReloads++ === 0)
+          this.reloadConflictedResources(token);
       },
       error: error => {
-        this.coreRefreshInFlight = false;
+        settle();
         if (this.isCurrent(token, core)) this.revokeSelection(error, core.id);
       },
     });
@@ -627,8 +699,8 @@ export class TaskSelectionService {
       if (!info) return;
       const detail = previous ?? emptyDetail(info, core);
       this.selected.set({ ...detail,
-        promptMarkdown: docs.prompt?.markdown ?? core.prompt.text,
-        statusMarkdown: docs.status?.markdown ?? core.statusSummary.text,
+        promptMarkdown: docs.prompt?.markdown ?? core.prompt.text ?? null,
+        statusMarkdown: docs.status?.markdown ?? core.statusSummary.text ?? null,
         summaryState: docs.status?.summaryState ?? null });
       this.detailPreview.set(null);
       if (this.resourceStates().documents.phase === 'loading')
@@ -651,7 +723,7 @@ export class TaskSelectionService {
             if (indexWarming(reply)) this.setResourceState('documents', 'warming', reply.reason);
             else if (!this.resourceMatches(reply, core)) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
-              this.refreshCoreAfterConflict(token, core);
+              this.refreshCore(token, core);
             }
             else if (reply.state === 'ready') docs[name] = reply.data;
             else this.setResourceState('documents', reply.state === 'stale' ? 'stale' : 'unavailable', reply.reason);
@@ -662,7 +734,7 @@ export class TaskSelectionService {
           if (current() && !this.revokeSelection(error, core.id)) {
             if (httpStatus(error) === 409) {
               this.setResourceState('documents', 'stale', 'core-generation-changed');
-              this.refreshCoreAfterConflict(token, core);
+              this.refreshCore(token, core);
             } else this.setResourceState('documents', 'error', 'Document request failed');
           }
           finish();
@@ -704,7 +776,7 @@ export class TaskSelectionService {
         }
         if (!this.resourceMatches(reply, core)) {
           this.setResourceState(name, 'stale', 'core-generation-changed');
-          this.refreshCoreAfterConflict(token, core);
+          this.refreshCore(token, core);
           return;
         }
         this.setResourceState(name, reply.state === 'ready' ? 'ready' : reply.state,
@@ -745,7 +817,7 @@ export class TaskSelectionService {
         const stale = httpStatus(error) === 409;
         this.setResourceState(name, stale ? 'stale' : 'error',
           stale ? 'core-generation-changed' : `${name} request failed`);
-        if (stale) this.refreshCoreAfterConflict(token, core);
+        if (stale) this.refreshCore(token, core);
       },
     });
     this.activeRequests.push(request);
@@ -787,7 +859,7 @@ export class TaskSelectionService {
       const core = this.selectedCore();
       // An explicit retry may re-read once more after an unchanged refresh.
       this.conflictReloads = 0;
-      if (core) this.refreshCoreAfterConflict(this.openDetailToken, core);
+      if (core) this.refreshCore(this.openDetailToken, core);
     } else if (name === 'documents') this.retryDocuments();
     else this.loadResource(name, name === 'review' && this.expandedTab === 'evidence');
   }

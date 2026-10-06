@@ -1,0 +1,2 @@
+.tag-chips { display: inline-flex; flex-wrap: wrap; gap: var(--studio-spacing-1); }
+.tag-chip { display: inline-flex; align-items: center; border: 1px solid var(--tag-color, var(--studio-border)); border-radius: 999px; padding: 0 var(--studio-spacing-2); color: var(--studio-fg-strong); background: var(--studio-bg-hover); font-size: .7rem; line-height: 1.4; }

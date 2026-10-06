@@ -1,27 +1,29 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { HttpHeaders, provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import type { TaskCoreResult } from '../../../models/task-core.model';
 
 /**
- * Covers the lane-pager core cache that backs the "pager step and
- * Accept → next-task paint instantly" path:
+ * Selection-facing behaviour of the shared core cache that the progressive
+ * task switch (AGT-2955) relies on. Cache invariants of AGT-2956 (bounds,
+ * store events, eviction) are covered by `task-core-cache.spec.ts`.
  *
- *   1. `prefetchCore` issues one bounded `/core` GET per (project, id) and
- *      never touches the legacy full-detail route.
- *   2. Parallel prefetches coalesce; a fresh entry short-circuits.
- *   3. `keepLookahead` and `clear` abort obsolete in-flight prefetches.
- *   4. `invalidate` drops one task without touching siblings.
+ *   1. Only the bounded `/core` route is read, never the legacy full detail.
+ *   2. A superseded foreground read aborts its request once no reader is left.
+ *   3. `invalidate` makes the next read revalidate conditionally.
+ *   4. `revalidateCore` revalidates even a current core.
  */
 describe('TaskDetailPrefetchService', () => {
   let service: TaskDetailPrefetchService;
   let http: HttpTestingController;
 
   const core = (id: string, coreVersion = '4') =>
-    ({ state: 'ready', id, projectId: 'PROJ-001', coreVersion });
+    ({ state: 'ready', id, projectId: 'PROJ-001', projectName: 'p', taskKey: `C:/p::${id}`, coreVersion });
+  const coreUrl = (id: string) => (r: { url: string }) => r.url.endsWith(`/api/tasks/${id}/core`);
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -35,52 +37,61 @@ describe('TaskDetailPrefetchService', () => {
 
     service = TestBed.inject(TaskDetailPrefetchService);
     http = TestBed.inject(HttpTestingController);
-    // `providedIn: 'root'` plus vitest's worker-level module cache means
-    // an entry could carry over from a sibling spec file.
-    service.clear();
   });
 
-  it('prefetches only a bounded core and aborts obsolete pager lookahead', () => {
-    service.prefetchCore('job-a', 'PROJ-001');
-    service.prefetchCore('job-a', 'PROJ-001');
-    const first = http.expectOne(r => r.url.endsWith('/api/tasks/job-a/core'));
-    expect(first.request.params.get('project')).toBe('PROJ-001');
+  it('reads only the bounded core and aborts a superseded foreground read', () => {
+    const first = service.getCore('PROJ-001', 'job-a', 'C:/p::job-a').subscribe();
+    const second = service.getCore('PROJ-001', 'job-a', 'C:/p::job-a').subscribe();
+    const request = http.expectOne(coreUrl('job-a'));
+    expect(request.request.params.get('project')).toBe('PROJ-001');
     http.expectNone(r => r.url.endsWith('/tasks/job-a'));
-    service.keepLookahead(new Set());
-    expect(first.cancelled).toBe(true);
 
-    service.prefetchCore('job-a', 'PROJ-001');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-a/core')).flush(core('job-a'));
-    expect(service.takeCore('job-a', 'PROJ-001')?.coreVersion).toBe('4');
-    service.prefetchCore('job-a', 'PROJ-001');
-    http.expectNone(r => r.url.endsWith('/api/tasks/job-a/core'));
+    first.unsubscribe();
+    expect(request.cancelled).toBe(false);
+    second.unsubscribe();
+    expect(request.cancelled).toBe(true);
+    expect(service.coreCacheSize().inFlight).toBe(0);
+  });
+
+  it('`invalidate` revalidates only the matching task with If-None-Match', () => {
+    service.prefetchCores([
+      { project: 'PROJ-001', id: 'job-d', taskKey: 'C:/p::job-d' },
+      { project: 'PROJ-001', id: 'job-e', taskKey: 'C:/p::job-e' },
+    ]);
+    http.expectOne(coreUrl('job-d')).flush(core('job-d'), { headers: new HttpHeaders({ ETag: '"d4"' }) });
+    http.expectOne(coreUrl('job-e')).flush(core('job-e'));
+
+    service.invalidate('job-d');
+    expect(service.isCoreCurrent('PROJ-001', 'job-d')).toBe(false);
+    expect(service.isCoreCurrent('PROJ-001', 'job-e')).toBe(true);
+    // The stale core still paints until its revalidation answers.
+    expect(service.peekCore('PROJ-001', 'job-d')?.id).toBe('job-d');
+
+    const results: TaskCoreResult[] = [];
+    service.getCore('PROJ-001', 'job-d', 'C:/p::job-d').subscribe(result => results.push(result));
+    const revalidation = http.expectOne(coreUrl('job-d'));
+    expect(revalidation.request.headers.get('If-None-Match')).toBe('"d4"');
+    revalidation.flush(null, { status: 304, statusText: 'Not Modified' });
+    expect(results).toEqual([{ state: 'ready', core: expect.objectContaining({ id: 'job-d' }) }]);
+    expect(service.isCoreCurrent('PROJ-001', 'job-d')).toBe(true);
+  });
+
+  it('`revalidateCore` asks the server even for a current core', () => {
+    service.prefetchCores([{ project: 'PROJ-001', id: 'job-r', taskKey: 'C:/p::job-r' }]);
+    http.expectOne(coreUrl('job-r')).flush(core('job-r'));
+    expect(service.isCoreCurrent('PROJ-001', 'job-r')).toBe(true);
+
+    const results: TaskCoreResult[] = [];
+    service.revalidateCore('PROJ-001', 'job-r', 'C:/p::job-r').subscribe(result => results.push(result));
+    http.expectOne(coreUrl('job-r')).flush(core('job-r', '5'));
+    expect(results.map(result => result.core?.coreVersion)).toEqual(['5']);
   });
 
   it('does not cache a warming core', () => {
-    service.prefetchCore('job-w', 'PROJ-001');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-w/core')).flush({ state: 'warming' });
-    expect(service.takeCore('job-w', 'PROJ-001')).toBeNull();
-  });
-
-  it('`invalidate` drops only the matching task', () => {
-    service.prefetchCore('job-d', 'PROJ-001');
-    service.prefetchCore('job-e', 'PROJ-001');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-d/core')).flush(core('job-d'));
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-e/core')).flush(core('job-e'));
-
-    service.invalidate('job-d');
-    expect(service.takeCore('job-d', 'PROJ-001')).toBeNull();
-    expect(service.takeCore('job-e', 'PROJ-001')?.id).toBe('job-e');
-  });
-
-  it('`clear` aborts in-flight prefetches and empties the cache', () => {
-    service.prefetchCore('job-c', 'PROJ-001');
-    http.expectOne(r => r.url.endsWith('/api/tasks/job-c/core')).flush(core('job-c'));
-    service.prefetchCore('job-f', 'PROJ-001');
-    const pending = http.expectOne(r => r.url.endsWith('/api/tasks/job-f/core'));
-
-    service.clear();
-    expect(pending.cancelled).toBe(true);
-    expect(service.takeCore('job-c', 'PROJ-001')).toBeNull();
+    const results: TaskCoreResult[] = [];
+    service.getCore('PROJ-001', 'job-w', 'C:/p::job-w').subscribe(result => results.push(result));
+    http.expectOne(coreUrl('job-w')).flush({ state: 'warming' }, { status: 202, statusText: 'Accepted' });
+    expect(results).toEqual([{ state: 'warming', core: null }]);
+    expect(service.peekCore('PROJ-001', 'job-w')).toBeNull();
   });
 });

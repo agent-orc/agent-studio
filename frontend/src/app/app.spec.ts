@@ -494,6 +494,8 @@ describe('App browser-history lane reconciliation', () => {
     TestBed.tick();
 
     expect(externalChange).toHaveBeenCalledWith('7-archive', restored.taskKey);
+    // The additive task core read (AGT-2956) is covered by task-selection-core.spec.ts.
+    http.match(req => req.url.endsWith('/core')).forEach(req => req.flush(null, { status: 404, statusText: 'Not Found' }));
     http.verify();
   });
 });

@@ -104,6 +104,17 @@ describe('TaskSelectionService · stable task URLs', () => {
     coreVersion, resource: 'history', version: 'h1', computedAt: null, state: 'ready',
     data: { promptHistory: [], titleHistory: [], log: [{ at: 'x', message: `${task.id} log` }] }, reason: null,
   });
+  /**
+   * Hold `core` as a visited core that a board-store event marked stale: the
+   * next open paints it at once and revalidates it with the server.
+   */
+  const cacheVisitedCore = (core: TaskCore, project: string) => {
+    const prefetch = TestBed.inject(TaskDetailPrefetchService);
+    prefetch.prefetchCores([{ project, id: core.id, taskKey: core.taskKey }]);
+    http.expectOne(req => req.url.endsWith(`/${core.id}/core`)).flush(core);
+    prefetch.invalidate(core.id);
+  };
+
   /** Land both documents after the core paint, then usage (and history) after the rich paint. */
   const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
     await loading('documents');
@@ -506,8 +517,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     });
 
     it('reloads the open tab for a new core generation of the same task', async () => {
-      TestBed.inject(TaskDetailPrefetchService)
-        .storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+      cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
       selection.openDetail(info);
       const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
       await paintRich(info);
@@ -660,20 +670,24 @@ describe('TaskSelectionService · stable task URLs', () => {
       .mockImplementation(() => undefined);
     const other = { ...info, id: 'other-task', key: 'AGT-2125',
       taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+    const handled = vi.spyOn(selection as unknown as { acceptCore: () => void }, 'acceptCore');
     selection.openDetail(info);
-    const firstA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    const requestA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
     selection.openDetail(other);
     const requestB = http.expectOne(req => req.url.endsWith('/other-task/core'));
     selection.openDetail(info);
-    const finalA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    // The shared core cache joins the still-open read of A instead of repeating it.
+    http.expectNone(req => req.url.endsWith('/human-readable-slug/core'));
 
     requestB.flush(coreFor(other, 'Agent Studio'));
     expect(selection.selectedCore()).toBeNull();
     expect(selection.detailPreview()?.id).toBe(info.id);
 
-    finalA.flush(coreFor(info, 'Agent Studio'));
-    firstA.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '9', title: 'Late first A' });
+    // The first A subscription and the final one both receive this reply;
+    // only the current open may accept it.
+    requestA.flush(coreFor(info, 'Agent Studio'));
 
+    expect(handled).toHaveBeenCalledTimes(1);
     expect(selection.selectedCore()).toMatchObject({ taskKey: info.taskKey, coreVersion: '1' });
     expect(selection.detailPreview()?.title).toBe(info.title);
     expect(location.hash).toBe('#/tasks/AGT-2124');
@@ -882,8 +896,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('refreshes a revalidated core in place instead of flipping the rich pane back to the core view', async () => {
-    const prefetch = TestBed.inject(TaskDetailPrefetchService);
-    prefetch.storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
 
     selection.openDetail(info);
     const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
@@ -916,8 +929,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('keeps the rich task and its editing state while a cached core revalidation warms', async () => {
-    const prefetch = TestBed.inject(TaskDetailPrefetchService);
-    prefetch.storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
 
     selection.openDetail(info);
     const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
@@ -941,8 +953,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('revokes a painted cached task when core revalidation denies access', async () => {
-    TestBed.inject(TaskDetailPrefetchService)
-      .storeCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
 
     selection.openDetail(info);
     const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
@@ -955,14 +966,13 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()).toBeNull();
     expect(selection.detailPreview()).toBeNull();
     expect(selection.detailLoadError()).not.toBeNull();
-    expect(TestBed.inject(TaskDetailPrefetchService).takeCore(info.id, 'Agent Studio')).toBeNull();
+    expect(TestBed.inject(TaskDetailPrefetchService).peekCore('Agent Studio', info.id)).toBeNull();
   });
 
   it('resolves a painted cached public URL on the server after an inferred-project 404', () => {
     registry({ id: 'PROJ-001', shortCode: null, storageLocation: info.watchPath });
     history.replaceState(null, '', '/#/tasks/human-readable-slug');
-    TestBed.inject(TaskDetailPrefetchService)
-      .storeCore(coreFor(info, 'PROJ-001') as unknown as TaskCore, 'PROJ-001');
+    cacheVisitedCore(coreFor(info, 'PROJ-001') as unknown as TaskCore, 'PROJ-001');
 
     selection.restoreFromUrl();
     expect(selection.selectedCore()?.id).toBe(info.id);

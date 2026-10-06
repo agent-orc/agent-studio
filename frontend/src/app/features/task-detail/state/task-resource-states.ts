@@ -12,9 +12,9 @@ export const idleResources = (): ResourceStates => ({
 
 export const emptyDetail = (info: TaskInfo, core: TaskCore): TaskDetail => ({
   info,
-  promptMarkdown: core.prompt.text,
+  promptMarkdown: core.prompt.text ?? null,
   promptHistory: [], titleHistory: [],
-  statusMarkdown: core.statusSummary.text,
+  statusMarkdown: core.statusSummary.text ?? null,
   contextUsage: null, log: [], summaryState: null, reviewEvidence: [],
 });
 

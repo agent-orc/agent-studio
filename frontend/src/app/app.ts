@@ -22,7 +22,7 @@ import {
   type EpicOverviewScope,
   FiltersDropdownComponent,
   TaskColumnComponent,
-  KanbanFilterSidesheetComponent,
+  KanbanFilterSidesheetComponent, TagFiltersComponent, TagChipsComponent,
   LaneCollapseService,
   ProjectTabsComponent,
   TypeFilterOption,
@@ -94,8 +94,6 @@ import {
   UpdateCenterComponent,
   UpdateVersionBadgeComponent,
 } from './features/update';
-// UpdateBannerComponent removed in F56; update notifications now flow through
-// UpdateNotificationBridge → NotificationService → notification-stack toasts.
 import { VerboseDebugOverlayComponent } from './features/verbose-debug';
 import {
   StudioShellComponent,
@@ -158,6 +156,7 @@ import { CostBreakdownDialogComponent, type TaskTokenSummary } from './features/
 import { LoadingSurfaceComponent } from './components/async-feedback';
 import { AuthGateComponent, AuthService } from './components/auth-gate/auth-gate';
 import { CodexSignInDialogComponent, ClaudeSignInDialogComponent } from './features/remote-hosts';
+import { ScrollMemoryDirective } from './directives/scroll-memory.directive';
 interface VerboseDebugContext {
   lines: CliOutputLine[];
   runTimeline: RunTimeline | null;
@@ -174,6 +173,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
   selector: 'app-root',
   imports: [
     TaskColumnComponent,
+    ScrollMemoryDirective,
     TaskDetailComponent,
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
@@ -203,7 +203,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     UpdateBlockModalComponent,
     VerboseDebugOverlayComponent,
     FiltersDropdownComponent,
-    KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent,
+    KanbanFilterSidesheetComponent, ActiveBoardFiltersComponent, TagFiltersComponent, TagChipsComponent,
     TooltipDirective,
     MenuComponent,
     EpicOverviewScreenComponent,

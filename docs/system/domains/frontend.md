@@ -170,6 +170,99 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+## Task core cache and board reuse (AGT-2956)
+
+Task navigation reads the board it already holds. `TaskService` stays the
+single owner of the grouped board store; `TaskDetailPrefetchService` owns the
+bounded task core cache for `GET /api/tasks/{id}/core` (see
+[Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)). The
+core-first selection of AGT-2955 reads every core through this cache; there
+is no full-detail lookahead any more, because a task switch no longer reads
+the legacy full detail.
+
+- **Selection never reads the grouped board.** Board click, Explorer, pager,
+  triage advance, deep link, Back/Forward and editor-tab switches do not call
+  `TaskService.refresh`. Only mutation replies, SignalR events, the reconnect
+  resync and the 30 s conditional heartbeat do. The board component is
+  re-created from the resident store when its tab returns; filters, lane sort,
+  lane focus and collapse live in services, and `ScrollMemoryDirective`
+  restores the board and lane-group scroll offsets.
+- **Board record first, then core, then resources.** The task route shell
+  (`TaskDetailLoadSectionsComponent`) paints the resident board record
+  (`detailPreview`) at once, then the complete bounded core as escaped text
+  with explicit empty states, then the `/details/*` resources (see
+  the task-detail entry under [Key Code](#key-code) and the
+  [task-detail README](../../../frontend/src/app/features/task-detail/README.md)).
+  A visited or
+  lookahead core paints synchronously; a stale one paints and revalidates.
+  The board payload is not widened with prompt, status or timeline heads.
+- **Key and bounds.** A core is keyed by registry project handle plus task id,
+  so identical slugs in two projects never share an entry. The cache holds at
+  most 48 cores and 512 KiB of estimated body bytes, evicting least recently
+  used first. Full-detail TTL expiry and `clear()` never touch cores.
+- **One request per task.** Concurrent reads of one core share a request. A
+  foreground read joins an in-flight lookahead. A foreground read whose last
+  reader left (the operator switched away) is aborted, so a superseded
+  selection never keeps a request open; a reply that still lands never
+  replaces the selected task.
+- **Lookahead.** Only the next two pager cores are requested, addressed with
+  the same project handle the pager step uses. Moving the window or leaving
+  the task aborts lookahead that left it. Pager steps and the accept -> next
+  advance paint a warmed core synchronously; enrichment is never prefetched.
+- **Invalidation is per task and per resource.** Core, runtime and content
+  versions travel in the core ETag; Git and usage versions do not. A pushed
+  row, a move or a successful own mutation marks only that task's core stale
+  and patches its lane facts in place; the next read revalidates with
+  `If-None-Match`, so an unchanged core costs a 304. A mutation reply that
+  names only the id revalidates every same-slug core but patches no lane,
+  because the slug may belong to another project. A reply that raced a
+  change of its task is kept for paint but not trusted as current.
+  `gitStateChanged`, sidecar generations and an unchanged grouped snapshot
+  leave every core current. A grouped snapshot that changes a task's lane,
+  runtime or persisted pins marks only that core stale, even when title and
+  order are unchanged. In-flight core reads capture those board facts at
+  request start; a changed grouped snapshot supersedes the reply even when no
+  core was cached yet. Reconnect and bulk changes mark all cores stale without
+  discarding them.
+- **Eviction for correctness.** A delete (push or own reply), a `404` and a
+  project leaving the visible registry evict immediately, including a reply
+  still in flight. A `403` evicts every cached and in-flight core of that
+  project, so a late response cannot restore access-revoked content. Registry
+  retention matches a core's project ID when present; a duplicate display name
+  never preserves a revoked project's core. Store events
+  name the task by board `taskKey`, and every in-flight read carries its
+  `taskKey`, so a delete never evicts the same slug in another project. A
+  delete reply that names only an id held by two projects revalidates both
+  instead of evicting either (the deleted one then answers `404`).
+- **The painted core follows the cache.** When a store event marks the
+  selected core stale or evicts it, the selection revalidates it: a `304`
+  keeps the view, a new generation reloads its resources, `403`/`404` revoke
+  the selection. Registry retention runs only once the registry has loaded,
+  so an empty not-yet-loaded list never evicts a painted core.
+
+Coverage: `task-core-cache.spec.ts` (cache invariants),
+`task-detail-prefetch.service.spec.ts` (superseded-read abort, conditional
+revalidation) and `task-selection-core.spec.ts` (board -> A -> B -> board,
+pager reuse, A -> D -> A abort, identical slugs, reconnect, push, delete,
+denial, registry removal) assert zero grouped and zero legacy full-detail
+requests on selection and zero duplicate core requests;
+`task-detail-load-sections.component.spec.ts` covers the core rendering. The
+browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
+API; `PW_BASE_URL` may point at a served production bundle). It times each
+selection from the click event to the first animation frame after the
+selected task's core facts are in the DOM, and asserts resident p95 <= 50 ms
+and uncached p95 <= 100 ms by default. A wall-clock verdict is not decidable
+on an oversubscribed host (1-minute load above the CPU count); such a run
+keeps every sample, records the load in its summary and annotates the
+skipped verdict, while the request invariants stay asserted. The mocked core
+latency makes this a client budget; the workstation gate with real reads is
+Dossier card 6. In-app
+diagnostic spans under `?perf=1`: `task-core-select-to-ready` (core available)
+and `task-core-select-to-painted` (heads rendered). The saving is
+conditional: it avoids a grouped handler of p50 350 ms / p95 956 ms and its
+roughly 2.56 MB body only where such a navigation refetch would otherwise
+occur. It is not a claim about tunnel transfer time.
+
 ## Key Code
 
 - `frontend/src/app/features/board/`: kanban lanes, task cards, project tabs,
