@@ -215,6 +215,20 @@ public static class StudioEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
+        tasks.MapGet("/older-brief-delivery", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeNullableAsync(
+                () => store.GetOlderBriefDeliveryAsync(projectId, taskIdentity, ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksRead);
+        tasks.MapPost("/older-brief-delivery/decision", async (
+            string projectId, string taskIdentity, HttpContext context,
+            OlderBriefDeliveryDecisionRequest request, TaskServerStore store, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => store.DecideOlderBriefDeliveryAsync(
+                    projectId, taskIdentity, request.Decision, TaskServerEndpoints.Actor(context), ct)))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+
         tasks.MapPost("/move-to-top", async (
             string projectId, string taskIdentity, HttpContext context, StudioLifecycleCoordinator coordinator, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(

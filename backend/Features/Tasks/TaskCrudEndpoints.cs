@@ -653,6 +653,10 @@ public static class TaskCrudEndpoints
         group.MapPut("/{jobId}/state", async (string jobId, string? project, string? watchPath, MoveJobRequest req,
             HttpContext ctx,
             TaskTransitionService transitions,
+            TaskScannerService scanner,
+            RunLeaseService leases,
+            AttemptAuthorityService authority,
+            TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
             CancellationToken ct) =>
         {
@@ -677,16 +681,17 @@ public static class TaskCrudEndpoints
             // detail-view lane button), so the lane-change ledger trigger is the
             // human. Auto paths (runner pickup, orchestrator, sweeps) reach
             // MoveJob without a cause and are recorded as system.
-            return MoveResult(await transitions.MoveAsync(
-                jobId, req.TargetState, watchPath, ct, req.TargetIndex,
-                cause: OperatorActor(ctx), reason: req.Reason,
-                operatorOverride: req.OperatorOverride,
-                archiveOverride: req.ArchiveOverride));
+            return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
+                transitions, scanner, leases, authority, timeline, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         group.MapPost("/{jobId}/move", async (string jobId, string? project, string? watchPath, MoveJobRequest req,
             HttpContext ctx,
             TaskTransitionService transitions,
+            TaskScannerService scanner,
+            RunLeaseService leases,
+            AttemptAuthorityService authority,
+            TimelineLog timeline,
             AgentStudio.Registry.ProjectRegistry projects,
             CancellationToken ct) =>
         {
@@ -707,12 +712,70 @@ public static class TaskCrudEndpoints
             if (req.ArchiveOverride && !CompletionContractPolicy.IsUsableReason(req.Reason?.Trim()))
                 return Results.BadRequest(new { error = OverrideReasonRequired });
 
-            return MoveResult(await transitions.MoveAsync(
-                jobId, req.TargetState, watchPath, ct, req.TargetIndex,
-                cause: OperatorActor(ctx), reason: req.Reason,
-                operatorOverride: req.OperatorOverride,
-                archiveOverride: req.ArchiveOverride));
+            return await MoveOperatorWithRunIntentAsync(jobId, watchPath, req, ctx,
+                transitions, scanner, leases, authority, timeline, ct);
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        group.MapPost("/{jobId}/older-brief-delivery/decision", async (
+            string jobId, string? project, string? watchPath,
+            OlderBriefDeliveryDecisionRequest req, HttpContext context,
+            TaskScannerService scanner, TaskTransitionService transitions,
+            AttemptAuthorityService authority, TimelineLog timeline,
+            AgentStudio.Registry.ProjectRegistry projects, CancellationToken ct) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            if (req.Decision is not ("accept" or "starting-point" or "discard"))
+                return Results.BadRequest(new { error = "Decision must be accept, starting-point, or discard." });
+            await LeaseEndpoints.ClaimGate.WaitAsync(ct);
+            try
+            {
+                var card = scanner.FindJob(jobId, watchPath);
+                if (card is null) return Results.NotFound();
+                var offer = OlderBriefDeliveryStore.Read(card.FolderPath);
+                if (offer is null || offer.Status != "pending")
+                    return Results.Conflict(new { error = "No pending older-brief delivery is available." });
+                if (card.State != TaskStates.Escalated)
+                    return Results.Conflict(new { error = "The card is no longer parked for an older-brief decision." });
+                var current = authority.GetTaskProjection(card.TaskKey).CurrentRunAttempt;
+                if (current?.AttemptId != offer.AttemptId || current.State != AttemptLifecycleState.Completed)
+                    return Results.Conflict(new { error = "The offered attempt is no longer current." });
+                if (req.Decision == "accept" && !TaskModes.IsReportOnly(card.Mode)
+                    && current.ResultEnvelope is null)
+                    return Results.Conflict(new { error = "This result has no immutable envelope to accept." });
+                var startingRef = offer.ResultRef ?? offer.SalvageBranch;
+                var startingSha = offer.ResultRef is null ? offer.SalvageCommitSha : offer.ResultSha;
+                if (req.Decision == "starting-point"
+                    && (string.IsNullOrWhiteSpace(startingRef) || string.IsNullOrWhiteSpace(startingSha)))
+                    return Results.Conflict(new { error = "No published result or salvage ref is available as a starting point." });
+
+                var target = req.Decision == "accept" ? TaskStates.AutoReview : TaskStates.Ready;
+                var moved = await transitions.MoveAsync(card.Id, target, card.WatchPath, ct,
+                    cause: OperatorActor(context),
+                    reason: $"Operator chose {req.Decision} for older-brief delivery {offer.AttemptId}.",
+                    acceptOlderBriefDelivery: req.Decision == "accept"
+                        && !TaskModes.IsReportOnly(card.Mode));
+                if (moved.Status != MoveJobStatus.Success) return MoveResult(moved);
+                var folder = moved.NewFolderPath ?? scanner.FindJob(card.Id, card.WatchPath)?.FolderPath ?? card.FolderPath;
+                if (req.Decision == "starting-point")
+                    AgentStudio.Runner.ContinuationBaseStore.Save(folder,
+                        new AgentStudio.Runner.ContinuationBaseRecord(
+                            startingRef!, startingSha!, "older-brief-starting-point",
+                            offer.AttemptId, DateTime.UtcNow));
+                OlderBriefDeliveryStore.Write(folder, offer with
+                {
+                    Status = req.Decision,
+                    DecidedAtUtc = DateTime.UtcNow,
+                });
+                timeline.Append(folder, TimelineEventKinds.OlderBriefDeliveryOffered,
+                    OperatorActor(context),
+                    $"Operator chose {req.Decision} for run {offer.AttemptId} delivered against an older brief.",
+                    offer.AttemptId,
+                    details: new Dictionary<string, string> { ["decision"] = req.Decision });
+                scanner.InvalidateCache();
+                return MoveResult(moved);
+            }
+            finally { LeaseEndpoints.ClaimGate.Release(); }
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
 
         // Lift a folder out of 3a-failed-pickup back into 2-ready and
         // rename it to drop the -pickup-failed-<utc> suffix. Closes the
@@ -1270,6 +1333,56 @@ public static class TaskCrudEndpoints
         + $"{CompletionContractPolicy.MinimumOverrideReasonLength} characters. It is stored on the "
         + "card and shown wherever the card claims completion.";
 
+    private static async Task<IResult> MoveOperatorWithRunIntentAsync(
+        string jobId, string? watchPath, MoveJobRequest request, HttpContext context,
+        TaskTransitionService transitions, TaskScannerService scanner, RunLeaseService leases,
+        AttemptAuthorityService authority, TimelineLog timeline, CancellationToken ct)
+    {
+        // Completion and claim use this same gate. Keep the lane move and its
+        // authority decision in one ordering so neither can settle in between.
+        await LeaseEndpoints.ClaimGate.WaitAsync(ct);
+        try
+        {
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            var live = card.State == TaskStates.Progress && request.TargetState != TaskStates.Progress
+                ? leases.Peek(card.TaskKey).Lease : null;
+            var intent = RunDispositionPolicy.ParseMoveIntent(request.RunIntent);
+            if (live is not null && intent is null)
+                return Results.BadRequest(new { error = "Moving a card with a live remote run requires runIntent: revoke or steer." });
+            if (live is not null && intent == RunMoveIntent.Steer
+                && card.PendingIntent?.RunIntent != "steer")
+                return Results.BadRequest(new { error = "Steer requires a queued follow-up." });
+
+            var moved = await transitions.MoveAsync(
+                jobId, request.TargetState, watchPath, ct, request.TargetIndex,
+                cause: OperatorActor(context), reason: request.Reason,
+                operatorOverride: request.OperatorOverride,
+                archiveOverride: request.ArchiveOverride);
+            if (moved.Status == MoveJobStatus.Success && live?.AttemptId is { } attemptId
+                && intent == RunMoveIntent.Revoke)
+            {
+                authority.RevokeRunForOperatorMove(card.TaskKey, attemptId,
+                    request.Reason ?? "Operator moved the card out of Progress.");
+                var folder = moved.NewFolderPath ?? scanner.FindJob(jobId, watchPath)?.FolderPath ?? card.FolderPath;
+                timeline.Append(folder, TimelineEventKinds.RunAttemptRevoked, OperatorActor(context),
+                    $"Run {attemptId} was revoked by the operator move. Its result remains reference material; it cannot deliver this card.",
+                    attemptId,
+                    details: new Dictionary<string, string>
+                    {
+                        ["attemptId"] = attemptId,
+                        ["fence"] = live.FencingToken.ToString(),
+                        ["runIntent"] = "revoke",
+                    });
+            }
+            return MoveResult(moved);
+        }
+        finally
+        {
+            LeaseEndpoints.ClaimGate.Release();
+        }
+    }
+
     private static string OperatorActor(HttpContext context)
     {
         var clientId = context.Items["ClientId"] as string
@@ -1368,6 +1481,8 @@ public static class TaskCrudEndpoints
 /// declaration (with an optional <see cref="Reason"/>); false clears it.
 /// </summary>
 public sealed record SetPlanningClosureRequest(bool Declared, string? Reason, string? DeclaredBy);
+
+public sealed record OlderBriefDeliveryDecisionRequest(string Decision);
 
 public sealed record TaskReferenceStatusRequest(IReadOnlyList<string>? Keys);
 

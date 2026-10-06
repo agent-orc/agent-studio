@@ -116,6 +116,20 @@ public sealed class RunnerBadgeProjectionTests
     }
 
     [Fact]
+    public void ExecutionProjection_SteeredReadyCard_StillShowsLiveRemoteRun()
+    {
+        var lease = Lease("agent-runner-02", "runner two", "linux-02")
+            with { LastHeartbeatAt = Now.AddSeconds(-5) };
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { State = TaskStates.Ready }, null, null,
+            new RunLeaseInspection("active", lease), "agent-runner-02", LocalIdentity(),
+            Now.AddSeconds(-4), Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Contains("outside Progress", result.TrustReason);
+    }
+
+    [Fact]
     public void ExecutionProjection_StaleRemoteLease_IsDisconnected_AndRenewedLeaseRecovers()
     {
         var stale = Lease("agent-runner-01", "agent-runner-01", "linux-01") with { LastHeartbeatAt = Now.AddMinutes(-2) };

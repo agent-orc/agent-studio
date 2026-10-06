@@ -74,6 +74,7 @@ import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { PendingButtonDirective } from '../../components/async-feedback';
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -95,6 +96,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
+    PendingButtonDirective,
   ],
   providers: [
     LayoutPanesService,
@@ -308,6 +310,23 @@ export class TaskDetailComponent implements OnDestroy {
   readonly elapsedTime = this.cliPoll.elapsedTime;
   readonly errorMsg = signal<string | null>(null);
   readonly starting = signal(false);
+  readonly olderBriefDecisionPending = signal<'accept' | 'starting-point' | 'discard' | null>(null);
+
+  decideOlderBriefDelivery(decision: 'accept' | 'starting-point' | 'discard'): void {
+    if (this.olderBriefDecisionPending() !== null) return;
+    const card = this.detail().info;
+    this.olderBriefDecisionPending.set(decision);
+    this.jobService.decideOlderBriefDelivery(card.id, decision, card.watchPath).subscribe({
+      next: () => {
+        this.olderBriefDecisionPending.set(null);
+        this.fileSaved.emit();
+      },
+      error: (error) => {
+        this.olderBriefDecisionPending.set(null);
+        this.showError(error);
+      },
+    });
+  }
   readonly continuing = signal(false);
   readonly regeneratingSummary = signal(false);
   private regenPollTimer: ReturnType<typeof setInterval> | null = null;

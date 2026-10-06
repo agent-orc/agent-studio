@@ -64,6 +64,7 @@ public sealed class LeaseLossProcessKillTests : IDisposable
         await heartbeat.RunAsync(run, CancellationToken.None);
 
         Assert.True(heartbeat.LeaseLost);
+        Assert.Contains("revoked", heartbeat.LeaseLossReason, StringComparison.OrdinalIgnoreCase);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => processTask);
         await WaitForExitAsync(parentPid);
         await WaitForExitAsync(childPid);
@@ -124,7 +125,7 @@ public sealed class LeaseLossProcessKillTests : IDisposable
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)
             {
                 Content = new StringContent(
-                    """{"outcome":"StaleToken","granted":false,"message":"authority epoch changed"}""",
+                    """{"outcome":"StaleToken","granted":false,"message":"The operator revoked this run."}""",
                     Encoding.UTF8,
                     "application/json")
             });

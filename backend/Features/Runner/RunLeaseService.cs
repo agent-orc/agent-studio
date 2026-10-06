@@ -47,7 +47,8 @@ public sealed class RunLeaseService
             request.BackendName,
             request.Pid,
             request.ClientId,
-            request.LeaseInstanceId);
+            request.LeaseInstanceId,
+            request.BriefVersion);
 
         return result.Status switch
         {
@@ -90,7 +91,11 @@ public sealed class RunLeaseService
 
         var result = _authority.RenewRun(
             reference, request.RunnerId, request.RequestedTtlSeconds, request.LeaseId, beforeRenew);
-        return MapMutation(result, "Renewed");
+        var response = MapMutation(result, "Renewed");
+        return !response.Granted
+            && _authority.GetRun(reference.AttemptId)?.TerminalOutcome == "operator-revoked"
+                ? response with { Message = "The operator revoked this run." }
+                : response;
     }
 
     public RunLeaseResponse Release(RunLeaseReleaseRequest request)
@@ -194,7 +199,10 @@ public sealed class RunLeaseService
             AttemptWriteStatus.NotFound => "NotHeld",
             _ => result.Status.ToString(),
         };
-        return new RunLeaseResponse(outcome, outcome == "Renewed", ToLease(result.RunAttempt), result.Message);
+        var message = result.RunAttempt?.TerminalOutcome == "operator-revoked"
+                ? "The operator revoked this run."
+                : result.Message;
+        return new RunLeaseResponse(outcome, outcome == "Renewed", ToLease(result.RunAttempt), message);
     }
 
     private static RunLeaseInfoDto? ToLease(RunAttemptDto? run)

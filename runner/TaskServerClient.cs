@@ -806,9 +806,10 @@ public sealed class TaskServerClient : IDisposable
             RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: claim.FollowUp)
+                    FollowUp: claim.FollowUp,
+                    BriefVersion: claim.Run.BriefVersion)
                 : claim.ModelFallback is null && claim.FollowUp is null
-                    ? null
+                    ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
                     : new RunSpecDto(
                         claim.ModelFallback?.CliType,
                         claim.ModelFallback?.To,
@@ -816,7 +817,8 @@ public sealed class TaskServerClient : IDisposable
                         ContextMode: claim.ModelFallback is null
                             ? null
                             : CodingAgentRunner.Model.CliContextModes.Clean,
-                        FollowUp: claim.FollowUp),
+                        FollowUp: claim.FollowUp,
+                        BriefVersion: claim.Run.BriefVersion),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             PreviousSession: claim.PreviousSession,
@@ -1739,6 +1741,21 @@ public sealed class TaskServerClient : IDisposable
                 || req.OutcomeDecision?.Outcome == Contract.ExecutionOutcomeKind.ProviderRejectedRequest
                 ? "5-human-review" : "4-auto-review";
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, targetState);
+    }
+
+    public async Task ReportRevokedReferenceAsync(
+        RunLeaseInfoDto lease, string branch, string commitSha, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(lease.AttemptId)) return;
+        var instanceId = _useV1 ? V1Authority(lease.TaskKey).InstanceId : RunnerInstanceId;
+        if (string.IsNullOrWhiteSpace(instanceId)) return;
+        var url = _useV1
+            ? $"/api/v1/runs/{Uri.EscapeDataString(lease.AttemptId)}/revoked-reference"
+            : $"/api/runner/lease/{Uri.EscapeDataString(lease.AttemptId)}/revoked-reference";
+        await PostJsonWithoutResponseAsync(url,
+            new Contract.RevokedRunReferenceRequest(
+                lease.RunnerId, instanceId, lease.LeaseId, lease.FencingToken,
+                branch, commitSha), ct);
     }
 
     public async Task<ResultHandoffAck> AcknowledgeResultHandoffAsync(

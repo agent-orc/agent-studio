@@ -73,7 +73,8 @@ public sealed record RunAttemptDto(
     string? TerminalReason,
     IReadOnlyList<string> EvidenceDigests,
     AgentStudio.TaskServer.Contracts.ImmutableResultEnvelope? ResultEnvelope = null,
-    string? ResultEnvelopeDigest = null);
+    string? ResultEnvelopeDigest = null,
+    string? BriefVersion = null);
 
 public sealed record ReviewAttemptDto(
     string AttemptId,

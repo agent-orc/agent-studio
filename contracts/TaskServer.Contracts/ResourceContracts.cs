@@ -64,7 +64,14 @@ public sealed record RunDto(
     DateTime? StartedAt,
     DateTime? FinishedAt,
     string? ResultSha = null,
-    string? RepositoryId = null);
+    string? RepositoryId = null,
+    string? BriefVersion = null);
+
+public sealed record OlderBriefDeliveryDto(
+    string RunId, string BriefVersion, string CurrentBriefVersion,
+    string? ResultSha, string? ResultRef, string? SalvageBranch,
+    string? SalvageCommitSha, string Status, DateTime OfferedAt,
+    DateTime? DecidedAt = null);
 
 public sealed record ExecutionAttemptTimelineDto(
     RunDto Run,

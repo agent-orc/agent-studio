@@ -8,8 +8,8 @@ namespace AgentStudio.TaskServer;
 /// Studio task lifecycle actions (move, start, continue, stop, delete) for
 /// the pull-based Task Server model: a Runner claims '2-ready' work itself
 /// through the existing <c>/runners/{runnerId}/claims</c> endpoint, so these
-/// actions only ever change durable task state - they never spawn a process
-/// or fence a run directly.
+/// actions change durable task state and may revoke a live lease. They never
+/// spawn a runner process.
 /// </summary>
 public sealed partial class TaskServerStore
 {
@@ -25,6 +25,42 @@ public sealed partial class TaskServerStore
             var existing = await ReadTaskAsync(connection, transaction, projectId, taskIdentity, ct)
                 ?? throw new KeyNotFoundException("Task was not found.");
             var now = UtcNow;
+            var activeRunId = await ScalarAsync(connection, """
+                SELECT run_id FROM leases
+                 WHERE task_id = $task AND status IN ('active', 'process-unknown')
+                 ORDER BY acquired_at DESC LIMIT 1;
+                """, ct, transaction, ("$task", existing.TaskId)) as string;
+            if (existing.State == StudioTaskLanes.Progress
+                && request.TargetState != StudioTaskLanes.Progress
+                && activeRunId is not null)
+            {
+                if (request.RunIntent is not ("revoke" or "steer"))
+                    throw new TaskServerConflictException("run-intent-required",
+                        "Moving a live run out of Progress requires runIntent: revoke or steer.");
+                if (request.RunIntent == "steer")
+                {
+                    var queued = await ScalarAsync(connection, """
+                        SELECT 1 FROM pending_follow_ups
+                         WHERE task_id = $task AND state = 'queued';
+                        """, ct, transaction, ("$task", existing.TaskId));
+                    if (queued is null)
+                        throw new TaskServerConflictException("steer-follow-up-required",
+                            "A move that keeps the run alive requires a queued follow-up.");
+                }
+                else
+                {
+                    await ExecuteAsync(connection, """
+                        UPDATE leases SET status = 'revoked' WHERE run_id = $run;
+                        UPDATE runs SET status = 'superseded', finished_at = $now WHERE id = $run;
+                        INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, 1)
+                        ON CONFLICT(task_id) DO UPDATE SET last_fence = last_fence + 1;
+                        """, ct, transaction,
+                        ("$run", activeRunId), ("$task", existing.TaskId), ("$now", Iso(now)));
+                    await AuditAsync(connection, transaction, actorId, "run.revoked", "run", activeRunId,
+                        JsonSerializer.Serialize(new { reason = request.Reason, taskId = existing.TaskId,
+                            salvage = "quarantine ref retained by runner after lease rejection" }), ct);
+                }
+            }
             var position = await PlaceInLaneAsync(
                 connection, transaction, existing.ProjectId, request.TargetState, existing.TaskId, request.TargetIndex, ct);
             await ExecuteAsync(connection, """
@@ -38,7 +74,8 @@ public sealed partial class TaskServerStore
                 await SupersedePendingFollowUpAsync(
                     connection, transaction, existing.TaskId, actorId, ct);
             await AuditAsync(connection, transaction, actorId, "task.moved", "task", existing.TaskId,
-                JsonSerializer.Serialize(new { from = existing.State, to = request.TargetState, request.Reason }), ct);
+                JsonSerializer.Serialize(new { from = existing.State, to = request.TargetState,
+                    request.Reason, request.RunIntent, activeRunId }), ct);
             result = new MoveTaskResponse(
                 existing with { State = request.TargetState, Version = existing.Version + 1, UpdatedAt = now },
                 position);
@@ -116,9 +153,8 @@ public sealed partial class TaskServerStore
                 ?? throw new KeyNotFoundException("Task was not found.");
             if (existing.State == StudioTaskLanes.Archive)
                 throw new TaskServerConflictException("task-archived", "An archived task cannot be continued.");
-            if (existing.State == StudioTaskLanes.Progress)
-                throw new TaskServerConflictException(
-                    "task-active", "Stop the active run before continuing this task.");
+            // Continue is an explicit steer: the queued intent is durable and
+            // the current fenced run remains live while the card is Ready.
             var now = UtcNow;
             var rank = await NextRankAsync(connection, transaction, existing.ProjectId, StudioTaskLanes.Ready, ct);
             await ExecuteAsync(connection, """
@@ -143,7 +179,8 @@ public sealed partial class TaskServerStore
                 ("$prompt", request.Prompt), ("$mode", string.IsNullOrWhiteSpace(request.Mode) ? "continue" : request.Mode),
                 ("$hash", FollowUpPromptDigest.Compute(request.Prompt)), ("$author", actorId));
             await AuditAsync(connection, transaction, actorId, "task.continue-requested", "task", existing.TaskId,
-                JsonSerializer.Serialize(new { request.Model, request.CliType, request.ThinkingLevel, request.Mode }), ct);
+                JsonSerializer.Serialize(new { request.Model, request.CliType, request.ThinkingLevel,
+                    request.Mode, runIntent = "steer" }), ct);
             result = new TaskLifecycleResponse(
                 existing with { State = StudioTaskLanes.Ready, Version = existing.Version + 1, UpdatedAt = now });
         }, ct);
