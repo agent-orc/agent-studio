@@ -222,6 +222,7 @@
         "src/app/features/task-detail/components/task-detail-load-sections/task-detail-load-sections.component.scss",
         "src/app/features/task-detail/components/protocol-pane/artifact-gallery/artifact-gallery.component.scss",
         "src/app/features/project-detail/components/execution-assignment-card/execution-assignment-card.scss",
+        "src/app/features/project-detail/components/operator-sweeps-block/operator-sweeps-block.scss",
         "src/app/features/project-detail/components/project-basics-card/project-basics-card.component.scss",
         "src/app/features/project-detail/components/project-build-profile-notice/project-build-profile-notice.component.scss",
         "src/app/features/project-detail/components/deployment-definition-editor/deployment-definition-editor.scss",
