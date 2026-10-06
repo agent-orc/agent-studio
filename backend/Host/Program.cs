@@ -427,6 +427,7 @@ builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -870,6 +871,12 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+// AGT-3009: a red merge gate is classified (environment, product, integration
+// branch, undecidable) and routed by the delivery-chain reconciler before it may
+// park. The fingerprint counter is the Task Server store the cause breaker reads.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateFailureFingerprintCounter,
+    AgentStudio.Pipeline.TaskServerGateFailureFingerprintCounter>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // AGT-2849: a build gate that never reached a verdict left an un-gated merge on
 // the integration branch, and the next delivery merged on top of it. Startup
 // recovery rolls that branch back to the exact pre-merge tip (or resumes the
@@ -885,6 +892,17 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
 }
+// AGT-3011: the fix-round, gate-triage and salvage sweeps that used to run from
+// an operator shell loop. One supervised tick, the shared per-card round
+// budget, per-project pause in project settings, projection next to pipeline
+// health. The failure-continuation service is shared with the failure panel.
+builder.Services.AddSingleton<TaskFailureContinuationService>();
+builder.Services.AddSingleton<IOperatorSweepGateFacts, OperatorSweepGateFacts>();
+builder.Services.AddSingleton<IOperatorSweepActions, OperatorSweepActions>();
+builder.Services.AddSingleton<OperatorSweepService>();
+builder.Services.AddSingleton<IOperatorSweepRunner>(sp => sp.GetRequiredService<OperatorSweepService>());
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<OperatorSweepHostedService>();
 // Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
 // detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),
 // same convention as Supervisor:SoftReasoningEnabled - it drafts real task
@@ -998,6 +1016,7 @@ builder.Services.AddSingleton<IQuotaProbe, ClaudeQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
+builder.Services.AddSingleton<QuotaHistoryStore>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
@@ -1375,6 +1394,17 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
+}
+
+// One-time collapse of task receipts that recorded the same usage more than
+// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

@@ -145,6 +145,17 @@ public sealed class GateEnvironmentRetryPolicyTests
     }
 
     [Fact]
+    public void Transport_failure_is_owned_by_gate_retry_not_integration_replay()
+    {
+        var status = Status(AcceptedIntegrationFailureCodes.GateEnvironmentFailure);
+        status = status with { Failure = status.Failure! with { Reason = "Remote gate transport failure: ECONNRESET" } };
+        var decision = GateEnvironmentRetryPolicy.Decide(Task(TaskStates.AutoReview), status,
+            reviewPassed: true, attemptsSpent: 0, lastAttemptAt: null, failedAt: Failed,
+            GateEnvironmentRetryOptions.Default, Failed.AddHours(1));
+        Assert.Equal(GateEnvironmentRetryAction.Ignore, decision.Action);
+    }
+
+    [Fact]
     public void Decide_WhenDisabled_IsIgnored()
     {
         var options = GateEnvironmentRetryOptions.Default with { Enabled = false };

@@ -103,6 +103,10 @@ async function installMocks(page: Page): Promise<void> {
   await page.route('**/api/workbenches**', r => r.fulfill(json({ items: [] })));
   await page.route('**/api/projects/pipeline-catalogue**', r => r.fulfill(json({ pipelineId: 'default', steps: [] })));
   await page.route('**/api/projects/settings', r => r.fulfill(json({ [PROJECT]: { pipelineSteps: {}, pipelineStepOrder: [] } })));
+  await page.route('**/api/projects/*/operator-sweeps', r => r.fulfill(json({
+    project: PROJECT, capturedAtUtc: '2026-09-27T15:50:00Z', status: 'healthy', enabled: true,
+    tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+  })));
   await page.route('**/api/projects/*/pipeline-health', r => r.fulfill(json({
     project: PROJECT,
     capturedAtUtc: '2026-09-27T15:50:00Z',

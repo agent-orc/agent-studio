@@ -106,6 +106,29 @@ public sealed class RunnerOptions
     public string StateDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-runner-state");
 
     /// <summary>
+    /// Host salvage directory owned by the coding daemon's retention sweep
+    /// (AGT-2999). Only top-level worktree tarballs are retention candidates.
+    /// Empty disables the sweep; the parsed service configuration defaults to
+    /// <c>~/salvage</c>.
+    /// </summary>
+    public string SalvageDir { get; init; } = "";
+
+    /// <summary><c>apply</c> deletes, <c>report</c> only logs what it would delete, <c>off</c> only measures.</summary>
+    public string SalvageRetentionMode { get; init; } = SalvageRetentionSweeper.ModeApply;
+
+    /// <summary>Days an entry survives after its card became completed or archived.</summary>
+    public int SalvageRetentionDays { get; init; } = 14;
+
+    /// <summary>Newest tarballs (and eligible refs) kept per card regardless of age.</summary>
+    public int SalvageMaxPerCard { get; init; } = 3;
+
+    /// <summary>Hours between retention sweeps; the first sweep runs five minutes after start.</summary>
+    public int SalvageSweepHours { get; init; } = 6;
+
+    internal static string DefaultSalvageDir
+        => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "salvage");
+
+    /// <summary>
     /// Additional host capabilities required by every claim for this service
     /// identity, for example toolchain:dotnet, toolchain:node, or
     /// toolchain:playwright. The Task Server combines these with the role,
@@ -497,6 +520,16 @@ public sealed class RunnerOptions
             RestartGuardOnly = restartGuard,
             Force = force,
             HoldAdmission = holdAdmission,
+            SalvageDir = Val("salvage-dir", "RUNNER_SALVAGE_DIR", DefaultSalvageDir),
+            SalvageRetentionMode = Val(
+                    "salvage-retention",
+                    "RUNNER_SALVAGE_RETENTION",
+                    SalvageRetentionSweeper.ModeApply)
+                .Trim()
+                .ToLowerInvariant(),
+            SalvageRetentionDays = EnvInt("RUNNER_SALVAGE_RETENTION_DAYS", 14),
+            SalvageMaxPerCard = EnvInt("RUNNER_SALVAGE_MAX_PER_CARD", 3),
+            SalvageSweepHours = EnvInt("RUNNER_SALVAGE_SWEEP_HOURS", 6),
         };
 
         var serverUri = new Uri(options.ServerUrl, UriKind.Absolute);
@@ -530,6 +563,10 @@ public sealed class RunnerOptions
         }
         if (options.ReviewCredentialEnvironment.Any(WorkerEdgeCredentialBoundary.IsProtectedName))
             throw new ArgumentException("RUNNER_REVIEW_CREDENTIAL_ENV cannot include Task Server or browser-edge credentials.");
+        if (options.SalvageRetentionMode is not (SalvageRetentionSweeper.ModeApply
+                or SalvageRetentionSweeper.ModeReport
+                or SalvageRetentionSweeper.ModeOff))
+            throw new ArgumentException("RUNNER_SALVAGE_RETENTION must be 'apply', 'report', or 'off'.");
         if (!options.IsWorkstation && (options.WorkstationRepositoryRoots.Count > 0
                                        || options.WorkstationRequiredTools.Count > 0
                                        || options.WorkstationPreview is not null))

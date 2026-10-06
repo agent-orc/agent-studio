@@ -2,10 +2,12 @@ import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject
 import { TaskService } from '../../../../services/task.service';
 import { laneName } from '../../../../models/lane-presentation';
 import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../task-pipeline';
+import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-sweeps-block';
 
 @Component({
   selector: 'app-pipeline-health-block',
   standalone: true,
+  imports: [OperatorSweepsBlockComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-health-block.html',
   styleUrl: './pipeline-health-block.scss',

@@ -2,6 +2,9 @@
 
 :host { display: block; }
 
+/* AGT-3011: the operator sweeps sit directly under the health alarm. */
+.ph-sweeps { margin-top: var(--studio-spacing-2); }
+
 /* Head + metric cells own the inset, so the panel runs flush and clips them. */
 .ph {
   @include m.deck-panel(0);

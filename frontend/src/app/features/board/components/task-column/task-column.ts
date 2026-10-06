@@ -89,8 +89,6 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   readonly stalledCount = computed(() => this.state() === TaskState.Progress
     ? this.jobs().filter((job) => deriveStalledTaskState(job, this.nowMs() || Date.now()) !== null).length
     : this.state() === TaskState.Ready ? this.unpullableDependencyCount() : 0);
-  readonly pullableCount = computed(() => this.state() === TaskState.Ready
-    ? this.jobs().length - this.unpullableDependencyCount() : this.jobs().length);
   readonly jobClick = output<TaskInfo>();
   // `targetIndex` is the 0-based insertion slot in this column the user
   // dropped the card on. Stable across silent polls because the backend
@@ -430,8 +428,8 @@ export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   /** Show the empty state only once a fetch has resolved with a genuine zero count. */
   readonly archiveIsEmpty = computed(() => this.archiveLoaded() && this.archiveTotal() === 0);
 
-  /** Header/rail count: archived total for the archive lane, live job count otherwise. */
-  readonly headerCount = computed(() => (this.isArchive() ? this.archiveTotal() : this.pullableCount()));
+  /** Count the children currently rendered in the lane, including held Ready cards. */
+  readonly headerCount = computed(() => (this.isArchive() ? this.archiveItems().length : this.jobs().length));
 
   ngOnInit(): void {
     if (this.isArchive()) {
