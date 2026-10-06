@@ -23,6 +23,10 @@ if (args is ["--detached-worker", var detachedSpec])
 if (args is ["--detached-review-worker", var detachedReviewSpec])
     return await DurableReviewProcess.RunWorkerAsync(detachedReviewSpec, shutdownBuildServers: true);
 
+// AGT-W63 I03: offline tooling for the owned runner-host record.
+if (args is ["host-record", ..])
+    return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
+
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
 
 void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] [agent-host] {message}");

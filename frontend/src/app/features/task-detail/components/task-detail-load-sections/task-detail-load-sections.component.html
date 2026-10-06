@@ -10,20 +10,96 @@
   <span class="task-load-head__lane">{{ laneLabel(info().state) }}</span>
 </header>
 
-<div class="task-load-sections" data-testid="task-detail-load-sections">
+<div class="task-load-sections" data-testid="task-detail-load-sections"
+     [attr.data-core-task]="view()?.seed?.taskKey ?? null"
+     [attr.data-core-state]="view()?.state ?? null">
   @for (section of sections; track section.id) {
+    @let fromCore = section.id !== 'evidence' && coreSettled();
+    @let showCore = section.id !== 'evidence' && !!view() && (fromCore || !errorMessage());
     <section class="task-load-section"
              [attr.data-testid]="'task-detail-section-' + section.id"
-             [attr.aria-busy]="errorMessage() ? 'false' : 'true'">
+             [attr.aria-busy]="errorMessage() || fromCore ? 'false' : 'true'">
       <header class="task-load-section__header">
         <h2>{{ section.label }}</h2>
         <span class="task-load-section__state">
           <span class="task-load-section__state-dot" aria-hidden="true"></span>
-          {{ errorMessage() ? 'Unavailable' : 'Loading' }}
+          @if (fromCore) {
+            {{ coreStateLabel() }}
+          } @else {
+            {{ errorMessage() ? 'Unavailable' : 'Loading' }}
+          }
         </span>
       </header>
 
-      @if (errorMessage(); as message) {
+      @if (showCore && view(); as current) {
+        @if (section.id === 'context') {
+          @if (notice(); as message) {
+            <p class="task-core__notice" role="status" data-testid="task-core-notice">{{ message }}</p>
+          }
+          @if (current.state !== 'missing' && current.state !== 'denied') {
+            <dl class="task-core__facts" data-testid="task-core-pins">
+              <dt>Model</dt>
+              <dd>{{ current.seed.pins.model || 'Default' }}@if (current.seed.pins.modelExplicit) { <span class="task-core__pinned">pinned</span> }</dd>
+              <dt>Thinking</dt>
+              <dd>{{ current.seed.pins.thinkingLevel || 'Default' }}@if (current.seed.pins.thinkingLevelExplicit) { <span class="task-core__pinned">pinned</span> }</dd>
+              <dt>CLI</dt>
+              <dd>{{ current.seed.pins.cliType || 'Default' }}</dd>
+              @if (runtime(); as run) {
+                <dt>Run</dt>
+                <dd data-testid="task-core-runtime">{{ run.state }}@if (run.location) { · {{ run.location }} }</dd>
+              }
+            </dl>
+            <div class="task-core__head" data-testid="task-core-prompt">
+              <h3>Prompt</h3>
+              @if (headsReady()) {
+                @if (prompt().text; as text) {
+                  <p class="task-core__text">{{ text }}</p>
+                  @if (prompt().truncated) { <p class="task-core__more">Shortened. The full prompt opens with the task.</p> }
+                } @else {
+                  <p class="task-core__empty">No prompt yet.</p>
+                }
+              } @else {
+                <ng-container [ngTemplateOutlet]="headSkeleton" />
+              }
+            </div>
+          }
+        } @else if (current.state !== 'missing' && current.state !== 'denied') {
+          <div class="task-core__head" data-testid="task-core-status">
+            <h3>Status</h3>
+            @if (headsReady()) {
+              @if (status().text; as text) {
+                <p class="task-core__text">{{ text }}</p>
+                @if (status().truncated) { <p class="task-core__more">Shortened. The full status opens with the task.</p> }
+              } @else {
+                <p class="task-core__empty">No status summary yet.</p>
+              }
+            } @else {
+              <ng-container [ngTemplateOutlet]="headSkeleton" />
+            }
+          </div>
+          <div class="task-core__head" data-testid="task-core-timeline">
+            <h3>Recent events</h3>
+            @if (headsReady()) {
+              @if (timeline().events.length) {
+                <ol class="task-core__events">
+                  @for (event of timeline().events; track event.sequence) {
+                    <li>
+                      <time class="task-core__time" [attr.datetime]="event.ts">{{ event.ts | date: 'MMM d, HH:mm' }}</time>
+                      <span class="task-core__summary">{{ event.summary }}</span>
+                      <span class="task-core__actor">{{ event.actor }}</span>
+                    </li>
+                  }
+                </ol>
+                @if (timeline().truncated) { <p class="task-core__more">Showing recent events. The full timeline opens with the task.</p> }
+              } @else {
+                <p class="task-core__empty">No events yet.</p>
+              }
+            } @else {
+              <ng-container [ngTemplateOutlet]="headSkeleton" />
+            }
+          </div>
+        }
+      } @else if (errorMessage(); as message) {
         <div class="task-load-section__error" role="alert">
           <p>{{ message }}</p>
           <button type="button"
@@ -45,3 +121,10 @@
     </section>
   }
 </div>
+
+<ng-template #headSkeleton>
+  <div class="task-load-section__skeleton" role="status" aria-label="Loading task core">
+    <span class="task-load-section__line task-load-section__line--wide"></span>
+    <span class="task-load-section__line task-load-section__line--short"></span>
+  </div>
+</ng-template>

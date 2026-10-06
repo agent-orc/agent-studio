@@ -67,13 +67,12 @@ import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labe
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
-
+import { UsageCockpitHostComponent } from '../usage-cockpit';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
 function normalizeStorage(path: string): string {
   return path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
 }
-
 
 /** Brand swatches per CLI — matches the status-bar glyph colours so the
  *  Sidebar CLI panel reads the same on first glance. */
@@ -102,7 +101,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHostComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -526,6 +525,7 @@ export class StudioShellComponent {
     }
     return null;
   });
+
 
   /** Project rows displayed in the titlebar pills + sidebar Explorer.
    *  A2 (2026-05-21): the visible "open jobs" counter excludes the

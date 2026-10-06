@@ -86,3 +86,39 @@
   align-self: center;
   color: var(--studio-text-muted);
 }
+
+// ------------------------------------------------------------------ alarms
+// HUC-S5 alarm treatments. A whole-surface semantic tint always travels with
+// text or a shape (the `Limited` word, the warning mark), never colour alone.
+// The pigments are the central --studio-warn / --studio-error tokens, so both
+// themes follow the theme blocks. Ordinary headroom keeps the neutral chip.
+
+@mixin alarm($pigment) {
+  border-color: color-mix(in srgb, $pigment 55%, var(--studio-border-strong));
+  background: color-mix(in srgb, $pigment 14%, var(--studio-bg-surface));
+
+  &:hover {
+    background: color-mix(in srgb, $pigment 22%, var(--studio-bg-surface));
+  }
+}
+
+@mixin alarm-warning {
+  @include alarm(var(--studio-warn));
+}
+
+@mixin alarm-limited {
+  @include alarm(var(--studio-error));
+}
+
+// Visible alarm word (`Limited`) on the full chip.
+@mixin alarm-word {
+  color: var(--studio-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@mixin alarm-mark($pigment) {
+  display: inline-flex;
+  align-self: center;
+  color: $pigment;
+}

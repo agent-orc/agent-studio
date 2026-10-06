@@ -861,6 +861,22 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.RequestOperatorHostDrainAsync(
                 hostId, request, Actor(context), ct)));
+        management.MapGet("/remote-hosts/enrolments", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListHostEnrolmentsAsync(ct)));
+        management.MapPut("/remote-hosts/{hostId}/enrolment", async (
+            HttpContext context,
+            string hostId,
+            EnrolHostRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.EnrolHostAsync(hostId, request, Actor(context), ct)));
+        management.MapPost("/remote-hosts/{hostId}/enrolment/remove", async (
+            HttpContext context,
+            string hostId,
+            RemoveHostRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RemoveHostAsync(hostId, request, Actor(context), ct)));
         management.MapPost("/remote-hosts/{hostId}/cli-update", async (
             HttpContext context,
             string hostId,
