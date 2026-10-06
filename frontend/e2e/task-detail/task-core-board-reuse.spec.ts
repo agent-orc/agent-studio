@@ -123,6 +123,9 @@ async function installRoutes(page: Page): Promise<Traffic> {
   })))));
   await page.route('**/api/environment**', route => route.fulfill(json({ isDev: false, devTools: {} })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', sessions: [] })));
+  // The usage cockpit is not under test; a failed read keeps it inert
+  // instead of feeding it the catch-all array.
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', ttlSeconds: 600, snapshots: [] })));
   await page.route(/\/workbenches(\?|$)/, route => route.fulfill(json({ items: [] })));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
@@ -173,11 +176,11 @@ function installPaintProbe(): void {
   const surface = (target: Target): PaintSample['surface'] | null => {
     const task = document.querySelector('[data-testid="studio-task"]');
     if (!task) return null;
-    const sections = task.querySelector('[data-testid="task-detail-load-sections"]');
-    if (sections) {
-      const painted = sections.querySelector('[data-testid="task-core"]');
-      if (painted?.getAttribute('data-core-id') !== target.id) return null;
-      const head = (id: string) => sections.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
+    // The core view replaces the pre-core placeholder sections once painted.
+    const painted = task.querySelector('[data-testid="task-core"]');
+    if (painted) {
+      if (painted.getAttribute('data-core-id') !== target.id) return null;
+      const head = (id: string) => painted.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
       return head('task-core-prompt').includes(`Prompt of ${target.id}`)
         && head('task-core-status').includes(`Status of ${target.id}`)
         && head('task-core-timeline').includes('Created') ? 'core' : null;

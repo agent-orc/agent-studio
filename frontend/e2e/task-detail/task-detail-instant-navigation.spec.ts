@@ -120,6 +120,9 @@ async function mockApplication(page: Page, includePeer = false): Promise<void> {
     }],
   }]));
   await page.route('**/api/cli/usage**', route => json(route, { items: [] }));
+  // The usage cockpit is not under test; a failed read keeps it inert
+  // instead of feeding it the catch-all array.
+  await page.route('**/api/usage/cockpit**', route => json(route, {}, 503));
   await page.route('**/api/cli/quota**', route => json(route, { at: '2026-08-11T10:00:00Z', snapshots: [] }));
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/tasks/archive**', route => json(route, { items: [], total: 0, offset: 0, limit: 50 }));
