@@ -475,6 +475,9 @@ function sixRunTimeline() {
 
 async function installFixtureRoutes(page: Page) {
   await page.route('**/api/**', route => route.fulfill(json([])));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill(json({
+    workspaceId: 'mock', clis: [], cost: null,
+  })));
   await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
     connectionId: 'review-budget-mock', connectionToken: 'review-budget-mock',
     negotiateVersion: 1,

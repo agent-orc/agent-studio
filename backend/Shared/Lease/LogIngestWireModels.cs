@@ -60,7 +60,8 @@ public sealed record ArtifactTransferIssue(
     string Path,
     long SizeBytes,
     string Reason,
-    string Outcome = "ArtifactTooLarge");
+    string Outcome = "ArtifactTooLarge",
+    int Attempts = 0);
 
 public sealed record ArtifactTransferReportRequest(
     string TaskKey,

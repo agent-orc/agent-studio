@@ -17,6 +17,9 @@ test('project failure continuation setting persists in both themes', async ({ pa
     pickupMode: 'manual', executionLocation: 'local', integrationBranch: 'develop',
   });
   await page.route('**/api/**', route => route.fulfill({ json: [] }));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ json: {
+    workspaceId: 'mock', clis: [], cost: null,
+  } }));
   await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({ json: {
     connectionId: 'mock-jobs-connection', connectionToken: 'mock-jobs-connection',
     negotiateVersion: 1,
@@ -92,9 +95,9 @@ test('project failure continuation setting persists in both themes', async ({ pa
   const results = process.env['JOB_RESULTS_DIR'];
   expect(results, 'durable evidence directory').toBeTruthy();
   mkdirSync(results!, { recursive: true });
+  const failureContinuations = page.getByRole('heading', { name: 'Failure continuations' }).locator('..');
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
-    await control.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(results!, `automatic-failure-continuations-${theme}.png`) });
+    await failureContinuations.screenshot({ path: join(results!, `project-review-round-budget-${theme}.png`) });
   }
 });

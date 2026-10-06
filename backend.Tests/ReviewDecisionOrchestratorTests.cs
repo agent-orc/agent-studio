@@ -137,6 +137,41 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Reissue_AfterOperatorRequeue_CannotExceedSharedCardBudget()
+    {
+        const string slug = "spent-card-budget";
+        SeedReviewJobWithNeedsInput(slug, "which column is primary?");
+        // The budget counts records, not their age; the history is dated data.
+        var seededAt = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
+        for (var index = 0; index < CardRoundBudget.DefaultRoundsPerCard; index++)
+            ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
+                seededAt.AddMinutes(index), slug, Project,
+                ReviewDecisionKind.Reissue, "prior automatic round", "(seed)", "(seed)", string.Empty));
+
+        // A fresh operator epoch rotates evidence without replenishing the
+        // card's lifetime allowance or automatic reissue count.
+        ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
+            seededAt.AddMinutes(CardRoundBudget.DefaultRoundsPerCard), slug, Project, ReviewDecisionKind.OperatorRequeue,
+            "operator reopened the card", "(seed)", "(seed)", string.Empty)
+        {
+            AttemptEpoch = 1,
+        });
+        Assert.Equal(CardRoundBudget.DefaultRoundsPerCard, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+            ReviewDecisionLog.ReadAll(_workspace, Project), slug));
+
+        await BuildOrchestrator("[[ORCHESTRATOR_DECISION: action=reissue; reason=try again]]")
+            .TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, slug)));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+        var records = ReviewDecisionLog.ReadAll(_workspace, Project).Where(record => record.JobId == slug).ToArray();
+        Assert.Equal(CardRoundBudget.DefaultRoundsPerCard,
+            records.Count(record => record.Kind == ReviewDecisionKind.Reissue));
+        Assert.Contains("Automatic round budget spent", records[^1].Reason);
+        Assert.Equal(ReviewDecisionKind.Escalate, records[^1].Kind);
+    }
+
+    [Fact]
     public async Task Reissue_SecondNormalizedIdenticalPrompt_IsDiagnosisFirstAndTimelineRecordsGuard()
     {
         const string slug = "repeat-guard";
