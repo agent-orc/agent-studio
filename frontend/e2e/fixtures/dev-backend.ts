@@ -119,9 +119,10 @@ function runScript(
       } : {}),
     },
     encoding: 'utf8',
-    // api.sh already allows a 180-second cold compile. Keep the fixture's
-    // synchronous launcher budget aligned so it does not kill a healthy boot.
-    timeout: 180_000,
+    // Keep the fixture's launcher budget aligned with API_START_TIMEOUT_SECS.
+    // Busy test hosts may need a longer cold compile without changing the
+    // default for routine runs.
+    timeout: Number(process.env.DEV_BACKEND_START_TIMEOUT_MS ?? 180_000),
   });
   return {
     code: result.status ?? 1,

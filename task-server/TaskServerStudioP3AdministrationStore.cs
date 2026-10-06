@@ -424,6 +424,8 @@ public sealed partial class TaskServerStore
         IReadOnlyList<ModelRoutingTierDto> Tiers,
         IReadOnlyList<ModelRoutingTaskTypeDefaultDto> TaskTypeDefaults,
         IReadOnlyList<ProviderModelFallback> ProviderRejectionFallbacks,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> ExplicitPinModels,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> ExplicitThinkingLevels,
         IReadOnlyDictionary<string, (string Model, string ThinkingLevel)> AnthropicRoutes);
 
     private static readonly Lazy<ModelRoutingPolicyDocumentData> ModelRoutingPolicyDocument = new(LoadModelRoutingPolicyDocument);
@@ -468,12 +470,28 @@ public sealed partial class TaskServerStore
                 fallback.GetProperty("cliType").GetString()!,
                 ThinkingLevel: null))
             .ToList();
+        var explicitPinModels = root.GetProperty("explicitPinModels").EnumerateObject()
+            .ToDictionary(
+                entry => entry.Name,
+                entry => (IReadOnlySet<string>)entry.Value.EnumerateArray()
+                    .Select(model => model.GetString()!)
+                    .ToHashSet(StringComparer.Ordinal),
+                StringComparer.OrdinalIgnoreCase);
+        var explicitThinkingLevels = root.GetProperty("explicitThinkingLevels").EnumerateObject()
+            .ToDictionary(
+                entry => entry.Name,
+                entry => (IReadOnlySet<string>)entry.Value.EnumerateArray()
+                    .Select(level => level.GetString()!)
+                    .ToHashSet(StringComparer.Ordinal),
+                StringComparer.OrdinalIgnoreCase);
         return new ModelRoutingPolicyDocumentData(
             root.GetProperty("version").GetString()!,
             root.GetProperty("wikiPath").GetString()!,
             tiers,
             taskTypeDefaults,
             providerFallbacks,
+            explicitPinModels,
+            explicitThinkingLevels,
             anthropicRoutes);
     }
 }

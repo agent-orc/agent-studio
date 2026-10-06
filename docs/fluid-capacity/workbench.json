@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "id": "fluid-capacity",
+  "title": "Fluid capacity",
+  "summary": "One live host resource budget shared by coding, review, gates and post-processing, with demand-aware load bands and a bounded orchestrator capacity check. The first slice raises the next gate processor grant from live telemetry and makes under-use visible.",
+  "entrypoint": "index.html",
+  "status": "decision-pending",
+  "phase": "decision-ready",
+  "updatedAt": "2026-10-06T04:19:52Z",
+  "sourceTaskKeys": [
+    "AGT-3019"
+  ],
+  "relatedTo": [
+    "AGT-W69",
+    "AGT-W70",
+    "AGT-W73",
+    "AGT-3010",
+    "AGT-3015"
+  ],
+  "implementationTasks": [
+    {
+      "id": "FC-S1",
+      "title": "Live gate hint and under-used finding",
+      "promptMarkdown": "# Live gate hint and under-used finding\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. In \u0060RemoteGateTransport\u0060, resolve the processor count for each new gate dispatch from a fresh host telemetry aggregate and the existing \u0060RuntimeCapacitySettingsService\u0060 target; pass the chosen count as \u0060DOTNET_PROCESSOR_COUNT\u0060 and aligned build-tool hints. Respect host safety, current gate occupancy and a conservative 4-core initial maximum, with a hard 6-core first-slice maximum only after a healthy sample window, still bounded by the agent-host profile. Preserve the running gate and existing machine lock.\n2. Join \u0060HostTelemetryStore\u0060 samples to integration queue depth, wait age and admission verdicts. Add an \u0060under-used\u0060 finding with the named primary blocker and timestamps; show it in existing host telemetry detail. Do not mark a host under-used when no work waits.\n3. Record dispatch-time target, sample freshness, count, gate process-tree CPU, duration and reason. Keep the existing configuration value as a fallback when telemetry is stale; do not require a backend restart to change the next grant.\n\n## Acceptance criteria\n- A 12-core simulated host at 16% busy with an integration queue grants the next gate more than 2 processors within two fresh windows, while an already running gate remains at 2 and is not cancelled.\n- Memory pressure, stale telemetry and conflicting active grants prevent a raise; the fallback is visible.\n- The under-used finding names serial integration and its queue age for the measured shape; idle with no waiting work produces no finding.\n- Compare gate wall time and process-tree CPU against the 2-processor baseline; report the measurement without asserting proportional speedup. No second capacity store or changed gate lock.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Live gate hint and under-used finding"
+      }
+    },
+    {
+      "id": "FC-S2",
+      "title": "One versioned host allocator",
+      "promptMarkdown": "# One versioned host allocator\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. Extend the existing \u0060RuntimeCapacitySettingsService\u0060 host record and API with operator-bounded role grants, desired/applied allocation version, timestamps and audit. Keep \u0060maxParallelism\u0060, \u0060targetLoadPercent\u0060 and \u0060rampStrategy\u0060 semantics and compare-and-swap updates. Do not create a second host store.\n2. Implement a pure 60-second host allocation calculation using two-minute CPU/load aggregates, memory/swap, iowait/steal, \u0060ReviewPlaneBudgetProbe\u0060, role occupancy and queue depth/age. Use half-core units, a host/system reserve, AIMD admission, a two-minute raise cooldown and five-minute recovery hold. Preserve running grants when desired shares fall.\n3. Publish host, version and fence to agent-host; block new admissions on stale or mismatched acknowledgements. Keep role grants inside agent-host profile ceilings.\n\n## Acceptance criteria\n- Concurrent project requests cannot spend one host grant twice; replay and restart yield the same allocation version and audit.\n- CPU idle plus an integration queue moves future gate grants upward; pressure or memory floor stops new heavy admissions and never kills an active run.\n- Missing telemetry prevents a raise; unit property failure is a visible desired/applied mismatch.\n- Existing coding claim behavior and the decided \u0060resource-governance.md\u0060 cgroup boundary remain intact.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "One versioned host allocator"
+      }
+    },
+    {
+      "id": "FC-S3",
+      "title": "Safe live gate slots",
+      "promptMarkdown": "# Safe live gate slots\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. Build on W69\u0027s per-branch merge/rollback lock and W70\u0027s exact-SHA speculative candidate design. Replace \u0060BuildTestGateRunner\u0060\u0027s one process semaphore/file lock with cross-process numbered slot locks and a live desired count backed by the same host allocation. A slot also reserves its CPU grant before dispatch.\n2. Read gate concurrency and processor hints at each dispatch, not backend start. Lowered desired count stops new acquisitions while occupied slots finish. Reconcile crashed slot owners and fence stale attempts before reuse.\n3. Keep ordered per-project publication and rollback owned by W69/W70; this slice changes only host gate admission and slot ownership. Enforce grant on the gate worker\u0027s agent-host cgroup.\n\n## Acceptance criteria\n- Two independent branches can gate concurrently when granted, but same-branch merge and ordered publication remain serial.\n- Capacity 1 reproduces current gate admission. Lowering 2 to 1 does not kill either running gate and prevents a third admission.\n- Cross-process crash and backend restart release or reconcile a slot without publishing an unverified SHA.\n- Measured p90 gate duration and host pressure decide whether the W69/W70 two-slot, three-core seed remains useful.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Safe live gate slots"
+      }
+    },
+    {
+      "id": "FC-S4",
+      "title": "Live review and post adoption",
+      "promptMarkdown": "# Live review and post adoption\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. Feed \u0060AdaptiveReviewParallelismPolicy\u0060 and \u0060CodingYieldPolicy\u0060 recommendations into the central host allocator, not an env-file executor. Review admission, \u0060ReviewDecisionOrchestrator\u0060 and post-processing read the current host allocation at each new job; coding continues through \u0060TaskServerClient.AdoptRoleMaxParallelism\u0060.\n2. Agent-host applies bounded role \u0060CPUQuota\u0060/\u0060CPUWeight\u0060 with \u0060systemctl set-property --runtime\u0060, reconciles them after restart and respects profile ceilings. Align per-worker envelopes under role units. Count post-processing on the machine where it runs.\n3. Report desired/applied version, cgroup throttling and held admissions per role.\n\n## Acceptance criteria\n- A review share change takes effect for the next review without editing \u0060runner-review.env\u0060 or restarting a unit; active reviews continue.\n- Three active reviews plus a promotion gate stop a fourth review and new lower-priority post work, while the promotion grant and fence remain valid.\n- A failed quota apply blocks only new work requiring the missing grant and creates an operator-visible mismatch.\n- No role exceeds its agent-host profile ceiling or creates a project-owned capacity budget.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Live review and post adoption"
+      }
+    },
+    {
+      "id": "FC-S5",
+      "title": "Host and fleet load bands",
+      "promptMarkdown": "# Host and fleet load bands\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. Add one host band and a fleet projection to the status bar, Execution Hosts and Ops view using existing Studio tokens, components and flat surfaces. Show target and actual side by side, host counts, demand-aware under-use, primary blocker, responsible consumer and held action.\n2. Promote \u0060HostCapacityPolicy\u0060 ceiling/load/ramp verdicts from DEBUG to structured rate-limited operator events and host history. Extend \u0060HostTelemetryStore\u0060 findings with under-utilisation joined to queue and admission facts.\n3. Provide accessible words and dots, light/dark themes, and no coloured left accent bars.\n\n## Acceptance criteria\n- The AGT-3019 shape reads \u0060under-used\u0060, 16% actual / 80% target, serial integration 21 and dependency-gated Ready 10; an idle host with no demand reads in band.\n- A saturated review-plus-promotion case names review pressure and the review/post admission held; fleet label cannot hide an overloaded host behind idle peers.\n- Playwright covers both themes and screenshots persist under the task \u0060results/\u0060 directory; status, contrast and responsive hierarchy are reviewed.\n- Aggregate actual/target are core-weighted and counts reconcile with visible host rows.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Host and fleet load bands"
+      }
+    },
+    {
+      "id": "FC-S6",
+      "title": "Periodic capacity check",
+      "promptMarkdown": "# Periodic capacity check\n\nSource: \u0060docs/fluid-capacity/index.html\u0060 (AGT-3019). Read AGENTS.md and the relevant domain map. Use each Dossier recommendation unless a later recorded operator decision selects another option; record the option implemented. Keep git ownership with the platform.\n\n## Deliver\n1. Register host-scoped \u0060capacity-check\u0060 as a \u0060StepKind.Orchestrator\u0060 execution on a 30-minute cadence and coalesced band/idle-queue events, with 48 scheduled plus 12 event calls per host-day and 180k input/90k output token caps. Allocation and band calculations continue without a model.\n2. Build a versioned at-most 3,000-token aggregate evidence pack with source freshness, omissions, lane queues, admission verdicts and recent allocations. Do not read raw logs or sessions; align with the AGT-3010 redo artefact boundary.\n3. Resolve model and thinking through \u0060OrchestratorSettingsResolver\u0060 and \u0060PipelineStepConfigResolver\u0060 with workspace default and project-scoped override. Parse a short report and at most three typed actions; validate host safety, profile ceilings, memory, queue order and fences before applying. Use the Task API for idempotent defect cards.\n4. Persist every occurrence and its model, tokens, price/cost, input summary, report, proposed/applied/rejected actions and outcome in the AGT-3015 pipeline step record. Project a scan-friendly host history from those records; do not add a second ledger.\n\n## Acceptance criteria\n- A successful call records exact usage and accepted/rejected actions; quota, outage and malformed output each record a deterministic fallback and leave the last safe allocation working.\n- No action can exceed host or profile ceilings, kill running work, bypass fencing, reorder an in-flight train or create a duplicate defect card.\n- Model and thinking overrides resolve with source shown, and project override cannot control a host-wide action.\n- A 48-call baseline and 60-call cap report measured cost against the current model price; missing price remains unknown.",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Periodic capacity check"
+      }
+    }
+  ],
+  "openDecisions": [
+    {
+      "id": "D1",
+      "question": "What is the allocation unit?",
+      "recommendation": "Half-core CPU grants plus slot admission; cgroups enforce.",
+      "rejectedOption": "Treat each slot as one core."
+    },
+    {
+      "id": "D2",
+      "question": "What is the first slice?",
+      "recommendation": "Live gate processor hint and under-used finding; keep serial lock.",
+      "rejectedOption": "Raise gate count immediately while the global lock still serializes integration."
+    },
+    {
+      "id": "D3",
+      "question": "How does pressure change grants?",
+      "recommendation": "One-minute AIMD with memory floor and asymmetric cooldowns.",
+      "rejectedOption": "Permanent per-role pools."
+    },
+    {
+      "id": "D4",
+      "question": "Which model setting governs a host-wide check?",
+      "recommendation": "Owning workspace default, or platform default for shared host; project override only for project-scoped actions.",
+      "rejectedOption": "Select the model from the oldest queued project."
+    },
+    {
+      "id": "D5",
+      "question": "How often does the capacity step run?",
+      "recommendation": "Every 30 minutes plus coalesced events, maximum 60 calls and bounded tokens per host-day.",
+      "rejectedOption": "Call the model on every telemetry tick."
+    },
+    {
+      "id": "D6",
+      "question": "How is fleet band derived?",
+      "recommendation": "Worst acute host label with core-weighted actual and target and per-band counts.",
+      "rejectedOption": "Average host labels into one fleet label."
+    },
+    {
+      "id": "D7",
+      "question": "How are runtime quotas applied?",
+      "recommendation": "Agent-host bounded runtime properties; lower only after existing work drains.",
+      "rejectedOption": "Mutate manual unit drop-ins or bypass the operator profile."
+    }
+  ],
+  "key": "AGT-W74"
+}

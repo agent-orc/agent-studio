@@ -1,0 +1,14 @@
+<div class="usage-cockpit-host" data-testid="usage-cockpit-host">
+  <div class="usage-cockpit-host__primary">
+    <app-usage-cli-chip [cliId]="primaryCliId()" [cli]="primaryCli()" [timeZone]="snapshot()?.timeZone ?? null"
+      [alarms]="primaryAlarms()" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()" [compact]="phone()" (activate)="openUsage.emit()" />
+    <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [alarms]="costAlarms()" [readFailed]="readFailed()" [compact]="phone()" (activate)="openUsage.emit()" />
+  </div>
+  @if (secondaryVisible()) { <div class="usage-cockpit-host__secondary">
+    @for (cli of secondaryClis(); track cli.cliId) {
+      <app-usage-cli-chip [cliId]="cli.cliId" [cli]="cli" [timeZone]="snapshot()?.timeZone ?? null"
+        [alarms]="secondaryAlarms(cli.cliId)" [readFailed]="readFailed()" (activate)="openUsage.emit()" />
+    }
+  </div> }
+  <app-usage-alarm-status />
+</div>

@@ -290,8 +290,11 @@ public sealed class GitWorkspace
             if (!Directory.Exists(Path.Combine(sharedRepoPath, ".git")))
             {
                 log($"project-delivery-preflight clone project={projectId} repository={expected}");
+                // A full clone, like the one PrepareAsync makes: a `--no-checkout`
+                // clone leaves an empty index, which the first claim's stable
+                // checkout update reads as local changes and refuses (AGT-2985).
                 var clone = await ProcessRunner.RunAsync(
-                    "git", ["clone", "--no-checkout", expected, sharedRepoPath], projectPath, ct: ct);
+                    "git", ["clone", expected, sharedRepoPath], projectPath, ct: ct);
                 if (!clone.Success) return Failed("clone", clone, expected, expected);
             }
 

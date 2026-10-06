@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-09-25
+Version: 2026-10-03
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -106,6 +106,15 @@ Its `version` must match this page. The registry owns tier ids, concrete Codex
 routes, task-type intake defaults, and correctness floors; appsettings must not
 redefine them.
 
+The registry also lists canonical model ids permitted as explicit continuation
+pins for the `codex` and `claude` runner CLIs. This includes known untiered
+models; a tier is not required for an operator pin. The Task Server validates
+the CLI id, model id, and their pairing against that list when accepting a
+continuation intent. It preserves a valid explicit selection. The static
+catalogue does not prove that a particular runner offers the model; execution
+still depends on the host CLI. An unknown id is rejected rather than
+being silently replaced by a policy recommendation.
+
 A fresh coding claim after a resumed mechanical integration round is qualified
 again when the round found a semantic conflict or the deterministic gate failed.
 An integration recovery claim with a pending mechanical delta is qualified before
@@ -119,6 +128,11 @@ registry's provider route at the stronger of the task's correctness floor and
 Sol/medium for a semantic conflict, or Terra/medium for a gate failure. The
 fresh-run reason is visible in the task's continuation ledger; the selected
 model is visible in the run-session event.
+When the standalone Task Server issues a required mechanical fresh route for
+that claim, the route takes precedence over a continuation intent's route
+selection. The continuation instruction still reaches the claimed run. Without
+a mechanical route, only fields explicitly submitted in the continuation
+override normal route resolution.
 The standalone Task Server uses the same versioned policy document for both
 direct claims and accepted host permits. A pending mechanical delta gets at
 least Terra/medium before the runner checks session admission; a recorded

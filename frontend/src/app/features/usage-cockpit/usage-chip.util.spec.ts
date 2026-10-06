@@ -188,8 +188,8 @@ describe('cost chip view', () => {
   });
 
   it('exposes only the fields the cost chip template renders', () => {
-    expect(Object.keys(buildCostChipView(cost(), NOW)).sort()).toEqual(['ariaLabel', 'detail', 'exact', 'state', 'value']);
-    expect(Object.keys(buildCostChipView(null, NOW)).sort()).toEqual(['ariaLabel', 'detail', 'exact', 'state', 'value']);
+    expect(Object.keys(buildCostChipView(cost(), NOW)).sort()).toEqual(['alarm', 'ariaLabel', 'detail', 'exact', 'state', 'value']);
+    expect(Object.keys(buildCostChipView(null, NOW)).sort()).toEqual(['alarm', 'ariaLabel', 'detail', 'exact', 'state', 'value']);
   });
 
   it('reports loading without $0.00', () => {

@@ -75,14 +75,16 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var merge = await stack.Runner.RunAsync(
             Project, "one", folder, _repo, "develop", CancellationToken.None);
 
-        // The gate never answered, so the merge sits on develop unverified and
-        // the durable journal is the only thing that knows about it.
+        // The gate never answered, so the merge sits on the integration lane
+        // unverified and the durable journal is the only thing that knows about
+        // it. The developer checkout's develop never received it (AGT-2996).
         Assert.Equal(MergeIntoIntegrationOutcome.Error, merge.Outcome);
-        Assert.NotEqual(preMergeTip, Head("develop"));
+        Assert.NotEqual(preMergeTip, Line());
+        Assert.Equal(preMergeTip, Head("develop"));
         var journal = IntegrationGateJournal.Read(folder);
         Assert.NotNull(journal);
         Assert.Equal(preMergeTip, journal!.PreMergeTip);
-        Assert.Equal(Head("develop"), journal.GatedSha);
+        Assert.Equal(Line(), journal.GatedSha);
 
         var report = BuildRecovery(stack).RunOnce();
 
@@ -90,6 +92,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         Assert.Equal(1, report.RolledBack);
         Assert.Equal(1, report.Requeued);
         Assert.Equal(0, report.Escalated);
+        Assert.Equal(preMergeTip, Line());
         Assert.Equal(preMergeTip, Head("develop"));
         Assert.Null(IntegrationGateJournal.Read(folder));
 
@@ -152,18 +155,19 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var preMergeTip = Head("develop");
 
         await stack.Runner.RunAsync(Project, "first", first, _repo, "develop", CancellationToken.None);
-        var afterFirst = Head("develop");
+        var afterFirst = Line();
         await stack.Runner.RunAsync(Project, "second", second, _repo, "develop", CancellationToken.None);
 
         Assert.NotEqual(preMergeTip, afterFirst);
-        Assert.NotEqual(afterFirst, Head("develop"));
+        Assert.NotEqual(afterFirst, Line());
+        Assert.Equal(preMergeTip, Head("develop"));
 
         var report = BuildRecovery(stack).RunOnce();
 
         Assert.Equal(1, report.Branches);
         Assert.Equal(1, report.RolledBack);
         Assert.Equal(2, report.Requeued);
-        Assert.Equal(preMergeTip, Head("develop"));
+        Assert.Equal(preMergeTip, Line());
         Assert.Null(IntegrationGateJournal.Read(first));
         Assert.Null(IntegrationGateJournal.Read(second));
         Assert.Equal("gate-interrupted", MergeStep(stack, first).Verdict);
@@ -185,7 +189,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var merge = await stack.Runner.RunAsync(
             Project, "green", folder, _repo, "develop", CancellationToken.None);
         Assert.True(merge.Outcome.IsSuccessfulIntegration());
-        var gatedSha = Head("develop");
+        var gatedSha = Line();
 
         // A crash between "receipt written" and "record closed" leaves exactly
         // this state: the verdict is durable, the record is still open.
@@ -204,7 +208,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
 
         Assert.Equal(0, report.RolledBack);
         Assert.Equal(1, report.Requeued);
-        Assert.Equal(gatedSha, Head("develop"));
+        Assert.Equal(gatedSha, Line());
         Assert.Null(IntegrationGateJournal.Read(folder));
     }
 
@@ -221,16 +225,17 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
 
         await stack.Runner.RunAsync(
             Project, "published", folder, _repo, "develop", CancellationToken.None);
-        var unGated = Head("develop");
-        // Somebody published the branch as it stands, un-gated merge included.
-        Git(_repo, "push", "-q", "origin", "develop");
+        var unGated = Line();
+        // The developer checkout's develop never carries the un-gated merge
+        // (AGT-2996); something published the integration lane itself.
+        Git(_repo, "push", "-q", "origin", unGated + ":refs/heads/develop");
         Git(_repo, "fetch", "-q", "origin");
 
         var report = BuildRecovery(stack).RunOnce();
 
         Assert.Equal(1, report.Escalated);
         Assert.Equal(0, report.RolledBack);
-        Assert.Equal(unGated, Head("develop"));
+        Assert.Equal(unGated, Line());
         var step = MergeStep(stack, folder);
         Assert.Equal(PipelineStepStatus.Failed, step.Status);
         Assert.Equal("error", step.Verdict);
@@ -255,6 +260,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var stack = Build(gateDies: true);
         var folder = SeedDelivery(stack, "already");
         Git(_repo, "merge", "-q", "--no-ff", "--no-edit", "task/already");
+        // Published, so the integration lane follows it (AGT-2996).
+        Git(_repo, "push", "-q", "origin", "develop");
         var alreadyMerged = Head("develop");
 
         var merge = await stack.Runner.RunAsync(
@@ -266,7 +273,7 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var report = BuildRecovery(stack).RunOnce();
 
         Assert.Equal(0, report.Branches);
-        Assert.Equal(alreadyMerged, Head("develop"));
+        Assert.Equal(alreadyMerged, Line());
     }
 
     // ---- helpers ------------------------------------------------------------
@@ -323,6 +330,9 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     }
 
     private string Head(string rev) => Git(_repo, "rev-parse", rev);
+
+    /// <summary>The integration line: the Studio lane the merges and rollbacks move (AGT-2996).</summary>
+    private string Line() => Head(GitService.IntegrationLaneRef("develop"));
 
     private Stack Build(bool gateDies)
     {
