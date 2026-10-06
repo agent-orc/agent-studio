@@ -54,9 +54,16 @@ describe('PipelineHealthBlockComponent', () => {
       alerts: [],
     });
     fixture.detectChanges();
+    // AGT-3011: the operator sweeps render under the health alarm.
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-07-23T01:00:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    fixture.detectChanges();
     await fixture.whenStable();
 
     const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="operator-sweeps"]')).not.toBeNull();
     const health = host.querySelector('[data-testid="pipeline-health"]');
     expect(health?.getAttribute('data-status')).toBe('alarm');
     expect(host.querySelector('[data-testid="pipeline-health-gate"]')?.textContent)

@@ -42,7 +42,10 @@ cannot remove the final active owner. Viewer mutations fail. Project membership
 is enforced on project-addressed routes for scoped non-owner accounts, and on
 body-addressed task-set mutations (reorder, batch-move) for every affected task.
 A single-task route whose project cannot be resolved fails closed rather than
-allowing the request; scope is never granted by an unresolved project. There is
+allowing the request; scope is never granted by an unresolved project. The
+project comes from the route or addressed task first; `?project=` may narrow
+but never replace it. An empty membership list grants a scoped account no
+project; only the explicit `*` entry grants every project. There is
 no tenant boundary, SSO, billing role, or policy language. Workspace-wide task,
 Runner, registry, and search collections must filter out disallowed projects.
 
@@ -65,7 +68,11 @@ surfaces.
 
 All API reads and writes require a human session unless the route is an
 explicitly scoped Runner route. SignalR negotiation, connection, subscription,
-and automatic reconnect require a live human session. `/healthz` and the
+and automatic reconnect require a live human session that is not waiting on a
+forced password change. A request under `/api/v1/` skips local authentication
+only when routing selected the standalone Task Server proxy endpoint and it
+carries exactly one well-formed `Bearer` credential; the upstream then
+authenticates it. `/healthz` and the
 minimum pre-auth endpoints are the only anonymous application routes.
 
 ### N7: dual-principal run audit

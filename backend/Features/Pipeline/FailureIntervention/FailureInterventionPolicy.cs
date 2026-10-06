@@ -39,6 +39,12 @@ public static partial class FailureInterventionPolicy
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhiteSpacePattern();
 
+    /// <summary>Failure code the merge-gate router raises for a fingerprint shared by several cards.</summary>
+    public const string GateSharedCauseCode = "gate-shared-cause";
+
+    /// <summary>Prefix of the evidence line that carries the shared gate fingerprint.</summary>
+    public const string GateFingerprintLinePrefix = "gate-fingerprint=";
+
     public static FailureClassificationResult? Classify(FailureCommandEvidence evidence)
     {
         var code = (evidence.FailureCode ?? string.Empty).Trim();
@@ -70,6 +76,14 @@ public static partial class FailureInterventionPolicy
             domain = FailureDomains.Infrastructure;
             failureClass = "gate/MissingSource";
             reason = "The gate could not materialize its configured source.";
+        }
+        else if (EqualsAny(code, GateSharedCauseCode))
+        {
+            // AGT-3009: the merge-gate router already decided this is one cause
+            // shared by several cards; the fingerprint line is its identity.
+            domain = FailureDomains.Product;
+            failureClass = "gate/shared-cause";
+            reason = "Several cards fail the merge gate on the same items.";
         }
         else if (EqualsAny(code, "build-gate-failed", "BuildGateFailed"))
         {
@@ -169,6 +183,7 @@ public static partial class FailureInterventionPolicy
             "gate/MissingSource" => new[] { "missing source", "source checkout missing" },
             "run/crash-as-completion" => new[] { "crash-as-completion", "process exited" },
             "integration/unverified-branch" => new[] { "unverified integration branch" },
+            "gate/shared-cause" => new[] { GateFingerprintLinePrefix },
             _ => [],
         };
         foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
