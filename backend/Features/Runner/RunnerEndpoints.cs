@@ -252,8 +252,7 @@ public static class RunnerEndpoints
             (HttpContext context, ITokenAggregator tokens) =>
             {
                 if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human
-                    && human.User.Role != StudioRoles.Owner
-                    && human.User.Projects.Count > 0)
+                    && !ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User))
                     return Results.NoContent();
                 var snap = tokens.CachedWorkspaceAggregate();
                 return snap == null ? Results.NoContent() : Results.Ok(snap);

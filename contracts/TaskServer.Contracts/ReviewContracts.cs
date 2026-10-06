@@ -193,7 +193,8 @@ public sealed record ReviewClaimResponse(
     IReadOnlyList<string>? CanaryCapabilities = null,
     string? Reason = null,
     IReadOnlyList<string>? MissingCapabilities = null,
-    IReadOnlyList<ReviewUnclaimableAttemptDto>? UnclaimableAttempts = null);
+    IReadOnlyList<ReviewUnclaimableAttemptDto>? UnclaimableAttempts = null,
+    string? AdmissionReason = null);
 
 /// <summary>Typed cause of an empty review claim (AGT-2987).</summary>
 public static class ReviewClaimEmptyReasons

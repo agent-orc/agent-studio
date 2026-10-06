@@ -235,6 +235,164 @@ and does not silently switch to a source build. The source-publish procedure
 below remains a troubleshooting and development fallback, not the product
 onboarding path.
 
+### Host enrolment and capacity record
+
+AGT-W63 I03 (Dossier decision D3, option A: one runner-host family) gives
+each host one identity and one owned desired record. The Coding and Review
+role services stay separate processes with separate principals and token
+files, but they share one bounded slot envelope. Review aspects, gates and
+verification remain pipeline-library steps run by these roles; there is no
+separate quality agent.
+
+**The record.** `/etc/agent-host/host.json` (schema version 1) states the host
+facts once:
+
+```json
+{
+  "schemaVersion": 1,
+  "hostId": "build-02",
+  "hostClass": "linux",
+  "serverUrl": "http://127.0.0.1:15031",
+  "gitRemote": "git@example.invalid:team/project.git",
+  "envelope": { "totalSlots": 3, "codingSlots": 2, "reviewSlots": 1 },
+  "roles": [
+    { "role": "coding", "principalId": "rnr-build-02-coding", "tokenFile": "/etc/agent-runner/coding.token" },
+    { "role": "review", "principalId": "rnr-build-02-review", "tokenFile": "/etc/agent-runner/review.token" }
+  ],
+  "resources": { "REVIEW_MEMORY_MAX": "6G" }
+}
+```
+
+`totalSlots` is conserved across both roles; each role cap is a sub-limit and
+may not exceed it. Two roles may not share a principal or a token file. The
+record holds paths to secrets, never the secrets. An ordinary workstation host
+adds `"workstation": { "roots": [...], "tools": [...] }` and keeps the same
+role services.
+
+**Generate, never hand-edit.** From the immutable release:
+
+```bash
+agent-host host-record check --record /etc/agent-host/host.json
+agent-host host-record render --record /etc/agent-host/host.json --out-dir /tmp/host-render
+# coding  agent-runner.service         /etc/agent-runner/runner.env
+# review  agent-runner-review.service  /etc/agent-runner/review.env
+```
+
+`render` writes `runner.env`, `review.env` and `profile.conf` (mode `600`),
+each stamped with the record digest. Unit names stay static
+(`agent-runner.service`, `agent-runner-review.service`). Every role file pins
+`RUNNER_HOSTNAME`, so a restart or a machine rename keeps the enrolled
+identity. Each file declares both `RUNNER_HOST_CODING_SLOTS` and
+`RUNNER_HOST_REVIEW_SLOTS`, so a value inherited from the service environment
+cannot leak in. `remote-runner-onboard.sh --host-record host.json --role
+<coding|review>` reads the same record and refuses any flag that disagrees
+with it, including an explicit coding or review slot count. The controller
+installs the record at `/etc/agent-host/host.json` on the selected host, runs
+the installed `agent-host host-record render`, then installs the selected role's
+generated EnvironmentFile and generated `profile.conf`. The managed unit's
+resource policy reads that profile. Legacy resource directives in that unit's
+drop-ins are removed so they cannot override the record; unrelated drop-in
+settings remain. Repeat onboarding for each enrolled role service. A record
+without the requested role or with an invalid envelope fails before service
+replacement. Keep each role's token file provisioned separately on that host.
+
+**Migrating an existing host.** Build the first record from the files already
+in place, review the notes, then render and compare:
+
+```bash
+agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
+  --review-env /etc/agent-runner/review.env --profile /etc/agent-host/profile.conf \
+  --host-class linux --out /etc/agent-host/host.json
+```
+
+The import refuses disagreeing shared facts (server URL, origin, push origin,
+host id) and shared principals instead of choosing one. A shared fact set in
+one role file but absent from the other is also refused, because the record
+would apply it to both roles. After building the record, migration renders it
+and compares every setting each role file declares with the generated file. A
+value the generated file would rewrite stops migration. This includes a
+`RUNNER_HOST_CODING_SLOTS` or `RUNNER_HOST_REVIEW_SLOTS` that disagrees with the
+other role's slot count, in either file. A peer slot count above zero for a
+role whose file was not supplied is refused too. A setting the record cannot
+carry also stops migration, for example a TLS pin, a workstation key, a
+non-standard work or state directory, or a custom CLI path. The importer names
+the file, key and generated value. Remove or align the setting, or keep that
+host on legacy onboarding. The generated service files carry the same CLI
+lines as legacy onboarding (`RUNNER_CLI_TYPE`, `RUNNER_CLAUDE_CLI_BIN`,
+`RUNNER_CODEX_CLI_BIN`). `host-record` refuses an unknown or repeated option,
+and a record field it does not know. Every file named by `--runner-env`,
+`--review-env` or `--profile` must exist; a missing named file stops migration
+before the record is written. Omit `--review-env` only for a coding-only host,
+or omit `--runner-env` only for a review-only host. Omit `--profile` only when
+there is no existing resource profile to import. A missing `RUNNER_HOSTNAME` is
+pinned to the current machine name. Migration preserves `HOST_TOTAL_SLOTS` from
+an existing profile, including a shared ceiling below the sum of the role caps;
+an invalid ceiling or a profile role cap that conflicts with a role file is
+refused. Without that key, the envelope starts at the sum of today's role
+slots. The legacy default of two role slots applies only when
+`RUNNER_MAX_PARALLELISM` is absent from a role file. An explicit value that is
+not an integer stops migration before a record is written. Review the imported
+resource values, then use `--host-record` on the normal onboarding controller. The
+controller replaces the old `runner.env`, `review.env` (one role at a time)
+and `profile.conf` from the record. Legacy onboarding without `--host-record`
+continues to import unit resource drop-ins into the existing profile.
+
+**Enrolment on the Task Server.** The Task Server owns the enrolment. With an
+administrator principal:
+
+```bash
+agent-host host-record enrolment --record /etc/agent-host/host.json --expected-generation 0 \
+  | curl -fsS -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+      --data @- "$TASK_SERVER/api/v1/management/remote-hosts/build-02/enrolment"
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$TASK_SERVER/api/v1/management/remote-hosts/enrolments"
+```
+
+Each change carries the current `generation`; a stale or replayed request
+fails with `host-enrolment-generation-mismatch`. A principal can be enrolled
+on only one host. Enrolling a second host with the first host's principal
+fails with `principal-enrolled-elsewhere`, and a copied first-host token
+claiming from another host is refused with `principal-not-enrolled`. Every
+new host therefore needs its own enrolled principals. Hosts without an
+enrolment keep the earlier runtime-capacity behaviour. Enrolment never
+changes a project's parallelism or placement.
+
+**Drain, removal and re-enrolment.** Drain stays on the existing
+`POST .../remote-hosts/{hostId}/operator-drain`. Removal is
+`POST .../remote-hosts/{hostId}/enrolment/remove` with `{ "expectedGeneration": n,
+"reason": "..." }`. It releases the host's principals and refuses new claims
+with `host-removed`; in-flight work settles through leases and fences. To
+re-enrol, issue a new `PUT` at the removed generation, normally with freshly
+enrolled principals.
+
+**Typed claim refusals.** No lease or review attempt is minted when a claim
+is refused. Coding claims report `placementReason`; review claims report
+`admissionReason`:
+
+| Reason | Cause |
+|---|---|
+| `capability-stale` | A required capability advertisement is past its freshness window. |
+| `provider-login-missing` | A required `provider-auth:*` capability is missing or not ready. |
+| `repository-proof-failed` | `repository:access`, `git:fetch`, `git:push`, `git:workflow-push` or `repository:filesystem` is missing or failed. |
+| `capability-missing` / `capability-unavailable` / `capability-draining` | Another required capability is absent, not claimable, or in recovery. |
+| `host-draining` | Operator or automatic whole-host drain. |
+| `host-removed` | The host enrolment was removed. |
+| `principal-not-enrolled` / `role-not-enrolled` | The caller is not this host's enrolled service for that role. |
+| `slot-budget-full` | Coding leases plus review attempts on the host fill `totalSlots`. |
+| `role-slot-budget-full` | This role's cap is full. |
+
+A review re-claim is a repair, not a new admission. It reattaches authority to
+a worker that is still running, or delivers that worker's loss report. The
+envelope therefore does not refuse it, even when the expired lease's slot was
+reused meanwhile. The repaired attempt counts again at once, so fresh claims
+get `slot-budget-full` until the host is back inside its envelope.
+
+**Offline hosts.** A host that stops renewing keeps its expired lease: it is
+not free capacity and the task is not reassigned silently. After the
+authority marks the attempt `process-unknown`, an administrator records
+containment proof with `resolve-unknown`. Only then does another host claim
+the task, under a higher fence. A reconnecting host's late completion with
+the old fence is rejected.
+
 ## 1. Provision the host
 
 Ubuntu LTS. Install the runtime the runner and the agent CLIs need:

@@ -1035,6 +1035,45 @@ public sealed partial class RemoteReviewAuthorityTests
     }
 
     [Fact]
+    public async Task Reclaim_repairs_in_flight_work_and_counts_against_the_enrolled_host_budget_again()
+    {
+        // AGT-W63 I03: reclaim repairs authority for a worker that is still
+        // running (or delivers its loss report), so the envelope does not refuse
+        // it. The repaired attempt counts again at once, and fresh claims stay
+        // refused until the host is back inside its envelope.
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 5, 9, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await store.EnrolHostAsync(
+            "host-a",
+            new EnrolHostRequest(
+                "linux", [new HostRolePrincipalDto(HostRoles.Review, "review-a")], new HostEnvelopeDto(1, 0, 1), 0),
+            "admin",
+            default);
+        await SeedReviewSubjectAsync(store, "First");
+        await SeedReviewSubjectAsync(store, "Second");
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var first = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("claimed", first.Status);
+        await SetReviewLeaseExpiryAsync(store, first.Attempt!.AttemptId, clock.GetUtcNow().UtcDateTime.AddMinutes(-1));
+
+        var reclaimed = await store.ReClaimReviewAsync(
+            first.Attempt.AttemptId,
+            new ReviewReClaimRequest(
+                "review-a", "instance-a", first.Lease!.LeaseId, first.Lease.Fence, "reclaim-in-flight"),
+            "review-a",
+            default);
+        Assert.True(reclaimed.Lease!.Fence > first.Lease.Fence);
+
+        var fresh = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        Assert.Equal("empty", fresh.Status);
+        Assert.Equal(HostAdmissionReasons.SlotBudgetFull, fresh.AdmissionReason);
+    }
+
+    [Fact]
     public async Task Uncommitted_stale_generation_reclaim_can_rotate_to_the_current_instance()
     {
         using var temp = new TempDirectory();
