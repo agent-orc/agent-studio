@@ -48,6 +48,7 @@ public sealed record BuildTestGateRequest(
     string Executor,
     bool RequireExactSubject = true)
 {
+    public bool DisableVerdictCache { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Project { get; init; }
     public string? WatchPath { get; init; }
@@ -414,7 +415,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
-        using var verdictLease = request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
+        using var verdictLease = !request.DisableVerdictCache
+            && request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
             ? await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false)
             : null;
         string? toolchainIdentity = request.ToolchainIdentity;
@@ -555,7 +557,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             // A hit must bypass project preparation as well as verification.
             // The SHA fixes repository-owned command definitions. Resolve the
             // same deterministic scope used after preparation before lookup.
-            if (completed is null && request.RequireExactSubject
+            if (completed is null && !request.DisableVerdictCache && request.RequireExactSubject
                 && SafeSha.IsMatch(testedSha ?? "")
                 && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase))
             {
@@ -677,7 +679,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
-                    if (request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
+                    if (!request.DisableVerdictCache && request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
                         && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase)
                         && commands.Count > 0)
                     {
@@ -832,7 +834,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         .Distinct(StringComparer.Ordinal).ToArray()
                     : completed.Requirements,
             };
-            if (profileDigest is not null && completed.VerdictSource == GateVerdictSource.Executed)
+            if (!request.DisableVerdictCache && profileDigest is not null
+                && completed.VerdictSource == GateVerdictSource.Executed)
                 completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
             return completed;
         }
