@@ -153,6 +153,7 @@ rejected command changes neither the lane nor attempt authority.
 
 `queue` admits backlog, Human Review, or escalated tasks to Ready; `park` moves
 only an unclaimed Ready task to Backlog. Neither command grants execution.
+
 Runner hosts use the existing claim, lease, heartbeat, and completion paths.
 The file-backed local ProjectRunner books the same `RunLeaseService` authority
 as the remote claim path before CLI spawn, renews while running, and releases
@@ -168,6 +169,64 @@ compatibility; it is not mounted as an authority beside the standalone SQLite
 Task Server in the remote profile. Policy selection for standalone engine
 actions stays in the Engine. The server only checks action eligibility and
 fenced state.
+
+### Versioned continuation intent (AGT-2934, D6)
+
+`POST /api/v1/steering/projects/{projectId}/tasks/{taskId}/continuations`
+accepts contract version 1, a caller supplied `commandId`, `expectedTaskVersion`,
+prompt, optional model/CLI/thinking selection, conversational mode, and reason.
+The server stores the instruction and increments the task version in the same
+SQLite transaction as Ready promotion. An active attempt keeps its current
+specification; the new instruction waits for a later round. The response is an
+immutable acceptance receipt with task version, ordered round, prompt/spec
+revision, actor, reason, and acceptance time. An identical command retry returns
+that receipt. A reused id with changed input or a stale task version returns
+409. The receipt records the model-routing policy version and whether a route
+field was explicitly selected. Explicit selections are retained as supplied;
+the policy does not silently replace an operator pin. The server validates an
+explicit CLI and model against the policy's known model catalogue, including
+their provider pairing. This static check does not prove host CLI availability.
+The accepted intent snapshots unspecified route fields from the task's current
+Studio settings and records a per-field selection mask. For a model-only pin,
+the server retains the task's validated CLI or resolves the model's unique CLI
+from the policy catalogue. The runner carries that CLI with the model so normal
+host defaults do not pair it with another provider; the thinking level remains
+unpinned. A thinking-only pin also carries its validated CLI. If the task has
+no CLI and the thinking level belongs to exactly one policy provider, the
+server resolves that provider; otherwise it rejects the ambiguous selection.
+
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/continuations` lists the
+ordered round projections for Studio readers, and its `/{commandId}` child
+reads one. Each projection shows `queued`, `claimed`, `consumed`, or
+`superseded`, the bound run and fence, and the consumption time. Claim binds
+the oldest queued round to one fenced run. The claim carries that round as its
+`followUp` delivery, with the run id as its claim id, plus the
+`continuationIntent` projection. A required mechanical fresh route takes
+precedence at claim. Otherwise the explicitly submitted route fields override
+normal claim and host resolution. A model or thinking pin also carries its validated CLI,
+while other snapshotted values remain visible only in the projection. A provider
+rejection fallback is a complete CLI/model/thinking route and applies only when
+the continuation has no explicit route fields; it is never used to fill missing
+fields around an operator pin.
+The round is consumed by the runner's existing
+worker-start acknowledgement: the lease renewal names `startedPromptSha256`,
+and only the active lease of the bound run with the matching prompt hash can
+mark it consumed. A different hash returns `follow-up-prompt-mismatch`. If
+spawn fails and the lease is released, completed without acknowledgement, or
+resolved after an unknown process, the round returns to `queued` without losing
+its acceptance receipt. A subsequent waiting round moves to Ready after the
+prior run settles. Moving the task to Completed or Archive marks every waiting
+round `superseded` and records one `follow-up.superseded` audit row. The
+existing Studio `continue` route adapts to this contract and includes
+`continuationReceipt` in its response. Its optional `commandId` and
+`expectedTaskVersion` let callers request idempotent replay. A Studio retry
+with a command id and no explicit task version reuses the accepted version for
+conflict comparison. A single-row follow-up saved before schema 26 is still
+delivered when no round is queued.
+The local file-backed monolith remains a separate compatibility authority; its
+`pending-intent.json` path has not been migrated into the standalone SQLite
+store. A deployment must route both continue and runner claim through the
+standalone Task Server to obtain this D6 receipt contract.
 
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
