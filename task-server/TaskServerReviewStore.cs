@@ -259,7 +259,8 @@ public sealed partial class TaskServerStore
             {
                 response = ReviewClaimEmptyResponses.Empty(
                     ReviewClaimEmptyReasons.CapabilityAdmission,
-                    capabilityAdmission.Message ?? "Review executor capability admission is closed.");
+                    capabilityAdmission.Message ?? "Review executor capability admission is closed.")
+                    with { AdmissionReason = capabilityAdmission.Reason };
                 return;
             }
             if (request.AvailableSlots <= 0)
@@ -269,10 +270,26 @@ public sealed partial class TaskServerStore
                     "Review executor has no available slot.");
                 return;
             }
+            var envelopeAdmission = await EvaluateHostEnvelopeAsync(
+                connection,
+                transaction,
+                executor.HostId,
+                HostRoles.Review,
+                request.ExecutorId,
+                ct);
+            if (!envelopeAdmission.Admitted)
+            {
+                response = ReviewClaimEmptyResponses.Empty(
+                    ReviewClaimEmptyReasons.CapabilityAdmission,
+                    envelopeAdmission.Message ?? "Review host capacity admission is closed.")
+                    with { AdmissionReason = envelopeAdmission.Reason };
+                return;
+            }
 
             ReviewAttemptDto? attempt = null;
             ReviewSubjectDto? subject = null;
             string? capabilityBlock = null;
+            string? capabilityBlockReason = null;
             var candidates = new List<(ReviewAttemptDto Attempt, ReviewSubjectDto Subject)>();
             var unclaimable = new List<ReviewUnclaimableAttemptDto>();
             // Read one page at a time so a claimable attempt cannot be hidden
@@ -343,6 +360,7 @@ public sealed partial class TaskServerStore
                     if (!candidateAdmission.Eligible)
                     {
                         capabilityBlock = candidateAdmission.Message;
+                        capabilityBlockReason = candidateAdmission.Reason;
                         continue;
                     }
                     attempt = candidate.Attempt;
@@ -362,6 +380,7 @@ public sealed partial class TaskServerStore
                 if (capabilityBlock is null) unclaimableToLog = unclaimable;
                 response = capabilityBlock is not null
                     ? ReviewClaimEmptyResponses.Empty(ReviewClaimEmptyReasons.CapabilityAdmission, capabilityBlock)
+                        with { AdmissionReason = capabilityBlockReason }
                     : ReviewClaimEmptyResponses.ForQueue(
                         unclaimable,
                         ReviewClaimEmptyReasons.QueueEmpty,
@@ -830,6 +849,8 @@ public sealed partial class TaskServerStore
                     "Review command evidence does not match the leased library step digest.");
             var classified = ClassifyReviewReport(subject, request, attempt);
             var received = UtcNow;
+            await RecordUnprovenFlakeFailuresAsync(
+                connection, transaction, request, attemptId, subject.TaskId, received, ct);
             var reportId = $"rrpt_{Guid.NewGuid():N}";
             var retry = string.Equals(classified.Outcome, "ReviewInfra", StringComparison.Ordinal);
             const string taskState = "4-auto-review";

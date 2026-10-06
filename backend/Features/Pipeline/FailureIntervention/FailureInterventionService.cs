@@ -451,6 +451,7 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
             "ReviewInfra/ToolUnavailable" => "review toolchain unavailable",
             "gate/MissingSource" => "gate source unavailable",
             "gate/build-gate-failed" => "build gate failed",
+            "gate/shared-cause" => "shared merge-gate failure",
             "integration/configuration" => "integration unavailable",
             "run/crash-as-completion" => "run crashed at completion",
             _ => c.FailureClass,

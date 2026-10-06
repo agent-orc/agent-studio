@@ -1,7 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { EMPTY, of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskReferenceStatus } from '../../../../components/task-reference-microcard/task-reference-microcard';
 import { TaskReferenceNavigationService } from '../../../../services/task-reference-navigation.service';
@@ -114,6 +114,7 @@ describe('WorkbenchViewerHeaderComponent', () => {
           provide: TaskService,
           useValue: {
             getReferenceStatuses,
+            taskEvents: EMPTY,
           },
         },
         { provide: TaskReferenceNavigationService, useValue: { openTaskKey } },
@@ -220,7 +221,7 @@ describe('WorkbenchViewerHeaderComponent', () => {
       providers: [
         provideHttpClient(),
         provideHttpClientTesting(),
-        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]) } },
+        { provide: TaskService, useValue: { getReferenceStatuses: () => of([]), taskEvents: EMPTY } },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(WorkbenchViewerHeaderComponent);

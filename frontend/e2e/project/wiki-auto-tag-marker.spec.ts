@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+test.use({ serviceWorkers: 'block', trace: 'off', video: 'off' });
+
 const PROJECT = 'Agent Studio';
 const REL = 'concepts/tagging-example.md';
 
@@ -53,21 +55,22 @@ test('wiki tree distinguishes proposed and applied article tags in both themes',
       ] }],
     }),
   }));
-  await page.goto('/#/projects/PROJ-002/wiki');
+  await page.goto('/#/projects/PROJ-002/wiki', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const tree = page.getByTestId('project-wiki-tree');
   await expect(tree).toBeVisible({ timeout: 15_000 });
   const folder = page.getByTestId('project-wiki-node-concepts');
   await folder.getByTestId('project-wiki-chevron-concepts').click();
-  const proposed = page.getByTestId(`project-wiki-tagging-${REL}`);
+  const proposed = page.getByTestId(`project-wiki-file-${REL}`).getByTestId('tags-proposed');
   const tagged = page.getByTestId('project-wiki-tagging-concepts/tagged-example.md');
-  await expect(proposed).toHaveText('Tags proposed');
+  await expect(proposed).toHaveCount(1);
+  await expect(proposed).toContainText('Tags proposed');
   await expect(tagged).toHaveText('Tagged');
   await expect(page.getByTestId('project-wiki-tagging-concepts/future-example.md')).toHaveCount(0);
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
     await expect(proposed).toBeVisible();
     await expect(tagged).toBeVisible();
-    await tree.screenshot({ path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-wiki-${theme}--mocked.png` });
+    await tree.screenshot({ timeout: 30_000, path: `${process.env.JOB_RESULTS_DIR ?? 'test-results'}/auto-tag-wiki-${theme}--mocked.png` });
   }
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 });

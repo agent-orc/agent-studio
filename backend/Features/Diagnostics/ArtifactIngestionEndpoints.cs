@@ -63,6 +63,9 @@ public static class ArtifactIngestionEndpoints
                     ["path"] = issue.Path,
                     ["sizeBytes"] = issue.SizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["reason"] = issue.Reason,
+                    ["attempts"] = issue.Attempts.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["retryAttempts"] = Math.Max(0, issue.Attempts - 1)
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["notTransferredCount"] = req.Issues.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 });
             return Results.Accepted(value: new { status = "partial", fact = summary });
