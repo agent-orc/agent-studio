@@ -70,6 +70,14 @@ test('project failure continuation setting persists in both themes', async ({ pa
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   const control = page.getByTestId('project-detail-automatic-failure-continuations');
   await expect(control).toBeChecked();
+  const results = process.env['JOB_RESULTS_DIR'];
+  expect(results, 'durable evidence directory').toBeTruthy();
+  mkdirSync(results!, { recursive: true });
+  const failureContinuations = page.getByRole('heading', { name: 'Failure continuations' }).locator('..');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await failureContinuations.screenshot({ path: join(results!, `project-review-round-budget-${theme}.png`) });
+  }
   await control.uncheck();
   await expect.poll(() => writes.at(-1)).toBe(false);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
@@ -82,22 +90,15 @@ test('project failure continuation setting persists in both themes', async ({ pa
   await expect(rounds).toHaveValue('4');
   await expect(reissues).toHaveValue('2');
   await rounds.fill('5');
-  await rounds.blur();
+  await rounds.dispatchEvent('change');
   await expect.poll(() => maxDeliveredReviewRounds).toBe(5);
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
   await expect(rounds).toHaveValue('5');
+  await expect(reissues).toHaveValue('2');
   await reissues.fill('3');
-  await reissues.blur();
+  await reissues.dispatchEvent('change');
   await expect.poll(() => maxAutoReissueAttempts).toBe(3);
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 45_000 });
   await expect(rounds).toHaveValue('5');
   await expect(reissues).toHaveValue('3');
-
-  const results = process.env['JOB_RESULTS_DIR'];
-  expect(results, 'durable evidence directory').toBeTruthy();
-  mkdirSync(results!, { recursive: true });
-  const failureContinuations = page.getByRole('heading', { name: 'Failure continuations' }).locator('..');
-  for (const theme of ['light', 'dark'] as const) {
-    await setTheme(page, theme);
-    await failureContinuations.screenshot({ path: join(results!, `project-review-round-budget-${theme}.png`) });
-  }
 });

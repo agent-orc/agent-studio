@@ -157,7 +157,7 @@
                data-testid="project-detail-review-round-limit"
                type="number" min="1" max="20"
                [(ngModel)]="maxDeliveredReviewRoundsDraft"
-               (change)="onReviewRoundBudgetsChange()" />
+               (change)="onReviewRoundBudgetsChange('rounds', $event)" />
         <span class="proj-detail__hint proj-detail__hint--inline">Default 4. Operator continuations use the same lifetime budget.</span>
       </div>
       <div class="proj-detail__model-row">
@@ -167,7 +167,7 @@
                data-testid="project-detail-review-reissue-limit"
                type="number" min="0" max="20"
                [(ngModel)]="maxAutoReissueAttemptsDraft"
-               (change)="onReviewRoundBudgetsChange()" />
+               (change)="onReviewRoundBudgetsChange('reissues', $event)" />
         <span class="proj-detail__hint proj-detail__hint--inline">Default 2 across operator epochs.</span>
       </div>
     </section>

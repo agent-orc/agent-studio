@@ -454,7 +454,14 @@ export class ProjectDetailComponent implements OnInit, OnDestroy {
     });
   }
 
-  onReviewRoundBudgetsChange(): void {
+  onReviewRoundBudgetsChange(changed?: 'rounds' | 'reissues', event?: Event): void {
+    const enteredValue = event?.target instanceof HTMLInputElement
+      ? Number(event.target.value)
+      : null;
+    if (changed === 'rounds' && enteredValue !== null)
+      this.maxDeliveredReviewRoundsDraft = enteredValue;
+    if (changed === 'reissues' && enteredValue !== null)
+      this.maxAutoReissueAttemptsDraft = enteredValue;
     this.maxDeliveredReviewRoundsDraft = Math.max(1, Math.min(20, Math.trunc(this.maxDeliveredReviewRoundsDraft || 1)));
     this.maxAutoReissueAttemptsDraft = Math.max(0, Math.min(20, Math.trunc(this.maxAutoReissueAttemptsDraft || 0)));
     this.jobService.setProjectReviewRoundBudgets(

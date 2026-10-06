@@ -36,8 +36,12 @@ describe('ProjectDetailComponent (smoke)', () => {
     expect(host.querySelector('[data-testid="project-detail-review-reissue-limit"]')).toBeTruthy();
 
     fixture.componentInstance.maxDeliveredReviewRoundsDraft = 5;
-    fixture.componentInstance.maxAutoReissueAttemptsDraft = 3;
-    fixture.componentInstance.onReviewRoundBudgetsChange();
+    fixture.componentInstance.maxAutoReissueAttemptsDraft = 2;
+    const reissues = host.querySelector('[data-testid="project-detail-review-reissue-limit"]') as HTMLInputElement;
+    reissues.value = '3';
+    const change = new Event('change');
+    Object.defineProperty(change, 'target', { value: reissues });
+    fixture.componentInstance.onReviewRoundBudgetsChange('reissues', change);
     const http = TestBed.inject(HttpTestingController);
     const write = http.expectOne('/api/projects/demo/review-round-budgets');
     expect(write.request.body).toEqual({ maxDeliveredReviewRounds: 5, maxAutoReissueAttempts: 3 });

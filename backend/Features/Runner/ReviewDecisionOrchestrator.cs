@@ -2501,7 +2501,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Decision);
 
-        var followUpDecision = ReviewFollowUpPolicy.Decide(
+        var initialFollowUpDecision = ReviewFollowUpPolicy.Decide(
             report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
                 verdict.Aspect,
                 AspectVerdictParsing.StatusToken(verdict.Status),
@@ -2512,8 +2512,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ReportBody: verdict.Body)),
             ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
             ConfiguredMaxConcernRounds(entry.Name));
-        if (followUpDecision.Action == ReviewFollowUpAction.RetryAspect)
-            report = MarkRetryAspectAsInfrastructure(report, followUpDecision);
+        if (initialFollowUpDecision.Action == ReviewFollowUpAction.RetryAspect)
+            report = MarkRetryAspectAsInfrastructure(report, initialFollowUpDecision);
 
         // Aspect-verdict infra crash (AGT-2021): one or more aspects produced no
         // verdict because the reviewing CLI died - even after the aspect runner's
@@ -2651,10 +2651,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     }
                     : verdict).ToArray());
             if (!TryRecordDegradedAspects(current.FolderPath, report, roundBudget)) return;
-            // The degraded findings now live on the linked follow-up card; they
-            // must not start a further automatic concern round on this delivery.
-            followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(followUpDecision, roundBudget);
         }
+
+        // The degraded findings now live on the linked follow-up card; they
+        // must not start a further automatic concern round on this delivery.
+        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
 
         if (report.Overall == AspectStatus.Block)
         {
