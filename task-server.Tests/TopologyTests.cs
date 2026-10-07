@@ -769,6 +769,55 @@ public sealed class TopologyTests
         return (project, task);
     }
 
+    [Fact(Timeout = 60000)]
+    public async Task Studio_edge_returns_bad_gateway_and_never_writes_locally_when_the_task_server_is_unreachable()
+    {
+        // I05 (docs/deployment-story/index.html): an upstream failure cannot
+        // fall back to local task writes; the edge holds no task store.
+        var root = ProtocolTests.RepositoryRoot();
+        var unreachable = $"http://127.0.0.1:{FreePort()}";
+        var studioUrl = $"http://127.0.0.1:{FreePort()}";
+        using var studio = StartStudio(root, studioUrl, unreachable);
+        await WaitForHttpAsync(studioUrl + "/healthz", studio);
+        using var client = Client(studioUrl);
+        client.DefaultRequestHeaders.Add("Origin", "http://localhost:4011");
+
+        var write = await client.PostAsJsonAsync("/api/v1/workspaces", new CreateWorkspaceRequest("Must not land"));
+        Assert.Equal(HttpStatusCode.BadGateway, write.StatusCode);
+        Assert.Equal("task-server-unavailable", (await write.Content.ReadFromJsonAsync<ApiError>())!.Code);
+        var read = await client.GetAsync("/api/v1/workspaces");
+        Assert.Equal(HttpStatusCode.BadGateway, read.StatusCode);
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Studio_edge_returns_bad_gateway_when_the_task_server_stalls()
+    {
+        var root = ProtocolTests.RepositoryRoot();
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var upstreamUrl = $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}";
+            var studioUrl = $"http://127.0.0.1:{FreePort()}";
+            using var studio = StartBuilt(root, "studio-bff", "agent-studio-bff.dll",
+                "--urls", studioUrl,
+                "--TaskServer:BaseUrl", upstreamUrl,
+                "--TaskServer:RequestTimeoutSeconds", "1");
+            await WaitForHttpAsync(studioUrl + "/healthz", studio);
+            using var client = Client(studioUrl);
+            client.DefaultRequestHeaders.Add("Origin", "http://localhost:4011");
+            var writeTask = client.PostAsJsonAsync("/api/v1/workspaces", new CreateWorkspaceRequest("Must not land"));
+            using var upstream = await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            using var write = await writeTask;
+            Assert.Equal(HttpStatusCode.BadGateway, write.StatusCode);
+            Assert.Equal("task-server-unavailable", (await write.Content.ReadFromJsonAsync<ApiError>())!.Code);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
     private static RunningProcess StartStudio(string root, string studioUrl, string serverUrl)
         => StartBuilt(
             root,
