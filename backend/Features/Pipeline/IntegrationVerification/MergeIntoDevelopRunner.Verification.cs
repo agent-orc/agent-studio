@@ -38,9 +38,9 @@ public sealed partial class MergeIntoDevelopRunner
         MergeIntoIntegrationResult result)
     {
         var releaseGate = IsReleaseBranch(branch);
-        var sha = ReviewSubjectStore.IsValidResultSha(result.MergedSha)
-            ? result.MergedSha
-            : _git.GetBranchTip(repoRoot, branch);
+        // The Studio-owned lane is authoritative. The developer checkout may
+        // still hold a stale local branch after origin advanced out of band.
+        var sha = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
         var tree = ReviewSubjectStore.IsValidResultSha(sha) ? _git.GetCommitTree(repoRoot, sha!) : null;
         bool SameTree(string candidate)
             => string.Equals(candidate, sha, StringComparison.OrdinalIgnoreCase)
