@@ -85,6 +85,20 @@ public sealed class AcceptanceRailPolicyTests
         Assert.Equal(AcceptanceRailAction.Accept, decision.Action);
     }
 
+    [Fact]
+    public void IntegratedCodingCardWithoutGateEvidence_IsNotAccepted()
+    {
+        var decision = AcceptanceRailPolicy.Decide(
+            Card(),
+            Status(IntegrationStatuses.Integrated) with { Verification = null },
+            conflictRequeues: 0,
+            Options,
+            Now);
+
+        Assert.Equal(AcceptanceRailAction.Ignore, decision.Action);
+        Assert.Equal("integrated-unverified", decision.Reason);
+    }
+
     [Theory]
     [InlineData("orchestrator-hold", "AGT-1")]
     [InlineData("ordinary", "AGT-HOLD")]
@@ -481,6 +495,13 @@ public sealed class AcceptanceRailPolicyTests
     {
         Status = status,
         IntegrationBranch = "develop",
+        Verification = IntegrationStatuses.IsMerged(status)
+            ? new TaskIntegrationVerification
+            {
+                State = IntegrationVerificationStates.Verified,
+                Sha = new string('a', 40),
+            }
+            : null,
     };
 
     /// <summary>

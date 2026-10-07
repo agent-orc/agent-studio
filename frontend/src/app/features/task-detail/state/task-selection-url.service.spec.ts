@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, type HttpRequest } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import type { RegistryWorkspaceListItem, TaskDetail, TaskInfo } from '../../../models/task.model';
@@ -9,6 +9,8 @@ import { TaskService } from '../../../services/task.service';
 import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { TaskSelectionService } from './task-selection.service';
 import { LanePagerService } from './lane-pager.service';
+import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
+import type { ResourceName, TaskCore } from '../../../models/task-core.model';
 
 describe('TaskSelectionService · stable task URLs', () => {
   let selection: TaskSelectionService;
@@ -29,6 +31,24 @@ describe('TaskSelectionService · stable task URLs', () => {
   } as unknown as TaskInfo;
 
   const detail = { info } as unknown as TaskDetail;
+  const coreFor = (task: TaskInfo, projectId = 'PROJ-001') => ({
+    state: 'ready', projectId, projectName: task.projectName, id: task.id,
+    taskKey: task.taskKey, key: task.key, title: task.title,
+    watchPath: task.watchPath, folderPath: task.folderPath ?? `${task.watchPath}\\${task.state}\\${task.id}`,
+    kind: 'task', taskType: 'chore', lane: task.state, archiveState: null,
+    enteredLaneAt: '2026-09-28T00:00:00Z', order: task.order, mode: 'coding',
+    released: false, pendingIntent: false, coreVersion: '1',
+    pins: { model: null, modelExplicit: false, thinkingLevel: null,
+      thinkingLevelExplicit: false, cliType: null, contextMode: null,
+      useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+    blocking: { dependencyBlocked: false, dependencyState: 'ready', dependencies: [] },
+    runtime: { attemptId: null, runnerId: null, runnerName: null, hostname: null,
+      executionStatus: null, location: 'none', heartbeatAt: null, leaseState: 'none', leaseId: null },
+    runtimeVersion: 'v1',
+    statusSummary: { state: 'missing', text: null, originalBytes: 0, hash: null, cursor: null },
+    prompt: { state: 'missing', text: null, originalBytes: 0, hash: null, cursor: null, continuationUrl: null },
+    timeline: { state: 'missing', events: [], cursor: null, continuationUrl: null },
+  });
 
   beforeEach(async () => {
     sessionStorage.clear();
@@ -48,30 +68,124 @@ describe('TaskSelectionService · stable task URLs', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => {
-    try {
-      // The additive task core read (AGT-2956) is covered by task-selection-core.spec.ts.
-      http.match(req => req.url.endsWith('/core'))
-        .forEach(req => req.flush(null, { status: 404, statusText: 'Not Found' }));
-      http.verify();
-    } finally {
-      history.replaceState(null, '', '/');
-      TestBed.resetTestingModule();
+  const registry = (...entries: { id: string; shortCode: string | null; storageLocation: string }[]) =>
+    projects.setWorkspaces(([{ projects: entries.map(entry => ({ ...entry,
+      displayName: entry.id })) }]) as unknown as RegistryWorkspaceListItem[]);
+  /**
+   * Settle the service's post-paint work (one animation frame, then a
+   * macrotask) before asserting that nothing was requested. jsdom runs frame
+   * callbacks in registration order, so work queued before this call has run
+   * when it resolves; a fixed sleep raced that work on a stalled host.
+   */
+  const afterPaint = async () => {
+    await Promise.resolve();
+    await new Promise<void>(resolve => typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(() => setTimeout(resolve, 0)) : setTimeout(resolve, 0));
+  };
+  /** Block the event loop the way a CPU-starved review host does. */
+  const stallHost = (ms: number) => {
+    const end = performance.now() + ms;
+    while (performance.now() < end) { /* busy host */ }
+  };
+  /** Wait until a resource read is in flight, however late the host schedules it. */
+  const loading = (resource: ResourceName) => vi.waitFor(
+    () => expect(selection.resourceStates()[resource].phase).toBe('loading'), { timeout: 5000 });
+  /** Wait for exactly one matching request instead of sleeping past a retry timer. */
+  const nextRequest = (match: (req: HttpRequest<unknown>) => boolean) =>
+    vi.waitFor(() => http.expectOne(match), { timeout: 5000 });
+  const documentReply = (task: TaskInfo, name: string, coreVersion = '1') => ({
+    id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+    coreVersion, resource: 'documents', version: 'v1', computedAt: null, state: 'ready',
+    data: { name, markdown: `${name} markdown`, summaryState: null }, reason: null,
+  });
+
+  const historyReply = (task: TaskInfo, coreVersion = '1') => ({
+    id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+    coreVersion, resource: 'history', version: 'h1', computedAt: null, state: 'ready',
+    data: { promptHistory: [], titleHistory: [], log: [{ at: 'x', message: `${task.id} log` }] }, reason: null,
+  });
+  /**
+   * Hold `core` as a visited core that a board-store event marked stale: the
+   * next open paints it at once and revalidates it with the server.
+   */
+  const cacheVisitedCore = (core: TaskCore, project: string) => {
+    const prefetch = TestBed.inject(TaskDetailPrefetchService);
+    prefetch.prefetchCores([{ project, id: core.id, taskKey: core.taskKey }]);
+    http.expectOne(req => req.url.endsWith(`/${core.id}/core`)).flush(core);
+    prefetch.invalidate(core.id);
+  };
+
+  /** Land both documents after the core paint, then usage (and history) after the rich paint. */
+  const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
+    await loading('documents');
+    const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
+    expect(documents).toHaveLength(2);
+    for (const request of documents)
+      request.flush(documentReply(task, request.request.params.get('name')!, opts.coreVersion));
+    await loading('usage');
+    http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    if (opts.history) {
+      const request = http.expectOne(req => req.url.endsWith(`/${task.id}/details/history`));
+      expect(request.request.params.get('generation')).toBe(opts.coreVersion ?? '1');
+      request.flush(historyReply(task, opts.coreVersion));
     }
+  };
+
+  afterEach(() => {
+    http.verify();
+    history.replaceState(null, '', '/');
+    TestBed.resetTestingModule();
   });
 
   it('round-trips a canonical key without a watch path or URL normalization', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     history.replaceState(null, '', '/studio?view=git#/tasks/AGT-2124');
 
     selection.restoreFromUrl();
 
-    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'));
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush(detail);
+    request.flush(coreFor(info));
 
-    expect(selection.selected()?.info.key).toBe('AGT-2124');
+    expect(selection.selectedCore()?.key).toBe('AGT-2124');
     expect(`${location.pathname}${location.search}${location.hash}`)
       .toBe('/studio?view=git#/tasks/AGT-2124');
+  });
+
+  it('accepts a public URL typed in another case than the canonical key', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    history.replaceState(null, '', '/#/tasks/agt-2124');
+
+    selection.restoreFromUrl();
+
+    // The server resolves references case-insensitively and answers with the canonical key.
+    http.expectOne(req => req.url.endsWith('/api/tasks/agt-2124/core')).flush(coreFor(info));
+    expect(selection.selectedCore()?.key).toBe('AGT-2124');
+    expect(selection.detailLoading()).toBe(false);
+    expect(selection.detailLoadError()).toBeNull();
+  });
+
+  it('resolves a public URL on the server when its core names another task', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+    const other = { ...info, id: 'other-task', key: 'AGT-9', taskKey: 'C:\\private\\project::other-task' } as TaskInfo;
+
+    selection.restoreFromUrl();
+
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(other));
+    expect(selection.selectedCore()).toBeNull();
+    // Never a silent spinner: the reference goes to server-side resolution.
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'))
+      .flush(detail);
+    expect(selection.selected()?.info.id).toBe(info.id);
+    expect(selection.detailLoading()).toBe(false);
   });
 
   it('accepts a legacy locator once and replaces it with the stable key', () => {
@@ -92,15 +206,45 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(location.href).not.toContain('watchPath');
   });
 
+  it('resolves a public task URL after projects arrive without prior board state', async () => {
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+    selection.restoreFromUrl();
+    http.expectNone(req => req.url.includes('/tasks/AGT-2124'));
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
+    TestBed.tick();
+    await Promise.resolve();
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush(coreFor(info));
+    expect(selection.selectedCore()?.taskKey).toBe(info.taskKey);
+  });
+
+  it('keeps the core task paths when a cold public URL opens the rich pane', async () => {
+    registry({ id: 'Agent Studio', shortCode: 'AGT', storageLocation: info.watchPath });
+    history.replaceState(null, '', '/#/tasks/AGT-2124');
+
+    selection.restoreFromUrl();
+    const folderPath = `${info.watchPath}\\5-human-review\\human-readable-slug`;
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), folderPath });
+    expect(selection.detailPreview()?.watchPath).toBe(info.watchPath);
+    expect(selection.detailPreview()?.folderPath).toBe(folderPath);
+
+    await paintRich(info);
+    expect(selection.selected()?.info.watchPath).toBe(info.watchPath);
+    expect(selection.selected()?.info.folderPath).toBe(folderPath);
+  });
+
   it('uses pushState for user navigation and clears selection on browser Back', () => {
     const push = vi.spyOn(history, 'pushState');
 
     selection.openDetail(info);
 
-    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.has('watchPath')).toBe(false);
     expect(request.request.params.get('project')).toBe('Agent Studio');
-    request.flush(detail);
+    request.flush(coreFor(info, 'Agent Studio'));
     expect(push).toHaveBeenCalled();
     expect(location.hash).toBe('#/tasks/AGT-2124');
 
@@ -113,6 +257,9 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('pushes an advance and restores its prior task, lane anchor, and pager position on popstate', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     const nextInfo = {
       ...info,
       id: 'next-task',
@@ -133,18 +280,18 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
     expect(push).toHaveBeenCalled();
     expect(location.hash).toBe('#/tasks/AGT-2125');
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125'))
-      .flush({ info: nextInfo } as TaskDetail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/next-task/core'))
+      .flush(coreFor(nextInfo));
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(1);
 
     history.replaceState(firstState, '', firstUrl);
     window.dispatchEvent(new PopStateEvent('popstate', { state: firstState }));
     const archivedInfo = { ...info, state: '7-archive' } as TaskInfo;
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'))
-      .flush({ info: archivedInfo } as TaskDetail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core'))
+      .flush(coreFor(archivedInfo));
 
-    expect(selection.selected()?.info).toMatchObject({ key: 'AGT-2124', state: '7-archive' });
+    expect(selection.selectedCore()).toMatchObject({ key: 'AGT-2124', lane: '7-archive' });
     expect(selection.triageLaneState).toBe('5-human-review');
     expect(pager.position()).toBe(1);
     expect(pager.total()).toBe(2);
@@ -157,9 +304,12 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('clears the browser-history reconciliation marker when another task is selected', () => {
+    projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
+      displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]
+      ) as unknown as RegistryWorkspaceListItem[]);
     history.replaceState(null, '', '/#/tasks/AGT-2124');
     selection.restoreFromUrl(true);
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
+    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(info));
 
     const nextInfo = {
       ...info,
@@ -180,9 +330,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()).toBeNull();
     expect(selection.detailLoading()).toBe(true);
 
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
-    expect(selection.selected()).toEqual(detail);
-    expect(selection.detailPreview()).toBeNull();
+    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()?.id).toBe(info.id);
     expect(selection.detailLoading()).toBe(false);
   });
 
@@ -190,7 +341,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     vi.useFakeTimers();
     try {
       selection.openDetail(info);
-      const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
+      const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
 
       await vi.advanceTimersByTimeAsync(15_000);
 
@@ -211,14 +362,14 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.get('project')).toBe('Agent Studio');
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush({ info: staleInfo } as TaskDetail);
+    request.flush(coreFor(staleInfo, 'Agent Studio'));
 
     expect(selection.detailLoading()).toBe(false);
     expect(selection.detailLoadError()).toBeNull();
-    expect(selection.selected()?.info.id).toBe('human-readable-slug');
+    expect(selection.selectedCore()?.id).toBe('human-readable-slug');
   });
 
   it('resolves a cold stale-lane tab through its containing registry project', () => {
@@ -234,27 +385,604 @@ describe('TaskSelectionService · stable task URLs', () => {
 
     selection.openDetailByTaskKey(staleTaskKey);
 
-    const request = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
+    const request = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
     expect(request.request.params.get('project')).toBe('PROJ-001');
     expect(request.request.params.has('watchPath')).toBe(false);
-    request.flush(detail);
+    request.flush(coreFor(info));
   });
 
   it('ends a failed tab load with a retryable error state', () => {
     tasks.jobs.set([info]);
 
     selection.openDetailByTaskKey(info.taskKey);
-    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'))
+    http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
       .flush({ title: 'Temporary failure' }, { status: 503, statusText: 'Unavailable' });
 
     expect(selection.detailLoading()).toBe(false);
     expect(selection.detailLoadError()?.taskLabel).toBe('AGT-2124');
 
     selection.retryDetailLoad();
-    const retry = http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug'));
-    retry.flush(detail);
+    const retry = http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'));
+    retry.flush(coreFor(info, 'Agent Studio'));
 
     expect(selection.detailLoadError()).toBeNull();
-    expect(selection.selected()).toEqual(detail);
+    expect(selection.selectedCore()?.id).toBe(info.id);
+  });
+
+  it('keeps the final A selection when A, B, A navigation supersedes late replies', () => {
+    const other = { ...info, id: 'other-task', key: 'AGT-2125',
+      taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+    selection.openDetail(info);
+    const firstA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    selection.openDetail(other);
+    const requestB = http.expectOne(req => req.url.endsWith('/other-task/core'));
+    selection.openDetail(info);
+    const finalA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+
+    expect(firstA.cancelled).toBe(true);
+    expect(requestB.cancelled).toBe(true);
+    finalA.flush(coreFor(info, 'Agent Studio'));
+    expect(selection.selectedCore()?.taskKey).toBe(info.taskKey);
+    expect(selection.detailPreview()?.title).toBe(info.title);
+  });
+
+  it('keeps core usable when usage alone fails', () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    selection.loadResource('usage');
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.resourceStates().usage.phase).toBe('error');
+    expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
+  it('loads history and review evidence only when their tab is expanded', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    selection.loadResourcesForTab('prompt');
+    http.expectNone(req => req.url.includes('/details/'));
+    await paintRich(info);
+
+    selection.loadResourcesForTab('timeline');
+    http.expectOne(req => req.url.endsWith('/details/history'));
+    selection.loadResourcesForTab('evidence');
+    const evidence = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(evidence.request.params.get('evidence')).toBe('true');
+    expect(selection.resourceStates().git.phase).toBe('idle');
+  });
+
+  describe('expanded tab resources', () => {
+    it('keeps a pending review projection retryable without clearing the task', async () => {
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info);
+
+      selection.loadResourcesForTab('evidence');
+      const pending = http.expectOne(req => req.url.endsWith('/details/review'));
+      expect(pending.request.params.get('evidence')).toBe('true');
+      pending.flush({
+        id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+        coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+        state: 'warming', reason: 'review-projection-pending',
+        data: { reviewProjection: null, evidence: null },
+      });
+      expect(selection.selectedCore()?.id).toBe(info.id);
+      expect(selection.resourceStates().review).toEqual({
+        phase: 'warming', reason: 'review-projection-pending',
+      });
+
+      selection.retryResource('review');
+      const retry = http.expectOne(req => req.url.endsWith('/details/review'));
+      expect(retry.request.params.get('evidence')).toBe('true');
+      retry.flush({
+        id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+        coreVersion: '1', resource: 'review', version: 'r2', computedAt: null,
+        state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+      });
+      expect(selection.resourceStates().review.phase).toBe('ready');
+    });
+
+    it('waits for the rich paint when the tab is expanded before the documents land', async () => {
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      selection.loadResourcesForTab('timeline');
+      await afterPaint();
+      http.expectNone(req => req.url.endsWith('/details/history'));
+
+      await paintRich(info, { history: true });
+      expect(selection.selected()?.log).toEqual([{ at: 'x', message: 'human-readable-slug log' }]);
+    });
+
+    it('reloads the open tab after a task switch', async () => {
+      const other = { ...info, id: 'other-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+      selection.openDetail(info);
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+        .flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info);
+      selection.loadResourcesForTab('timeline');
+      http.expectOne(req => req.url.endsWith('/human-readable-slug/details/history')).flush(historyReply(info));
+
+      selection.openDetail(other);
+      http.expectOne(req => req.url.endsWith('/other-task/core')).flush(coreFor(other, 'Agent Studio'));
+      await paintRich(other, { history: true });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+      expect(selection.selected()?.log).toEqual([{ at: 'x', message: 'other-task log' }]);
+    });
+
+    it('reloads the open tab for a new core generation of the same task', async () => {
+      cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+      selection.openDetail(info);
+      const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+      await paintRich(info);
+      selection.loadResourcesForTab('timeline');
+      http.expectOne(req => req.url.endsWith('/details/history')).flush(historyReply(info));
+
+      revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+      expect(selection.resourceStates().history.phase).toBe('idle');
+      await paintRich(info, { history: true, coreVersion: '2' });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+    });
+
+    it('restores the tab named by a task URL on reload and back/forward', async () => {
+      registry({ id: 'Agent Studio', shortCode: 'AGT', storageLocation: 'C:\\private\\project' });
+      history.replaceState(null, '', '/#/tasks/AGT-2124?view=timeline:protocol');
+
+      selection.restoreFromUrl(true);
+      http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124/core')).flush(coreFor(info, 'Agent Studio'));
+      await paintRich(info, { history: true });
+
+      expect(selection.resourceStates().history.phase).toBe('ready');
+    });
+  });
+
+  it('keeps the selection while the task index warms under an enrichment read', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    const warming = { state: 'warming', reason: 'task-index-warming', jobId: info.id, projectId: 'Agent Studio' };
+    await loading('documents');
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(warming, { status: 202, statusText: 'Accepted' });
+
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()?.id).toBe(info.id);
+    expect(selection.detailLoadError()).toBeNull();
+    expect(selection.resourceStates().documents).toEqual({ phase: 'warming', reason: 'task-index-warming' });
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+
+    // One warming retry later the rich view paints as usual.
+    await paintRich(info);
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+
+    selection.loadResource('review');
+    http.expectOne(req => req.url.endsWith('/details/review'))
+      .flush(warming, { status: 202, statusText: 'Accepted' });
+    expect(selection.resourceStates().review).toEqual({ phase: 'warming', reason: 'task-index-warming' });
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    (await nextRequest(req => req.url.endsWith('/details/review')))
+      .flush({ error: 'offline' }, { status: 503, statusText: 'Unavailable' });
+    expect(selection.resourceStates().review.phase).toBe('error');
+  });
+
+  describe('server-side resolution fallbacks', () => {
+    it('lets the backend resolve a public URL whose prefix matches no project of a multi-project workspace', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      history.replaceState(null, '', '/#/tasks/AGT-2124');
+
+      selection.restoreFromUrl(true);
+
+      http.expectNone(req => req.url.endsWith('/core'));
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
+      expect(selection.selected()?.info.key).toBe('AGT-2124');
+      expect(selection.selectedCore()).toBeNull();
+      expect(selection.detailPreview()).toBeNull();
+      expect(selection.detailLoadError()).toBeNull();
+      expect(selection.consumeTaskTabReplacement(info.taskKey)).toBe(true);
+    });
+
+    it('does not read a short code out of a public reference without a dash', () => {
+      // 'TWO' once became prefix 'tw' and was sent to the project whose short code is TW.
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TW', storageLocation: 'C:\\two' });
+      history.replaceState(null, '', '/#/tasks/TWO');
+
+      selection.restoreFromUrl();
+
+      http.expectNone(req => req.url.endsWith('/core'));
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/TWO')).flush(detail);
+      expect(selection.selected()?.info.id).toBe(info.id);
+    });
+
+    it('falls back to the backend when the inferred sole project does not own the task', () => {
+      registry({ id: 'PROJ-001', shortCode: null, storageLocation: 'C:\\one' });
+      history.replaceState(null, '', '/#/tasks/human-readable-slug');
+
+      selection.restoreFromUrl();
+
+      http.expectOne(req => req.url.endsWith('/api/tasks/human-readable-slug/core'))
+        .flush({ state: 'missing' }, { status: 404, statusText: 'Not Found' });
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
+      expect(selection.selected()?.info.id).toBe(info.id);
+      expect(selection.detailLoadError()).toBeNull();
+    });
+
+    it('bounds the registry wait of a cold public URL and then resolves on the server', async () => {
+      vi.useFakeTimers();
+      try {
+        history.replaceState(null, '', '/#/tasks/AGT-2124');
+        selection.restoreFromUrl();
+        http.expectNone(req => req.url.includes('/tasks/AGT-2124'));
+
+        await vi.advanceTimersByTimeAsync(3_000);
+
+        http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124')).flush(detail);
+        expect(selection.selected()?.info.key).toBe('AGT-2124');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resolves an unplaceable pager entry by its route key instead of failing the step', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      const nextInfo = { ...info, id: 'next-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::next-task' } as TaskInfo;
+      TestBed.inject(LanePagerService).capture(info.state, [info, nextInfo], info.taskKey);
+
+      expect(selection.pagerStep(1)).toBe(true);
+
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      expect(selection.selected()?.info.id).toBe('next-task');
+      expect(selection.detailLoadError()).toBeNull();
+      expect(selection.triageLaneState).toBe(info.state);
+    });
+
+    it('resolves an unplaceable post-mutation advance on the server', () => {
+      registry({ id: 'PROJ-001', shortCode: 'ONE', storageLocation: 'C:\\one' },
+        { id: 'PROJ-002', shortCode: 'TWO', storageLocation: 'C:\\two' });
+      const nextInfo = { ...info, id: 'next-task', key: 'AGT-2125',
+        taskKey: 'C:\\private\\project::next-task' } as TaskInfo;
+      TestBed.inject(LanePagerService).capture(info.state, [info, nextInfo], info.taskKey);
+      selection.selected.set(detail);
+
+      expect(selection.advanceAfterMutation(info.taskKey)).toBe(true);
+
+      http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2125')).flush({ info: nextInfo } as TaskDetail);
+      expect(selection.selected()?.info.id).toBe('next-task');
+      expect(selection.consumeTaskTabReplacement(nextInfo.taskKey)).toBe(true);
+    });
+  });
+
+  it('drops late A and B replies that reach the handlers after A, B, A navigation', () => {
+    // Abort is the first defence; this proves the identity guard holds even
+    // when a transport delivers replies for superseded requests anyway.
+    vi.spyOn(selection as unknown as { cancelRequests: () => void }, 'cancelRequests')
+      .mockImplementation(() => undefined);
+    const other = { ...info, id: 'other-task', key: 'AGT-2125',
+      taskKey: 'C:\\private\\project::other-task', title: 'Other task' } as TaskInfo;
+    const handled = vi.spyOn(selection as unknown as { acceptCore: () => void }, 'acceptCore');
+    selection.openDetail(info);
+    const requestA = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    selection.openDetail(other);
+    const requestB = http.expectOne(req => req.url.endsWith('/other-task/core'));
+    selection.openDetail(info);
+    // The shared core cache joins the still-open read of A instead of repeating it.
+    http.expectNone(req => req.url.endsWith('/human-readable-slug/core'));
+
+    requestB.flush(coreFor(other, 'Agent Studio'));
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.detailPreview()?.id).toBe(info.id);
+
+    // The first A subscription and the final one both receive this reply;
+    // only the current open may accept it.
+    requestA.flush(coreFor(info, 'Agent Studio'));
+
+    expect(handled).toHaveBeenCalledTimes(1);
+    expect(selection.selectedCore()).toMatchObject({ taskKey: info.taskKey, coreVersion: '1' });
+    expect(selection.detailPreview()?.title).toBe(info.title);
+    expect(location.hash).toBe('#/tasks/AGT-2124');
+  });
+
+  it('echoes a 64-bit core generation beyond the JavaScript safe range verbatim', async () => {
+    // Regression: a numeric generation rounded to 7457569699994893000 and every
+    // resource read answered 409 against the real backend.
+    const generation = '7457569699994892853';
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: generation });
+    await loading('documents');
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual([generation, generation]);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, generation));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    await loading('usage');
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('settles post-paint work before a negative assertion even when the host stalls', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    // A stall past the old 40 ms sleep let that sleep resolve before the
+    // queued document reads, so `expectNone` checks passed vacuously.
+    const settled = afterPaint();
+    stallHost(80);
+    await settled;
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    await paintRich(info);
+  });
+
+  it('marks an enrichment reply for another core generation stale instead of applying it', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    // Review hosts stall; a fixed sleep then read the requests before they were sent.
+    stallHost(80);
+    await loading('documents');
+    const [prompt, status] = http.match(req => req.url.endsWith('/details/documents'));
+    prompt.flush(documentReply(info, 'prompt', '2'));
+    status.flush(documentReply(info, 'status', '2'));
+
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+    expect(selection.selected()?.promptMarkdown ?? null).toBeNull();
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+    stallHost(80);
+    await loading('documents');
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    stallHost(80);
+    await loading('usage');
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('re-reads a conflicted section once when the refreshed core keeps its generation', async () => {
+    const conflict = { status: 409, statusText: 'Conflict' };
+    const documents = (req: HttpRequest<unknown>) => req.url.endsWith('/details/documents');
+    const core = (req: HttpRequest<unknown>) => req.url.endsWith('/human-readable-slug/core');
+    selection.openDetail(info);
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    await loading('documents');
+    let [prompt, status] = http.match(documents);
+    prompt.flush({ error: 'stale core' }, conflict);
+    status.flush(documentReply(info, 'status'));
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+
+    // The generation flipped back before the refresh: same core, so re-read.
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    [prompt, status] = http.match(documents);
+    expect([prompt, status].map(request => request.request.params.get('generation'))).toEqual(['1', '1']);
+
+    // A persistent mismatch stays stale with Retry instead of looping.
+    prompt.flush({ error: 'stale core' }, conflict);
+    status.flush(documentReply(info, 'status'));
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    http.expectNone(documents);
+    expect(selection.resourceStates().documents).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+
+    selection.retryResource('documents');
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    for (const request of http.match(documents))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    (await nextRequest(req => req.url.endsWith('/details/usage')))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('ignores the superseded document batch while conflict recovery re-reads documents', async () => {
+    const documents = (req: HttpRequest<unknown>) => req.url.endsWith('/details/documents');
+    const core = (req: HttpRequest<unknown>) => req.url.endsWith('/human-readable-slug/core');
+    selection.openDetail(info);
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    await loading('documents');
+    const [oldPrompt, oldStatus] = http.match(documents);
+    oldPrompt.flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+    // The unchanged refresh starts a replacement batch while the old status read is open.
+    http.expectOne(core).flush(coreFor(info, 'Agent Studio'));
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    const replacement = http.match(documents);
+    expect(replacement).toHaveLength(2);
+
+    // A late completion of the old batch must neither paint nor settle the section.
+    if (!oldStatus.cancelled) oldStatus.flush(documentReply(info, 'status'));
+    expect(oldStatus.cancelled).toBe(true);
+    expect(selection.resourceStates().documents.phase).toBe('loading');
+    expect(selection.selected()).toBeNull();
+
+    for (const request of replacement)
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.resourceStates().documents.phase).toBe('ready');
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    expect(selection.selected()?.statusMarkdown).toBe('status markdown');
+    (await nextRequest(req => req.url.endsWith('/details/usage')))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('lets an evidence request supersede a plain review read in flight', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await paintRich(info);
+
+    selection.loadResourcesForTab('code-review');
+    const plain = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(plain.request.params.get('evidence')).not.toBe('true');
+    selection.loadResourcesForTab('evidence');
+
+    expect(plain.cancelled).toBe(true);
+    const withEvidence = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(withEvidence.request.params.get('evidence')).toBe('true');
+    const evidence = [{ path: 'results/core-light.png' }];
+    withEvidence.flush({
+      id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence },
+    });
+    expect(selection.selected()?.reviewEvidence).toEqual(evidence);
+    expect(selection.resourceStates().review.phase).toBe('ready');
+  });
+
+  it('refreshes core after a resource 409 before requesting the new generation', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+
+    expect(selection.resourceStates().usage).toEqual({ phase: 'stale', reason: 'core-generation-changed' });
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    const refresh = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(refresh.request.params.get('project')).toBe('Agent Studio');
+    refresh.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'New generation' });
+
+    expect(selection.selectedCore()?.coreVersion).toBe('2');
+    expect(selection.selected()?.info.title).toBe('New generation');
+    expect(selection.detailPreview()).toBeNull();
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    const documents = http.match(req => req.url.endsWith('/details/documents'));
+    expect(documents.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of documents)
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('revalidates core when retrying a generation conflict', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ error: 'temporarily offline' }, { status: 503, statusText: 'Unavailable' });
+
+    selection.retryResource('usage');
+    http.expectNone(req => req.url.endsWith('/details/usage'));
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2' });
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('refreshes a revalidated core in place instead of flipping the rich pane back to the core view', async () => {
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(selection.selectedCore()?.coreVersion).toBe('1');
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    for (const request of http.match(req => req.url.endsWith('/details/documents')))
+      request.flush(documentReply(info, request.request.params.get('name')!));
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    const staleUsage = await vi.waitFor(
+      () => http.expectOne(req => req.url.endsWith('/details/usage')),
+      { timeout: 5000 },
+    );
+
+    revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'Renamed task' });
+
+    expect(staleUsage.cancelled).toBe(true);
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.info.title).toBe('Renamed task');
+    expect(selection.selectedCore()?.coreVersion).toBe('2');
+    await vi.waitFor(() => expect(selection.resourceStates().documents.phase).toBe('loading'), { timeout: 5000 });
+    const reload = http.match(req => req.url.endsWith('/details/documents'));
+    expect(reload.map(request => request.request.params.get('generation'))).toEqual(['2', '2']);
+    for (const request of reload) request.flush(documentReply(info, request.request.params.get('name')!, '2'));
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
+    await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    http.expectOne(req => req.url.endsWith('/details/usage'))
+      .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+  });
+
+  it('keeps the rich task and its editing state while a cached core revalidation warms', async () => {
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    await paintRich(info);
+    const rich = selection.selected();
+    expect(rich?.promptMarkdown).toBe('prompt markdown');
+    revalidation.flush({ state: 'warming', reason: 'task-index-warming' },
+      { status: 202, statusText: 'Accepted' });
+
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.selected()).toBe(rich);
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.detailLoading()).toBe(false);
+
+    const retry = await nextRequest(req => req.url.endsWith('/human-readable-slug/core'));
+    expect(selection.selected()).toBe(rich);
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    expect(selection.detailPreview()).toBeNull();
+    retry.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '1' });
+    expect(selection.selected()).toBe(rich);
+  });
+
+  it('revokes a painted cached task when core revalidation denies access', async () => {
+    cacheVisitedCore(coreFor(info, 'Agent Studio') as unknown as TaskCore, 'Agent Studio');
+
+    selection.openDetail(info);
+    const revalidation = http.expectOne(req => req.url.endsWith('/human-readable-slug/core'));
+    await paintRich(info);
+    expect(selection.selected()?.info.id).toBe(info.id);
+
+    revalidation.flush({ error: 'forbidden' }, { status: 403, statusText: 'Forbidden' });
+
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.selected()).toBeNull();
+    expect(selection.detailPreview()).toBeNull();
+    expect(selection.detailLoadError()).not.toBeNull();
+    expect(TestBed.inject(TaskDetailPrefetchService).peekCore('Agent Studio', info.id)).toBeNull();
+  });
+
+  it('resolves a painted cached public URL on the server after an inferred-project 404', () => {
+    registry({ id: 'PROJ-001', shortCode: null, storageLocation: info.watchPath });
+    history.replaceState(null, '', '/#/tasks/human-readable-slug');
+    cacheVisitedCore(coreFor(info, 'PROJ-001') as unknown as TaskCore, 'PROJ-001');
+
+    selection.restoreFromUrl();
+    expect(selection.selectedCore()?.id).toBe(info.id);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush({ error: 'missing' }, { status: 404, statusText: 'Not Found' });
+
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.detailPreview()).toBeNull();
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/human-readable-slug')).flush(detail);
+    expect(selection.selected()?.info.id).toBe(info.id);
+    expect(selection.detailLoadError()).toBeNull();
   });
 });

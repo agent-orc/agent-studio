@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgentStudio.Shared;
 
 namespace AgentStudio.Tasks;
@@ -13,6 +14,12 @@ public sealed record TaskCoreLookup(TaskCoreRecord? Record, bool Warming);
 /// </summary>
 public sealed record TaskCoreRecord
 {
+    // Commit facts feed only the versioned Git resource and the last session
+    // usage feeds only the usage resource. Excluding them from core
+    // serialization and its hash keeps ref and usage churn off the core path.
+    [JsonIgnore] public IReadOnlyList<TaskCommitInfo> Commits { get; init; } = [];
+    [JsonIgnore] public TaskCommitInfo? Commit { get; init; }
+    [JsonIgnore] public SessionUsage? LastUsage { get; init; }
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
     public string? Key { get; init; }
@@ -80,6 +87,8 @@ public sealed record TaskCoreRecord
         {
             Id = Limit(info.Id, 128)!, TaskKey = Limit(info.TaskKey, 256)!, Key = Limit(info.Key, 128),
             WatchPath = info.WatchPath, FolderPath = info.FolderPath,
+            Commits = info.Commits.ToArray(), Commit = info.Commit,
+            LastUsage = info.LastUsage,
             ProjectName = Limit(info.ProjectName, 128)!,
             Title = Limit(info.Title, 1024)!, State = info.State,
             ArchiveState = info.ArchiveState, EnteredLaneAt = info.EnteredLaneAt,

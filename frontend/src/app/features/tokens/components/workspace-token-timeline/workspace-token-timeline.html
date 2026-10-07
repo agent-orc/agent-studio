@@ -255,9 +255,9 @@
       }
     </table>
 
+    <app-workspace-token-model-table [models]="t.models ?? []" [projects]="t.projects" [hiddenProjects]="effectiveDisabled()" [freshness]="t.freshness" [colorFor]="colorFor" />
     <app-better-candidate-usage-report [lines]="t.betterCandidateUsage ?? []" />
 
     <p class="wtt__disc">{{ t.disclaimer }}</p>
   }
 </section>
-  

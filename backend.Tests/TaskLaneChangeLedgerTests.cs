@@ -247,6 +247,19 @@ public class TaskLaneChangeLedgerTests : IDisposable
     }
 
     [Fact]
+    public void PromoteToReadyTop_RejectedLaneMove_ReturnsZero()
+    {
+        SeedJob(TaskStates.HumanReview, "not-ready");
+        var (machine, _, _) = BuildMachine();
+
+        var position = machine.PromoteToReadyTop(
+            "not-ready", _watchPath, expectedSourceState: TaskStates.Ready);
+
+        Assert.Equal(0, position);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.HumanReview, "not-ready")));
+    }
+
+    [Fact]
     public void ArchiveFolder_AndFailedPickupMoves_NameTheirCause()
     {
         SeedJob(TaskStates.Progress, "stale-one");

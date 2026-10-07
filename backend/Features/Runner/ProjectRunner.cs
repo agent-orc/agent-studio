@@ -4008,7 +4008,8 @@ public class ProjectRunner
                 topic,
                 usage,
                 latency,
-                thinkingLevel: thinkingLevel);
+                thinkingLevel: thinkingLevel,
+                cliType: cliType);
         }
     }
 

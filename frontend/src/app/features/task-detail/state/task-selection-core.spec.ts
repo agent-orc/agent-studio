@@ -22,6 +22,8 @@ function makeCore(projectId: string, id: string, overrides: Partial<TaskCore> = 
     id,
     // The server's core taskKey is the board record's taskKey.
     taskKey: `C:/${projectNames[projectId]}::${id}`,
+    watchPath: `C:/${projectNames[projectId]}`,
+    folderPath: `C:/${projectNames[projectId]}/${id}`,
     key: null,
     title: `${projectNames[projectId]} ${id}`,
     kind: 'task',
@@ -40,7 +42,7 @@ function makeCore(projectId: string, id: string, overrides: Partial<TaskCore> = 
     statusSummary: { state: 'missing', originalBytes: 0 },
     prompt: { state: 'ready', text: `prompt of ${id}`, originalBytes: 12 },
     timeline: { state: 'missing', events: [], originalBytes: 0 },
-    coreVersion: 1,
+    coreVersion: '1',
     ...overrides,
   };
 }
@@ -56,8 +58,8 @@ const grouped = (r: HttpRequest<unknown>) => r.url === '/api/v1/studio/board';
 const anyCore = (r: HttpRequest<unknown>) => r.url.endsWith('/core');
 const core = (project: string, id: string) => (r: HttpRequest<unknown>) =>
   r.url === `/api/tasks/${id}/core` && r.params.get('project') === project;
-const detail = (id: string) => (r: HttpRequest<unknown>) =>
-  r.url.startsWith('/api/v1/projects/') && r.url.endsWith(`/tasks/${id}`);
+const legacyDetail = (r: HttpRequest<unknown>) => /\/api\/v1\/projects\/[^/]+\/tasks\/[^/]+$/.test(r.url);
+const anyResource = (r: HttpRequest<unknown>) => r.url.includes('/details/');
 
 function task(project: 'Alpha' | 'Beta', id: string, order: number): TaskInfo {
   const watchPath = `C:/${project}`;
@@ -69,9 +71,11 @@ function task(project: 'Alpha' | 'Beta', id: string, order: number): TaskInfo {
 }
 
 /**
- * AGT-2956 navigation contract: selection seeds the core from the resident
- * board, reads only missing cores (coalesced), warms the next two pager cores
- * after paint and never asks for the grouped board.
+ * AGT-2956 navigation contract on the AGT-2955 core-first selection: a task
+ * switch reads only missing cores through the shared cache, warms the next
+ * two pager cores, never asks for the grouped board or the legacy full
+ * detail, and revalidates the painted core when the board store says it
+ * changed.
  */
 describe('TaskSelectionService · board record reuse', () => {
   let selection: TaskSelectionService;
@@ -82,11 +86,6 @@ describe('TaskSelectionService · board record reuse', () => {
 
   const lane = ['a', 'b', 'c', 'd'].map((id, i) => task('Alpha', id, i));
   const betaTwin = task('Beta', 'a', 0);
-
-  /** One stubbed frame plus the lookahead's trailing macrotask. */
-  const afterPaint = async () => {
-    for (let i = 0; i < 3; i++) await new Promise(resolve => setTimeout(resolve, 0));
-  };
 
   beforeEach(async () => {
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0));
@@ -122,8 +121,10 @@ describe('TaskSelectionService · board record reuse', () => {
   afterEach(() => {
     try {
       tasks.stopLiveUpdates();
-      // Leftover full-detail prefetches are not what these cases assert on.
-      http.match(r => !r.url.endsWith('/core')).forEach(r => r.flush({ info: {} }));
+      selection.closeDetail();
+      // Enrichment of the selected task is covered by task-selection-url.service.spec.ts.
+      http.match(anyResource).forEach(r => r.flush(null, { status: 503, statusText: 'Unavailable' }));
+      http.expectNone(legacyDetail);
       http.verify();
     } finally {
       vi.unstubAllGlobals();
@@ -140,33 +141,28 @@ describe('TaskSelectionService · board record reuse', () => {
     TestBed.tick();
   }
 
-  function answerDetail(info: TaskInfo): void {
-    for (const request of http.match(detail(info.id))) request.flush({ info });
+  /** Answer every live lookahead core; aborted lookahead is dropped. */
+  function answerLookahead(): string[] {
+    const requests = http.match(anyCore).filter(r => !r.cancelled);
+    for (const r of requests) r.flush(makeCore(r.request.params.get('project')!, r.request.url.split('/')[3]));
+    return requests.map(r => r.request.url);
   }
 
-  it('board -> A -> B -> board reads each core once and never the grouped board', async () => {
+  it('board -> A -> B -> board reads each core once and never the grouped board', () => {
     const board = tasks.grouped();
 
     open(lane[0]);
-    // Seeded synchronously from the board record, before any reply.
-    expect(selection.selectedCore()).toMatchObject({
-      state: 'seeded', core: null,
-      seed: { project: 'PROJ-A', id: 'a', lane: '5-human-review', pins: { model: 'sonnet', modelExplicit: true } },
-    });
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    expect(selection.selectedCore()?.state).toBe('ready');
-    answerDetail(lane[0]);
-    await afterPaint();
-    for (const r of http.match(anyCore)) r.flush(makeCore('PROJ-A', r.request.url.split('/')[3]));
+    expect(selection.selectedCore()).toMatchObject({ id: 'a', projectId: 'PROJ-A' });
+    expect(answerLookahead()).toEqual(['/api/tasks/b/core', '/api/tasks/c/core']);
 
     open(lane[1]);
-    // B was warmed by the lookahead: current, no request.
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'b' } });
+    // B was warmed by the lookahead: painted at once, no request.
+    expect(selection.selectedCore()).toMatchObject({ id: 'b' });
     http.expectNone(core('PROJ-A', 'b'));
-    answerDetail(lane[1]);
+    answerLookahead();
 
     selection.closeDetail();
-    await afterPaint();
     expect(selection.selectedCore()).toBeNull();
     http.expectNone(grouped);
     // The board store was never replaced: filters, sort and scroll render
@@ -174,141 +170,50 @@ describe('TaskSelectionService · board record reuse', () => {
     expect(tasks.grouped()).toBe(board);
   });
 
-  it('pager steps reuse visited and lookahead cores without a request', async () => {
+  it('pager steps reuse visited and lookahead cores without a request', () => {
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
-    await afterPaint();
-    const lookahead = http.match(anyCore);
-    expect(lookahead.map(r => r.request.url)).toEqual(['/api/tasks/b/core', '/api/tasks/c/core']);
-    lookahead.forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
+    answerLookahead();
 
     selection.pagerStep(1);
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'b' } });
-    answerDetail(lane[1]);
-    await afterPaint();
+    TestBed.tick();
+    expect(selection.selectedCore()).toMatchObject({ id: 'b' });
     // Window is now c, d: c is resident, only d is requested.
-    http.expectOne(core('PROJ-A', 'd')).flush(makeCore('PROJ-A', 'd'));
+    expect(answerLookahead()).toEqual(['/api/tasks/d/core']);
 
     selection.pagerStep(-1);
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'a' } });
-    answerDetail(lane[0]);
-    await afterPaint();
+    TestBed.tick();
+    expect(selection.selectedCore()).toMatchObject({ id: 'a' });
     http.expectNone(anyCore);
     http.expectNone(grouped);
   });
 
-  it('a pager step without a prefetched detail previews the stepped-to task from its core', async () => {
+  it('A -> D -> A aborts the superseded reads and paints only A', () => {
     open(lane[0]);
-    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-    expect(selection.selected()?.info.id).toBe('a');
-
-    // The two-peer full-detail prefetch for b is still in flight: a miss.
-    selection.pagerStep(1);
-    // The route shows b's board record and its lookahead core, not a's detail.
-    expect(selection.detailPreview()?.taskKey).toBe(lane[1].taskKey);
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'b' }, seed: { id: 'b' } });
-
-    answerDetail(lane[1]);
-    expect(selection.selected()?.info.id).toBe('b');
-    expect(selection.detailPreview()).toBeNull();
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-    http.expectNone(grouped);
-  });
-
-  it('a pager step onto a prefetched detail paints it without a preview', async () => {
-    open(lane[0]);
-    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
-    for (const t of [lane[1], lane[2]]) answerDetail(t);
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-
-    selection.pagerStep(1);
-    expect(selection.selected()?.info.id).toBe('b');
-    expect(selection.detailPreview()).toBeNull();
-    answerDetail(lane[1]);
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-  });
-
-  it('a board click requests the full detail only after the uncached core answered', async () => {
-    selection.openDetailAfterPaint(lane[0]);
-    TestBed.tick();
-    expect(selection.detailPreview()?.taskKey).toBe(lane[0].taskKey);
-    await afterPaint();
-    // The core is still in flight: no enrichment request competes with its paint.
-    http.expectNone(detail('a'));
-    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    await afterPaint();
-    expect(http.match(detail('a')).length).toBeGreaterThan(0);
-    answerDetail(lane[0]);
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-  });
-
-  it('a slow core holds the full detail for a bounded time only', async () => {
-    selection.openDetailAfterPaint(lane[0]);
-    TestBed.tick();
-    const pending = http.expectOne(core('PROJ-A', 'a'));
-    await new Promise(resolve => setTimeout(resolve, 300));
-    await afterPaint();
-    expect(http.match(detail('a')).length).toBeGreaterThan(0);
-    answerDetail(lane[0]);
-    pending.flush(makeCore('PROJ-A', 'a'));
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-  });
-
-  it('a resident core lets a board click request the full detail after one frame', async () => {
-    open(lane[0]);
-    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
-    selection.closeDetail();
-
-    selection.openDetailAfterPaint(lane[0]);
-    TestBed.tick();
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'a' } });
-    http.expectNone(core('PROJ-A', 'a'));
-    await afterPaint();
-    expect(http.match(detail('a')).length).toBeGreaterThan(0);
-    answerDetail(lane[0]);
-    await afterPaint();
-    http.match(anyCore).forEach(r => r.flush(makeCore('PROJ-A', r.request.url.split('/')[3])));
-  });
-
-  it('A -> B -> A with late replies keeps A and issues no duplicate core read', () => {
-    open(lane[0]);
-    const coreA = http.expectOne(core('PROJ-A', 'a'));
+    const firstA = http.expectOne(core('PROJ-A', 'a'));
+    answerLookahead();
     open(lane[3]);
     const coreD = http.expectOne(core('PROJ-A', 'd'));
+    expect(firstA.cancelled).toBe(true);
     open(lane[0]);
-    // A's first read is still in flight and is joined, not repeated.
-    http.expectNone(core('PROJ-A', 'a'));
+    expect(coreD.cancelled).toBe(true);
 
-    coreD.flush(makeCore('PROJ-A', 'd'));
-    expect(selection.selectedCore()?.seed.id).toBe('a');
-    expect(selection.selectedCore()?.core).toBeNull();
-    coreA.flush(makeCore('PROJ-A', 'a'));
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'a' } });
-    // The late D reply still became a retained visited core.
-    expect(cache.isCoreCurrent('PROJ-A', 'd')).toBe(true);
-    for (const t of [lane[0], lane[3]]) answerDetail(t);
+    http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
+    expect(selection.selectedCore()).toMatchObject({ id: 'a' });
+    expect(cache.peekCore('PROJ-A', 'd')).toBeNull();
+    answerLookahead();
     http.expectNone(grouped);
   });
 
   it('identical slugs in two projects select two different cores', () => {
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a', { title: 'alpha a' }));
+    answerLookahead();
     open(betaTwin);
-    expect(selection.selectedCore()).toMatchObject({ state: 'seeded', core: null, seed: { project: 'PROJ-B' } });
+    expect(selection.selectedCore()).toBeNull();
     http.expectOne(core('PROJ-B', 'a')).flush(makeCore('PROJ-B', 'a', { title: 'beta a' }));
-    expect(selection.selectedCore()?.core?.title).toBe('beta a');
-    answerDetail(lane[0]);
+    expect(selection.selectedCore()?.title).toBe('beta a');
+    expect(cache.peekCore('PROJ-A', 'a')?.title).toBe('alpha a');
   });
 
   it('reconnect revalidates the visible core conditionally without dropping it', () => {
@@ -317,17 +222,21 @@ describe('TaskSelectionService · board record reuse', () => {
       pins: { model: 'sonnet', modelExplicit: true, cliType: 'claude', thinkingLevelExplicit: false,
         allowWebAccess: false, noBranchExpected: false },
     }), { headers: { ETag: '"core-a"' } });
-    answerDetail(lane[0]);
+    answerLookahead();
+    const painted = selection.selectedCore();
 
     hub.handlers?.reconnected?.();
     // Reconnect is an actual invalidation: the board resync still runs.
     http.expectOne(grouped).flush({ humanReview: [...lane, betaTwin], gitStateAt: null, stale: false });
     http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
-    expect(selection.selectedCore()).toMatchObject({ state: 'stale', core: { id: 'a' } });
-    const revalidate = http.expectOne(core('PROJ-A', 'a'));
-    expect(revalidate.request.headers.get('If-None-Match')).toBe('"core-a"');
-    revalidate.flush(null, { status: 304, statusText: 'Not Modified' });
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { id: 'a' } });
+    expect(selection.selectedCore()).toBe(painted);
+    const revalidate = http.match(core('PROJ-A', 'a'));
+    expect(revalidate).toHaveLength(1);
+    expect(revalidate[0].request.headers.get('If-None-Match')).toBe('"core-a"');
+    revalidate[0].flush(null, { status: 304, statusText: 'Not Modified' });
+    expect(selection.selectedCore()).toMatchObject({ id: 'a' });
+    expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(true);
+    answerLookahead();
   });
 
   it('a grouped pin change revalidates the selected core once', () => {
@@ -336,7 +245,7 @@ describe('TaskSelectionService · board record reuse', () => {
       pins: { model: 'sonnet', modelExplicit: true, cliType: 'claude', thinkingLevelExplicit: false,
         allowWebAccess: false, noBranchExpected: false },
     }), { headers: { ETag: '"core-a1"' } });
-    answerDetail(lane[0]);
+    answerLookahead();
 
     tasks.refresh(true);
     http.expectOne(grouped).flush({ humanReview: [{ ...lane[0], model: 'opus' }, ...lane.slice(1), betaTwin],
@@ -349,7 +258,7 @@ describe('TaskSelectionService · board record reuse', () => {
       pins: { model: 'opus', modelExplicit: true, cliType: 'claude', thinkingLevelExplicit: false,
         allowWebAccess: false, noBranchExpected: false },
     }));
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { pins: { model: 'opus' } } });
+    expect(selection.selectedCore()?.pins.model).toBe('opus');
     http.expectNone(core('PROJ-A', 'a'));
   });
 
@@ -358,46 +267,53 @@ describe('TaskSelectionService · board record reuse', () => {
     const first = http.expectOne(core('PROJ-A', 'a'));
     hub.handlers?.jobUpdated?.({ ...lane[0], title: 'renamed' });
     first.flush(makeCore('PROJ-A', 'a'), { headers: { ETag: '"core-a1"' } });
-    expect(selection.selectedCore()).toMatchObject({ state: 'stale', core: { id: 'a' } });
+    // The raced reply paints, but is not trusted as current.
+    expect(selection.selectedCore()).toMatchObject({ id: 'a', title: 'Alpha a' });
     const revalidate = http.expectOne(core('PROJ-A', 'a'));
     expect(revalidate.request.headers.get('If-None-Match')).toBe('"core-a1"');
     revalidate.flush(makeCore('PROJ-A', 'a', { title: 'renamed' }), { headers: { ETag: '"core-a2"' } });
-    expect(selection.selectedCore()).toMatchObject({ state: 'ready', core: { title: 'renamed' }, seed: { title: 'renamed' } });
-    answerDetail(lane[0]);
+    expect(selection.selectedCore()?.title).toBe('renamed');
+    http.expectNone(core('PROJ-A', 'a'));
+    answerLookahead();
   });
 
-  it('a deleted selected task clears its core content', () => {
+  it('a deleted selected task revokes its core content', () => {
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
+    answerLookahead();
 
     hub.handlers?.jobDeleted?.({ id: 'a', watchPath: 'C:/Alpha' });
-    expect(selection.selectedCore()).toMatchObject({ core: null });
+    expect(cache.peekCore('PROJ-A', 'a')).toBeNull();
     http.expectOne(core('PROJ-A', 'a')).flush({ state: 'missing' }, { status: 404, statusText: 'Not Found' });
-    expect(selection.selectedCore()).toMatchObject({ state: 'missing', core: null });
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.selected()).toBeNull();
+    expect(selection.detailLoadError()).not.toBeNull();
   });
 
   it('denied access shows no core and evicts the project', () => {
+    cache.getCore('PROJ-A', 'b', lane[1].taskKey).subscribe();
+    http.expectOne(core('PROJ-A', 'b')).flush(makeCore('PROJ-A', 'b'));
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(null, { status: 403, statusText: 'Forbidden' });
-    expect(selection.selectedCore()).toMatchObject({ state: 'denied', core: null });
-    answerDetail(lane[0]);
+    expect(selection.selectedCore()).toBeNull();
+    expect(selection.detailLoadError()).not.toBeNull();
+    expect(cache.peekCore('PROJ-A', 'b')).toBeNull();
+    for (const r of http.match(anyCore)) r.flush(null, { status: 403, statusText: 'Forbidden' });
   });
 
-  it('a project removed from the registry evicts the visible core', () => {
+  it('a project removed from the registry evicts and revokes the visible core', () => {
     open(lane[0]);
     http.expectOne(core('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    answerDetail(lane[0]);
+    answerLookahead();
 
     TestBed.inject(ProjectLookupService).setWorkspaces([{
       id: 'WS', displayName: 'WS', projects: [{ id: 'PROJ-B', displayName: 'Beta', storageLocation: 'C:/Beta' }],
     }] as unknown as RegistryWorkspaceListItem[]);
     TestBed.tick();
     expect(cache.peekCore('PROJ-A', 'a')).toBeNull();
-    expect(selection.selectedCore()?.core).toBeNull();
-    // The handle no longer resolves to a visible project; whatever the view
-    // requests next is answered by the server's access check.
+    // The revalidation is answered by the server's access check.
     for (const r of http.match(anyCore)) r.flush(null, { status: 403, statusText: 'Forbidden' });
+    expect(selection.selectedCore()).toBeNull();
   });
 
   it('removing one project ID evicts its core even when another project has the same display name', () => {

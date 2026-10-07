@@ -32,6 +32,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.role__readiness {
+  grid-column: 2 / -1;
+  color: var(--studio-fg-muted);
+  white-space: nowrap;
+}
+.role__readiness[data-state='capability-ready'] { color: var(--severity-pass); }
+.role__readiness[data-state='connected'] { color: var(--severity-warn); }
+.role__readiness-detail {
+  grid-column: 2 / -1;
+  color: var(--studio-fg-dim);
+  line-height: 1.3;
+}
 .role__restart {
   grid-column: 2 / -1;
   color: var(--studio-fg-muted);

@@ -3,6 +3,11 @@
     <div class="auth-gate__brand">Agent Software Studio</div>
     @if (auth.loading()) {
       <p class="auth-gate__muted">Connecting securely...</p>
+    } @else if (auth.ownerRecoveryCode(); as recoveryCode) {
+      <h1>Store the owner recovery code</h1>
+      <p class="auth-gate__muted">This code is shown once. Keep it with the installation recovery set, outside this browser.</p>
+      <output data-testid="owner-recovery-code">{{ recoveryCode }}</output>
+      <button type="button" data-testid="owner-recovery-acknowledge" (click)="acknowledgeRecoveryCode()">I stored the code</button>
     } @else if (auth.status()?.user?.mustChangePassword) {
       <h1>Choose a new password</h1>
       <p class="auth-gate__muted">Your temporary password must be replaced before Studio opens.</p>
@@ -14,6 +19,9 @@
       <p class="auth-gate__muted">This one-time step closes bootstrap and creates the organization owner.</p>
       <label>Username<input name="username" autocomplete="username" [(ngModel)]="username" required></label>
       <label>Display name<input name="displayName" autocomplete="name" [(ngModel)]="displayName"></label>
+      @if (auth.status()?.bootstrapCodeRequired) {
+        <label>Installer owner code<input name="bootstrapCode" type="password" autocomplete="off" [(ngModel)]="bootstrapCode" required></label>
+      }
       <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" [(ngModel)]="password" required></label>
       <button type="submit" [disabled]="submitting()">Create owner</button>
     } @else {
