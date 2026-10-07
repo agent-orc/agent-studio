@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Agent Studio scenario and smoke Docker image retention
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+Unit=agent-docker-scenario-retention.service
+
+[Install]
+WantedBy=timers.target
