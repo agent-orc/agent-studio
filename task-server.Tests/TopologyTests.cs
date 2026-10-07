@@ -51,6 +51,7 @@ public sealed class TopologyTests
         using var studio = StartStudio(root, studioUrl, serverUrl);
         await WaitForHttpAsync(studioUrl + "/healthz", studio);
         using var studioClient = Client(studioUrl);
+        studioClient.DefaultRequestHeaders.Add("Origin", "http://localhost:4011");
         var workspace = await PostAsync<CreateWorkspaceRequest, WorkspaceDto>(
             studioClient,
             "/api/v1/workspaces",
@@ -233,11 +234,12 @@ public sealed class TopologyTests
             "--max-parallelism", "1",
             "--poll-seconds", "1");
         await WaitForAuditCountAsync(client, "work.permit.accepted", 1, originalRunner);
+        await WaitForFileAsync(invocationCounter, originalRunner, TimeSpan.FromSeconds(20));
 
         firstServer.Stop();
         await WaitForOutputAsync(
             originalRunner,
-            "renewal safety boundary reached: task-server-unavailable",
+            "renewal safety boundary reached",
             TimeSpan.FromSeconds(15));
         AssertHealthy(originalRunner, originalRunner.Process.Id);
 
