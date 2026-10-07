@@ -717,6 +717,33 @@ public sealed partial class TaskServerStoreTests
         Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
     }
 
+    [Theory]
+    [InlineData(27, "project_repositories")]
+    [InlineData(28, "continuation_intents")]
+    public async Task Merged_schema_upgrades_stores_from_either_delivery_branch(
+        int previousVersion, string missingTable)
+    {
+        using var temp = new TempDirectory();
+        var first = Store(temp.Path);
+        await first.InitializeAsync();
+        await using (var connection = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"DROP TABLE {missingTable}; UPDATE meta SET value = '{previousVersion}' WHERE key = 'schema_version';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeAsync();
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
+        await using var verification = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False");
+        await verification.OpenAsync();
+        await using var query = verification.CreateCommand();
+        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents');";
+        Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
+    }
+
     [Fact]
     public async Task Task_row_mapping_accepts_the_legacy_nine_column_projection()
     {

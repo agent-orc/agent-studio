@@ -15,7 +15,12 @@ public static class StudioUserRoles
     public const string Viewer = "viewer";
 }
 
-public sealed record StudioBootstrapRequest(string Username, string Password, string? DisplayName = null);
+/// <summary>
+/// <see cref="BootstrapCode"/> is the installer-armed one-time owner code.
+/// Every authenticated installation requires it; see IdentityBootstrapContracts.
+/// </summary>
+public sealed record StudioBootstrapRequest(
+    string Username, string Password, string? DisplayName = null, string? BootstrapCode = null);
 public sealed record StudioLoginRequest(string Username, string Password);
 public sealed record StudioChangePasswordRequest(string CurrentPassword, string NewPassword);
 
