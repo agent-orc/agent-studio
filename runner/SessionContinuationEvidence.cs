@@ -52,12 +52,13 @@ internal static class SessionContinuationEvidence
     }
 
     /// <summary>
-    /// The attempt id the Task Server fenced for this slot. On the legacy runner
-    /// plane the slot's own attempt id is the lease id (there is no run id),
-    /// while the lease carries the server's attempt id and the completion
-    /// request sends that one; the server rejects continuation evidence whose
-    /// attempt id differs from the completion's. The lease's id wins; the
-    /// slot's id is the fallback for a lease without one.
+    /// The attempt id the Task Server fenced for this slot. The completion
+    /// request sends the lease's attempt id and the server rejects continuation
+    /// evidence whose attempt id differs from it. Since AGT-2985
+    /// <see cref="RunnerStateStore.Create"/> already sets the slot's id from the
+    /// lease, but a slot persisted by an older runner on the legacy plane still
+    /// carries the lease id (there is no run id there), so the lease's id wins
+    /// here; the slot's id is the fallback for a lease without one.
     /// </summary>
     internal static string FencedAttemptId(PersistedRunnerSlot slot)
         => string.IsNullOrWhiteSpace(slot.Lease.AttemptId) ? slot.AttemptId : slot.Lease.AttemptId;

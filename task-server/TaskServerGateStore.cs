@@ -93,20 +93,25 @@ public sealed partial class TaskServerStore
             {
                 if (!await reader.ReadAsync(ct)) throw new KeyNotFoundException("Gate source run was not found.");
                 if (reader.GetString(0) != request.TaskId
-                    || !string.Equals(reader.IsDBNull(1) ? null : reader.GetString(1), request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
+                    || request.BatchId is null
+                    && !string.Equals(reader.IsDBNull(1) ? null : reader.GetString(1), request.ExpectedSha, StringComparison.OrdinalIgnoreCase)
                     || (reader.IsDBNull(2) ? null : reader.GetString(2)) != request.RepositoryId)
                     throw new TaskServerConflictException("gate-source-mismatch", "Gate source does not match the fenced run result.");
                 ValidateOptionalSourceField(reader, 3, request.RepositoryUrl, "repository URL");
-                ValidateOptionalSourceField(reader, 4, request.ResultRef, "result ref");
+                if (request.BatchId is null)
+                    ValidateOptionalSourceField(reader, 4, request.ResultRef, "result ref");
                 ValidateOptionalSourceField(reader, 5, request.SourceBundleArtifactId, "source bundle artifact");
                 ValidateOptionalSourceField(reader, 6, request.SourceBundleSha256, "source bundle digest");
             }
+            if (request.BatchId is not null)
+                await ValidateBatchMembersAsync(connection, transaction, request, ct);
             var now = UtcNow;
             var subject = new GateSubject($"gsub_{Guid.NewGuid():N}", request.TaskId, request.SourceRunId,
                 request.RepositoryId, request.RepositoryUrl, request.ExpectedSha.ToLowerInvariant(), request.ResultRef,
                 request.SourceBundleArtifactId, request.SourceBundleSha256, request.PlanHash.ToLowerInvariant(),
                 request.PolicyHash, request.PipelineDefinitionVersion, request.TestSelectionAuditDigest,
-                request.Plan, now, request.DispatchDeadline.ToUniversalTime(), request.MaxAttempts);
+                request.Plan, now, request.DispatchDeadline.ToUniversalTime(), request.MaxAttempts,
+                request.BatchId, request.MembershipDigest, request.BaseSha, request.MemberRunIds);
             var attemptId = $"gat_{Guid.NewGuid():N}";
             await ExecuteAsync(connection, """
                 INSERT INTO gate_subjects(id, task_id, source_run_id, gate_id, plan_hash, policy_hash,
@@ -237,6 +242,17 @@ public sealed partial class TaskServerStore
                     candidates.Add((reader.GetString(0), JsonSerializer.Deserialize<GateSubject>(reader.GetString(1), GateJson)!, reader.GetInt32(2)));
             foreach (var candidate in candidates)
             {
+                if (candidate.Number > 1)
+                {
+                    var previousHost = await ScalarAsync(connection, """
+                        SELECT host_id FROM gate_attempts
+                         WHERE subject_id = $subject AND attempt_number = $previous;
+                        """, ct, transaction,
+                        ("$subject", candidate.Subject.SubjectId),
+                        ("$previous", candidate.Number - 1)) as string;
+                    if (string.Equals(previousHost, hostId, StringComparison.Ordinal))
+                        continue; // A same-SHA infrastructure retry needs a different healthy host.
+                }
                 var required = new HashSet<string>(candidate.Subject.Plan.RequiredCapabilities, StringComparer.Ordinal)
                 {
                     GateCapabilities.Executor, CapabilityProtocol.RepositoryAccess,
@@ -462,6 +478,27 @@ public sealed partial class TaskServerStore
             || (string.IsNullOrWhiteSpace(request.ResultRef) &&
                 (string.IsNullOrWhiteSpace(request.SourceBundleArtifactId) || !ValidDigest(request.SourceBundleSha256, 64))))
             throw new ArgumentException("Gate subject requires a bounded, exact source and all audit identities.");
+        if (request.BatchId is not null)
+        {
+            var candidatePrefix = $"refs/agent-studio/batch-candidates/{request.BatchId}/{request.MembershipDigest}/";
+            if (!Guid.TryParseExact(request.BatchId, "N", out _)
+                || !ValidDigest(request.MembershipDigest, 64)
+                || !ValidDigest(request.BaseSha, 40, 64)
+                || request.MemberRunIds is not { Count: > 0 and <= 8 }
+                || request.MemberRunIds.Distinct(StringComparer.Ordinal).Count() != request.MemberRunIds.Count
+                || !request.MemberRunIds.Contains(request.SourceRunId, StringComparer.Ordinal)
+                || request.ResultRef is null
+                || !request.ResultRef.StartsWith(candidatePrefix, StringComparison.Ordinal)
+                || !long.TryParse(request.ResultRef[candidatePrefix.Length..], out var candidateFence)
+                || candidateFence <= 0
+                || request.SourceBundleArtifactId is not null)
+                throw new ArgumentException("Batch gate subject requires a closed manifest identity and candidate ref.");
+            if (request.Plan.SubjectBindingDigest != request.MembershipDigest)
+                throw new ArgumentException("Batch gate plan must bind its membership digest.");
+        }
+        else if (request.MembershipDigest is not null || request.BaseSha is not null
+                 || request.MemberRunIds is not null)
+            throw new ArgumentException("Batch identity fields require a batch id.");
         var plan = request.Plan;
         if (plan.GateId != "post-build-test-gate" || plan.Version < 1 || plan.Commands.Count is < 1 or > 32
             || plan.OverallTimeoutSeconds is < 1 or > 21600 || plan.MaxOutputBytes is < 1 or > 1048576
@@ -490,7 +527,29 @@ public sealed partial class TaskServerStore
             && existing.PipelineDefinitionVersion == request.PipelineDefinitionVersion
             && existing.TestSelectionAuditDigest == request.TestSelectionAuditDigest
             && existing.DispatchDeadline == request.DispatchDeadline.ToUniversalTime()
-            && existing.MaxAttempts == request.MaxAttempts;
+            && existing.MaxAttempts == request.MaxAttempts
+            && existing.BatchId == request.BatchId
+            && existing.MembershipDigest == request.MembershipDigest
+            && existing.BaseSha == request.BaseSha
+            && (existing.MemberRunIds ?? []).SequenceEqual(request.MemberRunIds ?? [], StringComparer.Ordinal);
+
+    private static async Task ValidateBatchMembersAsync(
+        SqliteConnection connection, SqliteTransaction transaction,
+        CreateGateSubjectRequest request, CancellationToken ct)
+    {
+        foreach (var runId in request.MemberRunIds!)
+        {
+            await using var command = Command(connection, """
+                SELECT repository_id, result_sha FROM runs WHERE id = $run;
+                """, transaction, ("$run", runId));
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)
+                || reader.IsDBNull(0) || reader.GetString(0) != request.RepositoryId
+                || reader.IsDBNull(1) || !ValidDigest(reader.GetString(1), 40, 64))
+                throw new TaskServerConflictException("batch-gate-member-mismatch",
+                    "A batch member run is missing its settled result SHA or repository identity.");
+        }
+    }
 
     private static void ValidateGateReport(GatePlan plan, GateReport report)
     {

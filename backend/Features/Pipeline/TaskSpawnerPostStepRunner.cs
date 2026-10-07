@@ -25,7 +25,11 @@ public sealed record TaskSpawnerResult(
     string? TargetKey = null,
     string? TargetJobId = null,
     string? TargetProjectName = null,
-    string? Model = null);
+    string? Model = null,
+    // The evaluation call's receipt and effective level, so the step row
+    // records what deciding cost. Null when no model was called.
+    OrchestratorTokenUsage? Usage = null,
+    string? ThinkingLevel = null);
 
 /// <summary>
 /// The evidence + resolved config the spawner needs for one source task. The
@@ -146,23 +150,27 @@ public sealed class TaskSpawnerPostStepRunner
             return new TaskSpawnerResult(TaskSpawnerVerdict.Error, "evaluation call failed: " + ex.Message, Model: ctx.Model);
         }
 
+        var ranModel = result.EffectiveModel ?? result.Usage?.Model ?? ctx.Model;
+        var ranLevel = result.EffectiveThinkingLevel ?? ctx.ThinkingLevel;
         if (result is { Ok: false })
         {
             return new TaskSpawnerResult(TaskSpawnerVerdict.Error,
                 "evaluation CLI failed: " + (string.IsNullOrWhiteSpace(result.Error) ? "no output" : result.Error),
-                Model: ctx.Model);
+                Model: ranModel, Usage: result.Usage, ThinkingLevel: ranLevel);
         }
 
         var reply = !string.IsNullOrWhiteSpace(result.ParsedText) ? result.ParsedText : result.Stdout;
         var decision = TaskSpawnerDecisionParser.Parse(reply);
         if (!decision.Relevant)
             return new TaskSpawnerResult(TaskSpawnerVerdict.NotRelevant,
-                decision.Reason ?? "model judged the change not relevant", Model: ctx.Model);
+                decision.Reason ?? "model judged the change not relevant",
+                Model: ranModel, Usage: result.Usage, ThinkingLevel: ranLevel);
         if (!decision.CanSpawn)
             return new TaskSpawnerResult(TaskSpawnerVerdict.NotRelevant,
-                "relevant but the model produced no follow-up prompt", Model: ctx.Model);
+                "relevant but the model produced no follow-up prompt",
+                Model: ranModel, Usage: result.Usage, ThinkingLevel: ranLevel);
 
-        return Spawn(ctx, decision);
+        return Spawn(ctx, decision) with { Model = ranModel, Usage = result.Usage, ThinkingLevel = ranLevel };
     }
 
     private TaskSpawnerResult Spawn(TaskSpawnerRunContext ctx, TaskSpawnerDecision decision)

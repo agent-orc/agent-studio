@@ -106,58 +106,20 @@ public sealed partial class TaskServerStore
     public async Task<TaskLifecycleResponse> ContinueTaskAsync(
         string projectId, string taskIdentity, ContinueTaskRequest request, string actorId, CancellationToken ct)
     {
-        RequireWritable();
-        if (string.IsNullOrWhiteSpace(request.Prompt))
-            throw new ArgumentException("A continuation prompt is required.");
-        TaskLifecycleResponse? result = null;
-        await InWriteTransactionAsync(async (connection, transaction) =>
-        {
-            var existing = await ReadTaskAsync(connection, transaction, projectId, taskIdentity, ct)
-                ?? throw new KeyNotFoundException("Task was not found.");
-            if (existing.State == StudioTaskLanes.Archive)
-                throw new TaskServerConflictException("task-archived", "An archived task cannot be continued.");
-            if (existing.State == StudioTaskLanes.Progress)
-                throw new TaskServerConflictException(
-                    "task-active", "Stop the active run before continuing this task.");
-            var now = UtcNow;
-            var rank = await NextRankAsync(connection, transaction, existing.ProjectId, StudioTaskLanes.Ready, ct);
-            await ExecuteAsync(connection, """
-                UPDATE tasks SET state = $state, rank = $rank, version = version + 1, updated_at = $updated
-                 WHERE id = $id;
-                INSERT INTO pending_follow_ups(
-                    task_id, state, prompt, mode, prompt_sha256, saved_at,
-                    saved_reason, author, run_id)
-                VALUES ($id, 'queued', $prompt, $mode, $hash, $updated,
-                        'operator-continue', $author, NULL)
-                ON CONFLICT(task_id) DO UPDATE SET
-                    state = excluded.state,
-                    prompt = excluded.prompt,
-                    mode = excluded.mode,
-                    prompt_sha256 = excluded.prompt_sha256,
-                    saved_at = excluded.saved_at,
-                    saved_reason = excluded.saved_reason,
-                    author = excluded.author,
-                    run_id = NULL;
-                """, ct, transaction,
-                ("$state", StudioTaskLanes.Ready), ("$rank", rank), ("$updated", Iso(now)), ("$id", existing.TaskId),
-                ("$prompt", request.Prompt), ("$mode", string.IsNullOrWhiteSpace(request.Mode) ? "continue" : request.Mode),
-                ("$hash", FollowUpPromptDigest.Compute(request.Prompt)), ("$author", actorId));
-            await AuditAsync(connection, transaction, actorId, "task.continue-requested", "task", existing.TaskId,
-                JsonSerializer.Serialize(new { request.Model, request.CliType, request.ThinkingLevel, request.Mode }), ct);
-            result = new TaskLifecycleResponse(
-                existing with { State = StudioTaskLanes.Ready, Version = existing.Version + 1, UpdatedAt = now });
-        }, ct);
-        // The continuation instruction itself is persisted on the task's durable
-        // orchestrator context turn timeline, so the runner that next claims this
-        // task can read the latest instruction the same way it reads chat turns.
-        await AppendOrchestratorContextTurnAsync(
-            result!.Task.ProjectId,
-            result.Task.TaskId,
-            new AppendOrchestratorContextTurnRequest(
-                new OrchestratorContextTurnDto($"continue_{Guid.NewGuid():N}", UtcNow, "user", request.Prompt)),
-            actorId,
-            ct);
-        return result;
+        var task = await GetTaskAsync(projectId, taskIdentity, ct)
+            ?? throw new KeyNotFoundException("Task was not found.");
+        var prior = request.CommandId is null ? null : await GetContinuationIntentAsync(
+            projectId, taskIdentity, request.CommandId, ct);
+        var receipt = await SubmitContinuationIntentAsync(projectId, taskIdentity,
+            new ContinuationIntentRequest(1, request.CommandId ?? $"studio:{Guid.NewGuid():N}",
+                request.ExpectedTaskVersion ?? prior?.Receipt.ExpectedTaskVersion ?? task.Version,
+                request.Prompt, request.Model,
+                request.CliType, request.ThinkingLevel,
+                string.IsNullOrWhiteSpace(request.Mode) ? "continue" : request.Mode,
+                request.Reason ?? "operator-continue"), actorId, ct);
+        var current = await GetTaskAsync(projectId, taskIdentity, ct)
+            ?? throw new KeyNotFoundException("Task was not found.");
+        return new TaskLifecycleResponse(current, ContinuationReceipt: receipt);
     }
 
     private static async Task<FollowUpDeliveryDto?> ReadPendingFollowUpAsync(
@@ -189,6 +151,7 @@ public sealed partial class TaskServerStore
         string actorId,
         CancellationToken ct)
     {
+        await SupersedeQueuedContinuationsAsync(connection, transaction, taskId, actorId, ct);
         var followUp = await ReadPendingFollowUpAsync(connection, transaction, taskId, ct);
         if (followUp is null) return;
         await ExecuteAsync(connection,

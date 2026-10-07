@@ -183,7 +183,8 @@ public sealed class AspectRunnerService
         Func<string, string>? modelForAspect = null,
         Func<string, string?>? thinkingLevelForAspect = null,
         Func<string, string?>? promptForAspect = null,
-        Func<string, string?>? cliForAspect = null)
+        Func<string, string?>? cliForAspect = null,
+        Func<string, string?>? modelSourceForAspect = null)
     {
         var now = DateTime.UtcNow;
 
@@ -239,8 +240,11 @@ public sealed class AspectRunnerService
                 var stepPrompt = promptForAspect?.Invoke(entry.Def.Id);
                 var stepCli = cliForAspect?.Invoke(entry.Def.Id);
                 if (string.IsNullOrWhiteSpace(stepCli)) stepCli = cliBinary;
+                // Without a per-aspect resolver the run-wide model comes from
+                // host configuration (ReviewDecisionOrchestrator:AspectModel).
+                var stepModelSource = modelSourceForAspect?.Invoke(entry.Def.Id) ?? "config";
                 return RunOneAspectAsync(entry.Index, entry.Def, inputs, stepCli, stepModel, stepThinkingLevel,
-                    stepPrompt, perAspectTimeout, gate, now, ct);
+                    stepPrompt, perAspectTimeout, gate, now, ct, stepModelSource);
             })
             .ToArray();
 
@@ -319,7 +323,8 @@ public sealed class AspectRunnerService
         TimeSpan perAspectTimeout,
         SemaphoreSlim gate,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? modelSource = null)
     {
         await gate.WaitAsync(ct);
         try
@@ -331,6 +336,8 @@ public sealed class AspectRunnerService
                 StepId = pipelineStepId,
                 Kind = StepKind.Aspect,
                 Model = model,
+                ThinkingLevel = thinkingLevel,
+                ModelSource = modelSource,
                 Status = PipelineStepStatus.Running,
                 StartedAt = startedAt,
             });
@@ -351,10 +358,17 @@ public sealed class AspectRunnerService
             // A second non-empty but malformed reply is surfaced as
             // review:unparseable; a second empty/dead reply is infrastructure.
             var envRetries = 0;
+            // A verdict retry is a second paid call; the step row carries the
+            // sum of every call so the ledger does not drop the first one.
+            long spentInput = 0, spentOutput = 0, spentCacheRead = 0, spentCacheCreation = 0;
             while (true)
             {
                 (response, ok, callUsage, durationMs) =
                     await InvokeAspectCliAsync(def, inputs, cliBinary, model, thinkingLevel, prompt, perAspectTimeout, ct);
+                spentInput += callUsage?.InputTokens ?? 0;
+                spentOutput += callUsage?.OutputTokens ?? 0;
+                spentCacheRead += callUsage?.CacheReadTokens ?? 0;
+                spentCacheCreation += callUsage?.CacheCreationTokens ?? 0;
 
                 var parsed = AspectVerdictParsing.ParseVerdict(response);
                 if (parsed != null)
@@ -431,8 +445,8 @@ public sealed class AspectRunnerService
                 await File.WriteAllTextAsync(Path.Combine(inputs.JobFolderPath, mdName), report, ct);
                 _fileGenerationIndex?.Upsert(inputs.JobFolderPath, genMeta with { File = mdName });
 
-                // Structured JSON source of truth (one source, two renderings —
-                // concept doc §5). Strictly additive: the Files tab prefers it
+                // Structured JSON is the source of truth for two renderings
+                // (concept doc §5). Strictly additive: the Files tab prefers it
                 // and suppresses the markdown twin from the list, but the twin
                 // stays on disk for backend readers and older UIs.
                 var jsonBody = AspectVerdictParsing.RenderJson(verdict, resolvedModel, now);
@@ -453,6 +467,9 @@ public sealed class AspectRunnerService
                 StepId = pipelineStepId,
                 Kind = StepKind.Aspect,
                 Model = callUsage?.Model ?? model,
+                ThinkingLevel = callUsage?.ThinkingLevel ?? thinkingLevel,
+                ModelSource = modelSource,
+                EvidenceRef = $"aspect-{def.Id}.md",
                 // An infra crash (dead reviewer, no verdict after the retry) is a
                 // Failed step flagged environmental so a reviewer never reads it as
                 // a failed change; a healthy run is Passed, a soft CLI error is
@@ -461,10 +478,10 @@ public sealed class AspectRunnerService
                 StartedAt = startedAt,
                 CompletedAt = completedAt,
                 DurationMs = durationMs > 0 ? durationMs : (long)(completedAt - startedAt).TotalMilliseconds,
-                InputTokens = callUsage?.InputTokens ?? 0,
-                OutputTokens = callUsage?.OutputTokens ?? 0,
-                CacheReadTokens = callUsage?.CacheReadTokens ?? 0,
-                CacheCreationTokens = callUsage?.CacheCreationTokens ?? 0,
+                InputTokens = spentInput,
+                OutputTokens = spentOutput,
+                CacheReadTokens = spentCacheRead,
+                CacheCreationTokens = spentCacheCreation,
                 InputIncludesCached = callUsage?.InputIncludesCached,
                 Verdict = verdict.IsInfraFailure ? "environmental" : AspectVerdictParsing.StatusToken(verdict.Status),
                 Reason = verdict.IsInfraFailure
@@ -581,7 +598,7 @@ public sealed class AspectRunnerService
         sb.AppendLf();
         sb.AppendLf("Reply with a short paragraph or two (under 200 words) plus EXACTLY one verdict sentinel on its own line.");
         sb.AppendLf();
-        sb.AppendLf("Required sentinel format (literal characters — do NOT wrap in code fences, blockquotes, or quotes):");
+        sb.AppendLf("Required sentinel format (literal characters; do NOT wrap in code fences, blockquotes, or quotes):");
         sb.AppendLf();
         sb.AppendLf("[[ASPECT_VERDICT: status=<pass|concerns|block>; summary=<one short sentence, no semicolons or brackets>; evidence_checked=<comma-separated repository paths or none>; missing=<specific finding or none>]]");
         sb.AppendLf();
@@ -594,9 +611,9 @@ public sealed class AspectRunnerService
         sb.AppendLf("> [[TASK_DONE]]");
         sb.AppendLf();
         sb.AppendLf("Status values:");
-        sb.AppendLf("  pass     — aspect is fine, no follow-up needed");
-        sb.AppendLf("  concerns — aspect has issues a human should look at; not blocking");
-        sb.AppendLf("  block    — aspect has a defect that must be fixed before sign-off");
+        sb.AppendLf("  pass     - aspect is fine, no follow-up needed");
+        sb.AppendLf("  concerns - aspect has issues a human should look at; not blocking");
+        sb.AppendLf("  block    - aspect has a defect that must be fixed before sign-off");
         sb.AppendLf();
         sb.AppendLf("After the sentinel, end with [[TASK_DONE]] on its own line.");
         return sb.ToString();
@@ -684,7 +701,7 @@ public sealed class AspectRunnerService
             // can drill in. But tag it as `review:unparseable` (NOT
             // `{namespace}:concerns`) so the operator can distinguish
             // "model has a real concern" from "model didn't follow the
-            // verdict format" — these are very different signals when
+            // verdict format"; these are very different signals when
             // sorting / scanning the human-review lane. See F1 in the
             // 2026-05-21 probe findings.
             return new AspectVerdict(
