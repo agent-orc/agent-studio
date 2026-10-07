@@ -120,6 +120,23 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
     }
 
     [Fact]
+    public async Task Missing_bus_uses_durable_receipt_before_committing_the_reply()
+    {
+        var harness = BuildHarness(withBus: false);
+
+        var reply = await harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
+        {
+            InputTokens = 120,
+            OutputTokens = 30,
+        });
+
+        Assert.Equal("remote reply", reply.Text);
+        var receipt = Assert.Single(ChatUsageFallbackReceipts.Read(_root, ProjectName).Entries);
+        Assert.Equal(RunnerId, receipt.TokenUsage?.Host);
+        Assert.Equal(120, receipt.TokenUsage?.InputTokens);
+    }
+
+    [Fact]
     public async Task Failed_bus_and_fallback_writes_fail_the_request_visibly()
     {
         var harness = BuildHarness();
@@ -135,9 +152,11 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         }));
         Assert.Contains("could not be recovered", error.Message);
         Assert.Single(harness.Logger.Warnings);
+        Assert.DoesNotContain(harness.Service.Read(harness.WatchPath),
+            turn => turn.Role == OrchestratorChatRoles.Orchestrator);
     }
 
-    private Harness BuildHarness()
+    private Harness BuildHarness(bool withBus = true)
     {
         var watchPath = Path.Combine(_root, "projects", ProjectName);
         var repositoryPath = Path.Combine(_root, "repository");
@@ -176,7 +195,8 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         var service = new OrchestratorChatService(
             new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
             runner, sessionStore, bootstrap, scanner, configuration, logger,
-            projectSettings: settings, projects: projects, remoteWork: broker, bus: bus);
+            projectSettings: settings, projects: projects, remoteWork: broker,
+            bus: withBus ? bus : null);
         return new Harness(service, broker, watchPath, logger, configuration);
     }
 

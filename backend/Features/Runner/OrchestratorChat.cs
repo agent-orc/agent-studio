@@ -782,12 +782,12 @@ public class OrchestratorChatService
                     FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
-                await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
-                localOutcome = failure;
                 if (result is not null)
                     await RecordChatUsageAsync(projectName, result,
                         remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
                         remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
+                await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
+                localOutcome = failure;
                 return failure;
             }
 
@@ -822,11 +822,11 @@ public class OrchestratorChatService
                     FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
-                await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
-                localOutcome = failure;
                 await RecordChatUsageAsync(projectName, result,
                     remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
                     remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
+                await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
+                localOutcome = failure;
                 return failure;
             }
 
@@ -852,11 +852,11 @@ public class OrchestratorChatService
                 FinishedAt = remoteResult?.FinishedAt ?? DateTime.UtcNow,
                 ContextReceipt = contextReceipt
             };
-            await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
-            localOutcome = reply;
             await RecordChatUsageAsync(projectName, result,
                 remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
                 remoteResult?.ThinkingLevel ?? thinkingLevel, reply.FinishedAt ?? DateTime.UtcNow, reply.Id).ConfigureAwait(false);
+            await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
+            localOutcome = reply;
             return reply;
         }
         finally
@@ -874,8 +874,8 @@ public class OrchestratorChatService
     /// chat store keeps the transcript; the ledger is what the workspace
     /// timeline and project surfaces aggregate. Remote turns carry the runner
     /// id as host; local and fallback turns carry <c>local</c>.
-    /// The write is awaited. If the bus is unavailable, a durable fallback
-    /// receipt is written before returning the already-persisted transcript.
+    /// The write is awaited before the assistant turn is persisted. If the bus
+    /// is unavailable, a durable fallback receipt is written first.
     /// The merged ledger reads that receipt, including after a restart.
     /// </summary>
     private async Task RecordChatUsageAsync(
@@ -887,23 +887,26 @@ public class OrchestratorChatService
         string turnId)
     {
         var entry = BuildChatUsage(result, host, thinkingLevel);
-        if (_bus is null || entry is null) return;
+        if (entry is null) return;
         var recorded = false;
         Exception? error = null;
-        try
+        if (_bus is not null)
         {
-            recorded = await _bus.EmitTokenUsageAsync(
-                projectName,
-                jobId: null,
-                AgentMessageBusBridge.ParticipantOrchestratorFor(projectName),
-                OrchestratorChatUsageTopic,
-                entry,
-                createdAt: finishedAt,
-                ct: CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            error = ex;
+            try
+            {
+                recorded = await _bus.EmitTokenUsageAsync(
+                    projectName,
+                    jobId: null,
+                    AgentMessageBusBridge.ParticipantOrchestratorFor(projectName),
+                    OrchestratorChatUsageTopic,
+                    entry,
+                    createdAt: finishedAt,
+                    ct: CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
         }
         if (!recorded)
         {

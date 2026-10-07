@@ -50,12 +50,12 @@ timestamp, token dimensions).
 | Orchestrator chat turn (remote, fallback, local) | `OrchestratorChatService.RecordChatUsageAsync` | Project bus, or a durable chat fallback receipt if the bus append fails; `orchestrator:<project>`, topic `orchestrator-chat`, host = runner id or `local`, CLI, level |
 
 Each writer replaces its own participant's rows, so a replayed completion or
-report never counts twice. The chat row is awaited before the turn returns,
-since it is that turn's only timeline usage record. A failed bus append logs
+report never counts twice. The chat row is awaited before the assistant turn is
+committed, since it is that turn's only timeline usage record. A failed bus append logs
 the project, host, and model and writes an atomic fallback receipt under
 `TaskRepository/chat-usage-fallback/` before returning the persisted reply.
 The merged reader includes this source after restart; failure of both writes
-fails the request visibly. Every row keeps normalized
+fails the request visibly without committing an assistant turn. Every row keeps normalized
 uncached `input` and `cacheRead` separately (see the next section); no reader
 subtracts cache reads again. Rows written before host attribution resolve to `local` (bus) or
 `remote-unrecorded` (remote receipts) through `TokenUsageHost.Resolve`.
