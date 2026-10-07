@@ -73,6 +73,169 @@ update attempts to restart the installed version. Run
 `agent-studio-setup uninstall` to stop and remove containers while retaining
 the data volumes; add `--purge` to remove the volumes and installer files.
 
+## Installation journeys, preflight, and re-runs
+
+`agent-studio-setup` is one installer for four journeys. `--journey` selects
+the installer mode:
+
+| Journey | Mode | Purpose |
+| --- | --- | --- |
+| `one-box` | `studio` | Whole system on one machine; a workstation is a placement |
+| `join-host` | `agent-host` | Add a runner host to the existing Task Server |
+| `attach-studio` | `connector` | Attach Studio to a remote Task Server |
+| `relocate-authority` | `control-plane` | Move Task Server and engine to an always-on box |
+
+Each run prints the journey's facts first: prerequisites, storage, release
+pin, human identity, project origin, first runner and budgets. It then prints
+the checkpoints the journey must reach. Run `agent-studio-setup preflight
+--journey NAME [--server-url URL] [--backup-path PATH]` to check a host
+without changing it. Install runs the same checks first. A failed check names
+its recovery action; for example `wsl --install`, `wg-quick up wg0`, the
+private CA certificate, or `chmod 600` for a token file. Checks that the
+journey does not need report `n/a`. Docker and Compose are required only for
+`--target docker`; a Windows connector does not require Hyper-V or 20 GiB
+of repository space.
+
+Preflight probes the existing authority that the run will contact. A
+`join-host` run decodes its join token first and probes the authority URL in
+that token. A malformed token fails before any check, and a `--server-url`
+that differs from the token's URL is refused. `attach-studio` and
+`relocate-authority` probe `--server-url`; an interactive connector install
+asks for the URL and token file before preflight, so prompted values pass the
+same checks. A journey that needs an authority fails the `Authority URL` check
+when no URL is known. A fresh one-box or `--mode control-plane` install does
+not probe the URL it is about to serve. Reachability is probed for `https`
+and loopback `http` URLs. An unreachable authority reports a connectivity
+failure; certificate trust is checked only for `https`, after a TLS handshake.
+On Windows, execution runs in Linux
+containers under Docker Desktop with WSL 2. The host advertises `linux-x64`.
+There is no native Windows execution exemption from AGT-W51.
+
+The installer writes an owner-only `installation.json` manifest. It records
+the installation id, release pin, principal names, project origin, first
+runner and budgets, and never secrets. Re-running install keeps the id,
+principals and data. An interrupted install resumes when you rerun it with the
+same release. An interrupted `update` resumes when rerun with its target
+release; `installation.json` marks that pin as `updating` until health succeeds,
+while `install-state.json` retains the observed running release. Finish the
+interrupted update before rollback, so a stale previous-release pin cannot be
+activated. A different release needs `update` or `rollback`, and the
+installer rejects a downgrade over preserved data. Setup records a new release
+pin only after that release passes artifact verification and before services
+change. An unavailable or mistyped version therefore leaves no pin, and a
+rerun with the corrected version proceeds. If another setup run changed
+`installation.json` in the meantime, setup stops instead of overwriting it. Token and join-token files
+must be owner-only; the installer does not accept secrets as arguments or in
+answer files. `uninstall` keeps data and the manifest, so a later install
+keeps the same installation id. Only `--purge` deletes them. On Linux native
+hosts, pass the installed role (`--journey one-box` or `--journey join-host`),
+and use `--target native` for a one-box host. The installer stops and disables
+the owned systemd units; an explicit purge also deletes that role's local
+configuration, release tree and state. On a Docker control-plane host, purge
+removes the Compose volumes. The separately mounted off-host backup remains.
+For delegated Linux modes, `--install-dir` selects the configuration root used
+by both install and uninstall. An explicit purge removes that root and the
+role's installed release and state; it does not delete the default
+configuration root when a different root was selected.
+`checkpoints.jsonl` records observed installer checkpoints with host,
+platform, setup version and release provenance. A rollback records its release
+as `retained`, not as verified in that run. A connector records
+`authority-reachable` only for the install that probed the authority. Install
+records identity bootstrap, authenticated canary and recovery checkpoint as
+`not reached`; `accept` observes them. Linux native single and control-plane
+manifests live under `/etc/agent-orchestrator`; the agent-host manifest lives
+under `/etc/agent-host` (or `--install-dir` when supplied).
+
+### Acceptance
+
+After a one-box install, bootstrap the first human session, register the
+canonical Git project origin, and enrol the first runner with finite coding
+and review budgets. Until acceptance passes, a one-box `installation.json` has
+phase `awaiting-acceptance`; service health alone does not change it to
+`complete`. Then run acceptance on the authority host:
+
+```bash
+export AGENT_ORCHESTRATOR_CANARY_COMMAND='/path/to/detached-canary'
+agent-studio-setup accept --server-url https://tasks.wg.internal \
+  --token-file /path/to/management.token [--backup-path /path/to/backups]
+```
+
+`accept` reads the management token from an owner-only file and sends it only
+to the Task Server. It stops at the first checkpoint it cannot observe. That
+checkpoint is recorded as `not reached` with the next action, and the command
+exits with code 2:
+
+1. `identity-bootstrapped`: the Task Server accepts the token and lists active
+   studio, engine and runner principals. A runner must have contacted it.
+2. `recovery-checkpoint`: without `--recovery-checkpoint`, `accept` creates a
+   [full backup set](./task-server.md#full-backup-sets) and has the Task Server
+   verify it. That run records `recovery-set-verified` and names the set.
+   Rehearse that set's restore into an isolated empty store, write
+   `BACKUP_SET.rehearsal.json` as described for relocation below, and rerun
+   with `--recovery-checkpoint BACKUP_PATH/full/BACKUP_ID`. The rerun
+   recalculates the set's file and set hashes. It requires a rehearsal receipt
+   for this installation id and a matching Task Server verification.
+3. `authenticated-canary`: `accept` runs `AGENT_ORCHESTRATOR_CANARY_COMMAND`,
+   the canary contract that `update-docker.sh` already uses. It is bounded to 60
+   minutes. The command receives `AGENT_STUDIO_INSTALLATION_ID`,
+   `AGENT_STUDIO_SERVER_URL` and `AGENT_STUDIO_TOKEN_FILE` (a path, never the
+   token value). It must drive the provider-authenticated coding, review and
+   canonical publication canary; the
+   [deployment scenario](../testing/deployment-scenario.md) defines that
+   evidence. An unset command leaves the checkpoint pending. A non-zero exit or
+   timeout is recorded as `failed`.
+
+When all three checkpoints are observed in the same run, `accept` records
+`accepted` and sets the phase to `complete` (exit 0). It refuses to complete a
+manifest that another setup run changed during the canary. A rejected token is
+reported as an invalid credential. `accept` also applies to a relocated
+authority after network cutover.
+
+`relocate-authority` is the final certification step of the gated migration.
+First drain the source, resolve every attempt, enter Maintenance and create a
+full backup set. Verify it with `task-server backup verify-full BACKUP_ID` and
+rehearse `restore-full` into an isolated empty store. Freeze the source and
+retain its `installation.json`, D6 runtime manifest, credentials, repository
+origins and network configuration. Stage the complete set in the new host's
+Task Server backup directory, start that target in Maintenance, and place the
+source `installation.json` at the destination configuration root. Follow the
+[Task Server recovery procedure](./task-server.md#full-backup-sets) for the
+data and archive paths.
+Keep the old authority in Maintenance until cutover is proven.
+
+Record the rehearsal result in `BACKUP_SET.rehearsal.json`, beside the backup
+set directory. Its JSON fields are `backupId`, `setSha256`, `installationId`,
+`verified: true` and `restoredIntoEmptyTarget: true`; use the id and hash from
+the Task Server verify result. Run:
+
+```bash
+agent-studio-setup --journey relocate-authority \
+  --source-manifest /path/to/source/installation.json \
+  --recovery-checkpoint /path/to/full-backup/BACKUP_ID \
+  --authority-frozen --backup-path /path/to/offhost-backups \
+  --server-url https://new-authority.wg.internal \
+  --token-file /path/to/target-management.token
+```
+
+The installer recalculates the full set's file and set hashes and compares
+the staged installation id, release, principal names and project origin
+with the frozen source. It then calls the target's authenticated full-set
+verify and restore endpoints in that order. Task Server calculates an identity
+digest from the verified snapshot's authority id, principals, human accounts,
+projects and project URLs, then checks the live store against it after restore.
+The installer requires matching verify and restore digests and rereads the
+destination manifest before marking relocation complete. It refuses a missing
+target, changed identity, damaged set, failed API verification or missing
+rehearsal receipt. It does not start a fresh Task Server over restored data. The freeze
+and rehearsal receipt are operator evidence; the installer cannot independently
+observe the old host's mode. Keep admission closed until the authenticated
+canary, private HTTPS cutover and recovery check pass; run `accept` on the
+new authority for that. A completed relocation records the set hash it restored.
+A rerun with that same recovery set does not restore it again. An authority
+that was installed in control-plane mode or relocated earlier is still
+restored from a new set. Setup sends the Task Server protocol header on every
+management call.
+
 ## Native installation without Docker
 
 `--target native` installs services instead of containers. It is the path for

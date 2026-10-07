@@ -750,6 +750,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |
 | `RUNNER_GIT_REMOTE` | `--git-remote` | (none) | Startup push-probe repository and legacy one-shot fallback. It is never inherited by a project clone. |
+| `RUNNER_WORKSPACE_GIT_REMOTE` | `--workspace-git-remote` | (none) | Exact private workspace origin to check independently at daemon startup. Use a credential-free GitHub URL. |
+| `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH` | `--workspace-git-requires-push` | `false` | Require a managed temporary-ref push and delete proof for the workspace origin. |
 | `RUNNER_GIT_PUSH_REMOTE` | `--git-push-remote` | (fetch URL) | Startup push-probe and legacy one-shot write URL. It is never inherited by a project clone. |
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
@@ -775,6 +777,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
 | `RUNNER_CLAIM_MAX_LOAD_PER_CORE` | `--claim-max-load-per-core` | `1.5` | Load-per-core ceiling for new work. Coding uses the sustained gate below; Review checks it immediately before each single-slot claim. |
 | `RUNNER_LOAD_GATE_SUSTAINED_SECONDS` | none | `120` | Continuous high-load duration before Coding claim admission closes. Review admission does not use this delay. |
+| `RUNNER_DOCKER_DATA_ROOT` | none | `/var/lib/docker` | Filesystem the Review executor measures before a compose scenario step. Falls back to the review workspace when the path does not exist. See [Docker scenario image retention](#docker-scenario-image-retention). |
+| `RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT` | none | `10` | A compose scenario review step (`scripts/scenario.sh --target compose`, `scripts/compose-smoke-test.sh`) is refused as `ReviewInfra` / `ComposeScenarioDiskLow` when `RUNNER_DOCKER_DATA_ROOT` has less free space than this. `0` keeps the `review-compose-scenario-disk` log line and disables the refusal. |
 | `RUNNER_SALVAGE_DIR` | `--salvage-dir` | `~/salvage` | Host salvage store owned by the coding daemon's retention sweep. See [Salvage store retention](#salvage-store-retention). |
 | `RUNNER_SALVAGE_RETENTION` | `--salvage-retention` | `apply` | `apply` deletes what the policy selects, `report` only logs `would-delete` lines, `off` only measures the store for the host report. |
 | `RUNNER_SALVAGE_RETENTION_DAYS` | none | `14` | Days a salvage entry survives after its card became completed or archived. |
@@ -1215,6 +1219,82 @@ Keep `PrivateTmp=false` on the runner units. Detached workers outlive a daemon
 restart and a namespace-scoped `/tmp` is unmounted underneath them on every
 restart (AGT-2750); the hygiene above is what bounds the shared root instead.
 
+### Docker scenario image retention
+
+Every `scripts/scenario.sh --target compose` run builds four images named
+`<project>-{task-server,studio-bff,orchestrator-engine,agent-host}:local`
+(about 2.6 GB), and `scripts/compose-smoke-test.sh` builds its `-dev` images.
+Before AGT-2993 nothing removed them: on 2026-09-28 agent-runner-01 carried
+257 images (159 GB) and 143 GB of BuildKit cache, the disk reached 95-96 %
+twice, and the operator pruned by hand.
+
+Three layers now bound it:
+
+1. **Per run.** Both scripts remove the images of their own Compose project
+   when they exit, after success, after a failure, and on `SIGTERM`/`SIGINT`
+   (`scripts/docker-scenario-images.sh`, keyed by the
+   `com.docker.compose.project` label). Published images are never touched.
+   `COMPOSE_SMOKE_KEEP_ON_FAIL=1` keeps the stack and its images for
+   debugging. A `SIGKILL` cannot run the cleanup; the next layer covers it.
+2. **Retention.** `scripts/docker-scenario-retention.sh` removes scenario and
+   smoke images that no container (running or stopped) uses and whose
+   creation and last tag are both older than 6 hours, then caps the BuildKit
+   cache at 40 GB (`docker builder prune --max-used-space`, or
+   `--keep-storage` on Docker clients before 28). Images are found by the
+   `io.agent-studio.disposable-image` label that the scenario overlay and the
+   smoke override write, whatever the project is called, plus the
+   `agent-studio-scenario-` and `agent-studio-smoke-` name prefixes for older
+   unlabelled images. `scripts/scenario.sh` runs it before every compose run
+   (`SCENARIO_DOCKER_RETENTION=0` skips it). A retention failure is logged and
+   the scenario continues.
+3. **Admission.** The Review executor logs
+   `review-compose-scenario-disk step=... freePercent=... decision=admit|refuse`
+   before a compose scenario step and refuses the step below 10 % free on the
+   Docker data root. A step counts only when it executes
+   `scripts/scenario.sh --target compose` or `scripts/compose-smoke-test.sh`
+   (directly, through `sh -lc`, or behind environment assignments); a mention
+   in an `echo`, quoted data, or a comment is not gated. The refusal is a `ReviewInfra` outcome typed
+   `ComposeScenarioDiskLow`, so the review is retried and no verdict is
+   recorded against the change (`RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT`,
+   `RUNNER_DOCKER_DATA_ROOT`).
+
+Install the daily timer on each runner host that runs compose scenarios, from
+the trusted operator checkout:
+
+```bash
+sudo install -m 0755 scripts/docker-scenario-retention.sh \
+  /usr/local/libexec/agent-docker-scenario-retention
+sudo install -m 0644 deploy/systemd/agent-docker-scenario-retention.service \
+  deploy/systemd/agent-docker-scenario-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-docker-scenario-retention.timer
+# Optional overrides, read by the unit:
+#   /etc/agent-runner/docker-retention.env
+#   DOCKER_SCENARIO_RETENTION_MAX_AGE_HOURS=6
+#   DOCKER_SCENARIO_BUILD_CACHE_KEEP_STORAGE=40GB
+```
+
+Check and run it by hand:
+
+```bash
+systemctl list-timers agent-docker-scenario-retention.timer
+journalctl -u agent-docker-scenario-retention.service -n 50
+scripts/docker-scenario-retention.sh --dry-run      # what it would remove
+docker system df                                     # images and build cache
+```
+
+Scenario runs from before the label, under a custom
+`COMPOSE_SCENARIO_PROJECT` such as `agt2739-verify`, are not matched by the
+default prefixes. Clear them once with an explicit prefix; the age and in-use
+filters still apply: `scripts/docker-scenario-retention.sh --dry-run --prefix agt`,
+then the same without `--dry-run`.
+
+**Disk alarm threshold.** Alert at 80 % used on the Docker data root
+(`df -P /var/lib/docker`) and treat 90 % used (10 % free) as critical: from
+there the Review executor refuses compose scenarios. At the alert, check that
+the timer ran and that `docker system df` shows no reclaimable scenario
+images, then look for other residue.
+
 ### Salvage store retention
 
 The coding daemon owns the host salvage store and sweeps it on its own timer
@@ -1385,6 +1465,15 @@ before storing it in the runner user's credential helper. Keep the HTTPS URL
 free of embedded secrets. Do not put a token in `runner.env`, a command line,
 task output, or evidence.
 
+When a private workspace repository is part of the installation, set
+`RUNNER_WORKSPACE_GIT_REMOTE` to its exact origin. The daemon checks that origin
+separately from `RUNNER_GIT_REMOTE`. A product fallback success does not make a
+failed workspace fetch healthy. Set `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH=true`
+only when workspace policy permits publication. The push proof creates and
+deletes a temporary ref. A failed cleanup remains a failed proof and needs
+operator cleanup. This startup check is host diagnostics; project claim
+admission still uses its own registered repository preflight.
+
 ### Token requirements
 
 The coding runner must be able to publish ordinary source changes and changes
@@ -1438,8 +1527,9 @@ standard input so it does not enter shell history. On a headless host, make sure
 the selected credential helper persists for the runner user and protects its
 storage with user-only permissions.
 
-Set an expiration date and record the owner, repositories, permissions, expiry,
-and runner hosts in the operator inventory. Rotate before expiry:
+Record token subtype, owner, exact repository grants, repository purpose, and
+runner hosts separately. Use issuer expiry when known; leave it unknown when
+the issuer does not supply it. Rotate before a known expiry:
 
 1. Create and approve the replacement token with the same repository selection
    and permissions.
@@ -1459,8 +1549,21 @@ and runner hosts in the operator inventory. Rotate before expiry:
    `Fallback repo: ok` plus `Fallback workflow: ok` in
    **Workspace Settings -> Execution Hosts**.
 4. Revoke the old token only after every assigned repository and runner is
-   green. A token owner's departure or repository-access removal also
-   invalidates the runner identity and requires immediate rotation.
+   green and all deploy keys created with that token have been checked.
+   GitHub deletes deploy keys created with a personal access token when that
+   token is deleted, and deletes keys created with an OAuth app token when
+   that token is revoked. A token owner's departure or repository-access
+   removal also invalidates the runner identity and requires immediate
+   rotation.
+
+The renewal adapter stages a replacement in a host-only 0600 Git helper file,
+proves fetch and required push against the exact origin with that generation,
+then updates the active helper after active transports drain. A denied grant,
+failed proof or interruption leaves the old helper generation in place. The
+host journal keeps only operation IDs, generations and proof states. Protected
+human consent remains necessary to obtain a new bearer; it is never written
+to a task command, prompt or result. Revocation is a separate authorized
+step because the provisioning token may own deploy keys.
 
 The guided installer tracked by AGT-2334 must link to this section and include a
 **Create token** step before credential storage. That step shows the
@@ -1504,6 +1607,123 @@ The exact rewrite keeps `remote.origin.url` and `remote.origin.pushurl` equal to
 the registry value while Git uses the deploy-key SSH transport. Add one exact
 rewrite per assigned repository. The `RUNNER_GIT_PUSH_REMOTE` value above is
 still only the startup probe input.
+
+For managed replacement, the host adapter creates a new ed25519 key under a
+protected directory and journals its public fingerprint. An authorized
+administration session registers only the public key and records the GitHub
+key ID and the provisioning credential ID. Missing administration permission
+is a guided repository-administrator step. Before switching the exact
+repository rewrite, the platform Git layer proves fetch with the candidate
+identity alone and, when policy requires write access, proves a real
+temporary-ref push and delete. Active transports must drain first. The old
+GitHub key and known host-local private key are retired only after proof and
+switch. A retry searches GitHub by fingerprint before creating a key, so a
+lost registration receipt does not duplicate the key. The host must supply
+its active-transport drain check and old key path to complete an automatic
+rotation; otherwise the receipt stays pending for guided retirement.
+
+The `agent-host --renew-repository-access` maintenance command is the host
+entry point for these two flows. Put a metadata-only JSON request outside any
+checkout and run it as the target host's runner account. Use the
+`RepositoryHttpsRotationRequest` or `RepositoryRotationRequest` fields in the
+runner contract. The request includes the exact origin, repository purpose,
+expected generation and stable operation ID; it must contain no bearer or
+private key. The command writes a redacted status and exit code `0` when
+complete, `3` when a guided step or proof is pending, or `2` on a failed
+operation. Reuse the same operation ID on retry.
+
+The host operation has a five-minute deadline; each workstation
+administration command has a two-minute deadline.
+
+A deploy-key request has this shape; replace each fixture identifier with the
+current registry and GitHub values. `OldHostLocalRef` is the existing host
+key path outside the checkout. The host generates the replacement path.
+
+```json
+{
+  "OperationId": "rotation-2026-10-fixture",
+  "HostId": "runner-host-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Owner": "example",
+  "Repository": "private-workspace",
+  "Purpose": "workspace",
+  "Origin": "git@github.com:example/private-workspace.git",
+  "RequiresPush": true,
+  "OldGitHubKeyId": 42,
+  "ProvisioningCredentialId": "workstation-oauth-record",
+  "OldHostLocalRef": "/protected/old-deploy-key"
+}
+```
+
+Use `agent-host --renew-repository-access discover-https
+/protected/discovery-request.json` before R4 when subtype or grants need
+discovery. The metadata request names the credential ID, exact origin,
+repository purpose, required push policy, and issuer subtype or expiry if
+actually known. Supply the current bearer on protected standard input. The
+command queries the exact GitHub repository and prints subtype, fetch and
+push grants, and issuer expiry as separate metadata fields. Unknown issuer
+expiry remains unknown. Never put the bearer in the JSON request.
+
+```json
+{
+  "CredentialId": "runner-https-record",
+  "RepositoryPurpose": "workspace",
+  "Origin": "https://github.com/example/private-workspace.git",
+  "RequiresPush": true,
+  "IssuerSubtype": null,
+  "IssuerExpiresAt": null
+}
+```
+
+An HTTPS renewal request uses the discovered metadata as its `Metadata`
+object. Unknown issuer expiry is represented by `null` and `unknown`:
+
+```json
+{
+  "OperationId": "https-rotation-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Metadata": {
+    "CredentialId": "runner-https-record",
+    "TokenSubtype": "unknown",
+    "RepositoryPurpose": "workspace",
+    "Origin": "https://github.com/example/private-workspace.git",
+    "RequiresPush": true,
+    "FetchGrant": true,
+    "PushGrant": true,
+    "IssuerExpiresAt": null,
+    "ExpiryKnowledge": "unknown"
+  },
+  "OldCredentialId": "prior-runner-https-record"
+}
+```
+
+For HTTPS renewal, supply the new token through protected standard input to
+`agent-host --renew-repository-access https /protected/request.json`. The token
+input must be closed after the value so the command can continue. The token
+is staged in a host-only Git credential file and never appears in the request
+or result. For deploy-key renewal, run
+`agent-host --renew-repository-access deploy-key /protected/request.json` on
+the target host. Configure `RUNNER_GITHUB_ADMIN_SSH_HOST` to a trusted SSH
+alias for the provisioning workstation. The fixed workstation command uses
+that account's authorized `gh` provisioning session for GitHub administration;
+only the public key and repository metadata cross SSH. The workstation must
+have `agent-host` on `PATH`, `RUNNER_WORKSTATION=1`, and a comma-separated
+`RUNNER_GITHUB_ADMIN_REPOSITORIES` allowlist of exact `owner/repository`
+names in its SSH command environment. Restrict the SSH identity to this
+administration command. A workstation that is itself the target host may use its local
+`gh` session with `RUNNER_WORKSTATION=1`. Record the actual provisioning-token
+subtype from its issuance receipt; do not infer OAuth from `gh auth token`.
+If no protected administration
+session is available, the command returns `administrator-action-required`
+without creating a host key. After the runner has completed active Git
+transports, repeat the same command with `--drained` to permit the switch and
+retirement. The flag is an operator assertion that active transports have
+finished; do not set it while a Git operation is in flight. Keep the old
+GitHub key and host key until the exact-origin fetch and required push proof
+have passed. Subsequent rotations fence the active HTTPS generation with a
+host-local marker and the active deploy-key generation with the resolved
+managed SSH alias. Token revocation remains a separate administrator action after
+checking its dependent deploy keys.
 
 At daemon startup, the runner first performs `git push --dry-run` to
 `refs/heads/runner-capability-probe/<runner-id>`. It then commits a disabled
