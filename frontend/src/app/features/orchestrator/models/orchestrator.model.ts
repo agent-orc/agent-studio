@@ -28,6 +28,10 @@ export interface OrchestratorLogEntry {
   summary: string;
   reasoning?: string | null;
   jobId?: string | null;
+  commandId?: string | null;
+  attemptId?: string | null;
+  incidentId?: string | null;
+  settlementId?: string | null;
   tokenUsage?: OrchestratorTokenUsage | null;
   queuedAt?: string | null;
   startedAt?: string | null;

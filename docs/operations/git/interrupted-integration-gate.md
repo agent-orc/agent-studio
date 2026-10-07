@@ -70,8 +70,8 @@ somebody else's delivery.
 The reset runs in the Studio-owned integration worktree
 ([integration worktree](integration-worktree.md)), never in the developer
 checkout, and uses the same `GitService.ResetIntegrationBranch` primitive as the
-live gate rollback, so a checkout that was fast-forwarded along is returned with
-the branch.
+live gate rollback. It moves the integration lane; the developer checkout never
+received the unverified merge (AGT-2996).
 
 ## Re-queueing without a new review
 

@@ -5,6 +5,7 @@ import { StudioIconComponent } from '../../../../components/studio-icon/studio-i
 import type { UsageCostProjection } from '../../models/usage-cockpit.model';
 import type { UsageAlarm } from '../../usage-alarm.policy';
 import { buildCostChipView } from '../../usage-chip.util';
+import type { UsageChipFit } from '../../usage-header-layout';
 import { injectUsageClock } from '../../usage-clock';
 
 /**
@@ -37,6 +38,12 @@ export class UsageCostChipComponent {
   readonly alarms = input<readonly UsageAlarm[]>([]);
   /** A failed host read makes retained values stale, or missing values unavailable. */
   readonly readFailed = input(false);
+
+  /**
+   * Header fit (HUC-S4). `compact` and narrower omit the visible USD suffix;
+   * `bare` also drops the visible Today label. The accessible name keeps both.
+   */
+  readonly fit = input<UsageChipFit>('full');
 
   readonly activate = output<void>();
 

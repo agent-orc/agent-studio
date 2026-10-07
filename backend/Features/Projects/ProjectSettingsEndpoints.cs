@@ -233,6 +233,7 @@ public static class ProjectSettingsEndpoints
                 {
                     autoCommit = kv.Value.AutoCommit,
                     autoTag = kv.Value.AutoTag,
+                    batchGate = kv.Value.BatchGate,
                     crashRecoveryEnabled = kv.Value.CrashRecoveryEnabled,
                     autoPushStrategy = AutoPushStrategies.Normalize(kv.Value.AutoPushStrategy),
                     runnerMode = kv.Value.RunnerMode,
@@ -1025,6 +1026,20 @@ public static class ProjectSettingsEndpoints
             settings.SetTestExecution(projectName, null);
             return Results.Ok(new { cleared = true });
         });
+
+        app.MapPut("/api/projects/{projectName}/batch-gate", (string projectName, BatchGateFormationOptions options, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (!options.IsValid || !options.DocumentationOnly)
+                return Results.BadRequest(new { error = "The pilot requires valid documentation-only thresholds." });
+            settings.SetBatchGate(projectName, options);
+            return Results.Ok(settings.Get(projectName).BatchGate);
+        });
+        app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(pilot.Report(projectName))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (
             string projectName, TaskScannerService scanner) =>

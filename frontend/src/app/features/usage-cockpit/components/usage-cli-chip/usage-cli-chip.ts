@@ -5,6 +5,7 @@ import { StudioIconComponent } from '../../../../components/studio-icon/studio-i
 import type { UsageCli } from '../../models/usage-cockpit.model';
 import type { UsageAlarm } from '../../usage-alarm.policy';
 import { buildCliChipView } from '../../usage-chip.util';
+import { cliAbbreviation, type UsageChipFit } from '../../usage-header-layout';
 import { injectUsageClock } from '../../usage-clock';
 
 /**
@@ -12,11 +13,6 @@ import { injectUsageClock } from '../../usage-clock';
  * current-session windows as one indivisible button. Activating it asks the
  * host to open that CLI's usage detail (HUC-S3 owns the popover or sheet);
  * the chip only reflects the host's `expanded` and `controls` state.
- *
- * HUC-S5: `alarms` are this CLI's latched alarms (warning or critical tint
- * with a warning mark, and `Limited` in words on the full chip). On the
- * primary chip, `hiddenAlarms` adds one nonnumeric mark for providers whose
- * chip is not visible. `compact` is the phone composition: weekly only.
  */
 @Component({
   selector: 'app-usage-cli-chip',
@@ -33,19 +29,27 @@ export class UsageCliChipComponent {
   readonly cli = input<UsageCli | null>(null);
   /** Workspace IANA zone for reset and update times (UTC is shown alongside). */
   readonly timeZone = input<string | null>(null);
-  /** Reference time for staleness; otherwise the chip follows its own clock. */
+  /**
+   * Reference time for staleness, in epoch milliseconds. Without it the chip
+   * follows its own clock, so a snapshot that ages past its TTL turns stale.
+   */
   readonly now = input<number | null>(null);
   readonly expanded = input(false);
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
-  /** Latched HUC-S5 alarms of this CLI. */
+  /** Latched quota and provider alarms. */
   readonly alarms = input<readonly UsageAlarm[]>([]);
-  /** Alarms of CLIs whose chip is hidden; set on the primary chip only. */
+  /** Nonnumeric alarms for CLI chips hidden by the responsive fit. */
   readonly hiddenAlarms = input<readonly UsageAlarm[]>([]);
-  /** Phone composition: the weekly window only; the session stays in the sheet. */
   readonly compact = input(false);
-  /** A failed host read makes retained values stale, or missing values unavailable. */
   readonly readFailed = input(false);
+
+  /**
+   * Header fit (HUC-S4). `compact` and narrower show the weekly window only;
+   * `abbreviated` shortens the provider; `bare` drops the visible tag. The
+   * accessible name always carries every window.
+   */
+  readonly fit = input<UsageChipFit>('full');
 
   readonly activate = output<string>();
 
@@ -53,4 +57,14 @@ export class UsageCliChipComponent {
 
   readonly view = computed(() => buildCliChipView(
     this.cliId(), this.cli(), this.timeZone(), this.now() ?? this.clock(), this.alarms(), this.hiddenAlarms(), this.readFailed()));
+
+  readonly visibleName = computed(() => {
+    const fit = this.fit();
+    return fit === 'abbreviated' || fit === 'bare' ? cliAbbreviation(this.view().cliId) : this.view().name;
+  });
+
+  readonly windows = computed(() => {
+    const v = this.view();
+    return this.compact() || this.fit() !== 'full' ? [v.weekly] : [v.weekly, v.session];
+  });
 }

@@ -110,7 +110,8 @@ public sealed record ReviewPlanDto(
     IReadOnlyList<ReviewVerdictDto>? CarriedVerdicts = null,
     ScopedReviewPlanDto? ScopedReview = null,
     string? BriefSha256 = null,
-    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null);
+    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
+    bool BuildTestDeferredToBatch = false);
 
 public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 

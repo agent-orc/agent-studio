@@ -184,6 +184,17 @@ public static class RemoteReviewSettlementPolicy
                review.TestedResultSha, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
+    /// A documentation-only pass whose build and test aspect the batch gate
+    /// owns. It carries no delivery record: the batch publishes the member and
+    /// releases its lane, so recovery has no per-card integration to resume.
+    /// </summary>
+    public static bool IsBatchDeferredPass(RemoteReviewSettlementEntry entry)
+        => string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+           && entry.Report.Verdicts.Any(verdict =>
+               string.Equals(verdict.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal));
+
+    /// <summary>
     /// Restores the delivery sidecar from the journaled decision when an
     /// Auto Review card lost it (process death before the sidecar write).
     /// Callers verify that the entry belongs to the current accepted review.

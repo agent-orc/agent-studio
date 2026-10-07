@@ -52,7 +52,9 @@ public class OrchestratorChatLog
             // canonical record (the activity-log parser reads it). The bus
             // mirrors typed entries so future tooling can query without
             // reparsing prose. See docs/system/architecture/bus/agent-message-bus.md section 9.
-            try { _ = _bus?.EmitOrchestratorChatAsync(info, kind, text); }
+            // A decision executor that called a model holds its receipt in
+            // the ambient decision scope; the bus line names that model.
+            try { _ = _bus?.EmitOrchestratorChatAsync(info, kind, text, decidedBy: DecisionModelContext.Current); }
             catch (Exception ex) { _logger.LogDebug(ex, "Bus mirror of orchestrator chat failed for {JobId}", info?.Id); }
         }
         return ok;
@@ -81,7 +83,7 @@ public class OrchestratorChatLog
         if (info == null) return false;
         // If the job folder no longer exists, the job was moved (or deleted)
         // between the caller's lookup and this append. Recreating the folder
-        // here would resurrect the source lane as a one-line skeleton —
+        // here would resurrect the source lane as a one-line skeleton:
         // exactly the residue that was littering 4-auto-review after every
         // accept-as-done. Refuse the write and let the caller treat it as
         // best-effort; the canonical record (decision journal, bus event)

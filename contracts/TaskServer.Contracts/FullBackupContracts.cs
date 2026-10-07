@@ -15,8 +15,10 @@ public sealed record FullBackupSummaryDto(
 
 public sealed record ListFullBackupsResponse(IReadOnlyList<FullBackupSummaryDto> Backups);
 
-public sealed record VerifyFullBackupResult(string BackupId, bool Verified, FullBackupSummaryDto Summary);
+public sealed record VerifyFullBackupResult(string BackupId, bool Verified, FullBackupSummaryDto Summary,
+    string? IdentitySha256 = null);
 
 public sealed record RestoreFullBackupRequest(string BackupId);
 
-public sealed record RestoreFullBackupResult(string BackupId, bool Restored, string Message);
+public sealed record RestoreFullBackupResult(string BackupId, bool Restored, string Message,
+    string? IdentitySha256 = null);

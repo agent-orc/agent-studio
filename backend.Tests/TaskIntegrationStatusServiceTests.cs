@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using System.Text.Json;
 
 using AgentStudio.Pipeline;
@@ -32,6 +33,8 @@ namespace AgentStudio.Tests;
 public sealed class TaskIntegrationStatusServiceTests : IDisposable
 {
     private readonly string _tempDir;
+    private static FakeTimeProvider NewClock() => new(
+        new DateTimeOffset(2026, 9, 26, 12, 0, 0, TimeSpan.Zero));
 
     public TaskIntegrationStatusServiceTests()
     {
@@ -60,6 +63,78 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal("RB-42", GitService.ParseIntegrationMergeKey("merge(rb-42): lower-case key upper-cased"));
         Assert.Null(GitService.ParseIntegrationMergeKey("Merge branch 'task/foo' into develop"));
         Assert.Null(GitService.ParseIntegrationMergeKey("feat: not a merge"));
+    }
+
+    [Fact]
+    public void BuildLookup_ResolvesOriginOnceForManyAttributedTasksInOneRepository()
+    {
+        var repo = SeedDevelopMainRepo();
+        var sha = RunGit(repo, "rev-parse develop").Out.Trim();
+        var reads = 0;
+        var service = BuildService(repo, out var project, out var log,
+            _ => { Interlocked.Increment(ref reads); return null; });
+        var jobs = Enumerable.Range(0, 68)
+            .Select(i => Job($"origin-{i}", $"OR-{i}", project, repo, log,
+                commits: [Commit(sha)]))
+            .ToArray();
+
+        var statuses = service.BuildLookup(jobs);
+
+        Assert.Equal(68, statuses.Count);
+        Assert.Equal(1, Volatile.Read(ref reads));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void BuildLookup_CaseDistinctRepositoryRoots_KeepSeparateOrigins()
+    {
+        var first = SeedDevelopMainRepo("case-repo");
+        if (Directory.Exists(Path.Combine(_tempDir, "CASE-REPO"))) return;
+        var second = SeedDevelopMainRepo("CASE-REPO");
+        var repos = new[] { first, second };
+        var origins = new[] { "https://example.invalid/first.git", "https://example.invalid/second.git" };
+        // Distinct configured subdirectories exercise resolved repository-root
+        // memoization independently of the configured-path lookup cache.
+        var paths = repos.Select((repo, i) => Path.Combine(repo, $"project-{i}")).ToArray();
+        foreach (var path in paths) Directory.CreateDirectory(path);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            paths.SelectMany((path, i) => new Dictionary<string, string?>
+            {
+                [$"WatchPaths:{i}:Name"] = $"Project-{i}",
+                [$"WatchPaths:{i}:Path"] = path,
+                [$"WatchPaths:{i}:RepositoryPath"] = path,
+            })).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
+        var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var reads = new List<string>();
+        var service = new TaskIntegrationStatusService(git, settings, log,
+            NullLogger<TaskIntegrationStatusService>.Instance, NewClock(),
+            readOriginUrl: root =>
+            {
+                reads.Add(root);
+                return origins[Array.IndexOf(repos, root)];
+            });
+        var jobs = repos.SelectMany((repo, i) =>
+        {
+            settings.SetIntegrationBranch($"Project-{i}", "develop");
+            var sha = RunGit(repo, "rev-parse develop").Out.Trim();
+            return Enumerable.Range(0, 2).Select(j =>
+                Job($"case-{i}-{j}", $"CASE-{i}-{j}", $"Project-{i}", repo, log,
+                    commits: [Commit(sha) with { Repository = origins[i] }]) with { WatchPath = paths[i] });
+        }).ToArray();
+
+        var statuses = service.BuildLookup(jobs);
+
+        Assert.Equal(repos, reads);
+        foreach (var job in jobs)
+        {
+            var status = statuses[job.TaskKey];
+            Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+            Assert.False(status.ReachUnavailable);
+        }
     }
 
     [Fact]
@@ -1484,7 +1559,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
     // --- helpers -----------------------------------------------------------
 
-    private TaskIntegrationStatusService BuildService(string repo, out string projectName, out PipelineExecutionLog log)
+    private TaskIntegrationStatusService BuildService(string repo, out string projectName,
+        out PipelineExecutionLog log, Func<string, string?>? readOriginUrl = null)
     {
         projectName = "Fixture";
         var config = ConfigFor(repo, projectName);
@@ -1495,7 +1571,8 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         settings.SetIntegrationBranch(projectName, "develop");
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
-            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance);
+            git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance,
+            NewClock(), readOriginUrl: readOriginUrl);
     }
 
     private (TaskIntegrationStatusService Service, string Project, PipelineExecutionLog Log)
@@ -1560,9 +1637,9 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     private static IConfiguration EmptyConfig()
         => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
 
-    private string SeedDevelopMainRepo()
+    private string SeedDevelopMainRepo(string? directoryName = null)
     {
-        var repo = Path.Combine(_tempDir, "repo-" + Guid.NewGuid().ToString("N")[..8]);
+        var repo = Path.Combine(_tempDir, directoryName ?? "repo-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(repo);
         RunGit(repo, "init -q -b main");
         RunGit(repo, "config user.email test@example.com");

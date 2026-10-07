@@ -12,6 +12,12 @@ if (args is ["--version"])
     return 0;
 }
 
+// AGT-3005: every process this host starts, daemon or detached worker, inherits
+// the build-server fence, so no dotnet invocation it spawns can leave a reusable
+// MSBuild node or MSBuild server behind after its run.
+foreach (var (key, value) in WorkerBuildServerHygiene.Variables)
+    Environment.SetEnvironmentVariable(key, value);
+
 // AGT-2868 belt and braces: the worker environment already disables MSBuild node
 // reuse and the MSBuild server, so there should be nothing left to shut down.
 // Asking anyway costs one bounded command per attempt. Only the real detached
@@ -26,6 +32,36 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 // AGT-W63 I03: offline tooling for the owned runner-host record.
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
+
+if (args.Length is 3 or 4 && args[0] == "--renew-repository-access"
+    && (args.Length == 3 || args[3] == "--drained"))
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        return await RepositoryRenewalCommand.RunAsync(args[1], args[2],
+            args.Length == 4, Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository renewal failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
+if (args is ["--repository-admin"])
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        return await RepositoryRenewalCommand.RunAdminAsync(Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository administration failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
 
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
 

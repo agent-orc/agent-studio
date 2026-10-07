@@ -228,6 +228,40 @@ The local file-backed monolith remains a separate compatibility authority; its
 store. A deployment must route both continue and runner claim through the
 standalone Task Server to obtain this D6 receipt contract.
 
+### Correlated steering feedback (AGT-2938, D10)
+
+The decided D10 option is the recommended correlated feedback projection.
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/steering-feedback` returns a
+read-only `current` receipt and ordered `history` from SQLite steering actions,
+continuation intents, runs and review attempts. Each fact carries a stable
+identity, command and attempt when present, owning run, bounded reason, and
+incident identity for route loss. Review receipts carry their report idempotency
+key as `settlementId`. The task timeline adds `steering-receipt`
+entries carrying the same fact; the cross-project orchestrator feed adds quiet
+`steering-receipt` history and one `incident` row for a current unresolved
+incident. Retries reuse the authority row, so a process restart rebuilds all
+three reads without a second mutable verdict. A fact is current only while its
+task version or attempt generation remains current. The task lane remains the
+server's own state.
+The incident row summarizes affected attempts and recovered or still unresolved
+dispositions; each task timeline keeps the underlying attempt receipt.
+
+Route incident identity groups failures from the same runner host in a 15-minute
+UTC window. This is a bounded correlation key derived from authority timestamps,
+not a measured outage start or end; individual task receipts retain their own
+attempt identities for drill-down.
+
+The file-backed compatibility API exposes
+`GET /api/tasks/{id}/steering-feedback?project={projectId}`. Its task timeline
+adds `steering_feedback` rows and `/api/runner/orchestrator-feed` adds quiet
+receipt observations from durable stop receipts, run/review authority and the
+review settlement journal. The Overview status row reads the current timeline
+fact; historical rows remain in Timeline. This compatibility projection does
+not convert `pending-intent.json` into the standalone D6 command contract.
+An observed stop closed with `settled` remains a consumed stop acknowledgement;
+an unobserved stop closed when its attempt ends is rejected. Neither claims the
+run recovered. Recovery is reserved for an outage with a completed successor.
+
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
 - [docs/system/contracts/agent-task.md](../contracts/agent-task.md) defines what the app
@@ -265,9 +299,63 @@ move cannot return a decided card to Preparation; only the reopen lifecycle has
 the permit for that transition. A dependant
 whose `references.dependsOn` points to a pending decision reports the key in
 `blockedBy`; moves into Ready or Progress and runner claims are refused while
-the decision is pending. Deciding only releases that dependency gate. Applying
-the choice to prompts or creating implementation cards belongs to the separate
-apply delivery.
+the decision is pending.
+
+Deciding also applies the choice (`DecisionApplyService`). Keys listed in
+`decision.appliesTo` are linked implementation cards (blank keys and the
+decision's own key are ignored): each one waiting in Backlog, Preparation,
+Orchestrator Prep (`1a-orchestrator-prep`), or Escalated receives a decision block in `prompt.md`
+(question, chosen option, rationale, record link) and moves to `2-ready`; a card
+already in `2-ready` receives the block only, and a card past that point is left
+unchanged and named in the apply notes. With no linked card, the chosen option's
+`requirements` (Dossier implementation items) become `2-ready` coding cards
+through `ConceptPromotionService.CreateCards`, the ledger-backed mechanism
+concept promotion uses. The history entry records `applyOutcome` and
+`appliedTaskKeys`, and the wiki record lists them. A failed apply leaves the
+decision recorded and posts an activity feed alert. If the apply receipt or
+outcome cannot be saved after the choice is recorded, the endpoint returns a
+conflict; repeating the same choice resumes the apply step without adding
+another decision entry or duplicating cards. A linked card counts as applied
+only once its block and its move to `2-ready` both landed; a refused move or an
+unwritten block records `applyOutcome: failed`, and repeating the same choice
+resumes a failed apply the same way.
+
+Decision cards are also raised automatically through `DecisionCardRequests`:
+by the runner's Blocked outcome when the agent's final message states a question
+with two to four options, by `FailureInterventionService` when the failure
+evidence carries a `fork`, and by concept promotion for a Dossier implementation
+item with a `decision` block (descriptor shape in
+[workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md#decision-items)).
+The runner fills the failure `fork` at its run-failure boundary
+(`ProjectRunner`, core agent run step) with `BlockedForkReader.ReadRun`: only the
+agent turn that owns the final Blocked or NeedsInput sentinel is read, so crash
+output or build logs never become a decision; gate and review-plane failures carry
+no agent turn and keep the prose intervention. The blocked card becomes a
+dependant and apply target and gets a `dependsOn` edge to the decision card.
+A request counts as raised only once that edge is written. When the write fails
+the request reports no card; the decision already names the blocked card in
+`appliesTo`, so the next request for the same question reuses it and writes the
+missing edge instead of raising a second card. The Blocked outcome has already
+moved its card to Escalated, so no later request comes for it; the decision
+sweep (`DecisionCardRequests.RepairLinks`) writes the missing edge of every
+escalated card an open decision names as dependant and apply target. A failure that a further card hits
+attaches it to the open decision under the decision write gate, so a choice
+taken meanwhile is never overwritten; a failed attach is not recorded as an
+affected card and is retried on the next raise.
+
+`DecisionReminderSweep` runs every 30 minutes
+(`Supervisor:DecisionReminderSweepIntervalMinutes`). Once a pending decision
+passes its due date (`dueDate`, or three days after it was requested or last
+reopened), it posts one reminder per pending cycle: the wiki record gains
+lifecycle frontmatter (`pageKind: decision`, `review-requested`) so the
+workbench inbox lists it, and the activity feed gets an alert naming the decider
+and the blocked cards. Deciding rewrites the record without that frontmatter.
+The sweep stamps `remindedAt` only after both writes succeed. A failed inbox
+or feed write remains due for the next sweep, and a feed line already posted
+before a failed stamp is reused on retry.
+The sweep reads each due card again under the decision write gate that decide,
+reopen, and apply hold, and skips it when it is no longer pending, so a decision
+taken after the scan is never overwritten by the reminder stamp.
 
 ## Task Server failure fingerprint API
 
@@ -1272,18 +1360,30 @@ as `acceptance-rail-run`.
 
 ## Board state source (AGT-2726)
 
-Git-derived board state (merge signal, integration status, publish signal,
-test-run evidence, and the Git inventory below) is owned by one background
-index per repository, `GitStateIndexService`, not computed on any request
-path.
+Git-derived board and task-detail state (merge signal, integration status,
+publish signal, test-run evidence, review projection, reconstructed progress
+commits, and the Git inventory below) is owned by one background index per
+repository, `GitStateIndexService`. Detail and `GET
+/api/tasks/{jobId}/details/git` read the latest completed snapshot only.
+They do not start Git or wait for a refresh. The resource returns task and
+project identity, input and resource versions, `computedAt`, a bounded reason
+code, and `warming`, `ready`, `stale`, or `unavailable` state. An incompatible
+task generation has no Git facts. Acceptance and integration mutations keep
+their authoritative checks; display state never grants permission to mutate.
 
 - **Change-driven, not request-driven.** Each repository is watched with a
-  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, and worktree
-  `HEAD` files, plus the Task Server's own `TaskWatcherService.OnJobChanged`
-  event (a task-folder write is itself an integration/delivery signal). A
+  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, config, worktree
+  Git files and the common Git directory, plus task metadata and review-subject
+  events. The sweep also compares the task input signature, including the
+  review-subject content hash, so a missed event or a same-size rewrite with a
+  preserved timestamp converges, while a same-content touch does not reindex. A
   debounce (default 400 ms) coalesces a burst of events into one run per
   repository; a slow periodic sweep (default 45 s) re-checks a cheap
-  `GitRefSignature` as a safety net for anything the watcher missed. This
+  ref signature and Git-resolved effective configuration as a safety net for
+  anything the watcher missed, including external config includes. Git itself
+  interprets includes and worktree configuration. An unchanged task write can
+  queue an input check but cannot force full Git recomputation. Runtime logs
+  do not queue it. This
   replaced the previous design, where every list/grouped poll landing more
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
@@ -1293,6 +1393,27 @@ path.
   start a second one; it marks exactly one rerun for after the current run
   finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
   repositories index at once process-wide.
+- **Versioned publication.** Repository path, ref and effective-config
+  signatures, settings version, task commit/review generation and schema
+  version key an immutable snapshot. An input change during computation
+  discards the result and queues one rerun. A failed run retains the last
+  successful snapshot, marked stale with a bounded reason. Git children have
+  deadlines and are killed on timeout; failed runs back off with at most five
+  automatic retries. Later safety sweeps retry a failed repository even when
+  its inputs are unchanged, and only a successful publication clears stale
+  state. A repository computation runs at most four Git children at once.
+  One Git config command per index run supplies both the effective
+  config signature and primary origin. The 45 s sweep checks effective config
+  separately. `TaskIntegrationStatusService` also memoizes origin once per
+  repository in authoritative action lookups, using Git's own config semantics.
+  Origin memoization and every path-keyed map in `TaskListGitProjectionCache`
+  (repository snapshots, review-subject generations, sidecar stamps and read
+  grouping) share `FileSystemPathComparer`: case-sensitive on Linux,
+  case-insensitive on Windows and macOS. Case-distinct checkouts on Linux
+  therefore keep separate origins, snapshots and subject generations. A
+  board read that spans several repositories groups tasks by watch path and
+  takes each task's facts only from its own repository's snapshot; a fact a
+  snapshot carries for a task outside its group is never merged.
 - **Origin reads are bounded per integration lookup.** Delivered cards in one
   lookup share one effective origin read per checkout root, including a missing
   origin. The next lookup reads Git configuration again, so origin changes and

@@ -220,6 +220,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly HumanReviewEscalation? _humanReviewEscalation;
     private readonly FailureInterventionService? _failureInterventions;
     private readonly TaskMutationService? _taskMutations;
+    private readonly DecisionCardRequests? _decisionRequests;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -274,7 +275,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
         FailureInterventionService? failureInterventions = null,
         TaskIntegrationStatusService? integrationStatus = null,
-        TaskMutationService? taskMutations = null)
+        TaskMutationService? taskMutations = null,
+        DecisionCardRequests? decisionRequests = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -309,6 +311,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _qualityAnalysisRunner = qualityAnalysisRunner;
         _failureInterventions = failureInterventions;
         _integrationStatus = integrationStatus;
+        _decisionRequests = decisionRequests;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -1299,6 +1302,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
+        StepModelUsage? decisionUsage = null;
         try
         {
             var sw = AgentStudio.AdHoc.AdHocClaudeInvoker.StartTiming();
@@ -1324,6 +1328,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 project: entry.Name,
                 jobId: pending.Job.Id);
             response = parsedText;
+            decisionUsage = StepModelUsage.From(callUsage, model, thinkingLevel: null, modelSource: DecisionModelSource);
             RecordRateLimitedCall();
         }
         catch (Exception ex)
@@ -1334,6 +1339,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
+        // Everything recorded while carrying out this verdict (the decision
+        // step row and the chat line on the bus) names the deciding model.
+        using var decisionScope = decisionUsage is null ? null : DecisionModelContext.Use(decisionUsage);
         var verdict = ReviewDecisionParsing.ParseDecision(response);
         if (verdict == null)
         {
@@ -1697,6 +1705,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     project: entry.Name,
                     jobId: pending.Job.Id);
                 RecordRateLimitedCall();
+                using var decisionScope = DecisionModelContext.Use(
+                    StepModelUsage.From(callUsage, model, thinkingLevel: null, modelSource: DecisionModelSource));
 
                 var verdict = ReviewDecisionParsing.ParseDecision(response);
                 if (verdict != null)
@@ -1927,6 +1937,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             BuildEscalateDetails("agent-blocked", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
+        var decisionCard = move.Status == MoveJobStatus.Success
+            ? RequestDecisionForFork(entry, current, pending)
+            : null;
+
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
             JobId: current.Id,
@@ -1935,11 +1949,63 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Reason: reason,
             Prompt: "(deterministic BLOCKED branch)",
             Response: "(no fast-model call)",
-            FollowUp: string.Empty),
+            FollowUp: decisionCard is null ? string.Empty : $"decision card {decisionCard.Key}"),
             current.FolderPath,
             move.NewFolderPath);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A blocked run that stopped at a fork (a stated question with two to four
+    /// options) raises a decision card instead of leaving the question in prose.
+    /// The escalated card waits on it through <c>dependsOn</c>; deciding appends
+    /// the choice to its prompt and returns it to <c>2-ready</c>.
+    /// </summary>
+    private DecisionCardRequestResult? RequestDecisionForFork(
+        WatchPathEntry entry, TaskInfo current, PendingDecision pending)
+    {
+        if (_decisionRequests is null) return null;
+        try
+        {
+            var escalated = _scanner.FindJob(current.Id, entry.Path);
+            if (escalated is null) return null;
+            // Agent lines only: the escalation above already appended a
+            // supervisor line that quotes [[TASK_BLOCKED]].
+            var agentTurn = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(escalated.FolderPath))
+                .Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line))
+                .ToList();
+            var fork = BlockedForkReader.Read(pending.Reason, AgentOutcomeAnalyzer.ExtractBlockedMessage(agentTurn));
+            if (fork is null) return null;
+            var result = _decisionRequests.Request(new DecisionCardRequest
+            {
+                Title = $"Decision: {escalated.Title}",
+                WatchPath = entry.Path,
+                Content = fork,
+                BlockedCard = escalated,
+                PromptMarkdown = $"Raised from the Blocked outcome of {escalated.Key ?? escalated.Id}. " +
+                    "The run stopped at a fork it must not take alone; its options are the fields of this card.",
+            });
+            if (result is not null)
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    $"Orchestrator raised decision card {result.Key} for the fork this run stopped at.");
+            else
+            {
+                // A decision card whose dependsOn edge could not be written
+                // still names this card; the decision sweep retries the edge.
+                _logger.LogWarning(
+                    "ReviewDecisionOrchestrator: decision card request for BLOCKED fork on {JobId} did not complete; the decision sweep retries the link",
+                    current.Id);
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    "Orchestrator could not finish the decision card for the fork this run stopped at; the decision sweep retries the missing link.");
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ReviewDecisionOrchestrator: decision card for BLOCKED fork on {JobId} failed", current.Id);
+            return null;
+        }
     }
 
     /// <summary>
@@ -2426,6 +2492,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary),
                     resolvedModel);
             };
+        Func<string, string?>? modelSourceForAspect = settings is null
+            ? null
+            : aspectId => economyRecommendations.ContainsKey(aspectId)
+                ? "economy"
+                : PipelineStepConfigResolver.ResolveModelWithSource(settings, $"aspect-{aspectId}", aspectModel).Source;
         Func<string, string?>? promptForAspect = settings is null
             ? null
             : aspectId => PipelineStepConfigResolver.ResolvePrompt(settings, $"aspect-{aspectId}");
@@ -2454,7 +2525,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
-            modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect);
+            modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
             var merged = report.Verdicts.Concat(scopedReview.CarriedVerdicts).ToArray();
@@ -4770,6 +4841,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var startedAt = DateTime.UtcNow;
         string? selectedModel = null;
         string? selectedThinkingLevel = null;
+        string? selectedModelSource = null;
         try
         {
             // Quality over cost: the grade pass defaults to the live Codex
@@ -4779,15 +4851,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var (defaultModel, defaultCli) = AgentStudio.Review.CodeReviewGradeModelSelector.Resolve(
                 _configuration["CodeReviewStep:DefaultModel"],
                 _configuration["CodeReviewStep:DefaultCli"]);
-            var model = catalogueStep is null
-                ? defaultModel
-                : PipelineStepConfigResolver.ResolveModel(projectSettings, catalogueStep, defaultModel);
+            var modelResolution = catalogueStep is null
+                ? null
+                : PipelineStepConfigResolver.ResolveModelWithSource(projectSettings, catalogueStep, defaultModel);
+            var model = modelResolution?.Model ?? defaultModel;
             var cli = PipelineStepConfigResolver.ResolveCliType(projectSettings, stepId) ?? defaultCli;
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
             selectedModel = model;
             selectedThinkingLevel = thinkingLevel;
+            selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
             // Persist dispatch before the one-shot begins. A slow or interrupted
             // reviewer now reads Running instead of the misleading Pending state.
@@ -4799,6 +4873,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 StartedAt = startedAt,
                 Model = selectedModel,
                 ThinkingLevel = selectedThinkingLevel,
+                ModelSource = selectedModelSource,
             });
 
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
@@ -4832,7 +4907,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     "Quality-grade step error: " + report.ExecutionError,
                     startedAt,
                     report.Model,
-                    report.ThinkingLevel);
+                    report.ThinkingLevel,
+                    selectedModelSource,
+                    report.Usage,
+                    report.FileName);
                 return report;
             }
 
@@ -4845,19 +4923,22 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? PipelineStepStatus.Failed
                 : PipelineStepStatus.Passed;
 
-            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
-            {
-                StepId = stepId,
-                Kind = StepKind.Orchestrator,
-                Status = status,
-                StartedAt = startedAt,
-                CompletedAt = DateTime.UtcNow,
-                DurationMs = report.DurationMs,
-                Model = report.Model,
-                ThinkingLevel = report.ThinkingLevel,
-                Verdict = gradeToken,
-                VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
-            });
+            _pipelineLog?.RecordStep(job.FolderPath, StepModelUsage
+                .From(report.Usage, report.Model, report.ThinkingLevel, selectedModelSource)
+                .ApplyTo(new PipelineStepExecution
+                {
+                    StepId = stepId,
+                    Kind = StepKind.Orchestrator,
+                    Status = status,
+                    StartedAt = startedAt,
+                    CompletedAt = DateTime.UtcNow,
+                    DurationMs = report.DurationMs,
+                    Model = report.Model,
+                    ThinkingLevel = report.ThinkingLevel,
+                    Verdict = gradeToken,
+                    VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
+                    EvidenceRef = report.FileName,
+                }));
 
             WritePostProcessingOutcome(job, PostProcessingOutcomes.FindingsAdded,
                 summary: $"Quality grade {gradeToken}: {report.Summary}",
@@ -4878,7 +4959,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Quality-grade step was cancelled before completion.",
                 startedAt,
                 selectedModel,
-                selectedThinkingLevel);
+                selectedThinkingLevel,
+                selectedModelSource);
             throw;
         }
         catch (Exception ex)
@@ -4892,7 +4974,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Quality-grade step error: " + ex.Message,
                 startedAt,
                 selectedModel,
-                selectedThinkingLevel);
+                selectedThinkingLevel,
+                selectedModelSource);
             return null;
         }
     }
@@ -4903,7 +4986,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string reason,
         DateTime? startedAt = null,
         string? model = null,
-        string? thinkingLevel = null)
+        string? thinkingLevel = null,
+        string? modelSource = null,
+        OrchestratorTokenUsage? usage = null,
+        string? evidenceRef = null)
     {
         if (status is PipelineStepStatus.Failed or PipelineStepStatus.Skipped)
         {
@@ -4912,7 +4998,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (_pipelineLog == null) return;
         var completedAt = DateTime.UtcNow;
         var started = startedAt ?? completedAt;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.CodeReviewGradeStepId,
             Kind = StepKind.Orchestrator,
@@ -4922,8 +5008,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = Math.Max(0L, (long)(completedAt - started).TotalMilliseconds),
             Model = model,
             ThinkingLevel = thinkingLevel,
+            ModelSource = model is null ? null : modelSource,
             Reason = reason,
-        });
+            EvidenceRef = evidenceRef,
+            // A grade that never reached its model call (disabled, skipped,
+            // missing diff) spent nothing; record that zero explicitly.
+            CostBasis = model is null ? StepCostBasis.Deterministic : null,
+        };
+        _pipelineLog.RecordStep(
+            jobFolderPath,
+            usage is null ? row : StepModelUsage.From(usage, model, thinkingLevel, modelSource).ApplyTo(row));
     }
 
     /// <summary>
@@ -4997,9 +5091,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 _configuration["TaskSpawnerStep:DefaultModel"],
                 _configuration["TaskSpawnerStep:DefaultCli"],
                 _configuration["TaskSpawnerStep:DefaultThinkingLevel"]);
-            var model = catalogueStep is null
-                ? defaultModel
-                : PipelineStepConfigResolver.ResolveModel(settings, catalogueStep, defaultModel);
+            var modelResolution = catalogueStep is null
+                ? null
+                : PipelineStepConfigResolver.ResolveModelWithSource(settings, catalogueStep, defaultModel);
+            var model = modelResolution?.Model ?? defaultModel;
+            var modelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
             var cli = PipelineStepConfigResolver.ResolveCliType(settings, stepId) ?? defaultCli;
             var thinking = catalogueStep is null
                 ? defaultThinking
@@ -5030,7 +5126,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 case TaskSpawnerVerdict.Spawned:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Passed, durationMs,
                         "spawned", result.Reason, result.Model,
-                        verdictSummary: $"{result.TargetKey} in {result.TargetProjectName}");
+                        verdictSummary: $"{result.TargetKey} in {result.TargetProjectName}",
+                        result: result, modelSource: modelSource);
                     WritePostProcessingOutcome(current, PostProcessingOutcomes.NeedsFollowUpTask,
                         summary: $"Spawned {result.TargetKey} in {result.TargetProjectName}: {result.Reason}",
                         performerCliType: cli,
@@ -5053,19 +5150,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     break;
                 case TaskSpawnerVerdict.NotRelevant:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "not-relevant", result.Reason, result.Model);
+                        "not-relevant", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 case TaskSpawnerVerdict.Deduped:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "deduped", result.Reason, result.Model);
+                        "deduped", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 case TaskSpawnerVerdict.Error:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Failed, durationMs,
-                        "error", result.Reason, result.Model);
+                        "error", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 default:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "skipped", result.Reason, result.Model);
+                        "skipped", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
             }
         }
@@ -5091,11 +5188,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string verdictToken,
         string? reason,
         string? model = null,
-        string? verdictSummary = null)
+        string? verdictSummary = null,
+        TaskSpawnerResult? result = null,
+        string? modelSource = null)
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.TaskSpawnerStepId,
             Kind = StepKind.Orchestrator,
@@ -5107,7 +5206,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Verdict = verdictToken,
             VerdictSummary = string.IsNullOrWhiteSpace(verdictSummary) ? null : verdictSummary,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+        };
+        // Only a result that carries a call receipt reached the model; a
+        // dedup or config skip keeps the configured model for display only.
+        _pipelineLog.RecordStep(jobFolderPath, result?.Usage is { } usage
+            ? StepModelUsage.From(usage, model, result.ThinkingLevel, modelSource).ApplyTo(row)
+            : row with { CostBasis = StepCostBasis.Deterministic });
     }
 
     /// <summary>
@@ -5370,7 +5474,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.OrchestratorDecisionStepId,
             Kind = StepKind.Orchestrator,
@@ -5380,8 +5484,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = 0,
             Verdict = verdict,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+            // Outside a decision-model scope the verdict was aggregated by
+            // rule from the aspect results: an explicit zero, not a gap.
+            CostBasis = StepCostBasis.Deterministic,
+        };
+        _pipelineLog.RecordStep(
+            jobFolderPath,
+            DecisionModelContext.Current is { } usage ? usage.ApplyTo(row) : row);
     }
+
+    /// <summary>
+    /// The review-decision model comes from host configuration
+    /// (<c>ReviewDecisionOrchestrator:Model</c>), not from the per-step
+    /// resolver chain, so its resolution path is reported as <c>config</c>.
+    /// </summary>
+    private const string DecisionModelSource = "config";
 
     /// <summary>
     /// Persist the truncated stylelint output for the FE timeline to

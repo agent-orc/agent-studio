@@ -43,4 +43,20 @@ for principal in studio engine runner review_runner; do
         ln -s "$principal/${principal}_token" "$legacy"
     fi
 done
+# The first-owner code is distinct from service principal credentials. It is
+# created once; restarting bootstrap must never replace it.
+target="$secret_dir/owner_bootstrap_code"
+if [ ! -e "$target" ]; then
+    temporary="$(mktemp "$secret_dir/.owner_bootstrap.XXXXXXXX")"
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$temporary"
+    printf '\n' >> "$temporary"
+    chmod 600 "$temporary"
+    # link(2) never replaces a code another bootstrap created meanwhile; the
+    # checks below then verify whichever code won.
+    ln "$temporary" "$target" 2>/dev/null || true
+    rm -f "$temporary"
+fi
+chown 10001:10001 "$target"
+test -s "$target"
+test "$(stat -c %a "$target")" = 600
 printf 'compose-secrets=ready\n'

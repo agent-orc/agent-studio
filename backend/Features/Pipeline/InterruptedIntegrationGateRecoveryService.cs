@@ -125,7 +125,9 @@ public sealed class InterruptedIntegrationGateRecoveryService
             return (InterruptedGateRecoveryAction.None, 0);
         }
 
-        var branchTip = _git.GetBranchTip(repoRoot, integrationBranch);
+        // The in-flight merge lives on the integration lane (AGT-2996); the
+        // local branch never carried it.
+        var branchTip = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, integrationBranch));
         var publishedTip = _git.GetBranchTip(repoRoot, "origin/" + integrationBranch);
         var entries = journals
             .Select(item => Facts(repoRoot, integrationBranch, branchTip, publishedTip, item))
@@ -221,11 +223,10 @@ public sealed class InterruptedIntegrationGateRecoveryService
     }
 
     /// <summary>
-    /// Moves the integration branch back to the pre-merge anchor. The reset runs
-    /// in the Studio-owned integration worktree (AGT-2832); the developer
-    /// checkout is never a command workspace, and a checkout that was
-    /// fast-forwarded along with the branch is returned by the same primitive
-    /// the live gate rollback uses.
+    /// Moves the integration line back to the pre-merge anchor. The reset runs
+    /// in the Studio-owned integration worktree (AGT-2832) through the same
+    /// primitive the live gate rollback uses; the developer checkout is never a
+    /// command workspace and never received the unverified merge (AGT-2996).
     /// </summary>
     private string? RollBack(
         string repoRoot,
