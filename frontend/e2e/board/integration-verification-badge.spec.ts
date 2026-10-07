@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import { test, expect, type Page, type Route } from '@playwright/test';
-import { setTheme } from '../helpers/theme';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 // AGT-3002: a delivery the integration branch contains is not integrated
 // until a gate passed on that tree. The board badge tells an
@@ -166,6 +166,7 @@ test('the board badge tells integrated-verified from integrated-unverified cards
   await expect(verifiedBadge).toHaveAttribute('data-integration-verification', 'integrated-verified');
   await expect(verifiedBadge).toHaveAttribute('data-kind', 'integrated');
 
+  await dismissDevErrorDialog(page);
   for (const theme of ['light', 'dark'] as const) {
     await setTheme(page, theme);
     await unverifiedCard.screenshot({
