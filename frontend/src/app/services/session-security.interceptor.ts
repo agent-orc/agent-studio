@@ -14,7 +14,8 @@ export const sessionSecurityInterceptor: HttpInterceptorFn = (req, next) => {
   const csrf = typeof document === 'undefined'
     ? null
     : document.cookie.split('; ')
-      .find((item) => item.startsWith('__Host-agentstudio-csrf=') || item.startsWith('agentstudio-csrf='))
+      .find((item) => item.startsWith('__Host-agentstudio-csrf=')
+        || item.startsWith('agentstudio-csrf=') || item.startsWith('ts-studio-csrf='))
       ?.split('=', 2)[1];
   const secured = SAFE_METHODS.has(req.method.toUpperCase())
     ? req.clone({ withCredentials: true })

@@ -305,6 +305,58 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
   });
 
+  test('pinned installation checkpoints show observed facts and honest recovery limits in both themes', async ({ page }) => {
+    const json = (body: unknown) => (route: Route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(body),
+    });
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await page.route(/\/api\/v1\/studio\/board(?:\?|$)/, json({
+      preparation: [], ready: [], progress: [], review: [], completed: [], archive: [],
+    }));
+    await page.route('**/api/v1/installation', json({
+      installationId: 'ins_demo_01', ownerBootstrapped: true, ownerBootstrapArmed: false,
+    }));
+    await page.route('**/api/v1/projects', json([{
+      projectId: 'demo-app', workspaceId: 'demo', name: 'Demo App',
+    }]));
+    await page.route('**/api/v1/projects/demo-app/repository', json({
+      registration: { projectId: 'demo-app', repositoryUrl: 'https://example.invalid/demo-app.git',
+        integrationRef: 'develop', releaseRef: 'main', deliveryPolicy: 'reviewed-publication' },
+      probes: [],
+    }));
+    await page.route('**/api/v1/projects/demo-app/placement', json({
+      requiredCapabilities: ['platform:linux'], pinnedRunnerId: null, maxParallelism: 1,
+    }));
+    await page.route('**/api/v1/management/backups/full', json({ backups: [] }));
+    await page.route('**/api/v1/studio/auth/status', json({
+      profile: 'networked', bootstrapRequired: false, authenticated: true,
+      user: { id: 'demo-operator', username: 'demo-operator', displayName: 'Demo Operator',
+        role: 'operator', projects: ['demo-app'], disabled: false, mustChangePassword: false },
+    }));
+    await page.goto('/#/workspace/settings/execution-hosts');
+    await dismissDevErrorDialog(page);
+    const checkpoints = page.getByTestId('deployment-checkpoints');
+    await expect(checkpoints).toBeVisible();
+    await expect(page.getByTestId('deployment-identity')).toContainText('ins_demo_01');
+    await expect(page.getByTestId('deployment-project-demo-app')).toContainText('No host proof');
+    await expect(page.getByTestId('deployment-recovery')).toContainText('No full set is listed');
+    await expect(page.getByTestId('remote-host-role-readiness').first()).toHaveText('not-enrolled');
+    await expect(page.getByText('Enrol this host and wait for its first capability advertisement.').first()).toBeVisible();
+    await expect(page.getByTestId('error-dialog-overlay')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+    const assetDir = resolve(process.cwd(), '../docs/operations/deployment-story/assets');
+    mkdirSync(assetDir, { recursive: true });
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await expect(checkpoints).toBeVisible();
+      await page.screenshot({
+        path: join(assetDir, `execution-hosts-installation-checkpoints-${theme}--pinned.png`),
+        fullPage: false, animations: 'disabled',
+      });
+    }
+  });
+
   test('section lists one compact table row per host; summary reconciles to the rows (R3)', async ({ page }) => {
     await page.getByTestId('status-bar-settings').click();
     await dismissDevErrorDialog(page);
