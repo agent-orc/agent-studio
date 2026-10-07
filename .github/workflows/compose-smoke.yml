@@ -35,6 +35,7 @@ jobs:
           bash scripts/compose-bootstrap.test.sh
           bash scripts/compose-smoke-version.test.sh
           bash scripts/container-image-contracts.test.sh
+          bash scripts/docker-scenario-images.test.sh
 
       - name: Build, start, and verify onboarding stack
         run: scripts/compose-smoke-test.sh

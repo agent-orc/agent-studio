@@ -297,6 +297,21 @@ public sealed class RemoteReviewWorkspace
                         $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
                 }
 
+                if (ComposeScenarioDiskAdmission.IsComposeScenario(command))
+                {
+                    var disk = ComposeScenarioDiskGate(command.StepId);
+                    if (!disk.Admit)
+                    {
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            ComposeScenarioDiskAdmission.DiskLowClassification,
+                            disk.RefusalSummary(command.StepId, CommandLine(command) ?? command.FileName),
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+                }
+
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
@@ -1531,6 +1546,31 @@ public sealed class RemoteReviewWorkspace
 
     private static string ArtifactName(string workspaceRole, string stepId, string stream)
         => $"{SafeSegment(workspaceRole)}.{SafeSegment(stepId)}.{stream}.log";
+
+    /// <summary>
+    /// AGT-2993: measures the Docker data root (or, where it does not exist, the
+    /// review workspace's filesystem) and logs it before a compose scenario step.
+    /// </summary>
+    private ComposeScenarioDiskDecision ComposeScenarioDiskGate(string stepId)
+    {
+        var path = Directory.Exists(_options.DockerDataRoot) ? _options.DockerDataRoot : RepositoryPath;
+        long? free = null;
+        long? total = null;
+        try
+        {
+            var drive = new DriveInfo(path);
+            free = drive.AvailableFreeSpace;
+            total = drive.TotalSize;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _log($"review-compose-scenario-disk step={stepId} path={path} probe-failed={exception.Message}");
+        }
+        var decision = ComposeScenarioDiskAdmission.Decide(
+            path, free, total, _options.ComposeScenarioMinFreePercent);
+        _log(decision.Describe(stepId));
+        return decision;
+    }
 
     private static string CommandLine(ReviewPreparationCommandDto command)
         => string.Join(' ', new[] { command.FileName }.Concat(command.Arguments));
