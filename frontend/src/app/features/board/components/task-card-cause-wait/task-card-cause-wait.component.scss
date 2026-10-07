@@ -1,0 +1,25 @@
+:host {
+  display: contents;
+}
+
+.cause-wait-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-height: var(--studio-card-pill-height);
+  padding: 0 var(--studio-card-pill-padding-x);
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 42%, transparent);
+  border-radius: 7px;
+  color: var(--studio-accent-warn-strong);
+  background: color-mix(in srgb, var(--studio-accent-warn) 16%, var(--studio-bg-elevated));
+  font: inherit;
+  font-size: var(--studio-card-meta-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.cause-wait-pill:focus-visible {
+  outline: 2px solid var(--studio-focus-ring);
+  outline-offset: 1px;
+}

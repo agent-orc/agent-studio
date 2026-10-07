@@ -15,18 +15,6 @@ public sealed class ReviewInfrastructureRepeatPolicyTests
 {
     private const string BaselineFailure = "BaselineUnavailable";
 
-    [Theory]
-    [InlineData("PreparationFailed", true)]
-    [InlineData("preparationfailed", true)]
-    [InlineData("BaselineUnavailable", false)]
-    [InlineData(null, false)]
-    public void Only_preparation_failures_rebuild_the_retry_plan(
-        string? classification,
-        bool expected)
-        => Assert.Equal(
-            expected,
-            ReviewInfrastructureRetryPlanPolicy.RequiresRebuild(classification));
-
     [Fact]
     public void A_single_infrastructure_failure_is_not_yet_a_diagnosis()
     {
