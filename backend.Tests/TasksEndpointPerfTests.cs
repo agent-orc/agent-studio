@@ -358,13 +358,14 @@ public class JobsEndpointPerfTests : IDisposable
             Assert.False(groupedStale.GetBoolean());
 
             using var gitResource = await client.GetAsync(
-                "/api/tasks/task-1/details/git", timeout.Token);
+                "/api/tasks/task-1/details/git?project=task-list-perf", timeout.Token);
             gitResource.EnsureSuccessStatusCode();
             var resourceBody = await gitResource.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
             Assert.Contains(resourceBody.GetProperty("state").GetString(),
                 new[] { "ready", "stale" });
-            Assert.True(resourceBody.GetProperty("generation").GetInt64() > 0);
-            Assert.False(string.IsNullOrWhiteSpace(resourceBody.GetProperty("resourceVersion").GetString()));
+            Assert.Equal("git", resourceBody.GetProperty("resource").GetString());
+            Assert.True(long.TryParse(resourceBody.GetProperty("coreVersion").GetString(), out _));
+            Assert.False(string.IsNullOrWhiteSpace(resourceBody.GetProperty("version").GetString()));
 
             using var detailResponse = await client.GetAsync("/api/tasks/task-1", timeout.Token);
             detailResponse.EnsureSuccessStatusCode();

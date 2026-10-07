@@ -24,6 +24,8 @@ function makeCore(projectId: string, id: string, overrides: Partial<TaskCore> = 
     projectName: projectId,
     id,
     taskKey: `C:/${projectId}::${id}`,
+    watchPath: `C:/${projectId}`,
+    folderPath: `C:/${projectId}/${id}`,
     key: null,
     title: id,
     kind: 'task',
@@ -42,7 +44,7 @@ function makeCore(projectId: string, id: string, overrides: Partial<TaskCore> = 
     statusSummary: { state: 'missing', originalBytes: 0 },
     prompt: { state: 'ready', text: `prompt of ${id}`, originalBytes: 12 },
     timeline: { state: 'missing', events: [], originalBytes: 0 },
-    coreVersion: 1,
+    coreVersion: '1',
     ...overrides,
   };
 }
@@ -318,17 +320,14 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(false);
   });
 
-  it('evicts deleted tasks from both the core and full-detail stores', () => {
+  it('evicts deleted tasks from the core store', () => {
     startHub();
     read('PROJ-A', 'a');
     http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    cache.prefetch('a', 'C:/PROJ-A');
-    http.expectOne((r) => r.url === '/api/v1/projects/-/tasks/a').flush({ info: { id: 'a', taskKey: 'C:/PROJ-A::a' } });
 
     hub.handlers?.jobDeleted?.({ id: 'a', watchPath: 'C:/PROJ-A' });
 
     expect(cache.peekCore('PROJ-A', 'a')).toBeNull();
-    expect(cache.take('a', 'C:/PROJ-A')).toBeNull();
   });
 
   it('a delete during the first read keeps the late reply out of the cache', () => {
@@ -421,13 +420,6 @@ describe('TaskDetailPrefetchService · task core cache', () => {
       .flush({ state: 'warming', jobId: 'cold', projectId: 'PROJ-A' }, { status: 202, statusText: 'Accepted' });
     expect(results[0]).toEqual({ state: 'warming', core: null });
     expect(cache.peekCore('PROJ-A', 'cold')).toBeNull();
-  });
-
-  it('clearing full-detail entries never discards cores', () => {
-    read('PROJ-A', 'a');
-    http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a'));
-    cache.clear();
-    expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(true);
   });
 
   it('a delete in one project never evicts the in-flight core of the same slug in another', () => {

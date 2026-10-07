@@ -1,17 +1,22 @@
-import type { TaskInfo, TaskKind, TaskMode, TaskRunActivity } from './task.model';
+import type { TaskInfo, TaskRunActivity, ContextUsageSnapshot, TaskSummaryState,
+  TaskPromptHistoryEntry, TaskTitleHistoryEntry, TaskLogEntry, ReviewEvidenceEntry } from './task.model';
 
 /**
  * Wire shape of `GET /api/tasks/{jobId}/core?project=PROJ-002` (AGT-2953, backend
  * `TaskCoreResponse`). The response is capped at 16 KiB: status 1 KiB, prompt
  * 2 KiB, the last five timeline events within 2 KiB. It carries no Git, usage
- * or review facts; those are separate resources with their own versions.
+ * or review facts; those are the additive `/api/tasks/{id}/details/{resource}`
+ * resources (AGT-2955) with their own versions.
  */
 export interface TaskCore {
-  state: 'ready' | 'stale';
+  /** `warming` is the 202 body while the task index re-hydrates. */
+  state: 'ready' | 'stale' | 'warming';
   projectId: string;
   projectName: string;
   id: string;
   taskKey: string;
+  watchPath: string;
+  folderPath: string;
   key?: string | null;
   title: string;
   kind: string;
@@ -33,7 +38,11 @@ export interface TaskCore {
   statusSummary: TaskCoreText;
   prompt: TaskCoreText & { continuationUrl?: string | null };
   timeline: TaskCoreTimeline;
-  coreVersion: number;
+  /**
+   * 64-bit generation as a decimal string. Compare and echo it verbatim; as a
+   * JavaScript number it would round and fail every `generation` check.
+   */
+  coreVersion: string;
 }
 
 export interface TaskCorePins {
@@ -104,60 +113,7 @@ export interface TaskCoreTimeline {
   continuationUrl?: string | null;
 }
 
-/**
- * Identity, lane, runtime and pin facts the resident board record already
- * holds. Painted synchronously on selection; the bounded heads (status,
- * prompt, timeline) are the only part that has to come from `/core`.
- */
-export interface TaskCoreSeed {
-  /** Registry handle the core request is addressed with. */
-  project: string;
-  projectName: string;
-  id: string;
-  taskKey: string;
-  key: string | null;
-  title: string;
-  kind: TaskKind;
-  mode: TaskMode;
-  taskType: string | null;
-  lane: string;
-  archiveState: string | null;
-  enteredLaneAt: string | null;
-  order: number;
-  released: boolean;
-  pins: {
-    model: string | null;
-    modelExplicit: boolean;
-    thinkingLevel: string | null;
-    thinkingLevelExplicit: boolean;
-    cliType: string | null;
-    contextMode: string | null;
-    useOwnSession: boolean | null;
-  };
-  runtime: {
-    activity: TaskRunActivity | null;
-    executionStatus: string | null;
-    location: string;
-    runnerId: string | null;
-    heartbeatAt: string | null;
-  };
-}
-
-/**
- * Selection-facing core state. `seeded` has only board facts; `ready` and
- * `stale` carry a core; `warming`, `missing` and `denied` are the backend's
- * explicit non-ready answers; `error` is a failed request.
- */
-export type TaskCoreViewState =
-  | 'seeded' | 'ready' | 'stale' | 'warming' | 'missing' | 'denied' | 'error';
-
-export interface TaskCoreView {
-  seed: TaskCoreSeed;
-  core: TaskCore | null;
-  state: TaskCoreViewState;
-}
-
-/** Outcome of one core read; mirrors the route's status codes. */
+/** Outcome of one core read through the shared cache; mirrors the route's status codes. */
 export type TaskCoreResult =
   | { state: 'ready' | 'stale'; core: TaskCore }
   | { state: 'warming' | 'missing' | 'denied'; core: null };
@@ -170,38 +126,30 @@ export function taskCoreKey(project: string, id: string): string {
   return `${project}\u0000${id}`;
 }
 
-export function seedTaskCore(info: TaskInfo, project: string): TaskCoreSeed {
-  const location = info.executionLocation;
-  return {
-    project,
-    projectName: info.projectName,
-    id: info.id,
-    taskKey: info.taskKey,
-    key: info.key ?? null,
-    title: info.title,
-    kind: info.kind ?? 'task',
-    mode: info.mode ?? 'coding',
-    taskType: info.taskType ?? null,
-    lane: info.state,
-    archiveState: info.archiveState ?? null,
-    enteredLaneAt: info.enteredLaneAt ?? null,
-    order: info.order,
-    released: info.released ?? false,
-    pins: {
-      model: info.model ?? null,
-      modelExplicit: info.modelExplicit ?? false,
-      thinkingLevel: info.thinkingLevel ?? null,
-      thinkingLevelExplicit: info.thinkingLevelExplicit ?? false,
-      cliType: info.cliType ?? null,
-      contextMode: info.contextMode ?? null,
-      useOwnSession: info.useOwnSession ?? null,
-    },
-    runtime: {
-      activity: info.runActivity ?? null,
-      executionStatus: info.execution?.status ?? null,
-      location: location?.executionKind ?? 'none',
-      runnerId: location?.runnerId ?? null,
-      heartbeatAt: location?.lastHeartbeat ?? null,
-    },
-  };
+export type ResourceName = 'git' | 'usage' | 'review' | 'documents' | 'history';
+
+export interface TaskResource<T> {
+  id: string; taskKey: string; projectId: string; attemptId: string | null;
+  coreVersion: string; resource: ResourceName; version: string;
+  computedAt: string | null; state: 'warming' | 'ready' | 'stale' | 'unavailable';
+  data: T; reason: string | null;
+}
+
+export interface TaskDocumentData {
+  name: 'prompt' | 'status'; markdown: string | null; summaryState: TaskSummaryState | null;
+}
+export interface TaskUsageData {
+  tokenSummary: TaskInfo['tokenSummary']; lastUsage: TaskInfo['lastUsage'];
+  contextUsage: ContextUsageSnapshot | null;
+}
+export interface TaskReviewData { reviewProjection: TaskInfo['reviewProjection']; evidence: ReviewEvidenceEntry[] | null }
+export interface TaskHistoryData {
+  promptHistory: TaskPromptHistoryEntry[];
+  titleHistory: TaskTitleHistoryEntry[];
+  log: TaskLogEntry[];
+}
+export interface TaskGitData {
+  mergeSignal: TaskInfo['mergeSignal']; integration: TaskInfo['integration'];
+  publishSignal: TaskInfo['publishSignal']; testEvidence: TaskInfo['testEvidence'];
+  commit: TaskInfo['commit']; commits: TaskInfo['commits'];
 }
