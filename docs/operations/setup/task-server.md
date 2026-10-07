@@ -354,6 +354,13 @@ ownership. Hosts without a registered runner can update only from the instance
 that created the record. The management principal is required; secret values, token
 hashes and credential-bearing URLs are never accepted. The host or CLI retains
 native refresh and custody.
+GitHub records may additionally carry a token subtype, repository purpose and
+write grant. A deploy-key record can carry its GitHub key ID, public fingerprint
+and the credential ID of the provisioning token. These fields are metadata,
+not authority to register or revoke a key. The server advertises
+`credential-registry-github-v1` for clients that consume the expanded record;
+older records omit the nullable fields. Repository key operations still require
+an authorized administration session and a generation-matched host observation.
 
 Management routes, all under `/api/v1/management/retention`:
 

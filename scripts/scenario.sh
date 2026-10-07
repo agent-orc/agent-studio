@@ -13,9 +13,10 @@ usage() {
 Usage: scripts/scenario.sh --target inproc|compose|remote --level smoke|full [options]
 
 Targets:
-  inproc   Boots Task Server + Runner as sibling processes (dotnet test). No
-           Docker required; runs on Windows and Linux in under three minutes
-           at --level smoke.
+  inproc   Boots Task Server + Runner as sibling processes (dotnet test),
+           plus the backend monolith and a second Runner for the legacy
+           runner plane step. No Docker required; Linux only; about one
+           minute at --level smoke on an idle host.
   compose  Runs against the docker-compose stack. --level smoke reuses the
            one-box boot/health checks. --level full starts the
            Task Server and Studio BFF plus the scenario's
@@ -28,8 +29,9 @@ Targets:
            deployment, which this script does not provision.
 
 Levels:
-  smoke    The first six steps in testsupport/scenario/steps.json (bootstrap
-           principals through auto-review).
+  smoke    The smoke-level steps in testsupport/scenario/steps.json
+           (bootstrap principals through auto-review, including the coding
+           attempt on both runner planes).
   full     Every step in testsupport/scenario/steps.json. With --target
            inproc it also runs the Studio connector negative matrix and
            writes connector-negative-matrix.md/.json to the report dir.
