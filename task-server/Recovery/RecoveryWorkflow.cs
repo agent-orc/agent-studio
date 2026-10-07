@@ -557,10 +557,15 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         return await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, null, ct);
     }
 
+    /// <summary>Test seam: runs inside the rotation transaction after the credential file is in place.</summary>
+    internal Func<CancellationToken, Task>? AfterCredentialPlaced { get; init; }
+
     /// <summary>
     /// Re-enrols a client and delivers the new credential to <paramref name="credentialPath"/>. The credential
-    /// is written and flushed to an owner-only staging file created with that mode before the rotation commits;
-    /// a failed write rolls the rotation back, and the committed credential is then moved into place.
+    /// is written and flushed to an owner-only staging file created with that mode, then placed at the requested
+    /// path, all before the rotation commits. A prior file at that path is kept as a backup until the commit;
+    /// if placement or the commit fails, the rotation rolls back and the prior file is put back, so the old
+    /// credential stays both valid and delivered.
     /// </summary>
     public async Task<IssuedPrincipalCredential> ReenrolClientToFileAsync(
         string principalId, string credentialPath, string actorId, CancellationToken ct)
@@ -568,7 +573,11 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         if (await ReadReceiptAsync(ct) is null)
             throw new InvalidOperationException("No recovery restore receipt; re-enrol clients only on a restored target.");
         var target = Path.GetFullPath(credentialPath);
-        var staging = Path.Combine(Path.GetDirectoryName(target)!, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}.tmp");
+        var prefix = Path.Combine(Path.GetDirectoryName(target)!, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}");
+        var staging = prefix + ".tmp";
+        var backup = prefix + ".previous";
+        var placed = false;
+        var hadPrior = false;
         IssuedPrincipalCredential issued;
         try
         {
@@ -576,26 +585,40 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             {
                 var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
                 if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-                await using var stream = new FileStream(staging, options);
-                await stream.WriteAsync(Encoding.UTF8.GetBytes(credential), token);
-                stream.Flush(flushToDisk: true);
+                await using (var stream = new FileStream(staging, options))
+                {
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(credential), token);
+                    stream.Flush(flushToDisk: true);
+                }
+                hadPrior = File.Exists(target);
+                if (hadPrior) File.Replace(staging, target, backup);
+                else File.Move(staging, target);
+                placed = true;
+                if (AfterCredentialPlaced is not null) await AfterCredentialPlaced(token);
             }, ct);
         }
-        catch
+        catch (Exception failure)
         {
-            File.Delete(staging);
+            // The transaction did not commit (SQLite commit failures leave nothing applied), so the old
+            // credential is still the valid one: put its file back.
+            try
+            {
+                if (placed && hadPrior) File.Move(backup, target, overwrite: true);
+                else if (placed) File.Delete(target);
+                else File.Delete(backup);
+                File.Delete(staging);
+            }
+            catch (Exception cleanup)
+            {
+                throw new IOException(
+                    $"Re-enrolment rolled back and the old credential is still valid, but '{target}' could not be restored"
+                    + (hadPrior ? $" from '{backup}'" : string.Empty) + $": {cleanup.Message}",
+                    failure);
+            }
             throw;
         }
-        try
-        {
-            File.Move(staging, target, overwrite: true);
-        }
-        catch (Exception exception)
-        {
-            throw new IOException(
-                $"The new credential is active and was written to '{staging}' but could not be moved to '{target}': {exception.Message}",
-                exception);
-        }
+        // Committed: the backup holds the now revoked credential.
+        File.Delete(backup);
         return issued;
     }
 
@@ -641,7 +664,9 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var decision = RecoveryResumePolicy.Decide(facts);
         if (!decision.Allowed || checkOnly || receipt is null) return (decision, receipt);
 
-        await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Normal, "recovery resume gate passed"), actorId, ct);
+        // Record the resume before leaving Maintenance: a receipt that cannot be written keeps the target
+        // fenced instead of releasing it unrecorded, and a refused mode change puts the prior receipt back.
+        var gated = receipt;
         var resumed = UtcNow;
         receipt = receipt with
         {
@@ -649,6 +674,15 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             MeasuredRecoveryTimeSeconds = receipt.LossAt is null ? null : Math.Round((resumed - receipt.LossAt.Value).TotalSeconds, 3),
         };
         await WriteReceiptAsync(receipt, ct);
+        try
+        {
+            await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Normal, "recovery resume gate passed"), actorId, ct);
+        }
+        catch
+        {
+            await WriteReceiptAsync(gated, CancellationToken.None);
+            throw;
+        }
         await store.AuditRecoveryAsync(actorId, "recovery.resumed", receipt.ManifestId, new { receipt.MeasuredRecoveryTimeSeconds }, ct);
         return (decision, receipt);
     }

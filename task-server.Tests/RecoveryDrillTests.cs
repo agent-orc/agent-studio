@@ -408,6 +408,95 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Reenrol_to_file_rolls_back_when_the_credential_cannot_be_placed_at_the_requested_path()
+    {
+        using var temp = new TempDirectory("recovery-reenrol-place");
+        var (target, workflow, drill) = await RestoredWithLostStudioAsync(temp.Path);
+
+        // Staging succeeds but the final path is occupied by a directory: nothing may commit.
+        var occupied = Path.Combine(temp.Path, "studio.credential");
+        Directory.CreateDirectory(Path.Combine(occupied, "child"));
+        await Assert.ThrowsAnyAsync<IOException>(
+            () => workflow.ReenrolClientToFileAsync("studio:recovery", occupied, "drill", default));
+
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
+    }
+
+    [Fact]
+    public async Task Reenrol_to_file_restores_the_prior_credential_file_when_the_rotation_does_not_commit()
+    {
+        using var temp = new TempDirectory("recovery-reenrol-commit");
+        var (target, workflow, drill) = await RestoredWithLostStudioAsync(temp.Path);
+        var credentialPath = Path.Combine(temp.Path, "studio.credential");
+        await File.WriteAllTextAsync(credentialPath, drill.OldStudioCredential!);
+        var failing = new RecoveryWorkflow(target, Options(Path.Combine(temp.Path, "target")), new OriginRefProbe(Http), drill.Clock)
+        {
+            AfterCredentialPlaced = _ => throw new IOException("simulated failure after placement, before commit"),
+        };
+
+        await Assert.ThrowsAsync<IOException>(
+            () => failing.ReenrolClientToFileAsync("studio:recovery", credentialPath, "drill", default));
+
+        Assert.Equal(drill.OldStudioCredential, await File.ReadAllTextAsync(credentialPath));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
+
+        // A fresh credential file at a new path is removed again on the same failure.
+        var freshPath = Path.Combine(temp.Path, "fresh.credential");
+        await Assert.ThrowsAsync<IOException>(
+            () => failing.ReenrolClientToFileAsync("studio:recovery", freshPath, "drill", default));
+        Assert.False(File.Exists(freshPath));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+    }
+
+    [Fact]
+    public async Task Resume_stays_in_maintenance_when_the_resume_receipt_cannot_be_recorded()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var temp = new TempDirectory("recovery-resume-record");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        Assert.True((await Workflow(target, targetDirectory, drill.Clock)
+            .RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+        target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        var workflow = Workflow(target, targetDirectory, drill.Clock);
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        await workflow.FenceHostsAsync("drill", default);
+        var (ready, _) = await workflow.ResumeAsync(true, false, true, null, "drill", default);
+        Assert.True(ready.Allowed, string.Join("; ", ready.Blockers.Select(item => item.Code)));
+
+        var receiptPath = Path.Combine(targetDirectory, RecoveryRestoreReceipt.FileName);
+        File.SetUnixFileMode(receiptPath, UnixFileMode.UserRead);
+        try
+        {
+            await Assert.ThrowsAnyAsync<UnauthorizedAccessException>(
+                () => workflow.ResumeAsync(true, false, false, null, "drill", default));
+        }
+        finally
+        {
+            File.SetUnixFileMode(receiptPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        Assert.Equal(TaskServerMode.Maintenance, target.Mode);
+        Assert.Null((await workflow.ReadReceiptAsync(default))!.ResumedAt);
+    }
+
+    private static async Task<(TaskServerStore Target, RecoveryWorkflow Workflow, Drill Drill)> RestoredWithLostStudioAsync(string root)
+    {
+        var drill = await CaptureAsync(root, includeLostStudio: true);
+        var targetDirectory = Path.Combine(root, "target");
+        Assert.True((await Workflow(Store(targetDirectory, drill.Clock), targetDirectory, drill.Clock)
+            .RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default)).Restored);
+        var target = Store(targetDirectory, drill.Clock);
+        await target.InitializeAsync();
+        drill.Clock.Advance(TimeSpan.FromSeconds(1));
+        return (target, Workflow(target, targetDirectory, drill.Clock), drill);
+    }
+
+    [Fact]
     public async Task Empty_target_rebuilds_from_the_retained_set_and_resumes_behind_the_gate()
     {
         using var temp = new TempDirectory("recovery-drill");

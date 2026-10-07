@@ -134,8 +134,10 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    `task-server recovery reenrol --principal <id> --credential-out <file>`
    revokes that principal's old credentials and writes one fresh credential to
    an owner-only file while the target is in Maintenance. The file is created
-   with mode `0600` and flushed before the rotation commits; if it cannot be
-   written, the rotation rolls back and the old credential stays valid. Re-enrol every client
+   with mode `0600`, flushed and placed at `<file>` before the rotation
+   commits. A previous file at that path is kept until the commit. If the file
+   cannot be written or placed, or the commit fails, the rotation rolls back,
+   the previous file is put back and the old credential stays valid. Re-enrol every client
    reported as `client-credentials-lost`, then deliver each credential through
    its protected token file. Reconnect one host at a time. Re-enrol runners
    after `fence-hosts`, because the fence revokes every runner credential
@@ -158,6 +160,11 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    bundle);
    - for each pending host obligation, either reconciliation or the
      attestation that the host's outbox and salvage are kept.
+
+   When the gate passes, the resume time is written to the restore receipt
+   before the target leaves `Maintenance`. If the receipt cannot be written,
+   the target stays in `Maintenance`; fix the data directory and run resume
+   again.
 8. **Reconnect and canary.** Start the service. Reconnect the re-enrolled host
    with a new instance id; its old run leases are not accepted. Complete one
    canary run, verify its terminal success and published Git ref, then reopen
