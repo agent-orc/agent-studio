@@ -248,6 +248,11 @@ enrolled to connected to capability ready; a project still needs its own
 repository proof and placement admission. A successful host probe from another
 project or runner does not establish this project's access.
 
+The first-owner form asks for the installer owner code only while the Task
+Server reports an armed code and bootstrap is still open. Once the owner exists,
+the code is consumed; later sign-ins do not use it. A rejected code leaves the
+first-owner form open so the operator can correct it and retry.
+
 Studio cannot infer installation completion from service health, or a verified
 recovery from a listed backup. Read `installation.json` and `checkpoints.jsonl`
 on the authority host for the accepted release, canary and phase. Check the

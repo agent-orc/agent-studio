@@ -34,6 +34,7 @@ interface StandaloneAuthUser {
 interface StandaloneAuthStatus {
   bootstrapRequired: boolean;
   authenticated: boolean;
+  bootstrapCodeRequired?: boolean;
   user?: StandaloneAuthUser | null;
 }
 
@@ -48,7 +49,7 @@ function normalizeStatus(response: AuthStatus | StandaloneAuthStatus): AuthStatu
   return {
     profile: 'networked', bootstrapRequired: response.bootstrapRequired,
     authenticated: response.authenticated,
-    bootstrapCodeRequired: true,
+    bootstrapCodeRequired: response.bootstrapRequired && response.bootstrapCodeRequired === true,
     user: user ? {
       id: user.userId, username: user.username, displayName: user.displayName,
       role: user.role, projects: user.projectIds ?? [], disabled: user.disabled,

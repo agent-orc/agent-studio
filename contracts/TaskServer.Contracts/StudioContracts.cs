@@ -36,7 +36,8 @@ public sealed record StudioAuthUserDto(
 public sealed record StudioAuthStatusDto(
     bool BootstrapRequired,
     bool Authenticated,
-    StudioAuthUserDto? User = null);
+    StudioAuthUserDto? User = null,
+    bool BootstrapCodeRequired = false);
 
 public sealed record StudioAuthSessionDto(
     string SessionToken,
