@@ -22,6 +22,9 @@
     <ProjectReference Include="..\task-server\TaskServer.csproj" />
     <ProjectReference Include="..\studio-bff\StudioBff.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\runner\AgentRunner.csproj" ReferenceOutputAssembly="false" />
+    <!-- Built, never referenced: the deployment scenario boots the backend
+         monolith as a sibling process for its legacy runner plane step. -->
+    <ProjectReference Include="..\backend\OrchestratorApi.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\testsupport\AgentStudio.TestSupport.csproj" />
   </ItemGroup>
 

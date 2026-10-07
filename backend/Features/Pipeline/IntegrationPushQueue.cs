@@ -11,9 +11,8 @@ namespace AgentStudio.Pipeline;
 /// <see cref="ApprovedSha"/> is the exact commit the merge gate released. The
 /// push targets that object rather than the branch tip, so a merge that landed
 /// on the integration branch while this item waited in the queue cannot reach
-/// origin under this card's approval. Null only where no approval exists
-/// (legacy fixtures / the durable restart backstop), which keeps the historical
-/// tip semantics.
+/// origin under this card's approval. Legacy fixture calls may omit it; the
+/// durable restart backstop requires the SHA recorded by the passed merge step.
 /// </para>
 /// </summary>
 public sealed record IntegrationPushRequest(

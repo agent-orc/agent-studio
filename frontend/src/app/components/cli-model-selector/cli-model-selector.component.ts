@@ -16,18 +16,16 @@ import {
 import type { BetterCandidateNote, CliType } from '../../models/task.model';
 import { CLI_TYPES } from '../../models/task.model';
 import { CliCatalogStore, orderModelCatalog, type CliModelInfo } from '../../features/cli';
-import {
-  cliTypeIcon as fmtCliTypeIcon,
-  cliTypeLabel as fmtCliTypeLabel,
-} from '../../services/format.util';
+import { cliTypeIcon as fmtCliTypeIcon, cliTypeLabel as fmtCliTypeLabel } from '../../services/format.util';
 import { shortModelLabel } from 'coding-agent-chat/core';
 import { ModalStackService } from '../../services/modal-stack.service';
 import { ConnectedOverlayDirective } from '../../directives/connected-overlay.directive';
 import { OverlayPortalDirective } from '../../directives/overlay-portal.directive';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
-import { modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
+import { levelMappingNote, modelAriaLabel, modelAvailabilityNote, moveRadioSelection, normalizeThinkingLevel,
   olderModelAriaLabel, olderModelNote } from './cli-model-selector.util';
 import { BetterCandidateLinesComponent } from '../better-candidate-lines/better-candidate-lines.component';
+import { ModelPriceComponent } from '../model-price/model-price.component';
 
 interface CliOption {
   id: CliType;
@@ -53,7 +51,7 @@ interface CliOption {
   selector: 'app-cli-model-selector',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective, BetterCandidateLinesComponent],
+  imports: [AppTooltipDirective, ConnectedOverlayDirective, OverlayPortalDirective, BetterCandidateLinesComponent, ModelPriceComponent],
   templateUrl: './cli-model-selector.component.html',
   styleUrl: './cli-model-selector.component.scss',
 })
@@ -124,6 +122,7 @@ export class CliModelSelectorComponent {
   readonly draftThinkingLevels = computed(
     () => this.draftSelectedModel()?.thinkingLevels ?? [],
   );
+  readonly levelMappingNote = computed(() => levelMappingNote(this.draftSelectedModel(), this.thinkingLevel()));
   readonly effectiveDisabledReason = computed(() => {
     if (!this.disabled()) return null;
     return this.disabledReason() ?? 'Stop the run first to change the model.';
@@ -374,7 +373,7 @@ export class CliModelSelectorComponent {
     const stillValid = current === '' || selectable.some((model) => model.id === current);
     if (this.draftModelPinned() && stillValid) {
       this.draftThinkingLevel.set(
-        normalizeThinkingLevel(this.draftModels(), current, this.draftThinkingLevel()),
+        normalizeThinkingLevel(this.draftModels(), current, this.draftThinkingLevel() ?? this.thinkingLevel()),
       );
       return;
     }

@@ -1306,7 +1306,7 @@ public class ProjectDocsService
     };
 
     private static readonly HashSet<string> WikiLifecycleKinds = new(StringComparer.Ordinal)
-        { "design", "concept", "exploration", "workbench" };
+        { "design", "concept", "exploration", "workbench", "decision" };
     private static readonly HashSet<string> WikiLifecycleStates = new(StringComparer.Ordinal)
         { "in-progress", "review-requested", "decided", "documented", "done" };
 

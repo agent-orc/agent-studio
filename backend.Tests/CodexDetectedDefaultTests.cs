@@ -185,13 +185,59 @@ public sealed class CodexDetectedDefaultTests : IDisposable
     }
 
     [Fact]
+    public void DefaultForCli_FollowsTheGpt6SolPreference_WithItsDiscoveredDefaultLevel()
+    {
+        // AGT-2903: gpt-6-sol > gpt-5.6-sol > gpt-5.5 baseline.
+        var models = new List<CliModelInfo>
+        {
+            new() { Id = ModelIds.Gpt56Sol, Available = true },
+            new()
+            {
+                Id = ModelIds.Gpt6Sol, Available = true,
+                ThinkingLevels = ["low", "medium", "high", "xhigh", "max", "ultra"], DefaultThinkingLevel = "medium",
+            },
+        };
+        ModelMetadataRegistry.SetDetectedCodexLadders(models);
+        ModelMetadataRegistry.SetDetectedCodexDefault(
+            CodexModelDiscovery.PickDetectedDefault(new CliModelCatalog { Models = models, Source = "test" }));
+
+        Assert.Equal(ModelIds.Gpt6Sol, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+        Assert.Equal("medium", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, ModelIds.Gpt6Sol));
+        // gpt-6-sol offers ultra in live discovery: no mapping is hard-coded.
+        Assert.Equal("ultra", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Sol, "ultra"));
+
+        ModelMetadataRegistry.SetDetectedCodexDefault(null);
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+    }
+
+    [Fact]
+    public void ResolveThinkingLevel_MapsAnUnofferedUltraPinToTheHighestOfferedRung()
+    {
+        ModelMetadataRegistry.SetDetectedCodexLadders(
+        [
+            new CliModelInfo
+            {
+                Id = ModelIds.Gpt6Luna,
+                ThinkingLevels = ["low", "medium", "high", "xhigh", "max"],
+                DefaultThinkingLevel = "medium",
+            },
+        ]);
+
+        Assert.Equal("max", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Luna, "ultra"));
+        // A rung below the ladder cannot map downwards and keeps the model default.
+        Assert.Equal("medium", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt6Luna, "minimal"));
+    }
+
+    [Fact]
     public void ResolveThinkingLevel_HonorsExplicit_ElseTopOfLadder()
     {
         // Explicit choice wins (normalized to the model ladder)...
         Assert.Equal("high", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt56Sol, "high"));
-        // ...an out-of-ladder explicit request normalizes to the model's own
-        // ladder default (medium for gpt-5.5), not the product top-of-ladder.
-        Assert.Equal("medium", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt55, "ultra"));
+        // ...a known rung the model does not offer maps to the highest offered
+        // rung below it (AGT-2903: ultra -> xhigh on gpt-5.5)...
+        Assert.Equal("xhigh", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt55, "ultra"));
+        // ...and an unknown level still lands on the model's own ladder default.
+        Assert.Equal("medium", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt55, "turbo"));
         // No request at all => the product default (top of ladder).
         Assert.Equal("ultra", ModelMetadataRegistry.ResolveThinkingLevel(CliTypes.Codex, ModelIds.Gpt56Sol, null));
     }

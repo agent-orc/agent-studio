@@ -193,9 +193,10 @@ public static class ModelIds
     /// <summary>Onboarded OpenAI flagship of the gpt-6 generation. Unlike the
     /// gpt-5.6 family this one IS a registry entry, so the picker can show it
     /// as a disabled, explained option when the installed codex-cli does not
-    /// offer it yet (AGT-2707). It is not the product default; that stays with
-    /// <see cref="Gpt56Sol"/> detection / the <see cref="Gpt55"/> baseline.</summary>
+    /// offer it yet (AGT-2707). It is not the product default.</summary>
     public const string Gpt6Astra = "gpt-6-astra";
+    /// <summary>Codex product default when live discovery offers it, ahead of
+    /// <see cref="Gpt56Sol"/> and the <see cref="Gpt55"/> baseline (AGT-2903).</summary>
     public const string Gpt6Sol = "gpt-6-sol";
     public const string Gpt6Luna = "gpt-6-luna";
     public const string Gpt5Codex = "gpt-5-codex";
@@ -530,8 +531,8 @@ public static class ModelMetadataRegistry
 
     public static string? DefaultForCli(string? cliType)
     {
-        // Codex follows the installed CLI: once discovery detects a newer top
-        // model (gpt-5.6-*), it is published here and becomes the product
+        // Codex follows the installed CLI: discovery publishes gpt-6-sol when
+        // offered, else gpt-5.6-sol (AGT-2903), and that becomes the product
         // default everywhere Gpt55 was drawn (task creation, cli-type switch,
         // client-default materialization). Null => static gpt-5.5 baseline.
         if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex
@@ -810,9 +811,15 @@ public static class ModelMetadataRegistry
             string.Equals(level, requested?.Trim(), StringComparison.OrdinalIgnoreCase));
         if (match != null) return match;
 
-        // Out-of-ladder request: land on the model's own default rather than
-        // the product top-of-ladder, so a stale or mistyped level never
-        // silently escalates reasoning cost. Same source order as
+        // A known rung the model does not offer (an ultra pin carried over to
+        // a model whose ladder stops at xhigh or max) maps to the highest
+        // offered rung below it (AGT-2903). It never escalates past the pin.
+        var lower = HighestOfferedRungBelow(levels, requested);
+        if (lower != null) return lower;
+
+        // Unknown or below-ladder request: land on the model's own default
+        // rather than the product top-of-ladder, so a stale or mistyped level
+        // never silently escalates reasoning cost. Same source order as
         // DefaultThinkingLevelForCli, minus its codex top-of-ladder rule.
         var metadata = Find(model);
         if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
@@ -825,6 +832,25 @@ public static class ModelMetadataRegistry
         if (!string.IsNullOrWhiteSpace(detected)) return detected;
 
         return CliThinkingLevels.DefaultFor(cliType, model) ?? levels[0];
+    }
+
+    /// <summary>Canonical rung order shared by every CLI ladder, weakest first.
+    /// Matches the codex-cli catalogue order (max below ultra).</summary>
+    private static readonly string[] ThinkingRungOrder =
+        ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+    private static string? HighestOfferedRungBelow(IReadOnlyList<string> levels, string? requested)
+    {
+        var requestedRank = Array.FindIndex(ThinkingRungOrder, rung =>
+            string.Equals(rung, requested?.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (requestedRank <= 0) return null;
+        return levels
+            .Select(level => (level, rank: Array.FindIndex(ThinkingRungOrder, rung =>
+                string.Equals(rung, level, StringComparison.OrdinalIgnoreCase))))
+            .Where(candidate => candidate.rank >= 0 && candidate.rank < requestedRank)
+            .OrderByDescending(candidate => candidate.rank)
+            .Select(candidate => candidate.level)
+            .FirstOrDefault();
     }
 
     /// <summary>

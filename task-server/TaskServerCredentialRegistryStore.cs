@@ -214,6 +214,20 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("Credential locator and evidence must be safe local references.");
         if (record.Generation.Length == 64 && record.Generation.All(char.IsAsciiHexDigit))
             throw new ArgumentException("Credential generation cannot be a token hash.");
+        if (record.GitHubKeyId is <= 0 ||
+            record.GitHubKeyId is not null && record.Kind != "github_deploy_key" ||
+            record.ProvisioningCredentialId is not null && record.Kind != "github_deploy_key" ||
+            record.ProvisioningCredentialId is not null &&
+                (record.ProvisioningCredentialId.Length > 128 || record.ProvisioningCredentialId.Any(char.IsControl)) ||
+            record.RepositoryPurpose is not null &&
+                (record.Kind is not ("github_deploy_key" or "github_https_token" or "github_provisioning_oauth")
+                 || record.RepositoryPurpose is not ("product" or "workspace")) ||
+            record.RepositoryWriteGrant is not null &&
+                record.Kind is not ("github_deploy_key" or "github_https_token") ||
+            record.TokenSubtype is not null &&
+                (record.Kind is not ("github_https_token" or "github_provisioning_oauth")
+                 || record.TokenSubtype is not ("fine-grained-pat" or "classic-pat" or "oauth-app" or "unknown")))
+            throw new ArgumentException("GitHub credential metadata has an invalid kind or identifier.");
         var serialized = JsonSerializer.Serialize(request, CredentialRegistryJson);
         if (serialized.Length > 32_768 || UnsafeCredentialMetadata.IsMatch(serialized))
             throw new ArgumentException("Credential metadata contains a value or unsafe reference.");

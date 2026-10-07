@@ -10,10 +10,12 @@ import {
   incompleteTokenCostLabel,
 } from '../../../tokens';
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { summarizeDecisionCost } from '../../../task-pipeline';
 
 interface PipelineKindLegendRow {
   kind: PipelineStepKindKey;
   label: string;
+  runs: number;
   tokens: number;
   cost: number;
   unpricedRuns: number;
@@ -61,11 +63,32 @@ export class ProjectPipelineCostTrendComponent {
     (this.timeline()?.kinds ?? []).map(kind => ({
       kind: kind.kind,
       label: this.kindLabel(kind.kind),
+      runs: kind.runs ?? 0,
       tokens: kind.totalTokens,
       cost: kind.totalCostUsd,
       unpricedRuns: kind.unpricedRuns ?? (kind.anyModelUnknown ? 1 : 0),
       pricingGaps: kind.pricingGaps ?? [],
     })),
+  );
+
+  /** What deciding cost in the window against the agent runs (AGT-3015). */
+  readonly decisionSummary = computed(() => summarizeDecisionCost(this.timeline()?.decisionCost));
+
+  /** Every decision step that ran in the window: how often, on which model, at what cost. */
+  readonly decisionSteps = computed(() =>
+    (this.timeline()?.steps ?? [])
+      .filter(step => step.kind === 'orchestrator' && (step.runs ?? 0) > 0)
+      .map(step => ({
+        stepId: step.stepId,
+        runs: step.runs ?? 0,
+        tasks: step.tasks ?? 0,
+        models: (step.models ?? []).join(', ') || 'rule',
+        tokens: step.totalTokens,
+        cost: step.totalCostUsd,
+        unpricedRuns: step.unpricedRuns ?? (step.anyModelUnknown ? 1 : 0),
+        pricingGaps: step.pricingGaps ?? [],
+      }))
+      .sort((a, b) => b.runs - a.runs || a.stepId.localeCompare(b.stepId)),
   );
 
   readonly stackColumns = computed<PipelineStackColumn[]>(() => {
@@ -87,6 +110,7 @@ export class ProjectPipelineCostTrendComponent {
               return {
                 kind: kind.kind,
                 label: this.kindLabel(kind.kind),
+                runs: 0,
                 tokens: cell.totalTokens,
                 cost: cell.costUsd,
                 unpricedRuns: cell.unpricedRuns ?? 0,

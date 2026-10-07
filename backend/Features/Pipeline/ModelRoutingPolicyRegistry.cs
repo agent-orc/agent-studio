@@ -232,7 +232,10 @@ public sealed class ModelRoutingPolicyRegistry
     /// <summary>
     /// Whether a concrete sibling route clears the named policy floor. Older
     /// generations of the same Claude family inherit the current generation's
-    /// tier; this is a provider sibling substitution, not an economy downgrade.
+    /// tier, and the GPT-5.6 Sol/Luna siblings inherit their GPT-6 tier
+    /// (AGT-2903), so a pre-GPT-6 pin or a provider-rejection sibling keeps
+    /// clearing the floor it cleared before the re-base; this is a provider
+    /// sibling substitution, not an economy downgrade.
     /// </summary>
     public bool RouteMeetsFloor(string model, string? thinkingLevel, ModelRoutingTier? floor)
     {
@@ -256,6 +259,8 @@ public sealed class ModelRoutingPolicyRegistry
             ModelIds.ClaudeOpus48 or ModelIds.ClaudeOpus47 or ModelIds.ClaudeOpus46 or ModelIds.ClaudeOpus45
                 => ModelIds.ClaudeOpus5,
             ModelIds.ClaudeSonnet46 or ModelIds.ClaudeSonnet45 => ModelIds.ClaudeSonnet5,
+            ModelIds.Gpt56Sol => ModelIds.Gpt6Sol,
+            ModelIds.Gpt56Luna => ModelIds.Gpt6Luna,
             _ => value ?? string.Empty,
         };
 
@@ -280,7 +285,7 @@ public sealed class ModelRoutingPolicyRegistry
     private ModelRoutingTier Tier(string id)
         => Policy.Tiers.First(tier => string.Equals(tier.Id, id, StringComparison.OrdinalIgnoreCase));
 
-    private static (string Model, string? ThinkingLevel) ResolveCatalogueRoute(
+    private (string Model, string? ThinkingLevel) ResolveCatalogueRoute(
         ModelRoutingTier tier,
         CliModelCatalog catalogue)
     {
@@ -297,8 +302,7 @@ public sealed class ModelRoutingPolicyRegistry
         var targetModelId = overrideRoute?.Model ?? tier.Model;
         var targetThinkingLevel = overrideRoute?.ThinkingLevel ?? tier.ThinkingLevel;
 
-        var selected = available.FirstOrDefault(model =>
-            string.Equals(model.Id, targetModelId, StringComparison.OrdinalIgnoreCase));
+        var selected = FindWithDeclaredSiblings(available, targetModelId);
         if (selected == null && overrideRoute == null)
         {
             // Unknown/future CLI vendor with no exact model or vendor
@@ -321,6 +325,26 @@ public sealed class ModelRoutingPolicyRegistry
             ?? levels.FirstOrDefault()
             ?? targetThinkingLevel;
         return (selected.Id, thinking);
+    }
+
+    /// <summary>
+    /// Finds the tier model in the live catalogue, or else its declared
+    /// provider-rejection sibling chain (gpt-6-sol -> gpt-5.6-sol). A CLI that
+    /// does not offer a GPT-6 tier model yet keeps the same-family route
+    /// instead of reaching the positional fallback.
+    /// </summary>
+    private CliModelInfo? FindWithDeclaredSiblings(IReadOnlyList<CliModelInfo> available, string modelId)
+    {
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var candidate = modelId; !string.IsNullOrWhiteSpace(candidate) && visited.Add(candidate);)
+        {
+            var match = available.FirstOrDefault(model =>
+                string.Equals(model.Id, candidate, StringComparison.OrdinalIgnoreCase));
+            if (match != null) return match;
+            candidate = Policy.ProviderRejectionFallbacks.FirstOrDefault(fallback =>
+                string.Equals(fallback.FromModel, candidate, StringComparison.OrdinalIgnoreCase))?.ToModel;
+        }
+        return null;
     }
 
     private static ModelRoutingPolicyDocument ReadEmbeddedPolicy()

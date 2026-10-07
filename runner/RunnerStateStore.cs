@@ -84,7 +84,7 @@ public sealed class RunnerStateStore
         Directory.CreateDirectory(workerDirectory);
         var slot = new PersistedRunnerSlot(
             taskKey,
-            runId ?? lease.LeaseId,
+            AttemptIdFor(lease, runId),
             lease,
             runId,
             leaseInstanceId,
@@ -103,6 +103,20 @@ public sealed class RunnerStateStore
         Save(slot);
         return slot;
     }
+
+    /// <summary>
+    /// The slot's attempt id is the attempt the Task Server fenced. A lease that
+    /// carries an attempt id names it on both planes (on the v1 plane it equals
+    /// the run id); only a lease without one falls back to the run id, then the
+    /// lease id. On the legacy plane the claim carries no run id, and before
+    /// AGT-2985 the slot used the lease id here, so continuation evidence built
+    /// from the slot named an attempt the server never fenced and every
+    /// completion was rejected (Stable 0.9.3, 2026-09-27).
+    /// </summary>
+    internal static string AttemptIdFor(RunLeaseInfoDto lease, string? runId)
+        => !string.IsNullOrWhiteSpace(lease.AttemptId)
+            ? lease.AttemptId
+            : string.IsNullOrWhiteSpace(runId) ? lease.LeaseId : runId;
 
     public PersistedRunnerSlot Save(PersistedRunnerSlot slot)
     {

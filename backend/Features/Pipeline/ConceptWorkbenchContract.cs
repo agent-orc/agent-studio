@@ -191,7 +191,22 @@ public static class ConceptWorkbenchContract
             for (var i = 0; i < descriptor.ImplementationTasks.Count; i++)
             {
                 var item = descriptor.ImplementationTasks[i];
-                if (string.IsNullOrWhiteSpace(item.Title) || string.IsNullOrWhiteSpace(item.PromptMarkdown))
+                if (item.Decision is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(item.Title))
+                        findings.Add($"implementationTasks[{i}] requires a title.");
+                    findings.AddRange(DecisionCardPolicy.ValidateContent(item.Decision)
+                        .Select(error => $"implementationTasks[{i}].decision: {error.Message}"));
+                    foreach (var option in item.Decision.Options ?? [])
+                    foreach (var requirement in option.Requirements ?? [])
+                    {
+                        if (!string.IsNullOrWhiteSpace(requirement.Title)
+                            && !string.IsNullOrWhiteSpace(requirement.PromptMarkdown)
+                            && DossierImplementationCardPolicy.Validate(requirement) is { } requirementFinding)
+                            findings.Add($"implementationTasks[{i}].decision option '{option.Id}' requirement is not workflow-sized: {requirementFinding}");
+                    }
+                }
+                else if (string.IsNullOrWhiteSpace(item.Title) || string.IsNullOrWhiteSpace(item.PromptMarkdown))
                     findings.Add($"implementationTasks[{i}] requires title and promptMarkdown.");
                 else if (DossierImplementationCardPolicy.Validate(item) is { } scopeFinding)
                     findings.Add($"implementationTasks[{i}] is not workflow-sized: {scopeFinding}");

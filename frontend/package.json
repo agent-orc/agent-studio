@@ -18,6 +18,8 @@
     "build:mockup:planning": "ng build planning-visibility-mockup",
     "mockup:usage": "ng serve usage-chips-mockup --port 4034 --host 127.0.0.1",
     "build:mockup:usage": "ng build usage-chips-mockup",
+    "mockup:usage-header": "ng serve usage-header-mockup --port 4035 --host 127.0.0.1",
+    "build:mockup:usage-header": "ng build usage-header-mockup",
     "postinstall": "node scripts/patch-coding-agent-chat-model-selector.mjs && node scripts/patch-coding-agent-chat-technical-blocks.mjs",
     "test": "ng test",
     "test:ci": "ng test frontend --watch=false --progress=false",

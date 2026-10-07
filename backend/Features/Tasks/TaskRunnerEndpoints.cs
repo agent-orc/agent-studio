@@ -277,14 +277,30 @@ public static class TaskRunnerEndpoints
         // one greppable, time-ordered stream. Drives the Overview attempt
         // indicator and the Timeline tab. Read-only and tolerant of torn
         // trailing lines.
-        group.MapGet("/{jobId}/timeline", (string jobId, string? project, string? watchPath, TaskReader reader, AgentStudio.Registry.ProjectRegistry projects) =>
+        group.MapGet("/{jobId}/timeline", (string jobId, string? project, string? watchPath, TaskReader reader, SteeringFeedbackProjection feedback, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             // T2b (ASS-1740): the same unified read model also projects the
             // ledger, meshing each lane_changed row with its ASS-1724 anchor.
             var model = reader.Read(jobId, watchPath);
             if (model == null) return Results.NotFound(new { error = "Job not found" });
-            return Results.Ok(model.BuildLedger());
+            var ledger = model.BuildLedger();
+            var projection = feedback.Build(model.Info);
+            var receipts = SteeringFeedbackProjection.Timeline(projection);
+            var stoppedAttempts = projection.History.Where(fact => fact.Kind == "stop")
+                .Select(fact => fact.AttemptId).ToHashSet(StringComparer.Ordinal);
+            var uniqueLedger = ledger.Where(evt => evt.Kind != TimelineEventKinds.RemoteStopRequested
+                || evt.RunId is null || !stoppedAttempts.Contains(evt.RunId));
+            return Results.Ok(uniqueLedger.Concat(receipts).OrderBy(evt => evt.Ts).ToArray());
+        });
+
+        group.MapGet("/{jobId}/steering-feedback", (string jobId, string? project, string? watchPath,
+            TaskScannerService scanner, SteeringFeedbackProjection feedback,
+            AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var info = scanner.FindJob(jobId, watchPath);
+            return info is null ? Results.NotFound() : Results.Ok(feedback.Build(info));
         });
 
         // Per-run software-side change set: the commits authored during

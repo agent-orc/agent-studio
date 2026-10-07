@@ -281,6 +281,25 @@ public sealed class RemoteRunnerDaemon
         // decided by the repository-specific preflight before each project can
         // receive a lease.
         var gitCapability = await GitPushProbe.RunAsync(_options, _log, shutdown);
+        if (!string.IsNullOrWhiteSpace(_options.WorkspaceGitRemote))
+        {
+            try
+            {
+                var workspaceBinding = new RepositoryAccessBinding(
+                    "workspace", _options.WorkspaceGitRemote, _options.WorkspaceGitRequiresPush);
+                var workspaceProof = await RepositoryAccessRenewal.ProbeBindingsAsync(
+                    [workspaceBinding], new PlatformRepositoryGitProof(_ => null, _options.WorkDir), shutdown);
+                var proof = workspaceProof.Proofs[0];
+                _log($"runner-workspace-git-access status={proof.Status} fetch={proof.FetchVerified} push={proof.PushVerified}");
+                gitCapability = GitPushProbe.WithWorkspaceProof(gitCapability, proof);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"runner-workspace-git-access status=unverified error={ex.GetType().Name}");
+                gitCapability = new GitPushProbeResult(GitPushProbe.ReadOnly,
+                    "Workspace repository access could not be verified. Check the exact configured origin and host transport.");
+            }
+        }
         await WithServerRetryAsync<object?>(
             "git-capability report",
             async () =>
@@ -310,6 +329,29 @@ public sealed class RemoteRunnerDaemon
                 $"runner-provider-auth status={logStatus} binary={check.Binary} " +
                 $"detail={check.Status.Detail}");
         }
+        // AGT-3005: stale MSBuild and VBCSCompiler reuse nodes left by earlier
+        // runs are terminated at startup and once per hour, before they can make
+        // a later preparation hang in "Determining projects to restore".
+        var nextBuildNodeSweep = DateTime.MinValue;
+        void SweepBuildNodesIfDue()
+        {
+            if (DateTime.UtcNow < nextBuildNodeSweep) return;
+            nextBuildNodeSweep = DateTime.UtcNow.Add(BuildNodeSweep.Interval);
+            try
+            {
+                var tracked = inventory.Snapshot().Processes;
+                BuildNodeSweep.Run(
+                    tracked.Select(process => process.Pid),
+                    tracked.Select(process => process.Cwd)
+                        .Concat(state.LoadAll().Select(slot => slot.WorktreePath)),
+                    _log);
+            }
+            catch (Exception exception)
+            {
+                _log($"build-node-sweep failed; retrying next interval: {exception.Message}");
+            }
+        }
+        SweepBuildNodesIfDue();
         var capabilityGeneration = DateTime.UtcNow.Ticks;
         var telemetry = new HostTelemetrySampler();
         // Claim admission and salvage deletion share this gate. A claim is
@@ -536,6 +578,7 @@ public sealed class RemoteRunnerDaemon
                 // observed poll for the independent stall deadline.
                 idleWatchdog.RecordPollStarted();
                 var claimedAny = false;
+                SweepBuildNodesIfDue();
                 var inventorySnapshot = inventory.Snapshot();
                 var activeTaskKeys = ActiveTaskKeys(inventorySnapshot, state);
                 var loadDecision = loadGate.Observe(

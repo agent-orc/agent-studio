@@ -3,6 +3,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: policy version dates are catalogue identities, never compared with current time.
+
 /// <summary>
 /// AGT-2808: economy mode must never route bug/feature cards onto a Haiku-class
 /// model via the positional catalogue fallback, and Recommend() must never
@@ -13,7 +15,7 @@ public sealed class ModelRoutingPolicyGuardTests
     private static readonly CliModelCatalog ClaudeCatalogue = new()
     {
         Source = "test-claude",
-        FetchedAt = DateTime.UtcNow,
+        FetchedAt = DateTime.UnixEpoch,
         Models =
         [
             ClaudeModel("claude-haiku-4-5", "medium"),
@@ -25,10 +27,26 @@ public sealed class ModelRoutingPolicyGuardTests
     private static readonly CliModelCatalog GptCatalogue = new()
     {
         Source = "test-gpt",
-        FetchedAt = DateTime.UtcNow,
+        FetchedAt = DateTime.UnixEpoch,
         Models =
         [
+            GptModel("gpt-6-sol", "low", "medium", "high", "xhigh", "max", "ultra"),
+            GptModel("gpt-6-luna", "low", "medium", "high", "xhigh", "max"),
             GptModel("gpt-5.6-luna", "medium"),
+            GptModel("gpt-5.6-sol", "low", "medium", "high", "xhigh"),
+            GptModel("gpt-5.6-terra", "medium"),
+        ],
+    };
+
+    /// <summary>A codex-cli older than 0.155.0: no GPT-6 model in discovery.</summary>
+    private static readonly CliModelCatalog Gpt56OnlyCatalogue = new()
+    {
+        Source = "test-gpt56",
+        FetchedAt = DateTime.UnixEpoch,
+        Models =
+        [
+            GptModel("gpt-5.5", "low", "medium", "high", "xhigh"),
+            GptModel("gpt-5.6-luna", "low", "medium"),
             GptModel("gpt-5.6-sol", "low", "medium", "high", "xhigh"),
             GptModel("gpt-5.6-terra", "medium"),
         ],
@@ -85,16 +103,73 @@ public sealed class ModelRoutingPolicyGuardTests
     }
 
     [Fact]
-    public void Feature_recommendations_keep_the_existing_terra_tier_for_both_clis()
+    public void Policy_rebases_luna_and_sol_tiers_on_gpt6_and_keeps_terra()
     {
         var registry = new ModelRoutingPolicyRegistry();
-        var codex = registry.Recommend(TaskTypes.Feature, GptCatalogue, economyMode: false);
-        var claude = registry.Recommend(TaskTypes.Feature, ClaudeCatalogue, economyMode: false);
+        string ModelOf(string tier) => registry.Policy.Tiers.Single(t => t.Id == tier).Model;
 
-        Assert.Equal("terra-medium", codex.Tier);
-        Assert.Equal(ModelIds.Gpt56Terra, codex.Model);
-        Assert.Equal("terra-medium", claude.Tier);
+        Assert.Equal("2026-10-04", registry.Policy.Version);
+        Assert.Equal(5, registry.Policy.Tiers.Count);
+        Assert.Equal(ModelIds.Gpt6Luna, ModelOf("luna-medium"));
+        Assert.Equal(ModelIds.Gpt6Sol, ModelOf("sonnet-low"));
+        Assert.Equal(ModelIds.Gpt56Terra, ModelOf("terra-medium"));
+        Assert.Equal(ModelIds.Gpt6Sol, ModelOf("sol-medium"));
+        Assert.Equal(ModelIds.Gpt6Sol, ModelOf("sol-xhigh"));
+        Assert.Equal("sonnet-low", registry.Policy.TaskTypeDefaults[TaskTypes.Feature].EconomyFloorTier);
+        Assert.Equal("terra-medium", registry.Policy.TaskTypeDefaults[TaskTypes.Bug].HardFloorTier);
+    }
+
+    [Theory]
+    [InlineData(TaskTypes.Feature)]
+    [InlineData(TaskTypes.Bug)]
+    public void New_feature_and_bug_cards_route_to_gpt6_sol_medium(string taskType)
+    {
+        var registry = new ModelRoutingPolicyRegistry();
+        var codex = registry.Recommend(taskType, GptCatalogue, economyMode: false);
+        var claude = registry.Recommend(taskType, ClaudeCatalogue, economyMode: false);
+
+        Assert.Equal("sol-medium", codex.Tier);
+        Assert.Equal(ModelIds.Gpt6Sol, codex.Model);
+        Assert.Equal("medium", codex.ThinkingLevel);
+        Assert.Equal("2026-10-04", codex.PolicyVersion);
+        // The Anthropic override for Sol/medium is the same Sonnet 5/medium route Terra used.
+        Assert.Equal("sol-medium", claude.Tier);
         Assert.Equal(ModelIds.ClaudeSonnet5, claude.Model);
+        Assert.Equal("medium", claude.ThinkingLevel);
+    }
+
+    [Fact]
+    public void Chore_cards_route_to_gpt6_luna_medium()
+    {
+        var recommendation = new ModelRoutingPolicyRegistry()
+            .Recommend(TaskTypes.Chore, GptCatalogue, economyMode: false);
+
+        Assert.Equal("luna-medium", recommendation.Tier);
+        Assert.Equal(ModelIds.Gpt6Luna, recommendation.Model);
+    }
+
+    [Fact]
+    public void Economy_mode_lowers_a_feature_card_one_step_to_terra_not_below_its_floor()
+    {
+        var recommendation = new ModelRoutingPolicyRegistry()
+            .Recommend(TaskTypes.Feature, GptCatalogue, economyMode: true);
+
+        Assert.True(recommendation.EconomyDowngraded);
+        Assert.Equal("terra-medium", recommendation.Tier);
+        Assert.Equal(ModelIds.Gpt56Terra, recommendation.Model);
+    }
+
+    [Theory]
+    [InlineData(TaskTypes.Chore, "gpt-5.6-luna")]
+    [InlineData(TaskTypes.Feature, "gpt-5.6-sol")]
+    [InlineData(TaskTypes.Bug, "gpt-5.6-sol")]
+    public void A_cli_without_gpt6_keeps_the_declared_gpt56_sibling(string taskType, string expectedModel)
+    {
+        var recommendation = new ModelRoutingPolicyRegistry()
+            .Recommend(taskType, Gpt56OnlyCatalogue, economyMode: false);
+
+        Assert.Equal(expectedModel, recommendation.Model);
+        Assert.Equal("medium", recommendation.ThinkingLevel);
     }
 
     [Fact]
@@ -119,8 +194,12 @@ public sealed class ModelRoutingPolicyGuardTests
             "Prevent stale-write data-loss in the runner.");
 
         Assert.Equal("sol-xhigh", critical!.Id);
+        Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt6Sol, "xhigh", critical));
+        Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt6Sol, "medium", critical));
+        // The declared gpt-5.6 sibling inherits the GPT-6 tier it replaces.
         Assert.True(registry.RouteMeetsFloor(ModelIds.Gpt56Sol, "xhigh", critical));
         Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt56Sol, "medium", critical));
+        Assert.False(registry.RouteMeetsFloor(ModelIds.Gpt56Luna, "max", critical));
     }
 
     [Fact]
