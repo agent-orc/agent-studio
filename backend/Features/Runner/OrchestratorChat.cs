@@ -7,6 +7,7 @@ using AgentStudio.Registry;
 using AgentStudio.Tasks;
 using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Runner;
 
@@ -487,6 +488,7 @@ public class OrchestratorChatService
     private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
+    private readonly string? _taskRepositoryRoot;
 
     /// <summary>
     /// Serializes local session resumes. Remote turns use independent host
@@ -524,6 +526,7 @@ public class OrchestratorChatService
         _bootstrap = bootstrap;
         _scanner = scanner;
         _logger = logger;
+        _taskRepositoryRoot = config["TaskRepository"];
         _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
@@ -784,7 +787,7 @@ public class OrchestratorChatService
                 if (result is not null)
                     await RecordChatUsageAsync(projectName, result,
                         remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
-                        remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
+                        remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
                 return failure;
             }
 
@@ -823,7 +826,7 @@ public class OrchestratorChatService
                 localOutcome = failure;
                 await RecordChatUsageAsync(projectName, result,
                     remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
-                    remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
+                    remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
                 return failure;
             }
 
@@ -853,7 +856,7 @@ public class OrchestratorChatService
             localOutcome = reply;
             await RecordChatUsageAsync(projectName, result,
                 remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
-                remoteResult?.ThinkingLevel ?? thinkingLevel, reply.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
+                remoteResult?.ThinkingLevel ?? thinkingLevel, reply.FinishedAt ?? DateTime.UtcNow, reply.Id).ConfigureAwait(false);
             return reply;
         }
         finally
@@ -871,17 +874,17 @@ public class OrchestratorChatService
     /// chat store keeps the transcript; the ledger is what the workspace
     /// timeline and project surfaces aggregate. Remote turns carry the runner
     /// id as host; local and fallback turns carry <c>local</c>.
-    /// The write is awaited so the turn returns only once its usage is in the
-    /// ledger. It runs without the caller's token because the tokens are
-    /// already spent. A failed append fails the request visibly; returning a
-    /// reply would make the missing ledger row look like a successful turn.
+    /// The write is awaited. If the bus is unavailable, a durable fallback
+    /// receipt is written before returning the already-persisted transcript.
+    /// The merged ledger reads that receipt, including after a restart.
     /// </summary>
     private async Task RecordChatUsageAsync(
         string projectName,
         OrchestratorDecisionResult result,
         string host,
         string? thinkingLevel,
-        DateTime finishedAt)
+        DateTime finishedAt,
+        string turnId)
     {
         var entry = BuildChatUsage(result, host, thinkingLevel);
         if (_bus is null || entry is null) return;
@@ -905,10 +908,23 @@ public class OrchestratorChatService
         if (!recorded)
         {
             _logger.LogWarning(error,
-                "[orchestrator-chat] usage row was not recorded for project {Project} (host={Host}, model={Model})",
+                "[orchestrator-chat] bus usage append failed for project {Project} (host={Host}, model={Model}); writing durable fallback receipt",
                 projectName, entry.Host, entry.Model);
-            throw new IOException(
-                $"Orchestrator chat usage row was not recorded for project {projectName}.", error);
+            if (string.IsNullOrWhiteSpace(_taskRepositoryRoot))
+                throw new IOException($"Orchestrator chat usage could not be recovered for project {projectName}: TaskRepository is not configured.", error);
+            try
+            {
+                await ChatUsageFallbackReceipts.WriteAsync(
+                    _taskRepositoryRoot, projectName, turnId, finishedAt, entry).ConfigureAwait(false);
+            }
+            catch (Exception fallbackError)
+            {
+                _logger.LogError(fallbackError,
+                    "[orchestrator-chat] durable usage fallback failed for project {Project} (host={Host}, model={Model})",
+                    projectName, entry.Host, entry.Model);
+                throw new IOException(
+                    $"Orchestrator chat usage could not be recovered for project {projectName}.", fallbackError);
+            }
         }
     }
 

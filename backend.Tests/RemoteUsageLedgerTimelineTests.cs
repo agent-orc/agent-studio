@@ -133,6 +133,27 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
         Assert.Equal("Claude Opus 5.5", Assert.Single(timeline.Models, row => row.Model == "claude-opus-5-5").ModelLabel);
     }
 
+    [Fact]
+    public async Task Timeline_DeduplicatesChatFallbackReceiptAfterBusRecovery()
+    {
+        var (bridge, store, ledger) = BuildStack();
+        var at = _now.AddHours(-1);
+        var usage = Usage("gpt-6-sol", 2_000, 100, cacheRead: 1_000) with
+        {
+            Host = "agent-runner-02",
+            CliType = "codex",
+            InputIncludesCached = true,
+        };
+        await ChatUsageFallbackReceipts.WriteAsync(_workspace, Project, "turn-1", at, usage);
+        await EmitAsync(bridge, store, AgentMessageBusBridge.ParticipantOrchestratorFor(Project),
+            null, usage, at);
+
+        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
+            ledger, [(Project, _watchPath)], 24, 60, _now);
+        Assert.Equal(1, Assert.Single(timeline.Projects).Calls);
+        Assert.Equal(3_100, Assert.Single(timeline.Models).Total);
+    }
+
     [Theory]
     [InlineData("claude-opus-5-5", "claude-opus-5-5", "Claude Opus 5.5")]
     [InlineData("zeta-model-9", "zeta-model-9", "zeta-model-9")]

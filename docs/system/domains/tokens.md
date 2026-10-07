@@ -37,8 +37,9 @@ also read by the status-bar usage panels) folded only bus rows. Remote runner
 usage lives in durable task receipts, so a week of remote work rendered as an
 empty cockpit while every card carried a `tokenSummary`. The usage ledger is
 now one merged projection that every token surface reads:
-`BusBackedProjectTokenUsageReader.LoadSnapshot` unions bus history with task
-receipts and deduplicates overlap by (task, timestamp, token dimensions).
+`BusBackedProjectTokenUsageReader.LoadSnapshot` unions bus history, task
+receipts, and chat fallback receipts, and deduplicates overlap by (task,
+timestamp, token dimensions).
 
 | Execution path | Writer | Ledger rows |
 |---|---|---|
@@ -46,13 +47,15 @@ receipts and deduplicates overlap by (task, timestamp, token dimensions).
 | Local orchestrator boot/steer/decision | `ProjectRunner` | Project bus, `orchestrator:<project>`, host `local` |
 | Remote coding completion | `RemoteTokenReceiptService` | Task receipt, `agent:remote-runner:<attempt>`, host = runner id, CLI and level from the attempt's session event |
 | Remote review attempt | `RemotePipelineReviewEvidenceProjector` | Task receipt, `support:remote-review:<attempt>`, host = lease host, CLI from the command executable, level |
-| Orchestrator chat turn (remote, fallback, local) | `OrchestratorChatService.RecordChatUsageAsync` | Project bus, `orchestrator:<project>`, topic `orchestrator-chat`, host = runner id or `local`, CLI, level |
+| Orchestrator chat turn (remote, fallback, local) | `OrchestratorChatService.RecordChatUsageAsync` | Project bus, or a durable chat fallback receipt if the bus append fails; `orchestrator:<project>`, topic `orchestrator-chat`, host = runner id or `local`, CLI, level |
 
 Each writer replaces its own participant's rows, so a replayed completion or
 report never counts twice. The chat row is awaited before the turn returns,
-since it is that turn's only timeline usage record; a failed append logs the
-project, host, and model and fails the chat request so the loss is visible to
-the caller. The transcript remains persisted. Every row keeps normalized
+since it is that turn's only timeline usage record. A failed bus append logs
+the project, host, and model and writes an atomic fallback receipt under
+`TaskRepository/chat-usage-fallback/` before returning the persisted reply.
+The merged reader includes this source after restart; failure of both writes
+fails the request visibly. Every row keeps normalized
 uncached `input` and `cacheRead` separately (see the next section); no reader
 subtracts cache reads again. Rows written before host attribution resolve to `local` (bus) or
 `remote-unrecorded` (remote receipts) through `TokenUsageHost.Resolve`.
@@ -308,7 +311,7 @@ receipt writer at remote completion:
 |---|---------|-------------|-------|----------|-------------|
 | 1 | `AdHocUsageService` (read path) over `AdHocUsageRecorder` | `backend/Features/AdHoc/AdHocUsageService.cs`, `AdHocUsageRecorder.cs` | `adhoc-usage.jsonl` (workspace-wide) | Per-source / per-day / per-model rollup of one-shot Haiku calls | `GET /api/adhoc/usage` — ad-hoc usage chart in the status-bar modal |
 | 2 | `ProjectTokenUsageService` | `backend/Features/Runner/ProjectTokenUsageService.cs` | Historical token bus + durable task token receipts | Lifetime/24h summary with Job/Supporting/Orchestrator split; per-day × per-job heatmap; expensive-jobs top-N; per-job drill-down with deltas | `GET /api/projects/{project}/token-usage/*`: Project-Detail Token-Usage panel |
-| 3 | `WorkspaceTokensTimelineService` | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | Merged usage ledger (bus history + task receipts) for *every* watched project since AGT-2986 | (project × time-bucket) cells with priced dollars, per (project, model, host) rows, host shares | `GET /api/workspace/tokens/timeline`: `#/workspace/tokens` stacked timeline and status-bar usage panels |
+| 3 | `WorkspaceTokensTimelineService` | `backend/Features/Runner/WorkspaceTokensTimelineService.cs` | Merged usage ledger (bus history + task and chat fallback receipts) for *every* watched project since AGT-2986 | (project × time-bucket) cells with priced dollars, per (project, model, host) rows, host shares | `GET /api/workspace/tokens/timeline`: `#/workspace/tokens` stacked timeline and status-bar usage panels |
 | 4 | `TokenSummaryService` + `TokenSummary` | `backend/Features/Runner/TokenSummary.cs` | Historical token bus + durable task token receipts for canonical project/card reads | Per-project lifetime totals + per-model split + estimated dollars; aggregate across all projects | Project-card last-usage, status-bar usage modal, `TaskEndpointHelpers.WithRuntime` per-job rollups |
 | 5 | `BusAggregationCache` (the canonical one) | `backend/Features/Bus/BusAggregationCache.cs` | `logs/bus/*.jsonl` via `AgentMessageBusStore` | `byModel` / `byParticipant` / `byDay` totals plus context-window and latency awareness | `GET /api/bus/{project}/token-aggregate` |
 

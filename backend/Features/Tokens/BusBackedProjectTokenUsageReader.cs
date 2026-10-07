@@ -6,9 +6,8 @@ namespace AgentStudio.Tokens;
 
 /// <summary>
 /// Hybrid read path for the Project-Detail Token-Usage surfaces. It keeps
-/// historical <c>kind=token-usage</c> bus messages and merges the durable
-/// per-task receipts written by the current remote execution path, converts
-/// both into transient
+/// historical <c>kind=token-usage</c> bus messages and merges durable
+/// per-task receipts and failed-bus chat receipts, converts them into transient
 /// <see cref="OrchestratorLogEntry"/> records, and folds them through the
 /// existing pure-function aggregators on
 /// <see cref="ProjectTokenUsageService"/>.
@@ -31,8 +30,8 @@ namespace AgentStudio.Tokens;
 /// </remarks>
 public sealed class BusBackedProjectTokenUsageReader
 {
-    // The merged bus + receipt snapshot is a pure projection of on-disk facts
-    // (the bus day-files and every task.json receipt, archive included). A board
+    // The merged snapshot is a pure projection of on-disk facts (bus day-files,
+    // task.json receipts including archive, and chat fallback receipts). A board
     // poll re-derives it per project on every request, and the receipt walk
     // alone is heavier than the board scan. Memoize it against the task index
     // snapshot generation: token numbers then lag by at most one generation
@@ -185,6 +184,13 @@ public sealed class BusBackedProjectTokenUsageReader
         if (!string.IsNullOrWhiteSpace(receiptRead.Warning)) warnings.Add(receiptRead.Warning!);
 
         var entries = ProjectTokenReceiptReader.MergeWithoutDuplicates(historical, receiptRead.Entries);
+        if (!string.IsNullOrWhiteSpace(workspace))
+        {
+            var fallback = ChatUsageFallbackReceipts.Read(workspace!, projectName);
+            entries = ProjectTokenReceiptReader.MergeWithoutDuplicates(entries, fallback.Entries);
+            sources.Add("chat-usage-fallback");
+            if (!string.IsNullOrWhiteSpace(fallback.Warning)) warnings.Add(fallback.Warning!);
+        }
         var asOf = entries
             .Where(entry => entry.TokenUsage is not null)
             .Select(entry => (DateTime?)entry.Ts.ToUniversalTime())

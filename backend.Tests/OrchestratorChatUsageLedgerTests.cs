@@ -3,6 +3,7 @@ using AgentStudio.Orchestrator;
 using AgentStudio.Projects;
 using AgentStudio.Runner;
 using AgentStudio.Tasks;
+using AgentStudio.Tokens;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -54,7 +55,7 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task Failed_usage_write_fails_the_chat_request_and_logs_the_lost_row()
+    public async Task Failed_bus_write_preserves_the_chat_reply_and_usage_for_recovery()
     {
         var harness = BuildHarness();
         // A file where the project's bus directory belongs makes every ledger
@@ -63,15 +64,36 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(busProjectDir)!);
         await File.WriteAllTextAsync(busProjectDir, "not a directory");
 
-        var error = await Assert.ThrowsAsync<IOException>(() => harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
+        var reply = await harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
         {
             InputTokens = 2_000,
             OutputTokens = 100,
-        }));
+        });
 
-        Assert.Contains("usage row was not recorded", error.Message);
+        Assert.Equal("remote reply", reply.Text);
+        var persisted = Assert.Single(ChatUsageFallbackReceipts.Read(_root, ProjectName).Entries);
+        Assert.Equal(RunnerId, persisted.TokenUsage?.Host);
+        Assert.Equal(ModelIds.Gpt56Sol, persisted.TokenUsage?.Model);
+        Assert.Equal(2_000, persisted.TokenUsage?.InputTokens);
+        Assert.Equal(100, persisted.TokenUsage?.OutputTokens);
+        // The bus source becomes readable again, as it would after repairing
+        // a transient filesystem fault. A fresh reader must recover the row.
+        File.Delete(busProjectDir);
+        var scanner = new TaskScannerService(harness.Configuration,
+            NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, harness.Configuration));
+        var stats = new JobStatsMetadataCache(scanner, harness.Configuration,
+            NullLogger<JobStatsMetadataCache>.Instance);
+        var ledger = new BusBackedProjectTokenUsageReader(new AgentMessageBusStore(),
+            harness.Configuration, stats, new ProjectTokenReceiptReader());
+        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
+            ledger, [(ProjectName, WatchPath: harness.WatchPath)], 24, 60,
+            nowUtc: reply.FinishedAt!.Value.AddHours(1));
+        Assert.Equal(1, Assert.Single(timeline.Projects).Calls);
+        Assert.Equal(2_100, Assert.Single(timeline.Models).Total);
+        Assert.Contains("chat-usage-fallback", timeline.Freshness.Sources);
         var warning = Assert.Single(harness.Logger.Warnings);
-        Assert.Contains("usage row was not recorded", warning);
+        Assert.Contains("bus usage append failed", warning);
         Assert.Contains(ProjectName, warning);
         Assert.Contains(RunnerId, warning);
         Assert.Contains(ModelIds.Gpt56Sol, warning);
@@ -95,6 +117,24 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         Assert.Equal(RunnerId, row.Tokens?.Host);
         Assert.Equal(2_000, row.Tokens?.Input);
         Assert.Equal(100, row.Tokens?.Output);
+    }
+
+    [Fact]
+    public async Task Failed_bus_and_fallback_writes_fail_the_request_visibly()
+    {
+        var harness = BuildHarness();
+        var busProjectDir = AgentMessageBusPaths.ProjectDir(_root, ProjectName);
+        Directory.CreateDirectory(Path.GetDirectoryName(busProjectDir)!);
+        await File.WriteAllTextAsync(busProjectDir, "not a directory");
+        await File.WriteAllTextAsync(Path.Combine(_root, "chat-usage-fallback"), "not a directory");
+
+        var error = await Assert.ThrowsAsync<IOException>(() => harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
+        {
+            InputTokens = 100,
+            OutputTokens = 10,
+        }));
+        Assert.Contains("could not be recovered", error.Message);
+        Assert.Single(harness.Logger.Warnings);
     }
 
     private Harness BuildHarness()
@@ -137,7 +177,7 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
             new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
             runner, sessionStore, bootstrap, scanner, configuration, logger,
             projectSettings: settings, projects: projects, remoteWork: broker, bus: bus);
-        return new Harness(service, broker, watchPath, logger);
+        return new Harness(service, broker, watchPath, logger, configuration);
     }
 
     public void Dispose()
@@ -150,7 +190,8 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         OrchestratorChatService Service,
         RemoteChatWorkBroker Broker,
         string WatchPath,
-        CapturingLogger Logger)
+        CapturingLogger Logger,
+        IConfiguration Configuration)
     {
         public async Task<OrchestratorChatTurn> SendRemoteTurnAsync(
             OrchestratorTokenUsage usage, bool success = true)
