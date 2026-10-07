@@ -2695,6 +2695,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
+        // The roundBudget decision above and the initialFollowUpDecision from
+        // the settled verdicts determine followUpDecision before degradation.
         // Degraded findings move to the linked follow-up card below; they must
         // not start a further automatic concern round on this delivery.
         var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
