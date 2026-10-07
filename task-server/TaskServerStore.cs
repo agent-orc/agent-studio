@@ -1725,8 +1725,15 @@ public sealed partial class TaskServerStore
             }
             if (!string.Equals(lease.Status, "active", StringComparison.Ordinal))
                 throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
-            var infrastructureFailure = request.Outcome is
+            // A typed prelaunch release spends the budget only while the card is
+            // still held by this attempt. A card an operator already moved out of
+            // progress keeps its counter and gets no escalation evidence.
+            var taskInProgress = string.Equals(Convert.ToString(await ScalarAsync(connection,
+                "SELECT state FROM tasks WHERE id = $task;", ct, transaction,
+                ("$task", lease.TaskId)), CultureInfo.InvariantCulture), "3-progress", StringComparison.Ordinal);
+            var typedInfrastructureFailure = request.Outcome is
                 "runner-environment-preparation-failed" or "runner-salvage-failed" or "runner-results-handling-failed";
+            var infrastructureFailure = typedInfrastructureFailure && taskInProgress;
             var diagnostic = (request.Detail ?? request.Outcome).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (diagnostic.Length > 1000) diagnostic = diagnostic[..1000];
             var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
@@ -1756,7 +1763,7 @@ public sealed partial class TaskServerStore
                     "SELECT attempts FROM runner_infrastructure_failures WHERE task_id = $task;",
                     ct, transaction, ("$task", lease.TaskId)) ?? 0, CultureInfo.InvariantCulture);
             }
-            else
+            else if (!typedInfrastructureFailure)
                 await ExecuteAsync(connection,
                     "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
                     ct, transaction, ("$task", lease.TaskId));

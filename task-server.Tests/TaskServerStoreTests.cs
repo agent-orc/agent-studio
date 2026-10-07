@@ -696,6 +696,87 @@ public sealed partial class TaskServerStoreTests
     }
 
     [Fact]
+    public async Task Lost_worker_release_after_prelaunch_failures_keeps_release_semantics_and_breaks_the_chain()
+    {
+        // The durable plane never opened lost-worker continuation rounds (AGT-2870):
+        // a runner-process-missing release returns the card to Ready, restores the
+        // stashed follow-up and records the salvage ref. The failure budget must
+        // leave that path unchanged and only reset the consecutive-failure chain.
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var failed = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+            await store.ReleaseLeaseAsync(failed.Run!.RunId,
+                new LeaseReleaseRequest("runner-a", "instance-a", failed.Lease!.LeaseId,
+                    failed.Lease.Fence, "runner-environment-preparation-failed",
+                    Detail: "fatal: not a git repository"), "runner-a", default);
+        }
+        const string prompt = "Resume from the salvage ref.";
+        await store.ContinueTaskAsync(project.ProjectId, task.TaskId,
+            new ContinueTaskRequest(prompt), "human:owner", default);
+        var started = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal(prompt, started.FollowUp!.Prompt);
+
+        await store.ReleaseLeaseAsync(started.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", started.Lease!.LeaseId,
+                started.Lease.Fence, "runner-process-missing",
+                new LeaseReleaseSalvage("agent-studio/salvage/r/AGT-1/run/fence-3/abc", "abc")),
+            "runner-a", default);
+
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        var released = Assert.Single(await store.ListAuditAsync(0, default),
+            record => record.Action == "lease.released" && record.TargetId == started.Run.RunId);
+        Assert.Contains("agent-studio/salvage/r/AGT-1/run/fence-3/abc", released.DetailJson);
+        Assert.Contains("\"infrastructureFailure\":null", released.DetailJson);
+        var resumed = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        Assert.Equal(prompt, resumed.FollowUp!.Prompt);
+        await store.ReleaseLeaseAsync(resumed.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", resumed.Lease!.LeaseId,
+                resumed.Lease.Fence, "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), "runner-a", default);
+        Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.DoesNotContain(await store.ListAuditAsync(0, default),
+            record => record.Action == "runner-environment-broken");
+    }
+
+    [Fact]
+    public async Task Prelaunch_release_for_a_card_moved_out_of_progress_spends_no_budget_and_records_no_escalation()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var failed = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+            await store.ReleaseLeaseAsync(failed.Run!.RunId,
+                new LeaseReleaseRequest("runner-a", "instance-a", failed.Lease!.LeaseId,
+                    failed.Lease.Fence, "runner-environment-preparation-failed",
+                    Detail: "fatal: not a git repository"), "runner-a", default);
+        }
+        var third = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        var held = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
+            new UpdateTaskRequest(null, null, "5-human-review", held.Version), "operator", default);
+
+        await store.ReleaseLeaseAsync(third.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", third.Lease!.LeaseId,
+                third.Lease.Fence, "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), "runner-a", default);
+
+        Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        var audit = await store.ListAuditAsync(0, default);
+        Assert.DoesNotContain(audit, record => record.Action == "runner-environment-broken");
+        Assert.Contains("\"infrastructureFailure\":null", Assert.Single(audit,
+            record => record.Action == "lease.released" && record.TargetId == third.Run.RunId).DetailJson);
+    }
+
+    [Fact]
     public async Task Schema_migration_is_recorded_and_a_newer_store_fails_closed()
     {
         using var temp = new TempDirectory();

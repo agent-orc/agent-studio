@@ -1600,6 +1600,58 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2932 review round 10: a lost worker had started an agent process, so
+    /// its release keeps the AGT-2870 continuation and ends the chain of
+    /// consecutive prelaunch failures on this plane, as it does on the Task
+    /// Server. The next prelaunch failure starts again at attempt one.
+    /// </summary>
+    [Fact]
+    public async Task Lost_worker_release_keeps_its_continuation_and_resets_the_prelaunch_failure_chain()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Lost after two broken worktrees", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+        var claimRequest = new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []);
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+
+        async Task ReleaseAsync(int attempt, string outcome, bool salvage)
+        {
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, claimRequest)
+                : await client.ClaimAsync(claimRequest, CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:{outcome}:{attempt}",
+                Outcome: outcome,
+                SalvageBranch: salvage ? $"agent-studio/salvage/{RunnerId}/{TaskKey}/fence-{attempt}" : null,
+                SalvageCommitSha: salvage ? "5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a" : null,
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+            Assert.True(Directory.Exists(ready));
+        }
+
+        await ReleaseAsync(1, "runner-environment-preparation-failed", salvage: false);
+        await ReleaseAsync(2, "runner-environment-preparation-failed", salvage: false);
+        Assert.Equal(2, AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready)!.Attempts);
+
+        await ReleaseAsync(3, "worker-lost", salvage: true);
+        var traces = string.Join('\n', Directory
+            .EnumerateFiles(ready, "*", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        Assert.Contains(AgentStudio.Runner.LostWorkerContinuationPolicy.ContinuationReason, traces);
+        Assert.Null(AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready));
+
+        await ReleaseAsync(4, "runner-environment-preparation-failed", salvage: false);
+        Assert.Equal(1, AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready)!.Attempts);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+    }
+
+    /// <summary>
     /// AGT-2932 review finding: a delayed release from an older attempt is
     /// rejected by the fence, and must leave the stop request recorded for the
     /// newer attempt of the same card deliverable on that attempt's heartbeat.

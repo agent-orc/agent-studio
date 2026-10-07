@@ -218,12 +218,16 @@ public static class LeaseEndpoints
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
+                    var budget = new RemoteClaimFailureBudget(
+                        loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
+                        configuration.GetValue("Runner:RemoteClaimFailureBudget", RemoteClaimFailureBudget.MaxAttempts));
+                    // A lost worker had started an agent process, so it ends the
+                    // chain of consecutive prelaunch failures, as on the Task Server.
+                    if (task is not null && route == RemoteLeaseReleaseRoute.LostWorker)
+                        budget.Reset(task);
                     if (task is { State: TaskStates.Progress }
                         && route == RemoteLeaseReleaseRoute.PrelaunchInfrastructure)
                     {
-                        var budget = new RemoteClaimFailureBudget(
-                            loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
-                            configuration.GetValue("Runner:RemoteClaimFailureBudget", RemoteClaimFailureBudget.MaxAttempts));
                         var decision = budget.Record(task, req.Detail, req.Outcome, released.Lease?.Hostname);
                         var failure = budget.GetState(task)!;
                         var reason = $"runner-environment-broken: fingerprint={failure.Fingerprint}; " +

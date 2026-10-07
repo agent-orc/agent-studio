@@ -19,8 +19,13 @@ At the default budget, the first two return the card to Ready. The third parks
 it in Escalated with
 `runner-environment-broken`, the fingerprint, last error, host, and a recovery
 hint. A different fingerprint starts a new count; an operator move from
-Escalated to Ready resets the spent budget. Execution Hosts lists parked cards
-and their fingerprints. The activity record is emitted once on escalation.
+Escalated to Ready resets the spent budget. A lost-worker release (an agent
+process had started) ends the chain on both planes: the legacy API still runs
+the lost-worker continuation, the durable Task Server returns the card to Ready
+and records the salvage ref as before. A typed release that arrives after the
+card has left progress spends no budget and records no escalation. Execution
+Hosts lists parked cards and their fingerprints. The activity record is emitted
+once on escalation.
 
 The typed release travels on the existing lease-release request: the durable
 Task Server's `POST /api/v1/runs/{runId}/lease/release` (`LeaseReleaseRequest`)
