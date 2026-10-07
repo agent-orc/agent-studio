@@ -17,6 +17,15 @@ leave the same version with a different content hash in the local cache and
 later fail with `NU1403`; clear the contaminated cache entry and regenerate
 from the registry instead of accepting the scratch-feed hash.
 
+A pending decision card blocks any implementation card that names it in
+`references.dependsOn`. The board shows `blocked by` and the runner refuses to
+claim the dependent card. When an eligible decider chooses an option, the
+decision is recorded in the project wiki and its apply step appends the choice
+and rationale to linked implementation prompts before moving those cards to
+`2-ready`; if no card is linked, it creates cards from the chosen option's
+requirements. Reopening the decision with a note restores the block. See
+[Decision cards](../operations/decision-cards.md) for the fields and API.
+
 ## Worktree + branch model
 
 - Branch naming: every isolated task runs on `task/<id>` (`WorktreeTaskLifecycle.BranchFor`).
