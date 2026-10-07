@@ -55,5 +55,6 @@
     [jobId]="job().id"
     [watchPath]="job().watchPath"
     [containmentUnknown]="answer()?.containmentStatus === 'unknown'"
+    [escalated]="escalated()"
     (recheckRequested)="recheckIntegration()" />
 }

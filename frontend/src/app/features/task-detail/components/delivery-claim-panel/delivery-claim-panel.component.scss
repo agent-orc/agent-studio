@@ -1,3 +1,4 @@
+@use '../escalation-section' as section;
 :host {
   display: contents;
 }
@@ -9,10 +10,7 @@
   flex-wrap: wrap;
   gap: var(--studio-spacing-2);
   padding: var(--studio-spacing-1) var(--studio-spacing-2);
-  border: 1px solid var(--studio-border);
-  border-radius: var(--studio-spacing-1);
-  background: var(--studio-surface-muted);
-  color: var(--studio-fg);
+  @include section.surface(var(--studio-accent));
   font-size: 0.75rem;
 }
 
@@ -23,13 +21,11 @@
  * the hard design rules - no left accent bar.
  */
 .claim[data-integration='not-integrated'] {
-  border-color: color-mix(in srgb, var(--studio-warn) 35%, var(--studio-border));
-  background: color-mix(in srgb, var(--studio-warn) 7%, var(--studio-bg-surface));
+  @include section.surface(var(--studio-warn));
 }
 
 .claim__label {
-  color: var(--studio-fg-strong);
-  font-weight: 700;
+  @include section.heading;
 }
 
 .claim__ref {
@@ -38,7 +34,7 @@
 }
 
 .claim__ref--none {
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
   font-style: italic;
 }
 
@@ -67,19 +63,19 @@
 .claim__state[data-state='unknown'] .claim__dot,
 .claim__state[data-state='nothing-to-integrate'] .claim__dot,
 .claim__state[data-state='unreleased'] .claim__dot {
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
 }
 
 .claim__state[data-state='unknown'],
 .claim__state[data-state='nothing-to-integrate'],
 .claim__state[data-state='unreleased'] {
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
 }
 
 .claim__merge {
   font-family: var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
 }
 
 .claim__supersession,
@@ -87,7 +83,7 @@
   padding: 1px 6px;
   border-radius: 999px;
   background: var(--studio-bg-elevated);
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
   font-size: 0.6875rem;
   font-weight: 600;
   white-space: nowrap;
@@ -107,5 +103,5 @@
 .claim__reason {
   flex: 1 1 100%;
   margin: 0;
-  color: var(--studio-fg-muted);
+  color: var(--studio-fg-strong);
 }
