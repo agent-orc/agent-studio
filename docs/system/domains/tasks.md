@@ -258,6 +258,9 @@ receipt observations from durable stop receipts, run/review authority and the
 review settlement journal. The Overview status row reads the current timeline
 fact; historical rows remain in Timeline. This compatibility projection does
 not convert `pending-intent.json` into the standalone D6 command contract.
+An observed stop closed with `settled` remains a consumed stop acknowledgement;
+an unobserved stop closed when its attempt ends is rejected. Neither claims the
+run recovered. Recovery is reserved for an outage with a completed successor.
 
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.

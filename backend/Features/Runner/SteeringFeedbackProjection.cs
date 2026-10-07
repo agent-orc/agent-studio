@@ -97,7 +97,8 @@ public sealed class SteeringFeedbackProjection
                     "Owning runner acknowledged the stop.", current, owner));
             if (stop.TerminalAtUtc is { } terminal)
                 facts.Add(new($"stop:{stop.CommandId}:terminal", "stop",
-                    stop.TerminalReason == "settled" ? "recovered" : "rejected", terminal,
+                    stop.TerminalReason == "settled" && stop.ObservedAtUtc is not null
+                        ? "consumed" : "rejected", terminal,
                     stop.CommandId, stop.AttemptId, stop.AttemptId, null,
                     Bound(stop.TerminalReason ?? "Stop settled."), current, owner));
         }

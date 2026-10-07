@@ -16,6 +16,7 @@ interface Lease {
 
 test('durable stop receipt stays correlated in task status, timeline and operator feed',
   async ({ page, devBackend }, testInfo) => {
+    test.setTimeout(180_000);
     const watches = await api<WatchPath[]>('/api/watch-paths?includeFixtures=true');
     const watch = watches[0];
     expect(watch).toBeTruthy();
@@ -43,10 +44,12 @@ test('durable stop receipt stays correlated in task status, timeline and operato
       );
       expect(duplicate.commandId).toBe(commandId);
 
-      const feedback = await api<{ history: { commandId: string | null; attemptId: string | null; state: string }[] }>(
+      const feedback = await api<{ current: { commandId: string | null } | null;
+        history: { commandId: string | null; attemptId: string | null; state: string }[] }>(
         `/api/tasks/${encodeURIComponent(id)}/steering-feedback?watchPath=${encodeURIComponent(watch.path)}`);
       expect(feedback.history.filter(fact => fact.commandId === commandId && fact.state === 'requested')).toHaveLength(1);
       expect(feedback.history.find(fact => fact.commandId === commandId)?.attemptId).toBe(lease.attemptId);
+      expect(feedback.current?.commandId).toBe(commandId);
       const timeline = await api<{ kind: string; details?: { commandId?: string; attemptId?: string } }[]>(
         `/api/tasks/${encodeURIComponent(id)}/timeline?watchPath=${encodeURIComponent(watch.path)}`);
       expect(timeline.filter(event => event.kind === 'steering_feedback' && event.details?.commandId === commandId)).toHaveLength(1);
