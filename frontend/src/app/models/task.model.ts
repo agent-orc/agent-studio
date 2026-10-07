@@ -2089,6 +2089,8 @@ export interface ProjectSnapshot {
     autoCommit: boolean;
     crashRecoveryEnabled: boolean;
     automaticFailureContinuationsEnabled?: boolean;
+    maxDeliveredReviewRounds?: number;
+    maxAutoReissueAttempts?: number;
     autoPushStrategy: 'never' | 'on-completed' | 'always-immediate';
     runnerMode: string | null;
     orchestratorModel: string | null;
@@ -2357,6 +2359,7 @@ export interface ReviewProjectionView {
   /** Newest first. */
   attempts: ReviewAttempt[];
   rounds: number;
+  roundBudget?: { delivered: number; maximum: number; spentBy: string | null } | null;
   latestPlane: ReviewPlane | null;
   latestOutcome: string | null;
   latestReceivedAt: string | null;

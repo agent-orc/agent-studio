@@ -2520,6 +2520,13 @@ export class TaskService {
     );
   }
 
+  setProjectReviewRoundBudgets(projectName: string, maxDeliveredReviewRounds: number, maxAutoReissueAttempts: number) {
+    return this.http.put(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/review-round-budgets`,
+      { maxDeliveredReviewRounds, maxAutoReissueAttempts },
+    );
+  }
+
   /**
    * AGT-2839: project override for integration-gate review reuse. `null` clears
    * the override and falls back to the safe default (on where Remote Review

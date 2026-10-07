@@ -1,4 +1,4 @@
-import { type Page } from '@playwright/test';
+import { test as bareTest, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test, expect } from '../fixtures/dev-backend';
@@ -48,6 +48,13 @@ function jobDetail() {
       outcomeIssue: null,
       orchestratorVerdict: null,
       ownerClientId: 'local-default',
+      reviewProjection: {
+        attempts: [], rounds: 4, latestPlane: 'remote', latestOutcome: 'Pass',
+        latestReceivedAt: null, blockingAspects: [],
+        delivery: { status: 'not-attempted', reason: null },
+        decisionRequired: { required: false, source: null, reason: null },
+        roundBudget: { delivered: 4, maximum: 4, spentBy: 'code-quality' },
+      },
     },
     promptMarkdown: '# Pipeline step usage fixture',
     statusMarkdown: '## Done\n\nFixture status.',
@@ -468,6 +475,19 @@ function sixRunTimeline() {
 
 async function installFixtureRoutes(page: Page) {
   await page.route('**/api/**', route => route.fulfill(json([])));
+  await page.route('**/api/usage/cockpit**', route => route.fulfill(json({
+    workspaceId: 'mock', clis: [], cost: null,
+  })));
+  await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill(json({
+    connectionId: 'review-budget-mock', connectionToken: 'review-budget-mock',
+    negotiateVersion: 1,
+    availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }],
+  })));
+  await page.routeWebSocket('**/hubs/v1/studio**', socket => {
+    socket.onMessage(message => {
+      if (String(message).includes('"protocol"')) socket.send('{}\x1e');
+    });
+  });
   await page.route('**/api/v1/studio/auth/status', route => route.fulfill(json({
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   })));
@@ -1097,4 +1117,20 @@ test('token panel: own band, one label per quantity, and model + reasoning level
   await savePipelineAndUsageShot(page, 'token-panel-identity-band-light--mocked.png');
   await page.evaluate(() => { document.documentElement.dataset['studioTheme'] = 'dark'; });
   await savePipelineAndUsageShot(page, 'token-panel-identity-band-dark--mocked.png');
+});
+
+bareTest('task detail shows the lifetime round budget and spending aspect in both themes', async ({ page }) => {
+  bareTest.setTimeout(120_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installFixtureRoutes(page);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  const budget = page.getByTestId('task-detail-review-round-budget');
+  await expect(budget).toBeVisible();
+  await expect(budget).toContainText('Review round 4 of 4');
+  await expect(budget).toContainText('code-quality spent the budget');
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await saveShot(page, `review-round-budget-${theme}--mocked.png`);
+  }
 });
