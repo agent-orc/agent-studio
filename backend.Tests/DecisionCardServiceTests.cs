@@ -42,6 +42,30 @@ public class DecisionCardServiceTests : IDisposable
     };
 
     [Fact]
+    public void ProseMigration_ConvertsOnlyActivePreparationCard_WithoutChangingItsKeyOrPrompt()
+    {
+        var h = Build();
+        const string prose = "## Decision needed (operator)\n\nOption A, lock file.\n\nOption B, no lock file.";
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "old-prose", Title = "Stable release contract", WatchPath = _watchPath,
+            TargetState = TaskStates.Preparation, PromptMarkdown = prose,
+        })!;
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var originalPrompt = File.ReadAllText(Path.Combine(before.FolderPath, "prompt.md"));
+
+        Assert.True(h.Mutations.ConvertJobToDecision(id, SampleContent(), _watchPath));
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(before.Key, after.Key);
+        Assert.Equal(TaskKinds.Decision, after.Kind);
+        Assert.True(after.NoBranchExpected);
+        Assert.Equal(DecisionStatuses.Pending, after.Decision!.Status);
+        Assert.Equal(originalPrompt, File.ReadAllText(Path.Combine(after.FolderPath, "prompt.md")));
+        Assert.False(h.Mutations.ConvertJobToDecision(id, SampleContent(), _watchPath));
+        Assert.Equal(MoveJobStatus.Failure, h.States.MoveJob(id, TaskStates.Ready, _watchPath).Status);
+    }
+
+    [Fact]
     public void CreateDecisionCard_PersistsContent_LandsInPreparation_IsNoBranch()
     {
         var h = Build();
