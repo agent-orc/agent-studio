@@ -109,17 +109,7 @@ public static class PendingDecisionScanner
         {
             var line = lines[j];
             if (line == null) continue;
-            if (IsFollowUpStream(line.Stream)) return null;
-            // Defensive: some legacy adapters embed the follow-up tag in the
-            // text rather than the stream column; detect the same shape
-            // ReviewDecisionParsing uses.
-            if (line.Text != null
-                && (line.Text.Contains("[orchestrator]", StringComparison.OrdinalIgnoreCase)
-                 || line.Text.Contains("[supervisor]", StringComparison.OrdinalIgnoreCase)
-                 || line.Text.Contains("[user]", StringComparison.OrdinalIgnoreCase)))
-            {
-                return null;
-            }
+            if (IsFollowUpLine(line)) return null;
         }
 
         return new PendingDecision(
@@ -128,6 +118,18 @@ public static class PendingDecisionScanner
             DetectedAt: latestTs,
             LineIndex: latestIdx.Value);
     }
+
+    /// <summary>
+    /// A follow-up line: the orchestrator, supervisor, or user stream, or a
+    /// legacy line that embeds the follow-up tag in its text rather than the
+    /// stream column (the same shape ReviewDecisionParsing uses).
+    /// </summary>
+    public static bool IsFollowUpLine(CliOutputLine line)
+        => IsFollowUpStream(line.Stream)
+           || line.Text is { } text
+              && (text.Contains("[orchestrator]", StringComparison.OrdinalIgnoreCase)
+                  || text.Contains("[supervisor]", StringComparison.OrdinalIgnoreCase)
+                  || text.Contains("[user]", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsAgentStream(string? stream)
     {

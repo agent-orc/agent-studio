@@ -1979,6 +1979,14 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
+  /** AGT-2903: accept a catalogue migration for every eligible explicitly pinned card of a project. */
+  applyProjectModelMigration(project: string, from: string) {
+    return this.http.post<{ from: string; to: string; updatedTaskIds: string[]; failedTaskIds: string[] }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(project)}/model-migrations/apply`,
+      { from },
+    );
+  }
+
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,

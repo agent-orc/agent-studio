@@ -20,6 +20,46 @@ bounded acceptance scope. Legacy entries without the field are treated as one
 slice using that entry's title and prompt. Promotion rejects one open-ended
 entry that asks for all recommendations.
 
+### Decision items
+
+An entry whose slice depends on a fork the Dossier cannot settle carries a
+`decision` block instead of a coding slice. Promotion then creates a decision
+card (kind `decision`) with that options payload rather than a coding card:
+
+```json
+{
+  "title": "Stable release contract",
+  "promptMarkdown": "Optional context for the decider.",
+  "decision": {
+    "question": "Ship the Stable release with a lock file?",
+    "options": [
+      { "id": "a", "label": "Lock file", "consequences": "Reproducible installs" },
+      {
+        "id": "b",
+        "label": "No lock file",
+        "requirements": [
+          {
+            "title": "Release identity without lock file",
+            "promptMarkdown": "Derive the release identity from the manifest.",
+            "acceptanceScope": { "deliveryMode": "bounded-slice", "slice": "S1", "criteria": ["..."] }
+          }
+        ]
+      }
+    ],
+    "recommendedOptionId": "a",
+    "recommendationReason": "Reproducibility outweighs churn."
+  }
+}
+```
+
+A decision item needs a `title`; `promptMarkdown` is optional context. The
+`decision` block follows the decision card contract (a question, two to four
+options with unique ids, an optional recommendation). Each option may list
+`requirements`: implementation items with the same shape and the same
+workflow-sized rule as a top-level entry. Once the decision is taken, the chosen
+option's requirements become `2-ready` coding cards through the same promotion
+ledger; see [the task domain](../system/domains/tasks.md#decision-cards).
+
 ## Acceptance scope contract
 
 The card stores its review boundary in `job.json` as `acceptanceScope`. Task and

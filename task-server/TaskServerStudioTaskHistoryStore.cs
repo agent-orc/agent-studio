@@ -110,6 +110,14 @@ public sealed partial class TaskServerStore
                 audit.Action,
                 AuditAction: audit.Action));
 
+        var feedback = await GetSteeringFeedbackAsync(projectId, taskId, ct);
+        if (feedback is not null)
+            foreach (var fact in feedback.History)
+                entries.Add(new StudioTaskTimelineEntryDto(
+                    "steering-receipt", fact.OccurredAt,
+                    $"{fact.Kind}: {fact.State}", RunId: fact.OwningRunId,
+                    SteeringFeedback: fact));
+
         return new StudioTaskTimelineResponse(
             entries.OrderBy(entry => entry.OccurredAt).ToList());
     }

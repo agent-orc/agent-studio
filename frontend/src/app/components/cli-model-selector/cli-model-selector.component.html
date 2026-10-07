@@ -122,6 +122,7 @@
               (keydown)="onModelPillKeydown(modelOption.id, $event)"
               (click)="onModelPillClick(modelOption.id)">
               <span class="model-picker__pill-label">{{ modelOption.label || modelOption.id }}</span>
+              <app-model-price [modelId]="modelOption.id" [testId]="pickerTestidPrefix() + '-price-' + modelOption.id" />
               @if (modelOption.isDefault) {
                 <span class="model-picker__pill-hint">default</span>
               } @else if (modelAvailabilityNote(modelOption); as unavailableNote) {
@@ -194,6 +195,7 @@
             </button>
           }
         </div>
+        @if (levelMappingNote(); as note) { <div class="model-picker__hint" role="note" [attr.data-testid]="pickerTestidPrefix() + '-level-mapped'">{{ note }}</div> }
       </section>
     }
 

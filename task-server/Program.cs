@@ -224,6 +224,13 @@ if (bootstrap.RequiresAuthentication)
             runnerId: null,
             app.Lifetime.ApplicationStopping);
 }
+var armDecision = await store.ArmOwnerBootstrapCodeAsync(
+    bootstrap.OwnerBootstrapCode, app.Lifetime.ApplicationStopping);
+if (armDecision == OwnerBootstrapPolicy.ArmDecision.KeepArmedIgnoreDifferentFile)
+    Console.Error.WriteLine(
+        "owner-bootstrap: the configured code file differs from the armed code; the armed code is kept. Rotate only by restoring the original file.");
+else if (armDecision != OwnerBootstrapPolicy.ArmDecision.NoCode)
+    Console.WriteLine($"owner-bootstrap: {armDecision}");
 app.UseRouting();
 app.UsePublicDemoExecutionLock();
 app.UseMiddleware<TaskServerAuthenticationMiddleware>();
@@ -251,6 +258,7 @@ app.MapStudioP2Endpoints();
 // (docs/studio-route-ownership/index.html). No new migration - every route
 // reads a table a P0-P2 bundle already owns.
 app.MapStudioP3AdministrationEndpoints();
+app.MapIdentityBootstrapEndpoints();
 app.MapHub<TaskServerEventsHub>("/hubs/events")
     .RequireTaskServerScope(TaskServerScopes.EventsSubscribe);
 app.MapHub<TaskServerStudioHub>(TaskServerHubProtocol.StudioHubPath)
