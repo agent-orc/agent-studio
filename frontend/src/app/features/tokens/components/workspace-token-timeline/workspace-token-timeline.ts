@@ -63,7 +63,7 @@ interface BucketSegment {
 @Component({
   selector: 'app-workspace-token-timeline',
   standalone: true,
-  imports: [BetterCandidateUsageReportComponent],
+  imports: [BetterCandidateUsageReportComponent, WorkspaceTokenModelTableComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-token-timeline.html',
   styleUrl: './workspace-token-timeline.scss'

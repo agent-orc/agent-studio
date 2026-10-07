@@ -77,6 +77,26 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         Assert.Contains(ModelIds.Gpt56Sol, warning);
     }
 
+    [Fact]
+    public async Task Failed_remote_chat_turn_still_records_spent_tokens()
+    {
+        var harness = BuildHarness();
+
+        var reply = await harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
+        {
+            InputTokens = 2_000,
+            OutputTokens = 100,
+        }, success: false);
+
+        Assert.NotNull(reply.ErrorMessage);
+        var rows = new AgentMessageBusStore().Query(
+            _root, ProjectName, new AgentMessageQuery(Kind: "token-usage"));
+        var row = Assert.Single(rows);
+        Assert.Equal(RunnerId, row.Tokens?.Host);
+        Assert.Equal(2_000, row.Tokens?.Input);
+        Assert.Equal(100, row.Tokens?.Output);
+    }
+
     private Harness BuildHarness()
     {
         var watchPath = Path.Combine(_root, "projects", ProjectName);
@@ -132,7 +152,8 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         string WatchPath,
         CapturingLogger Logger)
     {
-        public async Task<OrchestratorChatTurn> SendRemoteTurnAsync(OrchestratorTokenUsage usage)
+        public async Task<OrchestratorChatTurn> SendRemoteTurnAsync(
+            OrchestratorTokenUsage usage, bool success = true)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var send = Service.SendAsync(
@@ -151,7 +172,8 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
 
             Assert.True(Broker.Complete(new RemoteChatWorkCompletionRequest(
                 claim.Work!.WorkId, claim.Work.ClaimToken, RunnerId,
-                true, "remote reply", claim.Work.Model, usage, null,
+                success, "remote reply", claim.Work.Model, usage,
+                success ? null : "Remote model call failed.",
                 new ChatExecutionContext(
                     "remote", "host-02", "/runner/repo", "main", "abc", "ready",
                     // clock-independent: context timestamp is provenance data, never compared with now.
@@ -164,7 +186,7 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
     private sealed class UnexpectedLocalRunner : OrchestratorRunner
     {
         public UnexpectedLocalRunner()
-            : base(null!, NullLogger<OrchestratorRunner>.Instance) { }
+            : base(NullLogger<OrchestratorRunner>.Instance) { }
 
         public override Task<OrchestratorDecisionResult> DecideCodexAsync(
             string prompt, string model, string? thinkingLevel,

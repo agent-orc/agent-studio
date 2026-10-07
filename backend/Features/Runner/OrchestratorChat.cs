@@ -639,7 +639,7 @@ public class OrchestratorChatService
                 localStarted = true;
             }
             DateTime? fallbackQueuedAt = null;
-            OrchestratorDecisionResult result;
+            OrchestratorDecisionResult? result = null;
             RemoteChatWorkResult? remoteResult = null;
             string? executionNote = null;
             try
@@ -781,9 +781,10 @@ public class OrchestratorChatService
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
                 localOutcome = failure;
-                await RecordChatUsageAsync(projectName, result,
-                    remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
-                    remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
+                if (result is not null)
+                    await RecordChatUsageAsync(projectName, result,
+                        remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
+                        remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
                 return failure;
             }
 
@@ -820,6 +821,9 @@ public class OrchestratorChatService
                 };
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
                 localOutcome = failure;
+                await RecordChatUsageAsync(projectName, result,
+                    remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
+                    remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow).ConfigureAwait(false);
                 return failure;
             }
 
