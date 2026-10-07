@@ -22,6 +22,9 @@
  *     disposable dirty Git repository before boot. Crash recovery tests can
  *     then observe a real pending decision without touching the operator's
  *     repositories. The option is scoped to the tests that set it.
+ *   - `test.use({ demoWorkspace: true })` seeds the isolated ADR-0056 demo
+ *     projects before boot. It requires the dev backend to be offline so an
+ *     existing operator backend is never replaced by a screenshot run.
  *   - Else: ask the dev backend's `/api/watch-paths` endpoint after start
  *     (Agent Software Studio entry) for the workspace path.
  *   - Else: fall back to the script's own default (sibling folder).
@@ -48,9 +51,16 @@ const DEV_BASE_URL = `http://127.0.0.1:${DEV_PORT}`;
 let isolatedWorkspace: string | undefined;
 let isolatedRecoveryRepository: string | undefined;
 
-function ensureIsolatedWorkspace(recoveryRepository: boolean): { taskRepository: string; watchPath: string } {
+function ensureIsolatedWorkspace(recoveryRepository: boolean, demoWorkspace: boolean): { taskRepository: string; watchPath: string } {
   isolatedWorkspace ??= mkdtempSync(path.join(tmpdir(), 'agent-studio-dev-backend-'));
-  const watchPath = path.join(isolatedWorkspace, 'projects', 'agent-studio-worktree');
+  // A demo backend starts only while the port is offline. Re-seed on every
+  // start so a retained fixture path cannot refer to a removed or mutated
+  // workspace after another fixture reused an existing backend.
+  if (demoWorkspace) {
+    const result = spawnSync(process.execPath, [path.join(resolveRepoRoot(), 'scripts', 'seed-demo-workspace.mjs'), '--root', isolatedWorkspace], { encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`Could not seed isolated demo workspace: ${result.stderr}`);
+  }
+  const watchPath = path.join(isolatedWorkspace, 'projects', demoWorkspace ? 'demo-app' : 'agent-studio-worktree');
   mkdirSync(watchPath, { recursive: true });
   if (recoveryRepository && !isolatedRecoveryRepository) {
     isolatedRecoveryRepository = path.join(isolatedWorkspace, 'recovery-repository');
@@ -96,10 +106,11 @@ function resolveScriptPath(): string {
 function runScript(
   cmd: 'start' | 'stop' | 'status',
   recoveryRepository = false,
+  demoWorkspace = false,
 ): { code: number; stdout: string; stderr: string } {
   const scriptPath = resolveScriptPath();
   const devCheckout = resolveDevCheckout();
-  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace(recoveryRepository) : undefined;
+  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace(recoveryRepository, demoWorkspace) : undefined;
   if (!existsSync(scriptPath)) {
     throw new Error(`dev-lifecycle.sh not found at ${scriptPath}`);
   }
@@ -114,8 +125,17 @@ function runScript(
         Runner__Role: 'test-subject',
         WatchPaths__0__Name: 'Agent Studio Worktree',
         WatchPaths__0__Path: isolated.watchPath,
-        WatchPaths__0__RootPath: isolatedRecoveryRepository ?? devCheckout,
-        WatchPaths__0__RepositoryPath: isolatedRecoveryRepository ?? devCheckout,
+        WatchPaths__0__RootPath: demoWorkspace ? isolated.watchPath : isolatedRecoveryRepository ?? devCheckout,
+        WatchPaths__0__RepositoryPath: demoWorkspace ? isolated.watchPath : isolatedRecoveryRepository ?? devCheckout,
+        ...(demoWorkspace ? {
+          'WatchPaths__0__Name': 'Demo App',
+          'WatchPaths__1__Name': 'Demo Platform',
+          'WatchPaths__1__Path': path.join(isolated.taskRepository, 'projects', 'demo-platform'),
+          'WatchPaths__1__RootPath': path.join(isolated.taskRepository, 'projects', 'demo-platform'),
+          'WatchPaths__1__RepositoryPath': path.join(isolated.taskRepository, 'projects', 'demo-platform'),
+          'DeliveryChain__Guarded': 'false',
+          'ReviewDecisionOrchestrator__BootDelaySeconds': '3600',
+        } : {}),
       } : {}),
     },
     encoding: 'utf8',
@@ -168,11 +188,15 @@ async function discoverWorkspace(): Promise<string> {
   return path.resolve(resolveRepoRoot(), '..', 'agent-taskboard-dev');
 }
 
-export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: boolean }>({
+export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: boolean; demoWorkspace: boolean }>({
   recoveryRepository: [false, { option: true }],
-  devBackend: async ({ recoveryRepository }, use, testInfo) => {
+  demoWorkspace: [false, { option: true }],
+  devBackend: async ({ recoveryRepository, demoWorkspace }, use, testInfo) => {
     const startedHealthy = await isHealthy();
     let weStartedIt = false;
+    if (startedHealthy && demoWorkspace) {
+      throw new Error('Pinned demo capture requires the dev backend to be offline; refusing to replace a running backend.');
+    }
 
     // A fixture-started worktree backend needs the isolated WatchPaths values
     // passed by runScript('start'). A stale KEEP_DEV_ON_FAIL process can still
@@ -188,7 +212,7 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
     }
 
     if (!startedHealthy || !await isHealthy()) {
-      const r = runScript('start', recoveryRepository);
+      const r = runScript('start', recoveryRepository, demoWorkspace);
       if (r.code !== 0) {
         runScript('stop');
         if (isolatedWorkspace) {
@@ -210,6 +234,7 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
     await use({ port: DEV_PORT, baseUrl: DEV_BASE_URL, workspace });
 
     // Teardown: only stop what we started, and respect KEEP_DEV_ON_FAIL.
+    // No demo-seeded flag survives this path; the next demo start re-seeds.
     if (!weStartedIt) return;
     const failed = testInfo.status !== testInfo.expectedStatus;
     if (failed && process.env.KEEP_DEV_ON_FAIL === '1') {
