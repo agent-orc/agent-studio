@@ -1,3 +1,5 @@
+import type { DecisionCostRollup } from '../../task-pipeline/models/task-pipeline.model';
+
 /**
  * Cycle 9 project-token-usage feature models. Lifted out of
  * `models/job.model.ts` per ADR-0034. Re-exported from the legacy file.
@@ -148,6 +150,8 @@ export interface PipelineKindSeries {
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
   cells: PipelineKindDayCell[];
+  /** Step executions of this kind in the window. */
+  runs?: number;
 }
 
 /**
@@ -164,6 +168,12 @@ export interface PipelineStepCostSeries {
   anyModelUnknown: boolean;
   unpricedRuns?: number;
   pricingGaps?: PipelinePricingGap[];
+  /** How often the step ran in the window, repeats across rounds and attempts included. */
+  runs?: number;
+  /** Distinct cards it ran on. */
+  tasks?: number;
+  /** Models the step ran on in the window. */
+  models?: string[];
 }
 
 export interface ProjectPipelineCostTimeline {
@@ -182,4 +192,6 @@ export interface ProjectPipelineCostTimeline {
   hasData: boolean;
   fetchedAt: string;
   freshness?: ProjectTokenDataFreshness;
+  /** What deciding cost in the window against the agent runs. */
+  decisionCost?: DecisionCostRollup | null;
 }

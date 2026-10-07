@@ -295,8 +295,11 @@ public sealed class GitWorkspace
             if (!Directory.Exists(Path.Combine(sharedRepoPath, ".git")))
             {
                 log($"project-delivery-preflight clone project={projectId} repository={expected}");
+                // A full clone, like the one PrepareAsync makes: a `--no-checkout`
+                // clone leaves an empty index, which the first claim's stable
+                // checkout update reads as local changes and refuses (AGT-2985).
                 var clone = await ProcessRunner.RunAsync(
-                    "git", ["clone", "--no-checkout", expected, sharedRepoPath], projectPath, ct: ct);
+                    "git", ["clone", expected, sharedRepoPath], projectPath, ct: ct);
                 if (!clone.Success) return Failed("clone", clone, expected, expected);
             }
 
@@ -308,10 +311,10 @@ public sealed class GitWorkspace
             if (!pushSet.Success) return Failed("set push URL", pushSet, expected, expected);
 
             var fetch = await ProcessRunner.RunAsync(
-                "git", ["remote", "get-url", "origin"], sharedRepoPath, ct: ct);
+                "git", ["config", "--get", "remote.origin.url"], sharedRepoPath, ct: ct);
             if (!fetch.Success) return Failed("read fetch URL", fetch, expected, expected);
             var push = await ProcessRunner.RunAsync(
-                "git", ["remote", "get-url", "--push", "origin"], sharedRepoPath, ct: ct);
+                "git", ["config", "--get", "remote.origin.pushurl"], sharedRepoPath, ct: ct);
             if (!push.Success) return Failed("read push URL", push, fetch.StdOut.Trim(), expected);
             var fetchUrl = fetch.StdOut.Trim();
             var pushUrl = push.StdOut.Trim();

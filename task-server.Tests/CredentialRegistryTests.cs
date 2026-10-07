@@ -9,6 +9,44 @@ namespace TaskServer.Tests;
 public sealed class CredentialRegistryTests
 {
     [Fact]
+    public async Task Deploy_key_registration_metadata_round_trips_without_secret_material()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await store.InitializeAsync();
+        var record = Fixture("github_deploy_key") with {
+            GitHubKeyId = 12345, ProvisioningCredentialId = "workstation-oauth-record",
+            RepositoryPurpose = "workspace", RepositoryWriteGrant = true
+        };
+        await store.UpsertCredentialRegistryAsync(new(record, "instance-a", null,
+            now.UtcDateTime), "test", default);
+
+        var stored = Assert.Single(await store.ListCredentialRegistryAsync(default));
+        Assert.Equal(12345, stored.GitHubKeyId);
+        Assert.Equal("workstation-oauth-record", stored.ProvisioningCredentialId);
+        Assert.Equal("workspace", stored.RepositoryPurpose);
+        Assert.True(stored.RepositoryWriteGrant);
+        Assert.DoesNotContain("fixture-secret", JsonSerializer.Serialize(stored));
+    }
+
+    [Fact]
+    public async Task GitHub_relationship_cannot_be_attached_to_an_unrelated_credential_kind()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }),
+            new ManualTimeProvider(now));
+        await store.InitializeAsync();
+        var invalid = Fixture("claude_oauth_token") with { GitHubKeyId = 12345 };
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.UpsertCredentialRegistryAsync(
+            new(invalid, "instance-a", null, now.UtcDateTime), "test", default));
+        Assert.Empty(await store.ListCredentialRegistryAsync(default));
+    }
+
+    [Fact]
     public async Task Every_catalogued_kind_round_trips_unknown_dates_and_bindings_without_values()
     {
         using var temp = new TempDirectory();

@@ -85,9 +85,11 @@
         </div>
       }
     </section>
+  }
 
-    <app-project-pipeline-cost-trend [timeline]="pipelineCost()" />
+  <app-project-pipeline-cost-trend [timeline]="pipelineCost()" />
 
+  @if (summary()?.hasData !== false) {
     <section class="tup__heatmap-section" aria-label="Per-task heatmap">
       <h3 class="tup__section-title">Heatmap (top tasks × days)</h3>
       @if (heatmap()?.hasData) {

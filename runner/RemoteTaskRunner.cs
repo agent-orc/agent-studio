@@ -2320,11 +2320,40 @@ public sealed class RemoteTaskRunner
         IReadOnlyList<string>? gateItems = null,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
+        var request = BuildCompletionRequest(
+            _options, taskKey, lease, outcome, outcomeDecision, teardown, repository, baseSha,
+            integrationBranch, artifactManifestDigest, outputLines, sourceMutated, gateItems,
+            sessionContinuation);
+        var resp = await _client.CompleteRunAsync(request, ct);
+        _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(request.ImmutableResultRef is null ? "absent" : "attached")}");
+    }
+
+    /// <summary>
+    /// The fenced completion exactly as the runner sends it. Shared with the
+    /// legacy-plane completion contract test (AGT-2985), which must post the
+    /// production shape rather than a hand-built one.
+    /// </summary>
+    internal static RemoteRunCompletionRequest BuildCompletionRequest(
+        RunnerOptions options,
+        string taskKey,
+        RunLeaseInfoDto lease,
+        RunOutcome outcome,
+        ExecutionOutcomeDecision outcomeDecision,
+        WorktreeTeardownResult teardown,
+        string? repository,
+        string? baseSha,
+        string integrationBranch,
+        string? artifactManifestDigest,
+        IReadOnlyList<string> outputLines,
+        bool sourceMutated,
+        IReadOnlyList<string>? gateItems = null,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
+    {
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
-        var resp = await _client.CompleteRunAsync(new RemoteRunCompletionRequest(
-            taskKey, lease.LeaseId, lease.FencingToken, _options.RunnerId,
-            outcome.Kind.ToString(), outcome.Reason, _options.RunnerName,
+        return new RemoteRunCompletionRequest(
+            taskKey, lease.LeaseId, lease.FencingToken, options.RunnerId,
+            outcome.Kind.ToString(), outcome.Reason, options.RunnerName,
             SalvageBranch: teardown.Branch,
             SalvageCommitSha: teardown.CommitSha,
             SalvageBranchUrl: teardown.BranchUrl,
@@ -2350,8 +2379,7 @@ public sealed class RemoteTaskRunner
             IntegrationBranch: integrationBranch,
             NeedsInputMessage: outcome.NeedsInputMessage,
             GateItems: gateItems,
-            SessionContinuation: sessionContinuation), ct);
-        _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
+            SessionContinuation: sessionContinuation);
     }
 
     private async Task CompleteOrReconcileAsync(

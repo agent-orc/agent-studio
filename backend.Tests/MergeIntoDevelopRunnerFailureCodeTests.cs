@@ -169,9 +169,14 @@ public sealed class MergeIntoDevelopRunnerFailureCodeTests : IDisposable
         Commit(other, "chore: remote-only develop work");
         RunGit(other, "push -q origin develop");
 
-        // ... while local develop grows its own commit: the two diverged.
+        // ... while the integration lane carries a gated merge that was never
+        // published: the two diverged. A commit on the developer checkout's
+        // local develop alone is not part of the lane (AGT-2996).
         File.WriteAllText(Path.Combine(repo, "local.txt"), "local-only work");
-        Commit(repo, "chore: local-only develop work");
+        Commit(repo, "chore: unpublished lane work");
+        var unpublished = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        RunGit(repo, "reset -q --hard HEAD~1");
+        RunGit(repo, $"update-ref {GitService.IntegrationLaneRef("develop")} {unpublished}");
         RunGit(repo, "checkout -q -b task/sync");
         File.WriteAllText(Path.Combine(repo, "task.txt"), "task work");
         Commit(repo, "feat: task work");
