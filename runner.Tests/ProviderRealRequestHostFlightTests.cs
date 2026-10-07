@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AgentRunner;
 using Xunit;
 
@@ -74,12 +75,12 @@ public sealed class ProviderRealRequestHostFlightTests : IDisposable
     // The lock is released by a continuation of the ended run; allow it to land.
     private static async Task<ProcessResult> AcquireWithinAsync(string lockPath, TimeSpan within)
     {
-        var until = DateTime.UtcNow + within;
+        var watch = Stopwatch.StartNew();
         while (true)
         {
             var result = await ProviderRealRequestHostFlight.RunAsync(
                 lockPath, _ => Task.FromResult((new ProcessResult(0, "OK", ""), false, false)), CancellationToken.None);
-            if (result.StdErr != ProviderRealRequestHostFlight.InProgress || DateTime.UtcNow > until)
+            if (result.StdErr != ProviderRealRequestHostFlight.InProgress || watch.Elapsed > within)
                 return result;
             await Task.Delay(20);
         }
