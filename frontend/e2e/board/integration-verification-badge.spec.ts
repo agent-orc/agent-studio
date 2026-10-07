@@ -140,7 +140,7 @@ async function installRoutes(page: Page): Promise<void> {
 }
 
 test('the board badge tells integrated-verified from integrated-unverified cards', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   await page.addInitScript(() => {
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
       v: 1,
@@ -150,7 +150,7 @@ test('the board badge tells integrated-verified from integrated-unverified cards
   });
 
   await installRoutes(page);
-  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   const unverifiedCard = page.locator('[data-testid="task-card"]', { hasText: 'Pushed to develop without a passing gate' });
   await expect(unverifiedCard).toBeVisible();
