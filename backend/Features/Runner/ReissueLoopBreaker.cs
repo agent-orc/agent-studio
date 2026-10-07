@@ -16,14 +16,9 @@ namespace AgentStudio.Runner;
 /// </para>
 ///
 /// <para>
-/// Three rules, applied in order:
+/// Two rules, applied in order:
 /// </para>
 /// <list type="number">
-/// <item>
-///   <b>Repeated aspect escalation.</b> When one aspect repeats the same
-///   normalized block through its configured round limit, escalate with that
-///   reason. An unchanged review finding is no longer useful coding input.
-/// </item>
 /// <item>
 ///   <b>Empty-diff accept.</b> When a card that was already re-issued at least
 ///   once comes back with an EMPTY follow-up diff (the latest run committed
@@ -103,26 +98,9 @@ public static class ReissueLoopBreaker
         int priorReissues,
         int maxReissues,
         bool emptyFollowupDiff,
-        bool stateAcceptable,
-        RepeatedAspectBlockDiagnosis? repeatedBlock = null)
+        bool stateAcceptable)
     {
-        // A reviewer that repeats the exact same semantic block has stopped
-        // producing new information. The task needs a human scope decision,
-        // not another automatic accept/re-code/review turn.
-        if (repeatedBlock?.MustEscalate == true)
-        {
-            return new Decision
-            {
-                Action = LoopBreakAction.Escalate,
-                Cause = "identical-aspect-block",
-                Reason =
-                    $"The same aspect block repeated for {repeatedBlock.ConsecutiveRounds} consecutive review rounds " +
-                    $"(limit {repeatedBlock.MaximumRounds}): {repeatedBlock.Finding}. " +
-                    "Escalating for a human scope decision instead of reissuing the same work again.",
-            };
-        }
-
-        // Rule 2: empty follow-up diff on an already-reissued, clean card -> accept.
+        // Rule 1: empty follow-up diff on an already-reissued, clean card -> accept.
         // This takes precedence over the budget rule: an empty clean re-run should
         // be accepted (low human burden), not escalated, even when the budget is
         // also spent.
@@ -139,7 +117,7 @@ public static class ReissueLoopBreaker
             };
         }
 
-        // Rule 3: budget spent -> escalate, never reissue back to 2-ready again.
+        // Rule 2: budget spent -> escalate, never reissue back to 2-ready again.
         if (priorReissues >= maxReissues)
         {
             return new Decision

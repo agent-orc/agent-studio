@@ -1,3 +1,4 @@
+@use '../../../../../styles/mixins' as m;
 .escalation {
   &__head {
     display: flex;
@@ -7,6 +8,7 @@
   }
 
   &__head-toggle {
+    @include m.disclosure-control;
     display: flex;
     align-items: flex-start;
     gap: var(--studio-spacing-2);
@@ -149,26 +151,6 @@
     }
   }
 
-  &__chevron {
-    flex: 0 0 auto;
-    margin: 0;
-    padding: var(--studio-spacing-1);
-    border: 0;
-    background: transparent;
-    color: var(--studio-fg-dim);
-    font-size: 10px;
-    cursor: pointer;
-    transition: color 0.15s ease;
-
-    &:hover { color: var(--studio-fg); }
-
-    &:focus-visible {
-      outline: 2px solid var(--studio-accent);
-      outline-offset: 2px;
-      border-radius: 6px;
-    }
-  }
-
   &__rec {
     display: inline-flex;
     flex: 0 0 auto;
@@ -208,8 +190,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     &__title,
-    &__action,
-    &__chevron { transition-duration: 0s; }
+    &__action { transition-duration: 0s; }
   }
 
   @media (max-width: 960px) {

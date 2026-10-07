@@ -21,6 +21,7 @@ import {
 } from '../../../../components/steering-detail';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { PendingButtonDirective } from '../../../../components/async-feedback';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { EscalationDetailsComponent } from '../escalation-details/escalation-details.component';
 import {
   laneActionsFor,
@@ -49,7 +50,7 @@ import {
   selector: 'app-escalation-summary',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, PendingButtonDirective, EscalationDetailsComponent],
+  imports: [TooltipDirective, PendingButtonDirective, EscalationDetailsComponent, DisclosureMarkerComponent],
   templateUrl: './escalation-summary.component.html',
   styleUrl: './escalation-summary.component.scss',
 })

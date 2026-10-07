@@ -29,6 +29,7 @@ public sealed class GitWorkspace
     private readonly string? _restoredBaseSha;
     private bool _startedFromSalvage;
     private SalvageReconciliationResult? _pickupReconciliation;
+    private PushProtectionCause? _pushProtectionRecovery;
 
     private const int MaxSalvagePublishAttempts = 3;
 
@@ -107,6 +108,97 @@ public sealed class GitWorkspace
     public string IntegrationBranchRef =>
         $"refs/heads/{ToBranchName(_preparedIntegrationBranch ?? _baseBranch)}";
     public SalvageReconciliationResult? PickupReconciliation => _pickupReconciliation;
+    public PushProtectionCause? PushProtectionRecovery => _pushProtectionRecovery;
+    private string PushProtectionMarkerPath => WorktreeLeasePath + ".push-protection.json";
+
+    private sealed record PushProtectionMarker(
+        string TaskKey, string? ProjectId, string? RunAttemptId, string Branch, string BaseSha,
+        string LocalSha, PushProtectionCause Cause);
+
+    private async Task RecordPushProtectionFailureAsync(WorktreeSalvageException ex)
+    {
+        if (ex.PushProtection is not { } cause ||
+            !Directory.Exists(RepoPath) || string.IsNullOrWhiteSpace(BaseSha)) return;
+        try
+        {
+            var head = await ProcessRunner.RunAsync("git", ["rev-parse", "HEAD"],
+                workingDirectory: RepoPath);
+            if (!head.Success) return;
+            var marker = new PushProtectionMarker(_safeTaskKey, _projectId, _sourceRunAttemptId, _workBranch,
+                BaseSha!, head.StdOut.Trim(), cause);
+            Directory.CreateDirectory(Path.GetDirectoryName(PushProtectionMarkerPath)!);
+            var temporary = PushProtectionMarkerPath + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temporary, JsonSerializer.Serialize(marker));
+            File.Move(temporary, PushProtectionMarkerPath, overwrite: true);
+        }
+        catch (Exception error)
+        {
+            _log($"push-protection-recovery-marker-failed path={RepoPath} error={OneLine(error.Message)}");
+        }
+    }
+
+    private async Task<bool> TryResumePushProtectionAsync(CancellationToken ct)
+    {
+        if (!File.Exists(PushProtectionMarkerPath) || !File.Exists(WorktreeLeasePath)) return false;
+        try
+        {
+            var marker = JsonSerializer.Deserialize<PushProtectionMarker>(
+                await File.ReadAllTextAsync(PushProtectionMarkerPath, ct));
+            using var lease = JsonDocument.Parse(await File.ReadAllTextAsync(WorktreeLeasePath, ct));
+            if (marker is null || marker.TaskKey != _safeTaskKey || marker.ProjectId != _projectId ||
+                marker.Branch != _workBranch ||
+                lease.RootElement.GetProperty("taskKey").GetString() != _safeTaskKey ||
+                lease.RootElement.GetProperty("projectId").GetString() != _projectId ||
+                lease.RootElement.GetProperty("runAttemptId").GetString() != marker.RunAttemptId ||
+                lease.RootElement.GetProperty("owner").GetString() != _options.RunnerId ||
+                lease.RootElement.GetProperty("subjectSha").GetString() != marker.BaseSha ||
+                lease.RootElement.GetProperty("worktreePath").GetString() != RepoPath)
+                return false;
+            var head = (await Git(["rev-parse", "HEAD"], RepoPath, ct)).StdOut.Trim();
+            if (head != marker.LocalSha || !await IsAncestorAsync(marker.BaseSha, head, ct)) return false;
+            if (marker.Cause.Commit is { } offending)
+            {
+                var resolved = (await Git(["rev-parse", "--verify", offending + "^{commit}"], RepoPath, ct)).StdOut.Trim();
+                if (!await IsAncestorAsync(marker.BaseSha, resolved, ct) ||
+                    !await IsAncestorAsync(resolved, head, ct) ||
+                    string.Equals(resolved, marker.BaseSha, StringComparison.OrdinalIgnoreCase)) return false;
+                var published = await Git(["branch", "-r", "--contains", resolved], RepoPath, ct);
+                if (!string.IsNullOrWhiteSpace(published.StdOut)) return false;
+            }
+            else
+            {
+                if (await ScanStagedDiffAsync(ct) is not { } found ||
+                    found.SecretType != marker.Cause.SecretType || found.Path != marker.Cause.Path)
+                    return false;
+            }
+            _startedHead = marker.BaseSha;
+            _startedFromSalvage = true;
+            _preparedIntegrationBranch = _baseBranch;
+            _pushProtectionRecovery = marker.Cause;
+            WriteWorktreeLease(marker.BaseSha);
+            return true;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _log($"push-protection-recovery-rejected path={RepoPath} error={OneLine(error.Message)}");
+            return false;
+        }
+    }
+
+    private async Task<PushProtectionCause?> ScanStagedDiffAsync(CancellationToken ct)
+    {
+        // ProcessRunner retains only a bounded output tail. Inspect each line as
+        // Git emits it so a large staged diff cannot hide an early match.
+        var scanner = new PushProtection.PushProtectionDiffScanner();
+        var result = await ProcessRunner.RunAsync("git",
+            ["diff", "--cached", "--unified=0", "--no-ext-diff", "--diff-filter=ACMR"],
+            workingDirectory: RepoPath,
+            onStdOut: scanner.AddLine,
+            ct: ct);
+        if (!result.Success)
+            throw new InvalidOperationException($"git staged diff failed ({result.ExitCode}): {result.StdErr.Trim()}");
+        return scanner.Cause;
+    }
 
     public async Task<string> PrepareAsync(CancellationToken ct)
     {
@@ -137,6 +229,11 @@ public sealed class GitWorkspace
             // applies before anything is removed.
             if (Directory.Exists(RepoPath))
             {
+                if (await TryResumePushProtectionAsync(ct))
+                {
+                    _log($"push-protection-recovery-ready path={RepoPath} cause={_pushProtectionRecovery!.Summary}");
+                    return _workBranch;
+                }
                 var retained = HasFencedGeneration
                     ? await SecureAndRemoveAsync(
                         "Unknown",
@@ -488,8 +585,9 @@ public sealed class GitWorkspace
                 var secured = await SecureAndRemoveAsync(outcome, sourceRunAttemptId, ct);
                 return secured with { Reconciliation = _pickupReconciliation ?? secured.Reconciliation };
             }
-            catch (WorktreeSalvageException)
+            catch (WorktreeSalvageException ex)
             {
+                await RecordPushProtectionFailureAsync(ex);
                 throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -525,8 +623,9 @@ public sealed class GitWorkspace
                     quarantine: true,
                     ct);
             }
-            catch (WorktreeSalvageException)
+            catch (WorktreeSalvageException ex)
             {
+                await RecordPushProtectionFailureAsync(ex);
                 throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -559,8 +658,9 @@ public sealed class GitWorkspace
                 return await SecureAsync(outcome, sourceRunAttemptId, removeAfterSecure: false,
                     immutableRefRequired: true, quarantine: false, ct);
             }
-            catch (WorktreeSalvageException)
+            catch (WorktreeSalvageException ex)
             {
+                await RecordPushProtectionFailureAsync(ex);
                 throw;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -729,6 +829,10 @@ public sealed class GitWorkspace
         if (wasDirty)
         {
             await Git(["add", "--all"], RepoPath, ct);
+            if (await ScanStagedDiffAsync(ct) is { } cause)
+                throw new WorktreeSalvageException(RepoPath, _workBranch,
+                    new InvalidOperationException(cause.Summary),
+                    pushProtection: cause);
             await Git([
                 "-c", "user.name=Agent Studio Runner",
                 "-c", "user.email=runner@agent-studio.invalid",
@@ -944,6 +1048,7 @@ public sealed class GitWorkspace
         try
         {
             if (File.Exists(WorktreeLeasePath)) File.Delete(WorktreeLeasePath);
+            if (File.Exists(PushProtectionMarkerPath)) File.Delete(PushProtectionMarkerPath);
             _log($"worktree-lease-released task={_safeTaskKey} lease={WorktreeLeasePath}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -1280,17 +1385,20 @@ public sealed class WorktreeSalvageException : Exception
         string branch,
         Exception innerException,
         string? localCommitSha = null,
-        string? remoteCommitSha = null)
+        string? remoteCommitSha = null,
+        PushProtectionCause? pushProtection = null)
         : base($"Could not secure worktree '{worktreePath}' on origin branch '{branch}'.", innerException)
     {
         WorktreePath = worktreePath;
         Branch = branch;
         LocalCommitSha = localCommitSha;
         RemoteCommitSha = remoteCommitSha;
+        PushProtection = pushProtection ?? AgentRunner.PushProtection.ParseGitHubRejection(innerException.Message);
     }
 
     public string WorktreePath { get; }
     public string Branch { get; }
     public string? LocalCommitSha { get; }
     public string? RemoteCommitSha { get; }
+    public PushProtectionCause? PushProtection { get; }
 }

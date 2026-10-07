@@ -18,6 +18,7 @@ export class IntegrationDeadEndComponent {
   readonly jobId = input.required<string>();
   readonly watchPath = input<string | null>(null);
   readonly containmentUnknown = input(false);
+  readonly escalated = input(false);
   readonly recheckRequested = output<void>();
   readonly model = computed(() => integrationDeadEnd(this.status(), this.containmentUnknown(), this.review()));
   readonly busy = signal(false);

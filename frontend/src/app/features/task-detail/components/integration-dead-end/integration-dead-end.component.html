@@ -16,7 +16,7 @@
       @if (deadEnd.recheck) {
         <button type="button" class="dead-end__primary" (click)="recheck()">Re-check integration</button>
       } @else {
-        <button type="button" class="dead-end__primary" [disabled]="busy()" (click)="continueTask()">Continue the task with this context</button>
+        <button type="button" [class.dead-end__primary]="!escalated()" [disabled]="busy()" (click)="continueTask()">Continue with delivery context</button>
       }
       @if (deadEnd.retry) {
         <button type="button" (click)="retry()">Retry integration</button>
