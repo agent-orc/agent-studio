@@ -5,6 +5,7 @@
         [class.usage-cli-chip--limited]="v.alarm === 'limited'"
         [attr.data-testid]="'usage-cli-chip-' + v.cliId"
         [attr.data-state]="v.state"
+        [attr.data-fit]="fit()"
         [attr.data-alarm]="v.alarm"
         [attr.data-usage-trigger]="controls() ? 'cli:' + v.cliId.toLowerCase() : null"
         aria-haspopup="dialog"
@@ -14,15 +15,17 @@
         [cacTooltip]="v.detail"
         (click)="activate.emit(v.cliId)">
   <span class="usage-cli-chip__body">
-    <span class="usage-cli-chip__name">{{ v.name }}</span>
+    <span class="usage-cli-chip__name">{{ visibleName() }}</span>
     @if (v.state === 'loading') {
       <span class="usage-cli-chip__placeholder" aria-hidden="true"></span>
     } @else if (v.state === 'unknown') {
       <span class="usage-cli-chip__value usage-cli-chip__value--muted" data-testid="usage-cli-chip-unavailable">{{ v.stateLabel }}</span>
     } @else {
-      @for (w of compact() ? [v.weekly] : [v.weekly, v.session]; track w.kind) {
+      @for (w of windows(); track w.kind) {
         <span class="usage-cli-chip__window" [attr.data-window]="w.kind">
-          <span class="usage-cli-chip__tag">{{ w.tag }}</span>
+          @if (fit() !== 'bare') {
+            <span class="usage-cli-chip__tag">{{ w.tag }}</span>
+          }
           <span class="usage-cli-chip__value"
                 [class.usage-cli-chip__value--muted]="!w.reported || v.state !== 'normal'"
                 [attr.data-testid]="'usage-cli-chip-' + v.cliId + '-' + w.kind">{{ w.value }}</span>

@@ -71,6 +71,8 @@ export class UsageDetailSurfaceComponent {
   readonly snapshot = input<UsageCockpitResponse | null>(null);
   /** Section to open at; `null` keeps the surface closed. */
   readonly focus = input<UsageDetailFocus | null>(null);
+  /** Optional visible trigger for a Details request that opens at the cost section. */
+  readonly returnTrigger = input<string | null>(null);
   readonly now = input.required<number>();
 
   /** Emitted on every close; the host clears `focus`. */
@@ -103,6 +105,7 @@ export class UsageDetailSurfaceComponent {
       const focus = this.focus();
       const mode = this.mode();
       const hasSnapshot = !!this.snapshot();
+      this.returnTrigger();
       untracked(() => this.sync(focus, mode, hasSnapshot));
     });
   }
@@ -139,6 +142,9 @@ export class UsageDetailSurfaceComponent {
   private trigger(focus: UsageDetailFocus | null): HTMLElement | null {
     const all = [...document.querySelectorAll<HTMLElement>(`[${USAGE_TRIGGER_ATTR}]`)].filter(visible);
     if (focus) {
+      const preferred = this.returnTrigger();
+      const preferredMatch = preferred && all.find(el => el.getAttribute(USAGE_TRIGGER_ATTR) === preferred);
+      if (preferredMatch) return preferredMatch;
       const key = usageTriggerKey(focus);
       const match = all.find(el => el.getAttribute(USAGE_TRIGGER_ATTR) === key);
       if (match) return match;
