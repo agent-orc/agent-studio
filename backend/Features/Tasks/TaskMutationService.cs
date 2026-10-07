@@ -1132,8 +1132,8 @@ public class TaskMutationService
     }
 
     /// <summary>
-    /// Moves an escalated prose request into preparation for conversion, and
-    /// restores its original lane if the atomic decision write fails.
+    /// Converts an escalated prose request without ever moving an ordinary
+    /// task into or out of the escalated lane on a failed conversion.
     /// </summary>
     public (bool Success, string? Error) MigrateJobToDecision(
         string jobId, DecisionContent decision, TaskStateMachine states, string? watchPath = null)
@@ -1143,25 +1143,82 @@ public class TaskMutationService
             || info.State is not (TaskStates.Preparation or TaskStates.Escalated))
             return (false, "Only active prose requests in preparation or escalated may be migrated.");
 
-        var wasEscalated = info.State == TaskStates.Escalated;
-        if (wasEscalated)
+        if (info.State == TaskStates.Preparation)
+            return ConvertJobToDecision(jobId, decision, watchPath)
+                ? (true, null) : (false, "Decision conversion failed; the card remains in its original lane.");
+
+        var jsonPath = Path.Combine(info.FolderPath, "task.json");
+        var originalJson = File.ReadAllText(jsonPath);
+        var fields = new Dictionary<string, object>
         {
-            var moved = states.MoveJob(jobId, TaskStates.Preparation, watchPath,
-                expectedSourceState: TaskStates.Escalated, reason: "Migrate active prose decision request");
-            if (moved.Status != MoveJobStatus.Success)
-                return (false, moved.Message ?? "Could not move the decision to preparation.");
+            ["kind"] = TaskKinds.Decision, ["decision"] = decision,
+            ["noBranchExpected"] = true, ["requiresIntegration"] = false,
+        };
+        // In flat storage, task.json is the lane authority. Change the kind
+        // and lane in one atomic replacement; the lane index is derived data.
+        var flatLayout = string.Equals(
+            Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(info.FolderPath))),
+            TaskStorageLayout.JobsDirName, StringComparison.Ordinal);
+        if (flatLayout)
+        {
+            fields["state"] = TaskStates.Preparation;
+            fields["enteredLaneAt"] = DateTime.UtcNow.ToString("o");
+        }
+        if (!TaskJsonFile.UpdateFields(info.FolderPath, fields, _logger, _keyFileWriter))
+            return (false, "Decision conversion failed; the card remains in its original lane.");
+
+        _scanner.InvalidateCache();
+        if (flatLayout)
+        {
+            try { TaskLayoutIndex.Rebuild(info.WatchPath, _logger); }
+            catch (Exception ex)
+            {
+                // The index is rebuilt from task.json at boot. The canonical
+                // decision and lane change already committed successfully.
+                _logger.LogWarning(ex, "Decision migration index rebuild deferred for {JobId}", jobId);
+            }
+            _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName,
+                TaskStates.Preparation);
+            _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
+            try
+            {
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.LaneChanged,
+                    TimelineActors.System, summary: $"{TaskStates.Escalated} → {TaskStates.Preparation}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["from"] = TaskStates.Escalated,
+                        ["to"] = TaskStates.Preparation,
+                        ["reason"] = "Migrate active prose decision request",
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not record decision migration lane change for {JobId}", jobId);
+            }
+            return (true, null);
         }
 
-        if (ConvertJobToDecision(jobId, decision, watchPath)) return (true, null);
-
-        if (wasEscalated)
+        var moved = states.MoveJob(jobId, TaskStates.Preparation, watchPath,
+            expectedSourceState: TaskStates.Escalated, reason: "Migrate active prose decision request");
+        if (moved.Status == MoveJobStatus.Success) return (true, null);
+        // A move may have landed even if its later bookkeeping failed. In that
+        // case the card is already the intended decision in preparation.
+        _scanner.InvalidateCache();
+        var current = _scanner.FindJob(jobId, watchPath);
+        if (current?.State == TaskStates.Preparation && TaskKinds.IsDecision(current.Kind))
+            return (true, null);
+        try
         {
-            var rollback = states.MoveJob(jobId, TaskStates.Escalated, watchPath,
-                expectedSourceState: TaskStates.Preparation, reason: "Decision conversion failed; restore original lane");
-            if (rollback.Status != MoveJobStatus.Success)
-                return (false, $"Decision conversion failed and the card could not return to escalated: {rollback.Message ?? rollback.Status.ToString()}.");
+            new AtomicJsonFileWriter().ReplaceExisting(jsonPath, originalJson);
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
+            return (false, $"Decision migration failed; the original lane and card were restored: {moved.Message ?? moved.Status.ToString()}.");
         }
-        return (false, "Decision conversion failed; the card remains in its original lane.");
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not restore prose card after decision migration failure for {JobId}", jobId);
+            return (false, "Decision migration failed and the original card could not be restored; operator repair is required.");
+        }
     }
 
     public bool SetTaggingStatus(string jobId, string status, string? watchPath = null)

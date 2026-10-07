@@ -99,6 +99,37 @@ public class DecisionCardServiceTests : IDisposable
     }
 
     [Fact]
+    public void ProseMigration_EscalatedFlatCard_WritesKindAndLaneTogether()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "escalated-atomic", Title = "Operator decision needed", WatchPath = _watchPath,
+            TargetState = TaskStates.Escalated, PromptMarkdown = "## Decision needed (operator)",
+        })!;
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var jsonPath = Path.Combine(before.FolderPath, "task.json");
+
+        var outcome = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+
+        Assert.True(outcome.Success);
+        Assert.Equal(1, writer.WritesFor(jsonPath));
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(before.FolderPath, after.FolderPath);
+        Assert.Equal(TaskStates.Preparation, after.State);
+        Assert.Equal(TaskKinds.Decision, after.Kind);
+        Assert.Equal(DecisionStatuses.Pending, after.Decision!.Status);
+        var byState = TaskLayoutIndex.ReadByState(_watchPath);
+        Assert.Contains(byState[TaskStates.Preparation], location =>
+            location.EndsWith('/' + Path.GetFileName(after.FolderPath), StringComparison.Ordinal));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(after.FolderPath);
+        Assert.Contains(timeline, item => item.Kind == TimelineEventKinds.LaneChanged
+            && item.Details?.GetValueOrDefault("from") == TaskStates.Escalated
+            && item.Details?.GetValueOrDefault("to") == TaskStates.Preparation);
+    }
+
+    [Fact]
     public void ProseMigration_EscalatedConversionSuccess_MovesToPreparation()
     {
         var h = Build();
