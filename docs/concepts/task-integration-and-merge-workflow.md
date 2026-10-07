@@ -396,6 +396,108 @@ AGT-2706's delivery `79c2dcf8c` was contained in `develop` and in `main` and had
 shipped with v0.3.0, yet the archive dialog reported it as a pending
 integration purely because its `integration` field was `undefined`.
 
+### What counts as integrated: containment plus gate evidence (AGT-3002)
+
+Containment answers "is the delivery on the branch". It does not answer "did
+anything verify the branch with it". On 2026-09-28/29 an operator script pushed
+the developer checkout's `develop`, which carried merges whose gate later
+failed and was rolled back. The delivery lane then found those deliveries on
+`origin/develop` and completed their cards as `AlreadyMerged` (47 times, and
+`alreadyMerged=8` in the accepted-integration backstop), although the only gate
+that ran on those trees had returned `Fail`.
+
+A card is therefore **integrated** only when both hold:
+
+1. the delivery is contained in the integration branch (the status above), and
+2. a gate passed on the exact tree the card claims.
+
+The integration projection carries the second half as
+`integration.verification.state`:
+
+| State | Meaning |
+|---|---|
+| `integrated-verified` | A gate passed on the merged tree: this lane's own merge gate, a gate receipt on the card for the exact tree, an `integrated-verified` integration record naming that SHA, or the one verification gate the lane ran on the tip. |
+| `integrated-unverified` | The delivery is on the branch, but no gate evidence exists for that tree, or the gate that ran on it failed. |
+| absent | The card is not currently classified as contained. A contained card without exact-tree evidence projects as `integrated-unverified`. |
+
+**How the lane decides a contained delivery.** When the merge runner finds the
+delivery already contained (`AlreadyMerged`, `AlreadyOnIntegrationBranch`), the
+pure `IntegrationVerificationPolicy`
+(`backend/Features/Pipeline/IntegrationVerification/`) decides:
+
+1. **Evidence for the exact tree** completes the card: a gate receipt in the
+   card's `post-steps/` whose tested SHA is, or has the same tree as, the
+   branch tip (`pre-develop-build-gate-*` for develop, or
+   `pre-main-test-gate-*` for main), or an `integrated-verified` record whose
+   `integrationSha` names that tree on the same integration branch. A
+   pre-develop receipt never satisfies the mandatory pre-main full suite,
+   even when develop and main point to the same tree. Records
+   that only prove containment (no `integrationSha`) do not count.
+2. **A red receipt for the exact tree** is the verdict. The gate is not run
+   again.
+3. **No evidence**: the lane writes `integrated-unverified` with the SHA and the
+   reason to `integration-verification.json`, then runs the gate **once** on the
+   current branch tip. The work line runs the pre-develop gate over the
+   delivery's own diff plus the tip's last merge; when the review subject is
+   missing, the lane derives the delivery range from the merge that brought it
+   onto the branch and the Git diffs of every attributed card commit. Without a
+   fenced subject, it also selects the repository's existing stack entry points
+   for a conservative gate. If no trustworthy range
+   or gate scope can be derived, the card stays unverified. A later docs-only
+   tip cannot make an earlier code delivery `NotApplicable`. The release line
+   runs the mandatory full suite. The per-SHA gate cache answers when that
+   exact tip was
+   already gated. "No gate applies" is written as an explicit `NotApplicable`
+   receipt.
+4. **Green**: the card completes and the record says `integrated-verified`.
+   **Red on the code**: the result is `GateFailed`, nothing is pushed, the
+   branch history is left unchanged, the card goes to `5-human-review` with the
+   gate verdict, and a cause card (`integration/unverified-branch`) is opened for
+   the branch. Every card stuck on the same branch joins that one cause card.
+   **No verdict** (host, budget, or source failure): the card does not complete
+   and no cause card blames the branch; an environment failure is replayed by
+   the gate-environment retry ladder.
+
+A fresh merge created by the lane is verified by construction: its own gate
+guarded it, and the lane records that too. For a merge awaiting publication,
+verification compares the Studio integration lane tip, even when the developer
+checkout still holds an older local branch tip.
+
+**When the tip moves on.** A verified record names the exact tree the gate
+passed on and lists the card's delivery SHAs that tree contained
+(`deliveryShas`). After other cards land, the projection keeps the card
+`integrated-verified` for that tree while the published branch still carries
+it and the card's current delivery is one of those SHAs. A rewritten branch, a
+newer delivery, another branch, or a record without `deliveryShas` makes it
+stale. Later commits are their own cards' responsibility: re-gating every
+completed card on each tip change would let a red tip they did not cause reopen
+them. The merge runner itself still matches the exact tip only, so a push it
+approves never extends past a gated tree.
+
+**Who else asks.** The accepted-integration backstop finalizes a merged card only
+when its verification is `integrated-verified` for the current integration
+tree as described above. Without other exact-tree evidence, a missing or stale verification file and a
+historical Passed merge step fail closed as `integrated-unverified`.
+A stale or current-tree `integrated-unverified` verification file does not hide
+a later `integrated-verified` integration record that names the current SHA and
+branch. The projection checks that exact-tree record before the file.
+An unverified card goes back through
+the merge runner, which applies the rule above; once a gate has failed on that
+tree, the backstop returns the card to Human Review instead of running it
+again. Archived cards are left alone: the archive guard runs before every
+recovery action, so a failed gate never reopens one. A card whose delivery is
+not merged and that carries a historical verification row is not replayed
+either; that row stays bookkeeping. The acceptance rail does not
+auto-accept an unverified card (`integrated-unverified`). A human acceptance of
+an unverified card is refused with the reason; the operator can still accept it
+with a written override. The board badge reads `merged @sha · verified` or,
+in the acute orange tone, `merged @sha · unverified`.
+
+Cards completed before this rule need exact-tree evidence too. A historical
+Passed merge step without a matching SHA is not proof of the current tree,
+including `merged`, `merged-after-rebase`, and `already-merged` outcomes.
+The backstop verifies that tree once before finalizing the card.
+
 ### The three grounds
 
 `CompletionContractPolicy` (`backend/Features/Tasks/Acceptance/CompletionContractPolicy.cs`)
