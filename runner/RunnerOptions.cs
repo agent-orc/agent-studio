@@ -284,6 +284,21 @@ public sealed class RunnerOptions
     public int LoadGateSustainedSeconds { get; init; } = 120;
 
     /// <summary>
+    /// AGT-2993: filesystem whose free space admits a compose scenario review
+    /// step (the Docker data root, where its images and build cache land). When
+    /// the path does not exist the review workspace's filesystem is measured.
+    /// </summary>
+    public string DockerDataRoot { get; init; } = "/var/lib/docker";
+
+    /// <summary>
+    /// AGT-2993: a compose scenario review step is refused as
+    /// <c>ReviewInfra</c> / <c>ComposeScenarioDiskLow</c> below this percentage
+    /// of free space on <see cref="DockerDataRoot"/>. <c>0</c> keeps the log
+    /// line and disables the refusal.
+    /// </summary>
+    public int ComposeScenarioMinFreePercent { get; init; } = ComposeScenarioDiskAdmission.DefaultMinFreePercent;
+
+    /// <summary>
     /// When set (<c>--health-check</c>), the runner only probes the Task Server's
     /// liveness and exits: 0 when the server is reachable, 4 when it is not. No task
     /// key is required. This is the readiness probe the reverse-tunnel service uses
@@ -521,6 +536,10 @@ public sealed class RunnerOptions
                 : EnvDouble("RUNNER_CLAIM_MAX_LOAD_PER_CORE", 1.5),
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
+            DockerDataRoot = Env("RUNNER_DOCKER_DATA_ROOT", "/var/lib/docker"),
+            ComposeScenarioMinFreePercent = Math.Min(100, EnvIntAllowingZero(
+                "RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT",
+                ComposeScenarioDiskAdmission.DefaultMinFreePercent)),
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
             ReviewReleaseDrain = OptIn(
                 Val("review-release-drain", "RUNNER_REVIEW_RELEASE_DRAIN")),
