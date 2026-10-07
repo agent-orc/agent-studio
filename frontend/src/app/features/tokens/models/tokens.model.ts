@@ -176,8 +176,47 @@ export interface TokenTimeline {
   cells: TokenTimelineCell[];
   projects: TokenTimelineProject[];
   betterCandidateUsage?: BetterCandidateUsageLine[];
+  /**
+   * Per (project, model id, executing host) rows over the window (AGT-2986).
+   * `model` is the stored id; `modelLabel` is resolved from the registry for
+   * this response and equals the id when the registry does not know it.
+   */
+  models?: TokenTimelineModelUsage[];
+  /** Read health of the merged usage ledger (bus history plus task receipts). */
+  freshness?: TokenTimelineFreshness;
   fetchedAt: string;
   disclaimer: string;
+}
+
+export interface TokenTimelineModelUsage {
+  project: string;
+  model: string;
+  modelLabel: string;
+  /** Remote runner id, `local`, or `remote-unrecorded` for pre-attribution receipts. */
+  host: string;
+  cliTypes: string[];
+  calls: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  dollars: number | null;
+  allModelsPriced: boolean;
+}
+
+export interface TokenTimelineHostShare {
+  host: string;
+  calls: number;
+  total: number;
+}
+
+export interface TokenTimelineFreshness {
+  /** `complete`, `partial`, or `unavailable`. */
+  status: string;
+  asOf: string | null;
+  warning: string | null;
+  sources: string[];
 }
 
 /** One project/week line for routes that had a better candidate at admission. */
@@ -231,6 +270,8 @@ export interface TokenTimelineProject {
   agentTokens: number;
   supportingTokens: number;
   orchestratorTokens: number;
+  /** Executing hosts of the project's window total, largest first (AGT-2986). */
+  hosts?: TokenTimelineHostShare[];
 }
 
 export interface WorkspaceExpensiveJobsResponse {

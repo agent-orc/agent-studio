@@ -234,12 +234,14 @@ public sealed class ProjectTokenReceiptReader
                     // resolve it back here so pricing never sees a label.
                     Model = string.IsNullOrWhiteSpace(call.Model)
                         ? call.Model
-                        : ModelMetadataRegistry.NormalizeId(call.Model),
+                        : TokenModelDisplay.StoredId(call.Model),
                     InputTokens = SafeInt(call.InputTokens),
                     OutputTokens = SafeInt(call.OutputTokens),
                     CacheReadTokens = SafeInt(call.CacheReadTokens),
                     CacheCreationTokens = SafeInt(call.CacheCreationTokens),
                     ThinkingLevel = call.ThinkingLevel,
+                    CliType = call.CliType,
+                    Host = call.Host,
                     InputIncludesCached = call.InputIncludesCached,
                     UsageNormalization = call.UsageNormalization,
                     PinnedModel = call.PinnedModel,
