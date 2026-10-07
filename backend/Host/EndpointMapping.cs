@@ -86,6 +86,7 @@ public static class EndpointMapping
         app.MapFailureInterventionEndpoints();
         app.MapCauseBreakerEndpoints();
         app.MapTokenPricingEndpoints();
+        app.MapModelMigrationProjectEndpoints();
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();

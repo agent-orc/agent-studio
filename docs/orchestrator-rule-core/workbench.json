@@ -1,72 +1,72 @@
 {
   "schemaVersion": 1,
   "id": "orchestrator-rule-core",
-  "title": "Orchestrator rule core",
-  "summary": "A versioned deterministic rule core evaluates consumption, progress, quality floors, portfolio capacity, and the eight existing budgets; it records auditable decisions and uses bounded artefacts for optional LLM classification.",
+  "key": "AGT-W73",
+  "title": "Orchestrator decisions between steps",
+  "summary": "A strong model chooses typed actions from bounded decision grounds at every transition and periodic intervention; guard rails signal, while mechanical checks preserve authority and finite execution. Replaces the deterministic AGT-3010 salvage framing.",
   "entrypoint": "index.html",
   "status": "decision-pending",
   "phase": "decision-ready",
-  "updatedAt": "2026-10-04T14:31:00Z",
+  "updatedAt": "2026-10-06T13:45:00Z",
   "sourceTaskKeys": [
-    "AGT-3010"
+    "AGT-3018"
   ],
   "implementationTasks": [
     {
-      "id": "ORC-S1",
-      "title": "Decision receipt and shadow adapter",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Implement a pure RuleEvaluation(input snapshot, pinned rule bundle) and an append-only decision receipt in shadow mode. Adapt the eight existing policy owners read-only; do not change their dispatch paths. Include rule identity/version, scope, matched and rejected rules, source and freshness of each signal, derived budget and sentence, pressure terms, candidate and shadow action, loop inventory id, evidence digest, and outcome link. Use RB-S1 delivery ledger when present; report unavailable otherwise. Acceptance: replay decisions are deterministic across restart; the same attempt and rule version produce one idempotent receipt; missing cost price is unknown rather than zero; every policy retains its current hard ceiling and breaker; a sample card receipt is visible through an API. Dependency: AGT-W68 RB-S1 for delivery exhaustion facts.",
+      "id": "OD-S1",
+      "title": "Decision grounds and shadow receipt",
+      "promptMarkdown": "Build DecisionGroundsV1 and OrchestratorDecisionReceiptV1 for one post-core transition in shadow mode. Read this Dossier, ADR-0032, the pipeline and token-pricing domain maps. Freeze typed inputs with source refs, freshness, omissions, alternatives, prior prediction/outcome, content digest and bounded pack; persist model/provider/thinking level, exact metered token categories, price status, reasoning, confidence and outcome link. Deduplicate usage by provider call id and keep unknown price explicit. No dispatch change. Acceptance: replay of the same occurrence yields one immutable receipt; a sample card has a one-click evidence ref; cached input and duplicate ledger fixtures do not inflate spend.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "Decision receipt and shadow adapter"
+        "slice": "Decision grounds and shadow receipt"
       }
     },
     {
-      "id": "ORC-S2",
-      "title": "Bounded decision evidence pack",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Introduce schema-validated DecisionEvidencePack with 32 KiB and 8,000 estimated-token caps, at most two redacted 80-line/8 KiB windows, typed source refs and immutable range digest. Migrate the supervision-loop cli-output reader, PostAbortReview input assembly, and the orchestrator-context use of the multichat session projection to consume this pack. Keep authorized human drill-down to the immutable source interval. Acceptance: oversized and secret-bearing inputs are omitted with reasons; no StepKind.Orchestrator prompt can include a session path or unbounded log; schema-invalid classifier output fails to human review; tests cover stale attempt/fence and log rotation.",
+      "id": "OD-S2",
+      "title": "Shared model decision and authority adapter",
+      "promptMarkdown": "Read this Dossier and the ADR-0032 amendment proposal. Activate one post-core transition using a configurable strong model and the closed action union. The model chooses a typed action from offered alternatives; dispatch validates current fence, lease, exact SHA, autonomy class, security and gate floors through existing APIs. Record model-unavailable, quota, invalid-schema and forbidden-action cases as ask/hold receipts, with at most one configured alternate-model transport retry. Acceptance: a valid A1 choice dispatches once; stale authority, A2/A3 mutation, and unusable output cannot dispatch; every branch records an occurrence with tokens or an explicit no-call reason.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "Bounded decision evidence pack"
+        "slice": "Shared model decision and authority adapter"
       }
     },
     {
-      "id": "ORC-S3",
-      "title": "Coding admission and measured budget",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Using RB-S1 and RB-S2, add a shadow coding-admission rule. Derive a starting round budget from at least 20 comparable clean completions in 90 days using 1.25 times p90, with cohort and exclusions recorded; fall back to RB-S2 resolution when thin. Compare forecast slot minutes and priced quota draw with fleet and eligible Ready reservations, preserving priority, age, and project fairness. Promote only after replay and operator activation. Acceptance: censored timeouts and anomalous host-load runs cannot inflate the estimator; host ceiling and card override precedence remain; scarce capacity produces a visible defer with next-review time, never a silent card rejection; shadow and active decisions carry source derivation.",
+      "id": "OD-S3",
+      "title": "Bounded artefact readers and loop signals",
+      "promptMarkdown": "Read this Dossier, Watcher evidence-pack contract and the existing loop inventory. Migrate orchestrator input assembly in supervision, abort review and multichat to bounded typed artefacts and immutable drill-down refs; no StepKind.Orchestrator prompt receives a raw session path or unbounded stream. Update all 13 inventory entries and their breaker tests so exhaustion raises a named signal and blocks re-entry pending model or human decision, without a counter choosing escalation. Acceptance: secret/oversize inputs have omission reasons, source digests survive log rotation, and each loop remains finite when the model is absent.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "Coding admission and measured budget"
+        "slice": "Bounded artefact readers and loop signals"
       }
     },
     {
-      "id": "ORC-S4",
-      "title": "Gradient adaptation and post-guard",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Apply the Dossier pressure formula and confidence/value thresholds at material events. Use AGT-W56 trusted route and correctness floor for a next-safe-turn model/thinking downgrade; route any unsupported same-session switch through a fresh bounded attempt. Connect high-pressure no-progress and repetition to RB-S3 checkpoint, RB-S4 continuation guard, and RB-S5 prepared scope-cut gate. Do not silently alter acceptance scope or replenish an existing loop counter. Acceptance: $400 and $2 examples with equal normalized usage show different scrutiny; expensive approved route does not by itself halt; cost cannot lower a floor; exhausted continuation reaches the owned human terminal; every action has a rule receipt. Dependencies: RB-S3, RB-S4, RB-S5.",
+      "id": "OD-S4",
+      "title": "Eight policy signals and emergency timeout",
+      "promptMarkdown": "Read this Dossier, runner and pipeline domain maps. Convert the eight listed policies to signal producers while retaining mechanical command/authority bounds. Carry the gate p95 and aspect derivation sentences into grounds. Resolve the coding emergency ceiling via project setting to workspace default to platform constant, default 24 hours; preserve timeout salvage ref/SHA and typed stop reason. Acceptance: a warning never chooses action, a hung process reaches the hard stop and salvage, and stale fence or runaway subprocess remains blocked.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "Gradient adaptation and post-guard"
+        "slice": "Eight policy signals and emergency timeout"
       }
     },
     {
-      "id": "ORC-S5",
-      "title": "ORCH-3 rules administration",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Add a workspace Rules page and project overlays using a typed, schema-validated definition under .metadata/orchestrator-rules through the application API. Save immutable versions with actor, reason, diff, parent, activation time, and replay digest. Build a read-only dry run over 30 days or 100 eligible decisions showing old/proposed action, cost, slot use, missing data, floor conflicts, and human reversals; label counterfactual estimates. Reject edits that weaken a hard breaker, host ceiling, A3 authority, or correctness floor, and never auto-apply assistant drafts. Acceptance: version pin survives restart; project overlay displays inherited and effective values; revert creates a new attributed version; dangerous edits fail with a specific reason.",
+      "id": "OD-S5",
+      "title": "Transition visibility and decision economics",
+      "promptMarkdown": "Read this Dossier and frontend AGENTS.md/design hard rules. Render each orchestrator occurrence between pipeline steps with one canonical primary blocker and one-click grounds/response/source evidence. Add deciding model to the bus producer and receipt projections. Show tokens, priced subtotal, unknown-price coverage and count by occurrence/card/project; include periodic occurrences. Acceptance: an escalated card has one correct statement above the pipeline, light/dark Playwright screenshots, model and cost reconcile to receipt, and no orchestrator cost is silently zero.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "ORCH-3 rules administration"
+        "slice": "Transition visibility and decision economics"
       }
     },
     {
-      "id": "ORC-S6",
-      "title": "Decision visibility and evidence navigation",
-      "promptMarkdown": "Read AGENTS.md, docs/orchestrator-rule-core/index.html, docs/system/contracts/agent-contract-pattern.md, docs/system/contracts/loop-inventory.md, docs/concepts/orchestrator-drive-to-conclusion.html, and the relevant domain map before changing code. Use the Dossier recommendations unless a recorded operator decision selects another option; record the selected option. Keep git handling in platform-owned steps. Project the canonical decision receipt to task primary statement, timeline, bus, and Result panel. Show rule id/version, signals and freshness, budget used/limit and derivation, actor/deciding model and calibrated confidence where applicable, action, blocker, and one-click immutable evidence reference. Add decidedByModel to the bus producer rather than joining token messages. Use one gate id across header and detail to avoid competing escalation statements. Acceptance: light and dark Playwright screenshots of an escalated card show the exact blocker above the pipeline and evidence opens in one click; deterministic decisions say system rule; bus/timeline/card ids and values agree; no stale statement survives a newer decision.",
+      "id": "OD-S6",
+      "title": "ORCH-3 rules editor and periodic capacity seam",
+      "promptMarkdown": "Read this Dossier and the Fluid capacity related card before implementation. Add API-owned immutable workspace rule versions and project overlays under .metadata, with actor/reason/diff/activation, dry-run replay and floor-refusal reasons. Support host-scoped periodic DecisionGroundsV1 with nullable card, configured model, full occurrence content/tokens/cost, and zero to three actions from the shared union; host-wide actions use workspace rules. Match Fluid capacity's 48 scheduled plus 12 event calls per host-day and 180,000 input/90,000 output token contingent; let that card own scheduling/allocation/utilization. Acceptance: version pin and rollback survive restart, dangerous edits are refused, dry run labels counterfactual model results, and a card-free capacity occurrence appears in host history and workspace roll-up.",
       "acceptanceScope": {
         "deliveryMode": "bounded-slice",
-        "slice": "Decision visibility and evidence navigation"
+        "slice": "ORCH-3 rules editor and periodic capacity seam"
       }
     }
   ],
-  "key": "AGT-W73",
   "tags": [],
   "taggingStatus": "tags-proposed"
 }

@@ -234,6 +234,10 @@
       "kind": "popup-trigger",
       "reason": "CLI usage chip. It opens the usage detail as an anchored popover or phone sheet; the value chip is the affordance."
     },
+    "src/app/features/usage-cockpit/components/usage-cockpit-header/usage-cockpit-header.html": {
+      "kind": "popup-trigger",
+      "reason": "Header More menu (aria-haspopup=\"menu\", text-only overlay list) and usage Details trigger (aria-haspopup=\"dialog\"); both open overlays, never in-place expansions."
+    },
     "src/app/features/usage-cockpit/components/usage-cost-chip/usage-cost-chip.html": {
       "kind": "popup-trigger",
       "reason": "Today's cost chip. It opens the cost detail as an anchored popover or phone sheet; the value chip is the affordance."

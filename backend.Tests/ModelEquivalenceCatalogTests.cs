@@ -34,8 +34,14 @@ public sealed class ModelEquivalenceCatalogTests
     [Fact]
     public void AutomaticCodexFallbacks_StayWithinStudioPolicyTiers()
     {
-        var policyModels = new ModelRoutingPolicyRegistry().Policy.Tiers
-            .Select(tier => tier.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // AGT-2903 re-based the tiers on GPT-6; the gpt-5.6 siblings stay in the
+        // policy as declared provider-rejection fallbacks of the GPT-6 tiers.
+        var policy = new ModelRoutingPolicyRegistry().Policy;
+        var policyModels = policy.Tiers.Select(tier => tier.Model)
+            .Concat(policy.ProviderRejectionFallbacks
+                .Where(fallback => fallback.CliType == CliTypes.Codex)
+                .Select(fallback => fallback.ToModel))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         Assert.NotEmpty(_catalogue.Routes);
         Assert.All(_catalogue.Routes, route =>
         {
@@ -77,6 +83,13 @@ public sealed class ModelEquivalenceCatalogTests
 
     [Fact]
     public void UnsupportedThinkingFloor_ReturnsNoDowngradedRoute()
-        => Assert.Null(_catalogue.TryGetRoute(
-            CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex));
+    {
+        // TokenEconomy 0.3.6 (TE-59) added max to the GPT-5.6 Sol ladder, so
+        // Opus 5/max now has an exact-level Codex route ...
+        var max = _catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "max", CliTypes.Codex);
+        Assert.NotNull(max);
+        Assert.Equal("max", max.ToThinkingLevel);
+        // ... while a level the source ladder lacks still gets no downgraded route.
+        Assert.Null(_catalogue.TryGetRoute(CliTypes.Claude, ModelIds.ClaudeOpus5, "ultra", CliTypes.Codex));
+    }
 }

@@ -161,6 +161,12 @@ export class TaskTimelinePaneComponent {
     const reason = typeof eventOrKind === 'string'
       ? null
       : eventOrKind.details?.['reason']?.trim().toLowerCase();
+    if (kind === TIMELINE_KIND.steeringFeedback) {
+      return typeof eventOrKind !== 'string'
+        && eventOrKind.details?.['current'] === 'true'
+        && ['unresolved', 'quarantined'].includes(eventOrKind.details?.['state'] ?? '')
+        ? 'danger' : 'neutral';
+    }
     const isBuildTestGate = typeof eventOrKind !== 'string'
       && (eventOrKind.details?.['step']?.trim().toLowerCase() === 'post-build-test-gate'
         || /^build\/test gate\b/i.test(eventOrKind.summary.trim()));

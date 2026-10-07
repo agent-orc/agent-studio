@@ -87,7 +87,8 @@ public sealed record OrchestratorFeedEntryDto(
     string RefId,
     string? ProjectId,
     string Text,
-    DateTime OccurredAt);
+    DateTime OccurredAt,
+    SteeringFeedbackReceiptDto? SteeringFeedback = null);
 
 public sealed record OrchestratorFeedResponse(IReadOnlyList<OrchestratorFeedEntryDto> Entries);
 

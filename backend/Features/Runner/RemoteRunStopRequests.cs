@@ -206,6 +206,20 @@ public sealed class RemoteRunStopRequestStore
         }
     }
 
+    /// <summary>Read every durable receipt for a card, including terminal history.</summary>
+    public IReadOnlyList<RemoteRunStopRequest> ListForTask(string taskKey)
+    {
+        if (string.IsNullOrWhiteSpace(taskKey)) return [];
+        lock (_gate)
+        {
+            return _requests.Values
+                .Where(request => string.Equals(request.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(request => request.RequestedAtUtc)
+                .ThenBy(request => request.CommandId, StringComparer.Ordinal)
+                .ToArray();
+        }
+    }
+
     public RemoteRunStopRequest? Observe(string taskKey, string? attemptId, long fencingToken)
     {
         lock (_gate)

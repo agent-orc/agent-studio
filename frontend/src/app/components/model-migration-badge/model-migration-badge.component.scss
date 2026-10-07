@@ -81,6 +81,25 @@
   color: var(--studio-accent-success-strong);
 }
 
+.model-migration__level {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: var(--studio-spacing-1);
+  padding: 0 var(--studio-spacing-1);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--studio-accent-warn) 14%, transparent);
+  color: var(--studio-accent-warn-strong);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.model-migration__target-level {
+  margin: 0;
+  color: var(--studio-fg);
+  font-size: 11px;
+}
+
 .model-migration__reason {
   margin: 0;
   color: var(--studio-fg-dim);

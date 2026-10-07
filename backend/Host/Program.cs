@@ -446,6 +446,11 @@ builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
+// Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).
+builder.Services.AddSingleton<DecisionApplyService>();
+builder.Services.AddSingleton<DecisionCardRequests>();
+builder.Services.AddSingleton<DecisionReminderSweep>();
+builder.Services.AddHostedService<DecisionReminderSweepHostedService>();
 builder.Services.AddSingleton<DeliveryChainReconciler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
@@ -609,6 +614,7 @@ builder.Services.AddSingleton<RunTimeoutContinuationService>();
 // AGT-2870: operator stops for remotely executed runs. The request is parked
 // here until the owning runner picks it up on its next lease renewal.
 builder.Services.AddSingleton<RemoteRunStopRequestStore>();
+builder.Services.AddSingleton<SteeringFeedbackProjection>();
 builder.Services.AddSingleton<ProviderRejectionContinuationService>();
 builder.Services.AddSingleton<AgentStudio.Management.ProviderRejectionFleetService>();
 builder.Services.AddSingleton<AgentMessageBusStore>();

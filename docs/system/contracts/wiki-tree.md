@@ -247,6 +247,14 @@ lifecycleHistory:
 ```
 
 The states are `in-progress`, `review-requested`, `decided`, and `done`.
+
+The page kinds are `design`, `concept`, `exploration`, `workbench`, and
+`decision`. Only the platform writes `decision`: when a pending decision card
+passes its due date, `DecisionReminderSweep` gives its ADR-style record under
+`operations/decisions/<KEY>.md` the frontmatter `pageKind: decision` and
+`lifecycleState: review-requested`, so the workbench inbox lists it. Deciding the
+card rewrites the record without the frontmatter, and the page leaves the inbox.
+See [the task domain](../domains/tasks.md) for the reminder rule.
 `editedBy` and `editedAt` describe the lifecycle edit, not an inferred Git
 author. Every transition appends a history entry and updates the current state,
 editor, and timestamp together.

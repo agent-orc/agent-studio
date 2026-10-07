@@ -139,4 +139,33 @@ public static class ModelMigrationPolicy
         var entry = catalog.FindMigration(model);
         return entry is { SafeAuto: true } ? entry : null;
     }
+
+    /// <summary>Lanes whose cards have not started executing. Project-wide
+    /// acceptance never rewrites a running, reviewed, or finished card.</summary>
+    private static readonly HashSet<string> ProjectAcceptanceLanes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        TaskStates.Backlog, TaskStates.Preparation, TaskStates.OrchestratorPrep, TaskStates.Ready,
+    };
+
+    /// <summary>
+    /// Whether an operator's project-wide acceptance of <paramref name="migration"/>
+    /// applies to one card (AGT-2903). Only an explicit pin to the migration's
+    /// source model in a pre-execution lane qualifies; a non-explicit card
+    /// follows the policy default and is never rewritten by this path.
+    /// </summary>
+    public static bool AppliesToCardOnProjectAcceptance(
+        ModelMigrationEntry migration,
+        string? lane,
+        bool modelExplicit,
+        string? model)
+    {
+        ArgumentNullException.ThrowIfNull(migration);
+        return modelExplicit
+               && !string.IsNullOrWhiteSpace(lane)
+               && ProjectAcceptanceLanes.Contains(lane)
+               && string.Equals(
+                   ModelMetadataRegistry.NormalizeId(model),
+                   ModelMetadataRegistry.NormalizeId(migration.From),
+                   StringComparison.OrdinalIgnoreCase);
+    }
 }

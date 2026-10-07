@@ -518,6 +518,10 @@ public static class TimelineEventKinds
     public const string DecisionRequested = "decision_requested";
     public const string DecisionDecided = "decision_decided";
     public const string DecisionReopened = "decision_reopened";
+    /// <summary>The apply step updated linked cards or created cards from the chosen option.</summary>
+    public const string DecisionApplied = "decision_applied";
+    /// <summary>A pending decision passed its due date; the reminder named the blocked cards.</summary>
+    public const string DecisionReminded = "decision_reminded";
 
     /// <summary>
     /// AGT-2870: an operator asked a remotely executed run to stop. The request
@@ -527,6 +531,8 @@ public static class TimelineEventKinds
     /// that holds the attempt.
     /// </summary>
     public const string RemoteStopRequested = "remote_stop_requested";
+    /// <summary>Read-only receipt rebuilt from steering, attempt or settlement authority.</summary>
+    public const string SteeringFeedback = "steering_feedback";
 
     /// <summary>
     /// A Global Orchestrator Watcher case (orchestrator-waechter dossier §10)

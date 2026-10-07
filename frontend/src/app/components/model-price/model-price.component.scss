@@ -1,0 +1,11 @@
+:host {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.model-price {
+  color: var(--studio-fg-muted);
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}

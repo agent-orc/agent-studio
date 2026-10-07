@@ -49,6 +49,7 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   [TIMELINE_KIND.integrationRecoveryQueued]: 'Integration recovery queued',
   [TIMELINE_KIND.followUpConsumed]: 'Follow-up delivered',
   [TIMELINE_KIND.followUpSuperseded]: 'Follow-up superseded',
+  [TIMELINE_KIND.steeringFeedback]: 'Steering receipt',
 };
 
 const HIDDEN_DETAILS = new Set([
@@ -66,6 +67,7 @@ const HIDDEN_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
   [TIMELINE_KIND.taskReleased]: new Set(['released']),
   [TIMELINE_KIND.taskSpawned]: new Set(['targetProject', 'targetKey', 'targetJobId']),
   [TIMELINE_KIND.externalCompletion]: new Set(['source']),
+  [TIMELINE_KIND.steeringFeedback]: new Set(['identity', 'current']),
 };
 
 const DEFAULT_VALUES = new Set(['', '0', 'false', 'none', 'null', 'unknown', 'yolo']);
@@ -76,6 +78,11 @@ export function timelineKindLabel(kind: string): string {
 }
 
 export function timelineEventTitle(event: TaskTimelineEvent): string {
+  if (event.kind === TIMELINE_KIND.steeringFeedback) {
+    const subject = clean(event.summary)?.split(':')[0] ?? 'Steering';
+    const state = clean(event.details?.['state']) ?? 'recorded';
+    return `${subject[0].toUpperCase()}${subject.slice(1)} ${state}`;
+  }
   if (event.kind === TIMELINE_KIND.agentRunStarted) {
     return 'Run started';
   }
