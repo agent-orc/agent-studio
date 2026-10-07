@@ -48,6 +48,12 @@ public record SetCrashRecoveryRequest
     public bool Enabled { get; init; }
 }
 
+public record SetReviewRoundBudgetsRequest
+{
+    public int MaxDeliveredReviewRounds { get; init; } = 4;
+    public int MaxAutoReissueAttempts { get; init; } = 2;
+}
+
 /// <summary>
 /// Body for the integration-gate review-reuse setting (AGT-2839). A null
 /// <see cref="Enabled"/> clears the project override and falls back to the safe
@@ -231,7 +237,8 @@ public static class ProjectSettingsEndpoints
             HttpContext context,
             ProjectSettingsService settings,
             ProjectRegistry projects,
-            OrchestratorDefaultsProvider defaults) =>
+            OrchestratorDefaultsProvider defaults,
+            IConfiguration configuration) =>
         {
             var all = settings.GetAll().AsEnumerable();
             if (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is HumanPrincipal human)
@@ -274,6 +281,9 @@ public static class ProjectSettingsEndpoints
                     integrationGateReviewReuse = kv.Value.IntegrationGateReviewReuse,
                     integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(kv.Value),
                     maxReviewConcernRounds = kv.Value.MaxReviewConcernRounds,
+                    maxDeliveredReviewRounds = kv.Value.MaxDeliveredReviewRounds,
+                    maxAutoReissueAttempts = kv.Value.MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
                     scopedReviewAfterFinding = kv.Value.ScopedReviewAfterFinding,
                     scopedReviewMaximumDeltaFiles = kv.Value.ScopedReviewMaximumDeltaFiles,
                     causeBreakerEnabled = kv.Value.CauseBreakerEnabled,
@@ -689,6 +699,17 @@ public static class ProjectSettingsEndpoints
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             settings.SetAutomaticFailureContinuationsEnabled(projectName, req.Enabled);
+            return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/review-round-budgets", (
+            string projectName, SetReviewRoundBudgetsRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (req.MaxDeliveredReviewRounds is < 1 or > 20 || req.MaxAutoReissueAttempts is < 0 or > 20)
+                return Results.BadRequest(new { error = "Review rounds must be 1 to 20 and reissues must be 0 to 20." });
+            settings.SetReviewRoundBudgets(projectName, req.MaxDeliveredReviewRounds, req.MaxAutoReissueAttempts);
             return Results.Ok(settings.Get(projectName));
         });
 

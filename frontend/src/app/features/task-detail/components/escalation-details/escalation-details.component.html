@@ -1,7 +1,8 @@
 <div class="escalation-details" data-testid="escalation-details">
   @if (gateItems().length) {
-    <details class="escalation-details__section" open data-testid="escalation-findings">
+    <details #findingsDisclosure class="escalation-details__section" open data-testid="escalation-findings" (toggle)="disclosureChanged()">
       <summary>
+        <app-disclosure-marker [open]="findingsDisclosure.open" [size]="10" />
         <span>Findings</span>
         <span class="escalation-details__count" data-testid="escalation-gate-count">
           {{ openFindingCount() }} open
@@ -30,47 +31,87 @@
   }
 
   @if (hasCouncilContext()) {
-    <details class="escalation-details__section" data-testid="escalation-council-follow-up">
-      <summary>Council reaction and follow-up</summary>
-      <div
-        class="escalation-details__content escalation-details__content--artifacts"
+    <details #councilDisclosure class="escalation-details__section" [class.escalation-details__section--maximized]="followUpMaximized()" data-testid="escalation-council-follow-up" (toggle)="disclosureChanged()">
+      <summary>
+        <app-disclosure-marker [open]="councilDisclosure.open" [size]="10" />
+        <span>Council reaction and follow-up</span>
+        <button type="button" class="escalation-details__maximize" data-testid="escalation-follow-up-maximize"
+          [attr.aria-label]="followUpMaximized() ? 'Restore follow-up' : 'Maximize follow-up'"
+          (click)="$event.preventDefault(); $event.stopPropagation(); followUpMaximized.set(!followUpMaximized())">
+          {{ followUpMaximized() ? '⤡' : '⤢' }}
+        </button>
+      </summary>
+      <div class="escalation-details__content escalation-details__content--artifacts"
         data-testid="escalation-council-follow-up-content">
+        @if (followUpMarkdown(); as followUp) {
+          <section class="escalation-details__follow-up" data-testid="escalation-follow-up-document">
+            <h4>Orchestrator follow-up</h4>
+            @if (parsedFollowUp().length === 0) {
+              <app-file-source-history [jobId]="job().id" [watchPath]="job().watchPath"
+                path="orchestrator-follow-up.md" [content]="followUp" [dense]="true" />
+            } @else {
+            @for (item of parsedFollowUp(); track item.id) {
+              <article class="escalation-details__gate" data-testid="structured-follow-up-item">
+                <h5>{{ item.kind }}</h5>
+                @if (item.cause) { <p class="escalation-details__cause">{{ item.cause }}</p> }
+                <dl class="escalation-details__fields">
+                  @for (entry of item.fields; track entry.label) {
+                    <div>
+                      <dt>{{ entry.label }}</dt>
+                      <dd>
+                        <code [attr.title]="entry.value" [attr.data-kind]="entry.kind">{{ entry.display }}</code>
+                        @if (entry.kind === 'sha') {
+                          <button type="button" class="escalation-details__copy" [attr.aria-label]="'Copy ' + entry.label"
+                            (click)="copy(entry.value)">Copy</button>
+                        }
+                      </dd>
+                    </div>
+                  }
+                </dl>
+                @if (item.rawOutput) {
+                  <details #outputDisclosure class="escalation-details__raw" (toggle)="disclosureChanged()">
+                    <summary><app-disclosure-marker [open]="outputDisclosure.open" [size]="10" />Raw tool output</summary>
+                    <pre>{{ item.rawOutput }}</pre>
+                  </details>
+                }
+              </article>
+            }
+            <details #sourceDisclosure class="escalation-details__raw" (toggle)="disclosureChanged()">
+              <summary><app-disclosure-marker [open]="sourceDisclosure.open" [size]="10" />Document source and history</summary>
+              <app-file-source-history [jobId]="job().id" [watchPath]="job().watchPath"
+                path="orchestrator-follow-up.md" [content]="followUp" [dense]="true" />
+            </details>
+            }
+          </section>
+        }
         @for (round of reviewRounds(); track round.entry.fileName) {
           @if (round.entry.councilReaction) {
             <section class="escalation-details__reaction">
               <h4>Round {{ round.number }} · Grade {{ round.entry.grade ?? 'not recorded' }}</h4>
-              <app-council-review-reaction
-                [job]="job()"
-                [reaction]="round.entry.councilReaction" />
+              <app-council-review-reaction [job]="job()" [reaction]="round.entry.councilReaction" />
             </section>
           }
-        }
-        @if (followUpMarkdown(); as followUp) {
-          <app-file-source-history
-            data-testid="escalation-follow-up-document"
-            [jobId]="job().id"
-            [watchPath]="job().watchPath"
-            path="orchestrator-follow-up.md"
-            [content]="followUp"
-            [dense]="true" />
         }
       </div>
     </details>
   }
 
   @if (reviewRounds().length) {
-    <details class="escalation-details__section" data-testid="escalation-grade-documents">
+    <details #gradesDisclosure class="escalation-details__section" data-testid="escalation-grade-documents" (toggle)="disclosureChanged()">
       <summary>
+        <app-disclosure-marker [open]="gradesDisclosure.open" [size]="10" />
         <span>Grade documents</span>
         <span class="escalation-details__count">{{ reviewRounds().length }}</span>
       </summary>
       <div class="escalation-details__review-list">
         @for (round of reviewRounds(); track round.entry.fileName) {
           <details
+            #reviewDisclosure
             class="escalation-details__review"
             [attr.data-testid]="'escalation-grade-round-' + round.number"
-            (toggle)="loadReviewBody(round, $event)">
+            (toggle)="loadReviewBody(round, $event); disclosureChanged()">
             <summary>
+              <app-disclosure-marker [open]="reviewDisclosure.open" [size]="10" />
               <strong>Round {{ round.number }} · Grade {{ round.entry.grade ?? 'not recorded' }}</strong>
               <span>{{ formatRunAt(round.entry.runAt) }}</span>
             </summary>
@@ -97,8 +138,9 @@
   }
 
   @if (reissues().length) {
-    <details class="escalation-details__section" data-testid="escalation-reissues">
+    <details #reissuesDisclosure class="escalation-details__section" data-testid="escalation-reissues" (toggle)="disclosureChanged()">
       <summary>
+        <app-disclosure-marker [open]="reissuesDisclosure.open" [size]="10" />
         <span>Reissue history</span>
         <span class="escalation-details__count">{{ reissues().length }}</span>
       </summary>

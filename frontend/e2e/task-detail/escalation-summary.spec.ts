@@ -1,6 +1,8 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import * as path from 'path';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { contrastRatio } from '../helpers/contrast';
+import { sampleColours } from '../helpers/theme';
 
 /**
  * Escalation summary panel — collapsible + compact (AGT-2060, round 2 on AGT-2019).
@@ -22,6 +24,10 @@ import { mkdirSync, writeFileSync } from 'fs';
 const PROJECT = 'fixture-escalation';
 const WATCH_PATH = 'C:/fixtures/escalation';
 const JOB_ID = 'AGT-1994-fixture';
+
+// Production builds register a service worker after boot; block it so delayed
+// grade-file reads still pass through the deterministic route fixtures.
+test.use({ serviceWorkers: 'block' });
 
 const SHOTS_DIR = process.env.JOB_RESULTS_DIR?.trim()
   ? path.join(process.env.JOB_RESULTS_DIR, '.')
@@ -293,6 +299,8 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-09T20:00:00Z', snapshots: [] }) }));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-09T20:00:00Z', clis: [], cost: null }) }));
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
 
@@ -316,7 +324,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false): P
     route.fulfill(emptyContext
       ? { status: 404, contentType: 'text/plain', body: '' }
       : { status: 200, contentType: 'text/plain', body: FOLLOW_UP }));
-  await page.route(/\/files\/code-review-grade-[^/?]+\.md(\?|$)/, (route) => {
+  await page.route('**/files/code-review-grade-*.md**', (route) => {
     const fileName = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-1) ?? '');
     return route.fulfill({
       status: 200,
@@ -351,6 +359,7 @@ async function openDetail(page: Page, state: string, emptyContext = false): Prom
   await page.setViewportSize({ width: 1440, height: 960 });
   await installRoutes(page, state, emptyContext);
   await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
   await expect(page.getByTestId('escalation-summary')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -465,8 +474,8 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
         bottom: s.borderBottomWidth,
       };
     });
-    expect(borders.left).toBe('0px');
-    expect(borders.right).toBe('0px');
+    expect(borders.left).toBe('1px');
+    expect(borders.right).toBe(borders.left);
     expect(borders.top).toBe('1px');
     expect(borders.bottom).toBe(borders.top);
 
@@ -599,6 +608,64 @@ test.describe('Escalation summary panel — collapsible + compact', () => {
     await dismissAppErrorDialog(page);
     await shootBothThemes(page, testInfo, 'escalation-empty-context');
   });
+});
+
+test('AGT-2975-like park and follow-up stay readable in both themes', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  await installRoutes(page, '5e-escalated');
+  const detail = buildDetail('5e-escalated');
+  Object.assign(detail.info, {
+    parkedBlocker: {
+      blockerType: 'operator-decision', conditionKind: 'manual',
+      conditionDescription: 'Operator decision required before the task can continue.',
+      lane: '5e-escalated', parkedAt: '2026-10-06T04:00:00Z', parkedForSeconds: 7200,
+      reason: 'Push protection blocked the retained checkout; choose the recovery route.',
+      recallStatus: 'blocked', lastEvaluatedAt: '2026-10-06T05:00:00Z',
+      detail: 'Awaiting operator decision.', evaluationAgeSeconds: 3600,
+      evaluationStale: false, requiresDecisionCard: false, needsInputFile: null,
+      decision: { questionId: 'push-protection-recovery', question: null, options: [], documents: [], decisionCardKey: null },
+    },
+  });
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
+  const followUp = readFileSync(path.resolve(__dirname, '../../src/app/features/task-detail/components/escalation-details/fixtures/agt-2975-orchestrator-follow-up.md'), 'utf8');
+  await page.route('**/files/orchestrator-follow-up.md**', route =>
+    route.fulfill({ status: 200, contentType: 'text/plain', body: followUp }));
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.addStyleTag({ content: '[data-testid="studio-overlay-root"], [role="alert"] { display: none !important; }' });
+  const park = page.getByTestId('parked-blocker');
+  await expect(park).toBeVisible();
+  const council = page.getByTestId('escalation-council-follow-up');
+  await council.locator('summary').first().click();
+  await expect(page.getByTestId('structured-follow-up-item')).toHaveCount(2);
+  await expect(page.getByTestId('escalation-follow-up-document').locator('app-task-reference-microcard')).toHaveCount(0);
+  mkdirSync(SHOTS_DIR, { recursive: true });
+  const ratios: Record<string, Record<string, number>> = {};
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await dismissAppErrorDialog(page);
+    ratios[theme] = {};
+    for (const id of ['parked-blocker-type', 'parked-blocker-question-missing', 'parked-blocker-reason']) {
+      const { color, bg } = await sampleColours(page, `[data-testid="${id}"]`);
+      ratios[theme][id] = contrastRatio(color, bg);
+      expect(ratios[theme][id]).toBeGreaterThanOrEqual(4.5);
+    }
+    const screenshotPath = path.join(SHOTS_DIR, `agt-2975-like-${theme}--mocked.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await testInfo.attach(`AGT-2975-like ${theme}`, { path: screenshotPath, contentType: 'image/png' });
+  }
+  writeFileSync(path.join(SHOTS_DIR, 'agt-2975-contrast.json'), JSON.stringify(ratios, null, 2));
+  await page.getByTestId('escalation-follow-up-maximize').click();
+  await expect(council).toHaveClass(/escalation-details__section--maximized/);
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    await page.getByTestId('escalation-follow-up-document').scrollIntoViewIfNeeded();
+    const screenshotPath = path.join(SHOTS_DIR, `agt-2975-follow-up-${theme}--mocked.png`);
+    await page.screenshot({ path: screenshotPath });
+    await testInfo.attach(`AGT-2975 follow-up ${theme}`, { path: screenshotPath, contentType: 'image/png' });
+  }
+  await page.getByTestId('escalation-follow-up-maximize').click();
 });
 
 /**
