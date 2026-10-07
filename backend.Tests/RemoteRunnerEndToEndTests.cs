@@ -6079,18 +6079,18 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     {
         const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
         SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
-        SeedTask(TaskStates.Progress, nextTaskKey, "Card still finishing its run", "Build and verify.");
+        SeedTask(TaskStates.Ready, nextTaskKey, "Card not yet moved to review", "Build and verify.");
         Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
         Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
             TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
         var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
-        Directory.Move(Path.Combine(_watchPath, TaskStates.Progress, nextTaskKey), nextTaskFolder);
+        Directory.Move(Path.Combine(_watchPath, TaskStates.Ready, nextTaskKey), nextTaskFolder);
         using var factory = BuildFactory();
         SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
         var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
         OpenPreparationBreaker(breaker, scanner.FindJob(TaskKey, _watchPath)!);
-        Assert.Equal(TaskStates.Progress, scanner.FindJob(nextTaskKey, _watchPath)!.State);
+        Assert.Equal(TaskStates.Ready, scanner.FindJob(nextTaskKey, _watchPath)!.State);
 
         // The attempt is minted before the board shows the lane move: not
         // held yet, and not settled either.
