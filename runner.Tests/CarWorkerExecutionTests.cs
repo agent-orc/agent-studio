@@ -392,6 +392,54 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task A_provider_host_flight_deadline_stops_car_and_releases_the_lock()
+    {
+        if (NodeMissing()) return;
+        Directory.CreateDirectory(_root);
+        var lockPath = Path.Combine(_root, ".provider-real-probe.lock");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        Task<FixtureRun>? car = null;
+        var watch = Stopwatch.StartNew();
+        var first = ProviderRealRequestHostFlight.RunAsync(lockPath, async stop =>
+        {
+            car = RunFixtureAsync(
+                Fixture.Load("p1-happy-done.claude.fixture"),
+                timeoutSeconds: 120,
+                extraEnvironment: new Dictionary<string, string> { ["FAKE_CLI_DELAY_MS"] = "60000" },
+                stopToken: stop);
+            var run = await car;
+            return (run.Result, run.TimedOut, run.LaunchFailed);
+        }, deadline.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2),
+            $"the host flight must return at the deadline ({watch.Elapsed})");
+
+        Assert.NotNull(car);
+        var completed = await car!.WaitAsync(TimeSpan.FromSeconds(35));
+        Assert.True(completed.TimedOut);
+        Assert.NotNull(completed.SpawnedProcess);
+        Assert.True(completed.SpawnedProcess!.WaitForExit(10_000),
+            "the fake CLI must exit before another host flight enters the clean context");
+
+        var retryWatch = Stopwatch.StartNew();
+        ProcessResult second;
+        do
+        {
+            second = await ProviderRealRequestHostFlight.RunAsync(lockPath,
+                _ => Task.FromResult((new ProcessResult(0, "OK", ""), false, false)),
+                CancellationToken.None);
+            if (second.StdErr == ProviderRealRequestHostFlight.InProgress)
+                await Task.Delay(20);
+        } while (second.StdErr == ProviderRealRequestHostFlight.InProgress
+                 && retryWatch.Elapsed < TimeSpan.FromSeconds(35));
+        Assert.Equal(0, second.ExitCode);
+        Assert.True(retryWatch.Elapsed < TimeSpan.FromSeconds(35));
+    }
+
+    [Fact]
     public async Task Launch_failure_is_preserved_as_an_explicit_pre_agent_fact()
     {
         var workerDirectory = Path.Combine(_root, "launch-failure");
