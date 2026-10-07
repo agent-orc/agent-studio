@@ -50,6 +50,7 @@ public static class RunnerEndpoints
         // force every other project out before timestamps are compared.
         runnerGroup.MapGet("/orchestrator-feed",
             (HttpContext context, TaskScannerService scanner, OrchestratorLog log,
+                SteeringFeedbackProjection feedback,
                 AgentStudio.Registry.ProjectRegistry projects,
                 AgentStudio.Watcher.WatcherActivityProjector? watcherActivity) =>
             {
@@ -68,8 +69,59 @@ public static class RunnerEndpoints
                         entry.JobId,
                         entry.ParticipantId,
                         entry.TokenUsage,
-                        entry.UserOverride
+                        entry.UserOverride,
+                        commandId = (string?)null,
+                        attemptId = (string?)null,
+                        incidentId = (string?)null,
+                        settlementId = (string?)null
                     }));
+
+                // Rebuild receipt observations from authority after a restart.
+                // Only the current unresolved generation is acute; a repeated
+                // route observation keeps one incident identity in the feed.
+                var receiptEntries = scanner.ScanAllJobsWithArchive()
+                    .Where(task => !task.Fixture
+                        && task.LastActivity >= DateTime.UtcNow.AddDays(-7)
+                        && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal human
+                            || ProjectAccessAuthorization.Allows(human.User, task.ProjectName, projects)))
+                    .OrderByDescending(task => task.LastActivity).Take(200)
+                    .SelectMany(task => feedback.Build(task, includeArchived: false).History.Select(fact => new { task, fact }))
+                    .GroupBy(item => item.fact.IncidentId is { Length: > 0 } incident
+                        ? $"incident:{incident}" : $"{item.task.TaskKey}:{item.fact.Identity}")
+                    .Select(group => new
+                    {
+                        latest = group.OrderByDescending(item => item.fact.AtUtc).First(),
+                        incident = group.Key.StartsWith("incident:", StringComparison.Ordinal),
+                        affected = group.Select(item => item.fact.AttemptId).Where(id => id is not null).Distinct().Count(),
+                        unresolved = group.Count(item => item.fact.State == "unresolved" && item.fact.Current),
+                        recovered = group.Count(item => item.fact.State == "recovered"),
+                        quarantined = group.Count(item => item.fact.State == "quarantined" && item.fact.Current),
+                    })
+                    .Select(group => new
+                    {
+                        project = (string?)group.latest.task.ProjectName,
+                        watchPath = (string?)group.latest.task.WatchPath,
+                        Ts = group.latest.fact.AtUtc,
+                        Kind = group.unresolved > 0 || group.quarantined > 0 || (!group.incident
+                            && group.latest.fact.Current
+                            && group.latest.fact.State is "unresolved" or "quarantined")
+                            ? "alert" : "observation",
+                        Topic = "steering-receipt",
+                        Summary = group.incident ? $"Route incident: {group.affected} affected attempt(s)"
+                            : $"{group.latest.fact.Kind}: {group.latest.fact.State}",
+                        Reasoning = (string?)(group.incident
+                            ? $"{group.unresolved} unresolved, {group.recovered} recovered, "
+                              + $"{group.quarantined} quarantined. {group.latest.fact.Reason}"
+                            : group.latest.fact.Reason),
+                        JobId = (string?)group.latest.task.Id,
+                        ParticipantId = (string?)null,
+                        TokenUsage = (AgentStudio.Shared.OrchestratorTokenUsage?)null,
+                        UserOverride = (OrchestratorIntervention?)null,
+                        commandId = group.latest.fact.CommandId,
+                        attemptId = group.latest.fact.AttemptId,
+                        incidentId = group.latest.fact.IncidentId,
+                        settlementId = group.latest.fact.SettlementId,
+                    });
 
                 // Workspace-wide Watcher findings (e.g. quota probe silence/drift)
                 // are not attributable to one project; they merge with
@@ -91,10 +143,14 @@ public static class RunnerEndpoints
                         entry.JobId,
                         entry.ParticipantId,
                         entry.TokenUsage,
-                        entry.UserOverride
+                        entry.UserOverride,
+                        commandId = (string?)null,
+                        attemptId = (string?)null,
+                        incidentId = (string?)null,
+                        settlementId = (string?)null
                     });
 
-                var entries = perProject.Concat(workspaceEntries)
+                var entries = perProject.Concat(workspaceEntries).Concat(receiptEntries)
                     .OrderByDescending(entry => entry.Ts)
                     .Take(500)
                     .ToList();

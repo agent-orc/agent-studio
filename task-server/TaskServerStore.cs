@@ -40,9 +40,12 @@ public sealed partial class TaskServerStore
     // 26 also adds ordered continuation rounds with immutable acceptance and
     // fenced consumption receipts. Both migrations are idempotent.
     // 27 adds authenticated per-consumer rotation delivery.
-    // The migration block is idempotent; the number guards downgrades from
-    // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 27;
+    // 28 records the I05 installation identity, owner recovery, service
+    // enrolments, canonical project registrations, and repository probes.
+    // 29 combines the I05 identity and ordered continuation schemas after
+    // merging the independently delivered branches. Migrations are idempotent;
+    // this version guards downgrades from binaries without both contracts.
+    public const int CurrentSchemaVersion = 29;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -300,25 +303,34 @@ public sealed partial class TaskServerStore
         var now = Iso(UtcNow);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            await ExecuteAsync(connection, """
-                INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
-                VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
-                INSERT INTO orchestrator_contexts(
-                    context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
-                VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
-                INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
-                VALUES ($id, 0, $stages, $max_reissues, $now);
-                """, ct, transaction,
-                ("$id", id), ("$workspace", request.WorkspaceId), ("$name", request.Name.Trim()),
-                ("$prefix", prefix), ("$now", now),
-                ("$context_key", $"project:{request.Name.Trim()}"),
-                ("$summary", $"Project chat for {request.Name.Trim()}"),
-                ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
-                ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
-            await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
-                JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
+            await CreateProjectInTransactionAsync(connection, transaction, request, id, actorId, now, ct);
         }, ct);
         return new ProjectDto(id, request.WorkspaceId, request.Name.Trim(), prefix, 1, Parse(now), Parse(now));
+    }
+
+    private async Task CreateProjectInTransactionAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CreateProjectRequest request,
+        string id, string actorId, string now, CancellationToken ct)
+    {
+        var name = request.Name.Trim();
+        var prefix = request.TaskKeyPrefix.Trim().ToUpperInvariant();
+        await ExecuteAsync(connection, """
+            INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
+            VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
+            INSERT INTO orchestrator_contexts(
+                context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
+            VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
+            INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
+            VALUES ($id, 0, $stages, $max_reissues, $now);
+            """, ct, transaction,
+            ("$id", id), ("$workspace", request.WorkspaceId), ("$name", name),
+            ("$prefix", prefix), ("$now", now),
+            ("$context_key", $"project:{name}"),
+            ("$summary", $"Project chat for {name}"),
+            ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
+            ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
+        await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
+            JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
     }
 
     public async Task<IReadOnlyList<ProjectDto>> ListProjectsAsync(string? workspaceId, CancellationToken ct)
@@ -1431,6 +1443,18 @@ public sealed partial class TaskServerStore
             var hostAdmission = capabilityAdmission;
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                var registered = Convert.ToInt64(await ScalarAsync(connection, """
+                    SELECT count(*) FROM project_repositories WHERE project_id = $project;
+                    """, ct, transaction, ("$project", projectId))) > 0;
+                var probeVerdict = registered
+                    ? Convert.ToString(await ScalarAsync(connection, """
+                        SELECT verdict FROM project_repository_probes
+                         WHERE project_id = $project AND runner_id = $runner;
+                        """, ct, transaction, ("$project", projectId), ("$runner", request.RunnerId)))
+                    : null;
+                var probeRefusal = ProjectRepositoryPolicy.ClaimRefusal(registered, probeVerdict);
+                if (probeRefusal is not null)
+                    return new ClaimPlacementVerdict(projectId, probeRefusal, null, null);
                 var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
                 if (placement is null)
                     return new ClaimPlacementVerdict(
@@ -4233,6 +4257,7 @@ public sealed partial class TaskServerStore
              WHERE delivered_at IS NOT NULL AND delivered_consumers_json = '[]'
                AND json_array_length(consumers_json) = 1;
             """, ct);
+        await ApplyIdentityBootstrapMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

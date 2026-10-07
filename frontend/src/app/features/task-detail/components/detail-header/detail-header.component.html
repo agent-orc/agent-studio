@@ -72,9 +72,9 @@
               testId="detail-model-chip"
               levelTestId="detail-thinking-level" />
             <app-model-migration-badge
-              [model]="info().model"
+              [model]="info().model" [cliType]="info().cliType ?? null" [thinkingLevel]="info().thinkingLevel ?? null"
               [explicit]="info().modelExplicit === true"
-              [jobId]="info().id"
+              [jobId]="info().id" [project]="info().projectName"
               [watchPath]="info().watchPath"
               testId="detail-model-migration" />
           }

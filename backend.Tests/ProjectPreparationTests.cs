@@ -287,6 +287,59 @@ public sealed class ProjectPreparationTests : IDisposable
     }
 
     [Fact]
+    public async Task Prepare_runs_with_the_build_server_fence_even_when_the_definition_disables_it()
+    {
+        // AGT-3005: the prepare environment is cleared, so the worker fence must be
+        // re-applied, and it must win over a repository-defined value.
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare")
+            .Replace("CI: \"true\"", "CI: \"true\"\n  MSBUILDDISABLENODEREUSE: \"0\""));
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            set -eu
+            printf '%s %s' "$MSBUILDDISABLENODEREUSE" "$DOTNET_CLI_USE_MSBUILD_SERVER" > observed
+            """);
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "product-cache"), Path.Combine(_root, "fence.json"), "subject-f", null,
+            TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.Output);
+        Assert.Equal("1 0", File.ReadAllText(Path.Combine(_root, "observed")));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Prepare_past_half_its_budget_logs_the_restore_phase()
+    {
+        Write("package-lock.json", "{\"lockfileVersion\":3}");
+        Write(".agent-studio/project.yml", Definition(".agent-studio/prepare"));
+        Write(".agent-studio/prepare", """
+            #!/bin/sh
+            echo "  Determining projects to restore..."
+            sleep 3
+            """);
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
+        var result = await ProjectPreparationExecutor.RunAsync(
+            _root, Path.Combine(_root, "product-cache"), Path.Combine(_root, "slow.json"), "subject-s", log.Enqueue,
+            TimeSpan.FromSeconds(2), CancellationToken.None);
+
+        Assert.Equal(PreparationFailureKind.Timeout, result.FailureKind);
+        Assert.Contains(log, line => line.StartsWith("project-prepare slow", StringComparison.Ordinal)
+                                     && line.Contains("phase=determining-projects", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("  Determining projects to restore...", PreparationPhaseTracker.DeterminingProjects)]
+    [InlineData("  GET https://api.nuget.org/v3-flatcontainer/xunit/index.json", PreparationPhaseTracker.PackageDownload)]
+    [InlineData("  OK https://api.nuget.org/v3-flatcontainer/xunit/index.json 120ms", PreparationPhaseTracker.PackageDownload)]
+    [InlineData("  Restored /repo/backend/OrchestratorApi.csproj (in 4 sec).", PreparationPhaseTracker.Restored)]
+    [InlineData("npm warn deprecated", null)]
+    public void Prepare_output_lines_map_to_restore_phases(string line, string? expected)
+        => Assert.Equal(expected, PreparationPhaseTracker.Classify(line.Trim()));
+
+    [Fact]
     public async Task Failed_prepare_discards_cache_staging_and_records_failure_signature()
     {
         Write("package-lock.json", "{\"lockfileVersion\":3}");

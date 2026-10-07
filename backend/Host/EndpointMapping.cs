@@ -85,6 +85,7 @@ public static class EndpointMapping
         app.MapOperatorSweepEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapTokenPricingEndpoints();
+        app.MapModelMigrationProjectEndpoints();
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();

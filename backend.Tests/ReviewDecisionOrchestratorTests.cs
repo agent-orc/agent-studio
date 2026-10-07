@@ -1109,6 +1109,78 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Blocked_WithFork_RaisesDecisionCard_AndEscalatedCardWaitsOnIt()
+    {
+        // Decision cards live in the job-store layout, so the blocked card is
+        // created there too instead of in the legacy lane folders.
+        var (scanner, originId) = SeedJobStoreCardWithBlockedLog("Stable release gate",
+            $"[12:00:00.000] [stdout] Should the Stable release ship with a lock file?{Environment.NewLine}" +
+            $"[12:00:00.100] [stdout] - Option A: Keep the lock file. Reproducible installs (recommended).{Environment.NewLine}" +
+            $"[12:00:00.200] [stdout] - Option B: Drop the lock file. Identity from the manifest.{Environment.NewLine}" +
+            $"[12:00:01.000] [stdout] [[TASK_BLOCKED:choose-lockfile-strategy]]{Environment.NewLine}");
+        var orchestrator = BuildOrchestrator(cliResponse: "", withDecisionRequests: true);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var record = ReadOnlyDecisionRecord();
+        Assert.Equal(ReviewDecisionKind.Escalate, record.Kind);
+        Assert.StartsWith("decision card ", record.FollowUp);
+        var decisionKey = record.FollowUp["decision card ".Length..];
+        var decision = scanner.FindJob(decisionKey, _watchPath)!;
+        Assert.Equal(TaskKinds.Decision, decision.Kind);
+        Assert.Equal(TaskStates.Preparation, decision.State);
+        Assert.Equal("Should the Stable release ship with a lock file?", decision.Decision!.Question);
+        Assert.Equal(["a", "b"], decision.Decision.Options.Select(option => option.Id));
+        Assert.Equal("Keep the lock file.", decision.Decision.Options[0].Label);
+        Assert.Equal("a", decision.Decision.RecommendedOptionId);
+        var origin = scanner.FindJob(originId, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, origin.State);
+        Assert.Equal([origin.Key ?? origin.Id], decision.Decision.AppliesTo);
+        Assert.Contains(origin.References.DependsOn, edge => edge.Key == decisionKey);
+    }
+
+    private (TaskScannerService Scanner, string JobId) SeedJobStoreCardWithBlockedLog(string title, string log)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _workspace,
+                ["WatchPaths:0:Name"] = Project,
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["WatchPaths:0:RootPath"] = _watchPath,
+            }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance);
+        var jobId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = title, WatchPath = _watchPath, TargetState = TaskStates.AutoReview,
+            PromptMarkdown = "# Stable release gate\n\nShip the release contract.\n",
+        })!;
+        var folder = scanner.FindJob(jobId, _watchPath)!.FolderPath;
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        File.WriteAllText(TaskPaths.CliOutputLog(folder), log);
+        return (scanner, jobId);
+    }
+
+    [Fact]
+    public async Task Blocked_WithoutFork_KeepsTheProseEscalationOnly()
+    {
+        SeedReviewJobWithBlocked("no-fork", "missing-sdk");
+        var orchestrator = BuildOrchestrator(cliResponse: "", withDecisionRequests: true);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(string.Empty, ReadOnlyDecisionRecord().FollowUp);
+        Assert.DoesNotContain(Directory.EnumerateFiles(_watchPath, "task.json", SearchOption.AllDirectories),
+            path => File.ReadAllText(path).Contains("\"kind\": \"decision\""));
+    }
+
+    [Fact]
     public async Task Blocked_DoesNotReprocess_OnceSupervisorEscalateLineIsPresent()
     {
         SeedReviewJobWithBlocked("already-escalated", "needs human");
@@ -2578,7 +2650,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Action? onCall = null,
         OrchestratorChatLog? chatLogOverride = null,
         string? reviewCli = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        bool withDecisionRequests = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -2600,11 +2673,21 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
         var statusSnapshot = new AutoReviewStatusSnapshot();
         var taskAccess = BuildTaskAccess(scanner, stateMachine, config);
+        var decisionRequests = withDecisionRequests
+            ? new DecisionCardRequests(scanner,
+                new TaskMutationService(scanner,
+                    new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+                    new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+                    new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+                    NullLogger<TaskMutationService>.Instance, _timeline),
+                NullLogger<DecisionCardRequests>.Instance)
+            : null;
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot, config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
             timeline: _timeline,
-            attemptAuthority: attemptAuthority);
+            attemptAuthority: attemptAuthority,
+            decisionRequests: decisionRequests);
         orchestrator.CliRunner = (cli, model, prompt, timeout, ct) =>
         {
             onCall?.Invoke();
