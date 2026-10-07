@@ -1323,7 +1323,8 @@ public sealed class TaskIntegrationStatusService
                     out publishedAncestors);
             }
 
-            var localHead = _git.GetRefShaFresh(root, integrationBranch);
+            var localHead = _git.GetRefShaFresh(root, GitService.IntegrationLaneRef(integrationBranch))
+                ?? _git.GetRefShaFresh(root, integrationBranch);
             var publishedHead = _git.GetRefShaFresh(
                 root, hasPublishedBranch ? "origin/" + integrationBranch : integrationBranch);
             return new RepoIntegration(

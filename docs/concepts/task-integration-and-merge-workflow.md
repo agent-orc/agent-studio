@@ -450,7 +450,9 @@ pure `IntegrationVerificationPolicy`
    the gate-environment retry ladder.
 
 A fresh merge created by the lane is verified by construction: its own gate
-guarded it, and the lane records that too.
+guarded it, and the lane records that too. For a merge awaiting publication,
+verification compares the Studio integration lane tip, even when the developer
+checkout still holds an older local branch tip.
 
 **When the tip moves on.** A verified record names the exact tree the gate
 passed on and lists the card's delivery SHAs that tree contained

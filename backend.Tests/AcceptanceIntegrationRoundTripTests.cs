@@ -1509,6 +1509,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             IntegrationStrategies.DirectMerge,
             PipelineTypes.Task);
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, immediate.Outcome);
+        var mergedCard = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var mergedStatus = deps.Integration.BuildLookup([mergedCard])[mergedCard.TaskKey];
+        Assert.Equal(IntegrationStatuses.MergedLocally, mergedStatus.Status);
+        Assert.Equal(IntegrationVerificationStates.Verified, mergedStatus.Verification?.State);
+        Assert.Equal(immediate.MergedSha, mergedStatus.Verification?.Sha);
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
 
