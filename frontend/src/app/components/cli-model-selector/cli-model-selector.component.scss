@@ -135,7 +135,7 @@
     font-weight: 600;
   }
   &--row {
-    justify-content: flex-start;
+    & > .model-picker__pill-label { flex: 1 1 auto; }
     border-radius: 7px;
   }
   &--older {

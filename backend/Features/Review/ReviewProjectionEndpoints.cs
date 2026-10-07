@@ -10,10 +10,14 @@ namespace AgentStudio.Review;
 public sealed class ReviewProjectionService
 {
     private readonly AgentStudio.Tasks.TimelineLog _timeline;
+    private readonly AgentStudio.Projects.ProjectSettingsService? _settings;
 
-    public ReviewProjectionService(AgentStudio.Tasks.TimelineLog timeline)
+    public ReviewProjectionService(
+        AgentStudio.Tasks.TimelineLog timeline,
+        AgentStudio.Projects.ProjectSettingsService? settings = null)
     {
         _timeline = timeline;
+        _settings = settings;
     }
 
     public ReviewProjectionView Read(TaskInfo task)
@@ -21,7 +25,16 @@ public sealed class ReviewProjectionService
         if (string.IsNullOrWhiteSpace(task.FolderPath)) return ReviewProjectionView.Empty;
         var timeline = _timeline.ReadAll(task.FolderPath);
         var parkedBlocker = AgentStudio.Tasks.ParkedBlockerMarker.TryRead(task.FolderPath);
-        return ReviewProjectionReader.Read(task, timeline, parkedBlocker);
+        var projection = ReviewProjectionReader.Read(task, timeline, parkedBlocker);
+        var ledger = AgentStudio.Runner.ReviewRoundBudgetStore.Read(task.FolderPath, projection.Attempts);
+        return projection with
+        {
+            RoundBudget = new ReviewRoundBudgetView(
+                ledger.Delivered,
+                Math.Clamp(_settings?.Get(task.ProjectName).MaxDeliveredReviewRounds
+                           ?? AgentStudio.Runner.ReviewRoundBudgetPolicy.DefaultMaximumRounds, 1, 20),
+                ledger.SpentBy),
+        };
     }
 
     public Dictionary<string, ReviewProjectionView> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)

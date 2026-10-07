@@ -13,12 +13,14 @@ import type { CodeReviewListEntry } from '../../../../services/task.service';
 import { TaskService } from '../../../../services/task.service';
 import { FileSourceHistoryComponent } from '../../../../components/file-source-history/file-source-history.component';
 import { formatDateTimeUtc } from '../../../../services/format.util';
+import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { CouncilReviewReactionComponent } from '../protocol-pane/council-review-reaction/council-review-reaction.component';
 import type {
   EscalationGateItem,
   EscalationGateSource,
   EscalationReissue,
 } from '../escalation-summary/escalation-summary.util';
+import { parseFollowUp } from './follow-up-parser';
 
 interface ReviewRound {
   entry: CodeReviewListEntry;
@@ -29,7 +31,7 @@ interface ReviewRound {
   selector: 'app-escalation-details',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FileSourceHistoryComponent, CouncilReviewReactionComponent],
+  imports: [FileSourceHistoryComponent, CouncilReviewReactionComponent, DisclosureMarkerComponent],
   templateUrl: './escalation-details.component.html',
   styleUrl: './escalation-details.component.scss',
 })
@@ -40,6 +42,9 @@ export class EscalationDetailsComponent {
   readonly gateItems = input<readonly EscalationGateItem[]>([]);
   readonly gateSource = input<EscalationGateSource>('none');
   readonly reissues = input<readonly EscalationReissue[]>([]);
+  readonly followUpMaximized = signal(false);
+  readonly disclosureVersion = signal(0);
+  readonly parsedFollowUp = computed(() => parseFollowUp(this.followUpMarkdown() ?? ''));
 
   private readonly jobs = inject(TaskService);
   private readonly reviewBodies = signal<Record<string, string | null>>({});
@@ -100,5 +105,13 @@ export class EscalationDetailsComponent {
 
   formatRunAt(iso: string | null | undefined): string {
     return iso ? formatDateTimeUtc(iso) : '';
+  }
+
+  copy(value: string): void {
+    void navigator.clipboard?.writeText(value);
+  }
+
+  disclosureChanged(): void {
+    this.disclosureVersion.update(value => value + 1);
   }
 }

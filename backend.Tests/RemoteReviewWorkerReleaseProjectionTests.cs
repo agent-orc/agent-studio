@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentStudio.GeneratedFiles;
 using AgentStudio.Pipeline;
 using AgentStudio.Projects;
@@ -167,6 +168,58 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
         Assert.Equal(PipelineStepStatus.Failed, step.Status);
         Assert.Equal("block", step.Verdict);
         Assert.Equal("Review command 'aspect-code-quality' exited 17.", step.VerdictSummary);
+    }
+
+    [Fact]
+    public void Review_usage_receipt_failure_is_observed_and_can_be_retried()
+    {
+        var task = Job();
+        var started = new DateTime(2026, 9, 18, 9, 10, 0, DateTimeKind.Utc);
+        var report = Report(null) with
+        {
+            Commands =
+            [
+                new Contract.ReviewCommandEvidenceDto(
+                    "aspect-code-quality", "code-quality", "codex", [], new string('a', 40),
+                    new string('a', 40), new string('b', 40), started, started.AddMinutes(1), 0, null,
+                    new string('c', 64), new string('d', 64),
+                    ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
+                    AttemptId: "review-attempt-1", Model: "gpt-6-sol", InputTokens: 100,
+                    OutputTokens: 20),
+            ],
+        };
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Workspace:Root"] = _root,
+                ["TaskRepository"] = _root,
+                ["WatchPaths:0:Name"] = "Demo",
+                ["WatchPaths:0:Path"] = task.WatchPath,
+            }).Build();
+        var scanner = new TaskScannerService(configuration, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, configuration));
+        var mutations = new TaskMutationService(
+            scanner,
+            new ClientIdentityStore(configuration, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance);
+        var projector = new RemotePipelineReviewEvidenceProjector(
+            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new TimelineLog(NullLogger<TimelineLog>.Instance),
+            new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
+            new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration),
+            mutations);
+
+        // The folder exists, but the receipt writer cannot read task.json.
+        Assert.Throws<IOException>(() => projector.Project(
+            task, Attempt(), report, "remote-review-grade-review-attempt-1.md", started.AddMinutes(2)));
+
+        File.WriteAllText(Path.Combine(task.FolderPath, "task.json"), "{\"id\":\"AGT-2863\",\"title\":\"Review task\"}");
+        projector.Project(task, Attempt(), report, "remote-review-grade-review-attempt-1.md", started.AddMinutes(2));
+
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(task.FolderPath, "task.json")));
+        Assert.Equal(1, document.RootElement.GetProperty("tokenSummary").GetProperty("Calls").GetInt32());
     }
 
     private void Project(

@@ -247,6 +247,8 @@ public class TokenSummaryTests
         var receipt = Assert.Single(summary.Entries);
         Assert.Equal("claude-haiku-4-5", receipt.Model);
         Assert.Equal("Claude Haiku 4.5", receipt.DisplayModel);
+        // The pin is stored as the id it was recorded with; claude-opus-5-5 is
+        // a routing equivalence of claude-opus-5, not the same id (AGT-2986).
         Assert.Equal("claude-opus-5-5", receipt.PinnedModel);
         Assert.True(receipt.ModelMismatch);
         Assert.True(receipt.ModelPriced);

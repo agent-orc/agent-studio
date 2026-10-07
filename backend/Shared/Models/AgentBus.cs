@@ -105,7 +105,14 @@ public sealed record AgentMessageTokens(
     [property: JsonPropertyName("inputIncludesCached")] bool? InputIncludesCached = null,
     [property: JsonPropertyName("usageNormalization")] string? UsageNormalization = null,
     [property: JsonPropertyName("pinnedModel")] string? PinnedModel = null,
-    [property: JsonPropertyName("modelMismatch")] bool ModelMismatch = false);
+    [property: JsonPropertyName("modelMismatch")] bool ModelMismatch = false,
+    /// <summary>CLI that made the call (AGT-2986). Null on legacy rows.</summary>
+    [property: JsonPropertyName("cliType")] string? CliType = null,
+    /// <summary>
+    /// Executing host (AGT-2986): a remote runner id, or <c>local</c> for the
+    /// workstation. Null on legacy rows, which readers attribute to local.
+    /// </summary>
+    [property: JsonPropertyName("host")] string? Host = null);
 
 /// <summary>
 /// Snapshot of the model's context-window state at the moment one turn completed.

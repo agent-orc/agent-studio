@@ -66,6 +66,10 @@ public sealed class RemoteTokenReceiptService
                 .Where(item => item.Line.Timestamp >= from && item.Line.Timestamp <= through)
                 .ToList();
         }
+        // The fenced session is the durable source of execution dimensions.
+        var cliType = NormalizeCli(run?.Cli ?? task.CliType ?? task.Agent);
+        var thinkingLevel = FirstNonBlank(run?.ThinkingLevel, task.ThinkingLevel);
+        var host = FirstNonBlank(runnerId, run?.ExecutionLocation?.RunnerId) ?? TokenUsageHost.UnrecordedRemote;
         var observed = new List<ObservedUsage>();
         foreach (var (line, lineIndex) in lines)
         {
@@ -123,6 +127,9 @@ public sealed class RemoteTokenReceiptService
                     CacheReadTokens = SafeInt(item.Usage.CacheRead),
                     CacheCreationTokens = SafeInt(item.Usage.CacheWrite),
                     InputIncludesCached = item.Usage.InputIncludesCached,
+                    ThinkingLevel = thinkingLevel,
+                    CliType = cliType,
+                    Host = host,
                 },
             })
             .ToList();
@@ -176,6 +183,12 @@ public sealed class RemoteTokenReceiptService
     }
 
     internal sealed record ObservedUsage(DateTime Ts, ParsedTurnUsage Usage, string Identity);
+
+    private static string? FirstNonBlank(params string?[] values)
+        => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+
+    private static string? NormalizeCli(string? cli)
+        => string.IsNullOrWhiteSpace(cli) ? null : cli.Trim().ToLowerInvariant();
 
     private static int SafeInt(long value)
     {

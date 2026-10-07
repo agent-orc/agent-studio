@@ -170,13 +170,23 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+D10 steering feedback uses the same task timeline poll as the Overview status
+row and the Timeline tab. Overview shows only a fact marked current by the
+server's attempt generation; Timeline retains quiet historical receipts with
+command, attempt and incident IDs. The workspace feed renders historical
+receipts as observations. Only a current unresolved or quarantined incident is an acute alert
+and contributes to the Activity badge. The UI never writes a receipt state or
+derives a review verdict from one.
+
 ## Task core cache and board reuse (AGT-2956)
 
 Task navigation reads the board it already holds. `TaskService` stays the
-single owner of the grouped board store; `TaskDetailPrefetchService` owns two
-independent caches: the existing 30 s full-detail lookahead, and the bounded
-task core cache for `GET /api/tasks/{id}/core` (see
-[Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)).
+single owner of the grouped board store; `TaskDetailPrefetchService` owns the
+bounded task core cache for `GET /api/tasks/{id}/core` (see
+[Bounded task core read](tasks.md#bounded-task-core-read-agt-2953)). The
+core-first selection of AGT-2955 reads every core through this cache; there
+is no full-detail lookahead any more, because a task switch no longer reads
+the legacy full detail.
 
 - **Selection never reads the grouped board.** Board click, Explorer, pager,
   triage advance, deep link, Back/Forward and editor-tab switches do not call
@@ -185,38 +195,28 @@ task core cache for `GET /api/tasks/{id}/core` (see
   re-created from the resident store when its tab returns; filters, lane sort,
   lane focus and collapse live in services, and `ScrollMemoryDirective`
   restores the board and lane-group scroll offsets.
-- **Seed first, then core, then full detail.** `TaskSelectionService.selectedCore`
-  is set synchronously from the board record: identity, lane, order, runtime
-  activity/location and model/thinking/CLI pins (`seedTaskCore`). Its state is
-  `seeded` until the bounded heads arrive, then `ready` or `stale`; `warming`,
-  `missing`, `denied` and `error` are explicit. The task route shell
-  (`TaskDetailLoadSectionsComponent`) reads that selection signal directly.
-  Board facts and pins paint at once; the prompt, status and timeline heads
-  paint as escaped text when
-  the core is available, with explicit empty states. Git evidence is not core
-  and keeps its own loading and retry state, so a failed full-detail request
-  never blanks core content already on screen. The shell shows while the full
-  detail loads: board and Explorer clicks, tab restore, and pager or triage
-  steps whose full detail was not prefetched. On a board or Explorer click
-  with an uncached core, the full-detail request waits until the core has
-  answered (at most 250 ms) and a frame has painted, so its heavier render
-  never competes with the core paint. The board payload is not widened with
-  prompt, status or timeline heads.
+- **Board record first, then core, then resources.** The task route shell
+  (`TaskDetailLoadSectionsComponent`) paints the resident board record
+  (`detailPreview`) at once, then the complete bounded core as escaped text
+  with explicit empty states, then the `/details/*` resources (see
+  the task-detail entry under [Key Code](#key-code) and the
+  [task-detail README](../../../frontend/src/app/features/task-detail/README.md)).
+  A visited or
+  lookahead core paints synchronously; a stale one paints and revalidates.
+  The board payload is not widened with prompt, status or timeline heads.
 - **Key and bounds.** A core is keyed by registry project handle plus task id,
   so identical slugs in two projects never share an entry. The cache holds at
   most 48 cores and 512 KiB of estimated body bytes, evicting least recently
   used first. Full-detail TTL expiry and `clear()` never touch cores.
 - **One request per task.** Concurrent reads of one core share a request. A
-  foreground read joins an in-flight lookahead. A late reply for a task the
-  operator already left is retained as a visited core but never replaces the
-  selected one.
-- **Lookahead.** After the selected core is available and a frame has
-  painted, only the next two pager cores are requested. Moving the window or
-  leaving the task aborts lookahead that left it. The existing two-peer
-  full-detail prefetch still serves the instant accept -> next path while its
-  30 s entries are fresh. A pager step that misses it paints the lookahead
-  core instead of leaving the previous task on screen, and cores do not
-  expire with that TTL.
+  foreground read joins an in-flight lookahead. A foreground read whose last
+  reader left (the operator switched away) is aborted, so a superseded
+  selection never keeps a request open; a reply that still lands never
+  replaces the selected task.
+- **Lookahead.** Only the next two pager cores are requested, addressed with
+  the same project handle the pager step uses. Moving the window or leaving
+  the task aborts lookahead that left it. Pager steps and the accept -> next
+  advance paint a warmed core synchronously; enrichment is never prefetched.
 - **Invalidation is per task and per resource.** Core, runtime and content
   versions travel in the core ETag; Git and usage versions do not. A pushed
   row, a move or a successful own mutation marks only that task's core stale
@@ -242,11 +242,18 @@ task core cache for `GET /api/tasks/{id}/core` (see
   `taskKey`, so a delete never evicts the same slug in another project. A
   delete reply that names only an id held by two projects revalidates both
   instead of evicting either (the deleted one then answers `404`).
+- **The painted core follows the cache.** When a store event marks the
+  selected core stale or evicts it, the selection revalidates it: a `304`
+  keeps the view, a new generation reloads its resources, `403`/`404` revoke
+  the selection. Registry retention runs only once the registry has loaded,
+  so an empty not-yet-loaded list never evicts a painted core.
 
-Coverage: `task-core-cache.spec.ts` (cache invariants) and
-`task-selection-core.spec.ts` (board -> A -> B -> board, pager reuse and
-pager-miss preview, A -> B -> A, identical slugs, reconnect, delete, denial)
-assert zero grouped requests on selection and zero duplicate core requests;
+Coverage: `task-core-cache.spec.ts` (cache invariants),
+`task-detail-prefetch.service.spec.ts` (superseded-read abort, conditional
+revalidation) and `task-selection-core.spec.ts` (board -> A -> B -> board,
+pager reuse, A -> D -> A abort, identical slugs, reconnect, push, delete,
+denial, registry removal) assert zero grouped and zero legacy full-detail
+requests on selection and zero duplicate core requests;
 `task-detail-load-sections.component.spec.ts` covers the core rendering. The
 browser proof is `e2e/task-detail/task-core-board-reuse.spec.ts` (fully mocked
 API; `PW_BASE_URL` may point at a served production bundle). It times each
@@ -291,6 +298,27 @@ occur. It is not a claim about tunnel transfer time.
   backend seed + navigate).
 - `frontend/src/app/features/task-detail/`: task detail shell, protocol pane,
   prompt pane, git pane, timeline, pipeline overview, and command surfaces.
+  Ordinary task selection reads the bounded `/core` projection first and paints
+  identity, lane, pins, execution, status, prompt, and recent events before
+  independent detail resources begin. Two documents load after core paint;
+  usage follows the rich view, Git waits for its pane, and review evidence and
+  history wait for explicit tabs. The selection service keeps the pager and
+  public URL identity guards while resource replies carry their own freshness,
+  retry state, and task, attempt, and core generation checks. A reference the
+  project registry cannot place (a keyless task, a key prefix no project
+  short code owns in a multi-project workspace, a pager entry outside every
+  registered storage location, or a registry still loading after 3 s) is
+  resolved server-side through the legacy detail route instead of failing.
+  A revalidated core generation refreshes an already painted rich pane in
+  place, and the expanded history or review tab reloads with it. If core
+  revalidation finds the index warming, only the read retries: the selected
+  core and rich pane, including local editing state, stay painted. The feature
+  README records the client flow and compatibility boundary; the backend contract
+  of `/details/*` lives in the
+  [Tasks domain](tasks.md#task-detail-resources-agt-2955).
+  Pending crash recovery remains visible through a persistent review control;
+  its dialog opens only on operator request, and closing it leaves the durable
+  recovery record untouched so task navigation remains available.
   The middle inspector uses the fixed `Task | Activity | Result` order. Task
   renders `prompt.md` and the read-only refinement projection from run/log and
   steering-history evidence. When `enrichment-report.json` exists, Task keeps
@@ -310,15 +338,21 @@ occur. It is not a claim about tunnel transfer time.
   treatment. Diff, patch, Markdown, JSON, and log results have typed on-demand
   previews, while HTML delegates to the shared task artifact viewer route and
   unknown extensions keep the canonical chat row.
-  Escalated tasks render a borderless, collapsible decision section that
+  Escalated tasks render a lightly tinted, collapsible decision section that
   keeps one bounded essence line visible: typed review-round count, latest
   grade, open-finding count, and escalation-reason class. Markdown bodies never
   feed that line. The expanded section renders structured council findings,
   complete council reactions and `orchestrator-follow-up.md`, every
   `code-review-grade-*.md` artifact with file history, reissue history, and
-  delivery context. Long artifact blocks scroll within their own container and
-  never truncate the source text. The primary reissue, accept-as-is, and abort
-  decisions remain beside the recommendation. When findings, review artifacts,
+  delivery context. Known follow-up gate items become labelled fields with
+  shortened refs, copyable SHAs, a concise cause, and collapsed raw tool output;
+  the source and file history remain available. The follow-up can fill the
+  viewport for reading. Standalone task keys become microcards, while paths,
+  refs, URLs, and code stay literal. Long artifact blocks scroll within their
+  own container. The park block has a per-task persisted disclosure and keeps
+  its badge, age, and one-line reason visible when closed. The reissue action
+  is primary beside the recommendation; accept-as-is and abort are secondary
+  decisions. When findings, review artifacts,
   and delivery context are absent, the section renders one compact empty line.
   The Runs modal also shows the current operator-owned review-attempt epoch and
   the closed cycle history, including requeue reason, lane crossing, and rotated

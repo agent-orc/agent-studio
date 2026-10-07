@@ -64,9 +64,12 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
         if (route is not null) return route;
 
         // Proposal-only successors inherit their predecessor's comparable
-        // cross-provider tier. This is a lookup, not an automatic migration.
-        var predecessor = ComparablePredecessor(model);
-        route = predecessor is null ? null : FindRoute(fromCli, predecessor, requestedThinking, toCli);
+        // cross-provider tier, and a predecessor pin inherits the route Token
+        // Economy now declares for its successor (TokenEconomy 0.3.6 moved
+        // the Sol/medium fallback to gpt-6-sol, AGT-2903). This is a lookup,
+        // not an automatic migration.
+        var related = ComparablePredecessor(model) ?? ComparableSuccessor(model);
+        route = related is null ? null : FindRoute(fromCli, related, requestedThinking, toCli);
         if (route is null) return null;
         var price = CurrentPrice(model);
         return route with
@@ -93,6 +96,14 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
                 && string.Equals(migration.To, canonical, StringComparison.OrdinalIgnoreCase))?.From;
     }
 
+    private static string? ComparableSuccessor(string model)
+    {
+        var canonical = ModelMetadataRegistry.NormalizeId(model);
+        return MigrationCatalog.Catalog.Migrations
+            .FirstOrDefault(migration => !migration.SafeAuto
+                && string.Equals(migration.From, canonical, StringComparison.OrdinalIgnoreCase))?.To;
+    }
+
     private IReadOnlyList<ModelEquivalenceRoute> BuildRoutes()
     {
         var rows = new List<ModelEquivalenceRoute>();
@@ -111,10 +122,12 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
 
         // The reverse direction is limited to Token Economy's explicitly
         // evidence-scoped providerFallbacks. An absent rule means wait.
+        // A policy route on a proposal successor (gpt-6-sol since TokenEconomy
+        // 0.3.6) is a declared source, so its fallback stays reachable.
         foreach (var route in Knowledge.Routes)
         {
             var source = Knowledge.FindModel(route.ModelId);
-            if (source is null || !IsUsableSource(source)) continue;
+            if (source is null || !IsRoutable(source)) continue;
             foreach (var fallback in Knowledge.FallbacksFor(route.Id))
             {
                 var target = Knowledge.FindModel(fallback.ModelId);
@@ -164,6 +177,10 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
            && ComparablePredecessor(model.CanonicalId) is null
            && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsRoutable(ModelRoutingModel model)
+        => ModelMetadataRegistry.Find(model.CanonicalId)?.Deprecated != true
+           && !string.Equals(model.RoutingStatus.ToString(), "Deprecated", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsSelectable(ModelRoutingModel model)
         => IsUsableSource(model)
            && string.Equals(model.RoutingStatus.ToString(), "Selectable", StringComparison.OrdinalIgnoreCase);
@@ -185,8 +202,12 @@ public sealed class ModelEquivalenceCatalog : IModelEquivalenceCatalog
            ?? ModelMetadataRegistry.Find(modelId)?.DefaultThinkingLevel
            ?? "medium";
 
+    // A blank Codex model runs on the detected Codex default (gpt-6-sol when
+    // offered, AGT-2903); gpt-5.6-sol stays the answer before discovery ran.
     private static string DefaultModelFor(string cliType)
-        => cliType == CliTypes.Claude ? ModelIds.ClaudeOpus5 : ModelIds.Gpt56Sol;
+        => cliType == CliTypes.Claude
+            ? ModelIds.ClaudeOpus5
+            : ModelMetadataRegistry.DetectedCodexDefault ?? ModelIds.Gpt56Sol;
 
     private static string NormalizeCli(string? cliType)
         => cliType?.Trim().ToLowerInvariant() switch

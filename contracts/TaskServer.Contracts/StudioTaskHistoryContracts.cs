@@ -27,7 +27,8 @@ public sealed record StudioTaskTimelineEntryDto(
     string? EventKind = null,
     string? ArtifactId = null,
     string? ArtifactName = null,
-    string? AuditAction = null);
+    string? AuditAction = null,
+    SteeringFeedbackReceiptDto? SteeringFeedback = null);
 
 public sealed record StudioTaskTimelineResponse(IReadOnlyList<StudioTaskTimelineEntryDto> Entries);
 

@@ -18,6 +18,7 @@ import { resolveTaskArtifactLink } from '../task-artifact-links/task-artifact-li
 import { TooltipDirective } from 'coding-agent-chat/shared';
 
 const EXPANDED_STORAGE_KEY = 'taskboard.parkedSession.expanded.v1';
+const COLLAPSE_KEY = 'taskboard.parkedBlocker.collapsed';
 const TRANSCRIPT_PAGE_LINES = 250;
 
 export function resolveParkingRun(runs: readonly RunRecord[], parkedAt: string): RunRecord | null {
@@ -87,8 +88,10 @@ export class ParkedBlockerComponent {
   private loadedTaskId: string | null = null;
   private sessionRequest: Subscription | null = null;
   private readonly expandedByTask = signal<Record<string, boolean>>(readExpandedMap());
+  private readonly collapsedByTask = signal<Record<string, boolean>>(readCollapseMap());
 
   readonly info = computed<TaskInfo>(() => this.detail().info);
+  readonly collapsed = computed(() => this.collapsedByTask()[this.info().id] === true);
   readonly sessionExpanded = computed(() => this.expandedByTask()[this.info().id] === true);
   readonly sessionLoading = signal(false);
   readonly sessionError = signal<string | null>(null);
@@ -161,6 +164,12 @@ export class ParkedBlockerComponent {
 
   /** The freetext park reason, verbatim - it is the record, not a headline. */
   readonly reasonLine = computed(() => this.info().parkedBlocker?.reason?.trim() || 'not recorded');
+
+  toggleCollapsed(): void {
+    const next = { ...this.collapsedByTask(), [this.info().id]: !this.collapsed() };
+    this.collapsedByTask.set(next);
+    try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next)); } catch { /* best effort */ }
+  }
 
   toggleSession(): void {
     const id = this.info().id;
@@ -260,4 +269,11 @@ function writeExpandedMap(map: Record<string, boolean>): void {
   try {
     localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(map));
   } catch { /* Browser storage is best-effort. */ }
+}
+
+function readCollapseMap(): Record<string, boolean> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '{}');
+    return value && typeof value === 'object' ? value as Record<string, boolean> : {};
+  } catch { return {}; }
 }

@@ -59,18 +59,16 @@ public sealed class StudioCoreAttachBffTopologyTests
         var login = await ReadAsync<StudioAuthSessionDto>(
             await studio.PostAsJsonAsync("/api/v1/studio/auth/login", new StudioLoginRequest("bff-owner", password)));
         Assert.True(login.Status.Authenticated);
-        // The BFF does not relay the nested human session (header or cookie);
-        // that propagation belongs to the connector security work. It must
-        // not keep the login's session cookie for itself either: the pooled
-        // upstream handler is shared by every Studio caller. The route is
-        // still owned and answered by the Task Server itself.
+        // The BFF relays the caller's HttpOnly human session cookie to the
+        // Task Server. The pooled upstream handler must not keep a session
+        // for a different Studio caller.
         var changePassword = await studio.PostAsJsonAsync(
             "/api/v1/studio/auth/change-password", new StudioChangePasswordRequest(password, password + " rotated"));
-        Assert.Equal(HttpStatusCode.Unauthorized, changePassword.StatusCode);
-        Assert.Equal("authentication-required", (await ReadAsync<ApiError>(changePassword)).Code);
+        Assert.Equal(HttpStatusCode.OK, changePassword.StatusCode);
         var logout = await studio.PostAsync("/api/v1/studio/auth/logout", null);
-        Assert.Equal(HttpStatusCode.Unauthorized, logout.StatusCode);
-        Assert.Equal("authentication-required", (await ReadAsync<ApiError>(logout)).Code);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        Assert.False((await ReadAsync<StudioAuthStatusDto>(
+            await studio.GetAsync("/api/v1/studio/auth/status"))).Authenticated);
 
         // Workspaces and projects x4.
         var workspace = await ReadAsync<WorkspaceDto>(

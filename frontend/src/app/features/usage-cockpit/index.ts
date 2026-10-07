@@ -1,7 +1,12 @@
-/** Header usage cockpit public API (HUC-S2 chips, HUC-S3 detail, HUC-S5 alarms). Cycle 9h / ADR-0034. */
+/** Header usage cockpit public API (HUC-S2 to HUC-S5). Cycle 9h / ADR-0034. */
 export { UsageCliChipComponent } from './components/usage-cli-chip/usage-cli-chip';
 export { UsageCostChipComponent } from './components/usage-cost-chip/usage-cost-chip';
 export { UsageCockpitHostComponent } from './components/usage-cockpit-host/usage-cockpit-host';
+export { UsageCockpitHeaderComponent } from './components/usage-cockpit-header/usage-cockpit-header';
+export type { CockpitNavItem, UsageDetailRequest } from './components/usage-cockpit-header/usage-cockpit-header';
+export { UsageCockpitService, USAGE_COCKPIT_REFRESH_MS } from './services/usage-cockpit.service';
+export { cliAbbreviation, headerTierForWidth, orderClis, planUsageHeader } from './usage-header-layout';
+export type { HeaderTier, UsageChipFit, UsageHeaderMeasures, UsageHeaderPlan } from './usage-header-layout';
 export { UsageSlotChipComponent } from './components/usage-slot-chip/usage-slot-chip';
 export { UsageAlarmStatusComponent } from './components/usage-alarm-status/usage-alarm-status';
 export { UsageAlarmStateService } from './state/usage-alarm-state.service';

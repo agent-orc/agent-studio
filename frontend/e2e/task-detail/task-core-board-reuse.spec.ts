@@ -9,11 +9,12 @@ import * as path from 'node:path';
  * Fully mocked API against the dev frontend: no backend, Git or filesystem.
  * Asserts that task selection never re-reads the grouped board, that each
  * core is requested at most once at a time, that the next two pager cores are
- * warmed after paint, and that the board returns with its filter and lane
- * scroll intact. The measurement case times each selection from the click
- * event to the frame after the selected task's core facts (prompt, status and
- * timeline heads, or the full detail when it was already prefetched) are in
- * the DOM, and enforces resident p95 <=50 ms and uncached p95 <=100 ms. The
+ * warmed, that a switch never reads the legacy full detail (enrichment comes
+ * from `/details/*`, AGT-2955), and that the board returns with its filter
+ * and lane scroll intact. The measurement case times each selection from the
+ * click event to the frame after the selected task's core facts (prompt,
+ * status and timeline heads, or the rich view once its documents landed) are
+ * in the DOM, and enforces resident p95 <=50 ms and uncached p95 <=100 ms. The
  * API is mocked with a fixed core latency, so this is a client budget, not
  * the workstation gate of Dossier card 6. A wall-clock budget is not
  * decidable on an oversubscribed host (1-minute load above the CPU count):
@@ -27,6 +28,7 @@ const REUSE = { id: 'PROJ-REUSE', name: 'Reuse', short: 'REU', path: 'C:/fixture
 const TWIN = { id: 'PROJ-TWIN', name: 'Twin', short: 'TWN', path: 'C:/fixtures/Twin' };
 const LANE_SIZE = 100;
 const CORE_DELAY_MS = 15;
+/** Latency of every mocked `/details/*` resource. */
 const DETAIL_DELAY_MS = 60;
 
 type Project = typeof REUSE;
@@ -51,6 +53,7 @@ function core(project: Project, id: string) {
   const info = job(project, Number(id.slice(5)));
   return {
     state: 'ready', projectId: project.id, projectName: project.name, id, taskKey: info.taskKey, key: info.key,
+    watchPath: info.watchPath, folderPath: info.folderPath,
     title: info.title, kind: 'task', taskType: 'chore', lane: info.state, enteredLaneAt: '2026-09-28T09:00:00Z',
     order: info.order, mode: 'coding', released: false, pendingIntent: false,
     pins: { model: 'sonnet', modelExplicit: true, thinkingLevelExplicit: false, allowWebAccess: false, noBranchExpected: false },
@@ -60,15 +63,23 @@ function core(project: Project, id: string) {
     statusSummary: { state: 'ready', text: `Status of ${id}`, originalBytes: 12 },
     prompt: { state: 'ready', text: `Prompt of ${id}`, originalBytes: 12 },
     timeline: { state: 'ready', events: [{ sequence: 1, ts: '2026-09-28T09:00:00Z', kind: 'created', actor: 'operator', summary: 'Created' }], originalBytes: 60 },
-    coreVersion: 1,
+    coreVersion: '1',
   };
 }
 
-function detail(project: Project, id: string) {
+/** One `/details/{resource}` reply for the core generation above. */
+function detailResource(project: Project, id: string, resource: string, name: string | null) {
+  const data: Record<string, unknown> = {
+    documents: { name, markdown: name === 'prompt' ? `Prompt of ${id}` : `Status of ${id}`, summaryState: null },
+    usage: { tokenSummary: null, lastUsage: null, contextUsage: null },
+    git: { mergeSignal: null, integration: null, publishSignal: null, testEvidence: null, commit: null, commits: [] },
+    review: { reviewProjection: null, evidence: null },
+    history: { promptHistory: [], titleHistory: [], log: [] },
+  };
   return {
-    info: job(project, Number(id.slice(5))), promptMarkdown: `Prompt of ${id}`, statusMarkdown: '', log: [],
-    promptHistory: [], titleHistory: [], contextUsage: null, reviewEvidence: [],
-    summaryState: { status: 'none', startedAt: null, finishedAt: null, errorMessage: null },
+    id, taskKey: job(project, Number(id.slice(5))).taskKey, projectId: project.id, attemptId: null,
+    coreVersion: '1', resource, version: `${resource}-1`, computedAt: null, state: 'ready',
+    data: data[resource] ?? null, reason: null,
   };
 }
 
@@ -76,10 +87,12 @@ interface Traffic {
   grouped: { at: number }[];
   core: { key: string; at: number }[];
   maxConcurrentPerCore: number;
+  /** Legacy full-detail reads; a task switch must never issue one. */
+  legacyDetail: number;
 }
 
 async function installRoutes(page: Page): Promise<Traffic> {
-  const traffic: Traffic = { grouped: [], core: [], maxConcurrentPerCore: 0 };
+  const traffic: Traffic = { grouped: [], core: [], maxConcurrentPerCore: 0, legacyDetail: 0 };
   const inFlight = new Map<string, number>();
   const lanes = {
     backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
@@ -110,6 +123,9 @@ async function installRoutes(page: Page): Promise<Traffic> {
   })))));
   await page.route('**/api/environment**', route => route.fulfill(json({ isDev: false, devTools: {} })));
   await page.route('**/api/cli/usage**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', sessions: [] })));
+  // The usage cockpit is not under test; a failed read keeps it inert
+  // instead of feeding it the catch-all array.
+  await page.route('**/api/usage/cockpit**', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/cli/quota**', route => route.fulfill(json({ at: '2026-09-28T08:00:00Z', ttlSeconds: 600, snapshots: [] })));
   await page.route(/\/workbenches(\?|$)/, route => route.fulfill(json({ items: [] })));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, route => route.fulfill(json({ projects: {} })));
@@ -133,15 +149,20 @@ async function installRoutes(page: Page): Promise<Traffic> {
     await route.fulfill({ ...json(core(project, id)), headers: { ETag: `"core-${key}"` } }).catch(() => undefined);
   });
   await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/task-\d+(\?|$)/, async route => {
+    traffic.legacyDetail++;
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }).catch(() => undefined);
+  });
+  await page.route(/\/api\/tasks\/task-\d+\/details\/[a-z]+(\?|$)/, async route => {
     const url = new URL(route.request().url());
-    const id = url.pathname.split('/').at(-1)!;
+    const [, , , id, , resource] = url.pathname.split('/');
     await new Promise(resolve => setTimeout(resolve, DETAIL_DELAY_MS));
-    await route.fulfill(json(detail(projectOf(url.searchParams.get('project') ?? url.pathname.split('/')[4]), id))).catch(() => undefined);
+    await route.fulfill(json(detailResource(projectOf(url.searchParams.get('project')), id, resource,
+      url.searchParams.get('name')))).catch(() => undefined);
   });
   return traffic;
 }
 
-interface PaintSample { ms: number; start: number; end: number; surface: 'core' | 'full-detail'; id: string }
+interface PaintSample { ms: number; start: number; end: number; surface: 'core' | 'rich-view'; id: string }
 
 /**
  * In-page paint probe. `arm` names the task the next click selects; the
@@ -155,17 +176,18 @@ function installPaintProbe(): void {
   const surface = (target: Target): PaintSample['surface'] | null => {
     const task = document.querySelector('[data-testid="studio-task"]');
     if (!task) return null;
-    const sections = task.querySelector('[data-testid="task-detail-load-sections"]');
-    if (sections) {
-      if (sections.getAttribute('data-core-task') !== target.taskKey) return null;
-      const head = (id: string) => sections.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
+    // The core view replaces the pre-core placeholder sections once painted.
+    const painted = task.querySelector('[data-testid="task-core"]');
+    if (painted) {
+      if (painted.getAttribute('data-core-id') !== target.id) return null;
+      const head = (id: string) => painted.querySelector(`[data-testid="${id}"]`)?.textContent ?? '';
       return head('task-core-prompt').includes(`Prompt of ${target.id}`)
         && head('task-core-status').includes(`Status of ${target.id}`)
         && head('task-core-timeline').includes('Created') ? 'core' : null;
     }
     // The detail header stays mounted when the selected inspector tab changes.
     const title = task.querySelector('app-detail-header h2')?.textContent ?? '';
-    return title.includes(target.title) ? 'full-detail' : null;
+    return title.includes(target.title) ? 'rich-view' : null;
   };
   document.addEventListener('click', event => {
     const target = probe.target;
@@ -295,6 +317,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     await expect.poll(() => lane.evaluate(el => el.scrollTop)).toBe(scrolled);
 
     expect(traffic.grouped.length - groupedBefore).toBe(0);
+    expect(traffic.legacyDetail).toBe(0);
     expect(traffic.maxConcurrentPerCore).toBe(1);
     const keys = traffic.core.map(c => c.key);
     // task-04, its lookahead 05/06, then 07 for the pager window at 05.
@@ -310,28 +333,28 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     }
   });
 
-  test('the task route paints the core while the full detail is still loading', async ({ page }) => {
+  test('the task route paints the core while its documents are still loading', async ({ page }) => {
     const traffic = await openBoard(page, '#/board');
-    // Hold task-10's full detail so only the board record and the core can paint.
-    let releaseDetail: () => void = () => undefined;
-    const held = new Promise<void>(resolve => { releaseDetail = resolve; });
-    await page.route(/\/api\/v1\/projects\/[^/]+\/tasks\/task-10(\?|$)/, async route => {
+    // Hold task-10's documents so only the board record and the core can paint.
+    let releaseDocuments: () => void = () => undefined;
+    const held = new Promise<void>(resolve => { releaseDocuments = resolve; });
+    await page.route(/\/api\/tasks\/task-10\/details\/documents(\?|$)/, async route => {
       await held;
+      const name = new URL(route.request().url()).searchParams.get('name');
       await route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify(detail(REUSE, 'task-10')),
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify(detailResource(REUSE, 'task-10', 'documents', name)),
       }).catch(() => undefined);
     });
 
     await card(page, REUSE, 10).scrollIntoViewIfNeeded();
     await card(page, REUSE, 10).click();
     const sections = page.getByTestId('task-detail-load-sections');
-    await expect(sections).toHaveAttribute('data-core-state', 'ready');
+    await expect(page.getByTestId('task-core')).toHaveAttribute('data-core-id', 'task-10');
     await expect(page.getByTestId('task-core-pins')).toContainText('sonnet');
     await expect(page.getByTestId('task-core-prompt')).toContainText('Prompt of task-10');
     await expect(page.getByTestId('task-core-status')).toContainText('Status of task-10');
     await expect(page.getByTestId('task-core-timeline')).toContainText('Created');
-    // Git evidence is not core: it is still waiting for its own resource.
-    await expect(page.getByTestId('task-detail-section-evidence')).toHaveAttribute('aria-busy', 'true');
     expect(traffic.core.filter(c => c.key === 'PROJ-REUSE/task-10')).toHaveLength(1);
     if (RESULTS_DIR) {
       fs.mkdirSync(RESULTS_DIR, { recursive: true });
@@ -341,9 +364,10 @@ test.describe('Task core board reuse (AGT-2956)', () => {
       }
     }
 
-    releaseDetail();
+    releaseDocuments();
     await expect(sections).toHaveCount(0);
     await expect(page.getByTestId('overview-title')).toContainText('Reuse task-10');
+    expect(traffic.legacyDetail).toBe(0);
   });
 
   test('identical slugs in two projects read two cores', async ({ page }) => {
@@ -410,7 +434,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     let position = 0;
     for (let step = 0; step < 30; step++) {
       const direction = step % 6 < 3 ? 'next' : 'prev';
-      // The pager arrows show once the current full detail is on screen.
+      // The pager arrows show once the rich view of the current task is on screen.
       await expect(page.getByTestId(`studio-task-${direction}`)).toBeVisible();
       position += direction === 'next' ? 1 : -1;
       const before = await armProbe(page, REUSE, position);
@@ -423,6 +447,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     const heartbeatWindows = Math.ceil((Date.now() - phaseStart) / 30_000);
     const phaseGrouped = traffic.grouped.length - groupedBefore;
     expect(phaseGrouped).toBeLessThanOrEqual(heartbeatWindows);
+    expect(traffic.legacyDetail).toBe(0);
     expect(traffic.maxConcurrentPerCore).toBe(1);
 
     const ms = (list: PaintSample[]) => list.map(sample => sample.ms);
@@ -436,7 +461,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
         ?? (process.env['PW_TARGET'] === 'stable' ? 'http://localhost:4011' : 'http://localhost:4010'),
       measure: 'click event to the first animation frame after the selected task\'s core facts are in the DOM',
       mockedCoreLatencyMs: CORE_DELAY_MS,
-      mockedDetailLatencyMs: DETAIL_DELAY_MS,
+      mockedResourceLatencyMs: DETAIL_DELAY_MS,
       host: { cpus, loadAverage1m: Number(load.toFixed(2)), budgetDecidable },
       budgetsMs: { residentP95: 50, uncachedP95: 100 },
       groupedRequestsDuringSelections: phaseGrouped,
@@ -446,7 +471,7 @@ test.describe('Task core board reuse (AGT-2956)', () => {
       maxConcurrentRequestsPerCore: traffic.maxConcurrentPerCore,
       residentSurfaces: {
         core: samples.resident.filter(sample => sample.surface === 'core').length,
-        fullDetail: samples.resident.filter(sample => sample.surface === 'full-detail').length,
+        richView: samples.resident.filter(sample => sample.surface === 'rich-view').length,
       },
       uncachedBreakdownMs: Object.fromEntries(Object.entries(breakdown).map(([name, values]) => [name, {
         p50: Number(percentile(values, 50).toFixed(2)),

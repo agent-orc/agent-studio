@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace AgentStudio.Tasks;
 
 /// <summary>Wire contract for the additive task core route.</summary>
@@ -8,6 +10,8 @@ public sealed record TaskCoreResponse
     public string ProjectName { get; init; } = "";
     public string Id { get; init; } = "";
     public string TaskKey { get; init; } = "";
+    public string WatchPath { get; init; } = "";
+    public string FolderPath { get; init; } = "";
     public string? Key { get; init; }
     public string Title { get; init; } = "";
     public string Kind { get; init; } = "task";
@@ -29,6 +33,12 @@ public sealed record TaskCoreResponse
     public TaskCoreText StatusSummary { get; init; } = TaskCoreText.Missing;
     public TaskCorePromptResponse Prompt { get; init; } = new();
     public TaskCoreTimelineResponse Timeline { get; init; } = new();
+    /// <summary>
+    /// A SHA-derived 64-bit generation. It travels as a decimal string because
+    /// most values exceed the 2^53 range a JavaScript number keeps exact, and a
+    /// rounded generation would fail every `generation` check downstream.
+    /// </summary>
+    [JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)]
     public long CoreVersion { get; init; }
 }
 

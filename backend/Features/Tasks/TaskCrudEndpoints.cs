@@ -343,17 +343,6 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}/details/git", (string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects,
-            TaskListGitProjectionCache gitProjection, ILoggerFactory loggerFactory) =>
-        {
-            using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail/git",
-                loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            var task = scanner.FindJob(jobId, watchPath);
-            return task is null ? Results.NotFound() : Results.Ok(gitProjection.ReadTask(task));
-        });
-
         group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
@@ -1076,6 +1065,42 @@ public static class TaskCrudEndpoints
             watchPath = ResolveWatchPath(projects, project, watchPath);
             return DecisionResult(await decisions.ReopenAsync(jobId, watchPath, req, DecisionActor(ctx), ct,
                 (ctx.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal)?.User.Role));
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
+
+        // Operator-run one-off conversion. The prompt digest makes a reviewed
+        // dry-run plan stale rather than silently migrating changed prose.
+        group.MapPost("/{jobId}/decision/migrate", (string jobId, string? project, string? watchPath,
+            MigrateDecisionRequest req, TaskScannerService scanner, TaskMutationService mutations,
+            TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null) return Results.NotFound();
+            if (!string.Equals(card.Kind, TaskKinds.Task, StringComparison.OrdinalIgnoreCase)
+                || card.State is not (TaskStates.Preparation or TaskStates.Escalated))
+                return Results.Conflict(new { error = "Only active prose requests in preparation or escalated may be migrated." });
+            var promptPath = Path.Combine(card.FolderPath, "prompt.md");
+            if (!File.Exists(promptPath)) return Results.Conflict(new { error = "The decision request prompt is missing." });
+            var prompt = File.ReadAllText(promptPath);
+            if (!prompt.Contains("decision needed", StringComparison.OrdinalIgnoreCase)
+                && !prompt.Contains("open decision", StringComparison.OrdinalIgnoreCase)
+                && !prompt.Contains("operator question", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(new { error = "No recognisable decision request was found." });
+            var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(prompt))).ToLowerInvariant();
+            if (!string.Equals(digest, req.ExpectedPromptSha256, StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(new { error = "The prompt changed since the migration inventory." });
+            if (req.Decision is null) return Results.BadRequest(new { error = "Decision content is required." });
+            var decision = req.Decision with { Status = DecisionStatuses.Pending,
+                ChosenOptionId = null, Rationale = null, DecidedBy = null, DecidedAt = null,
+                RecordPath = null, History = [], RemindedAt = null };
+            var errors = DecisionCardPolicy.ValidateContent(decision);
+            if (errors.Count > 0) return Results.BadRequest(new { errors });
+            var migration = mutations.MigrateJobToDecision(jobId, decision, states, watchPath);
+            if (!migration.Success)
+                return Results.Conflict(new { error = migration.Error });
+            return Results.Ok(new { key = card.Key ?? card.Id, kind = TaskKinds.Decision,
+                state = TaskStates.Preparation, options = decision.Options.Count });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
 
         // Replace-all: the request's Tags array becomes the new full set on

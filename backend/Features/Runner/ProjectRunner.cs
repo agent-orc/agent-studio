@@ -4008,7 +4008,8 @@ public class ProjectRunner
                 topic,
                 usage,
                 latency,
-                thinkingLevel: thinkingLevel);
+                thinkingLevel: thinkingLevel,
+                cliType: cliType);
         }
     }
 
@@ -6447,20 +6448,14 @@ public class ProjectRunner
                 && !WasDeliberatelyStopped(execution.Status)
                 && FailureInterventionEnabled(activeInfo))
             {
-                var outputTail = string.Join("\n", liveOutputSnapshot.TakeLast(80).Select(line => line.Text));
-                var failureCode = action.IssueKind == RunIssueKind.InfraCrash
-                    ? "crash-as-completion"
-                    : action.IssueKind.ToString();
                 runIntervention = await _failureInterventions!.RaiseAsync(activeInfo,
-                    new FailureCommandEvidence(
-                        failureCode,
+                    RunFailureEvidence(
+                        action.IssueKind,
                         terminalOutcome.Kind,
                         execution.ExitCode,
                         execution.DurationSeconds is { } duration ? (long)(duration * 1_000) : null,
-                        outputTail,
+                        liveOutputSnapshot,
                         outcome.Reason,
-                        PipelineCatalogue.CoreAgentRunStepId,
-                        ["logs/", PipelineExecutionLog.FileName],
                         execution.StartedAt),
                     CancellationToken.None);
                 action = new OutcomeAction(
@@ -7070,6 +7065,31 @@ public class ProjectRunner
             }
         }
     }
+
+    /// <summary>
+    /// Evidence for the failure intervention raised at the end of a failed
+    /// core agent run. When the agent's final Blocked or NeedsInput turn states a
+    /// fork, the evidence carries it and the intervention is a decision card.
+    /// </summary>
+    internal static FailureCommandEvidence RunFailureEvidence(
+        RunIssueKind issueKind,
+        string? outcomeKind,
+        int? exitCode,
+        long? durationMs,
+        IReadOnlyList<CliOutputLine> output,
+        string? reason,
+        DateTime? startedAt)
+        => new(
+            issueKind == RunIssueKind.InfraCrash ? "crash-as-completion" : issueKind.ToString(),
+            outcomeKind,
+            exitCode,
+            durationMs,
+            string.Join("\n", output.TakeLast(80).Select(line => line.Text)),
+            reason,
+            PipelineCatalogue.CoreAgentRunStepId,
+            ["logs/", PipelineExecutionLog.FileName],
+            startedAt,
+            BlockedForkReader.ReadRun(output, reason));
 
     private bool FailureInterventionEnabled(TaskInfo task)
     {

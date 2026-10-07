@@ -24,6 +24,7 @@ public static class EndpointMapping
             .AddEndpointFilter<TaskOperationTimingFilter>();
         tasks.MapTaskCrudEndpoints();
         tasks.MapTaskCoreEndpoint();
+        tasks.MapTaskDetailResources();
         tasks.MapBatchMoveEndpoints();
         tasks.MapTaskFilesEndpoints();
         tasks.MapTaskRunnerEndpoints();
@@ -85,6 +86,7 @@ public static class EndpointMapping
         app.MapOperatorSweepEndpoints();
         app.MapFailureInterventionEndpoints();
         app.MapTokenPricingEndpoints();
+        app.MapModelMigrationProjectEndpoints();
         app.MapReviewDecisionsEndpoints();
         app.MapProjectSnapshotEndpoints();
         app.MapProjectOperatorDashboardEndpoints();

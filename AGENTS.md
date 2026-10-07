@@ -57,6 +57,8 @@ apply only under `frontend/`.
 - Follow the canonical contribution and style guide linked above. Its language
   policy applies to UI strings, backend errors shown to the UI, prompts,
   comments, docs, commits, and PR text. Do not introduce em dashes.
+- In test fixtures, build fake credential-shaped values at runtime. Never write
+  provider-shaped key literals into source files or commits.
 - When adding a document under `docs/`, add one row to
   [docs/start/README.md](docs/start/README.md) in the same change.
 - CLI crashes, run-outcome classification, retries, or orchestrator

@@ -11,11 +11,11 @@ import {
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
-import type { TokenTimeline, TokenTimelineCell } from '../../../../features/tokens';
-import { TokensApiService } from '../../../../features/tokens';
+import { TokensApiService, type TokenTimeline, type TokenTimelineCell } from '../../../../features/tokens';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 import { colorForProject } from './workspace-token-timeline-color.util';
 import { BetterCandidateUsageReportComponent } from '../better-candidate-usage-report/better-candidate-usage-report.component';
+import { WorkspaceTokenModelTableComponent } from '../workspace-token-model-table/workspace-token-model-table.component';
 import type { UsageLedgerScope } from '../../../usage-cockpit';
 import { Subscription } from 'rxjs';
 import { formatAgo, formatBucketRange, formatTime, pad2 } from './workspace-token-timeline-format.util';
@@ -62,7 +62,7 @@ interface BucketSegment {
 @Component({
   selector: 'app-workspace-token-timeline',
   standalone: true,
-  imports: [BetterCandidateUsageReportComponent],
+  imports: [BetterCandidateUsageReportComponent, WorkspaceTokenModelTableComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './workspace-token-timeline.html',
   styleUrl: './workspace-token-timeline.scss'

@@ -742,6 +742,14 @@ The service listens on `127.0.0.1:5031` and uses the current user's application
 data directory. The topology test separately proves the service with another
 process and temporary data root.
 
+## Owner bootstrap, enrolment and project registration
+
+`OWNER_BOOTSTRAP_CODE_FILE` arms the one-time first-owner code. Host
+principals join through one-time enrolment codes, and projects register one
+canonical repository through `POST /api/v1/projects/registrations`. The
+contract, closure rules and host scripts are in
+[identity-and-project-bootstrap.md](./identity-and-project-bootstrap.md).
+
 ## Rotate and revoke principals
 
 Use a current `management` credential and protocol header. Enrol a separate

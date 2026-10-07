@@ -1,7 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
 import { Subject, catchError, finalize, map, tap, throwError, type Observable } from 'rxjs';
-import type { TaskCore } from '../models/task-core.model';
+import type { TaskCore, TaskResource, ResourceName } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
   BatchMoveItemInput,
@@ -813,6 +813,19 @@ export class TaskService {
       `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
       params.keys().length ? { params } : {},
     );
+  }
+
+  /**
+   * Additive enrichment resource of one core generation (AGT-2955). A reply
+   * for another generation answers 409; see `docs/system/domains/tasks.md`.
+   */
+  getDetailResource<T>(jobId: string, project: string, coreVersion: string,
+    resource: ResourceName, name?: 'prompt' | 'status', evidence = false) {
+    let params = new HttpParams().set('project', project).set('generation', coreVersion);
+    if (name) params = params.set('name', name);
+    if (evidence) params = params.set('evidence', 'true');
+    return this.http.get<TaskResource<T>>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/details/${resource}`, { params });
   }
 
   /**
@@ -1979,6 +1992,14 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
+  /** AGT-2903: accept a catalogue migration for every eligible explicitly pinned card of a project. */
+  applyProjectModelMigration(project: string, from: string) {
+    return this.http.post<{ from: string; to: string; updatedTaskIds: string[]; failedTaskIds: string[] }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(project)}/model-migrations/apply`,
+      { from },
+    );
+  }
+
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
@@ -2509,6 +2530,13 @@ export class TaskService {
     return this.http.put(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/automatic-failure-continuations`,
       { enabled },
+    );
+  }
+
+  setProjectReviewRoundBudgets(projectName: string, maxDeliveredReviewRounds: number, maxAutoReissueAttempts: number) {
+    return this.http.put(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/review-round-budgets`,
+      { maxDeliveredReviewRounds, maxAutoReissueAttempts },
     );
   }
 

@@ -105,6 +105,8 @@ public class WorkspaceTokensTimelineService
         // (project, bucketStart) -> Bucket
         var cellMap = new Dictionary<(string, DateTime), Bucket>();
         var projectTotals = new Dictionary<string, ProjectTotal>(StringComparer.Ordinal);
+        // (project, model id, host) -> usage row (AGT-2986)
+        var modelMap = new Dictionary<(string Project, string Model, string Host), ModelTotal>();
 
         foreach (var (project, entries) in perProject)
         {
@@ -146,8 +148,19 @@ public class WorkspaceTokensTimelineService
                     bucket.HasUnpricedCall = true;
                 }
 
+                var modelId = TokenModelDisplay.StoredId(u.Model) ?? UnknownModel;
+                var host = TokenUsageHost.Resolve(u.Host, entry.ParticipantId);
+                if (!modelMap.TryGetValue((project, modelId, host), out var modelTotal))
+                {
+                    modelTotal = new ModelTotal(project, modelId, host);
+                    modelMap[(project, modelId, host)] = modelTotal;
+                }
+                modelTotal.Add(u, entryTotal, cost);
+                if (!string.IsNullOrWhiteSpace(u.CliType)) modelTotal.CliTypes.Add(u.CliType.Trim().ToLowerInvariant());
+
                 var pt = projectTotals[project];
                 pt.Calls++;
+                pt.AddHost(host, entryTotal);
                 pt.Input += u.InputTokens;
                 pt.Output += u.OutputTokens;
                 pt.CacheRead += u.CacheReadTokens;
@@ -212,7 +225,37 @@ public class WorkspaceTokensTimelineService
                 LastActivity: p.LastActivity?.ToString("o"),
                 AgentTokens: p.AgentTokens,
                 SupportingTokens: p.SupportingTokens,
-                OrchestratorTokens: p.OrchestratorTokens))
+                OrchestratorTokens: p.OrchestratorTokens)
+            {
+                Hosts = p.Hosts.Values
+                    .OrderByDescending(h => h.Total)
+                    .ThenBy(h => h.Host, StringComparer.Ordinal)
+                    .Select(h => new TokenTimelineHostShare(h.Host, h.Calls, h.Total))
+                    .ToList(),
+            })
+            .ToList();
+
+        var modelsOut = modelMap.Values
+            .OrderByDescending(m => m.Total)
+            .ThenBy(m => m.Project, StringComparer.Ordinal)
+            .ThenBy(m => m.Model, StringComparer.Ordinal)
+            .ThenBy(m => m.Host, StringComparer.Ordinal)
+            .Select(m => new TokenTimelineModelUsage(
+                Project: m.Project,
+                Model: m.Model,
+                // Label resolved per response from the registry; the id is
+                // the stored value and an unknown id renders as itself.
+                ModelLabel: m.Model == UnknownModel ? UnknownModel : TokenModelDisplay.Label(m.Model) ?? m.Model,
+                Host: m.Host,
+                CliTypes: m.CliTypes.OrderBy(c => c, StringComparer.Ordinal).ToList(),
+                Calls: m.Calls,
+                Input: m.Input,
+                Output: m.Output,
+                CacheRead: m.CacheRead,
+                CacheWrite: m.CacheWrite,
+                Total: m.Total,
+                Dollars: m.Dollars,
+                AllModelsPriced: m.HasPricedCall && !m.HasUnpricedCall))
             .ToList();
 
         return new TokenTimeline(
@@ -224,8 +267,14 @@ public class WorkspaceTokensTimelineService
             Cells: cells,
             Projects: projectsOut,
             FetchedAt: DateTime.UtcNow.ToString("o"),
-            Disclaimer: TokenSummaryService.DefaultDisclaimer);
+            Disclaimer: TokenSummaryService.DefaultDisclaimer)
+        {
+            Models = modelsOut,
+        };
     }
+
+    /// <summary>Model key for ledger rows that recorded no model.</summary>
+    public const string UnknownModel = "(unknown)";
 
     public static int ResolveWindowHours(int requested)
     {
@@ -283,8 +332,73 @@ public class WorkspaceTokensTimelineService
         }
     }
 
+    private sealed class ModelTotal
+    {
+        public string Project { get; }
+        public string Model { get; }
+        public string Host { get; }
+        public HashSet<string> CliTypes { get; } = new(StringComparer.Ordinal);
+        public int Calls;
+        public long Input;
+        public long Output;
+        public long CacheRead;
+        public long CacheWrite;
+        public long Total;
+        public decimal? Dollars;
+        public bool HasPricedCall;
+        public bool HasUnpricedCall;
+
+        public ModelTotal(string project, string model, string host)
+        {
+            Project = project;
+            Model = model;
+            Host = host;
+        }
+
+        public void Add(OrchestratorTokenUsage u, long entryTotal, TokenCostEstimate cost)
+        {
+            Calls++;
+            Input += u.InputTokens;
+            Output += u.OutputTokens;
+            CacheRead += u.CacheReadTokens;
+            CacheWrite += u.CacheCreationTokens;
+            Total += entryTotal;
+            if (cost.ModelKnown)
+            {
+                Dollars = (Dollars ?? 0m) + cost.Total;
+                HasPricedCall = true;
+            }
+            else
+            {
+                HasUnpricedCall = true;
+            }
+        }
+    }
+
+    private sealed class HostTotal
+    {
+        public string Host { get; }
+        public int Calls;
+        public long Total;
+
+        public HostTotal(string host) => Host = host;
+    }
+
     private sealed class ProjectTotal
     {
+        public Dictionary<string, HostTotal> Hosts { get; } = new(StringComparer.Ordinal);
+
+        public void AddHost(string host, long amount)
+        {
+            if (!Hosts.TryGetValue(host, out var total))
+            {
+                total = new HostTotal(host);
+                Hosts[host] = total;
+            }
+            total.Calls++;
+            total.Total += amount;
+        }
+
         public string Project { get; }
         public int Calls;
         public long Input;
@@ -339,7 +453,41 @@ public sealed record TokenTimeline(
     /// decision with a better benchmark candidate for the selected route.
     /// </summary>
     public IReadOnlyList<BetterCandidateUsageLine> BetterCandidateUsage { get; init; } = [];
+
+    /// <summary>
+    /// Per (project, model id, executing host) usage over the window
+    /// (AGT-2986). Sums reconcile to the per-project totals.
+    /// </summary>
+    public IReadOnlyList<TokenTimelineModelUsage> Models { get; init; } = [];
+
+    /// <summary>Read health of the merged usage ledger behind this response.</summary>
+    public ProjectTokenDataFreshness Freshness { get; init; } = ProjectTokenDataFreshness.Empty;
 }
+
+/// <summary>
+/// One (project, model, host) row. <see cref="Model"/> is the stored id;
+/// <see cref="ModelLabel"/> is resolved from the registry for this response
+/// and equals the id when the registry does not know it. <see cref="Host"/>
+/// is a remote runner id, <c>local</c>, or <c>remote-unrecorded</c> for
+/// remote receipts written before host attribution.
+/// </summary>
+public sealed record TokenTimelineModelUsage(
+    string Project,
+    string Model,
+    string ModelLabel,
+    string Host,
+    IReadOnlyList<string> CliTypes,
+    int Calls,
+    long Input,
+    long Output,
+    long CacheRead,
+    long CacheWrite,
+    long Total,
+    decimal? Dollars,
+    bool AllModelsPriced);
+
+/// <summary>Share of one project's window total executed on one host.</summary>
+public sealed record TokenTimelineHostShare(string Host, int Calls, long Total);
 
 /// <summary>
 /// One (project, bucket) cell. <see cref="AllModelsPriced"/> is false
@@ -390,4 +538,8 @@ public sealed record TokenTimelineProject(
     string? LastActivity,
     long AgentTokens,
     long SupportingTokens,
-    long OrchestratorTokens);
+    long OrchestratorTokens)
+{
+    /// <summary>Executing hosts of this project's window total, largest first (AGT-2986).</summary>
+    public IReadOnlyList<TokenTimelineHostShare> Hosts { get; init; } = [];
+}

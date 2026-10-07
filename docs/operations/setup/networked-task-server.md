@@ -2,6 +2,9 @@
 
 This is the reference deployment for a small, single-organization Task Server.
 Do not expose the local profile or treat `X-Client-Id` as a credential.
+This runbook covers the legacy networked backend. The standalone Task Server
+uses a different identity contract; see
+[identity-and-project-bootstrap.md](./identity-and-project-bootstrap.md).
 
 ## Topology
 
