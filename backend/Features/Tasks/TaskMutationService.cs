@@ -1131,6 +1131,39 @@ public class TaskMutationService
         return Updated(info);
     }
 
+    /// <summary>
+    /// Moves an escalated prose request into preparation for conversion, and
+    /// restores its original lane if the atomic decision write fails.
+    /// </summary>
+    public (bool Success, string? Error) MigrateJobToDecision(
+        string jobId, DecisionContent decision, TaskStateMachine states, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null || !string.Equals(info.Kind, TaskKinds.Task, StringComparison.OrdinalIgnoreCase)
+            || info.State is not (TaskStates.Preparation or TaskStates.Escalated))
+            return (false, "Only active prose requests in preparation or escalated may be migrated.");
+
+        var wasEscalated = info.State == TaskStates.Escalated;
+        if (wasEscalated)
+        {
+            var moved = states.MoveJob(jobId, TaskStates.Preparation, watchPath,
+                expectedSourceState: TaskStates.Escalated, reason: "Migrate active prose decision request");
+            if (moved.Status != MoveJobStatus.Success)
+                return (false, moved.Message ?? "Could not move the decision to preparation.");
+        }
+
+        if (ConvertJobToDecision(jobId, decision, watchPath)) return (true, null);
+
+        if (wasEscalated)
+        {
+            var rollback = states.MoveJob(jobId, TaskStates.Escalated, watchPath,
+                expectedSourceState: TaskStates.Preparation, reason: "Decision conversion failed; restore original lane");
+            if (rollback.Status != MoveJobStatus.Success)
+                return (false, $"Decision conversion failed and the card could not return to escalated: {rollback.Message ?? rollback.Status.ToString()}.");
+        }
+        return (false, "Decision conversion failed; the card remains in its original lane.");
+    }
+
     public bool SetTaggingStatus(string jobId, string status, string? watchPath = null)
     {
         if (status is not ("tagged" or "tags-proposed")) return false;

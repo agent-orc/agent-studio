@@ -1107,15 +1107,9 @@ public static class TaskCrudEndpoints
                 RecordPath = null, History = [], RemindedAt = null };
             var errors = DecisionCardPolicy.ValidateContent(decision);
             if (errors.Count > 0) return Results.BadRequest(new { errors });
-            if (card.State == TaskStates.Escalated)
-            {
-                var moved = states.MoveJob(jobId, TaskStates.Preparation, watchPath,
-                    expectedSourceState: TaskStates.Escalated, reason: "Migrate active prose decision request");
-                if (moved.Status != MoveJobStatus.Success)
-                    return Results.Conflict(new { error = moved.Message ?? "Could not move the decision to preparation." });
-            }
-            if (!mutations.ConvertJobToDecision(jobId, decision, watchPath))
-                return Results.Conflict(new { error = "Decision conversion failed; the card remains in preparation." });
+            var migration = mutations.MigrateJobToDecision(jobId, decision, states, watchPath);
+            if (!migration.Success)
+                return Results.Conflict(new { error = migration.Error });
             return Results.Ok(new { key = card.Key ?? card.Id, kind = TaskKinds.Decision,
                 state = TaskStates.Preparation, options = decision.Options.Count });
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);
