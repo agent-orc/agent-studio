@@ -14,6 +14,7 @@ import {
   viewChildren,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { StudioHeaderCockpit, UsageCockpitHeaderComponent } from './studio-shell.header-cockpit';
 import type { TaskInfo, RegistryWorkspaceListItem, RegistryProjectSummary, WatchPathEntry, RegistryProjectUrl } from '../../models/task.model';
 import type { WorkbenchListItem } from '../../models/project-docs.model';
 import { forkJoin } from 'rxjs';
@@ -67,12 +68,13 @@ import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labe
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
 import { OrchestratorFeedStore } from '../orchestrator';
-import { UsageCockpitHostComponent } from '../usage-cockpit';
+import { UsageDetailSurfaceComponent } from '../usage-cockpit';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
 function normalizeStorage(path: string): string {
   return path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
 }
+
 
 /** Brand swatches per CLI — matches the status-bar glyph colours so the
  *  Sidebar CLI panel reads the same on first glance. */
@@ -101,7 +103,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHostComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -258,6 +260,7 @@ export class StudioShellComponent {
   readonly openOrchSettings = output<void>();
   /** Emits when the user toggles the auto-pickup mode for a project. */
   readonly toggleAuto = output<string>();
+  readonly headerCockpit = new StudioHeaderCockpit(this);
 
   /** Project picker dropdown open state. */
   readonly pickerOpen = signal(false);
@@ -363,7 +366,6 @@ export class StudioShellComponent {
     }
     return `Auto-pickup is paused for ${name} — click to enable.`;
   }
-
 
   /**
    * F47 / ADR-0042 — registry-backed workspace list rendered by the
@@ -525,7 +527,6 @@ export class StudioShellComponent {
     }
     return null;
   });
-
 
   /** Project rows displayed in the titlebar pills + sidebar Explorer.
    *  A2 (2026-05-21): the visible "open jobs" counter excludes the
@@ -1076,7 +1077,6 @@ export class StudioShellComponent {
     this.explorerWorkbenchState.collapseAll(this.projectRows().map(project => project.name));
     this.collapseAllVersion.update(version => version + 1);
   }
-
 
   /** Visible CLI types observed across the loaded jobs (for the CLI sidebar panel). */
   readonly cliRows = computed(() => {

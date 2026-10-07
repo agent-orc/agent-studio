@@ -1,0 +1,106 @@
+@let p = plan();
+<div class="cockpit-header__nav" data-testid="cockpit-header-nav-row">
+  @if (p.layout === 'single' && p.showWordmark) {
+    <span class="cockpit-header__wordmark" data-testid="cockpit-header-wordmark">Studio</span>
+  }
+  <div #navContent class="cockpit-header__nav-content" [hidden]="p.layout === 'single'">
+    <ng-content />
+  </div>
+</div>
+
+<!-- More sits before the usage row in the DOM so focus order matches the
+     visual order: navigation, More, then usage. -->
+<div class="cockpit-header__more">
+  <button #moreTrigger
+          type="button"
+          class="cockpit-header__more-trigger"
+          data-testid="cockpit-header-more"
+          aria-label="More navigation"
+          aria-haspopup="menu"
+          [attr.aria-expanded]="moreOpen()"
+          (click)="onMoreClick($event)">
+    <span aria-hidden="true">⋯</span>
+  </button>
+  <app-menu [items]="menuItems()"
+            [open]="moreOpen()"
+            [anchorEl]="moreTrigger"
+            placement="below"
+            testIdPrefix="cockpit-header-more-menu"
+            ariaLabel="More navigation"
+            [minWidth]="200"
+            (itemClick)="onMenuItem($event)"
+            (closeRequest)="closeMore()" />
+</div>
+
+<div class="cockpit-header__usage" role="group" aria-label="Usage" data-testid="cockpit-header-usage-row">
+  @if (primary(); as first) {
+    <app-usage-cli-chip [cliId]="first.cliId" [cli]="first.cli" [timeZone]="timeZone()" [now]="now()"
+                        [fit]="p.fit"
+                        [compact]="p.fit !== 'full' || p.layout === 'single'"
+                        [alarms]="cliAlarms(first.cliId)" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()"
+                        [expanded]="isExpanded('cli', first.cliId)" [controls]="detailControls()"
+                        data-testid="cockpit-primary-cli"
+                        (activate)="usageSelect.emit({ section: 'cli', cliId: $event })" />
+  }
+  @for (c of visibleSecondaries(); track c.cliId) {
+    <app-usage-cli-chip [cliId]="c.cliId" [cli]="c.cli" [timeZone]="timeZone()" [now]="now()"
+                        [alarms]="cliAlarms(c.cliId)" [readFailed]="readFailed()"
+                        [expanded]="isExpanded('cli', c.cliId)" [controls]="detailControls()"
+                        data-testid="cockpit-secondary-cli"
+                        (activate)="usageSelect.emit({ section: 'cli', cliId: $event })" />
+  }
+  <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [now]="now()" [fit]="p.fit"
+                       [compact]="p.fit !== 'full' || p.layout === 'single'"
+                       [alarms]="costAlarms()" [readFailed]="readFailed()"
+                       [expanded]="isExpanded('cost')" [controls]="detailControls()"
+                       (activate)="usageSelect.emit({ section: 'cost', cliId: null })" />
+  @if (p.showDetails) {
+    <button #detailsButton
+            type="button"
+            class="cockpit-header__details"
+            data-testid="cockpit-header-details"
+            data-usage-trigger="details"
+            aria-haspopup="dialog"
+            [attr.aria-expanded]="isExpanded('details')"
+            [attr.aria-controls]="detailControls()"
+            [attr.aria-label]="detailsLabel()"
+            (click)="usageSelect.emit({ section: 'details', cliId: null })">
+      Details
+      @if (hiddenCliNames().length) {
+        <span class="cockpit-header__details-count" data-testid="cockpit-header-details-count">+{{ hiddenCliNames().length }}</span>
+      }
+    </button>
+  }
+</div>
+<app-usage-alarm-status />
+
+
+<!-- Off-screen, inert copies of every chip variant. Their widths drive the
+     content fit; they never take focus or reach the accessibility tree. -->
+<div #measure class="cockpit-header__measure" aria-hidden="true" inert>
+  @if (primary(); as first) {
+    @for (fit of fits; track fit) {
+      <span [attr.data-measure]="'primary-' + fit">
+        <app-usage-cli-chip [cliId]="first.cliId" [cli]="first.cli" [timeZone]="timeZone()" [now]="now()" [fit]="fit"
+                            [compact]="fit !== 'full'"
+                            [alarms]="cliAlarms(first.cliId)" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()" />
+      </span>
+    }
+  }
+  @for (fit of fits; track fit) {
+    <span [attr.data-measure]="'cost-' + fit">
+      <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [now]="now()" [fit]="fit"
+                           [compact]="fit !== 'full'"
+                           [alarms]="costAlarms()" [readFailed]="readFailed()" />
+    </span>
+  }
+  @for (c of secondaries(); track c.cliId) {
+    <span [attr.data-measure]="'secondary-' + c.cliId">
+      <app-usage-cli-chip [cliId]="c.cliId" [cli]="c.cli" [timeZone]="timeZone()" [now]="now()"
+                          [alarms]="cliAlarms(c.cliId)" [readFailed]="readFailed()" />
+    </span>
+  }
+  <span data-measure="details"><span class="cockpit-header__details">Details <span class="cockpit-header__details-count">+{{ secondaries().length }}</span></span></span>
+  <span data-measure="wordmark"><span class="cockpit-header__wordmark">Studio</span></span>
+  <span data-measure="more"><span class="cockpit-header__more-trigger">⋯</span></span>
+</div>

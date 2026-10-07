@@ -8,7 +8,7 @@ namespace AgentStudio.Tests;
 public sealed class MechanicalFreshRunRoutePolicyTests
 {
     [Theory]
-    [InlineData("semantic-conflict", "gpt-5.6-sol", "medium")]
+    [InlineData("semantic-conflict", "gpt-6-sol", "medium")]
     [InlineData("failed-deterministic-gate", "gpt-5.6-terra", "medium")]
     [InlineData("pending-mechanical-continuation", "gpt-5.6-terra", "medium")]
     public void Fresh_fallback_clears_the_policy_floor(string reason, string model, string thinking)

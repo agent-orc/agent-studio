@@ -133,17 +133,22 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // like every other GET that only re-derives git state.
             // AGT-3001 added GET /api/cli/quota/history on Preview: read-only
             // quota history is denied in public demo like GET /api/cli/quota.
-            // Decision-card decide and reopen are execution mutations on Start.
-            Assert.Equal(88, routes.Count);
+            // Decision-card decide, reopen, and prose migration are execution mutations on Start.
+            // Project model migration is an operator-triggered Preview mutation.
+            Assert.Equal(90, routes.Count);
             // Pin their identities too: an unrelated route must not mask the loss
             // of either decision mutation from the denial inventory.
-            foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen" })
+            foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
             {
                 var decisionRoute = Assert.Single(routes, route => route.RoutePattern.RawText == decisionPath);
                 Assert.Equal(ExecutionAdmissionPath.Start,
                     decisionRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
                 Assert.Contains("POST", decisionRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
             }
+            var migrationRoute = Assert.Single(routes, route =>
+                route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
+            Assert.Equal(ExecutionAdmissionPath.Preview,
+                migrationRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -153,11 +158,11 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                 new Dictionary<ExecutionAdmissionPath, int>
                 {
                     [ExecutionAdmissionPath.Claim] = 6,
-                    [ExecutionAdmissionPath.Start] = 14,
+                    [ExecutionAdmissionPath.Start] = 15,
                     [ExecutionAdmissionPath.Continue] = 14,
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
-                    [ExecutionAdmissionPath.Preview] = 25,
+                    [ExecutionAdmissionPath.Preview] = 26,
                     [ExecutionAdmissionPath.PostStep] = 11,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

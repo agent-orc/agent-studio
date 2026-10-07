@@ -7,6 +7,7 @@ import type { CliModelInfo } from '../../../../cli';
 import type { RunRecord } from '../../../../run-timeline';
 import { RunTimelinePollService } from '../../../../polling/services/run-timeline-poll.service';
 import { CompletionLoopIndicatorComponent } from '../../../../task-timeline';
+import { SteeringReceiptStatusComponent } from './steering-receipt-status/steering-receipt-status.component';
 import { AgentWorkSummaryPollService } from '../../../../polling/services/agent-work-summary-poll.service';
 import { TaskPipelinePollService } from '../../../../polling/services/task-pipeline-poll.service';
 import { TaskTimelinePollService } from '../../../../polling/services/task-timeline-poll.service';
@@ -103,7 +104,7 @@ import {
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineDecisionChainComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, SteeringReceiptStatusComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineDecisionChainComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })

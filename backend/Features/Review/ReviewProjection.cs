@@ -128,6 +128,7 @@ public sealed record ReviewProjectionView
     public IReadOnlyList<ReviewAttempt> Attempts { get; init; } = [];
 
     public int Rounds { get; init; }
+    public ReviewRoundBudgetView? RoundBudget { get; init; }
     public string? LatestPlane { get; init; }
     public string? LatestOutcome { get; init; }
     public DateTime? LatestReceivedAt { get; init; }
@@ -140,6 +141,8 @@ public sealed record ReviewProjectionView
 
     public static ReviewProjectionView Empty { get; } = new();
 }
+
+public sealed record ReviewRoundBudgetView(int Delivered, int Maximum, string? SpentBy);
 
 /// <summary>Plain facts parsed from one <c>code-review-grade-*.md</c> local attempt.</summary>
 internal sealed record LocalReviewAttemptFacts(

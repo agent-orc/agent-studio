@@ -82,4 +82,40 @@ public sealed class ModelMigrationPolicyTests
     {
         public ModelMigrationCatalogDocument Load() => document;
     }
+    [Theory]
+    [InlineData(ModelIds.Gpt56Sol)]
+    [InlineData(ModelIds.Gpt56Luna)]
+    public void Gpt6Migrations_AreProposalOnly_AndNeverAutoApply(string model)
+    {
+        var entry = Catalog.FindMigration(model);
+
+        Assert.NotNull(entry);
+        Assert.False(entry!.SafeAuto);
+        Assert.Null(ModelMigrationPolicy.DecideAutoMigration(
+            modelExplicit: false, model: model, autoApplyEnabled: true, catalog: Catalog));
+    }
+
+    [Theory]
+    // lane, explicit, model, expected
+    [InlineData(TaskStates.Backlog, true, ModelIds.Gpt56Sol, true)]
+    [InlineData(TaskStates.Preparation, true, ModelIds.Gpt56Sol, true)]
+    [InlineData(TaskStates.OrchestratorPrep, true, ModelIds.Gpt56Sol, true)]
+    [InlineData(TaskStates.Ready, true, "GPT-5.6-SOL", true)]
+    [InlineData(TaskStates.Ready, false, ModelIds.Gpt56Sol, false)]
+    [InlineData(TaskStates.Ready, true, ModelIds.Gpt56Luna, false)]
+    [InlineData(TaskStates.Ready, true, ModelIds.Gpt6Sol, false)]
+    [InlineData(TaskStates.Ready, true, null, false)]
+    [InlineData(TaskStates.Progress, true, ModelIds.Gpt56Sol, false)]
+    [InlineData(TaskStates.AutoReview, true, ModelIds.Gpt56Sol, false)]
+    [InlineData(TaskStates.HumanReview, true, ModelIds.Gpt56Sol, false)]
+    [InlineData(TaskStates.Completed, true, ModelIds.Gpt56Sol, false)]
+    [InlineData(TaskStates.Archive, true, ModelIds.Gpt56Sol, false)]
+    public void ProjectAcceptance_RewritesOnlyExplicitSourcePinsBeforeExecution(
+        string lane, bool modelExplicit, string? model, bool expected)
+    {
+        var migration = Catalog.FindMigration(ModelIds.Gpt56Sol)!;
+
+        Assert.Equal(expected, ModelMigrationPolicy.AppliesToCardOnProjectAcceptance(
+            migration, lane, modelExplicit, model));
+    }
 }

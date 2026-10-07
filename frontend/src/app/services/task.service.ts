@@ -1979,6 +1979,14 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
+  /** AGT-2903: accept a catalogue migration for every eligible explicitly pinned card of a project. */
+  applyProjectModelMigration(project: string, from: string) {
+    return this.http.post<{ from: string; to: string; updatedTaskIds: string[]; failedTaskIds: string[] }>(
+      `${this.baseUrl}/projects/${encodeURIComponent(project)}/model-migrations/apply`,
+      { from },
+    );
+  }
+
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
     return this.http.put(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
@@ -2509,6 +2517,13 @@ export class TaskService {
     return this.http.put(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/automatic-failure-continuations`,
       { enabled },
+    );
+  }
+
+  setProjectReviewRoundBudgets(projectName: string, maxDeliveredReviewRounds: number, maxAutoReissueAttempts: number) {
+    return this.http.put(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/review-round-budgets`,
+      { maxDeliveredReviewRounds, maxAutoReissueAttempts },
     );
   }
 

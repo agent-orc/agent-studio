@@ -1191,6 +1191,11 @@ public static partial class ProjectPreparationExecutor
         foreach (var entry in read.Definition.Environment) processStart.Environment[entry.Key] = entry.Value;
         foreach (var binding in cacheBindings)
             processStart.Environment[binding.EnvironmentVariable] = binding.WorkingPath;
+        // AGT-3005: the environment was cleared above, so the worker's own
+        // build-server fence does not reach the prepare script by inheritance.
+        // Applied after the repository definition so no definition can re-enable
+        // a reusable MSBuild node that outlives the run.
+        PreparationBuildServerFence.ApplyTo(processStart.Environment);
         processStart.Environment["AGENT_STUDIO_PREPARATION"] = "1";
         processStart.Environment["AGENT_STUDIO_PREPARATION_MANIFEST"] = manifestPath;
 
@@ -1206,9 +1211,13 @@ public static partial class ProjectPreparationExecutor
             using var process = Process.Start(processStart)
                 ?? throw new InvalidOperationException("Prepare process did not start.");
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            bounded.CancelAfter(timeout > TimeSpan.Zero ? timeout : TimeSpan.FromMinutes(15));
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
+            var budget = timeout > TimeSpan.Zero ? timeout : TimeSpan.FromMinutes(15);
+            bounded.CancelAfter(budget);
+            var phase = new PreparationPhaseTracker();
+            var stdoutTask = ReadObservedAsync(process.StandardOutput, phase);
+            var stderrTask = ReadObservedAsync(process.StandardError, phase);
+            using var halfway = new CancellationTokenSource();
+            var halfwayReport = ReportHalfwayPhaseAsync(phase, budget, stopwatch, log, halfway.Token);
             try
             {
                 await process.WaitForExitAsync(bounded.Token).ConfigureAwait(false);
@@ -1218,6 +1227,11 @@ public static partial class ProjectPreparationExecutor
                 try { process.Kill(entireProcessTree: true); } catch { /* best effort containment */ }
                 try { await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); } catch { /* already gone */ }
                 throw;
+            }
+            finally
+            {
+                halfway.Cancel();
+                await halfwayReport.ConfigureAwait(false);
             }
             stdout = await stdoutTask.ConfigureAwait(false);
             stderr = await stderrTask.ConfigureAwait(false);
@@ -1290,6 +1304,46 @@ public static partial class ProjectPreparationExecutor
                 : new Dictionary<string, string>(StringComparer.Ordinal),
             RunRoot = succeeded ? runRoot : null,
         };
+    }
+
+    /// <summary>
+    /// Reads one output stream line by line so the phase tracker sees the
+    /// restore progress while the script is still running.
+    /// </summary>
+    private static async Task<string> ReadObservedAsync(StreamReader reader, PreparationPhaseTracker phase)
+    {
+        var builder = new StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            phase.Observe(line);
+            builder.AppendLine(line);
+        }
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// AGT-3005: a preparation still running at half its budget logs the restore
+    /// phase it is in, so the operator can tell MSBuild contention (stuck in
+    /// "Determining projects to restore") from a slow network (package download).
+    /// </summary>
+    private static async Task ReportHalfwayPhaseAsync(
+        PreparationPhaseTracker phase,
+        TimeSpan budget,
+        Stopwatch stopwatch,
+        Action<string>? log,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(budget / 2, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        log?.Invoke(
+            $"project-prepare slow elapsedMs={stopwatch.ElapsedMilliseconds} budgetMs={(long)budget.TotalMilliseconds} " +
+            $"phase={phase.Current} lastLine=\"{phase.LastLine}\"");
     }
 
     /// <summary>

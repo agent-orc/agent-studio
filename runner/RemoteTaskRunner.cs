@@ -806,14 +806,14 @@ public sealed class RemoteTaskRunner
         }
         catch (WorktreeSalvageException ex)
         {
-            if (outbox is not null)
+            if (outbox is not null && ex.PushProtection is null)
             {
                 outbox.RecordHandoffState("transfer-recovery");
                 await ReportOutboxSafeAsync(outbox, CancellationToken.None);
                 _log($"result transfer remains recoverable without a new coding attempt: {ex.Message}");
                 return 4;
             }
-            await ReportUnsecuredWorktreeAsync(taskKey, lease, ex);
+            await ReportUnsecuredWorktreeAsync(taskKey, lease, ex, outbox);
             handedBack = true;
             return 1;
         }
@@ -1245,6 +1245,18 @@ public sealed class RemoteTaskRunner
             shipper.Add("system",
                 $"[runner] mechanical-continuation decision={slot.ResumeDecision} reason={slot.ResumeRejectionReason ?? "none"} " +
                 $"inputSession={slot.InputSessionId ?? "none"}");
+        }
+        if (workspace.PushProtectionRecovery is { } pushProtection)
+        {
+            prompt += "\n\n## Retained worktree recovery required\n" +
+                      $"GitHub push protection rejected {pushProtection.SecretType} at " +
+                      $"{pushProtection.Path}:{pushProtection.Line}" +
+                      (pushProtection.Commit is null ? "" : $" in commit {pushProtection.Commit}") + ". " +
+                      "You are in the retained worktree. Remove every provider-shaped literal from the " +
+                      "unpushed commit history, build fake test credentials at runtime, and rewrite the " +
+                      "unpushed commit(s). Verify the offending value is absent from the commits before finishing. " +
+                      "Do not discard unrelated task work.\n";
+            shipper.Add("system", $"[runner] retained worktree recovery: {pushProtection.Summary}");
         }
         var specLine =
             $"[runner] spec cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
@@ -2105,6 +2117,10 @@ public sealed class RemoteTaskRunner
                     outbox.Authority.RunId,
                     shutdown);
             }
+            catch (WorktreeSalvageException ex) when (ex.PushProtection is not null)
+            {
+                throw;
+            }
             catch (WorktreeSalvageException ex) when (!shutdown.IsCancellationRequested)
             {
                 var delay = TimeSpan.FromSeconds(Math.Min(60, Math.Max(2, attempt * 5)));
@@ -2431,7 +2447,8 @@ public sealed class RemoteTaskRunner
     private async Task ReportUnsecuredWorktreeAsync(
         string taskKey,
         RunLeaseInfoDto lease,
-        WorktreeSalvageException ex)
+        WorktreeSalvageException ex,
+        DurableRunOutbox? outbox = null)
     {
         var failure = ex.InnerException?.Message.Replace('\r', ' ').Replace('\n', ' ').Trim()
                       ?? ex.Message;
@@ -2459,13 +2476,29 @@ public sealed class RemoteTaskRunner
         }
         try
         {
+            if (outbox is not null)
+            {
+                var completion = outbox.Enqueue("completion", JsonSerializer.Serialize(
+                    new DurableCompletionPayload(
+                        RunOutcomeKind.Blocked.ToString(),
+                        BuildUnsecuredWorktreeReason(ex),
+                        null,
+                        GateItems: [gate]),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+                await ReplayBeforeAsync(outbox, completion.Sequence, CancellationToken.None);
+                await _client.SendOutboxItemAsync(outbox.Authority, completion, CancellationToken.None);
+                outbox.Acknowledge(completion.Sequence);
+                outbox.RecordHandoffState("completed");
+                await ReportOutboxSafeAsync(outbox, CancellationToken.None);
+                return;
+            }
             await _client.CompleteRunAsync(new RemoteRunCompletionRequest(
                 taskKey,
                 lease.LeaseId,
                 lease.FencingToken,
                 _options.RunnerId,
                 RunOutcomeKind.Blocked.ToString(),
-                $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}.",
+                BuildUnsecuredWorktreeReason(ex),
                 _options.RunnerName,
                 AttemptId: lease.AttemptId,
                 AuthorityEpoch: lease.AuthorityEpoch,
@@ -2486,12 +2519,32 @@ public sealed class RemoteTaskRunner
                    $"retained local HEAD {ex.LocalCommitSha ?? "unknown"}";
         var failure = ex.InnerException?.Message.Replace('\r', ' ').Replace('\n', ' ').Trim()
                       ?? ex.Message;
+        if (ex.PushProtection is { } cause)
+        {
+            var location = $"{cause.Path}:{cause.Line}";
+            var commit = cause.Commit ?? ex.LocalCommitSha ?? "uncommitted staged diff";
+            var inspect = cause.Commit is null
+                ? $"git diff --cached -- '{cause.Path}'"
+                : $"git show {cause.Commit} -- '{cause.Path}'";
+            var rewrite = cause.Commit is null
+                ? $"replace the literal with a runtime-built fixture, then git add -- '{cause.Path}'"
+                : "replace the literal with a runtime-built fixture, then rewrite the unpushed commit(s) " +
+                  "with git commit --amend or git rebase -i before continuing";
+            var recipe = $"On {hostname}: cd '{ex.WorktreePath}' && git status --short && {inspect}; " +
+                         $"at {location}, {rewrite}. Continue the card after checking the unpushed history.";
+            return $"worktree-blocked: {cause.Summary}; host={hostname}; worktree={ex.WorktreePath}; " +
+                   $"branch={ex.Branch}; commit={commit}; path={location}; {refs}. Recovery recipe: {recipe}";
+        }
         var remediation = GitPushProbe.IsWorkflowScopeFailure(failure)
             ? GitPushProbe.WorkflowScopeFix()
             : "Restore origin push access, publish the retained HEAD to a new ref, then requeue.";
         return $"worktree-blocked: host={hostname}; worktree={ex.WorktreePath}; branch={ex.Branch}; " +
                $"{refs}; failure={failure}. No ref was overwritten. Recovery recipe: {remediation}";
     }
+
+    internal static string BuildUnsecuredWorktreeReason(WorktreeSalvageException ex)
+        => ex.PushProtection?.Summary
+           ?? $"Remote runner retained unsecured worktree at {ex.WorktreePath}; intended branch {ex.Branch}.";
 
     private async Task<bool> ReleaseAsync(
         RunLeaseInfoDto lease,

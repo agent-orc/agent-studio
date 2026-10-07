@@ -69,6 +69,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Completion contract: what a card must prove to claim "delivered", containment over stored records, the `next-attempt` placeholder, and the delivery-claim sweep (AGT-2817) | [concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817](../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817) |
 | Stale-branch sweep: all-namespace classification, reports, report-only vs reclaim, operator reclamation (AGT-2794) | [concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794](../concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
+| Decision cards: lifecycle, fields, decider, apply step, reminders, API, and migration | [operations/decision-cards.md](../operations/decision-cards.md) |
 | Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
@@ -184,6 +185,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
+| Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |

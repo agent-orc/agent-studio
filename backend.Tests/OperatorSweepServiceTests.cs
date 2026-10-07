@@ -122,14 +122,14 @@ public sealed class OperatorSweepServiceTests : IDisposable
         var stack = Build();
         var folder = SeedCard(stack, "AGT-9004", Sha('d'));
         // Two orchestrator reissues, an operator requeue (new epoch), one more
-        // orchestrator reissue: the orchestrator's epoch count says 1, the
-        // card has spent 3 of 4.
+        // orchestrator reissue: the lifetime count and card budget both see
+        // three spent rounds despite the epoch change.
         AppendOrchestratorReissue("AGT-9004");
         AppendOrchestratorReissue("AGT-9004");
         var requeue = new OperatorReviewRequeueService(_root, NullLogger<OperatorReviewRequeueService>.Instance);
         requeue.Apply(folder, "AGT-9004", Project, TaskStates.HumanReview, TaskStates.Ready, "retry", "human");
         AppendOrchestratorReissue("AGT-9004", epoch: 1);
-        Assert.Equal(1, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+        Assert.Equal(3, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
             ReviewDecisionLog.ReadAll(_root, Project), "AGT-9004"));
         SettleReview(stack, "AGT-9004", Sha('d'), ReviewTerminalOutcome.ProductFailure, suffix: "1");
 
@@ -138,7 +138,7 @@ public sealed class OperatorSweepServiceTests : IDisposable
         Assert.Equal(1, first.Acted);
         Assert.Contains("automatic round 4 of 4", Assert.Single(stack.Actions.FixRounds).FollowUp);
         // The orchestrator counts the sweep's round in its own budget.
-        Assert.Equal(2, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+        Assert.Equal(4, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
             ReviewDecisionLog.ReadAll(_root, Project), "AGT-9004"));
 
         // Another operator requeue opens a new epoch; the card budget stays spent.

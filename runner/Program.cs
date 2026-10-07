@@ -12,6 +12,12 @@ if (args is ["--version"])
     return 0;
 }
 
+// AGT-3005: every process this host starts, daemon or detached worker, inherits
+// the build-server fence, so no dotnet invocation it spawns can leave a reusable
+// MSBuild node or MSBuild server behind after its run.
+foreach (var (key, value) in WorkerBuildServerHygiene.Variables)
+    Environment.SetEnvironmentVariable(key, value);
+
 // AGT-2868 belt and braces: the worker environment already disables MSBuild node
 // reuse and the MSBuild server, so there should be nothing left to shut down.
 // Asking anyway costs one bounded command per attempt. Only the real detached
