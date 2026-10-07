@@ -49,9 +49,15 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   afterEach(() => {
-    http.verify();
-    history.replaceState(null, '', '/');
-    TestBed.resetTestingModule();
+    try {
+      // The additive task core read (AGT-2956) is covered by task-selection-core.spec.ts.
+      http.match(req => req.url.endsWith('/core'))
+        .forEach(req => req.flush(null, { status: 404, statusText: 'Not Found' }));
+      http.verify();
+    } finally {
+      history.replaceState(null, '', '/');
+      TestBed.resetTestingModule();
+    }
   });
 
   it('round-trips a canonical key without a watch path or URL normalization', () => {

@@ -57,6 +57,9 @@ public interface ITokenAggregator
     /// <summary>(project, time-bucket) cells for the workspace tokens timeline.</summary>
     TokenTimeline WorkspaceTimeline(IEnumerable<(string Name, string WatchPath)> projects, int windowHours, int bucketMinutes, DateTime? nowUtc = null);
 
+    /// <summary>Workspace timeline for an exact UTC calendar interval.</summary>
+    TokenTimeline WorkspaceTimelineRange(IEnumerable<(string Name, string WatchPath)> projects, DateTime fromUtc, DateTime toUtc, int bucketMinutes);
+
     /// <summary>Workspace-wide ad-hoc one-shot call rollup (TitleGen, SummaryGen, ...).</summary>
     AdHocUsageAggregate AdHocAggregate(DateTime? since = null);
 }

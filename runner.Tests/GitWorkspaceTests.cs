@@ -101,8 +101,7 @@ public sealed class GitWorkspaceTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, "QS-31", _ => { }, isProjectClone: true);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -129,6 +128,30 @@ public sealed class GitWorkspaceTests : IDisposable
         var probeRefs = await GitAsync(_origin, "for-each-ref", "--format=%(refname)",
             "refs/heads/runner/runner-test/delivery-preflight-*");
         Assert.Empty(probeRefs.StdOut);
+    }
+
+    // AGT-2985: on a fresh host the delivery preflight creates the shared clone
+    // before the first claim. A `--no-checkout` clone left an empty index there,
+    // so the first preparation saw every tracked file as a staged deletion and
+    // refused the "stable checkout with local changes" three times in a row.
+    [Fact]
+    public async Task Project_preflight_clone_is_a_stable_checkout_the_first_claim_can_prepare()
+    {
+        await SeedOriginAsync();
+        // A hosted repository's HEAD names its default branch; without it a
+        // clone checks nothing out either way and the defect stays hidden.
+        await GitAsync(_origin, "symbolic-ref", "HEAD", "refs/heads/main");
+        var preflight = await GitWorkspace.PreflightProjectAsync(
+            PreflightOptions(), "PROJ-016", _origin, "main", _ => { }, CancellationToken.None);
+        Assert.True(preflight.Succeeded, preflight.Detail);
+
+        var workspace = CreateProjectWorkspace(_origin);
+        Assert.Equal(string.Empty, (await GitAsync(workspace.SharedRepoPath, "status", "--porcelain")).StdOut);
+        await workspace.PrepareAsync(CancellationToken.None);
+
+        Assert.Equal("main", (await GitAsync(workspace.SharedRepoPath, "branch", "--show-current")).StdOut);
+        Assert.Equal(string.Empty, (await GitAsync(workspace.SharedRepoPath, "status", "--porcelain")).StdOut);
+        await workspace.TeardownAsync("Done", CancellationToken.None);
     }
 
     [Fact]
@@ -278,8 +301,7 @@ public sealed class GitWorkspaceTests : IDisposable
         var processTask = ProcessRunner.RunAsync(
             "/bin/sh",
             ["-c", "sleep 300 & wait"],
-            workingDirectory: workspace.RepoPath,
-            isolateProcessGroup: true);
+            workingDirectory: workspace.RepoPath);
         for (var attempt = 0;
              attempt < 100 && WorktreeProcessReaper.FindByCwd(workspace.RepoPath).Count == 0;
              attempt++)
@@ -816,8 +838,7 @@ public sealed class GitWorkspaceTests : IDisposable
             WorkDir = _workDir,
             StateDir = Path.Combine(_workDir, ".runner-state"),
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         },
             "AGT-2147",
             log ?? (_ => { }),
@@ -838,8 +859,7 @@ public sealed class GitWorkspaceTests : IDisposable
             GitPushRemote = "git@github.com-agentstudio:agent-orc/agent-studio.git",
             WorkDir = _workDir,
             BaseBranch = "main",
-            CliBin = "test",
-            CliArgs = "",
+            ClaudeCliBin = "test",
         }, "QS-30", log ?? (_ => { }), "PROJ-016", repositoryUrl, "main");
 
     private RunnerOptions PreflightOptions() => new()
@@ -851,8 +871,7 @@ public sealed class GitWorkspaceTests : IDisposable
         BackendName = "test",
         WorkDir = _workDir,
         BaseBranch = "main",
-        CliBin = "test",
-        CliArgs = "",
+        ClaudeCliBin = "test",
     };
 
     private async Task CommitFileAsync(string repo, string path, string content, string message)

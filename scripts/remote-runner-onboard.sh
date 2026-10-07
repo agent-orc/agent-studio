@@ -23,6 +23,12 @@ codex_cli_version="0.154.0"
 claude_cli_version="2.1.269"
 provider_auth_file="/etc/agent-runner/provider-auth.env"
 skip_auth=0
+host_record=""
+host_id=""
+coding_slots=2
+review_slots=2
+coding_slots_explicit=0
+review_slots_explicit=0
 
 usage() {
   cat <<'EOF'
@@ -44,6 +50,12 @@ Options:
   --minimum-version <v>   Minimum accepted package version (default: 0.5.0)
   --auth-token-file <p>   Protected Runner credential file already on the host
   --skip-auth             Do not launch login flows; status checks still run
+  --host-record <path>    Owned host record (host.json, AGT-W63 I03). Supplies the
+                          host id, role principal, token file, origins and the
+                          coding/review slot envelope; explicit flags must agree
+  --host-id <id>          Stable host identity written as RUNNER_HOSTNAME
+  --coding-slots <n>      Coding slots in the host envelope (default: 2)
+  --review-slots <n>      Review slots in the host envelope (default: 2)
   -h, --help              Show this help
 
 The Task Server URL is tested from the remote host before installation. A
@@ -73,10 +85,74 @@ while (($#)); do
     --runner-command) runner_command="${2:-}"; shift 2 ;;
     --minimum-version) minimum_version="${2:-}"; shift 2 ;;
     --skip-auth) skip_auth=1; shift ;;
+    --host-record) host_record="${2:-}"; shift 2 ;;
+    --host-id) host_id="${2:-}"; shift 2 ;;
+    --coding-slots) coding_slots="${2:-}"; coding_slots_explicit=1; shift 2 ;;
+    --review-slots) review_slots="${2:-}"; review_slots_explicit=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument '$1'. Run with --help." ;;
   esac
 done
+
+if [[ -n "$host_record" ]]; then
+  [[ -f "$host_record" ]] || die "--host-record '$host_record' does not exist."
+  command -v python3 >/dev/null || die "--host-record needs python3 on the controller."
+  # One owned record states the host facts; flags may repeat them but not disagree.
+  record_values="$(python3 - "$host_record" "$role" <<'HOST_RECORD'
+import json, sys
+record = json.load(open(sys.argv[1]))
+roles = record.get("roles") or []
+if not isinstance(roles, list):
+    sys.exit("host record roles must be a list")
+role = next((item for item in roles if isinstance(item, dict) and item.get("role") == sys.argv[2]), None)
+if role is None:
+    sys.exit(f"host record has no {sys.argv[2]} role")
+envelope = record["envelope"]
+for value in (record["serverUrl"], record["gitRemote"], record.get("gitPushRemote") or "",
+              role["principalId"], role["tokenFile"], role.get("name") or "", record["hostId"],
+              envelope["codingSlots"], envelope["reviewSlots"], role.get("clientId") or ""):
+    print(value)
+HOST_RECORD
+)" || die "--host-record could not be read."
+  mapfile -t record_fields <<<"$record_values"
+  adopt() {
+    local name="$1" value="$2"
+    local current="${!name}"
+    if [[ -n "$current" && "$current" != "$value" ]]; then
+      die "--${name//_/-} '$current' disagrees with host record value '$value'."
+    fi
+    [[ -z "$value" ]] || printf -v "$name" '%s' "$value"
+  }
+  adopt server_url "${record_fields[0]}"
+  adopt git_remote "${record_fields[1]}"
+  adopt git_push_remote "${record_fields[2]}"
+  adopt runner_id "${record_fields[3]}"
+  adopt auth_token_file "${record_fields[4]}"
+  if [[ -n "${record_fields[5]}" ]]; then
+    adopt runner_name "${record_fields[5]}"
+  else
+    [[ -z "$runner_name" ]] || die "--runner-name needs a name in the host record role."
+    runner_name="${record_fields[6]}-$role"
+  fi
+  adopt host_id "${record_fields[6]}"
+  adopt client_id "${record_fields[9]:-}"
+  if ((coding_slots_explicit)) && [[ "$coding_slots" != "${record_fields[7]}" ]]; then
+    die "--coding-slots '$coding_slots' disagrees with host record value '${record_fields[7]}'."
+  fi
+  if ((review_slots_explicit)) && [[ "$review_slots" != "${record_fields[8]}" ]]; then
+    die "--review-slots '$review_slots' disagrees with host record value '${record_fields[8]}'."
+  fi
+  coding_slots="${record_fields[7]}"
+  review_slots="${record_fields[8]}"
+fi
+[[ "$coding_slots" =~ ^[0-9]+$ ]] || die "--coding-slots must be a non-negative integer."
+[[ "$review_slots" =~ ^[0-9]+$ ]] || die "--review-slots must be a non-negative integer."
+if [[ "$role" == "coding" ]]; then
+  ((coding_slots > 0)) || die "the coding role needs at least one coding slot."
+else
+  ((review_slots > 0)) || die "the review role needs at least one review slot."
+fi
+[[ -z "$host_id" || "$host_id" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--host-id must be 1-64 characters of [A-Za-z0-9._-]."
 
 [[ -n "$host" ]] || die "--host is required."
 [[ -n "$server_url" ]] || die "--server is required."
@@ -380,8 +456,18 @@ if [[ "$role" == "review" ]]; then
     'guard_tmp="$(mktemp)"; trap '"'"'rm -f "$guard_tmp"'"'"' EXIT; cat >"$guard_tmp"; sudo install -d -m 0755 /usr/local/libexec; sudo install -m 0644 "$guard_tmp" /usr/local/libexec/agent-runner-review-restart-guard.conf' \
     <"$review_restart_guard"
 fi
+record_owned=0
+if [[ -n "$host_record" ]]; then
+  record_owned=1
+  # The record contains paths and principals, never tokens. Install it once as
+  # the desired source before rendering any role or resource setting.
+  "${ssh_base[@]}" -T "$host" \
+    'set -euo pipefail; record_tmp="$(mktemp)"; trap '"'"'rm -f "$record_tmp"'"'"' EXIT; cat >"$record_tmp"; sudo install -d -m 0755 /etc/agent-host; sudo install -m 0644 -o root -g root "$record_tmp" /etc/agent-host/host.json' \
+    <"$host_record"
+fi
 "${ssh_base[@]}" -T "$host" bash -s -- \
-  "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" <<'REMOTE_SYSTEMD'
+  "$server_url" "$client_id" "$runner_id" "$runner_name" "$role" "$git_remote" "$git_push_remote" "$runner_command" "$auth_token_file" "$service_auth" "$provider_auth_file" \
+  "$host_id" "$coding_slots" "$review_slots" "$record_owned" <<'REMOTE_SYSTEMD'
 set -euo pipefail
 server_url="$1"
 client_id="$2"
@@ -394,6 +480,10 @@ runner_command="$8"
 auth_token_file="$9"
 service_auth="${10}"
 provider_auth_file="${11}"
+host_id="${12}"
+coding_slots="${13}"
+review_slots="${14}"
+record_owned="${15}"
 restart_guard_source="/usr/local/libexec/agent-runner-review-restart-guard.conf"
 export PATH="$HOME/.dotnet/tools:$HOME/.local/bin:$PATH"
 runner_user="$(id -un)"
@@ -426,41 +516,62 @@ fi
 
 env_tmp="$(mktemp)"
 unit_tmp="$(mktemp)"
-trap 'rm -f "$env_tmp" "$unit_tmp"' EXIT
+render_dir="$(mktemp -d)"
+trap 'rm -f "$env_tmp" "$unit_tmp"; rm -rf "$render_dir"' EXIT
 chmod 600 "$env_tmp"
-{
+if [[ "$record_owned" == 1 ]]; then
+  "$runner_bin" host-record render --record /etc/agent-host/host.json --out-dir "$render_dir" >/dev/null
+  rendered_env="$render_dir/$(basename "$env_file")"
+  [[ -f "$rendered_env" && -f "$render_dir/profile.conf" ]] || {
+    echo '[remote] Host record did not render the requested role and profile.' >&2
+    exit 51
+  }
+  # Refuse a malformed resource value before replacing the live profile or
+  # removing an older unit override.
+  sudo /usr/local/libexec/agent-host-resource-governance \
+    --role "$role" --coding-slots "$coding_slots" --review-slots "$review_slots" \
+    --profile "$render_dir/profile.conf" >/dev/null
+  cp "$rendered_env" "$env_tmp"
+  sudo install -m 0644 -o root -g root "$render_dir/profile.conf" /etc/agent-host/profile.conf
+  resource_mode=(--replace-drop-in-resources)
+else
+  resource_mode=(--migrate-drop-ins)
+  {
   printf 'RUNNER_SERVER_URL=%s\n' "$server_url"
   [[ -z "$client_id" ]] || printf 'RUNNER_CLIENT_ID=%s\n' "$client_id"
   printf 'RUNNER_ID=%s\n' "$runner_id"
   printf 'RUNNER_NAME=%s\n' "$runner_name"
   printf 'RUNNER_ROLE=%s\n' "$role"
-  printf 'RUNNER_CLI_BIN=/usr/local/bin/claude\n'
-  printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
+  # A pinned host id keeps the enrolled identity across restarts and renames.
+  [[ -z "$host_id" ]] || printf 'RUNNER_HOSTNAME=%s\n' "$host_id"
+  printf 'RUNNER_CLI_TYPE=claude\n'
   printf 'RUNNER_CLAUDE_CLI_BIN=/usr/local/bin/claude\n'
+  printf 'RUNNER_CODEX_CLI_BIN=/usr/local/bin/codex\n'
   [[ "$service_auth" == 1 ]] && printf 'RUNNER_AUTH_TOKEN_FILE=%s\n' "$auth_token_file"
   printf 'RUNNER_GIT_REMOTE=%s\n' "$git_remote"
   [[ -z "$git_push_remote" ]] || printf 'RUNNER_GIT_PUSH_REMOTE=%s\n' "$git_push_remote"
   printf 'RUNNER_WORKDIR=%s/work\n' "$service_root"
   [[ "$role" != "review" ]] || printf 'RUNNER_REVIEW_WORKDIR=%s/review-work\n' "$service_root"
   printf 'RUNNER_STATE_DIR=%s/state\n' "$service_root"
-  printf 'RUNNER_MAX_PARALLELISM=2\n'
-  # AGT-2866: each role declares only the OTHER role's slot count. Its own
-  # count is RUNNER_MAX_PARALLELISM above, so a sanctioned parallelism change
-  # moves the per-worker envelope with it instead of leaving a stale number.
+  # AGT-W63 I03: both role files are written from the same host envelope, so
+  # each declares both counts and an inherited value cannot leak into either.
   if [[ "$role" == "coding" ]]; then
-    printf 'RUNNER_HOST_REVIEW_SLOTS=2\n'
+    printf 'RUNNER_MAX_PARALLELISM=%s\n' "$coding_slots"
   else
-    printf 'RUNNER_HOST_CODING_SLOTS=2\n'
+    printf 'RUNNER_MAX_PARALLELISM=%s\n' "$review_slots"
   fi
-} >"$env_tmp"
+  printf 'RUNNER_HOST_CODING_SLOTS=%s\n' "$coding_slots"
+  printf 'RUNNER_HOST_REVIEW_SLOTS=%s\n' "$review_slots"
+  } >"$env_tmp"
+fi
 
 resource_policy="$(sudo /usr/local/libexec/agent-host-resource-governance \
   --role "$role" \
-  --coding-slots 2 \
-  --review-slots 2 \
+  --coding-slots "$coding_slots" \
+  --review-slots "$review_slots" \
   --profile /etc/agent-host/profile.conf \
   --drop-in-dir "/etc/systemd/system/${service_name}.service.d" \
-  --migrate-drop-ins)"
+  "${resource_mode[@]}")"
 
 cat >"$unit_tmp" <<EOF
 [Unit]

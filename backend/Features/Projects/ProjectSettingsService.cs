@@ -123,6 +123,33 @@ public class ProjectSettingsService
         }
     }
 
+    /// <summary>
+    /// AGT-3011: pause or resume one operator sweep for one project. The sweep
+    /// id is validated by the calling boundary; resuming a sweep that is not
+    /// paused is a no-op write.
+    /// </summary>
+    public void SetOperatorSweepPaused(
+        string projectName, string sweep, bool paused, string actor, string? reason, DateTime nowUtc)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            var pauses = (current.OperatorSweepPauses ?? [])
+                .Where(item => !string.Equals(item.Sweep, sweep, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (paused)
+                pauses.Add(new OperatorSweepPause(
+                    sweep,
+                    nowUtc,
+                    string.IsNullOrWhiteSpace(actor) ? "operator" : actor.Trim(),
+                    string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()));
+            _cache[key] = current with { OperatorSweepPauses = pauses.Count == 0 ? null : pauses };
+            Persist();
+        }
+    }
+
     public void SetAutoTag(string projectName, bool enabled)
     {
         EnsureLoaded();
@@ -131,6 +158,21 @@ public class ProjectSettingsService
             var key = ResolveAliasLocked(projectName);
             var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
             _cache[key] = current with { AutoTag = enabled };
+            Persist();
+        }
+    }
+
+    public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.IsValid || !options.DocumentationOnly)
+            throw new ArgumentException("The pilot requires valid documentation-only thresholds.", nameof(options));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { BatchGate = options };
             Persist();
         }
     }
@@ -772,24 +814,16 @@ public class ProjectSettingsService
         }
     }
 
-    /// <summary>
-    /// Sets or clears the per-project local CLI execution-engine override.
-    /// Blank clears the override; unknown non-blank values are rejected.
-    /// </summary>
-    public void SetCliExecutionEngine(string projectName, string? executionEngine)
+    public void SetChatMetadataEnabled(string projectName, bool? enabled)
     {
-        var normalized = CliExecutionEngines.NormalizeOverride(executionEngine);
         EnsureLoaded();
         lock (_lock)
         {
             var key = ResolveAliasLocked(projectName);
-            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
-            _cache[key] = current with { CliExecutionEngine = normalized };
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { ChatMetadataEnabled = enabled };
             Persist();
         }
-        _logger.LogInformation(
-            "CLI execution-engine override set to {ExecutionEngine} for project {Project}",
-            normalized ?? "(workspace/default)", projectName);
     }
 
     /// <summary>

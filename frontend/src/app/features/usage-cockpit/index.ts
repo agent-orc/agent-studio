@@ -1,17 +1,50 @@
-/** Header usage cockpit public API (HUC-S2, HUC-S4). Cycle 9h / ADR-0034. */
+/** Header usage cockpit public API (HUC-S2 to HUC-S5). Cycle 9h / ADR-0034. */
 export { UsageCliChipComponent } from './components/usage-cli-chip/usage-cli-chip';
 export { UsageCostChipComponent } from './components/usage-cost-chip/usage-cost-chip';
-export { UsageSlotChipComponent } from './components/usage-slot-chip/usage-slot-chip';
+export { UsageCockpitHostComponent } from './components/usage-cockpit-host/usage-cockpit-host';
 export { UsageCockpitHeaderComponent } from './components/usage-cockpit-header/usage-cockpit-header';
 export type { CockpitNavItem, UsageDetailRequest } from './components/usage-cockpit-header/usage-cockpit-header';
 export { UsageCockpitService, USAGE_COCKPIT_REFRESH_MS } from './services/usage-cockpit.service';
-export {
-  cliAbbreviation,
-  headerTierForWidth,
-  orderClis,
-  planUsageHeader,
-} from './usage-header-layout';
+export { cliAbbreviation, headerTierForWidth, orderClis, planUsageHeader } from './usage-header-layout';
 export type { HeaderTier, UsageChipFit, UsageHeaderMeasures, UsageHeaderPlan } from './usage-header-layout';
+export { UsageSlotChipComponent } from './components/usage-slot-chip/usage-slot-chip';
+export { UsageAlarmStatusComponent } from './components/usage-alarm-status/usage-alarm-status';
+export { UsageAlarmStateService } from './state/usage-alarm-state.service';
+export {
+  alarmsForSource,
+  EMPTY_USAGE_ALARM_STATE,
+  hiddenProviderAlarms,
+  isTrustedQuotaSample,
+  observeCli,
+  observeCost,
+  observeSnapshot,
+  QUOTA_WARNING_ABOVE_PCT,
+  reduceUsageAlarms,
+} from './usage-alarm.policy';
+export type {
+  UsageAlarm,
+  UsageAlarmKind,
+  UsageAlarmSeverity,
+  UsageAlarmState,
+  UsageAlarmStep,
+  UsageSourceObservation,
+} from './usage-alarm.policy';
+export { UsageDetailPanelComponent } from './components/usage-detail-panel/usage-detail-panel';
+export {
+  UsageDetailSurfaceComponent,
+  USAGE_PHONE_QUERY,
+  USAGE_TRIGGER_ATTR,
+  usageTriggerKey,
+} from './components/usage-detail-surface/usage-detail-surface';
+export {
+  buildUsageDetailView,
+  CLI_MANAGEMENT_HREF,
+  ledgerHref,
+  describeLedgerScope,
+  ledgerScopeFromHash,
+  UNKNOWN,
+} from './usage-detail.util';
+export type { UsageDetailFocus, UsageDetailView, UsageLedgerScope } from './usage-detail.util';
 export {
   buildCliChipView,
   buildCostChipView,
@@ -25,6 +58,7 @@ export {
   NOT_AVAILABLE,
 } from './usage-chip.util';
 export type {
+  UsageChipAlarm,
   UsageChipState,
   UsageCliChipView,
   UsageCostChipView,

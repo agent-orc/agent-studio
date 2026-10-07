@@ -216,7 +216,7 @@ public class OrchestratorPromptUserPreferencesTests : IDisposable
     private sealed class StubOrchestratorRunner : OrchestratorRunner
     {
         public StubOrchestratorRunner()
-            : base(claude: null!, logger: NullLogger<OrchestratorRunner>.Instance,
+            : base(logger: NullLogger<OrchestratorRunner>.Instance,
                 parsers: null, modelRegistry: null, oneShotRegistry: null)
         {
         }

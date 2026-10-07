@@ -68,6 +68,9 @@ public static class TaskPipelineEndpoints
             // stays explicitly missing instead of silently becoming zero.
             var tokensByModel = PipelineCostCalculator.SummarizeByModel(
                 record, sessionEvents, taskTokens);
+            // What deciding cost on this card against what its agent runs
+            // cost, over every attempt, with the unpriced share stated.
+            var decisionCost = PipelineCostCalculator.SummarizeDecisionCost(record, projected.LedgerCalls);
             var execution = AspectConcernReader.Enrich(record, info.FolderPath);
 
             var resultFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -156,6 +159,7 @@ public static class TaskPipelineEndpoints
                 execution,
                 cost,
                 tokensByModel,
+                decisionCost,
                 config,
                 resultFiles,
                 aspectEvidence,

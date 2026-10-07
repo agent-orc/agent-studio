@@ -145,6 +145,7 @@
           </section>
         } @else if (effectiveProject()) {
           <section class="sheet__chat">
+            <app-orchestrator-chat-usage-header [turns]="turns()" [project]="effectiveProject()" />
             <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
               <cac-conversation-view
                 variant="embedded"

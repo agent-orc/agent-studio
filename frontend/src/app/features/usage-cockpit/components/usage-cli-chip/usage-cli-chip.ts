@@ -3,6 +3,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 
 import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import type { UsageCli } from '../../models/usage-cockpit.model';
+import type { UsageAlarm } from '../../usage-alarm.policy';
 import { buildCliChipView } from '../../usage-chip.util';
 import { cliAbbreviation, type UsageChipFit } from '../../usage-header-layout';
 import { injectUsageClock } from '../../usage-clock';
@@ -36,6 +37,12 @@ export class UsageCliChipComponent {
   readonly expanded = input(false);
   /** Id of the detail dialog this chip opens. */
   readonly controls = input<string | null>(null);
+  /** Latched quota and provider alarms. */
+  readonly alarms = input<readonly UsageAlarm[]>([]);
+  /** Nonnumeric alarms for CLI chips hidden by the responsive fit. */
+  readonly hiddenAlarms = input<readonly UsageAlarm[]>([]);
+  readonly compact = input(false);
+  readonly readFailed = input(false);
 
   /**
    * Header fit (HUC-S4). `compact` and narrower show the weekly window only;
@@ -48,7 +55,8 @@ export class UsageCliChipComponent {
 
   private readonly clock = injectUsageClock();
 
-  readonly view = computed(() => buildCliChipView(this.cliId(), this.cli(), this.timeZone(), this.now() ?? this.clock()));
+  readonly view = computed(() => buildCliChipView(
+    this.cliId(), this.cli(), this.timeZone(), this.now() ?? this.clock(), this.alarms(), this.hiddenAlarms(), this.readFailed()));
 
   readonly visibleName = computed(() => {
     const fit = this.fit();
@@ -57,6 +65,6 @@ export class UsageCliChipComponent {
 
   readonly windows = computed(() => {
     const v = this.view();
-    return this.fit() === 'full' ? [v.weekly, v.session] : [v.weekly];
+    return this.compact() || this.fit() !== 'full' ? [v.weekly] : [v.weekly, v.session];
   });
 }

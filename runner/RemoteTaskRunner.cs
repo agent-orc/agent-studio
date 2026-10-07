@@ -19,6 +19,7 @@ using AgentStudio.TaskServer.Contracts;
 public sealed class RemoteTaskRunner
 {
     internal const int MaxEnvironmentPreparationAttempts = 3;
+    private const int MaxArtifactTransferAttempts = 3;
 
     private readonly RunnerOptions _options;
     private readonly TaskServerClient _client;
@@ -262,7 +263,7 @@ public sealed class RemoteTaskRunner
     /// Inventory whatever evidence the stopped run already wrote without
     /// allowing result-file I/O to block the code handoff. The empty manifest
     /// remains a valid immutable-envelope identity; the inventory failure is
-    /// reported after delivery as a partial artifact outcome.
+    /// reported before settlement as a partial artifact outcome.
     /// </summary>
     private async Task<ArtifactTransferPlan> PrepareResultsSafeAsync(
         string taskKey,
@@ -653,7 +654,7 @@ public sealed class RemoteTaskRunner
                 string.Equals(candidate.AttemptId, slot.AttemptId, StringComparison.Ordinal)) ?? slot;
             var continuationEntry = epicPlanning ? null : SessionContinuationEvidence.Build(
                 currentSlot, workspace, teardown, _options.Hostname,
-                AgentCliProcess.Resolve(_options, currentSlot.RunSpec).CliType) with
+                CliSelection.Resolve(_options, currentSlot.RunSpec).CliType) with
                 { FallbackReason = mechanicalFallbackReason };
             if (finalizationRetries > 0)
             {
@@ -665,6 +666,12 @@ public sealed class RemoteTaskRunner
                 shipper.Add("system", delivered);
                 await shipper.FlushAsync(stopRun.Token);
             }
+            // Artifacts and their partial-transfer receipt are run writes. They
+            // must finish while this attempt is leased: settling first turns a
+            // later upload into a fenced 409 and loses otherwise eligible
+            // evidence. Transfer faults remain non-fatal for the code handoff.
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
+
             if (outbox is not null)
             {
                 // The isolated checkout has now either been removed after a
@@ -711,7 +718,11 @@ public sealed class RemoteTaskRunner
                     completion,
                     stopRun.Token);
                 outbox.Acknowledge(completion.Sequence);
-                outbox.RecordHandoffState("completed", envelopeDigest);
+                outbox.RecordHandoffState(
+                    outbox.Snapshot.FinalHandoffState == "artifact-replay"
+                        ? "artifact-replay"
+                        : "completed",
+                    envelopeDigest);
                 await ReportOutboxSafeAsync(outbox, stopRun.Token);
             }
             else
@@ -737,7 +748,6 @@ public sealed class RemoteTaskRunner
                 + (finalizationRetries > 0
                     ? $"; finalizationRetries={finalizationRetries}"
                     : string.Empty));
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             return outcome.Kind is RunOutcomeKind.Done or RunOutcomeKind.NoOp ? 0 : 1;
         }
         catch (DetachedWorkerLostException ex)
@@ -878,6 +888,7 @@ public sealed class RemoteTaskRunner
                 taskKey, outbox?.Authority.RunId ?? lease.AttemptId ?? lease.LeaseId,
                 artifactLimits, outbox);
             artifactManifest = artifactPlan?.Manifest;
+            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             await CompleteAsync(
                 taskKey,
                 lease,
@@ -892,7 +903,6 @@ public sealed class RemoteTaskRunner
                 sourceMutated,
                 CancellationToken.None);
             handedBack = true;
-            await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
             _log($"task '{taskKey}' handed back after an operator stop: {outcome.Kind}");
             return 0;
         }
@@ -1012,6 +1022,7 @@ public sealed class RemoteTaskRunner
                         && artifactManifest is not null)
                     {
                         outcomeDecision = WithDurableOutput(outcomeDecision, teardown);
+                        await TransferResultsSafeAsync(taskKey, lease, artifactPlan, shipper, outbox);
                         await CompleteOrReconcileAsync(
                             taskKey,
                             lease,
@@ -1195,12 +1206,9 @@ public sealed class RemoteTaskRunner
                 : $"[runner] claimed follow-up claim={acknowledgedFollowUp.ClaimId ?? "legacy"} mode={acknowledgedFollowUp.Mode} hash={acknowledgedFollowUp.PromptSha256} delivered as this run's prompt");
         }
 
-        // T0b proof line: which CLI, model and reasoning level this run actually
-        // starts with, and whether that came from the card's spec or from the
-        // host's RUNNER_CLI_* fallback. This is the line the migration's operating
-        // evidence is filtered on, so it is written to the journal as well as to
-        // the task's shipped log.
-        var invocation = AgentCliProcess.Resolve(_options, runSpec);
+        // Record the effective typed provider selection in the durable journal
+        // and the task's shipped log.
+        var invocation = CliSelection.Resolve(_options, runSpec);
         if (!string.IsNullOrWhiteSpace(slot.FreshRunReason))
         {
             slot = _state.Save(slot with
@@ -1212,12 +1220,10 @@ public sealed class RemoteTaskRunner
         }
         else if (slot.MechanicalDelta is not null)
         {
-            var continuation = _options.ExecEngine == RunnerOptions.ExecEngineCar
-                ? await MechanicalSessionContinuation.DecideAsync(
-                    slot, workspace, invocation.CliType,
-                    CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode),
-                    _options.Hostname, shutdown)
-                : (SessionId: (string?)null, Reason: (string?)"unsupported-engine", DeltaPrompt: (string?)null);
+            var continuation = await MechanicalSessionContinuation.DecideAsync(
+                slot, workspace, invocation.CliType,
+                CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode),
+                _options.Hostname, shutdown);
             if (continuation.SessionId is not null)
             {
                 prompt = continuation.DeltaPrompt!;
@@ -1249,15 +1255,11 @@ public sealed class RemoteTaskRunner
             (invocation.Note is null ? "" : $" note={invocation.Note}");
         _log(specLine);
         shipper.Add("system", specLine);
-        // Plan §4 (Beobachtbarkeit): the engine line is the proof of which
-        // execution path a run took and the filter for the T3 operating
-        // evidence. The legacy engine keeps its historical spawning line.
-        var engineLine = _options.ExecEngine == RunnerOptions.ExecEngineCar
-            ? $"[runner] engine=car cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
-              $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
-              $"permission={CodingAgentRunner.Model.CliPermissionModes.Normalize(runSpec?.PermissionMode)} " +
-              $"context={CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode)}"
-            : $"[runner] spawning {invocation.FileName} {string.Join(' ', invocation.Arguments)}";
+        // Keep an explicit CAR marker for the execution boundary.
+        var engineLine = $"[runner] engine=car cli={invocation.CliType} model={invocation.Model ?? "<cli-default>"} " +
+                         $"thinking={invocation.ThinkingLevel ?? "<cli-default>"} " +
+                         $"permission={CodingAgentRunner.Model.CliPermissionModes.Normalize(runSpec?.PermissionMode)} " +
+                         $"context={CodingAgentRunner.Model.CliContextModes.Normalize(runSpec?.ContextMode)}";
         _log(engineLine);
         shipper.Add("system", engineLine);
         slot = _state.Save(slot with
@@ -1360,7 +1362,7 @@ public sealed class RemoteTaskRunner
         Func<bool>? operatorStopRequested = null)
     {
         var process = DurableAgentProcess.Attach(slot);
-        var activeInvocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+        var activeInvocation = CliSelection.Resolve(_options, slot.RunSpec);
         ProviderAuthProbe.Shared.RecordRunStarted(activeInvocation.FileName);
         var providerRunRecorded = true;
         var sequence = slot.LastOutputSequence;
@@ -1398,7 +1400,7 @@ public sealed class RemoteTaskRunner
                     providerRunRecorded = false;
                     ReportWorkerEnvelope(slot, shipper);
                     var processResult = ProcessResultFrom(result);
-                    var invocation = AgentCliProcess.Resolve(_options, slot.RunSpec);
+                    var invocation = CliSelection.Resolve(_options, slot.RunSpec);
                     var classified = result.TimedOut
                         ? ClassifyTimedOutResult(slot.Lease, workspace, result, sameSessionResumeAttempts)
                         : ClassifyProcessResult(
@@ -1474,15 +1476,7 @@ public sealed class RemoteTaskRunner
                         && sameSessionResumeAttempts < ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts)
                     {
                         var sessionId = classified.Decision.RawFacts.SessionId!;
-                        // The car engine resumes through CliRunRequest.ResumeSessionId
-                        // (the descriptor knows the handshake); the legacy engine keeps
-                        // substituting RUNNER_CLI_RESUME_ARGS. The gate stays the same
-                        // on both engines: no configured resume template, no resume.
-                        var carEngine = _options.ExecEngine == RunnerOptions.ExecEngineCar;
-                        var resumeArgs = carEngine
-                            ? null
-                            : _options.CliResumeArgs!
-                                .Replace("{sessionId}", sessionId, StringComparison.Ordinal);
+                        // CAR resumes through the typed ResumeSessionId field.
                         shipper.Add(
                             "system",
                             $"[runner] bounded same-session resume 1/{ExecutionOutcomeAdapter.MaxSameSessionResumeAttempts}; session={sessionId}");
@@ -1500,13 +1494,9 @@ public sealed class RemoteTaskRunner
                             workspace.RepoPath,
                             "Continue the interrupted attempt from the durable workspace state. Complete the requested work, verify it, and end with exactly one required [[TASK_*]] terminal sentinel.",
                             ResultsDir(slot.TaskKey),
-                            resumeArgs is null ? null : AgentCliProcess.SplitArgs(resumeArgs),
-                            // RUNNER_CLI_RESUME_ARGS carries only the resume
-                            // handshake; the card's model / reasoning selection
-                            // must survive the second attempt too.
-                            resumeSlot.RunSpec,
+                            runSpec: resumeSlot.RunSpec,
                             runId: resumeSlot.AttemptId,
-                            resumeSessionId: carEngine ? sessionId : null,
+                            resumeSessionId: sessionId,
                             cleanContextKey: resumeSlot.TaskKey,
                             // The resumed attempt is the same run and keeps the
                             // same preparation cache binding, which a reattaching
@@ -1689,21 +1679,12 @@ public sealed class RemoteTaskRunner
         ProcessResult result,
         bool launchFailed,
         int sameSessionResumeAttempts,
-        AgentCliProcess.CliInvocation? invocation = null)
+        CliSelection.Selection? invocation = null)
     {
         var provider = ProviderOutputEvidenceExtractor.Extract(result.StdOut);
-        // Resume stays gated on a configured RUNNER_CLI_RESUME_ARGS on BOTH
-        // engines, even though the CAR descriptor could resume from the session
-        // id alone. Production leaves that variable unset, so lifting the gate
-        // here would make runs resume that never resumed before - a third
-        // behaviour jump on top of the two T1 ships. It belongs to T2/T3, with a
-        // parity scenario (P12) behind it.
         var sessionState = !string.IsNullOrWhiteSpace(provider.SessionId)
-                           && !string.IsNullOrWhiteSpace(_options.CliResumeArgs)
             ? ExecutionSessionState.Resumable
-            : string.IsNullOrWhiteSpace(provider.SessionId)
-                ? ExecutionSessionState.Unsupported
-                : ExecutionSessionState.Active;
+            : ExecutionSessionState.Unsupported;
         var factsAfterExit = BuildProcessFacts(
             lease,
             workspace,
@@ -1878,13 +1859,25 @@ public sealed class RemoteTaskRunner
                 _log($"artifact-transfer outcome=ArtifactTooLarge task={taskKey} {fact}");
                 shipper.Add("system", $"[runner] {fact}");
             }
+            catch (ArtifactUploadFailedException ex)
+            {
+                var issue = new ArtifactTransferIssue(
+                    file.RelativePath,
+                    file.SizeBytes,
+                    $"upload failed after {ex.Attempts} attempt(s) ({OneLine(ex.InnerException?.Message ?? ex.Message)})",
+                    ArtifactTransferOutcomes.TransferFailed,
+                    ex.Attempts);
+                issues.Add(issue);
+                _log($"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} {ArtifactFact(issue)}");
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 var issue = new ArtifactTransferIssue(
                     file.RelativePath,
                     file.SizeBytes,
                     $"upload failed ({OneLine(ex.Message)})",
-                    ArtifactTransferOutcomes.TransferFailed);
+                    ArtifactTransferOutcomes.TransferFailed,
+                    Attempts: 1);
                 issues.Add(issue);
                 _log($"artifact-transfer outcome=ArtifactTransferFailed task={taskKey} {ArtifactFact(issue)}");
             }
@@ -1913,17 +1906,20 @@ public sealed class RemoteTaskRunner
         var reportFailed = false;
         if (issues.Count > 0)
         {
+            var report = new ArtifactTransferReportRequest(
+                taskKey,
+                "partial",
+                issues,
+                lease.RunnerId,
+                lease.LeaseId,
+                lease.FencingToken,
+                lease.AttemptId);
+            outbox?.RecordPendingArtifactReport(report);
             try
             {
                 await shipper.FlushAsync(CancellationToken.None);
-                await _client.ReportArtifactTransferAsync(new ArtifactTransferReportRequest(
-                    taskKey,
-                    "partial",
-                    issues,
-                    lease.RunnerId,
-                    lease.LeaseId,
-                    lease.FencingToken,
-                    lease.AttemptId), CancellationToken.None);
+                await _client.ReportArtifactTransferAsync(report, CancellationToken.None);
+                outbox?.ClearPendingArtifactReport();
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1934,7 +1930,11 @@ public sealed class RemoteTaskRunner
         if (reportFailed || issues.Any(issue => issue.Outcome == ArtifactTransferOutcomes.TransferFailed))
         {
             outbox?.RecordHandoffState("artifact-replay");
-            _log($"artifact replay retained task={taskKey} attempt={lease.AttemptId}");
+            _log($"artifact transfer remains partial task={taskKey} attempt={lease.AttemptId}");
+        }
+        else if (outbox?.Snapshot.FinalHandoffState == "artifact-replay")
+        {
+            outbox.RecordHandoffState("transferring");
         }
         _log($"artifact-transfer task={taskKey} artifacts={(issues.Count == 0 ? "complete" : "partial")} uploaded={uploaded} notTransferred={issues.Count}");
     }
@@ -1942,23 +1942,35 @@ public sealed class RemoteTaskRunner
     private async Task<ArtifactIngestResponse?> UploadArtifactWithRetryAsync(
         ArtifactIngestRequest request)
     {
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1; attempt <= MaxArtifactTransferAttempts; attempt++)
         {
             try
             {
                 return await _client.UploadArtifactsAsync(request, CancellationToken.None);
             }
-            catch (Exception ex) when (attempt < 3 && IsRetryableArtifactFault(ex))
+            catch (Exception ex) when (attempt < MaxArtifactTransferAttempts && IsRetryableArtifactFault(ex))
             {
-                _log($"artifact upload retry task={request.TaskKey} attempt={attempt + 1}/3 reason={OneLine(ex.Message)}");
+                _log($"artifact upload retry task={request.TaskKey} attempt={attempt + 1}/{MaxArtifactTransferAttempts} reason={OneLine(ex.Message)}");
                 await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt));
             }
+            catch (Exception ex) when (IsRetryableArtifactFault(ex))
+            {
+                throw new ArtifactUploadFailedException(attempt, ex);
+            }
         }
+
+        throw new InvalidOperationException("Artifact upload retry loop exited without a result.");
     }
 
     private static bool IsRetryableArtifactFault(Exception exception)
         => exception is HttpRequestException or TimeoutException
            || exception is TaskServerException { StatusCode: 408 or 429 or >= 500 };
+
+    private sealed class ArtifactUploadFailedException(int attempts, Exception innerException)
+        : Exception("Artifact upload retry budget was exhausted.", innerException)
+    {
+        public int Attempts { get; } = attempts;
+    }
 
     internal static List<(string FullPath, string RelativePath, long SizeBytes)> ObserveResultFiles(
         string resultsDirectory)
@@ -2196,11 +2208,40 @@ public sealed class RemoteTaskRunner
         IReadOnlyList<string>? gateItems = null,
         SessionContinuationLedgerEntry? sessionContinuation = null)
     {
+        var request = BuildCompletionRequest(
+            _options, taskKey, lease, outcome, outcomeDecision, teardown, repository, baseSha,
+            integrationBranch, artifactManifestDigest, outputLines, sourceMutated, gateItems,
+            sessionContinuation);
+        var resp = await _client.CompleteRunAsync(request, ct);
+        _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(request.ImmutableResultRef is null ? "absent" : "attached")}");
+    }
+
+    /// <summary>
+    /// The fenced completion exactly as the runner sends it. Shared with the
+    /// legacy-plane completion contract test (AGT-2985), which must post the
+    /// production shape rather than a hand-built one.
+    /// </summary>
+    internal static RemoteRunCompletionRequest BuildCompletionRequest(
+        RunnerOptions options,
+        string taskKey,
+        RunLeaseInfoDto lease,
+        RunOutcome outcome,
+        ExecutionOutcomeDecision outcomeDecision,
+        WorktreeTeardownResult teardown,
+        string? repository,
+        string? baseSha,
+        string integrationBranch,
+        string? artifactManifestDigest,
+        IReadOnlyList<string> outputLines,
+        bool sourceMutated,
+        IReadOnlyList<string>? gateItems = null,
+        SessionContinuationLedgerEntry? sessionContinuation = null)
+    {
         var (envelopeBaseSha, envelopeResultRef, envelopeManifestDigest) =
             BuildEnvelopeCompletionFields(teardown, baseSha, artifactManifestDigest);
-        var resp = await _client.CompleteRunAsync(new RemoteRunCompletionRequest(
-            taskKey, lease.LeaseId, lease.FencingToken, _options.RunnerId,
-            outcome.Kind.ToString(), outcome.Reason, _options.RunnerName,
+        return new RemoteRunCompletionRequest(
+            taskKey, lease.LeaseId, lease.FencingToken, options.RunnerId,
+            outcome.Kind.ToString(), outcome.Reason, options.RunnerName,
             SalvageBranch: teardown.Branch,
             SalvageCommitSha: teardown.CommitSha,
             SalvageBranchUrl: teardown.BranchUrl,
@@ -2226,8 +2267,7 @@ public sealed class RemoteTaskRunner
             IntegrationBranch: integrationBranch,
             NeedsInputMessage: outcome.NeedsInputMessage,
             GateItems: gateItems,
-            SessionContinuation: sessionContinuation), ct);
-        _log($"remote-runner-completion recorded: outcome {resp?.Outcome}, state {resp?.TargetState}, result-envelope {(envelopeResultRef is null ? "absent" : "attached")}");
+            SessionContinuation: sessionContinuation);
     }
 
     private async Task CompleteOrReconcileAsync(

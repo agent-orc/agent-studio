@@ -20,6 +20,8 @@ export class UsageCockpitService {
 
   private readonly snapshotSignal = signal<UsageCockpitResponse | null>(null);
   readonly snapshot = this.snapshotSignal.asReadonly();
+  private readonly readFailedSignal = signal(false);
+  readonly readFailed = this.readFailedSignal.asReadonly();
 
   private workspaceId: string | null = null;
   private timer: VisibleIntervalHandle | null = null;
@@ -49,6 +51,7 @@ export class UsageCockpitService {
     if (workspaceId === this.workspaceId) return;
     this.workspaceId = workspaceId;
     this.snapshotSignal.set(null);
+    this.readFailedSignal.set(false);
     if (this.consumers > 0) this.refresh();
   }
 
@@ -62,9 +65,10 @@ export class UsageCockpitService {
         if (requested !== this.workspaceId) return;
         if (requested && snapshot.workspaceId && snapshot.workspaceId !== requested) return;
         this.snapshotSignal.set(snapshot);
+        this.readFailedSignal.set(false);
       },
-      // Keep the last good snapshot; each chip ages it into its stale state.
-      error: () => undefined,
+      // Keep the last good snapshot but mark it stale; a failed first read is unavailable.
+      error: () => this.readFailedSignal.set(true),
     });
   }
 }

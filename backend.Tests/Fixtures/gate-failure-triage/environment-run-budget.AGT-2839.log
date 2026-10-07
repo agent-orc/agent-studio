@@ -1,0 +1,515 @@
+verdict=Fail exit=-1 durationMs=1800161
+expectedSha=c5c80e25c81cba8808add3532ea84510ad644285 testedSha=c5c80e25c81cba8808add3532ea84510ad644285
+reason=`dotnet test "task-server.Tests/TaskServer.Tests.csproj" --filter Category!=MachineBound` violated gate-run budget (limit=1800000ms, consumed=1800164ms, phase=verification); evidence: ...erver.dll AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner\bin\Debug\net10.0\agent-host.dll StudioBff -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\studio-bff\bin\Debug\net10.0\agent-studio-bff.dll TaskServer.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server.Tests\bin\Debug\net10.0\TaskServer.Tests.dll Test run for C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server.Tests\bin\Debug\net10.0\TaskServer.Tests.dll (.NETCoreApp,Version=v10.0) A total of 1 test files matched the specified pattern.; test-level=work-package; selected=4; full-suite=not-run; omitted=2
+budget=gate-run limitMs=1800000 consumedMs=1800164 phase=verification
+--- dependency-cache-decision.json ---
+null
+--- dependency-cache.json ---
+[]
+--- test-selection.json ---
+{
+  "Level": "work-package",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "backend.Tests/IntegrationGateReusePolicyTests.cs",
+    "backend.Tests/MergeIntoDevelopRunnerTests.cs",
+    "backend.Tests/RemoteRunnerEndToEndTests.cs",
+    "backend.Tests/StagedTestExecutionTests.cs",
+    "backend/Features/Pipeline/BuildTestGateRunner.cs",
+    "backend/Features/Pipeline/IntegrationGateReusePolicy.cs",
+    "backend/Features/Pipeline/MergeIntoDevelopRunner.cs",
+    "backend/Features/Pipeline/PreDevelopBuildGate.cs",
+    "backend/Features/Pipeline/ReviewVerificationStore.cs",
+    "backend/Features/Pipeline/TestSelectionPlanner.cs",
+    "backend/Features/Projects/ProjectSettingsEndpoints.cs",
+    "backend/Features/Projects/ProjectSettingsService.cs",
+    "backend/Features/Projects/ProjectSnapshotEndpoints.cs",
+    "backend/Features/Runner/V1ReviewPlaneEndpoints.cs",
+    "backend/Shared/Models/ProjectSettings.cs",
+    "contracts/TaskServer.Contracts/ReviewContracts.cs",
+    "docs/concepts/task-integration-and-merge-workflow.md",
+    "docs/system/contracts/review-plane.md",
+    "frontend/src/app/features/project-detail/components/project-detail/project-detail.html",
+    "frontend/src/app/features/project-detail/components/project-detail/project-detail.spec.ts",
+    "frontend/src/app/features/project-detail/components/project-detail/project-detail.ts",
+    "frontend/src/app/models/task.model.ts",
+    "frontend/src/app/services/task.service.ts",
+    "runner/RemoteReviewWorkspace.cs"
+  ],
+  "HistoryInput": [],
+  "Candidates": [
+    {
+      "Id": "test-79d55191acdd",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022backend.Tests/OrchestratorApi.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": [
+        "diff touches this test project or a referenced production project"
+      ]
+    },
+    {
+      "Id": "test-7c70c1c60e31",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022demo-replay-runner.Tests/DemoReplayRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-7752045b73d6",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022orchestrator-engine.Tests/OrchestratorEngine.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-7cfa892f31c0",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022retention.Tests/AgentStudio.Retention.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-f2d03e18b3ab",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022runner.Tests/AgentRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": [
+        "diff touches this test project or a referenced production project"
+      ]
+    },
+    {
+      "Id": "test-9962dc073fa3",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022setup.Tests/AgentOrchestratorSetup.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-3cf1cd39e64f",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022task-server.Tests/TaskServer.Tests.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": [
+        "diff touches this test project or a referenced production project"
+      ]
+    },
+    {
+      "Id": "test-29aece91168a",
+      "Command": {
+        "Ecosystem": 0,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test \u0022testsupport/AgentStudio.TestSupport.csproj\u0022 --filter Category!=MachineBound",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-3c648dd17e0b",
+      "Command": {
+        "Ecosystem": 2,
+        "Kind": 1,
+        "WorkingSubdir": "",
+        "Command": "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+        "Shell": 1,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": null
+      },
+      "Reasons": []
+    },
+    {
+      "Id": "test-4965b8fbb5d6",
+      "Command": {
+        "Ecosystem": 1,
+        "Kind": 1,
+        "WorkingSubdir": "frontend",
+        "Command": "npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/project-detail/components/project-detail/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022 --include=\u0022src/app/models/*.spec.ts\u0022 --include=\u0022src/app/services/*.spec.ts\u0022",
+        "Shell": 0,
+        "TestScope": "not-test",
+        "BlocksWorkPackage": true,
+        "SelectionReason": "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      },
+      "Reasons": [
+        "frontend diff selects touched-folder specs plus the studio-shell and task-detail barrel collision set"
+      ]
+    }
+  ],
+  "SelectedCandidateIds": [
+    "test-79d55191acdd",
+    "test-f2d03e18b3ab",
+    "test-3cf1cd39e64f",
+    "test-4965b8fbb5d6"
+  ],
+  "SelectedCommands": [
+    "dotnet test \u0022backend.Tests/OrchestratorApi.Tests.csproj\u0022 --filter Category!=MachineBound",
+    "dotnet test \u0022runner.Tests/AgentRunner.Tests.csproj\u0022 --filter Category!=MachineBound",
+    "dotnet test \u0022task-server.Tests/TaskServer.Tests.csproj\u0022 --filter Category!=MachineBound",
+    "(frontend) npm run test:ci -- --include=\u0022src/app/app.spec.ts\u0022 --include=\u0022src/app/features/project-detail/components/project-detail/*.spec.ts\u0022 --include=\u0022src/app/features/studio-shell/studio-shell.component.spec.ts\u0022 --include=\u0022src/app/features/task-detail/task-detail.spec.ts\u0022 --include=\u0022src/app/models/*.spec.ts\u0022 --include=\u0022src/app/services/*.spec.ts\u0022"
+  ],
+  "OmittedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "continuous baseline not configured"
+  ],
+  "Selector": "deterministic",
+  "SelectorModel": null,
+  "AdvisorReason": null,
+  "FullSuiteRequired": false,
+  "FullSuiteRan": false
+}
+--- last-300-lines ---
+[stdout] chunk-2LYNFSIW.js   | -                                 |   4.08 kB |                 1.39 kB
+[stdout] chunk-24HW2VQU.js   | -                                 |   4.02 kB |                 1.40 kB
+[stdout] chunk-7JT72N4G.js   | -                                 |   3.97 kB |                 1.54 kB
+[stdout] chunk-Q4PQV2P5.js   | -                                 |   3.57 kB |                 1.16 kB
+[stdout] chunk-5G4IO24T.js   | -                                 |   3.45 kB |                 1.31 kB
+[stdout] chunk-PMHYYKWW.js   | -                                 |   3.20 kB |               932 bytes
+[stdout] chunk-TAJIUXOI.js   | -                                 |   3.15 kB |                 1.44 kB
+[stdout] chunk-LQEYVBAN.js   | -                                 |   2.95 kB |                 1.14 kB
+[stdout] chunk-345QOV75.js   | -                                 |   2.95 kB |                 1.20 kB
+[stdout] chunk-QR4GHEFA.js   | -                                 |   2.91 kB |               994 bytes
+[stdout] chunk-A3EAQW4X.js   | -                                 |   2.71 kB |               971 bytes
+[stdout] chunk-7EPVVBPW.js   | -                                 |   2.70 kB |               937 bytes
+[stdout] chunk-RYHTZ7NE.js   | -                                 |   2.44 kB |               904 bytes
+[stdout] chunk-5VGGPY4S.js   | -                                 |   2.16 kB |               978 bytes
+[stdout] chunk-HQECQZ2I.js   | -                                 |   2.07 kB |               791 bytes
+[stdout] chunk-TIW2IRDR.js   | -                                 |   1.89 kB |               677 bytes
+[stdout] chunk-4TCHLLX6.js   | -                                 |   1.85 kB |               545 bytes
+[stdout] chunk-7N5QKNCP.js   | -                                 |   1.85 kB |               569 bytes
+[stdout] chunk-BYKL7TEM.js   | -                                 |   1.85 kB |               726 bytes
+[stdout] chunk-74NXY7P5.js   | -                                 |   1.77 kB |               579 bytes
+[stdout] chunk-ZWTNZRMJ.js   | -                                 |   1.75 kB |               723 bytes
+[stdout] chunk-UGRBHJ6C.js   | -                                 |   1.58 kB |               641 bytes
+[stdout] chunk-JURMQ2VV.js   | -                                 |   1.51 kB |               645 bytes
+[stdout] chunk-CVFS3EY2.js   | -                                 |   1.48 kB |               675 bytes
+[stdout] chunk-MYFTJZMC.js   | -                                 |   1.40 kB |               621 bytes
+[stdout] chunk-HLZHFKRR.js   | -                                 |   1.35 kB |               480 bytes
+[stdout] chunk-HZ6M6AS2.js   | -                                 |   1.32 kB |               570 bytes
+[stdout] chunk-DGHYXC4G.js   | -                                 |   1.24 kB |               596 bytes
+[stdout] chunk-A3BW23A2.js   | -                                 |   1.21 kB |               564 bytes
+[stdout] chunk-2QW4U2P5.js   | -                                 |   1.18 kB |               658 bytes
+[stdout] chunk-VJ3HVOBG.js   | -                                 |   1.04 kB |               524 bytes
+[stdout] chunk-BFNFUFUS.js   | -                                 | 633 bytes |               633 bytes
+[stdout] chunk-W3XHUBIT.js   | -                                 | 537 bytes |               537 bytes
+[stdout] chunk-IA7OUPBF.js   | -                                 | 498 bytes |               498 bytes
+[stdout] chunk-S6OXS67S.js   | -                                 | 458 bytes |               458 bytes
+[stdout] chunk-NGNRMWUY.js   | -                                 | 407 bytes |               407 bytes
+[stdout] chunk-XHVGMZBJ.js   | -                                 | 404 bytes |               404 bytes
+[stdout] chunk-KNONNJYQ.js   | -                                 | 372 bytes |               372 bytes
+[stdout] chunk-KYWGQRCN.js   | -                                 | 335 bytes |               335 bytes
+[stdout] chunk-6U7A5BQ5.js   | -                                 | 149 bytes |               149 bytes
+[stdout] chunk-MABXFAYI.js   | -                                 | 110 bytes |               110 bytes
+[stdout] 
+[stdout]                     | Initial total                     |   4.37 MB |               910.04 kB
+[stdout] 
+[stdout] Lazy chunk files    | Names                             |  Raw size | Estimated transfer size
+[stdout] chunk-JEOJXSN4.js   | lazy                              | 683.45 kB |               124.86 kB
+[stdout] chunk-DSHQ2X4J.js   | -                                 | 293.50 kB |                78.68 kB
+[stdout] chunk-YA4U7LLM.js   | overview-pane-component           | 207.79 kB |                39.06 kB
+[stdout] chunk-E4M2PQK6.js   | -                                 | 127.60 kB |                26.71 kB
+[stdout] chunk-DYGHSXL2.js   | index                             |  80.26 kB |                24.37 kB
+[stdout] chunk-YJNOQJBH.js   | workbench-overview-component      |  49.66 kB |                10.05 kB
+[stdout] chunk-GFRCEULZ.js   | index                             |  46.33 kB |                 9.79 kB
+[stdout] chunk-HWD2I7MX.js   | -                                 |  44.45 kB |                11.80 kB
+[stdout] chunk-4CQJ7IKO.js   | -                                 |  38.80 kB |                 9.37 kB
+[stdout] chunk-NUKAGRKP.js   | index                             |  38.01 kB |                 8.12 kB
+[stdout] chunk-NA4CUEHP.js   | workbench-viewer-header-component |  25.16 kB |                 5.88 kB
+[stdout] chunk-WHNQEHXZ.js   | artifact-gallery-lazy             |  22.21 kB |                 6.44 kB
+[stdout] chunk-G3KW5MLD.js   | -                                 |  18.67 kB |                 4.72 kB
+[stdout] chunk-PQKNADHB.js   | -                                 |  17.59 kB |                 5.02 kB
+[stdout] chunk-YJNJKOVV.js   | wiki-linked-elements-component    |  13.91 kB |                 3.91 kB
+[stdout] ...and 41 more lazy chunks files. Use "--verbose" to show all the files.
+[stdout] 
+[stdout] Application bundle generation complete. [117.020 seconds] - 2026-09-16T09:46:05.997Z
+[stdout] 
+[stdout] Output location: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\frontend\dist\frontend
+[stdout] 
+[stderr] ▲ [WARNING] bundle initial exceeded maximum budget. Budget 3.00 MB was not met by 1.37 MB with a total of 4.37 MB.
+[stderr] 
+[stderr] 
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580
+> C:\Program Files\Git\bin\bash.exe -lc npm --prefix frontend run lint
+[stdout] 
+[stdout] > lint
+[stdout] > ng lint && npm run lint:scss && npm run lint:components && npm run lint:structure && npm run lint:process-spawns
+[stdout] 
+[stdout] 
+[stdout] Linting "frontend"...
+[stdout] 
+[stdout] All files pass linting.
+[stdout] 
+[stdout] 
+[stdout] > lint:scss
+[stdout] > stylelint "src/**/*.scss"
+[stdout] 
+[stdout] 
+[stdout] > lint:components
+[stdout] > node scripts/check-component-size.mjs
+[stdout] 
+[stdout] OK: scanned 336 Angular components; component size budgets hold.
+[stdout] 
+[stdout] > lint:structure
+[stdout] > node scripts/check-component-folders.mjs && node scripts/check-lane-strings.mjs && node scripts/check-disclosure-markers.mjs && node --test scripts/check-disclosure-markers.test.mjs
+[stdout] 
+[stdout] OK: scanned 679 .ts files; no two-components-per-folder violations.
+[stdout] (3 folder-name baseline exception(s) above — remove after renaming.)
+[stdout] OK: scanned 1002 files; no hard-coded lane strings (25 canonical, 7 retired, 7 allowlisted).
+[stdout] Disclosure grammar OK: 74 site(s) in 59 template(s) (6 enforced, 53 documented divergence(s)).
+[stdout] ✔ accepts a toggle that renders the shared marker (89.862ms)
+[stdout] ✔ fails an enforced template whose toggle has no marker (83.6752ms)
+[stdout] ✔ fails a brand-new template that is in neither list (85.7822ms)
+[stdout] ✔ accepts a recorded divergence and rejects an empty reason (165.2824ms)
+[stdout] ✔ ignores aria-expanded mentioned in a template comment (113.1274ms)
+[stdout] ✔ rejects a stale enforced entry for a template without any disclosure (99.3517ms)
+[stdout] ℹ tests 6
+[stdout] ℹ suites 0
+[stdout] ℹ pass 6
+[stdout] ℹ fail 0
+[stdout] ℹ cancelled 0
+[stdout] ℹ skipped 0
+[stdout] ℹ todo 0
+[stdout] ℹ duration_ms 764.8631
+[stdout] 
+[stdout] > lint:process-spawns
+[stdout] > node --test ../scripts/process-spawn-guard.test.mjs
+[stdout] 
+[stdout] ✔ every Node child-process launch hides its Windows console (759.3445ms)
+[stdout] ✔ scanner rejects an unguarded spawn and accepts a guarded spawn (0.3952ms)
+[stdout] ℹ tests 2
+[stdout] ℹ suites 0
+[stdout] ℹ pass 2
+[stdout] ℹ fail 0
+[stdout] ℹ cancelled 0
+[stdout] ℹ skipped 0
+[stdout] ℹ todo 0
+[stdout] ℹ duration_ms 910.5127
+[stderr] 
+[stderr] 3 folder-name baseline exception(s) (non-blocking):
+[stderr] 
+[stderr]   - src/app/components/aspect-findings/aspect-findings-list.component.ts
+[stderr]     folder 'aspect-findings/' does not match component name 'aspect-findings-list' (baseline exception)
+[stderr]   - src/app/features/project-detail/components/project-observability/project-observability-panel.component.ts
+[stderr]     folder 'project-observability/' does not match component name 'project-observability-panel' (baseline exception)
+[stderr]   - src/app/features/project-detail/components/project-product-runtime/project-product-runtime-panel.component.ts
+[stderr]     folder 'project-product-runtime/' does not match component name 'project-product-runtime-panel' (baseline exception)
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580
+> cmd.exe /c dotnet test "backend.Tests/OrchestratorApi.Tests.csproj" --filter Category!=MachineBound
+[stdout]   Determining projects to restore...
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\contracts\TaskServer.Contracts\TaskServer.Contracts.csproj (in 243 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\retention\AgentStudio.Retention.csproj (in 246 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\cli-hosting\AgentStudio.CliHosting.csproj (in 243 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\update-service\UpdateService.csproj (in 248 ms).
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\OrchestratorApi.Tests.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\testsupport\AgentStudio.TestSupport.csproj (in 472 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner\AgentRunner.csproj (in 469 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\tools\SilentCatchAnalyzer\SilentCatchAnalyzer.csproj (in 523 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj (in 539 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\OrchestratorApi.Tests.csproj (in 577 ms).
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\OrchestratorApi.Tests.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj : warning NU1902: Package 'AngleSharp' 0.17.1 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-pgww-w46g-26qg
+[stdout]   AgentStudio.Retention -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\retention\bin\Debug\net10.0\AgentStudio.Retention.dll
+[stdout]   TaskServer.Contracts -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\contracts\TaskServer.Contracts\bin\Debug\net10.0\TaskServer.Contracts.dll
+[stdout]   AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll
+[stdout]   AgentStudio.TestSupport -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\testsupport\bin\Debug\net10.0\AgentStudio.TestSupport.dll
+[stdout]   SilentCatchAnalyzer -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\tools\SilentCatchAnalyzer\bin\Debug\netstandard2.0\SilentCatchAnalyzer.dll
+[stdout]   AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner\bin\Debug\net10.0\agent-host.dll
+[stdout]   UpdateService -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\update-service\bin\Debug\net10.0\UpdateService.dll
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Shared\Models\WaitsOn.cs(168,43): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\CliCompletionContracts.cs(84,23): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\CliContextConventions.cs(44,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(182,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\CliWorkingMemoryService.cs(213,18): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\BuiltInCliBehaviors.cs(1223,19): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Shared\Models\CliModels.cs(819,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Host\Program.cs(481,64): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Host\Program.cs(490,60): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Git\GitService.cs(890,35): warning CS8603: Possible null reference return. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Runner\ReviewAspectTimeoutPolicy.cs(80,34): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Runner\TaskRunnerService.cs(1046,59): warning CS8602: Dereference of a possibly null reference. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Quota\AntigravityQuotaProbe.cs(16,39): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Runner\ProjectRunner.cs(3343,55): warning CS8604: Possible null reference argument for parameter 'cliType' in 'Task AgentMessageBusBridge.EmitRunStartedAsync(TaskInfo info, string cliType, DateTime startedAtUtc, string? sessionId, string intent, CancellationToken ct = default(CancellationToken))'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\SessionRegistry.cs(138,17): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Cli\Execution\SessionRegistry.cs(313,13): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7226,29): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Runner\ReviewDecisionOrchestrator.cs(7226,90): warning CS0618: 'CliTypes.Gemini' is obsolete: 'Gemini CLI support is deprecated and unmaintained; removal is planned before 1.0. Use Antigravity (agentapi) for Google models.' [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout] C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\Features\Tasks\TaskMutationService.cs(728,60): warning CS8604: Possible null reference argument for parameter 'value' in 'void TaskJsonFile.UpdateField(string jobDir, string fieldName, object value, ILogger logger)'. [C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\OrchestratorApi.csproj]
+[stdout]   OrchestratorApi -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend\bin\Debug\net10.0\OrchestratorApi.dll
+[stdout]   OrchestratorApi.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\bin\Debug\net10.0\OrchestratorApi.Tests.dll
+[stdout] Test run for C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\backend.Tests\bin\Debug\net10.0\OrchestratorApi.Tests.dll (.NETCoreApp,Version=v10.0)
+[stdout] A total of 1 test files matched the specified pattern.
+[stdout] [xUnit.net 00:01:06.42]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_SequentialKillRestart_StaysHealthy [SKIP]
+[stdout] [xUnit.net 00:01:06.43]     AgentStudio.Tests.CliSpawnIntegrationTests.DirectExe_PipeStdin_StreamJson_ProducesMultipleFrames [SKIP]
+[stdout] [xUnit.net 00:01:06.43]     AgentStudio.Tests.CliSpawnIntegrationTests.CmdShim_PipeStdin_StreamJson_LiveScaleFatPrompt_ShouldStreamPastInit [SKIP]
+[stdout] [xUnit.net 00:01:06.43]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_FatPrompt_ProducesStreamingFrames [SKIP]
+[stdout] [xUnit.net 00:01:06.43]     AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout] [xUnit.net 00:01:06.43]     AgentStudio.Tests.CliSpawnIntegrationTests.AntigravityCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_SequentialKillRestart_StaysHealthy [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.DirectExe_PipeStdin_StreamJson_ProducesMultipleFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.CmdShim_PipeStdin_StreamJson_LiveScaleFatPrompt_ShouldStreamPastInit [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_FatPrompt_ProducesStreamingFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.ClaudeCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.AntigravityCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout] [xUnit.net 00:01:06.48]     AgentStudio.Tests.CliSpawnIntegrationTests.CodexCliService_StartAsync_ProducesStreamingFrames [SKIP]
+[stdout]   Skipped AgentStudio.Tests.CliSpawnIntegrationTests.CodexCliService_StartAsync_ProducesStreamingFrames [1 ms]
+[stdout] [xUnit.net 00:01:20.84]     AgentStudio.Tests.WatchPathAddressingRegressionTests.FindJob_CaseVariantProjects_KeepsProjectsDistinct_OnCaseSensitiveFilesystem [SKIP]
+[stdout]   Skipped AgentStudio.Tests.WatchPathAddressingRegressionTests.FindJob_CaseVariantProjects_KeepsProjectsDistinct_OnCaseSensitiveFilesystem [1 ms]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptRaceWithMerge_TaskStaysHumanReviewUntilMergeWins [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Ready_DirectReviewWithoutClaim_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptWithoutIntegrationResult_TaskStaysHumanReview [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_LeaseTakeover_TaskJsonContainsRunnerRoute [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_BackendRestart_PendingIntegrationRecoversWithoutDelivery [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.AutoReview_DirectComplete_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:49.01]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_TwoRunnerCommits_TaskJsonContainsPerCommitRunnerAttribution [SKIP]
+[stdout] [xUnit.net 00:02:49.02]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_DirectComplete_TaskIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:49.02]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_MergeFinished_TaskJsonContainsIntegrationOutcome [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptRaceWithMerge_TaskStaysHumanReviewUntilMergeWins [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Ready_DirectReviewWithoutClaim_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_AcceptWithoutIntegrationResult_TaskStaysHumanReview [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_LeaseTakeover_TaskJsonContainsRunnerRoute [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_BackendRestart_PendingIntegrationRecoversWithoutDelivery [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.AutoReview_DirectComplete_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.HumanReview_TwoRunnerCommits_TaskJsonContainsPerCommitRunnerAttribution [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_DirectComplete_TaskIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_MergeFinished_TaskJsonContainsIntegrationOutcome [1 ms]
+[stdout] [xUnit.net 00:02:49.02]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_ReissueWhileIntegrationRuns_QueuedMergeIsRejected [SKIP]
+[stdout] [xUnit.net 00:02:49.02]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_SystemEscalation_TaskJsonContainsCategoryAndReason [SKIP]
+[stdout] [xUnit.net 00:02:49.02]     AgentStudio.Tests.TaskLanePipelineSollSkipTests.Backlog_DirectAccept_TaskIsRejected [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Completed_ReissueWhileIntegrationRuns_QueuedMergeIsRejected [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Progress_SystemEscalation_TaskJsonContainsCategoryAndReason [1 ms]
+[stdout]   Skipped AgentStudio.Tests.TaskLanePipelineSollSkipTests.Backlog_DirectAccept_TaskIsRejected [1 ms]
+[stdout] [xUnit.net 00:03:57.33]     AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_ReferenceWriteFailure_RestoresSourceAndOriginalReferences [SKIP]
+[stdout] [xUnit.net 00:03:57.34]     AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_CopyFailure_RestoresArchivedSourceWithoutOrphan [SKIP]
+[stdout]   Skipped AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_ReferenceWriteFailure_RestoresSourceAndOriginalReferences [1 ms]
+[stdout]   Skipped AgentStudio.Tests.ChangeProjectAtomicityTests.ChangeProject_CopyFailure_RestoresArchivedSourceWithoutOrphan [1 ms]
+[stdout] [xUnit.net 00:05:53.63]     AgentStudio.Tests.TaskOperationPerfBenchmarks.FlatStorage_TaskOperations_P95Under30ms_At20kTasks [SKIP]
+[stdout]   Skipped AgentStudio.Tests.TaskOperationPerfBenchmarks.FlatStorage_TaskOperations_P95Under30ms_At20kTasks [1 ms]
+[stdout] 
+[stdout] Passed!  - Failed:     0, Passed:  6586, Skipped:    23, Total:  6609, Duration: 21 m 3 s - OrchestratorApi.Tests.dll (net10.0)
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580
+> cmd.exe /c dotnet test "runner.Tests/AgentRunner.Tests.csproj" --filter Category!=MachineBound
+[stdout]   Determining projects to restore...
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner.Tests\AgentRunner.Tests.csproj (in 356 ms).
+[stdout]   4 of 5 projects are up-to-date for restore.
+[stdout]   AgentStudio.TestSupport -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\testsupport\bin\Debug\net10.0\AgentStudio.TestSupport.dll
+[stdout]   AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll
+[stdout]   TaskServer.Contracts -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\contracts\TaskServer.Contracts\bin\Debug\net10.0\TaskServer.Contracts.dll
+[stdout]   AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner\bin\Debug\net10.0\agent-host.dll
+[stdout]   AgentRunner.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner.Tests\bin\Debug\net10.0\AgentRunner.Tests.dll
+[stdout] Test run for C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner.Tests\bin\Debug\net10.0\AgentRunner.Tests.dll (.NETCoreApp,Version=v10.0)
+[stdout] A total of 1 test files matched the specified pattern.
+[stdout] [xUnit.net 00:00:01.58]     AgentRunner.Tests.DurableAgentProcessTests.Pid_with_a_different_worktree_is_not_adopted [SKIP]
+[stdout]   Skipped AgentRunner.Tests.DurableAgentProcessTests.Pid_with_a_different_worktree_is_not_adopted [1 ms]
+[stdout] [xUnit.net 00:00:01.60]     AgentRunner.Tests.CommandProgressWatchdogTests.A_process_that_does_not_exist_is_unobservable [SKIP]
+[stdout] [xUnit.net 00:00:01.60]     AgentRunner.Tests.CommandProgressWatchdogTests.Cpu_sample_covers_descendants_not_only_the_direct_child [SKIP]
+[stdout] [xUnit.net 00:00:01.60]     AgentRunner.Tests.CommandProgressWatchdogTests.Watchdog_fires_for_a_sleeping_tree_and_stays_quiet_for_a_busy_one [SKIP]
+[stdout]   Skipped AgentRunner.Tests.CommandProgressWatchdogTests.A_process_that_does_not_exist_is_unobservable [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CommandProgressWatchdogTests.Cpu_sample_covers_descendants_not_only_the_direct_child [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CommandProgressWatchdogTests.Watchdog_fires_for_a_sleeping_tree_and_stays_quiet_for_a_busy_one [1 ms]
+[stdout] [xUnit.net 00:00:01.72]     AgentRunner.Tests.LeaseLossProcessKillTests.Rejected_lease_renewal_kills_the_agent_process_group [SKIP]
+[stdout]   Skipped AgentRunner.Tests.LeaseLossProcessKillTests.Rejected_lease_renewal_kills_the_agent_process_group [1 ms]
+[stdout] [xUnit.net 00:00:01.82]     AgentRunner.Tests.GitWorkspaceTests.Project_preflight_fails_when_origin_rejects_the_write_probe [SKIP]
+[stdout]   Skipped AgentRunner.Tests.GitWorkspaceTests.Project_preflight_fails_when_origin_rejects_the_write_probe [1 ms]
+[stdout] [xUnit.net 00:00:02.21]     AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_a_tracked_binary_process_whose_cwd_was_already_deleted [SKIP]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_a_tracked_binary_process_whose_cwd_was_already_deleted [1 ms]
+[stdout] [xUnit.net 00:00:02.22]     AgentRunner.Tests.CliProcessReaperTests.Reconciler_purge_of_a_dead_worker_reaps_its_orphaned_child_before_deleting_state [SKIP]
+[stdout] [xUnit.net 00:00:02.23]     AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_spares_a_workspace_the_daemon_still_owns [SKIP]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.Reconciler_purge_of_a_dead_worker_reaps_its_orphaned_child_before_deleting_state [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_spares_a_workspace_the_daemon_still_owns [1 ms]
+[stdout] [xUnit.net 00:00:02.23]     AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_any_process_whose_workspace_was_already_deleted [SKIP]
+[stdout] [xUnit.net 00:00:02.23]     AgentRunner.Tests.CliProcessReaperTests.ReapWorkspaceAsync_kills_a_long_lived_child_and_logs_pid_age_and_attempt [SKIP]
+[stdout] [xUnit.net 00:00:02.24]     AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_a_tracked_binary_process_older_than_the_review_budget [SKIP]
+[stdout] [xUnit.net 00:00:02.24]     AgentRunner.Tests.CliProcessReaperTests.ReapWorkspaceAsync_is_a_no_op_when_nothing_lives_in_the_workspace [SKIP]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_any_process_whose_workspace_was_already_deleted [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.ReapWorkspaceAsync_kills_a_long_lived_child_and_logs_pid_age_and_attempt [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.OrphanSweep_kills_a_tracked_binary_process_older_than_the_review_budget [1 ms]
+[stdout]   Skipped AgentRunner.Tests.CliProcessReaperTests.ReapWorkspaceAsync_is_a_no_op_when_nothing_lives_in_the_workspace [1 ms]
+[stdout] [xUnit.net 00:00:03.09]     AgentRunner.Tests.RunnerServiceUnitTests.Review_guard_uses_the_candidate_and_the_active_process_state_directory [SKIP]
+[stdout]   Skipped AgentRunner.Tests.RunnerServiceUnitTests.Review_guard_uses_the_candidate_and_the_active_process_state_directory [1 ms]
+[stdout] [xUnit.net 00:00:03.53]     AgentRunner.Tests.ReviewHandoffAdoptionTests.Handoff_extends_the_lease_before_leaving_the_worker_to_its_replacement [SKIP]
+[stdout] [xUnit.net 00:00:03.53]     AgentRunner.Tests.ReviewHandoffAdoptionTests.Concurrent_phase_save_preserves_pending_re_claim_for_the_next_daemon [SKIP]
+[stdout]   Skipped AgentRunner.Tests.ReviewHandoffAdoptionTests.Handoff_extends_the_lease_before_leaving_the_worker_to_its_replacement [1 ms]
+[stdout]   Skipped AgentRunner.Tests.ReviewHandoffAdoptionTests.Concurrent_phase_save_preserves_pending_re_claim_for_the_next_daemon [1 ms]
+[stdout] [xUnit.net 00:00:04.30]     AgentRunner.Tests.RunnerServiceUnitTests.Agent_runner_cli_update_uses_fixed_packages_staging_probes_and_rollback [SKIP]
+[stdout]   Skipped AgentRunner.Tests.RunnerServiceUnitTests.Agent_runner_cli_update_uses_fixed_packages_staging_probes_and_rollback [1 ms]
+[stdout] [xUnit.net 00:00:04.41]     AgentRunner.Tests.ReviewConcurrentWorkspaceIsolationTests.A_command_that_keeps_working_is_never_reaped_by_the_hang_watchdog [SKIP]
+[stdout] [xUnit.net 00:00:04.41]     AgentRunner.Tests.ReviewConcurrentWorkspaceIsolationTests.A_verify_command_blocked_on_a_host_shared_handle_is_reaped_as_review_infrastructure [SKIP]
+[stdout]   Skipped AgentRunner.Tests.ReviewConcurrentWorkspaceIsolationTests.A_command_that_keeps_working_is_never_reaped_by_the_hang_watchdog [1 ms]
+[stdout]   Skipped AgentRunner.Tests.ReviewConcurrentWorkspaceIsolationTests.A_verify_command_blocked_on_a_host_shared_handle_is_reaped_as_review_infrastructure [1 ms]
+[stdout] [xUnit.net 00:00:17.90]     AgentRunner.Tests.GitWorkspaceTests.Teardown_kills_processes_with_cwd_in_worktree_before_removal [SKIP]
+[stdout]   Skipped AgentRunner.Tests.GitWorkspaceTests.Teardown_kills_processes_with_cwd_in_worktree_before_removal [1 ms]
+[stdout] 
+[stdout] Passed!  - Failed:     0, Passed:   617, Skipped:    20, Total:   637, Duration: 1 m 40 s - AgentRunner.Tests.dll (net10.0)
+# working directory: C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580
+> cmd.exe /c dotnet test "task-server.Tests/TaskServer.Tests.csproj" --filter Category!=MachineBound
+[stdout]   Determining projects to restore...
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\studio-bff\StudioBff.csproj (in 217 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server\TaskServer.csproj (in 381 ms).
+[stdout]   Restored C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server.Tests\TaskServer.Tests.csproj (in 435 ms).
+[stdout]   5 of 8 projects are up-to-date for restore.
+[stdout]   AgentStudio.TestSupport -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\testsupport\bin\Debug\net10.0\AgentStudio.TestSupport.dll
+[stdout]   AgentStudio.Retention -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\retention\bin\Debug\net10.0\AgentStudio.Retention.dll
+[stdout]   TaskServer.Contracts -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\contracts\TaskServer.Contracts\bin\Debug\net10.0\TaskServer.Contracts.dll
+[stdout]   TaskServer -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server\bin\Debug\net10.0\task-server.dll
+[stdout]   AgentStudio.CliHosting -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\cli-hosting\bin\Debug\net10.0\AgentStudio.CliHosting.dll
+[stdout]   AgentRunner -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\runner\bin\Debug\net10.0\agent-host.dll
+[stdout]   StudioBff -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\studio-bff\bin\Debug\net10.0\agent-studio-bff.dll
+[stdout]   TaskServer.Tests -> C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server.Tests\bin\Debug\net10.0\TaskServer.Tests.dll
+[stdout] Test run for C:\Users\rmisc\AppData\Local\Temp\agentstudio-review-gates\e33f300497124227a0257c94be95b580\task-server.Tests\bin\Debug\net10.0\TaskServer.Tests.dll (.NETCoreApp,Version=v10.0)
+[stdout] A total of 1 test files matched the specified pattern.
+cmd.exe violated gate-run budget limit=1800000ms consumed=1800164ms phase=verification

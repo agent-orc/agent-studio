@@ -43,6 +43,7 @@ public sealed class RunnerOptions
 
     /// <summary>Runner service credential sent as Authorization on every networked-profile request.</summary>
     public string? AuthToken { get; init; }
+    public string? AuthTokenFile { get; init; }
 
     /// <summary>
     /// Explicit opt-in (<c>RUNNER_ALLOW_INSECURE_HTTP=1|true</c>) that allows a
@@ -70,6 +71,12 @@ public sealed class RunnerOptions
     /// fetch and push and never inherit this fallback.
     /// </summary>
     public string? GitPushRemote { get; init; }
+
+    /// <summary>Exact private workspace origin, checked separately from the product fallback.</summary>
+    public string? WorkspaceGitRemote { get; init; }
+
+    /// <summary>Whether workspace access must also prove a managed temporary-ref push.</summary>
+    public bool WorkspaceGitRequiresPush { get; init; }
 
     /// <summary>Directory the runner checks the repo out into on the runner host.</summary>
     public required string WorkDir { get; init; }
@@ -105,6 +112,29 @@ public sealed class RunnerOptions
     public string StateDir { get; init; } = Path.Combine(Path.GetTempPath(), "agent-runner-state");
 
     /// <summary>
+    /// Host salvage directory owned by the coding daemon's retention sweep
+    /// (AGT-2999). Only top-level worktree tarballs are retention candidates.
+    /// Empty disables the sweep; the parsed service configuration defaults to
+    /// <c>~/salvage</c>.
+    /// </summary>
+    public string SalvageDir { get; init; } = "";
+
+    /// <summary><c>apply</c> deletes, <c>report</c> only logs what it would delete, <c>off</c> only measures.</summary>
+    public string SalvageRetentionMode { get; init; } = SalvageRetentionSweeper.ModeApply;
+
+    /// <summary>Days an entry survives after its card became completed or archived.</summary>
+    public int SalvageRetentionDays { get; init; } = 14;
+
+    /// <summary>Newest tarballs (and eligible refs) kept per card regardless of age.</summary>
+    public int SalvageMaxPerCard { get; init; } = 3;
+
+    /// <summary>Hours between retention sweeps; the first sweep runs five minutes after start.</summary>
+    public int SalvageSweepHours { get; init; } = 6;
+
+    internal static string DefaultSalvageDir
+        => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "salvage");
+
+    /// <summary>
     /// Additional host capabilities required by every claim for this service
     /// identity, for example toolchain:dotnet, toolchain:node, or
     /// toolchain:playwright. The Task Server combines these with the role,
@@ -130,37 +160,14 @@ public sealed class RunnerOptions
     /// <summary>Fallback branch when the task branch is absent or unspecified.</summary>
     public required string BaseBranch { get; init; }
 
-    /// <summary>
-    /// Which execution engine drives the coding CLI inside the detached worker
-    /// (<c>RUNNER_EXEC_ENGINE</c>). <c>car</c> (default) drives it through the
-    /// CodingAgentRunner library: descriptor-built argv, structured events,
-    /// permission-mode injection, clean config home. <c>legacy</c> keeps the
-    /// pre-AGT-2370 raw spawn. The switch is a rollout instrument for the T1
-    /// canary cohorts and is deleted in AGT-2373 together with the legacy path.
-    /// </summary>
-    public string ExecEngine { get; init; } = ExecEngineCar;
-
-    public const string ExecEngineCar = "car";
-    public const string ExecEngineLegacy = "legacy";
-
-    /// <summary>Agent CLI binary to spawn (claude, codex, ...).</summary>
-    public required string CliBin { get; init; }
+    /// <summary>Default provider used when a run spec does not select one.</summary>
+    public string CliType { get; init; } = CliSelection.ClaudeCli;
 
     /// <summary>Codex binary used by the GPT-only project chat work path.</summary>
     public string CodexCliBin { get; init; } = "codex";
 
     /// <summary>Claude binary used when a Claude-pinned card runs on a host whose primary CLI is Codex.</summary>
     public string ClaudeCliBin { get; init; } = "claude";
-
-    /// <summary>Extra CLI arguments inserted before the prompt is streamed on stdin (space-split, shell-unaware).</summary>
-    public required string CliArgs { get; init; }
-
-    /// <summary>
-    /// Optional provider-specific arguments for resuming a captured session.
-    /// The value must contain <c>{sessionId}</c>. When absent, the provider is
-    /// treated as not supporting same-session recovery on this host.
-    /// </summary>
-    public string? CliResumeArgs { get; init; }
 
     /// <summary>
     /// Lease TTL requested on acquire/renew; the server clamps to its own
@@ -275,6 +282,21 @@ public sealed class RunnerOptions
 
     /// <summary>Continuous high-load duration required before claim admission closes.</summary>
     public int LoadGateSustainedSeconds { get; init; } = 120;
+
+    /// <summary>
+    /// AGT-2993: filesystem whose free space admits a compose scenario review
+    /// step (the Docker data root, where its images and build cache land). When
+    /// the path does not exist the review workspace's filesystem is measured.
+    /// </summary>
+    public string DockerDataRoot { get; init; } = "/var/lib/docker";
+
+    /// <summary>
+    /// AGT-2993: a compose scenario review step is refused as
+    /// <c>ReviewInfra</c> / <c>ComposeScenarioDiskLow</c> below this percentage
+    /// of free space on <see cref="DockerDataRoot"/>. <c>0</c> keeps the log
+    /// line and disables the refusal.
+    /// </summary>
+    public int ComposeScenarioMinFreePercent { get; init; } = ComposeScenarioDiskAdmission.DefaultMinFreePercent;
 
     /// <summary>
     /// When set (<c>--health-check</c>), the runner only probes the Task Server's
@@ -427,6 +449,7 @@ public sealed class RunnerOptions
             BackendName = Val("backend-name", "RUNNER_BACKEND_NAME", "remote-runner"),
             Role = Val("role", "RUNNER_ROLE", "coding").Trim().ToLowerInvariant(),
             AuthToken = authToken.Length > 0 ? authToken : null,
+            AuthTokenFile = authTokenFile.Length > 0 ? authTokenFile : null,
             TlsServerCertificateSha256 = Val(
                 "tls-certificate-sha256",
                 "RUNNER_TLS_CERTIFICATE_SHA256").Trim() is { Length: > 0 } certificateSha
@@ -434,6 +457,9 @@ public sealed class RunnerOptions
                     : null,
             GitRemote = Val("git-remote", "RUNNER_GIT_REMOTE").Trim() is { Length: > 0 } gitRemote ? gitRemote : null,
             GitPushRemote = Val("git-push-remote", "RUNNER_GIT_PUSH_REMOTE").Trim() is { Length: > 0 } gitPushRemote ? gitPushRemote : null,
+            WorkspaceGitRemote = Val("workspace-git-remote", "RUNNER_WORKSPACE_GIT_REMOTE").Trim() is { Length: > 0 } workspaceRemote ? workspaceRemote : null,
+            WorkspaceGitRequiresPush = Val("workspace-git-requires-push", "RUNNER_WORKSPACE_GIT_REQUIRES_PUSH")
+                .Trim().ToLowerInvariant() is "1" or "true",
             WorkDir = Val("workdir", "RUNNER_WORKDIR", Path.Combine(Path.GetTempPath(), "agent-runner-work")),
             ReviewWorkDir = Val(
                 "review-workdir",
@@ -468,14 +494,9 @@ public sealed class RunnerOptions
                 Val("preview-lifetime-seconds", "RUNNER_PREVIEW_LIFETIME_SECONDS", "3600")),
             Branch = Val("branch", "RUNNER_BRANCH") is { Length: > 0 } b ? b : null,
             BaseBranch = Val("base-branch", "RUNNER_BASE_BRANCH", "main"),
-            ExecEngine = Val("exec-engine", "RUNNER_EXEC_ENGINE", ExecEngineCar).Trim().ToLowerInvariant(),
-            CliBin = Val("cli", "RUNNER_CLI_BIN", "claude"),
+            CliType = Val("cli-type", "RUNNER_CLI_TYPE", CliSelection.ClaudeCli).Trim().ToLowerInvariant(),
             CodexCliBin = Val("codex-cli", "RUNNER_CODEX_CLI_BIN", "codex"),
             ClaudeCliBin = Val("claude-cli", "RUNNER_CLAUDE_CLI_BIN", "claude"),
-            CliArgs = Val("cli-args", "RUNNER_CLI_ARGS", "-p"),
-            CliResumeArgs = Val("cli-resume-args", "RUNNER_CLI_RESUME_ARGS").Trim() is { Length: > 0 } resumeArgs
-                ? resumeArgs
-                : null,
             TtlSeconds = overrides.TryGetValue("ttl", out var ttl) && int.TryParse(ttl, out var ttlV) ? ttlV : EnvInt("RUNNER_TTL_SECONDS", 900),
             HeartbeatSeconds = EnvInt("RUNNER_HEARTBEAT_SECONDS", 30),
             HandoffLeaseTtlSeconds = EnvInt("RUNNER_HANDOFF_LEASE_TTL_SECONDS", 300),
@@ -515,6 +536,10 @@ public sealed class RunnerOptions
                 : EnvDouble("RUNNER_CLAIM_MAX_LOAD_PER_CORE", 1.5),
             CommandSilenceWatchdogSeconds = EnvInt("RUNNER_COMMAND_SILENCE_WATCHDOG_SECONDS", 600),
             LoadGateSustainedSeconds = EnvInt("RUNNER_LOAD_GATE_SUSTAINED_SECONDS", 120),
+            DockerDataRoot = Env("RUNNER_DOCKER_DATA_ROOT", "/var/lib/docker"),
+            ComposeScenarioMinFreePercent = Math.Min(100, EnvIntAllowingZero(
+                "RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT",
+                ComposeScenarioDiskAdmission.DefaultMinFreePercent)),
             AllowInsecureHttp = OptIn(Val("allow-insecure-http", "RUNNER_ALLOW_INSECURE_HTTP")),
             ReviewReleaseDrain = OptIn(
                 Val("review-release-drain", "RUNNER_REVIEW_RELEASE_DRAIN")),
@@ -523,6 +548,16 @@ public sealed class RunnerOptions
             RestartGuardOnly = restartGuard,
             Force = force,
             HoldAdmission = holdAdmission,
+            SalvageDir = Val("salvage-dir", "RUNNER_SALVAGE_DIR", DefaultSalvageDir),
+            SalvageRetentionMode = Val(
+                    "salvage-retention",
+                    "RUNNER_SALVAGE_RETENTION",
+                    SalvageRetentionSweeper.ModeApply)
+                .Trim()
+                .ToLowerInvariant(),
+            SalvageRetentionDays = EnvInt("RUNNER_SALVAGE_RETENTION_DAYS", 14),
+            SalvageMaxPerCard = EnvInt("RUNNER_SALVAGE_MAX_PER_CARD", 3),
+            SalvageSweepHours = EnvInt("RUNNER_SALVAGE_SWEEP_HOURS", 6),
         };
 
         var serverUri = new Uri(options.ServerUrl, UriKind.Absolute);
@@ -547,13 +582,19 @@ public sealed class RunnerOptions
                 Path.GetFullPath(options.ReviewWorkDir),
                 StringComparison.Ordinal))
             throw new ArgumentException("Review and coding workspace roots must be different.");
-        if (options.CliResumeArgs is not null
-            && !options.CliResumeArgs.Contains("{sessionId}", StringComparison.Ordinal))
-            throw new ArgumentException("RUNNER_CLI_RESUME_ARGS must contain the {sessionId} placeholder.");
+        if (CliSelection.NormalizeCliType(options.CliType) is null)
+            throw new ArgumentException("RUNNER_CLI_TYPE must be 'claude' or 'codex'.");
+        foreach (var removed in new[] { "RUNNER_EXEC_ENGINE", "RUNNER_CLI_BIN", "RUNNER_CLI_ARGS", "RUNNER_CLI_RESUME_ARGS" })
+        {
+            if (!string.IsNullOrWhiteSpace(Env(removed)))
+                throw new ArgumentException($"{removed} was removed in AGT-2373; use RUNNER_CLI_TYPE and provider-specific CLI paths.");
+        }
         if (options.ReviewCredentialEnvironment.Any(WorkerEdgeCredentialBoundary.IsProtectedName))
             throw new ArgumentException("RUNNER_REVIEW_CREDENTIAL_ENV cannot include Task Server or browser-edge credentials.");
-        if (options.ExecEngine is not (ExecEngineCar or ExecEngineLegacy))
-            throw new ArgumentException("RUNNER_EXEC_ENGINE must be 'car' or 'legacy'.");
+        if (options.SalvageRetentionMode is not (SalvageRetentionSweeper.ModeApply
+                or SalvageRetentionSweeper.ModeReport
+                or SalvageRetentionSweeper.ModeOff))
+            throw new ArgumentException("RUNNER_SALVAGE_RETENTION must be 'apply', 'report', or 'off'.");
         if (!options.IsWorkstation && (options.WorkstationRepositoryRoots.Count > 0
                                        || options.WorkstationRequiredTools.Count > 0
                                        || options.WorkstationPreview is not null))
@@ -563,7 +604,7 @@ public sealed class RunnerOptions
         return (options, string.IsNullOrWhiteSpace(taskKey) ? null : taskKey.Trim(), once, help);
     }
 
-    private static string ReadAuthTokenFile(string path)
+    internal static string ReadAuthTokenFile(string path)
     {
         if (!File.Exists(path)) throw new ArgumentException($"RUNNER_AUTH_TOKEN_FILE does not exist: {path}");
         if (!OperatingSystem.IsWindows())

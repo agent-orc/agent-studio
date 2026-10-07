@@ -1,9 +1,11 @@
-import { DestroyRef, computed, effect, inject, signal, type OutputEmitterRef, type Signal, type WritableSignal } from '@angular/core';
+import { DestroyRef, computed, effect, inject, signal, untracked, type OutputEmitterRef, type Signal, type WritableSignal } from '@angular/core';
 
 import type { RegistryWorkspaceListItem } from '../../models/task.model';
 import {
   UsageCockpitHeaderComponent,
   UsageCockpitService,
+  UsageAlarmStateService,
+  type UsageDetailFocus,
   type CockpitNavItem,
   type UsageDetailRequest,
 } from '../usage-cockpit';
@@ -48,10 +50,15 @@ export interface StudioHeaderHost {
  * and usage triggers to the shell's existing destinations.
  */
 export class StudioHeaderCockpit {
+  private currentWorkspaceId: string | null | undefined;
   readonly usage = inject(UsageCockpitService);
+  readonly alarms = inject(UsageAlarmStateService);
   readonly navItems = STUDIO_HEADER_NAV_ITEMS;
   /** The CLI the operator last opened from the strip leads the primary order. */
   readonly selectedCli = signal<string | null>(null);
+  readonly detailFocus = signal<UsageDetailFocus | null>(null);
+  readonly detailNow = signal(Date.now());
+  readonly openRequest = signal<UsageDetailRequest | null>(null);
   /** Saved default CLI (status-bar selector), re-read on each snapshot. */
   readonly defaultCli = computed(() => {
     this.usage.snapshot();
@@ -64,7 +71,17 @@ export class StudioHeaderCockpit {
     this.usage.connect(inject(DestroyRef));
     effect(() => {
       const name = host.activeWorkspaceName();
-      this.usage.setWorkspace(host.registryWorkspaces().find(ws => ws.displayName === name)?.id ?? null);
+      const workspaceId = host.registryWorkspaces().find(ws => ws.displayName === name)?.id ?? null;
+      if (workspaceId === this.currentWorkspaceId) return;
+      this.currentWorkspaceId = workspaceId;
+      this.usage.setWorkspace(workspaceId);
+      this.alarms.reset();
+      this.detailFocus.set(null);
+      this.openRequest.set(null);
+    });
+    effect(() => {
+      const snapshot = this.usage.snapshot();
+      if (snapshot) untracked(() => this.alarms.ingest(snapshot));
     });
     effect(() => {
       if (!host.pickerOpen()) this.pickerAnchor.set(null);
@@ -91,12 +108,17 @@ export class StudioHeaderCockpit {
     }
   }
 
-  /**
-   * Usage chips and Details open the existing usage hub until the HUC-S3
-   * popover and sheet land; a CLI chip also becomes the selected CLI.
-   */
   onUsage(request: UsageDetailRequest): void {
     if (request.section === 'cli' && request.cliId) this.selectedCli.set(request.cliId);
-    this.host.openUsageSheet.emit();
+    this.detailNow.set(Date.now());
+    this.openRequest.set(request);
+    this.detailFocus.set(request.section === 'cli' && request.cliId
+      ? { kind: 'cli', cliId: request.cliId }
+      : { kind: 'cost' });
+  }
+
+  closeDetail(): void {
+    this.detailFocus.set(null);
+    this.openRequest.set(null);
   }
 }

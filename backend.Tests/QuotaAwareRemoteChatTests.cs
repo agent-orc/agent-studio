@@ -57,8 +57,9 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         var broker = new RemoteChatWorkBroker(
             NullLogger<RemoteChatWorkBroker>.Instance,
             TimeSpan.FromMilliseconds(20));
+        var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
         var service = new OrchestratorChatService(
-            new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
+            chat,
             runner, sessionStore, bootstrap, scanner, configuration,
             NullLogger<OrchestratorChatService>.Instance,
             projectSettings: settings, projects: projects, remoteWork: broker);
@@ -81,6 +82,23 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         Assert.NotNull(reply.FinishedAt);
         Assert.True(reply.QueuedAt <= reply.StartedAt);
         Assert.True(reply.StartedAt <= reply.FinishedAt);
+        // AGT-2970: every chat kind, including a Dossier (workbench) session,
+        // carries the turn metadata and persists it into its own transcript.
+        var metadata = Assert.IsType<ChatTurnMetadata>(reply.Metadata);
+        Assert.Equal(ModelIds.Gpt56Sol, metadata.Model);
+        Assert.Equal("medium", metadata.Effort);
+        Assert.Equal("local-thread", metadata.ProviderThreadId);
+        Assert.Equal(Environment.MachineName, metadata.Host);
+        Assert.Equal(reply.QueuedAt, metadata.QueuedAt);
+        Assert.Equal(reply.StartedAt, metadata.StartedAt);
+        Assert.Equal(12, metadata.InputTokens);
+        Assert.Equal(3, metadata.OutputTokens);
+        Assert.True(metadata.Capabilities.Tokens);
+        var persisted = chat.Read(watchPath, context)
+            .Single(turn => turn.Role == OrchestratorChatRoles.Orchestrator);
+        Assert.Equal(metadata.ProviderThreadId, persisted.Metadata?.ProviderThreadId);
+        Assert.Equal(metadata.InputTokens, persisted.Metadata?.InputTokens);
+        Assert.Equal(metadata.Cost, persisted.Metadata?.Cost);
         var repository = RemoteProjectRepositoryResolver.Resolve(
             projects.FindByStorageLocation(watchPath),
             settings.Get(projectName).IntegrationBranch);
@@ -261,7 +279,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
     private sealed class UnexpectedLocalRunner : OrchestratorRunner
     {
         public UnexpectedLocalRunner()
-            : base(null!, NullLogger<OrchestratorRunner>.Instance)
+            : base(NullLogger<OrchestratorRunner>.Instance)
         {
         }
 
@@ -284,7 +302,7 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
     private sealed class FallbackLocalRunner : OrchestratorRunner
     {
         public FallbackLocalRunner()
-            : base(null!, NullLogger<OrchestratorRunner>.Instance) { }
+            : base(NullLogger<OrchestratorRunner>.Instance) { }
 
         public bool WasCalled { get; private set; }
 
@@ -295,7 +313,13 @@ public sealed class QuotaAwareRemoteChatTests : IDisposable
         {
             WasCalled = true;
             return Task.FromResult(new OrchestratorDecisionResult(
-                true, "local reply", model, null, null, null));
+                true, "local reply", model,
+                new OrchestratorTokenUsage { Model = model, InputTokens = 12, OutputTokens = 3 },
+                null, null)
+            {
+                CliType = CliTypes.Codex,
+                ProviderThreadId = "local-thread",
+            });
         }
     }
 }

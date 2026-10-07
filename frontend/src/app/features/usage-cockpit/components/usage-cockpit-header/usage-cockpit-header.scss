@@ -148,6 +148,13 @@
   }
 }
 
+app-usage-alarm-status {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 // Touch tablet and desktop: 48 + 48 px rows and 44 px targets.
 @media (pointer: coarse) {
   :host([data-layout='rows']) {

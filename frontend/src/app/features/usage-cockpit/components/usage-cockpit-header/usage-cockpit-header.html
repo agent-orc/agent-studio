@@ -36,17 +36,22 @@
   @if (primary(); as first) {
     <app-usage-cli-chip [cliId]="first.cliId" [cli]="first.cli" [timeZone]="timeZone()" [now]="now()"
                         [fit]="p.fit"
+                        [compact]="p.fit !== 'full' || p.layout === 'single'"
+                        [alarms]="cliAlarms(first.cliId)" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()"
                         [expanded]="isExpanded('cli', first.cliId)" [controls]="detailControls()"
                         data-testid="cockpit-primary-cli"
                         (activate)="usageSelect.emit({ section: 'cli', cliId: $event })" />
   }
   @for (c of visibleSecondaries(); track c.cliId) {
     <app-usage-cli-chip [cliId]="c.cliId" [cli]="c.cli" [timeZone]="timeZone()" [now]="now()"
+                        [alarms]="cliAlarms(c.cliId)" [readFailed]="readFailed()"
                         [expanded]="isExpanded('cli', c.cliId)" [controls]="detailControls()"
                         data-testid="cockpit-secondary-cli"
                         (activate)="usageSelect.emit({ section: 'cli', cliId: $event })" />
   }
   <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [now]="now()" [fit]="p.fit"
+                       [compact]="p.fit !== 'full' || p.layout === 'single'"
+                       [alarms]="costAlarms()" [readFailed]="readFailed()"
                        [expanded]="isExpanded('cost')" [controls]="detailControls()"
                        (activate)="usageSelect.emit({ section: 'cost', cliId: null })" />
   @if (p.showDetails) {
@@ -54,6 +59,7 @@
             type="button"
             class="cockpit-header__details"
             data-testid="cockpit-header-details"
+            data-usage-trigger="details"
             aria-haspopup="dialog"
             [attr.aria-expanded]="isExpanded('details')"
             [attr.aria-controls]="detailControls()"
@@ -66,6 +72,7 @@
     </button>
   }
 </div>
+<app-usage-alarm-status />
 
 
 <!-- Off-screen, inert copies of every chip variant. Their widths drive the
@@ -74,18 +81,23 @@
   @if (primary(); as first) {
     @for (fit of fits; track fit) {
       <span [attr.data-measure]="'primary-' + fit">
-        <app-usage-cli-chip [cliId]="first.cliId" [cli]="first.cli" [timeZone]="timeZone()" [now]="now()" [fit]="fit" />
+        <app-usage-cli-chip [cliId]="first.cliId" [cli]="first.cli" [timeZone]="timeZone()" [now]="now()" [fit]="fit"
+                            [compact]="fit !== 'full'"
+                            [alarms]="cliAlarms(first.cliId)" [hiddenAlarms]="hiddenAlarms()" [readFailed]="readFailed()" />
       </span>
     }
   }
   @for (fit of fits; track fit) {
     <span [attr.data-measure]="'cost-' + fit">
-      <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [now]="now()" [fit]="fit" />
+      <app-usage-cost-chip [cost]="snapshot()?.cost ?? null" [now]="now()" [fit]="fit"
+                           [compact]="fit !== 'full'"
+                           [alarms]="costAlarms()" [readFailed]="readFailed()" />
     </span>
   }
   @for (c of secondaries(); track c.cliId) {
     <span [attr.data-measure]="'secondary-' + c.cliId">
-      <app-usage-cli-chip [cliId]="c.cliId" [cli]="c.cli" [timeZone]="timeZone()" [now]="now()" />
+      <app-usage-cli-chip [cliId]="c.cliId" [cli]="c.cli" [timeZone]="timeZone()" [now]="now()"
+                          [alarms]="cliAlarms(c.cliId)" [readFailed]="readFailed()" />
     </span>
   }
   <span data-measure="details"><span class="cockpit-header__details">Details <span class="cockpit-header__details-count">+{{ secondaries().length }}</span></span></span>

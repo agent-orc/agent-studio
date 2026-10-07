@@ -196,13 +196,15 @@ public sealed class DriftPostStepRunner
             var pipelineRecord = EnsureRunRecord(jobFolderPath, project, jobId);
             using var pipelineAttempt = _pipelineLog.EnterAttempt(jobFolderPath, pipelineRecord.Attempt);
             var cliType = PipelineStepConfigResolver.ResolveCliType(settings, step) ?? DefaultCli;
-            var model = PipelineStepConfigResolver.ResolveModel(settings, step, DefaultModel);
+            var modelResolution = PipelineStepConfigResolver.ResolveModelWithSource(settings, step, DefaultModel);
+            var model = modelResolution.Model;
             var thinkingLevel = PipelineStepConfigResolver.ResolveThinkingLevel(
                 settings, step, cliType, model, DefaultThinkingLevel);
             try
             {
                 var promptOverride = PipelineStepConfigResolver.ResolvePrompt(settings, step);
-                await RunDimensionAsync(step, cliType, model, thinkingLevel, promptOverride, project, jobId, jobFolderPath, projectRoot, repoRoot, workspace!, ct)
+                await RunDimensionAsync(step, cliType, model, thinkingLevel, promptOverride, project, jobId, jobFolderPath, projectRoot, repoRoot, workspace!, ct,
+                        modelResolution.Source)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -225,10 +227,12 @@ public sealed class DriftPostStepRunner
         string projectRoot,
         string repoRoot,
         string workspace,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? modelSource = null)
     {
         var startedAt = DateTime.UtcNow;
-        RecordStep(jobFolderPath, step.Id, model, PipelineStepStatus.Running, null, null, startedAt);
+        RecordStep(jobFolderPath, step.Id, model, PipelineStepStatus.Running, null, null, startedAt,
+            thinkingLevel: thinkingLevel, modelSource: modelSource);
 
         // The code-pattern dimension is deterministic (no LLM call). The other
         // four are LLM dimensions sharing the manual endpoint's flow.
@@ -284,7 +288,8 @@ public sealed class DriftPostStepRunner
         RecordStep(
             jobFolderPath, step.Id, usage?.Model ?? model,
             cli.Ok ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
-            usage, cli.Ok ? null : "drift-cli-failed", startedAt, endedAt);
+            usage, cli.Ok ? null : "drift-cli-failed", startedAt, endedAt,
+            thinkingLevel: usage?.ThinkingLevel ?? thinkingLevel, modelSource: modelSource);
         RegisterGenerated(jobFolderPath, step.Id, usage?.Model ?? model, usage, cliType, startedAt, endedAt, reportId);
     }
 
@@ -431,13 +436,17 @@ public sealed class DriftPostStepRunner
         OrchestratorTokenUsage? usage,
         string? reason,
         DateTime? startedAt = null,
-        DateTime? completedAt = null)
+        DateTime? completedAt = null,
+        string? thinkingLevel = null,
+        string? modelSource = null)
     {
         _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
         {
             StepId = stepId,
             Kind = StepKind.Drift,
             Model = model,
+            ThinkingLevel = thinkingLevel,
+            ModelSource = modelSource,
             Status = status,
             StartedAt = startedAt,
             CompletedAt = completedAt,

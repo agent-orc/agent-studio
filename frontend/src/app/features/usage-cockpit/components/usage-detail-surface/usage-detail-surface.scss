@@ -1,0 +1,95 @@
+// Usage detail surface (HUC-S3): anchored popover on desktop, bottom sheet on
+// phone. One flat elevated surface in both themes; no left accent.
+
+:host {
+  display: contents;
+}
+
+.usage-surface {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  display: none;
+  flex-direction: column;
+  width: min(32rem, calc(100vw - 16px));
+  max-height: min(70vh, 40rem);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-deck-panel-radius);
+  background: var(--studio-bg-elevated);
+  color: var(--studio-text-primary);
+  box-shadow: var(--studio-card-shadow-hover);
+
+  &[open] {
+    display: flex;
+  }
+
+  &[data-mode='popover'] {
+    inset: auto;
+  }
+
+  &[data-mode='sheet'] {
+    inset: auto 0 0;
+    width: 100vw;
+    max-width: 100vw;
+    max-height: 85vh;
+    border-width: 1px 0 0;
+    border-radius: var(--studio-deck-panel-radius) var(--studio-deck-panel-radius) 0 0;
+  }
+
+  &::backdrop {
+    background: var(--studio-bg-overlay);
+  }
+}
+
+.usage-surface__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--studio-spacing-3);
+  padding: var(--studio-spacing-3) var(--studio-spacing-4);
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.usage-surface__title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.usage-surface__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--studio-row-min-h-interactive-compact);
+  min-height: var(--studio-row-min-h-interactive-compact);
+  padding: 0;
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-surface);
+  color: var(--studio-text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--studio-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--studio-accent-strong);
+    outline-offset: 2px;
+  }
+
+  [data-mode='sheet'] & {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.usage-surface__body {
+  overflow: auto;
+  padding: var(--studio-spacing-3) var(--studio-spacing-4) var(--studio-spacing-4);
+  overscroll-behavior: contain;
+}

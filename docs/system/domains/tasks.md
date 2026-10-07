@@ -1,6 +1,6 @@
 # Tasks Domain Map
 
-Version: 2026-09-27
+Version: 2026-09-29
 Status: System-of-record map for task storage, lanes, and API mutation changes.
 
 Use this when a change touches job folders, lane states, task metadata,
@@ -153,6 +153,7 @@ rejected command changes neither the lane nor attempt authority.
 
 `queue` admits backlog, Human Review, or escalated tasks to Ready; `park` moves
 only an unclaimed Ready task to Backlog. Neither command grants execution.
+
 Runner hosts use the existing claim, lease, heartbeat, and completion paths.
 The file-backed local ProjectRunner books the same `RunLeaseService` authority
 as the remote claim path before CLI spawn, renews while running, and releases
@@ -168,6 +169,64 @@ compatibility; it is not mounted as an authority beside the standalone SQLite
 Task Server in the remote profile. Policy selection for standalone engine
 actions stays in the Engine. The server only checks action eligibility and
 fenced state.
+
+### Versioned continuation intent (AGT-2934, D6)
+
+`POST /api/v1/steering/projects/{projectId}/tasks/{taskId}/continuations`
+accepts contract version 1, a caller supplied `commandId`, `expectedTaskVersion`,
+prompt, optional model/CLI/thinking selection, conversational mode, and reason.
+The server stores the instruction and increments the task version in the same
+SQLite transaction as Ready promotion. An active attempt keeps its current
+specification; the new instruction waits for a later round. The response is an
+immutable acceptance receipt with task version, ordered round, prompt/spec
+revision, actor, reason, and acceptance time. An identical command retry returns
+that receipt. A reused id with changed input or a stale task version returns
+409. The receipt records the model-routing policy version and whether a route
+field was explicitly selected. Explicit selections are retained as supplied;
+the policy does not silently replace an operator pin. The server validates an
+explicit CLI and model against the policy's known model catalogue, including
+their provider pairing. This static check does not prove host CLI availability.
+The accepted intent snapshots unspecified route fields from the task's current
+Studio settings and records a per-field selection mask. For a model-only pin,
+the server retains the task's validated CLI or resolves the model's unique CLI
+from the policy catalogue. The runner carries that CLI with the model so normal
+host defaults do not pair it with another provider; the thinking level remains
+unpinned. A thinking-only pin also carries its validated CLI. If the task has
+no CLI and the thinking level belongs to exactly one policy provider, the
+server resolves that provider; otherwise it rejects the ambiguous selection.
+
+`GET /api/v1/projects/{projectId}/tasks/{taskId}/continuations` lists the
+ordered round projections for Studio readers, and its `/{commandId}` child
+reads one. Each projection shows `queued`, `claimed`, `consumed`, or
+`superseded`, the bound run and fence, and the consumption time. Claim binds
+the oldest queued round to one fenced run. The claim carries that round as its
+`followUp` delivery, with the run id as its claim id, plus the
+`continuationIntent` projection. A required mechanical fresh route takes
+precedence at claim. Otherwise the explicitly submitted route fields override
+normal claim and host resolution. A model or thinking pin also carries its validated CLI,
+while other snapshotted values remain visible only in the projection. A provider
+rejection fallback is a complete CLI/model/thinking route and applies only when
+the continuation has no explicit route fields; it is never used to fill missing
+fields around an operator pin.
+The round is consumed by the runner's existing
+worker-start acknowledgement: the lease renewal names `startedPromptSha256`,
+and only the active lease of the bound run with the matching prompt hash can
+mark it consumed. A different hash returns `follow-up-prompt-mismatch`. If
+spawn fails and the lease is released, completed without acknowledgement, or
+resolved after an unknown process, the round returns to `queued` without losing
+its acceptance receipt. A subsequent waiting round moves to Ready after the
+prior run settles. Moving the task to Completed or Archive marks every waiting
+round `superseded` and records one `follow-up.superseded` audit row. The
+existing Studio `continue` route adapts to this contract and includes
+`continuationReceipt` in its response. Its optional `commandId` and
+`expectedTaskVersion` let callers request idempotent replay. A Studio retry
+with a command id and no explicit task version reuses the accepted version for
+conflict comparison. A single-row follow-up saved before schema 26 is still
+delivered when no round is queued.
+The local file-backed monolith remains a separate compatibility authority; its
+`pending-intent.json` path has not been migrated into the standalone SQLite
+store. A deployment must route both continue and runner claim through the
+standalone Task Server to obtain this D6 receipt contract.
 
 - [docs/system/contracts/filesystem.md](../contracts/filesystem.md) defines the durable
   job-folder layout, lane catalog, and state strings.
@@ -572,6 +631,11 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   obligation before any lane mutation. It binds the current RunAttempt, review
   epoch, failure evidence, result ref and SHA, branch, conflict paths, round
   count, hold state, operator route and the safe merge-into-delivery route.
+  The idempotency key and evidence fingerprint hash length-prefixed fields
+  (`AgentStudio.Shared.CanonicalFields`, AGT-2989), so a failure reason or
+  path containing a newline cannot alias another conflict. Obligations written
+  before AGT-2989 keep their old file name; the one-automatic-round-per-epoch
+  timeline check still holds across the key change.
   Operator recovery writes the same
   projection and records a manual action. The rail may queue only one automatic
   round per review epoch; later recoverable conflicts in that epoch remain
@@ -629,6 +693,20 @@ filesystem mutation under `agent-taskboard-workspace/projects/**` or
   history and `status.md` retain the override and reason. Concept and other
   no-branch cards are exempt through their mode, kind, `taskType=concept|decision`,
   or the explicit `noBranchExpected: true` card field.
+  The acceptance integration writer appends its own marked section to
+  `status.md`. On retry or clear, it finds a whole-line ownership marker
+  immediately before the section's marker pair, heading, and field layout.
+  The ownership marker does not depend on surrounding task text, so edits
+  before the section and task notes after it do not prevent replacement.
+  Quoted marker pairs and copied section bodies without the ownership marker
+  remain task text. Each retry advances the marker generation, so a copy of
+  an older complete writer block remains task text after replacement. When
+  task text appends an exact copy of the current block, the first occurrence
+  remains the writer's section. For status files written before the ownership
+  marker existed, retry and clear also recognize the previous writer's complete
+  field layout when it is separated from the task result by a blank line and
+  ends the document. The next write replaces it with a marked section; other
+  marker pairs remain task text (AGT-2989).
 - `HistoricalIntegrationVerificationSweep` runs once off the startup request
   path before the accepted integration inventory. The V2 pass reads every task
   folder directly, groups Git reads by repository, and processes card writes in
@@ -1194,18 +1272,30 @@ as `acceptance-rail-run`.
 
 ## Board state source (AGT-2726)
 
-Git-derived board state (merge signal, integration status, publish signal,
-test-run evidence, and the Git inventory below) is owned by one background
-index per repository, `GitStateIndexService`, not computed on any request
-path.
+Git-derived board and task-detail state (merge signal, integration status,
+publish signal, test-run evidence, review projection, reconstructed progress
+commits, and the Git inventory below) is owned by one background index per
+repository, `GitStateIndexService`. Detail and `GET
+/api/tasks/{jobId}/details/git` read the latest completed snapshot only.
+They do not start Git or wait for a refresh. The resource returns task and
+project identity, input and resource versions, `computedAt`, a bounded reason
+code, and `warming`, `ready`, `stale`, or `unavailable` state. An incompatible
+task generation has no Git facts. Acceptance and integration mutations keep
+their authoritative checks; display state never grants permission to mutate.
 
 - **Change-driven, not request-driven.** Each repository is watched with a
-  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, and worktree
-  `HEAD` files, plus the Task Server's own `TaskWatcherService.OnJobChanged`
-  event (a task-folder write is itself an integration/delivery signal). A
+  `FileSystemWatcher` on `.git/HEAD`, `refs/`, `packed-refs`, config, worktree
+  Git files and the common Git directory, plus task metadata and review-subject
+  events. The sweep also compares the task input signature, including the
+  review-subject content hash, so a missed event or a same-size rewrite with a
+  preserved timestamp converges, while a same-content touch does not reindex. A
   debounce (default 400 ms) coalesces a burst of events into one run per
   repository; a slow periodic sweep (default 45 s) re-checks a cheap
-  `GitRefSignature` as a safety net for anything the watcher missed. This
+  ref signature and Git-resolved effective configuration as a safety net for
+  anything the watcher missed, including external config includes. Git itself
+  interprets includes and worktree configuration. An unchanged task write can
+  queue an input check but cannot force full Git recomputation. Runtime logs
+  do not queue it. This
   replaced the previous design, where every list/grouped poll landing more
   than a fixed TTL after the last refresh queued a whole-board recompute -
   structurally proportional to request traffic rather than to actual repo
@@ -1215,6 +1305,27 @@ path.
   start a second one; it marks exactly one rerun for after the current run
   finishes. `GitStateIndex:MaxConcurrentRepos` (default 2) bounds how many
   repositories index at once process-wide.
+- **Versioned publication.** Repository path, ref and effective-config
+  signatures, settings version, task commit/review generation and schema
+  version key an immutable snapshot. An input change during computation
+  discards the result and queues one rerun. A failed run retains the last
+  successful snapshot, marked stale with a bounded reason. Git children have
+  deadlines and are killed on timeout; failed runs back off with at most five
+  automatic retries. Later safety sweeps retry a failed repository even when
+  its inputs are unchanged, and only a successful publication clears stale
+  state. A repository computation runs at most four Git children at once.
+  One Git config command per index run supplies both the effective
+  config signature and primary origin. The 45 s sweep checks effective config
+  separately. `TaskIntegrationStatusService` also memoizes origin once per
+  repository in authoritative action lookups, using Git's own config semantics.
+  Origin memoization and every path-keyed map in `TaskListGitProjectionCache`
+  (repository snapshots, review-subject generations, sidecar stamps and read
+  grouping) share `FileSystemPathComparer`: case-sensitive on Linux,
+  case-insensitive on Windows and macOS. Case-distinct checkouts on Linux
+  therefore keep separate origins, snapshots and subject generations. A
+  board read that spans several repositories groups tasks by watch path and
+  takes each task's facts only from its own repository's snapshot; a fact a
+  snapshot carries for a task outside its group is never merged.
 - **Origin reads are bounded per integration lookup.** Delivered cards in one
   lookup share one effective origin read per checkout root, including a missing
   origin. The next lookup reads Git configuration again, so origin changes and
@@ -1362,6 +1473,11 @@ every byte of it is a byte the client already holds.
   `?includeLegacyReviewLane=false` and receives the key as an empty array
   instead of the duplicate, which is what the Angular board does. Omitting the
   parameter keeps the pre-ADR-0025 contract unchanged.
+- **Task navigation does not re-read the board.** Selection reuses the
+  resident grouped snapshot and reads only the bounded task core; this route
+  stays reserved for mutations, push convergence, reconnect and the conditional
+  heartbeat. The client contract is in
+  [Task core cache and board reuse](frontend.md#task-core-cache-and-board-reuse-agt-2956).
 
 ## Project Git inventory contract
 

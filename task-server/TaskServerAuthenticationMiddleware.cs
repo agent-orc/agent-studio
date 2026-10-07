@@ -5,7 +5,8 @@ namespace AgentStudio.TaskServer;
 public sealed class TaskServerAuthenticationMiddleware(
     RequestDelegate next,
     TaskServerBootstrapOptions bootstrap,
-    TaskServerStore store)
+    TaskServerStore store,
+    ILogger<TaskServerAuthenticationMiddleware> logger)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -62,6 +63,27 @@ public sealed class TaskServerAuthenticationMiddleware(
 
         context.Items[typeof(TaskServerPrincipal)] = principal;
         await next(context);
+        if (context.Response.StatusCode is >= 200 and < 300
+            && !context.Request.Path.StartsWithSegments("/api/v1/principal-rotations")
+            && requiredScope is not null)
+        {
+            try
+            {
+                await store.RecordPrincipalScopeProofAsync(principal, requiredScope.Scope,
+                    context.Request.Headers["X-Principal-Consumer-Id"].FirstOrDefault(),
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(),
+                    context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                // The consumer will make another scoped request before acknowledgement.
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning("Principal rotation proof recording failed: {ErrorType}",
+                    exception.GetType().Name);
+            }
+        }
     }
 
     private static bool IsProtectedPath(PathString path)
@@ -70,7 +92,11 @@ public sealed class TaskServerAuthenticationMiddleware(
 
     private static bool IsOpenPath(PathString path)
         => path.Equals("/api/v1/protocol", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/api/v1/protocol/compatibility", StringComparison.OrdinalIgnoreCase)
+           // I05: a host verifies the installation and exchanges its one-time
+           // enrolment code before it holds any principal credential.
+           || path.Equals("/api/v1/installation", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/api/v1/enrolments/exchange", StringComparison.OrdinalIgnoreCase);
 
     private static string? ReadBearer(HttpRequest request)
     {

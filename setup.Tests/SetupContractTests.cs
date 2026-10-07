@@ -188,10 +188,9 @@ public sealed class SetupContractTests
                 "agent",
                 "agent",
                 "/home/agent",
-                "/usr/bin/codex",
+                "codex",
                 "/usr/bin/claude",
                 "/usr/bin/codex",
-                "exec -",
                 null,
                 null,
                 4),
@@ -199,9 +198,12 @@ public sealed class SetupContractTests
             "/var/lib/agent-runner/work",
             "/var/lib/agent-runner/state");
 
-        Assert.Contains("RUNNER_CLI_BIN=/usr/bin/codex", environment, StringComparison.Ordinal);
+        Assert.Contains("RUNNER_CLI_TYPE=codex", environment, StringComparison.Ordinal);
         Assert.Contains("RUNNER_CLAUDE_CLI_BIN=/usr/bin/claude", environment, StringComparison.Ordinal);
         Assert.Contains("RUNNER_CODEX_CLI_BIN=/usr/bin/codex", environment, StringComparison.Ordinal);
+        // AGT-2373: the runner refuses to start when these removed settings are present.
+        Assert.DoesNotContain("RUNNER_CLI_BIN=", environment, StringComparison.Ordinal);
+        Assert.DoesNotContain("RUNNER_CLI_ARGS=", environment, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -16,6 +16,8 @@ import { MenuComponent } from '../../../../components/menu/menu.component';
 import type { MenuItem, MenuItemClickEvent } from '../../../../components/menu/menu.types';
 import type { UsageCockpitResponse } from '../../models/usage-cockpit.model';
 import { cliDisplayName } from '../../usage-chip.util';
+import { UsageAlarmStateService } from '../../state/usage-alarm-state.service';
+import { UsageAlarmStatusComponent } from '../usage-alarm-status/usage-alarm-status';
 import {
   headerTierForWidth,
   narrowerTier,
@@ -67,7 +69,7 @@ const FITS: readonly UsageChipFit[] = ['full', 'compact', 'abbreviated', 'bare']
 @Component({
   selector: 'app-usage-cockpit-header',
   standalone: true,
-  imports: [MenuComponent, UsageCliChipComponent, UsageCostChipComponent],
+  imports: [MenuComponent, UsageAlarmStatusComponent, UsageCliChipComponent, UsageCostChipComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './usage-cockpit-header.html',
   styleUrl: './usage-cockpit-header.scss',
@@ -82,6 +84,7 @@ const FITS: readonly UsageChipFit[] = ['full', 'compact', 'abbreviated', 'bare']
 export class UsageCockpitHeaderComponent {
   /** Cockpit projection; `null` while it loads. */
   readonly snapshot = input<UsageCockpitResponse | null>(null);
+  readonly readFailed = input(false);
   /** CLIs listed while the projection loads, in stable provider order. */
   readonly placeholderCliIds = input<readonly string[]>(['codex', 'claude']);
   /** The operator's current CLI selection, if any. */
@@ -100,6 +103,7 @@ export class UsageCockpitHeaderComponent {
   readonly usageSelect = output<UsageDetailRequest>();
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly alarms = inject(UsageAlarmStateService);
   private readonly measureLayer = viewChild<ElementRef<HTMLElement>>('measure');
   private readonly navContent = viewChild<ElementRef<HTMLElement>>('navContent');
   private readonly moreTrigger = viewChild<ElementRef<HTMLButtonElement>>('moreTrigger');
@@ -142,6 +146,19 @@ export class UsageCockpitHeaderComponent {
   });
 
   readonly visibleSecondaries = computed(() => this.secondaries().slice(0, this.plan().visibleSecondaries));
+  readonly hiddenAlarms = computed(() => {
+    this.alarms.state();
+    return this.alarms.hiddenAlarms([this.primary()?.cliId, ...this.visibleSecondaries().map(cli => cli.cliId)]
+      .filter((id): id is string => !!id));
+  });
+  cliAlarms(cliId: string) {
+    this.alarms.state();
+    return this.alarms.alarmsFor(`cli:${cliId}`);
+  }
+  costAlarms() {
+    this.alarms.state();
+    return this.alarms.alarmsFor('cost');
+  }
   readonly hiddenCliNames = computed(() => {
     const p = this.plan();
     const hidden = this.secondaries().slice(p.visibleSecondaries).map(c => cliDisplayName(c.cliId));

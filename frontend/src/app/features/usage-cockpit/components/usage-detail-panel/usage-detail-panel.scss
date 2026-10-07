@@ -1,0 +1,215 @@
+// Usage detail content (HUC-S3). Flat sections separated by hairlines; state
+// is wording plus a tinted badge, never a left accent or colour alone.
+
+:host {
+  display: block;
+  color: var(--studio-text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.usage-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-4);
+}
+
+.usage-detail__jump {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-block: var(--studio-spacing-2);
+  background: var(--studio-bg-elevated);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-3);
+}
+
+.usage-detail__jump-link {
+  color: var(--studio-text-secondary);
+  text-decoration: none;
+
+  &[aria-current='location'] {
+    color: var(--studio-text-primary);
+    font-weight: 650;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+.usage-detail__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-2);
+  padding-top: var(--studio-spacing-3);
+  border-top: 1px solid var(--studio-border);
+  // Clears the sticky section links when a section is brought into view.
+  scroll-margin-top: calc(var(--studio-spacing-7) + var(--studio-spacing-2));
+}
+
+.usage-detail__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.usage-detail__subtitle {
+  margin: var(--studio-spacing-2) 0 0;
+  color: var(--studio-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.usage-detail__meta,
+.usage-detail__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-1) var(--studio-spacing-3);
+  margin: 0;
+}
+
+.usage-detail p {
+  margin: 0;
+}
+
+.usage-detail__muted,
+.usage-detail__utc {
+  color: var(--studio-text-muted);
+}
+
+// Angular drops whitespace-only text between elements; keep adjacent values apart.
+time + .usage-detail__utc,
+time + .usage-detail__muted,
+.usage-detail__key + .usage-detail__muted {
+  margin-inline-start: var(--studio-spacing-1);
+}
+
+.usage-detail__note {
+  color: var(--studio-text-secondary);
+}
+
+.usage-detail__num {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.usage-detail__key {
+  font-weight: 600;
+}
+
+.usage-detail__badge {
+  display: inline-block;
+  padding-inline: var(--studio-spacing-1);
+  border-radius: var(--studio-action-radius-sm);
+  background: var(--studio-bg-selected);
+  color: var(--studio-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.usage-detail__route {
+  padding-inline: var(--studio-spacing-1);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-action-radius-sm);
+  color: var(--studio-text-secondary);
+}
+
+.usage-detail__table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th,
+  td {
+    padding: var(--studio-spacing-1) var(--studio-spacing-2) var(--studio-spacing-1) 0;
+    border-bottom: 1px solid var(--studio-border-muted);
+    text-align: start;
+    vertical-align: baseline;
+    font-weight: 400;
+  }
+
+  thead th {
+    color: var(--studio-text-muted);
+    font-size: 12px;
+  }
+
+  th.usage-detail__num,
+  td.usage-detail__num {
+    text-align: end;
+  }
+
+  tfoot th,
+  tfoot td {
+    border-bottom: 0;
+    font-weight: 650;
+  }
+}
+
+.usage-detail__caption {
+  color: var(--studio-text-muted);
+  font-size: 12px;
+  text-align: start;
+  caption-side: top;
+  padding-bottom: var(--studio-spacing-1);
+}
+
+.usage-detail__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--studio-spacing-3);
+  margin: 0;
+
+  dt {
+    color: var(--studio-text-muted);
+    font-size: 12px;
+  }
+
+  dd {
+    margin: 0;
+    text-align: start;
+  }
+
+  dd.usage-detail__num {
+    font-size: 16px;
+    font-weight: 650;
+  }
+}
+
+.usage-detail__groups,
+.usage-detail__runs,
+.usage-detail__slots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--studio-spacing-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-detail__runs {
+  padding-inline-start: var(--studio-spacing-4);
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-2);
+  }
+}
+
+.usage-detail__group-head,
+.usage-detail__slots li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}
+
+.usage-detail a {
+  color: var(--studio-accent-strong);
+}
+
+.usage-detail a:focus-visible,
+.usage-detail__title:focus-visible {
+  outline: 2px solid var(--studio-accent-strong);
+  outline-offset: 2px;
+}

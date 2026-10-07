@@ -31,6 +31,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
@@ -386,12 +387,12 @@ builder.Services.AddSingleton<OrchestratorContextDigestService>();
 builder.Services.AddSingleton<OrchestratorTaskPromptContextComposer>();
 builder.Services.AddSingleton<OrchestratorWorkbenchPromptContextComposer>();
 builder.Services.AddSingleton<RemoteChatWorkBroker>();
+builder.Services.AddSingleton<LocalChatUsageTracker>();
 builder.Services.AddSingleton<OrchestratorChatService>();
 builder.Services.AddSingleton<ProjectChatStore>();
 builder.Services.AddSingleton<ProjectChatIndex>();
 builder.Services.AddSingleton<ProjectChatMigration>();
 builder.Services.AddSingleton<OrchestratorRunner>(sp => new OrchestratorRunner(
-    sp.GetRequiredKeyedService<GenericCliExecutionService>(CliTypes.Claude),
     sp.GetRequiredService<ILogger<OrchestratorRunner>>(),
     sp.GetService<CliUsageParserRegistry>(),
     sp.GetService<ICliModelRegistry>(),
@@ -427,6 +428,7 @@ builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
 builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
+builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -697,6 +699,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthDetector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineHealthSensor>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.IEvidenceFlushAlarm>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+// AGT-3000: clears git locks left by dead git processes before a server-owned write.
+builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
@@ -715,6 +721,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvid
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
@@ -866,6 +876,12 @@ builder.Services.AddSingleton<AcceptanceRailHostedService>();
 // ladder that actually performs that retry lives in its own service. It replays
 // the integration for the unchanged delivery SHA and never starts a review.
 builder.Services.AddSingleton<AgentStudio.Pipeline.GateEnvironmentRetryService>();
+// AGT-3009: a red merge gate is classified (environment, product, integration
+// branch, undecidable) and routed by the delivery-chain reconciler before it may
+// park. The fingerprint counter is the Task Server store the cause breaker reads.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IGateFailureFingerprintCounter,
+    AgentStudio.Pipeline.TaskServerGateFailureFingerprintCounter>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateFailureRouter>();
 // AGT-2849: a build gate that never reached a verdict left an un-gated merge on
 // the integration branch, and the next delivery merged on top of it. Startup
 // recovery rolls that branch back to the exact pre-merge tip (or resumes the
@@ -880,7 +896,19 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
+    builder.Services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
 }
+// AGT-3011: the fix-round, gate-triage and salvage sweeps that used to run from
+// an operator shell loop. One supervised tick, the shared per-card round
+// budget, per-project pause in project settings, projection next to pipeline
+// health. The failure-continuation service is shared with the failure panel.
+builder.Services.AddSingleton<TaskFailureContinuationService>();
+builder.Services.AddSingleton<IOperatorSweepGateFacts, OperatorSweepGateFacts>();
+builder.Services.AddSingleton<IOperatorSweepActions, OperatorSweepActions>();
+builder.Services.AddSingleton<OperatorSweepService>();
+builder.Services.AddSingleton<IOperatorSweepRunner>(sp => sp.GetRequiredService<OperatorSweepService>());
+if (!publicDemoExecutionProfile)
+    builder.Services.AddHostedService<OperatorSweepHostedService>();
 // Global Orchestrator Watcher (orchestrator-waechter dossier §10, W1+W2):
 // detector sweep + ticket-proposal drafting. Off by default (Watcher:Enabled),
 // same convention as Supervisor:SoftReasoningEnabled - it drafts real task
@@ -994,6 +1022,7 @@ builder.Services.AddSingleton<IQuotaProbe, ClaudeQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, CodexQuotaProbe>();
 builder.Services.AddSingleton<IQuotaProbe, AntigravityQuotaProbe>();
 builder.Services.AddSingleton<QuotaCacheStore>();
+builder.Services.AddSingleton<QuotaHistoryStore>();
 builder.Services.AddSingleton<CliVersionTracker>();
 builder.Services.AddSingleton<NpmGlobalInstaller>();
 builder.Services.AddSingleton<LocalCliRepairService>();
@@ -1371,6 +1400,17 @@ try
 catch (Exception ex)
 {
     crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
+}
+
+// One-time collapse of task receipts that recorded the same usage more than
+// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
+try
+{
+    app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
 }
 
 // Cap legacy durable CLI logs after the one-time full-history wiki read

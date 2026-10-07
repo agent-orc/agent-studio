@@ -12,8 +12,11 @@
                             class="studio-titlebar"
                             data-testid="studio-titlebar"
                             [snapshot]="headerCockpit.usage.snapshot()"
+                            [readFailed]="headerCockpit.usage.readFailed()"
                             [selectedCliId]="headerCockpit.selectedCli()"
                             [defaultCliId]="headerCockpit.defaultCli()"
+                            [openDetail]="headerCockpit.openRequest()"
+                            detailControls="studio-usage-detail"
                             [navItems]="headerCockpit.navItems"
                             (navSelect)="headerCockpit.onNav($event, cockpitHeader)"
                             (usageSelect)="headerCockpit.onUsage($event)">
@@ -122,6 +125,12 @@
       </button>
     </div>
   </app-usage-cockpit-header>
+  <app-usage-detail-surface surfaceId="studio-usage-detail"
+                            [snapshot]="headerCockpit.usage.snapshot()"
+                            [focus]="headerCockpit.detailFocus()"
+                            [returnTrigger]="headerCockpit.openRequest()?.section === 'details' ? 'details' : null"
+                            [now]="headerCockpit.detailNow()"
+                            (closed)="headerCockpit.closeDetail()" />
   <app-global-search
     [tasks]="globalSearchTasks()"
     [open]="globalSearchOpen()"

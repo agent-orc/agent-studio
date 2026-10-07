@@ -2,6 +2,11 @@ namespace AgentStudio.Shared;
 
 public record ProjectSettings
 {
+    /// <summary>Documentation-only batch gate pilot. Disabled until a project opts in.</summary>
+    public AgentStudio.Pipeline.BatchGateFormationOptions BatchGate { get; init; } = new();
+    /// <summary>Optional project override for chat metadata visibility.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("chat.metadata.enabled")]
+    public bool? ChatMetadataEnabled { get; init; }
     /// <summary>Default-on creation classification. Stored here until project definition v2 accepts tagging.autoTag.</summary>
     public bool AutoTag { get; init; } = true;
     /// <summary>
@@ -36,6 +41,13 @@ public record ProjectSettings
 
     /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
     public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
+
+    /// <summary>
+    /// AGT-3011: operator sweeps (<c>fix-rounds</c>, <c>gate-triage</c>,
+    /// <c>salvage</c>) an operator paused for this project. Persisted so a pause
+    /// survives a backend restart. Null or empty means every sweep runs.
+    /// </summary>
+    public IReadOnlyList<OperatorSweepPause>? OperatorSweepPauses { get; init; }
 
     /// <summary>
     /// Controls when the platform pushes runner-owned commits. Default is
@@ -117,15 +129,6 @@ public record ProjectSettings
     /// <c>BenchmarkCapabilityClass</c> from the pinned package.
     /// </summary>
     public string? BenchmarkCapabilityClass { get; init; }
-
-    /// <summary>
-    /// Per-project override for the local CLI execution engine. One of
-    /// <see cref="CliExecutionEngines.Car"/> or
-    /// <see cref="CliExecutionEngines.Legacy"/>. Null inherits the owning
-    /// workspace default, then <see cref="CliExecutionEngines.Default"/>. The
-    /// process-wide rollback selector takes precedence when present.
-    /// </summary>
-    public string? CliExecutionEngine { get; init; }
 
     /// <summary>
     /// Per-topic cadence for scheduled analysis reports (project-level
@@ -1175,3 +1178,13 @@ public sealed record BranchSweepSettings
     /// </summary>
     public int? AbandonedRetentionDays { get; init; }
 }
+
+/// <param name="Sweep">One of the operator sweep ids.</param>
+/// <param name="PausedAtUtc">When the operator paused it.</param>
+/// <param name="PausedBy">Operator identity from the request, or <c>operator</c>.</param>
+/// <param name="Reason">Optional operator note shown next to the paused sweep.</param>
+public sealed record OperatorSweepPause(
+    string Sweep,
+    DateTime PausedAtUtc,
+    string PausedBy,
+    string? Reason = null);

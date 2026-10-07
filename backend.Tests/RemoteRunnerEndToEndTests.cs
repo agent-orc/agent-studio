@@ -106,7 +106,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     public async Task Server_advertises_artifact_limit_and_records_partial_board_fact()
     {
         SeedTask(TaskStates.Progress, TaskKey, "Artifact policy", "Deliver bounded evidence.");
-        using var factory = BuildFactory();
+        // Keep the seeded Progress card stable while this endpoint acceptance
+        // inspects the operator timeline, rather than allowing the unrelated
+        // boot liveness sweep to move it during server startup.
+        var authorityNow = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        using var factory = BuildFactory(authorityNow: () => authorityNow);
         using var http = factory.CreateClient();
         using var client = new RClient(http, RunnerId);
         var ct = CancellationToken.None;
@@ -125,15 +129,27 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             [new RArtifactIssue(
                 "results/playwright/archive/trace.zip",
                 18L * 1024 * 1024,
-                "exceeded the 25 MB upload limit")],
+                "upload failed after 3 attempt(s) (HTTP 503)",
+                "ArtifactTransferFailed",
+                Attempts: 3)],
             lease.Lease!.RunnerId,
             lease.Lease.LeaseId,
             lease.Lease.FencingToken,
             lease.Lease.AttemptId), ct);
 
-        // The endpoint acceptance proves the fenced report reached the backend;
-        // ArtifactIngestionEndpointsTests pins the exact board-fact wording and
-        // typed outcome written by this route.
+        var reportedTask = Assert.Single(factory.Services
+            .GetRequiredService<ITaskScanner>()
+            .ScanAllJobs()
+            .Where(task => string.Equals(task.TaskKey, TaskKey, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(task.Id, TaskKey, StringComparison.OrdinalIgnoreCase)));
+        var partial = Assert.Single(ReadTimelineAt(reportedTask.FolderPath)
+            .Where(entry => entry.GetProperty("kind").GetString()
+                            == TimelineEventKinds.ResultArtifactsPartial));
+        var details = partial.GetProperty("details");
+        Assert.Equal("ArtifactTransferFailed", details.GetProperty("typedOutcome").GetString());
+        Assert.Equal("3", details.GetProperty("attempts").GetString());
+        Assert.Equal("2", details.GetProperty("retryAttempts").GetString());
+        Assert.Equal("1", details.GetProperty("notTransferredCount").GetString());
     }
 
     [Fact]
@@ -2292,7 +2308,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal("codex", codex.RunSpec!.CliType);
         var claimedClaudeSpec = claude.RunSpec with { ContextMode = "shared" };
 
-        var invocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        var invocation = Runner::AgentRunner.CliSelection.Resolve(
             runnerOptions,
             claimedClaudeSpec);
         Assert.Equal(claudeBinary, invocation.FileName);
@@ -2311,7 +2327,6 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             results,
             runSpec: claimedClaudeSpec,
             runId: claude.RunId);
-        Assert.Equal(ROptions.ExecEngineCar, persistedSpec.Engine);
         Assert.Equal("claude", persistedSpec.CliType);
         Assert.Equal(claudeBinary, persistedSpec.FileName);
 
@@ -2472,10 +2487,11 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.PermissionMode));
         Assert.False(string.IsNullOrWhiteSpace(claim.RunSpec.ContextMode));
 
-        var claudeInvocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        var claudeInvocation = Runner::AgentRunner.CliSelection.Resolve(
             RunnerOptions("claude"), claim.RunSpec);
         Assert.Equal("claude", claudeInvocation.FileName);
-        Assert.Equal(["--model", "claude-opus-4-8", "--effort", "max"], claudeInvocation.Arguments);
+        Assert.Equal("claude-opus-4-8", claudeInvocation.Model);
+        Assert.Equal("max", claudeInvocation.ThinkingLevel);
 
         // The host-capacity contract admits one slot for this fixture. Release
         // the first lease before probing the second card's independent RunSpec.
@@ -2503,14 +2519,12 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // the model's ladder rather than shipping an invalid selector.
         Assert.Equal("medium", codexClaim.RunSpec.ThinkingLevel);
 
-        // The card routes to the other CLI, so RUNNER_CLI_BIN / RUNNER_CLI_ARGS
-        // stop being the truth: the codex binary and its minimal headless form win.
-        var codexInvocation = Runner::AgentRunner.AgentCliProcess.Resolve(
+        // The card routes to the other provider-specific binary. CAR owns argv.
+        var codexInvocation = Runner::AgentRunner.CliSelection.Resolve(
             RunnerOptions("claude"), codexClaim.RunSpec);
         Assert.Equal("codex", codexInvocation.FileName);
-        Assert.Equal(
-            ["exec", "--experimental-json", "-m", "gpt-5.6-codex", "-c", "model_reasoning_effort=\"medium\"", "-"],
-            codexInvocation.Arguments);
+        Assert.Equal("gpt-5.6-codex", codexInvocation.Model);
+        Assert.Equal("medium", codexInvocation.ThinkingLevel);
     }
 
     [Fact]
@@ -2554,15 +2568,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             WorkDir = runnerWork,
             StateDir = Path.Combine(runnerWork, ".runner-state"),
             BaseBranch = "main",
-            CliBin = cli,
+            ClaudeCliBin = cli,
             CodexCliBin = cli,
-            CliArgs = "",
             TtlSeconds = 120,
             HeartbeatSeconds = 30,
             RunTimeoutSeconds = 30,
             HostMaxParallelism = 1,
             PollSeconds = 1,
-            ExecEngine = ROptions.ExecEngineLegacy,
         };
         var taskRunner = new RTaskRunner(options, client, _ => { });
         var exit = await taskRunner.RunClaimedAsync(
@@ -3810,9 +3822,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         WorkDir = Path.Combine(_workspace, "remote-runner-work"),
         StateDir = Path.Combine(_workspace, "remote-runner-work", ".runner-state"),
         BaseBranch = "main",
-        CliBin = cliBin,
-        ClaudeCliBin = claudeCliBin ?? "claude",
-        CliArgs = "",
+        CliType = cliBin.Contains("codex", StringComparison.OrdinalIgnoreCase) ? "codex" : "claude",
+        ClaudeCliBin = claudeCliBin ?? cliBin,
         TtlSeconds = 120,
         HeartbeatSeconds = 30,
         RunTimeoutSeconds = 30,
@@ -4695,8 +4706,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         ReviewWorkDir = Path.Combine(_workspace, "review-work"),
         StateDir = Path.Combine(_workspace, "review-state"),
         BaseBranch = "main",
-        CliBin = "unused",
-        CliArgs = string.Empty,
+        ClaudeCliBin = "unused",
         CodexCliBin = codexCliBin ?? "codex",
         TtlSeconds = 120,
         HeartbeatSeconds = 1,
@@ -5888,6 +5898,14 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     private List<JsonElement> ReadTimeline(string state)
     {
         var path = Path.Combine(_watchPath, state, TaskKey, "logs", "timeline.jsonl");
+        return ReadTimelineAt(path);
+    }
+
+    private static List<JsonElement> ReadTimelineAt(string jobFolderOrTimelinePath)
+    {
+        var path = jobFolderOrTimelinePath.EndsWith("timeline.jsonl", StringComparison.OrdinalIgnoreCase)
+            ? jobFolderOrTimelinePath
+            : Path.Combine(jobFolderOrTimelinePath, "logs", "timeline.jsonl");
         if (!File.Exists(path)) return [];
         return File.ReadAllLines(path)
             .Where(line => !string.IsNullOrWhiteSpace(line))

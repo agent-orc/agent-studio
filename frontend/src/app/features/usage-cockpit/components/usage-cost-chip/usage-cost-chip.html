@@ -4,6 +4,8 @@
         data-testid="usage-cost-chip"
         [attr.data-state]="v.state"
         [attr.data-fit]="fit()"
+        [attr.data-alarm]="v.alarm"
+        [attr.data-usage-trigger]="controls() ? 'cost' : null"
         aria-haspopup="dialog"
         [attr.aria-expanded]="expanded()"
         [attr.aria-controls]="controls()"
@@ -20,7 +22,7 @@
       <span class="usage-cost-chip__value"
             [class.usage-cost-chip__value--muted]="v.state !== 'normal' && v.state !== 'partial'"
             data-testid="usage-cost-chip-value">{{ v.value }}</span>
-      @if (v.exact && fit() === 'full') {
+      @if (v.exact && fit() === 'full' && !compact()) {
         <span class="usage-cost-chip__unit">USD</span>
       }
     }

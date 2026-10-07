@@ -1,0 +1,22 @@
+# AGT-2993: removes scenario and compose smoke images older than six hours that
+# no container uses and caps the BuildKit cache. Install steps and the disk
+# alarm threshold: docs/operations/setup/linux-runner-host.md, section
+# "Docker scenario image retention".
+[Unit]
+Description=Agent Studio scenario and smoke Docker image retention
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Optional overrides: DOCKER_SCENARIO_RETENTION_MAX_AGE_HOURS (default 6) and
+# DOCKER_SCENARIO_BUILD_CACHE_KEEP_STORAGE (default 40GB).
+EnvironmentFile=-/etc/agent-runner/docker-retention.env
+ExecStart=/usr/local/libexec/agent-docker-scenario-retention
+# Docker socket access is equivalent to root; this unit runs as root only to
+# reach the daemon and changes nothing outside Docker. The Docker CLI and buildx
+# keep state under /root/.docker, so the home directory stays writable.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+SyslogIdentifier=agent-docker-scenario-retention

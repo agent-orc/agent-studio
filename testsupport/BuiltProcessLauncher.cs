@@ -28,9 +28,13 @@ public static class BuiltProcessLauncher
             UseShellExecute = false,
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        // A null value removes an inherited variable instead of passing it on.
         if (environment is not null)
             foreach (var (key, value) in environment)
-                start.Environment[key] = value;
+            {
+                if (value is null) start.Environment.Remove(key);
+                else start.Environment[key] = value;
+            }
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"Could not start {file}.");
         var managed = new ManagedProcess(process);
@@ -54,6 +58,21 @@ public static class BuiltProcessLauncher
         string assemblyName,
         IReadOnlyDictionary<string, string?>? environment,
         params string[] arguments)
+        => StartBuiltIn(repositoryRoot, repositoryRoot, projectDirectory, assemblyName, environment, arguments);
+
+    /// <summary>
+    /// Like <see cref="StartBuilt(string, string, string, IReadOnlyDictionary{string, string?}?, string[])"/>
+    /// but runs the binary from <paramref name="workingDirectory"/>. A component that
+    /// writes beside its content root (the backend monolith writes <c>logs/</c>)
+    /// must not run from the repository checkout.
+    /// </summary>
+    public static ManagedProcess StartBuiltIn(
+        string repositoryRoot,
+        string workingDirectory,
+        string projectDirectory,
+        string assemblyName,
+        IReadOnlyDictionary<string, string?>? environment,
+        params string[] arguments)
     {
         var candidates = BuiltAssemblyCandidates(repositoryRoot, projectDirectory, assemblyName);
         var assembly = candidates.FirstOrDefault(File.Exists)
@@ -65,7 +84,7 @@ public static class BuiltProcessLauncher
         return StartProcess(
             "dotnet",
             new[] { assembly }.Concat(arguments).ToArray(),
-            repositoryRoot,
+            workingDirectory,
             environment);
     }
 

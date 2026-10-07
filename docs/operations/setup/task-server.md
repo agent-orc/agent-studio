@@ -354,6 +354,13 @@ ownership. Hosts without a registered runner can update only from the instance
 that created the record. The management principal is required; secret values, token
 hashes and credential-bearing URLs are never accepted. The host or CLI retains
 native refresh and custody.
+GitHub records may additionally carry a token subtype, repository purpose and
+write grant. A deploy-key record can carry its GitHub key ID, public fingerprint
+and the credential ID of the provisioning token. These fields are metadata,
+not authority to register or revoke a key. The server advertises
+`credential-registry-github-v1` for clients that consume the expanded record;
+older records omit the nullable fields. Repository key operations still require
+an authorized administration session and a generation-matched host observation.
 
 Management routes, all under `/api/v1/management/retention`:
 
@@ -476,6 +483,13 @@ dotnet task-server.dll backup full --TaskServer:DataDirectory /srv/agent-orchest
 dotnet task-server.dll backup verify-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 dotnet task-server.dll backup restore-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 ```
+
+The authenticated full-backup verify and restore API responses include
+`identitySha256`, a digest of stable authority, principal, human-account,
+project and project-URL identity. Restore compares the verified snapshot
+digest with the live store after restore and fails if they differ. The setup
+relocation gate requires the matching response digests and the preserved
+`installation.json` before it records the authority as relocated.
 
 ## Container images
 
@@ -728,25 +742,119 @@ The service listens on `127.0.0.1:5031` and uses the current user's application
 data directory. The topology test separately proves the service with another
 process and temporary data root.
 
+## Owner bootstrap, enrolment and project registration
+
+`OWNER_BOOTSTRAP_CODE_FILE` arms the one-time first-owner code. Host
+principals join through one-time enrolment codes, and projects register one
+canonical repository through `POST /api/v1/projects/registrations`. The
+contract, closure rules and host scripts are in
+[identity-and-project-bootstrap.md](./identity-and-project-bootstrap.md).
+
 ## Rotate and revoke principals
 
-Use a current `management` credential and protocol header. Creation and
-rotation reveal a new secret exactly once, so redirect the response to a
-protected file and install the credential before the overlap ends.
+Use a current `management` credential and protocol header. Enrol a separate
+management-scoped recovery principal before rotating the normal management
+path. Create it as kind `studio`, with an id starting `recovery:` and exactly
+`["management"]` as its scopes; keep its protected credential outside the normal
+management credential path. The rotation request
+requires a stable operation id and the exact consumer bindings. For a Runner,
+the consumer id must equal its bound Runner id. Choose an overlap that covers
+protected delivery, every consumer's reload or safe drain, a scoped request,
+acknowledgement, and old-bearer rejection. The server accepts 1 to the
+configured maximum overlap seconds; use explicit revocation for an emergency
+that may interrupt work.
 
 ```bash
 curl --fail --silent --show-error \
   -H "Authorization: Bearer $MANAGEMENT_CREDENTIAL" \
   -H "X-Task-Protocol-Version: 2" \
   -H "Content-Type: application/json" \
-  -d '{"overlapSeconds":300}' \
+  -d '{"operationId":"runner-rotation-2026-10-03","overlapSeconds":300,"consumers":[{"consumerId":"agent-runner-01","requiredScope":"tasks:read"}]}' \
   https://task-server.example/api/v1/management/principals/runner:agent-runner-01/rotate \
   > /root/runner-rotation.json
 ```
 
-Replace the Runner token file atomically, restart the Runner, and prove it has
-registered before the overlap expires. A zero-second overlap invalidates all
-older credential versions immediately. To contain a compromise, revoke first;
+The first response contains the new bearer and a consumer proof. For a shared
+principal, set `deliveryConsumerId` to one declared consumer on each request.
+The proof is different for each consumer. If a response is lost before that
+consumer acknowledges delivery, retry the same operation id, bindings, overlap,
+and `deliveryConsumerId` with the same issuing management principal before the
+deadline. The shared principal cannot be its own delivery manager. The same
+bearer and that consumer's
+proof are returned. Delivery by another consumer does not end this replay.
+After the selected consumer acknowledges delivery, its retries return the
+receipt with `credential: null` and `consumerProof: null`. No retry issues
+another generation. The bearer and proofs derive from a private host-owned
+`principal-rotation-delivery.key` in the Task Server data directory; the command
+database stores the bearer's verifier hash and rotation metadata only. Protect
+and back up this key as a host secret with mode `0600` on Linux. Neither the
+SQLite backup route nor a full backup set includes this key. If it is
+unavailable, restore it before retrying; do not create a new rotation to
+compensate for a lost response.
+`GET /api/v1/management/principals/{principalId}/rotations/{operationId}`
+returns the redacted receipt with actor, previous and new generations, delivered
+consumer ids
+and per-consumer acknowledgement times, and retirement state. Store the bearer only in the target host's protected
+secret file and replace that file atomically. Runner file-backed clients, the
+Engine file-backed client, and the Studio edge proxy reread it on subsequent
+requests without dropping active leases. The Studio connector also rereads its
+protected store. For a client without a supported reload path, drain it and roll
+it safely before the overlap deadline. A read-only Docker secret mount is a
+deployment-owned replacement: do not assume its contents change in a running
+container. Stage the new secret through that deployment path, drain affected
+work where reattachment is unproven, and roll the consumer within the chosen
+overlap before acknowledging it.
+
+On a Linux receiving host, `scripts/install-principal-rotation.py` accepts the
+management response on stdin and installs the bearer in the configured token file
+with an atomic replacement. Use a pinned protected SSH session or run it locally;
+do not put the response in task results. Supply `--server`, `--operation-id`,
+`--consumer-id` and `--token-file`. Before replacing the file, it checks the operation
+receipt with the new bearer and rejects a stale or recovered generation. It
+first stages the bearer and its matching consumer proof together in one private
+host-local `.pending` file, then backs up
+the previous credential and replaces the live file. It removes the pending file
+after the live file and adjacent `.consumer-proof` file are durable. File-backed
+Runner, Engine, and Studio edge clients reload this private proof with the bearer
+on each request. The installer then acknowledges delivery and waits
+up to 30 seconds for the running consumer
+to complete a successful request requiring its declared scope. It does not
+make that proof request on the consumer's behalf. Use `--resume` to retry the
+acknowledgement from the installed file within the overlap deadline. The
+installer retains the previous bearer in a restricted host-local backup while
+the operation is active. It removes that backup only after retirement and an
+HTTP 401 check with the old bearer. A failed delivery leaves the backup for
+operator recovery within the original overlap; it does not request another
+rotation or claim rollback after the deadline.
+If the command stops after staging, run it with `--resume` using the same
+operation id. It reads the private pending or installed file and completes the
+same operation. If the command stopped before staging, repeat the management
+request with the same operation id and pipe its replayed response to the
+installer. An incomplete stage from an older installer that has a bearer but
+no proof is rejected before the live file changes; replay that same operation's
+management response to restage it. No retry requests a second bearer.
+
+The receiving consumer calls `POST /api/v1/principal-rotations/{operationId}/delivered`
+with the new bearer, completes a successful operation on a route requiring its
+declared `requiredScope`, then calls
+`POST /api/v1/principal-rotations/{operationId}/ack` with
+`{"consumerId":"agent-runner-01"}` using that bearer. The server records the
+scoped success against the new credential generation, rejects an acknowledgement
+without it, and revokes old generations only after all declared consumers have
+acknowledged. For a shared principal, delivery, scoped requests and acknowledgement
+must carry both `X-Principal-Consumer-Id` and `X-Principal-Consumer-Proof`. A
+bearer and one consumer's proof cannot acknowledge another consumer. A
+single-consumer operation infers its binding. Runner and Engine clients send
+their configured identity; a Studio edge can set `TaskServer:ConsumerId`.
+Verify the old bearer receives 401 and the new
+bearer still works.
+If a response or delivery is lost, inspect the receipt and the target host's
+protected file. Do not request a new operation while the receipt is active.
+After its deadline the receipt says `recovery-required`; old credentials may
+already be unusable, and the server does not claim rollback. A separately
+enrolled `recovery:` management principal can start a new operation.
+
+To contain a compromise, revoke first;
 revocation is read from the store on the next request and needs no Task Server
 restart:
 

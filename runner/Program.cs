@@ -23,6 +23,40 @@ if (args is ["--detached-worker", var detachedSpec])
 if (args is ["--detached-review-worker", var detachedReviewSpec])
     return await DurableReviewProcess.RunWorkerAsync(detachedReviewSpec, shutdownBuildServers: true);
 
+// AGT-W63 I03: offline tooling for the owned runner-host record.
+if (args is ["host-record", ..])
+    return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
+
+if (args.Length is 3 or 4 && args[0] == "--renew-repository-access"
+    && (args.Length == 3 || args[3] == "--drained"))
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        return await RepositoryRenewalCommand.RunAsync(args[1], args[2],
+            args.Length == 4, Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository renewal failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
+if (args is ["--repository-admin"])
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        return await RepositoryRenewalCommand.RunAdminAsync(Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository administration failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
 
 void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] [agent-host] {message}");
@@ -80,16 +114,7 @@ if (help)
 }
 
 var daemonMode = taskKey is null || !once;
-Log($"agent-host starting: server={options.ServerUrl} role={options.Role} engine={options.ExecEngine} mode={(daemonMode ? "daemon" : "one-shot")} task={taskKey ?? "(assigned projects)"}");
-
-// Migration note (AGT-2370): under the car engine the CAR descriptor owns the
-// argv, so a configured RUNNER_CLI_ARGS is loudly ignored instead of silently
-// half-applied. RUNNER_CLI_BIN stays meaningful on both engines (binary path).
-if (options.ExecEngine == RunnerOptions.ExecEngineCar
-    && !string.IsNullOrWhiteSpace(RunnerOptions.Env("RUNNER_CLI_ARGS")))
-    Log("RUNNER_CLI_ARGS is set but RUNNER_EXEC_ENGINE=car builds the CLI arguments itself; "
-        + "the configured args apply to the legacy engine only and are ignored. "
-        + "Set RUNNER_EXEC_ENGINE=legacy to fall back to the raw spawn (removed in AGT-2373).");
+Log($"agent-host starting: server={options.ServerUrl} role={options.Role} engine=car mode={(daemonMode ? "daemon" : "one-shot")} task={taskKey ?? "(assigned projects)"}");
 using var shutdown = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
@@ -252,18 +277,9 @@ static void PrintUsage()
           --state-dir <path>      Durable slot/process state  (RUNNER_STATE_DIR)
           RUNNER_CLAIM_MAX_LOAD_PER_CORE                      Load/core threshold (default 1.5)
           RUNNER_LOAD_GATE_SUSTAINED_SECONDS                  High-load window (default 120)
-          --cli <bin>             Agent CLI binary            (RUNNER_CLI_BIN)
+          --cli-type <type>       Default provider            (RUNNER_CLI_TYPE, claude|codex)
           --claude-cli <bin>      Claude card binary           (RUNNER_CLAUDE_CLI_BIN)
           --codex-cli <bin>       Codex card/chat binary       (RUNNER_CODEX_CLI_BIN)
-          --cli-args "<args>"     Headless CLI args, legacy engine only
-                                                            (RUNNER_CLI_ARGS)
-          --exec-engine <car|legacy>
-                                  CLI execution engine        (RUNNER_EXEC_ENGINE, default car).
-                                  car drives the CLI through CodingAgentRunner
-                                  (descriptor argv, stream-json, permission
-                                  injection, clean config home); legacy is the
-                                  pre-AGT-2370 raw spawn and disappears with
-                                  AGT-2373.
           --auth-token-file <p>   Protected credential file  (RUNNER_AUTH_TOKEN_FILE)
           --tls-certificate-sha256 <hex>
                                   Private-CA/rehearsal certificate pin
