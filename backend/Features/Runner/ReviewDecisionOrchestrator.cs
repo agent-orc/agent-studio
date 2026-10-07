@@ -220,6 +220,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly HumanReviewEscalation? _humanReviewEscalation;
     private readonly FailureInterventionService? _failureInterventions;
     private readonly TaskMutationService? _taskMutations;
+    private readonly DecisionCardRequests? _decisionRequests;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -274,7 +275,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
         FailureInterventionService? failureInterventions = null,
         TaskIntegrationStatusService? integrationStatus = null,
-        TaskMutationService? taskMutations = null)
+        TaskMutationService? taskMutations = null,
+        DecisionCardRequests? decisionRequests = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -309,6 +311,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _qualityAnalysisRunner = qualityAnalysisRunner;
         _failureInterventions = failureInterventions;
         _integrationStatus = integrationStatus;
+        _decisionRequests = decisionRequests;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -1934,6 +1937,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             BuildEscalateDetails("agent-blocked", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
+        var decisionCard = move.Status == MoveJobStatus.Success
+            ? RequestDecisionForFork(entry, current, pending)
+            : null;
+
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
             JobId: current.Id,
@@ -1942,11 +1949,63 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Reason: reason,
             Prompt: "(deterministic BLOCKED branch)",
             Response: "(no fast-model call)",
-            FollowUp: string.Empty),
+            FollowUp: decisionCard is null ? string.Empty : $"decision card {decisionCard.Key}"),
             current.FolderPath,
             move.NewFolderPath);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A blocked run that stopped at a fork (a stated question with two to four
+    /// options) raises a decision card instead of leaving the question in prose.
+    /// The escalated card waits on it through <c>dependsOn</c>; deciding appends
+    /// the choice to its prompt and returns it to <c>2-ready</c>.
+    /// </summary>
+    private DecisionCardRequestResult? RequestDecisionForFork(
+        WatchPathEntry entry, TaskInfo current, PendingDecision pending)
+    {
+        if (_decisionRequests is null) return null;
+        try
+        {
+            var escalated = _scanner.FindJob(current.Id, entry.Path);
+            if (escalated is null) return null;
+            // Agent lines only: the escalation above already appended a
+            // supervisor line that quotes [[TASK_BLOCKED]].
+            var agentTurn = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(escalated.FolderPath))
+                .Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line))
+                .ToList();
+            var fork = BlockedForkReader.Read(pending.Reason, AgentOutcomeAnalyzer.ExtractBlockedMessage(agentTurn));
+            if (fork is null) return null;
+            var result = _decisionRequests.Request(new DecisionCardRequest
+            {
+                Title = $"Decision: {escalated.Title}",
+                WatchPath = entry.Path,
+                Content = fork,
+                BlockedCard = escalated,
+                PromptMarkdown = $"Raised from the Blocked outcome of {escalated.Key ?? escalated.Id}. " +
+                    "The run stopped at a fork it must not take alone; its options are the fields of this card.",
+            });
+            if (result is not null)
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    $"Orchestrator raised decision card {result.Key} for the fork this run stopped at.");
+            else
+            {
+                // A decision card whose dependsOn edge could not be written
+                // still names this card; the decision sweep retries the edge.
+                _logger.LogWarning(
+                    "ReviewDecisionOrchestrator: decision card request for BLOCKED fork on {JobId} did not complete; the decision sweep retries the link",
+                    current.Id);
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    "Orchestrator could not finish the decision card for the fork this run stopped at; the decision sweep retries the missing link.");
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ReviewDecisionOrchestrator: decision card for BLOCKED fork on {JobId} failed", current.Id);
+            return null;
+        }
     }
 
     /// <summary>

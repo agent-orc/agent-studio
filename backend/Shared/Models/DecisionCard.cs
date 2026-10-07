@@ -52,6 +52,14 @@ public sealed record DecisionOption
     public string? Consequences { get; init; }
     public string? Effort { get; init; }
     public string? Risk { get; init; }
+
+    /// <summary>
+    /// Implementation requirements that become cards when this option is chosen
+    /// and no implementation card is linked (Dossier decision-cards D3=C). Same
+    /// item shape as a Dossier implementation task, so the apply step creates
+    /// them through the concept promotion mechanism.
+    /// </summary>
+    public List<ConceptImplementationTask> Requirements { get; init; } = [];
 }
 
 /// <summary>
@@ -86,6 +94,20 @@ public sealed record DecisionContent
     /// <summary>Stable keys of the cards blocked by this decision (its dependants).</summary>
     public List<string> Dependants { get; init; } = [];
 
+    /// <summary>
+    /// Stable keys of the implementation cards the decision applies to. On
+    /// decide each linked card receives a decision block in its prompt and moves
+    /// to <c>2-ready</c>; with no linked card the chosen option's
+    /// <see cref="DecisionOption.Requirements"/> become new cards instead.
+    /// </summary>
+    public List<string> AppliesTo { get; init; } = [];
+
+    /// <summary>
+    /// UTC instant the overdue reminder fired for the current pending cycle.
+    /// Cleared on reopen so a reopened decision can be reminded again.
+    /// </summary>
+    public DateTime? RemindedAt { get; init; }
+
     /// <summary>Lifecycle status; see <see cref="DecisionStatuses"/>.</summary>
     public string Status { get; init; } = DecisionStatuses.Pending;
 
@@ -115,7 +137,27 @@ public sealed record DecisionContent
 
 public sealed record DecisionHistoryEntry(
     string Status, string? OptionId, string? Rationale, string Actor,
-    DateTime At, string? Note);
+    DateTime At, string? Note)
+{
+    /// <summary>How the apply step used this choice; see <see cref="DecisionApplyOutcomes"/>.</summary>
+    public string? ApplyOutcome { get; init; }
+
+    /// <summary>Keys of the cards the apply step updated or created for this choice.</summary>
+    public List<string> AppliedTaskKeys { get; init; } = [];
+}
+
+/// <summary>Outcome of applying a recorded choice; persisted on the history entry.</summary>
+public static class DecisionApplyOutcomes
+{
+    /// <summary>Linked implementation cards received the decision block.</summary>
+    public const string LinkedCards = "linked-cards";
+    /// <summary>Cards were created from the chosen option's requirements.</summary>
+    public const string CreatedCards = "created-cards";
+    /// <summary>No card was linked and the chosen option names no requirements.</summary>
+    public const string Nothing = "nothing-to-apply";
+    /// <summary>The apply step failed; the decision itself stands.</summary>
+    public const string Failed = "apply-failed";
+}
 
 /// <summary>Well-known decider roles for <see cref="DecisionContent.Decider"/>.</summary>
 public static class DecisionDeciders
@@ -147,6 +189,8 @@ public enum DecisionCardErrorCode
     NotDecided,
     /// <summary>Reopening needs an explanation for the audit record.</summary>
     MissingReopenNote,
+    /// <summary>An option requirement is missing its title or prompt.</summary>
+    RequirementShape,
 }
 
 /// <summary>One reason a decision-card operation was rejected.</summary>
@@ -209,6 +253,11 @@ public static class DecisionCardPolicy
             if (!seen.Add(option.Id.Trim()))
                 errors.Add(new(DecisionCardErrorCode.DuplicateOptionId,
                     $"Option id '{option.Id.Trim()}' is used more than once."));
+            if ((option.Requirements ?? []).Any(requirement =>
+                    string.IsNullOrWhiteSpace(requirement.Title)
+                    || string.IsNullOrWhiteSpace(requirement.PromptMarkdown)))
+                errors.Add(new(DecisionCardErrorCode.RequirementShape,
+                    $"Every requirement of option '{option.Id.Trim()}' needs a title and a prompt."));
         }
 
         if (!string.IsNullOrWhiteSpace(content.RecommendedOptionId)
@@ -274,6 +323,7 @@ public static class DecisionCardPolicy
         DecidedAt = null,
         RecordPath = content.RecordPath,
         ReopenNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),
+        RemindedAt = null,
     };
 
     /// <summary>The option the recorded choice points at, or null when open / unknown.</summary>

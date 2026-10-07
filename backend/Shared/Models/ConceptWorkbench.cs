@@ -27,6 +27,14 @@ public sealed record ConceptImplementationTask
     /// use the item title and prompt as their one-card boundary.
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
+
+    /// <summary>
+    /// Optional single fork the Dossier surfaced. When present, promotion
+    /// creates a decision card (kind <c>decision</c> with this options payload)
+    /// instead of a coding card; the chosen option's requirements become the
+    /// implementation cards once it is decided.
+    /// </summary>
+    public DecisionContent? Decision { get; init; }
 }
 
 /// <summary>

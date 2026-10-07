@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { Subject, of, throwError } from 'rxjs';
 import { CliModelSelectorComponent } from './cli-model-selector.component';
 import type { CliModelInfo } from '../../features/cli';
 import { CliCatalogStore } from '../../features/cli';
 import { ModalStackService } from '../../services/modal-stack.service';
+import { ModelPriceStore } from '../../features/tokens/model-prices';
 
 /**
  * Studio picker specs: the historical inputs/outputs and testids survive, the
@@ -28,6 +29,14 @@ describe('CliModelSelectorComponent', () => {
       refreshForPickerOpen: vi.fn().mockReturnValue(null),
     };
   }
+
+  const priceStore = {
+    prices: signal(new Map([
+      ['gpt-6-sol', { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2,
+        currency: 'USD', validFrom: '2026-09-22', source: null, note: null, unconfirmed: false }],
+    ])),
+    ensure: vi.fn(),
+  };
 
   function createModalStackMock() {
     const dispose = vi.fn();
@@ -53,6 +62,7 @@ describe('CliModelSelectorComponent', () => {
         provideZonelessChangeDetection(),
         { provide: CliCatalogStore, useValue: store },
         { provide: ModalStackService, useValue: modalStack.service },
+        { provide: ModelPriceStore, useValue: priceStore },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(CliModelSelectorComponent);
@@ -372,5 +382,51 @@ describe('CliModelSelectorComponent', () => {
     fixture.componentInstance.onRefreshRequested('claude');
     await fixture.whenStable();
     expect(fixture.componentInstance.catalogError()).toMatch(/could not refresh/i);
+  });
+  describe('GPT-6 ladder (AGT-2903)', () => {
+    const gptModels: CliModelInfo[] = [
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'medium' },
+      { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
+    ];
+
+    function codexStore() {
+      const store = createStoreMock();
+      store.modelsFor.mockReturnValue(gptModels);
+      store.ensure.mockReturnValue(of(gptModels));
+      return store;
+    }
+
+    it('orders GPT-6 models first and shows their TokenEconomy price', async () => {
+      const { fixture } = await create({ cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'medium' }, codexStore());
+      openPicker(fixture);
+      await fixture.whenStable();
+
+      const ids = [...document.querySelectorAll('[data-testid^="cli-model-selector-picker-model-gpt"]')]
+        .map((el) => (el as HTMLElement).dataset['testid']!.replace('cli-model-selector-picker-model-', ''));
+      expect(ids.slice(0, 2)).toEqual(['gpt-6-luna', 'gpt-6-sol']);
+      expect(ids[2]).toBe('gpt-5.6-sol');
+      const price = document.querySelector('[data-testid="cli-model-selector-picker-price-gpt-6-sol"]');
+      expect(price?.textContent?.trim()).toBe('$2 / $10');
+      expect(priceStore.ensure).toHaveBeenCalled();
+    });
+
+    it('maps an unoffered pinned level to the highest offered rung below it with a visible note', async () => {
+      const { fixture, component } = await create({ cliType: 'codex', model: 'gpt-6-luna', thinkingLevel: 'ultra' }, codexStore());
+      openPicker(fixture);
+      await fixture.whenStable();
+
+      expect(component.draftThinkingLevel()).toBe('max');
+      const note = document.querySelector('[data-testid="cli-model-selector-picker-level-mapped"]');
+      expect(note?.textContent).toContain('Pinned ultra is not offered by gpt-6-luna; runs at max.');
+    });
+
+    it('shows no mapping note when the model offers the pinned level', async () => {
+      const { fixture } = await create({ cliType: 'codex', model: 'gpt-6-sol', thinkingLevel: 'ultra' }, codexStore());
+      openPicker(fixture);
+      await fixture.whenStable();
+
+      expect(document.querySelector('[data-testid="cli-model-selector-picker-level-mapped"]')).toBeNull();
+    });
   });
 });

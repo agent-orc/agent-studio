@@ -1,0 +1,4 @@
+@if (label(); as price) {
+  <span class="model-price" [attr.data-testid]="testId()"
+        [appTooltip]="'USD per million input / output tokens (TokenEconomy)'">{{ price }}</span>
+}

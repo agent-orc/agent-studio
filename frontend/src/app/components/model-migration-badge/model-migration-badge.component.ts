@@ -19,6 +19,9 @@ import {
   ModelMigrationCatalogStore,
   type ModelMigrationEntry,
 } from '../../features/cli/model-migrations';
+import { mapThinkingLevel, mappedThinkingLevelNote, type ThinkingLevelMapping } from '../../features/cli/thinking-levels';
+import { CliCatalogStore } from '../../features/cli/catalog';
+import type { CliType } from '../../models/task.model';
 import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRef } from '../../services/overlay-portal.service';
 
 /**
@@ -45,6 +48,12 @@ import { OverlayPortalRef, OverlayPortalService, type ConnectedOverlayPositionRe
  *    (`onStepAgentCommit` / `setPrimary`) that this component must not
  *    bypass by hand-rolling a competing PUT.
  *
+ * AGT-2903: given `cliType` and the pinned `thinkingLevel`, it also shows a
+ * small "ultra→xhigh" chip when the installed CLI's ladder for the current
+ * model does not offer the pinned level (the backend runs the highest offered
+ * rung below it), and the popover states the level the proposal target would
+ * run at. Both read the live catalog; no per-model mapping is hard-coded.
+ *
  * The popover is portaled to the shared body-level overlay layer
  * (`OverlayPortalService`) so it is never clipped by an ancestor's
  * `overflow: hidden` / `content-visibility` containment (the board card sets
@@ -63,6 +72,7 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
   private readonly notifications = inject(NotificationService);
   private readonly tasks = inject(TaskService);
   private readonly overlayPortal = inject(OverlayPortalService);
+  private readonly catalogs = inject(CliCatalogStore);
 
   /** The current explicitly-pinned model id to check against the catalog. */
   readonly model = input<string | null>(null);
@@ -75,6 +85,12 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
   /** Delegated mode: external pending flag while the caller's own PUT is in flight. */
   readonly pending = input(false);
   readonly testId = input('model-migration-badge');
+  /** Task-pin mode: project handle that enables "Apply to project" (AGT-2903). */
+  readonly project = input<string | null>(null);
+  /** CLI whose live catalog answers which levels the model offers. */
+  readonly cliType = input<CliType | string | null>(null);
+  /** The pinned thinking level to check against the model ladder. */
+  readonly thinkingLevel = input<string | null>(null);
 
   /** Delegated mode: emits the migration's target model id on Apply. */
   readonly apply = output<string>();
@@ -88,6 +104,20 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
 
   readonly proposal = computed<ModelMigrationEntry | null>(() =>
     this.explicit() ? this.migrations.proposalFor(this.model()) : null);
+
+  /** Pinned level not offered by the current model, mapped to the rung the run uses. */
+  readonly levelMapping = computed(() => this.mappingFor(this.model()));
+  readonly levelMappingNote = computed(() => {
+    const mapping = this.levelMapping();
+    return mapping ? mappedThinkingLevelNote(mapping, this.model()) : null;
+  });
+  /** The level a pinned card would run at after accepting the proposal. */
+  readonly targetLevel = computed(() => {
+    const proposal = this.proposal();
+    const pinned = this.thinkingLevel()?.trim().toLowerCase() || null;
+    if (!proposal || !pinned) return null;
+    return this.mappingFor(proposal.to) ?? { level: pinned, mappedFrom: null };
+  });
 
   readonly isPending = computed(() => (this.jobId() ? this.selfPending() : this.pending()));
 
@@ -154,6 +184,50 @@ export class ModelMigrationBadgeComponent implements OnDestroy {
         this.notifications.error('Could not apply the model migration.');
       },
     });
+  }
+
+  /** Accepts the proposal for every eligible explicitly pinned card of the project. */
+  onApplyProject(event: Event): void {
+    event.stopPropagation();
+    const proposal = this.proposal();
+    const project = this.project();
+    if (!proposal || !project || this.isPending()) return;
+    this.selfPending.set(true);
+    this.tasks.applyProjectModelMigration(project, proposal.from).subscribe({
+      next: (result) => {
+        this.selfPending.set(false);
+        this.close();
+        const count = result.updatedTaskIds.length;
+        const failed = result.failedTaskIds;
+        if (failed.length > 0) {
+          const shown = failed.slice(0, 3).join(', ');
+          const remaining = failed.length > 3 ? ` and ${failed.length - 3} more` : '';
+          const message = `${count} card${count === 1 ? '' : 's'} updated to ${proposal.to}; ${failed.length} failed (${shown}${remaining}).`;
+          if (count === 0) this.notifications.error(message);
+          else this.notifications.warning(message);
+          return;
+        }
+        if (count === 0) {
+          this.notifications.info('No eligible cards remain for this model migration.');
+          return;
+        }
+        this.notifications.success(`Model updated to ${proposal.to} on ${count} card${count === 1 ? '' : 's'}.`);
+      },
+      error: () => {
+        this.selfPending.set(false);
+        this.notifications.error('Could not apply the model migration to the project.');
+      },
+    });
+  }
+
+  private mappingFor(modelId: string | null): ThinkingLevelMapping | null {
+    const cli = this.cliType();
+    const pinned = this.thinkingLevel();
+    if (!cli || !modelId || !pinned?.trim()) return null;
+    const model = this.catalogs.modelsFor(cli as CliType).find((candidate) => candidate.id === modelId);
+    if (!model || model.available === false || !model.thinkingLevels?.length) return null;
+    const mapping = mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned);
+    return mapping.mappedFrom ? mapping : null;
   }
 
   private attachPortal(): void {
