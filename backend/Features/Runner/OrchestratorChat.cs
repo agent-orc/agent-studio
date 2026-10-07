@@ -873,8 +873,8 @@ public class OrchestratorChatService
     /// id as host; local and fallback turns carry <c>local</c>.
     /// The write is awaited so the turn returns only once its usage is in the
     /// ledger. It runs without the caller's token because the tokens are
-    /// already spent, and a lost row is logged instead of failing a reply
-    /// whose transcript is already persisted.
+    /// already spent. A failed append fails the request visibly; returning a
+    /// reply would make the missing ledger row look like a successful turn.
     /// </summary>
     private async Task RecordChatUsageAsync(
         string projectName,
@@ -907,6 +907,8 @@ public class OrchestratorChatService
             _logger.LogWarning(error,
                 "[orchestrator-chat] usage row was not recorded for project {Project} (host={Host}, model={Model})",
                 projectName, entry.Host, entry.Model);
+            throw new IOException(
+                $"Orchestrator chat usage row was not recorded for project {projectName}.", error);
         }
     }
 

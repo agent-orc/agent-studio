@@ -50,8 +50,9 @@ receipts and deduplicates overlap by (task, timestamp, token dimensions).
 
 Each writer replaces its own participant's rows, so a replayed completion or
 report never counts twice. The chat row is awaited before the turn returns,
-since it is that turn's only usage record; a failed append keeps the reply and
-logs a warning with the project, host, and model. Every row keeps normalized
+since it is that turn's only timeline usage record; a failed append logs the
+project, host, and model and fails the chat request so the loss is visible to
+the caller. The transcript remains persisted. Every row keeps normalized
 uncached `input` and `cacheRead` separately (see the next section); no reader
 subtracts cache reads again. Rows written before host attribution resolve to `local` (bus) or
 `remote-unrecorded` (remote receipts) through `TokenUsageHost.Resolve`.

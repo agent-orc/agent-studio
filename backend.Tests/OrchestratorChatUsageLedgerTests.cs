@@ -54,7 +54,7 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task Failed_usage_write_keeps_the_reply_and_logs_the_lost_row()
+    public async Task Failed_usage_write_fails_the_chat_request_and_logs_the_lost_row()
     {
         var harness = BuildHarness();
         // A file where the project's bus directory belongs makes every ledger
@@ -63,13 +63,13 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(busProjectDir)!);
         await File.WriteAllTextAsync(busProjectDir, "not a directory");
 
-        var reply = await harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
+        var error = await Assert.ThrowsAsync<IOException>(() => harness.SendRemoteTurnAsync(new OrchestratorTokenUsage
         {
             InputTokens = 2_000,
             OutputTokens = 100,
-        });
+        }));
 
-        Assert.Equal("remote reply", reply.Text);
+        Assert.Contains("usage row was not recorded", error.Message);
         var warning = Assert.Single(harness.Logger.Warnings);
         Assert.Contains("usage row was not recorded", warning);
         Assert.Contains(ProjectName, warning);
