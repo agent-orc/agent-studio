@@ -523,6 +523,8 @@ public static class TimelineEventKinds
     /// that holds the attempt.
     /// </summary>
     public const string RemoteStopRequested = "remote_stop_requested";
+    /// <summary>Read-only receipt rebuilt from steering, attempt or settlement authority.</summary>
+    public const string SteeringFeedback = "steering_feedback";
 
     /// <summary>
     /// A Global Orchestrator Watcher case (orchestrator-waechter dossier §10)
