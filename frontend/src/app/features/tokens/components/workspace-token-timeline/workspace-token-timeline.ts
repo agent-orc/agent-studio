@@ -11,8 +11,7 @@ import {
 } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { setVisibleInterval, clearVisibleInterval, VisibleIntervalHandle } from '../../../../utils/visible-interval';
-import type { TokenTimeline, TokenTimelineCell } from '../../../../features/tokens';
-import { TokensApiService } from '../../../../features/tokens';
+import { TokensApiService, type TokenTimeline, type TokenTimelineCell } from '../../../../features/tokens';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
 import { colorForProject } from './workspace-token-timeline-color.util';
 import { BetterCandidateUsageReportComponent } from '../better-candidate-usage-report/better-candidate-usage-report.component';
