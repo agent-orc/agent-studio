@@ -21,7 +21,7 @@ public static class TaskCrudEndpoints
         group.MapPost("/reference-status", (TaskReferenceStatusRequest req,
             HttpContext context,
             TaskScannerService scanner,
-            BoardMergeStatusService mergeStatus,
+            TaskListGitProjectionCache gitProjection,
             AgentStudio.Registry.ProjectRegistry projects,
             ILoggerFactory loggerFactory) =>
         {
@@ -47,7 +47,7 @@ public static class TaskCrudEndpoints
                 .GroupBy(j => j.Key!, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             var matched = requested.Where(byKey.ContainsKey).Select(k => byKey[k]).ToArray();
-            var merges = mergeStatus.BuildLookup(matched);
+            var merges = gitProjection.ReadCacheOnly(matched).Merge;
 
             var items = requested.Select(key =>
             {
@@ -343,19 +343,29 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, GitService git, TaskSessionLog sessions, BoardMergeStatusService mergeStatus, TaskIntegrationStatusService integrationStatus, TaskPublishableService publishStatus, TestRunService testRuns, AgentStudio.Review.ReviewProjectionService reviewProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates) =>
+        group.MapGet("/{jobId}/details/git", (string jobId, string? project, string? watchPath,
+            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects,
+            TaskListGitProjectionCache gitProjection, ILoggerFactory loggerFactory) =>
         {
+            using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail/git",
+                loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var task = scanner.FindJob(jobId, watchPath);
+            return task is null ? Results.NotFound() : Results.Ok(gitProjection.ReadTask(task));
+        });
+
+        group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
+        {
+            using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",
+                loggerFactory.CreateLogger("TaskDetail"), includeNested: true);
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var detail = scanner.GetJobDetail(jobId, watchPath);
             if (detail is null) return Results.NotFound();
-            // ASS-1712: an in-progress per-task-worktree task's persisted commits[]
-            // chain collapses to empty/singular (per-run ranges track the shared
-            // develop HEAD; attribution only stamps once it leaves 3-progress).
-            // Fold the reconstructed task-branch history into TaskInfo.Commits so
-            // the git-pane chain + header badge show the full history, not one
-            // commit. No-op for any other lane / an already-populated chain.
-            using (TaskSwitchTrace.Span("commits"))
-                detail = JobCommitsAggregation.WithReconstructedInProgressCommits(detail, sessions, watchPath, git);
+            // Detail and the Git resource consume the same completed repository
+            // snapshot. A stale result for an older task attempt is withheld.
+            var gitFacts = TaskSwitchTrace.Run("index.lookup", () => gitProjection.ReadTask(detail.Info).Data);
+            if (gitFacts?.ReconstructedCommits is { } commits)
+                detail = detail with { Info = detail.Info with { Commits = commits.ToList() } };
             var tokenLookup = TaskSwitchTrace.Run("tokens", () => BuildTokenLookup(new[] { detail.Info }, tokens));
             var verdictLookup = TaskSwitchTrace.Run("runtime", () => BuildOrchestratorVerdictLookup(new[] { detail.Info }, configuration));
             var eligibleWaiters = ProjectAccessAuthorization
@@ -370,29 +380,15 @@ public static class TaskCrudEndpoints
             var liveLookup = TaskSwitchTrace.Run("runtime", () => liveStatus.BuildLookup(new[] { withRuntime.Info }));
             if (liveLookup.TryGetValue(withRuntime.Info.TaskKey, out var currentLiveStatus))
                 withRuntime = withRuntime with { Info = withRuntime.Info with { LiveStatus = currentLiveStatus } };
-            // AGT-2046: fold the batched merge signal onto the detail's info too, so
-            // a card opened from the board keeps the same [develop|main] indicator.
-            var mergeLookup = TaskSwitchTrace.Run("merge", () => mergeStatus.BuildLookup(new[] { withRuntime.Info }));
-            if (mergeLookup.TryGetValue(withRuntime.Info.TaskKey, out var signal))
-                withRuntime = withRuntime with { Info = withRuntime.Info with { MergeSignal = signal } };
-            // AGT-2202: fold the integration verdict so a completed/archived card
-            // opened from the board keeps the same "integrated / not integrated"
-            // badge as its board card.
-            var integrationLookup = TaskSwitchTrace.Run("integration", () => integrationStatus.BuildLookup(new[] { withRuntime.Info }));
-            if (integrationLookup.TryGetValue(withRuntime.Info.TaskKey, out var integration))
-                withRuntime = withRuntime with { Info = withRuntime.Info with { Integration = integration } };
-            // PUB-1: fold the per-task publish chip signal so a completed card opened
-            // from the board shows "publishable: npm, website" in its detail too.
-            var publishLookup = TaskSwitchTrace.Run("publish", () => publishStatus.BuildLookup(new[] { withRuntime.Info }));
-            if (publishLookup.TryGetValue(withRuntime.Info.TaskKey, out var publishSignal))
-                withRuntime = withRuntime with { Info = withRuntime.Info with { PublishSignal = publishSignal } };
-            var testRunLookup = TaskSwitchTrace.Run("tests", () => testRuns.BuildLookup(new[] { withRuntime.Info }));
-            if (testRunLookup.TryGetValue(withRuntime.Info.TaskKey, out var testEvidence))
-                withRuntime = withRuntime with { Info = withRuntime.Info with { TestEvidence = testEvidence } };
-            // AGT-2717: fold the canonical review projection so the escalation
-            // banner, Evidence tab, Result header, and board chip all read the
-            // same rounds/outcome/blocking-aspect facts from one card open.
-            withRuntime = withRuntime with { Info = withRuntime.Info with { ReviewProjection = TaskSwitchTrace.Run("review", () => reviewProjection.Read(withRuntime.Info)) } };
+            if (gitFacts is not null)
+                withRuntime = withRuntime with { Info = withRuntime.Info with
+                {
+                    MergeSignal = gitFacts.Merge,
+                    Integration = gitFacts.Integration,
+                    PublishSignal = gitFacts.Publish,
+                    TestEvidence = gitFacts.TestEvidence,
+                    ReviewProjection = gitFacts.ReviewProjection,
+                } };
             return Results.Ok(withRuntime);
         });
 

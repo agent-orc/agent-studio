@@ -26,7 +26,14 @@ public sealed record VisualQaResult(
     string Model,
     string ThinkingLevel,
     int Round,
-    int PriorAutomaticRetries)
+    int PriorAutomaticRetries,
+    // The reviewer call's receipt, resolution level and timing, so the
+    // verdict step row records what the decision cost. Null usage means the
+    // reviewer was never called (capture failed or CLI unavailable).
+    OrchestratorTokenUsage? Usage = null,
+    string? ModelSource = null,
+    DateTime? ReviewStartedAt = null,
+    long ReviewDurationMs = 0)
 {
     public static VisualQaResult NotApplicable { get; } = new(
         false,
@@ -136,10 +143,14 @@ public sealed class VisualQaService
             .ToArray();
 
         var projectSettings = _settings.Get(request.Task.ProjectName);
-        var model = PipelineStepConfigResolver.ResolveModel(
+        var modelResolution = PipelineStepConfigResolver.ResolveModelWithSource(
             projectSettings,
             PipelineCatalogue.UiVisualVerdictStepId,
             PipelineStepModelDefaults.SupportModel);
+        var model = modelResolution.Model;
+        OrchestratorTokenUsage? reviewUsage = null;
+        DateTime? reviewStartedAt = null;
+        long reviewDurationMs = 0;
         var cli = PipelineStepConfigResolver.ResolveCliType(
                       projectSettings,
                       PipelineCatalogue.UiVisualVerdictStepId)
@@ -187,6 +198,7 @@ public sealed class VisualQaService
             }
             else
             {
+                reviewStartedAt = DateTime.UtcNow;
                 var result = await oneShot.RunAsync(new CliOneShotRequest(cli, model, renderedPrompt)
                 {
                     ThinkingLevel = thinking,
@@ -200,6 +212,12 @@ public sealed class VisualQaService
                     StepId = PipelineCatalogue.UiVisualVerdictStepId,
                     TemplateRef = PromptTemplate,
                 }, ct).ConfigureAwait(false);
+                reviewDurationMs = Math.Max(0L, (long)(DateTime.UtcNow - reviewStartedAt.Value).TotalMilliseconds);
+                reviewUsage = (result.Usage ?? new OrchestratorTokenUsage()) with
+                {
+                    Model = result.EffectiveModel ?? result.Usage?.Model ?? model,
+                    ThinkingLevel = result.EffectiveThinkingLevel ?? result.Usage?.ThinkingLevel ?? thinking,
+                };
                 rawResponse = result.ParsedText;
                 verdict = result.Ok
                     ? VisualQaPolicy.ParseVerdict(rawResponse)
@@ -262,7 +280,11 @@ public sealed class VisualQaService
             model,
             thinking,
             round,
-            priorRetries);
+            priorRetries,
+            reviewUsage,
+            modelResolution.Source,
+            reviewStartedAt,
+            reviewDurationMs);
     }
 
     private string BuildPrompt(

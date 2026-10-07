@@ -303,6 +303,10 @@ public sealed class PipelineExecutionLog
             {
                 if (!replaced && string.Equals(existing.StepId, stepResult.StepId, StringComparison.OrdinalIgnoreCase))
                 {
+                    // A repeated execution keeps the earlier one in the row's
+                    // run history instead of overwriting it, and every terminal
+                    // row is stamped with its measured cost (AGT-3015).
+                    stepResult = Measure(jobFolderPath, StepCostMeasurement.CarryRuns(existing, stepResult));
                     updatedSteps.Add(stepResult);
                     replaced = true;
                 }
@@ -311,10 +315,23 @@ public sealed class PipelineExecutionLog
                     updatedSteps.Add(existing);
                 }
             }
-            if (!replaced) updatedSteps.Add(stepResult);
+            if (!replaced)
+                updatedSteps.Add(Measure(jobFolderPath, StepCostMeasurement.CarryRuns(null, stepResult)));
 
             WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
         }
+    }
+
+    private PipelineStepExecution Measure(string jobFolderPath, PipelineStepExecution row)
+    {
+        var stamped = StepCostMeasurement.Stamp(row);
+        if (StepCostMeasurement.IsMissingModel(stamped))
+        {
+            _logger.LogWarning(
+                "PipelineExecutionLog: model-backed step {StepId} in {Folder} finished without a recorded model; its cost is unmeasured",
+                stamped.StepId, jobFolderPath);
+        }
+        return stamped;
     }
 
     /// <summary>
@@ -498,7 +515,7 @@ public sealed class PipelineExecutionLog
 
             if (step.Status == PipelineStepStatus.Running)
             {
-                return step with
+                return StepCostMeasurement.Stamp(step with
                 {
                     Status = PipelineStepStatus.Failed,
                     CompletedAt = record.CompletedAt,
@@ -506,15 +523,15 @@ public sealed class PipelineExecutionLog
                         ? Math.Max(0L, (long)(record.CompletedAt.Value - step.StartedAt.Value).TotalMilliseconds)
                         : step.DurationMs,
                     Reason = "Pipeline attempt ended while this step was still running.",
-                };
+                });
             }
 
-            return step with
+            return StepCostMeasurement.Stamp(step with
             {
                 Status = PipelineStepStatus.Skipped,
                 CompletedAt = record.CompletedAt,
                 Reason = string.IsNullOrWhiteSpace(step.Reason) ? reason : step.Reason,
-            };
+            });
         }).ToList();
 
         return record with

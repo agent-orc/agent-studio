@@ -51,6 +51,7 @@ internal static class GitNetworkProcessRunner
         Task<string>? stderr = null;
         Task? input = null;
         var elapsed = Stopwatch.StartNew();
+        using var tracked = GitChildProcessRegistry.Track(startInfo.WorkingDirectory);
 
         try
         {
@@ -137,6 +138,7 @@ internal static class GitNetworkProcessRunner
         Task<string>? stderr = null;
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         bounded.CancelAfter(timeout);
+        using var tracked = GitChildProcessRegistry.Track(startInfo.WorkingDirectory);
 
         try
         {

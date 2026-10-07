@@ -577,12 +577,16 @@
   . reason="PID dead, no commit, 2nd watchdog this hour"
   . artifact=log-slice:cli-output.log#L3187 . replyTo=adv-01J9...</code></pre>
 
-    <h3>The <code>decidedByModel</code> gap</h3>
-    <p>Today decision messages carry NO model field; only token messages do
-       (<code>EmitTokenUsageRichAsync</code> includes <code>tokens.model</code>, but
-       <code>EmitOrchestratorChatAsync</code> does not). The fix is to add <code>payload.decidedByModel</code> to
-       <code>EmitOrchestratorChatAsync</code> so the feed shows WHICH supervisor made the call. This is essential once
-       parallel orchestrators run (Section 6), because otherwise two loops are indistinguishable in the feed.</p>
+    <h3>The <code>decidedByModel</code> field (gap closed by AGT-3015)</h3>
+    <p>Until AGT-3015 decision messages carried no model field; only token messages did
+       (<code>EmitTokenUsageRichAsync</code> includes <code>tokens.model</code>). <code>EmitOrchestratorChatAsync</code>
+       now writes an <code>OrchestratorDecisionPayload</code>: <code>decidedBy</code> is <code>model</code> or
+       <code>rule</code>, and <code>decidedByModel</code>, <code>decidedByThinkingLevel</code> and
+       <code>decidedByModelSource</code> name the model that made the call. A decision executor opens a
+       <code>DecisionModelContext</code> scope after its model call returns. <code>OrchestratorChatLog</code> reads that
+       scope, so the chat line and the decision step row name the same model. Wired paths: review decision, abort
+       review, failure intervention, and the project orchestrator's auto-mode and steer turns. Without a scope the line
+       says <code>rule</code>. Two parallel orchestrators are therefore distinguishable in the feed (Section 6).</p>
 
     <h3>Dead-loop visibility and operator controls</h3>
     <ul>
@@ -770,8 +774,8 @@ End with `[[TASK_DONE]]`. No prose outside sentinels.</code></pre>
           AutoIntervention's limiter, <code>SupervisorInterventionService</code> for acts. Deterministic fast-path acts
           first; model deep-tick on suspicion. Writes the loop heartbeat each tick. Default <code>LoopEnabled=false</code>.
           Wrap MetaCycle's verified <code>ResumeWithRetry</code>/quiescence logic, do not rewrite it.</li>
-      <li><strong>S4 &mdash; Transparency on the bus.</strong> Add <code>decidedByModel</code> to
-          <code>EmitOrchestratorChatAsync</code>; emit rolled-up clear-tick heartbeat + full decision lines with
+      <li><strong>S4 &mdash; Transparency on the bus.</strong> <code>decidedByModel</code> on
+          <code>EmitOrchestratorChatAsync</code> is delivered (AGT-3015); still open: emit rolled-up clear-tick heartbeat + full decision lines with
           <code>replyToId</code> chains; participant-graph pulse + dead-loop red banner; thumbs/undo controls in the feed.</li>
       <li><strong>S5 &mdash; Dead-loop watchdog.</strong> Independent heartbeat-watcher (<span class="layer">L3</span> /
           dependency-free timer) producing the <code>supervision-loop-dead</code> advisory + banner + in-process restart

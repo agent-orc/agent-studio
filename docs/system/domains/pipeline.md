@@ -60,6 +60,90 @@ These metrics measure the exact-subject gate runner on its execution host; they 
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
+## Documentation-only batch gate pilot
+
+`backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
+membership digest, append-only replay and member evidence records, bounded
+halving policy, coordinator lease, publication preconditions, and pilot metric
+projection. `GitService.ReplayBatchMember` exposes the existing conflict-free
+mechanical rebase through a disposable detached worktree; candidate refs use
+`refs/agent-studio/batch-candidates/<batchId>/<membershipDigest>/<coordinatorFence>`.
+The D10 prerequisite estimate is
+[recorded with its limits](../../operations/gates/d10-measurement.md).
+The Task Server gate subject can bind a combined candidate SHA, manifest digest,
+base SHA and member run IDs; its existing claimable executor still checks the
+exact candidate SHA. An infrastructure retry excludes the host of the previous
+attempt.
+
+The default-off `BatchGate` project setting routes documentation-only settled
+Remote Review passes to a durable pending queue. The review plan records the
+build and test aspect as `DeferredToBatch` while retaining model review. The
+settlement journal of such a pass carries no delivery record, so neither the
+settlement reconciler nor Auto Review resume integrates the card or settles it
+as a failed delivery gate; the batch gate owns its publication. Set it
+with `PUT /api/projects/{projectName}/batch-gate` and a JSON
+`BatchGateFormationOptions` body: `enabled` (default `false`), `closeSize`
+(default 4), `maximumSize` (8), `deadlineMinutes` (15), `pressureSize` (2),
+`reviewQueuePressure` (12), and `documentationOnly` (`true`). The endpoint
+rejects invalid thresholds and `documentationOnly: false` for this pilot.
+The hosted pilot worker closes manifests at the configured size, age, or
+pressure threshold, assembles the candidate, persists a run before invoking
+`BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
+Green publication rechecks member generations and the remote pre-tip under a
+coordinator lease and the shared fenced ref-mutation lease. A changed pre-tip
+returns members for reconstruction and another suite run. Both leases are
+rechecked against their durable fences immediately before the push. When the
+coordinator heartbeat loses its lease while the suite runs, the gate stops,
+the batch is recorded `Abandoned` with `coordinator lease lost during the gate`,
+and its members return to the pending queue; other scopes in the same tick
+continue. The worker verifies the remote SHA before recording publication. If
+it stops after that remote advance and before the publication record, the
+`Publishing` state retains the selected
+run ID and ref-mutation fence. The next tick holds both leases, confirms
+the remote still resolves to the tested SHA and matches that passing durable run,
+then records publication and releases the members. If the remote differs, it
+returns the members for reconstruction on the current base. The pilot publishes
+only a tested fast-forward candidate; it does not synthesize a merge commit
+after the gate.
+Each admitted member receives an
+append-only batch-gate record. The card-local ownership marker makes both
+Human Review entry and Completed acceptance fail closed on missing or stale
+evidence with `batch-gate-evidence-missing`. A superseded pending review's
+marker is cleared; a prior successful marker does not govern later review
+generations. Verified members also
+receive an idempotent integration bookkeeping
+record with their mapped SHA set and tested remote tip. A disabled project and
+a lone aged member use the ordinary per-card
+gate on the same immutable result subject. Within one backend process that
+per-card gate runs at most once at a time per review generation: a retried
+review report or a tick that meets a running fallback waits for it instead of
+starting a second gate. The card marker records that per-card gate as active
+with a start count; a marker still active with no gate running in the process
+(restart, or a gate that threw) is resumed on the next tick, and after two
+interrupted starts the card escalates as `GateInfra`. A batch that pauses (a second
+infrastructure red, flaky red, an unresolved cohort, a failed publication or an
+unexpected fault) keeps `Paused` in its state history; on the next tick the
+worker returns every member it still owns to that per-card gate and records the
+batch as `Abandoned` with a `paused-to-per-task-gate` reason. Code-bearing
+cards keep the existing route.
+
+The default local store is
+`<LocalApplicationData>/agentstudio/batch-gates`: `pending/` holds durable
+review subjects and each batch ID directory holds its closed manifest, state,
+replay, run, verdict, publication and member facts. Coordinator leases live in
+`<LocalApplicationData>/agentstudio/batch-gate-leases`; the shared publication
+lease lives in `ref-mutation-leases` beside it. The card-local admission marker
+is `logs/batch-gate-ownership.json`. Native member records carry the gate
+identity and evidence; the integration-record endpoint only records integration
+bookkeeping.
+
+The pilot is currently executed by the backend hosted worker using the local
+gate runner. It does not claim an independently claimable remote `GateAttempt`;
+that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
+`GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
+and the correctness floor; comparable baseline and cost fields remain null
+until measured on the same window.
+
 ## Compose-render gate step (AGT-2981)
 
 A card whose diff can change the Compose stack renders it in its own gate.
@@ -255,6 +339,94 @@ See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
   package adapter, repository-owned activation policy, canonical finding
   projection, and the first executable Angular named-rule pass.
 
+## Step cost measurement and the cost of deciding (AGT-3015)
+
+Every write to `pipeline-execution.json` passes through
+`PipelineExecutionLog.RecordStep`. That write applies the pure policy in
+`backend/Features/Pipeline/StepCost/StepCostMeasurement.cs`. Executors report
+only what ran; the log owns the arithmetic.
+
+- **Model-backed or deterministic.** `IsModelBacked(stepId, kind)` makes the
+  call. Core and aspect steps are model-backed. Drift and orchestrator steps
+  are model-backed except these rule or human gates:
+  `post-orchestrator-review`, `post-concept-review`,
+  `post-concept-sight-review`, `post-ui-human-review-gate` and
+  `post-drift-code-pattern`. Module, tool and analysis steps are
+  deterministic, except `post-analysis-model-review`. Model qualification,
+  prompt enrichment and orchestrator prep name a model but run rule-based
+  selectors. The four orchestrator exceptions have concrete non-model
+  executors: post-orchestrator-review records the static completeness check;
+  post-concept-review calls `ConceptWorkbenchContract.ReviewDirectory`;
+  post-concept-sight-review and post-ui-human-review-gate wait for a human
+  verdict. The separate `post-orchestrator-decision` and visual verdict rows
+  carry the model calls when those calls occur.
+- **Cost stamp.** A terminal row gets `costBasis`, `estimatedCostUsd` and
+  `modelPriced`:
+  - `costBasis` is `model`, `deterministic` (a measured zero) or `not-run`.
+  - An unpriced model has `modelPriced = false` and a null cost, never zero.
+  - A model-backed row without a model keeps a null `costBasis`. The log warns
+    about that measurement gap and `StepCostMeasurementTests` guard it.
+  - A decision taken by rule records `costBasis = deterministic` explicitly.
+- **Resolution path.** `modelSource` names the level that chose the model:
+  - the step resolver levels: `step`, `project`, `global`, `catalogue`,
+    `runtime`;
+  - for the core run: the model-qualification source, `task` or
+    `client-default`;
+  - `config` for the host-configured review-decision model;
+  - `economy` for an economy-routed step.
+
+  The resolver has no job level, despite the older `PipelineStep.Model`
+  comment.
+- **Occurrences.** `runs` counts executions inside one attempt.
+  - When a step starts again, the replaced execution moves into
+    `earlierRuns`, bounded to 50, instead of being overwritten.
+  - Archived attempts keep their own counts, so per-card and per-project
+    totals survive both review rounds and epochs.
+  - The core run carries its accumulated tokens on its live row. Its earlier
+    runs are counted but not priced a second time.
+- **Decision model.** `StepModelUsage` is built from the same one-shot or CLI
+  receipt the token ledger records. `DecisionModelContext` carries it to the
+  decision row and to `decidedByModel` on the bus decision message.
+
+Ledger (`GET /api/projects/{project}/token-usage/pipeline-cost`):
+
+- `ProjectPipelineCostService.MergeSources` now reads the execution log of a
+  receipt-backed (remote) task as well.
+- A core receipt prices the agent run of the attempt whose time window holds
+  it (an attempt owns the span from its start to the next attempt's start).
+  An attempt with no core receipt keeps its logged core tokens. The log adds the aspect,
+  orchestrator and drift rows, plus the core run count. Orchestrator and
+  supporting receipts (`support:` calls: aspect, drift, analysis rows) that
+  match a measured step execution by job, model and all four token counters
+  are consumed one at a time. An aspect verdict retry writes one receipt per
+  paid call while its step row carries their sum, so a still-unmatched
+  execution then consumes a pair of receipts whose counters sum to it.
+  Unmatched receipts remain visible.
+  A task with only an orchestrator receipt retains its log's core usage.
+- Before this change, the log of a receipt-backed task was skipped entirely.
+  That is why no orchestrator step appeared in the ledger.
+- Kinds and steps carry `runs`; steps also carry `tasks` and `models`.
+- The project Token Usage panel renders this pipeline cost timeline even when
+  its separate token-activity summary has no entries. The execution log can
+  be the only source for a measured decision on an older card.
+- `decisionCost` compares deciding (orchestrator kind) against agent runs
+  (core) and other, with the unpriced tokens stated.
+
+The card rollup is `PipelineCostCalculator.SummarizeDecisionCost`. It is
+returned as `decisionCost` by `GET /api/tasks/{id}/pipeline` and covers every
+attempt.
+
+The Overview pipeline block renders both under the step table, through
+`pipeline-decision-chain`: one line per decision execution, showing the step
+that ended, verdict, model, duration, cost and evidence. The project token
+usage trend shows the project rollup and a decision-step table.
+
+Two known ledger distortions remain and are not corrected here:
+
+- Codex input that includes cached tokens (AGT-2882) overstates historical GPT
+  costs.
+- One card accumulated duplicate entries.
+
 ## Failure intervention step
 
 `post-failure-intervention` is an opt-in failure-boundary step configured through
@@ -421,7 +593,25 @@ steer the pipeline in this policy version.
   `post-merge-into-develop` mutation boundary. A settled immutable Result
   Envelope whose Remote Review is `Pass` enters the queue when build/test is
   passed or explicitly not applicable. A frozen plan that requires build/test
-  cannot omit that verdict. The report endpoint awaits the result before moving
+  cannot omit that verdict.
+  **Rule: command steps are judged by exit status; verdict markers come only
+  from aspect replies (AGT-3016).** A tool step (`verify-N`, `compose-render-N`)
+  yields `CommandPassed` or `CommandFailed` from its exit code. A failed step
+  can also yield a baseline-compared verdict. Its output never reaches the
+  `[[ASPECT_VERDICT: ...]]` parser, because a test log can quote a sentinel
+  from test data. The AGT-2954 and AGT-2996 `AspectRunnerTests` output did
+  that, and a green `dotnet test` became a `concerns` row marked
+  "malformed: duplicate-key". The runner enforces the rule in
+  `RemoteReviewWorkspace.ParseVerdict`. The report endpoint then applies
+  `ReviewCommandVerdictPolicy.NormalizeReport`
+  (`contracts/TaskServer.Contracts/ReviewCommandVerdictPolicy.cs`) before
+  grading. That repairs reports from released agent-hosts that still read
+  markers out of command output. Any marker-derived verdict on a tool-only
+  aspect (`RemoteAspectVerdict...`, `review:unparseable`, or `malformed:`) is
+  replaced by its step's exit-status verdict, so a malformed marker in the
+  output of a command that exited 0 never refuses this gate. Aspects with an
+  agent command keep their verdicts, and the malformed-reply handling of
+  real aspect replies is unchanged. The report endpoint awaits the result before moving
   Auto Review to Human Review. This is the canonical path for every Remote
   coding project; it is not limited to AGT, a specific executor, or a project
   feature flag. `RemoteExecutionEnabled` controls dispatch only and does not
@@ -437,9 +627,11 @@ steer the pipeline in this policy version.
   from the repository path and reset before each integration, never in the
   registered developer checkout: uncommitted changes there no longer refuse a
   merge, and integration no longer switches that checkout's branch. The worktree
-  stays detached and the integration branch is advanced afterwards - preferring a
-  fast-forward asked of the checkout that holds the branch, which git refuses
-  rather than overwriting local modifications. Repository identity (default
+  stays detached and merges onto the integration lane
+  `refs/agent-studio/integration/<branch>` (AGT-2996); only the integration push
+  worker publishes `develop`, and the developer checkout's local branch is
+  fast-forwarded only after that push (never over commits made there).
+  Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See
   [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md)
@@ -1446,7 +1638,12 @@ operator changes cause the step to fail before its writer runs.
   `failure_fingerprint` values on distinct cards, and a one-hour lane drain
   window that alarms when at least two cards have waited for 15 minutes with
   zero exits. Environmental retries of one card count once for the cross-card
-  fingerprint sequence. Alarms append as `alert` / `pipeline-health` rows in
+  fingerprint sequence. `WorkspaceEvidenceWorker` also reports a workspace
+  evidence flush that has kept failing for more than 15 minutes
+  (`evidence-flush-stalled`, raised for every project whose watch path lives in
+  that repository and cleared by the next successful flush; see
+  [stale-git-lock](../../operations/common-problems/stale-git-lock/README.md)).
+  Alarms append as `alert` / `pipeline-health` rows in
   the orchestrator feed; `GET /api/projects/{projectName}/pipeline-health`
   supplies the compact Pipeline page block with the active gate, global
   fingerprint streak, and completed/hour for each observed lane. This is
@@ -1809,7 +2006,8 @@ new fact even when its operator-facing summary is unchanged.
   screenshots when the user-facing view changes.
 - Pipeline health changes need `PipelineHealthNightReplayTests`, the
   `pipeline-health-block` component spec, and the mocked night-alarm screenshot
-  in `pipeline-page-evidence.spec.ts`.
+  in `pipeline-page-evidence.spec.ts`; the evidence-flush alarm has
+  `EvidenceFlushStallAlarmTests` and `pipeline-health-evidence-flush.spec.ts`.
 - Failure-class and requeue changes need `RunFailureClassifierTests` (the
   September-6 incident replay plus the classifier's fact-before-text
   ordering), `ReviewGradingPolicyTests` (the AGT-2706 concerns-vs-block
