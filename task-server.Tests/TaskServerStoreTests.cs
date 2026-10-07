@@ -575,7 +575,7 @@ public sealed partial class TaskServerStoreTests
         var fresh = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Null(fresh.MechanicalDelta);
         Assert.Equal("semantic-conflict", fresh.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-5.6-sol", fresh.MechanicalFreshRoute?.Model);
+        Assert.Equal("gpt-6-sol", fresh.MechanicalFreshRoute?.Model);
         Assert.Equal("medium", fresh.MechanicalFreshRoute?.ThinkingLevel);
         Assert.Equal("semantic-conflict", fresh.PreviousSession?.FallbackReason);
         Assert.Equal("refs/heads/result", fresh.ContinuationBaseRef);
@@ -617,7 +617,7 @@ public sealed partial class TaskServerStoreTests
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        Assert.Equal("gpt-5.6-sol", claim.MechanicalFreshRoute?.Model);
+        Assert.Equal("gpt-6-sol", claim.MechanicalFreshRoute?.Model);
         Assert.Equal(expectedThinking, claim.MechanicalFreshRoute?.ThinkingLevel);
     }
 
