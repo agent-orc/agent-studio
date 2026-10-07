@@ -25,6 +25,7 @@
     "test:ci": "ng test frontend --watch=false --progress=false",
     "watch": "ng build frontend --watch --configuration development",
     "e2e": "playwright test",
+    "e2e:task-switch-budget": "node scripts/run-task-switch-budget.mjs",
     "e2e:ui": "playwright test --ui",
     "e2e:headed": "playwright test --headed",
     "e2e:report": "playwright show-report",

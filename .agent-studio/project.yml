@@ -36,6 +36,10 @@ testSuites:
     category: machine-bound
     expectedDurationSeconds: 900
     command: npm --prefix frontend run e2e
+  - id: task-switch-workstation-budget
+    category: machine-bound
+    expectedDurationSeconds: 5400
+    command: npm --prefix frontend run e2e:task-switch-budget
 cachePaths:
   - frontend/node_modules
 capabilities: [git, child-process, loopback-network]

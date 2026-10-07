@@ -9,6 +9,12 @@ or commit attribution.
 
 ## Execution modes
 
+The task core read exposes `core-index`, `core-runtime`, `core-serialize` and
+`task-core` Server-Timing stages. An opt-in `X-Task-Switch-Trace: 1` request
+also returns request-correlated Git-spawn and workspace-scan counts in
+`X-Task-Core-Git-Spawns` and `X-Task-Core-Workspace-Scans`. The trace is
+diagnostic; it does not make Git or scanner work permissible on a core read.
+
 - `coding` is the default source-mutating mode.
 - `planning` and `research` are report-only modes. They run the lightweight
   report pipeline without git, build, test, Stylelint, aspect, or code-quality

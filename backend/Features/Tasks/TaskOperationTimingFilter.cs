@@ -27,10 +27,12 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
     {
         var sw = Stopwatch.StartNew();
         var http = context.HttpContext;
+        var route = (http.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)
+            ?.RoutePattern.RawText;
+        var coreRequest = route?.EndsWith("/{jobId}/core", StringComparison.Ordinal) == true;
         var traceEnabled = http.Request.Headers["X-Task-Switch-Trace"] == "1"
             && http.Request.Method == "GET"
-            && (http.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)
-                ?.RoutePattern.RawText?.EndsWith("/{jobId}", StringComparison.Ordinal) == true;
+            && (coreRequest || route?.EndsWith("/{jobId}", StringComparison.Ordinal) == true);
         var trace = traceEnabled ? TaskSwitchTrace.Begin(
             http.Request.Headers["X-Task-Request-Id"],
             http.Request.Headers["X-Task-Switch-Id"]) : null;
@@ -39,11 +41,19 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         {
             http.Response.Headers["X-Task-Request-Id"] = trace.RequestId;
             http.Response.Headers["X-Task-Switch-Id"] = trace.SwitchId;
-            gitScope = GitProcessTelemetry.BeginRequest("tasks/detail", _logger, includeNested: true);
+            gitScope = GitProcessTelemetry.BeginRequest(coreRequest ? "tasks/core" : "tasks/detail",
+                _logger, includeNested: true);
         }
         try
         {
             var result = await next(context);
+            if (trace != null && coreRequest)
+            {
+                var tally = GitProcessTelemetry.CurrentTally();
+                if (tally.HasValue)
+                    http.Response.Headers["X-Task-Core-Git-Spawns"] = tally.Value.Spawns.ToString(CultureInfo.InvariantCulture);
+                http.Response.Headers["X-Task-Core-Workspace-Scans"] = trace.WorkspaceScans.ToString(CultureInfo.InvariantCulture);
+            }
             return trace != null && result is IResult inner
                 ? new TaskSwitchTracedResult(inner, trace, GitProcessTelemetry.CurrentTally(),
                     GitProcessTelemetry.CurrentTimeouts(), _logger)

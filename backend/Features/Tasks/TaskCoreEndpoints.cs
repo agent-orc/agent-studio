@@ -26,7 +26,9 @@ public static class TaskCoreEndpoints
                 && !ProjectAccessAuthorization.Allows(human.User, projectRecord.Id, projects))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
 
-            var lookup = index.GetCore(jobId, projectRecord.StorageLocation);
+            var indexStarted = Stopwatch.GetTimestamp();
+            var lookup = TaskSwitchTrace.Run("index.lookup", () => index.GetCore(jobId, projectRecord.StorageLocation));
+            var indexMs = Stopwatch.GetElapsedTime(indexStarted).TotalMilliseconds;
             if (lookup.Record is null)
             {
                 context.Response.Headers.CacheControl = "no-store";
@@ -38,7 +40,9 @@ public static class TaskCoreEndpoints
             var core = lookup.Record;
             // These are resident runtime facts. No scanner, settings, Git,
             // review projection, token collector or sidecar read is involved.
-            var runtime = runtimeSource.Read(core);
+            var runtimeStarted = Stopwatch.GetTimestamp();
+            var runtime = TaskSwitchTrace.Run("runtime", () => runtimeSource.Read(core));
+            var runtimeMs = Stopwatch.GetElapsedTime(runtimeStarted).TotalMilliseconds;
             var runtimeVersion = runtime.Version;
             var editable = !SecurityProfiles.IsPublicDemo(configuration)
                 && (context.Items[AccessSecurityMiddleware.HumanPrincipalItem] is not HumanPrincipal principal
@@ -47,7 +51,10 @@ public static class TaskCoreEndpoints
             context.Response.Headers.ETag = etag;
             context.Response.Headers.CacheControl = "private, no-cache";
             if (context.Request.Headers.IfNoneMatch.Any(value => value == etag))
+            {
+                SetTiming(context, started, indexMs, runtimeMs, 0);
                 return Results.StatusCode(StatusCodes.Status304NotModified);
+            }
 
             var response = new TaskCoreResponse
             {
@@ -91,12 +98,21 @@ public static class TaskCoreEndpoints
                     $"/api/tasks/{Uri.EscapeDataString(core.Id)}/timeline?project={Uri.EscapeDataString(projectRecord.Id)}"),
                 CoreVersion = core.Version,
             };
+            var serializeStarted = Stopwatch.GetTimestamp();
             var body = JsonSerializer.SerializeToUtf8Bytes(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var serializeMs = Stopwatch.GetElapsedTime(serializeStarted).TotalMilliseconds;
             if (body.Length > 16 * 1024)
                 return Results.Problem("Task core projection exceeded its 16 KiB contract.", statusCode: 500);
-            context.Response.Headers["Server-Timing"] = "task-core;dur=" +
-                Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture);
+            SetTiming(context, started, indexMs, runtimeMs, serializeMs);
             return Results.Bytes(body, "application/json; charset=utf-8");
         });
     }
+
+    private static void SetTiming(HttpContext context, long started,
+        double indexMs, double runtimeMs, double serializeMs) =>
+        context.Response.Headers["Server-Timing"] = string.Join(", ",
+            "core-index;dur=" + indexMs.ToString("F3", CultureInfo.InvariantCulture),
+            "core-runtime;dur=" + runtimeMs.ToString("F3", CultureInfo.InvariantCulture),
+            "core-serialize;dur=" + serializeMs.ToString("F3", CultureInfo.InvariantCulture),
+            "task-core;dur=" + Stopwatch.GetElapsedTime(started).TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture));
 }

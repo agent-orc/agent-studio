@@ -1874,6 +1874,13 @@ broken. An operator had to requeue every one by hand.
   wants to run them explicitly. A live-CLI test failing on an exhausted
   provider quota must never fail a gate run it was never supposed to be part
   of.
+- **Task-switch budget.** `.agent-studio/project.yml` declares the
+  `task-switch-workstation-budget` suite as machine-bound. It calls the existing
+  Playwright runner with one worker and requires an explicit designated
+  workstation profile. The suite preserves raw switch attempts and a fail-closed
+  offline verdict; routine .NET gates exclude the timing-sensitive helper via
+  `Category!=MachineBound`. The measurement contract and remaining cohort
+  prerequisites live in [measurement.md](../../task-switch-performance/measurement.md).
 
 ## Acceptance rail: one integration truth, one refusal
 
