@@ -6020,7 +6020,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
-    public void Cause_breaker_rechecks_pending_review_when_an_already_observed_project_meets_the_open_cause()
+    public void Cause_breaker_rechecks_pending_review_when_a_project_known_only_to_a_closed_fingerprint_meets_the_open_cause()
     {
         const string otherProjectName = "other-project";
         const string otherFailingKey = "OTH-FAILING";
@@ -6067,8 +6067,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             StderrTail: "npm ci: command not found");
         Assert.Equal(CauseBreakerAction.Wait, breaker.Observe(otherFailing, otherFailingKey, "rva-other-npm",
             fingerprint, evidence, evidence.StderrTail).Decision.Action);
-        // A second observation of the open cause in the same project changes
-        // nothing that was checked; the claim still holds the pending review.
+        // This project's first observation of the open npm cause adds it to
+        // the observed projects. The stamp changes and revokes cached admission.
         Assert.Contains(otherPendingKey, breaker.HoldPendingReviews());
         Assert.NotNull(CauseWaitMarker.TryRead(pendingFolder));
         Assert.Contains(otherPendingKey, breaker.HoldPendingReviews());

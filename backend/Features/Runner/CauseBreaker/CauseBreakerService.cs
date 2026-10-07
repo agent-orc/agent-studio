@@ -387,6 +387,8 @@ public sealed class CauseBreakerService
     /// Every input <see cref="HoldLocked"/> reads besides the attempt's own
     /// plan and lane: the settings version (enabled flag, thresholds) and, per
     /// breaker that can hold new work, its toolchain and observed projects.
+    /// Only open unresolved records count; a project observed under a closed
+    /// fingerprint is not affected.
     /// Holding a card only adds to <c>Waiting</c>, which is not part of it.
     /// </summary>
     private string PendingCheckStamp()
