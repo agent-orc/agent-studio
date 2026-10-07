@@ -360,27 +360,40 @@ public class CodexModelDiscoveryTests : IDisposable
     }
 
     [Fact]
-    public void PickDetectedDefault_FollowsTheCliFlaggedDefault_WhenItIsGpt56()
+    public void PickDetectedDefault_PrefersGpt56Sol_OverAFlaggedGpt56Sibling()
     {
-        // config.toml pins gpt-5.6-terra even though sol ranks first: respect it.
+        // AGT-2903: the default order is gpt-6-sol, then gpt-5.6-sol; a
+        // config.toml pin to another gpt-5.6 tier no longer becomes the default.
         var cat = Catalog(
-            Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-5.6-terra", isDefault: true),
+            Model("gpt-5.6-sol", isDefault: false),
             Model("gpt-5.5", isDefault: false));
 
-        Assert.Equal("gpt-5.6-terra", CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Equal("gpt-5.6-sol", CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]
-    public void PickDetectedDefault_IgnoresNonGpt56FlaggedDefault()
+    public void PickDetectedDefault_PrefersGpt6Sol_WhenDiscoveryOffersIt()
     {
-        // The CLI's active model is an older gpt-5.5, but a gpt-5.6 is list-
-        // visible, so "as soon as 5.6 is detected" it becomes the default.
+        // codex-cli 0.159 flags gpt-6.1-sol, which TokenEconomy 0.3.6 does not
+        // onboard yet; the product default stays on gpt-6-sol.
         var cat = Catalog(
-            Model("gpt-5.5", isDefault: true),
+            Model("gpt-6.1-sol", isDefault: true),
+            Model("gpt-5.6-sol", isDefault: false),
+            Model("gpt-6-sol", isDefault: false),
+            Model("gpt-6-luna", isDefault: false));
+
+        Assert.Equal(ModelIds.Gpt6Sol, CodexModelDiscovery.PickDetectedDefault(cat));
+    }
+
+    [Fact]
+    public void PickDetectedDefault_SkipsAnUnavailableGpt6Sol()
+    {
+        var cat = Catalog(
+            Model("gpt-6-sol", isDefault: false) with { Available = false },
             Model("gpt-5.6-sol", isDefault: false));
 
-        Assert.Equal("gpt-5.6-sol", CodexModelDiscovery.PickDetectedDefault(cat));
+        Assert.Equal(ModelIds.Gpt56Sol, CodexModelDiscovery.PickDetectedDefault(cat));
     }
 
     [Fact]

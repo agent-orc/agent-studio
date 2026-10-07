@@ -7,15 +7,18 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/docker-scenario-images.sh
+. "$repo_root/scripts/docker-scenario-images.sh"
 
 usage() {
     cat <<'EOF'
 Usage: scripts/scenario.sh --target inproc|compose|remote --level smoke|full [options]
 
 Targets:
-  inproc   Boots Task Server + Runner as sibling processes (dotnet test). No
-           Docker required; runs on Windows and Linux in under three minutes
-           at --level smoke.
+  inproc   Boots Task Server + Runner as sibling processes (dotnet test),
+           plus the backend monolith and a second Runner for the legacy
+           runner plane step. No Docker required; Linux only; about one
+           minute at --level smoke on an idle host.
   compose  Runs against the docker-compose stack. --level smoke reuses the
            one-box boot/health checks. --level full starts the
            Task Server and Studio BFF plus the scenario's
@@ -28,8 +31,9 @@ Targets:
            deployment, which this script does not provision.
 
 Levels:
-  smoke    The first six steps in testsupport/scenario/steps.json (bootstrap
-           principals through auto-review).
+  smoke    The smoke-level steps in testsupport/scenario/steps.json
+           (bootstrap principals through auto-review, including the coding
+           attempt on both runner planes).
   full     Every step in testsupport/scenario/steps.json. With --target
            inproc it also runs the Studio connector negative matrix and
            writes connector-negative-matrix.md/.json to the report dir.
@@ -42,6 +46,12 @@ Options:
   --remote-url URL      Base URL for --target remote.
   --remote-token TOKEN  Bearer token for --target remote.
   -h, --help            Show this help.
+
+Docker residue (--target compose): every run removes the images it built when
+it exits (also on failure and SIGTERM), and runs
+scripts/docker-scenario-retention.sh first to clear images older runs left
+behind and cap the BuildKit cache. SCENARIO_DOCKER_RETENTION=0 skips that
+retention pass.
 EOF
 }
 
@@ -120,6 +130,10 @@ compose_full_cleanup() {
         docker compose --project-name "$scenario_compose_project" \
             --file "$scenario_compose_file" --file "$scenario_compose_override" \
             down --volumes --remove-orphans >/dev/null 2>&1 || true
+        docker_scenario_remove_project_images "$scenario_compose_project" \
+            "${SCENARIO_TASK_SERVER_IMAGE:-}" "${SCENARIO_STUDIO_BFF_IMAGE:-}" \
+            "${SCENARIO_ORCHESTRATOR_ENGINE_IMAGE:-}" "${SCENARIO_AGENT_HOST_IMAGE:-}"
+        scenario_compose_project=""
     fi
     case "$scenario_compose_host_dir" in
         "${TMPDIR:-/tmp}/agent-studio-scenario."*)
@@ -176,6 +190,8 @@ EOF
 compose_full_on_exit() {
     local status=$?
     trap - EXIT
+    # A second signal must not abort the cleanup that frees the run's images.
+    trap '' HUP INT TERM
     if [ "$status" -ne 0 ]; then
         compose_full_diagnostics
     fi
@@ -329,12 +345,25 @@ run_compose_full() {
         compose_full_diagnostics
     fi
 
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    trap '' HUP INT TERM
     compose_full_cleanup
+    trap - HUP INT TERM
     return "$status"
 }
 
+run_compose_retention() {
+    if [ "${SCENARIO_DOCKER_RETENTION:-1}" = "0" ]; then
+        return
+    fi
+    # Residue from runs that were killed before their own cleanup. A failed
+    # retention pass is reported but never fails the scenario itself.
+    "$repo_root/scripts/docker-scenario-retention.sh" \
+        || echo "scenario: warning: docker-scenario-retention.sh failed; continuing" >&2
+}
+
 run_compose() {
+    run_compose_retention
     if [ "$level" = "full" ]; then
         run_compose_full
         return

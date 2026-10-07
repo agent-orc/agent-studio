@@ -13,6 +13,44 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var instruction = new ContinuationIntentRequest(1, "receipt-round-1", task.Version,
+            "Continue this task", null, null, null, "continue", "operator correction");
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            instruction, "human:owner", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await store.RenewLeaseAsync(claim.Run!.RunId,
+            new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, StartedPromptSha256: claim.FollowUp!.PromptSha256),
+            "runner-a", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var feedback = (await restarted.GetSteeringFeedbackAsync(project.ProjectId, task.TaskId, default))!;
+        var receipt = Assert.Single(feedback.History, fact => fact.CommandId == instruction.CommandId);
+        Assert.Equal("consumed", receipt.State);
+        Assert.Equal(claim.Run.RunId, receipt.AttemptId);
+        Assert.Equal(receipt, feedback.Current);
+        var timeline = await restarted.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
+        Assert.Single(timeline.Entries, entry => entry.SteeringFeedback?.CommandId == instruction.CommandId);
+        var feed = await restarted.GetOrchestratorFeedAsync(500, default);
+        Assert.Single(feed.Entries, entry => entry.SteeringFeedback?.CommandId == instruction.CommandId);
+
+        var current = (await restarted.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await restarted.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            instruction with { CommandId = "receipt-round-2", ExpectedTaskVersion = current.Version,
+                Prompt = "Later correction" }, "human:owner", default);
+        feedback = (await restarted.GetSteeringFeedbackAsync(project.ProjectId, task.TaskId, default))!;
+        Assert.Equal("receipt-round-2", feedback.Current?.CommandId);
+    }
+
+    [Fact]
     public async Task Follow_up_is_reserved_on_claim_and_consumed_only_after_worker_start_acknowledgement()
     {
         using var temp = new TempDirectory();
@@ -575,7 +613,7 @@ public sealed partial class TaskServerStoreTests
         var fresh = await restarted.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
         Assert.Null(fresh.MechanicalDelta);
         Assert.Equal("semantic-conflict", fresh.MechanicalFreshRoute?.Reason);
-        Assert.Equal("gpt-5.6-sol", fresh.MechanicalFreshRoute?.Model);
+        Assert.Equal("gpt-6-sol", fresh.MechanicalFreshRoute?.Model);
         Assert.Equal("medium", fresh.MechanicalFreshRoute?.ThinkingLevel);
         Assert.Equal("semantic-conflict", fresh.PreviousSession?.FallbackReason);
         Assert.Equal("refs/heads/result", fresh.ContinuationBaseRef);
@@ -617,7 +655,7 @@ public sealed partial class TaskServerStoreTests
         await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
 
         var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        Assert.Equal("gpt-5.6-sol", claim.MechanicalFreshRoute?.Model);
+        Assert.Equal("gpt-6-sol", claim.MechanicalFreshRoute?.Model);
         Assert.Equal(expectedThinking, claim.MechanicalFreshRoute?.ThinkingLevel);
     }
 
@@ -715,6 +753,33 @@ public sealed partial class TaskServerStoreTests
                 "Keep going", null, null, null, "continue", "operator"), "operator", default);
         Assert.Equal(1, receipt.Round);
         Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
+    }
+
+    [Theory]
+    [InlineData(27, "project_repositories")]
+    [InlineData(28, "continuation_intents")]
+    public async Task Merged_schema_upgrades_stores_from_either_delivery_branch(
+        int previousVersion, string missingTable)
+    {
+        using var temp = new TempDirectory();
+        var first = Store(temp.Path);
+        await first.InitializeAsync();
+        await using (var connection = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"DROP TABLE {missingTable}; UPDATE meta SET value = '{previousVersion}' WHERE key = 'schema_version';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgraded = Store(temp.Path);
+        await upgraded.InitializeAsync();
+        Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
+        await using var verification = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False");
+        await verification.OpenAsync();
+        await using var query = verification.CreateCommand();
+        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents');";
+        Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
     }
 
     [Fact]

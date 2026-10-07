@@ -170,6 +170,14 @@ AGT-2410 acute-only status contract, and every event kind uses the same
 row-width grid so Watcher Problem and Decision projections can join the stream
 without a parallel surface.
 
+D10 steering feedback uses the same task timeline poll as the Overview status
+row and the Timeline tab. Overview shows only a fact marked current by the
+server's attempt generation; Timeline retains quiet historical receipts with
+command, attempt and incident IDs. The workspace feed renders historical
+receipts as observations. Only a current unresolved or quarantined incident is an acute alert
+and contributes to the Activity badge. The UI never writes a receipt state or
+derives a review verdict from one.
+
 ## Task core cache and board reuse (AGT-2956)
 
 Task navigation reads the board it already holds. `TaskService` stays the

@@ -138,7 +138,7 @@ The corresponding decision routes are
 Their `decision` body accepts `accept`, `starting-point`, or `discard`.
 
 The legacy timeline records `run_attempt_revoked` and
-`older_brief_delivery_offered` for those boundaries. Task Server schema 28
+`older_brief_delivery_offered` for those boundaries. Task Server schema 30
 stores the brief version on each run and the pending older-brief offer.
 
 Registered in `backend/Features/Tasks/LeaseEndpoints.cs`,

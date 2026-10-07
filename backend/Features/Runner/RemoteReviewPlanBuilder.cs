@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using AgentStudio.Pipeline;
+using AgentStudio.Git;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -22,13 +23,16 @@ public sealed class RemoteReviewPlanBuilder
 
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
+    private readonly GitService? _git;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        GitService? git = null)
     {
         _aspects = aspects;
         _configuration = configuration;
+        _git = git;
     }
 
     /// <param name="changedFiles">
@@ -50,6 +54,27 @@ public sealed class RemoteReviewPlanBuilder
             projectSettings?.BuildProfile,
             integrationRef,
             changedFiles);
+        var ordinaryToolPlan = toolPlan;
+        var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
+        var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(repositoryPath)
+            || string.IsNullOrWhiteSpace(integrationRef) || subject is null
+            ? null
+            : _git.ChangedPathsAgainstMergeBase(
+                repositoryPath, integrationRef,
+                subject.ImmutableResultRef ?? subject.ResultSha));
+        var deferBuildTest = projectSettings?.BatchGate.Enabled == true
+            && task is not null && !TaskModes.IsReportOnly(task.Mode)
+            && DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
+            && subject is { ImmutableResultRef: not null }
+            && ReviewSubjectStore.IsValidResultSha(subject.ResultSha);
+        if (deferBuildTest)
+            toolPlan = toolPlan with
+            {
+                Commands = toolPlan.Commands.Where(command =>
+                    !string.Equals(command.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase)).ToArray(),
+                Preparation = [],
+                BuildTestDeferredToBatch = true,
+            };
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
 
@@ -119,9 +144,17 @@ public sealed class RemoteReviewPlanBuilder
                 ThinkingLevel: thinking));
         }
 
+        var hasModelReview = commands.Any(command =>
+            Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
+        if (deferBuildTest && !hasModelReview)
+            commands = ordinaryToolPlan.Commands.ToList();
+
         var plan = toolPlan with
         {
             Commands = commands,
+            Preparation = deferBuildTest && !hasModelReview
+                ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
+            BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
             RequiredAspects = commands
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)

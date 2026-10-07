@@ -17,6 +17,9 @@ public sealed class FullBackupServiceTests
         await store.InitializeAsync();
         var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
         await store.CreateProjectAsync(new CreateProjectRequest(workspace.WorkspaceId, "Project", "FB"), "test", default);
+        await store.CreatePrincipalAsync(new CreatePrincipalRequest(
+            "backup-operator", TaskServerPrincipalKinds.Studio, [TaskServerScopes.Management]),
+            "test", default);
 
         var management = new FullBackupManagementService(store);
         var summary = await management.CreateAsync("test", default);
@@ -29,14 +32,18 @@ public sealed class FullBackupServiceTests
         var verified = await management.VerifyAsync(summary.Id, default);
         Assert.True(verified.Verified);
         Assert.Equal(summary.SetSha256, verified.Summary.SetSha256);
+        Assert.Matches("^[0-9a-f]{64}$", verified.IdentitySha256);
         await Assert.ThrowsAsync<ArgumentException>(() => management.VerifyAsync("..", default));
 
         await store.ChangeModeAsync(new ChangeModeRequest(TaskServerMode.Maintenance, "restore rehearsal"), "operator", default);
         var restored = await management.RestoreAsync(summary.Id, "operator", default);
         Assert.True(restored.Restored);
+        Assert.Equal(verified.IdentitySha256, restored.IdentitySha256);
 
         var projects = await store.ListProjectsAsync(workspace.WorkspaceId, default);
         Assert.Single(projects);
+        Assert.Contains(await store.ListPrincipalsAsync(default),
+            principal => principal.PrincipalId == "backup-operator");
     }
 
     [Fact]

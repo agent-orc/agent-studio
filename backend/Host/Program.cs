@@ -31,6 +31,7 @@ Log.Logger = new LoggerConfiguration()
     .CreateBootstrapLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 var connectorProfile = ConnectorProfile.IsEnabled(builder.Configuration);
 builder.Services.AddTaskServerPlaneProxy(builder.Configuration);
 var orchestrationExecutionMode = OrchestrationExecutionModeParser.Parse(
@@ -445,6 +446,11 @@ builder.Services.AddSingleton<ReviewProjectionService>();
 builder.Services.AddSingleton<TaskTransitionService>();
 builder.Services.AddSingleton<DecisionCardService>();
 builder.Services.AddSingleton<DecisionRecordService>();
+// Decision cards, apply step and creation paths (Dossier decision-cards D3=C, D5=A).
+builder.Services.AddSingleton<DecisionApplyService>();
+builder.Services.AddSingleton<DecisionCardRequests>();
+builder.Services.AddSingleton<DecisionReminderSweep>();
+builder.Services.AddHostedService<DecisionReminderSweepHostedService>();
 builder.Services.AddSingleton<DeliveryChainReconciler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryChainReconciler>());
 builder.Services.AddSingleton<IBatchMoveItemExecutor, BatchMoveItemExecutor>();
@@ -603,6 +609,7 @@ builder.Services.AddSingleton<RunTimeoutContinuationService>();
 // AGT-2870: operator stops for remotely executed runs. The request is parked
 // here until the owning runner picks it up on its next lease renewal.
 builder.Services.AddSingleton<RemoteRunStopRequestStore>();
+builder.Services.AddSingleton<SteeringFeedbackProjection>();
 builder.Services.AddSingleton<ProviderRejectionContinuationService>();
 builder.Services.AddSingleton<AgentStudio.Management.ProviderRejectionFleetService>();
 builder.Services.AddSingleton<AgentMessageBusStore>();
@@ -698,6 +705,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthDetector>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineHealthService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineHealthSensor>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton<AgentStudio.Pipeline.IEvidenceFlushAlarm>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+// AGT-3000: clears git locks left by dead git processes before a server-owned write.
+builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
@@ -716,6 +727,10 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineModelCatalogueProvid
     AgentStudio.Pipeline.CliPipelineModelCatalogueProvider>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.PipelineStepEconomyAdvisor>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.MergeIntoDevelopRunner>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateStore>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
@@ -887,6 +902,7 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<AgentStudio.Pipeline.IntegrationPushBackstopHostedService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AcceptanceRailHostedService>());
     builder.Services.AddHostedService<AgentStudio.Pipeline.GateEnvironmentRetryHostedService>();
+    builder.Services.AddHostedService<AgentStudio.Pipeline.BatchGatePilotHostedService>();
 }
 // AGT-3011: the fix-round, gate-triage and salvage sweeps that used to run from
 // an operator shell loop. One supervised tick, the shared per-card round

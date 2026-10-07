@@ -1,3 +1,10 @@
+@if (levelMapping(); as mapping) {
+  <span class="model-migration__level"
+        role="note"
+        [attr.data-testid]="testId() + '-level-mapped'"
+        [attr.aria-label]="levelMappingNote()"
+        [cacTooltip]="levelMappingNote()">{{ mapping.mappedFrom }}→{{ mapping.level }}</span>
+}
 @if (proposal(); as p) {
   <span class="model-migration" [attr.data-testid]="testId()">
     <button #trigger type="button"
@@ -24,6 +31,15 @@
           <span class="model-migration__arrow" aria-hidden="true">→</span>
           <span class="model-migration__to" [attr.data-testid]="testId() + '-to'">{{ p.to }}</span>
         </div>
+        @if (targetLevel(); as target) {
+          <p class="model-migration__target-level" [attr.data-testid]="testId() + '-target-level'">
+            @if (target.mappedFrom) {
+              Level {{ target.mappedFrom }} is not offered by {{ p.to }}; runs at {{ target.level }}.
+            } @else {
+              Keeps level {{ target.level }}.
+            }
+          </p>
+        }
         <p class="model-migration__reason">{{ p.reason }}</p>
         <button type="button"
                 class="model-migration__apply"
@@ -31,6 +47,13 @@
                 [appPendingButton]="isPending()"
                 pendingLabel="Applying…"
                 (click)="onApply($event)">Apply</button>
+        @if (jobId() && project()) {
+          <button type="button"
+                  class="model-migration__apply model-migration__apply--project"
+                  [attr.data-testid]="testId() + '-apply-project'"
+                  [disabled]="isPending()"
+                  (click)="onApplyProject($event)">Apply to all pinned cards in project</button>
+        }
       </div>
     }
   </span>

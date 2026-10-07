@@ -41,6 +41,7 @@ public sealed class TaskTransitionService
     private readonly ReviewAttemptTaskLifecycleService? _reviewAttemptLifecycle;
     private readonly ResultVersionStore? _resultVersions;
     private readonly BranchReclaimTriggerService? _branchReclaim;
+    private readonly AgentStudio.Pipeline.BatchGateStore? _batchGateStore;
     private readonly TimeProvider _time;
     private readonly bool _guardedDelivery;
     private long _resultScaffoldCreatedCount;
@@ -88,7 +89,8 @@ public sealed class TaskTransitionService
         ResultVersionStore? resultVersions = null,
         BranchReclaimTriggerService? branchReclaim = null,
         TimeProvider? timeProvider = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        AgentStudio.Pipeline.BatchGateStore? batchGateStore = null)
     {
         _scanner = scanner;
         _states = states;
@@ -111,6 +113,7 @@ public sealed class TaskTransitionService
         _reviewAttemptLifecycle = reviewAttemptLifecycle;
         _resultVersions = resultVersions;
         _branchReclaim = branchReclaim;
+        _batchGateStore = batchGateStore;
         _time = timeProvider ?? TimeProvider.System;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
@@ -245,6 +248,10 @@ public sealed class TaskTransitionService
         }
 
         var fromState = info.State;
+        if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
+             || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
+            && BatchGateReleaseFailure(info) is { } batchFailure)
+            return new MoveJobOutcome(MoveJobStatus.Failure, batchFailure, info.FolderPath);
         var projectName = info.ProjectName;
 
         // Human acceptance is a quality decision, never an integration trigger.
@@ -1491,6 +1498,19 @@ public sealed class TaskTransitionService
             $"Acceptance does not integrate deliveries. The task remains in Human Review because its current delivery is "
             + $"'{status?.Status ?? IntegrationStatuses.Pending}' on '{integrationBranch}'. {detail}",
             reviewed.FolderPath);
+    }
+
+    private string? BatchGateReleaseFailure(TaskInfo task)
+    {
+        AgentStudio.Pipeline.BatchGateOwnership? ownership;
+        try { ownership = AgentStudio.Pipeline.BatchGateOwnershipStore.Read(task.FolderPath); }
+        catch { return "batch-gate-evidence-missing"; }
+        if (ownership is null) return null;
+        if (_attemptAuthority is null || _batchGateStore is null)
+            return "batch-gate-evidence-missing";
+        var projection = _attemptAuthority.GetTaskProjection(task.Id);
+        return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
+            ownership, projection, _batchGateStore, task.FolderPath);
     }
 
     /// <summary>

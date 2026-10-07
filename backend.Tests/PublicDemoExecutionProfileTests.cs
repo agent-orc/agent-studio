@@ -136,7 +136,8 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // Decision-card decide and reopen are execution mutations on Start.
             // The revoked-reference post step and older-brief decision are
             // execution mutations and must remain in the denial inventory.
-            Assert.Equal(90, routes.Count);
+            // Project model migration is an operator-triggered Preview mutation.
+            Assert.Equal(91, routes.Count);
             // Pin their identities too: an unrelated route must not mask the loss
             // of either decision mutation from the denial inventory.
             foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen" })
@@ -156,6 +157,10 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                 Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
                 Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
             }
+            var migrationRoute = Assert.Single(routes, route =>
+                route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
+            Assert.Equal(ExecutionAdmissionPath.Preview,
+                migrationRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
             Assert.Equal(
                 ExecutionAdmissionPolicy.AllPaths.OrderBy(path => path),
                 routes.Select(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
@@ -169,7 +174,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Continue] = 15,
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
-                    [ExecutionAdmissionPath.Preview] = 25,
+                    [ExecutionAdmissionPath.Preview] = 26,
                     [ExecutionAdmissionPath.PostStep] = 12,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)

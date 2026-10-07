@@ -1229,14 +1229,36 @@ public static class AgentOutcomeAnalyzer
     public static string? ExtractNeedsInputMessage(IReadOnlyList<CliOutputLine> lines)
         => ExtractNeedsInputMessage(JoinAgentText(lines ?? Array.Empty<CliOutputLine>()));
 
+    /// <summary>
+    /// Extracts the assistant turn that owns the final Blocked sentinel, with the
+    /// same turn boundary as <see cref="ExtractNeedsInputMessage(IReadOnlyList{CliOutputLine})"/>.
+    /// A blocked run that weighed a fork states it here.
+    /// </summary>
+    public static string? ExtractBlockedMessage(IReadOnlyList<CliOutputLine> lines)
+        => ExtractTerminalMessage(JoinAgentText(lines ?? Array.Empty<CliOutputLine>()), "BLOCKED");
+
+    /// <summary>
+    /// Extracts the assistant turn that owns the final Blocked or NeedsInput
+    /// sentinel. A failed run that stopped at a fork states it there; a run
+    /// that crashed without an interruptive sentinel returns null.
+    /// </summary>
+    public static string? ExtractInterruptiveMessage(IReadOnlyList<CliOutputLine> lines)
+    {
+        var agentText = JoinAgentText(lines ?? Array.Empty<CliOutputLine>());
+        return ExtractTerminalMessage(agentText, "BLOCKED") ?? ExtractTerminalMessage(agentText, "NEEDS_INPUT");
+    }
+
     private static string? ExtractNeedsInputMessage(string agentText)
+        => ExtractTerminalMessage(agentText, "NEEDS_INPUT");
+
+    private static string? ExtractTerminalMessage(string agentText, string expectedKeyword)
     {
         var matches = SentinelRegex.Matches(agentText);
         if (matches.Count == 0) return null;
         var terminal = matches[^1];
         var keyword = Regex.Replace(terminal.Groups["keyword"].Value, @"[\s_-]+", "_")
             .ToUpperInvariant();
-        if (keyword != "NEEDS_INPUT") return null;
+        if (keyword != expectedKeyword) return null;
         var start = matches.Count > 1 ? matches[^2].Index + matches[^2].Length : 0;
         var message = agentText[start..terminal.Index].Trim('\r', '\n');
         if (string.IsNullOrWhiteSpace(message)) return null;

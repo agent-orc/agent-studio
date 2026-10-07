@@ -555,6 +555,63 @@ public sealed class RunnerServiceUnitTests
         Assert.DoesNotContain("agent-runner-deploy --force", sudoers, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-2985: Stable 0.9.3 restarted cleanly and then had every completion
+    /// rejected. After a promotion the helper waits for one accepted completion
+    /// and otherwise prints the rollback command to the previous release.
+    /// </summary>
+    [SkippableFact]
+    public void Post_restart_completion_check_passes_on_an_acceptance_and_prints_the_rollback_otherwise()
+    {
+        PlatformGate.RequiresPosixShell();
+
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-completion-check.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        var output = result.StandardOutput;
+        Assert.Contains("accepted-status=0", output);
+        Assert.Contains("accepted-polls=1", output);
+        Assert.Contains("early-new-invocation-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-polls=1", output);
+        Assert.Contains("late-acceptance-status=0", output);
+        Assert.Contains("late-acceptance-polls=3", output);
+        const string rollback =
+            "rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/rel-previous /opt/agent-host/current";
+        foreach (var failed in new[] { "outgoing-acceptance", "rejected", "idle", "expired-late-acceptance" })
+        {
+            Assert.Contains($"{failed}-status=2", output);
+            Assert.Contains($"{failed}-output: agent-runner-deploy: {rollback}", output);
+        }
+        Assert.Contains("2 completion(s) were rejected", output);
+        Assert.Contains(
+            "outgoing-acceptance-output: agent-runner-deploy: release rel-new is active, but " +
+            "no completion was accepted within 600s of its activation; 1 completion(s) were rejected",
+            output);
+        Assert.DoesNotContain("outgoing-acceptance-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("expired-late-acceptance-polls=1", output);
+        Assert.DoesNotContain("expired-late-acceptance-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("no completion was attempted within 600s", output);
+        Assert.DoesNotContain("accepted-output: agent-runner-deploy: rollback", output);
+
+        var helper = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+        Assert.Contains("readonly completion_watch_seconds=600", helper, StringComparison.Ordinal);
+        Assert.Contains("1:verify-completions)", helper, StringComparison.Ordinal);
+        // Promotion runs the check itself, after it has recorded what to roll back to.
+        var restart = helper.LastIndexOf("  restart_release_services ", StringComparison.Ordinal);
+        var invocation = helper.LastIndexOf("systemctl show --property=InvocationID", StringComparison.Ordinal);
+        var record = helper.LastIndexOf("record_last_promotion \"$release_id\"", StringComparison.Ordinal);
+        var verify = helper.LastIndexOf("  verify_completions\n}", StringComparison.Ordinal);
+        Assert.True(restart > 0 && invocation > restart && record > invocation && verify > record,
+            "promotion must restart, capture the new Coding invocation, record it, then verify");
+        var sudoers = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "sudoers.d", "agent-runner"));
+        Assert.Contains("/usr/local/sbin/agent-runner-deploy verify-completions,", sudoers, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Host_hardening_installs_the_root_owned_dependency_validator_without_expanding_sudoers()
     {

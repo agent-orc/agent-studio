@@ -261,9 +261,9 @@
         testId="task-card-effective-model"
         levelTestId="task-card-thinking-level" />
       <app-model-migration-badge
-        [model]="job().model"
+        [model]="job().model" [cliType]="job().cliType ?? null" [thinkingLevel]="job().thinkingLevel ?? null"
         [explicit]="job().modelExplicit === true"
-        [jobId]="job().id"
+        [jobId]="job().id" [project]="job().projectName"
         [watchPath]="job().watchPath"
         testId="task-card-model-migration" />
       <app-run-disposition-badges [execution]="displayedExecutionLocation()" [state]="job().state" [olderBriefPending]="job().olderBriefDelivery?.status === 'pending'" />

@@ -345,29 +345,32 @@ public sealed class CodexModelDiscovery
         };
     }
 
-    private static bool IsGpt56(string? id)
-        => id != null && id.StartsWith("gpt-5.6", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Codex default preference (AGT-2903, policy 2026-10-04): gpt-6-sol when
+    /// the installed CLI offers it, else gpt-5.6-sol. Null when neither is
+    /// listed so the caller keeps the static gpt-5.5 baseline. The CLI's own
+    /// flagged default does not override this order: a newer flagged model
+    /// (gpt-6.1-sol on codex-cli 0.159) is not onboarded in TokenEconomy yet.
+    /// </summary>
+    private static readonly string[] DefaultPreference = [ModelIds.Gpt6Sol, ModelIds.Gpt56Sol];
 
     /// <summary>
-    /// Derive the Codex product default from a live/cached catalog: as soon as
-    /// the installed CLI lists a gpt-5.6-* model, that becomes the default
-    /// (following the CLI's own active model when it is already a gpt-5.6, else
-    /// the highest-priority gpt-5.6 in the list). Returns null when no gpt-5.6
-    /// is present so the caller keeps the static gpt-5.5 baseline (AGT-2025).
+    /// Derive the Codex product default from a live/cached catalog by walking
+    /// <see cref="DefaultPreference"/> against the models the CLI marks
+    /// available. Merged-in registry entries are unavailable and never win.
     /// </summary>
     internal static string? PickDetectedDefault(CliModelCatalog cat)
     {
         var models = cat.Models;
         if (models == null || models.Count == 0) return null;
 
-        // Follow the CLI's own default when it already points at a gpt-5.6 model.
-        // Merged-in registry entries are unavailable and can never be the default.
-        var flagged = models.FirstOrDefault(m => m.Available && m.IsDefault && IsGpt56(m.Id));
-        if (flagged != null) return flagged.Id;
-
-        // Otherwise: the models are priority-ordered, so the first gpt-5.6 is the
-        // highest-priority one the CLI advertises.
-        return models.FirstOrDefault(m => m.Available && IsGpt56(m.Id))?.Id;
+        foreach (var preferred in DefaultPreference)
+        {
+            var match = models.FirstOrDefault(m =>
+                m.Available && string.Equals(m.Id, preferred, StringComparison.OrdinalIgnoreCase));
+            if (match != null) return match.Id;
+        }
+        return null;
     }
 
     /// <summary>
@@ -375,7 +378,7 @@ public sealed class CodexModelDiscovery
     /// creation, cli-type switches, and client-default materialization all
     /// follow the CLI, then return the catalog unchanged. Called on every path
     /// that yields a catalog (fresh, mem-cache, disk-cache) so a null result
-    /// (no gpt-5.6) correctly clears back to the gpt-5.5 baseline.
+    /// (no gpt-6-sol or gpt-5.6-sol) correctly clears back to the gpt-5.5 baseline.
     /// </summary>
     private CliModelCatalog Publish(CliModelCatalog cat)
     {

@@ -82,6 +82,12 @@ internal static class StudioTaskHistoryEndpoints
             string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
             => await WithTaskAsync(store, projectId, taskIdentity, ct, task
                 => TaskServerEndpoints.InvokeAsync(() => store.GetTaskTimelineAsync(task.ProjectId, task.TaskId, ct))));
+
+        tasks.MapGet("/steering-feedback", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct)
+            => await WithTaskAsync(store, projectId, taskIdentity, ct, task
+                => TaskServerEndpoints.InvokeNullableAsync(
+                    () => store.GetSteeringFeedbackAsync(task.ProjectId, task.TaskId, ct))));
     }
 
     /// <summary>
