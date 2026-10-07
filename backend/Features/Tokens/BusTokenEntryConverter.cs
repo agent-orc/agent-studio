@@ -32,6 +32,8 @@ internal static class BusTokenEntryConverter
                 CacheReadTokens = SafeInt(t.CacheRead ?? 0),
                 CacheCreationTokens = SafeInt(t.CacheWrite ?? 0),
                 ThinkingLevel = t.ThinkingLevel,
+                CliType = t.CliType,
+                Host = t.Host,
                 InputIncludesCached = t.InputIncludesCached,
                 UsageNormalization = t.UsageNormalization,
                 PinnedModel = t.PinnedModel,

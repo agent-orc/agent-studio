@@ -39,7 +39,19 @@ describe('WorkspaceTokenTimelineComponent (smoke)', () => {
     const timeline: TokenTimeline = {
       windowStart: firstScope.fromUtc, windowEnd: firstScope.toUtc,
       windowHours: 24, bucketMinutes: 60, bucketCount: 24,
-      cells: [], projects: [], fetchedAt: firstScope.toUtc, disclaimer: '',
+      cells: [], projects: [{
+        project: 'studio', calls: 1, input: 100, output: 0, cacheRead: 0, cacheWrite: 0,
+        total: 100, dollars: null, allModelsPriced: false, peakBucketStart: null,
+        peakBucketTotal: 100, lastActivity: firstScope.toUtc, agentTokens: 100,
+        supportingTokens: 0, orchestratorTokens: 0,
+      }],
+      models: [{
+        project: 'studio', model: 'gpt-unlisted-model-9', modelLabel: 'gpt-unlisted-model-9',
+        host: 'agent-runner-01', cliTypes: ['codex'], calls: 1, input: 100,
+        output: 0, cacheRead: 0, cacheWrite: 0, total: 100, dollars: null,
+        allModelsPriced: false,
+      }],
+      fetchedAt: firstScope.toUtc, disclaimer: '',
     };
 
     fixture.componentRef.setInput('scope', firstScope);
@@ -57,8 +69,13 @@ describe('WorkspaceTokenTimelineComponent (smoke)', () => {
     expect(current.request.params.get('projectId')).toBe('PROJ-002');
     expect(fixture.componentInstance.timeline()).toBeNull();
 
+    fixture.componentInstance.disabledProjects.set(new Set(['studio']));
     current.flush(timeline);
     expect(fixture.componentInstance.timeline()).toEqual(timeline);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.nativeElement.querySelector(
+      '[data-testid="wtt-model-row-studio|gpt-unlisted-model-9|agent-runner-01"]')).not.toBeNull();
 
     fixture.componentRef.setInput('scope', firstScope);
     fixture.detectChanges();

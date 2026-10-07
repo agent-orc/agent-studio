@@ -102,7 +102,10 @@ public sealed class AdHocUsageRecorder
             // failures must not block the canonical write path). When tokens
             // are zero (the plain-text fallback case) we still emit so the
             // per-source call counts on the bus stay accurate.
-            if (_bus is not null)
+            // Chat turns write their ledger row through OrchestratorChatService
+            // and await its receipt. Keep this legacy log without a second
+            // fire-and-forget bus event for the same turn.
+            if (_bus is not null && record.Source != AdHocUsageSources.ChatTurn)
             {
                 var usage = new OrchestratorTokenUsage
                 {

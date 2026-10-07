@@ -18,18 +18,24 @@ public sealed class RemotePipelineReviewEvidenceProjector
     private readonly TimelineLog _timeline;
     private readonly FileGenerationIndex _files;
     private readonly AgentStudio.Projects.ProjectSettingsService _settings;
+    private readonly TaskMutationService? _mutations;
 
     public RemotePipelineReviewEvidenceProjector(
         PipelineExecutionLog pipeline,
         TimelineLog timeline,
         FileGenerationIndex files,
-        AgentStudio.Projects.ProjectSettingsService settings)
+        AgentStudio.Projects.ProjectSettingsService settings,
+        TaskMutationService? mutations = null)
     {
         _pipeline = pipeline;
         _timeline = timeline;
         _files = files;
         _settings = settings;
+        _mutations = mutations;
     }
+
+    /// <summary>Receipt participant prefix for remote review attempt usage.</summary>
+    public const string ReviewParticipantPrefix = "support:remote-review:";
 
     /// <summary>
     /// Synchronous so the evidence worker can apply the task-level projection
@@ -65,6 +71,73 @@ public sealed class RemotePipelineReviewEvidenceProjector
         }
         ProjectToolGate(task, review, report, execution.Attempt);
         ProjectTimeline(task, review, report, evidenceFile, receivedAt);
+        RecordReviewUsage(task, review, report);
+    }
+
+    /// <summary>
+    /// Writes the attempt's agent usage into the task token receipt, the
+    /// ledger the workspace timeline and project surfaces aggregate
+    /// (AGT-2986). One participant per review attempt keeps a replayed
+    /// report idempotent. Cached input stays in its own dimension: the runner
+    /// already normalized input to the uncached share.
+    /// </summary>
+    private void RecordReviewUsage(TaskInfo task, ReviewAttemptDto review, Contract.ReviewReportRequest report)
+    {
+        if (_mutations is null || string.IsNullOrWhiteSpace(review.AttemptId)) return;
+        var calls = BuildReviewUsageCalls(review, report);
+        if (calls.Count == 0) return;
+        if (!_mutations.SetTokenReceiptEntriesOnFolder(
+            task.FolderPath,
+            ReviewParticipantPrefix + review.AttemptId,
+            calls))
+        {
+            // The evidence worker retries I/O failures and leaves the
+            // settlement journal unfinished until the receipt is durable.
+            throw new IOException($"Failed to persist remote review usage receipt for {review.AttemptId}");
+        }
+    }
+
+    internal static IReadOnlyList<TaskTokenCall> BuildReviewUsageCalls(
+        ReviewAttemptDto review,
+        Contract.ReviewReportRequest report)
+    {
+        var host = review.Lease?.HostId ?? report.Environment.HostId;
+        var calls = new List<TaskTokenCall>();
+        foreach (var command in report.Commands.Where(command =>
+                     Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind)))
+        {
+            var total = command.InputTokens + command.OutputTokens
+                        + command.CacheReadTokens + command.CacheCreationTokens;
+            if (total <= 0) continue;
+            var model = TokenModelDisplay.StoredId(command.Model);
+            var cost = TokenPricing.Estimate(
+                command.Model, command.InputTokens, command.OutputTokens,
+                command.CacheReadTokens, command.CacheCreationTokens, command.FinishedAt);
+            calls.Add(new TaskTokenCall
+            {
+                Ts = command.FinishedAt,
+                Model = model,
+                DisplayModel = TokenModelDisplay.Label(model),
+                ThinkingLevel = string.IsNullOrWhiteSpace(command.ThinkingLevel) ? null : command.ThinkingLevel.Trim(),
+                CliType = CliFromExecutable(command.FileName),
+                Host = string.IsNullOrWhiteSpace(command.HostId) ? host : command.HostId,
+                InputTokens = command.InputTokens,
+                OutputTokens = command.OutputTokens,
+                CacheReadTokens = command.CacheReadTokens,
+                CacheCreationTokens = command.CacheCreationTokens,
+                InputIncludesCached = command.InputIncludesCached,
+                EstimatedApiCostUsd = cost.Total,
+                ModelPriced = cost.ModelKnown,
+            });
+        }
+        return calls;
+    }
+
+    private static string? CliFromExecutable(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return null;
+        var name = Path.GetFileNameWithoutExtension(fileName.Trim()).ToLowerInvariant();
+        return CliTypes.IsValid(name) ? CliTypes.Normalize(name) : null;
     }
 
     private void ProjectCarriedAspect(
