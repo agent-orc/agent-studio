@@ -319,9 +319,8 @@ internal static class TaskEndpointHelpers
     }
 
     /// <summary>
-    /// AGT-2046: folds the batched board merge signal onto each job. List routes
-    /// read the lookup from <see cref="TaskListGitProjectionCache"/> while detail
-    /// routes may build a bounded lookup directly. The fold itself stays an O(1)
+    /// AGT-2046: folds the batched board merge signal onto each job. List and
+    /// detail routes read <see cref="TaskListGitProjectionCache"/>. The fold stays an O(1)
     /// dictionary hit per job. Jobs without a committed or merged anchor are
     /// passed through untouched.
     /// </summary>
@@ -401,21 +400,22 @@ internal static class TaskEndpointHelpers
             .Where(j => !string.IsNullOrWhiteSpace(j.Key))
             .Select(j => j.Key!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var reviewActivity = attemptAuthority?.ReadBoardReviewActivity();
         var waitsOn = new Dictionary<string, WaitsOnStatus>(StringComparer.Ordinal);
         foreach (var job in withDeps)
         {
             var status = index.EvaluateWaitsOn(job);
-            if (attemptAuthority is not null)
+            if (reviewActivity is not null)
             {
                 status = status with
                 {
                     Items = status.Items.Select(item =>
                     {
                         if (!item.Resolved) return item;
-                        var review = attemptAuthority.GetTaskProjection(item.Key).CurrentReviewAttempt;
-                        var active = review is { State: AttemptLifecycleState.Pending }
-                            || review is { State: AttemptLifecycleState.Leased, Lease: { } lease }
-                               && lease.ExpiresAt > DateTime.UtcNow;
+                        var active = reviewActivity.TryGetValue(item.Key, out var review)
+                            && (review.State == AttemptLifecycleState.Pending
+                                || review.State == AttemptLifecycleState.Leased
+                                   && review.LeaseExpiresAt > DateTime.UtcNow);
                         return item with { TargetHasActiveReviewAttempt = active };
                     }).ToList(),
                 };

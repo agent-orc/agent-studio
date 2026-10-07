@@ -14,6 +14,8 @@ public record OrchestratorTokenUsage
     public int OutputTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
+    /// <summary>Subset of output tokens spent on reasoning, when reported.</summary>
+    public int? ReasoningTokens { get; init; }
     /// <summary>
     /// True when the provider's raw input counter included cached tokens,
     /// false when input and cache-read were reported separately, and null for

@@ -130,26 +130,15 @@ public class RunnerOptionsTests
     }
 
     [Fact]
-    public void Provider_specific_resume_args_require_and_preserve_session_placeholder()
-    {
-        var (options, _, _, _) = RunnerOptions.Parse(
-            ["--cli-resume-args", "exec resume {sessionId} --json"]);
-
-        Assert.Equal("exec resume {sessionId} --json", options.CliResumeArgs);
-        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(
-            ["--cli-resume-args", "exec resume fixed-session --json"]));
-    }
-
-    [Fact]
     public void Provider_specific_card_binaries_are_configurable_in_both_directions()
     {
         var (options, _, _, _) = RunnerOptions.Parse([
-            "--cli", "/opt/bin/codex",
+            "--cli-type", "codex",
             "--claude-cli", "/opt/bin/claude",
             "--codex-cli", "/opt/bin/codex-card",
         ]);
 
-        Assert.Equal("/opt/bin/codex", options.CliBin);
+        Assert.Equal("codex", options.CliType);
         Assert.Equal("/opt/bin/claude", options.ClaudeCliBin);
         Assert.Equal("/opt/bin/codex-card", options.CodexCliBin);
     }
@@ -191,6 +180,19 @@ public class RunnerOptionsTests
 
         Assert.Equal("https://github.com/acme/repo.git", options.GitRemote);
         Assert.Equal("git@github.com:acme/repo.git", options.GitPushRemote);
+    }
+
+    [Fact]
+    public void Private_workspace_origin_and_required_write_are_separate_from_product_remote()
+    {
+        var (options, _, _, _) = RunnerOptions.Parse([
+            "--git-remote", "https://github.com/acme/product.git",
+            "--workspace-git-remote", "https://github.com/acme/private-workspace.git",
+            "--workspace-git-requires-push", "true"]);
+
+        Assert.Equal("https://github.com/acme/product.git", options.GitRemote);
+        Assert.Equal("https://github.com/acme/private-workspace.git", options.WorkspaceGitRemote);
+        Assert.True(options.WorkspaceGitRequiresPush);
     }
 
     [Theory]
@@ -293,6 +295,70 @@ public class RunnerOptionsTests
         Assert.Equal(fingerprint, options.TlsServerCertificateSha256);
     }
 
+    [Fact]
+    public void Salvage_retention_defaults_to_apply_on_the_home_salvage_store()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_SALVAGE_DIR", null),
+            ("RUNNER_SALVAGE_RETENTION", null),
+            ("RUNNER_SALVAGE_RETENTION_DAYS", null),
+            ("RUNNER_SALVAGE_MAX_PER_CARD", null),
+            ("RUNNER_SALVAGE_SWEEP_HOURS", null));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+
+        Assert.Equal(RunnerOptions.DefaultSalvageDir, options.SalvageDir);
+        Assert.Equal("apply", options.SalvageRetentionMode);
+        Assert.Equal(14, options.SalvageRetentionDays);
+        Assert.Equal(3, options.SalvageMaxPerCard);
+        Assert.Equal(6, options.SalvageSweepHours);
+        Assert.Equal(string.Empty, new RunnerOptions
+        {
+            ServerUrl = "http://localhost",
+            RunnerId = "r",
+            RunnerName = "r",
+            Hostname = "h",
+            BackendName = "b",
+            WorkDir = "w",
+            BaseBranch = "main",
+        }.SalvageDir);
+    }
+
+    [Fact]
+    public void Salvage_retention_settings_come_from_the_environment_and_reject_unknown_modes()
+    {
+        using var environment = new EnvironmentVariableScope(
+            ("RUNNER_SALVAGE_DIR", "/srv/salvage"),
+            ("RUNNER_SALVAGE_RETENTION", "Report"),
+            ("RUNNER_SALVAGE_RETENTION_DAYS", "30"),
+            ("RUNNER_SALVAGE_MAX_PER_CARD", "5"),
+            ("RUNNER_SALVAGE_SWEEP_HOURS", "12"));
+
+        var (options, _, _, _) = RunnerOptions.Parse(["--poll"]);
+
+        Assert.Equal("/srv/salvage", options.SalvageDir);
+        Assert.Equal("report", options.SalvageRetentionMode);
+        Assert.Equal(30, options.SalvageRetentionDays);
+        Assert.Equal(5, options.SalvageMaxPerCard);
+        Assert.Equal(12, options.SalvageSweepHours);
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--poll", "--salvage-retention", "purge"]));
+    }
+
+    [Theory]
+    [InlineData("RUNNER_EXEC_ENGINE")]
+    [InlineData("RUNNER_CLI_BIN")]
+    [InlineData("RUNNER_CLI_ARGS")]
+    [InlineData("RUNNER_CLI_RESUME_ARGS")]
+    public void Removed_invocation_settings_fail_with_a_migration_error(string name)
+    {
+        using var environment = new EnvironmentVariableScope((name, "legacy-value"));
+
+        var error = Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["AGT-1"]));
+
+        Assert.Contains(name, error.Message, StringComparison.Ordinal);
+        Assert.Contains("RUNNER_CLI_TYPE", error.Message, StringComparison.Ordinal);
+    }
+
     private sealed class TemporaryTokenFile : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "runner-token-" + Guid.NewGuid().ToString("N"));
@@ -324,26 +390,5 @@ public class RunnerOptionsTests
             foreach (var (name, value) in _original)
                 Environment.SetEnvironmentVariable(name, value);
         }
-    }
-}
-
-public class AgentCliArgsTests
-{
-    [Fact]
-    public void Simple_args_split_on_whitespace()
-    {
-        Assert.Equal(["-p", "--verbose"], AgentCliProcess.SplitArgs("-p --verbose"));
-    }
-
-    [Fact]
-    public void Quoted_segment_stays_together()
-    {
-        Assert.Equal(["--flag", "two words"], AgentCliProcess.SplitArgs("--flag \"two words\""));
-    }
-
-    [Fact]
-    public void Empty_args_yield_empty_list()
-    {
-        Assert.Empty(AgentCliProcess.SplitArgs(""));
     }
 }

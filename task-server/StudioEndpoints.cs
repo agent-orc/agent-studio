@@ -7,7 +7,11 @@ namespace AgentStudio.TaskServer;
 /// board projection, task lifecycle mutation, orchestrator chat and context
 /// digests, runner status, and workspace/project listing. Existing
 /// <c>/api/v1/workspaces</c> and <c>/api/v1/projects</c> already satisfy the
-/// remaining four routes in that bundle and are not duplicated here.
+/// remaining four routes in that bundle and are not duplicated here, and the
+/// single-task detail read (<c>GET /api/v1/projects/{projectId}/tasks/{taskIdentity}</c>)
+/// is the general v1 task read in <see cref="TaskServerEndpoints"/>, returning
+/// the same <see cref="TaskDto"/> the board lanes carry. Mapping a second bare
+/// GET on the lifecycle group below would make that route ambiguous.
 /// </summary>
 public static class StudioEndpoints
 {
@@ -31,11 +35,13 @@ public static class StudioEndpoints
         auth.MapGet("/status", async (HttpContext context, TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(() => store.GetStudioAuthStatusAsync(StudioSessionToken(context), ct)));
 
-        auth.MapPost("/bootstrap", async (HttpContext context, StudioBootstrapRequest request, TaskServerStore store, CancellationToken ct) =>
+        auth.MapPost("/bootstrap", async (
+            HttpContext context, StudioBootstrapRequest request, TaskServerStore store,
+            TaskServerBootstrapOptions bootstrap, CancellationToken ct) =>
         {
             try
             {
-                var session = await store.BootstrapStudioAuthAsync(request, ct);
+                var session = await store.BootstrapStudioAuthAsync(request, bootstrap.RequiresAuthentication, ct);
                 SetStudioSessionCookies(context, session.SessionToken, session.CsrfToken);
                 return Results.Json(session, statusCode: StatusCodes.Status201Created);
             }
@@ -105,6 +111,15 @@ public static class StudioEndpoints
 
         orchestrator.MapGet("/sessions", async (TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioOrchestratorSessionsAsync(ct)));
+        orchestrator.MapPost("/sessions/workbench:{projectIdentity}/{workbenchIdentity}/turns", async (
+            string projectIdentity, string workbenchIdentity, HttpContext context, StudioOrchestratorTurnRequest request,
+            StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => coordinator.AppendWorkbenchTurnAsync(
+                    projectIdentity, workbenchIdentity, request, TaskServerEndpoints.Actor(context), ct),
+                StatusCodes.Status202Accepted))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
 
     private static Task<IResult> BuildOrchestratorDigestAsync(
@@ -234,11 +249,11 @@ public static class StudioEndpoints
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
 
-    private static string? StudioSessionToken(HttpContext context)
+    internal static string? StudioSessionToken(HttpContext context)
         => context.Request.Headers["X-Studio-Session-Token"].FirstOrDefault()
            ?? context.Request.Cookies["ts-studio-session"];
 
-    private static void SetStudioSessionCookies(HttpContext context, string sessionToken, string csrfToken)
+    internal static void SetStudioSessionCookies(HttpContext context, string sessionToken, string csrfToken)
     {
         var secure = context.Request.IsHttps;
         context.Response.Cookies.Append("ts-studio-session", sessionToken, new CookieOptions

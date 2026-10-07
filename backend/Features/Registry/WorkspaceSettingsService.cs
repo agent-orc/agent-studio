@@ -59,6 +59,18 @@ public sealed class WorkspaceSettingsService
         }
     }
 
+    public void SetChatMetadataEnabled(string workspaceId, bool? enabled)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var current = _cache.TryGetValue(workspaceId, out var value) ? value : new WorkspaceSettings();
+            _cache[workspaceId] = current with { ChatMetadataEnabled = enabled };
+            Persist();
+        }
+    }
+
     public void SetUsageCalendar(string workspaceId, string timeZone, DayOfWeek weekStart)
     {
         if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("Workspace is required.", nameof(workspaceId));
@@ -102,26 +114,6 @@ public sealed class WorkspaceSettingsService
         _logger.LogInformation(
             "workspace-settings orchestrator model set to {Model} for workspace {Workspace}",
             string.IsNullOrWhiteSpace(model) ? "(default)" : model, workspaceId);
-    }
-
-    /// <summary>
-    /// Sets or clears the workspace-default local CLI execution engine. Blank
-    /// clears the default; unknown non-blank values are rejected.
-    /// </summary>
-    public void SetCliExecutionEngine(string workspaceId, string? executionEngine)
-    {
-        if (string.IsNullOrWhiteSpace(workspaceId)) return;
-        var normalized = CliExecutionEngines.NormalizeOverride(executionEngine);
-        EnsureLoaded();
-        lock (_lock)
-        {
-            var current = _cache.TryGetValue(workspaceId, out var s) ? s : new WorkspaceSettings();
-            _cache[workspaceId] = current with { CliExecutionEngine = normalized };
-            Persist();
-        }
-        _logger.LogInformation(
-            "workspace-settings CLI execution engine set to {ExecutionEngine} for workspace {Workspace}",
-            normalized ?? "(default)", workspaceId);
     }
 
     /// <summary>

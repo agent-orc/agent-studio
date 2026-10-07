@@ -73,25 +73,23 @@ public sealed class RunnerServiceUnitTests
     }
 
     /// <summary>
-    /// Both roles derive the envelope from the same two slot numbers, so each
-    /// role environment file has to declare the other role's count. Its own
-    /// count stays RUNNER_MAX_PARALLELISM, which is what the sanctioned
-    /// parallelism helper changes; writing it twice would leave a stale number
-    /// behind after every raise.
+    /// Both roles derive the envelope from the same two slot numbers. AGT-W63
+    /// I03 writes both role files from one host envelope (a host record or the
+    /// slot flags), so each file declares both counts and its own
+    /// RUNNER_MAX_PARALLELISM from the same values; nothing is hard-coded.
     /// </summary>
     [Fact]
-    public void Onboarding_declares_the_peer_role_slot_count_for_the_envelope()
+    public void Onboarding_declares_both_role_slot_counts_from_one_envelope()
     {
         var content = File.ReadAllText(
             Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
 
-        Assert.Contains("RUNNER_HOST_REVIEW_SLOTS=2", content, StringComparison.Ordinal);
-        Assert.Contains("RUNNER_HOST_CODING_SLOTS=2", content, StringComparison.Ordinal);
-        var codingBranch = content.IndexOf("if [[ \"$role\" == \"coding\" ]]; then", StringComparison.Ordinal);
-        Assert.InRange(
-            content.IndexOf("RUNNER_HOST_REVIEW_SLOTS=2", StringComparison.Ordinal),
-            codingBranch,
-            content.IndexOf("RUNNER_HOST_CODING_SLOTS=2", StringComparison.Ordinal));
+        Assert.Contains("printf 'RUNNER_HOST_CODING_SLOTS=%s\\n' \"$coding_slots\"", content, StringComparison.Ordinal);
+        Assert.Contains("printf 'RUNNER_HOST_REVIEW_SLOTS=%s\\n' \"$review_slots\"", content, StringComparison.Ordinal);
+        Assert.Contains("--coding-slots \"$coding_slots\"", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("RUNNER_MAX_PARALLELISM=2", content, StringComparison.Ordinal);
+        Assert.Contains("--host-record", content, StringComparison.Ordinal);
+        Assert.Contains("printf 'RUNNER_HOSTNAME=%s\\n' \"$host_id\"", content, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -296,6 +294,16 @@ public sealed class RunnerServiceUnitTests
         Assert.True(reviewStart > reviewPromotion);
         Assert.True(codingPromotion > reviewStart);
         Assert.True(codingRestart > codingPromotion);
+    }
+
+    [Fact]
+    public void Onboarding_emits_each_provider_cli_setting_once()
+    {
+        var content = File.ReadAllText(Path.Combine(RepoRoot(), "scripts", "remote-runner-onboard.sh"));
+
+        Assert.Equal(1, content.Split("printf 'RUNNER_CLAUDE_CLI_BIN=", StringSplitOptions.None).Length - 1);
+        Assert.Equal(1, content.Split("printf 'RUNNER_CODEX_CLI_BIN=", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("printf 'RUNNER_CLI_BIN=", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -547,6 +555,63 @@ public sealed class RunnerServiceUnitTests
         Assert.DoesNotContain("agent-runner-deploy --force", sudoers, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// AGT-2985: Stable 0.9.3 restarted cleanly and then had every completion
+    /// rejected. After a promotion the helper waits for one accepted completion
+    /// and otherwise prints the rollback command to the previous release.
+    /// </summary>
+    [SkippableFact]
+    public void Post_restart_completion_check_passes_on_an_acceptance_and_prints_the_rollback_otherwise()
+    {
+        PlatformGate.RequiresPosixShell();
+
+        var result = RunShellScript(
+            "runner.Tests/Fixtures/agent-runner-deploy-completion-check.sh",
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+
+        Assert.True(result.ExitCode == 0, result.StandardError);
+        var output = result.StandardOutput;
+        Assert.Contains("accepted-status=0", output);
+        Assert.Contains("accepted-polls=1", output);
+        Assert.Contains("early-new-invocation-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-status=0", output);
+        Assert.Contains("expired-on-time-acceptance-polls=1", output);
+        Assert.Contains("late-acceptance-status=0", output);
+        Assert.Contains("late-acceptance-polls=3", output);
+        const string rollback =
+            "rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/rel-previous /opt/agent-host/current";
+        foreach (var failed in new[] { "outgoing-acceptance", "rejected", "idle", "expired-late-acceptance" })
+        {
+            Assert.Contains($"{failed}-status=2", output);
+            Assert.Contains($"{failed}-output: agent-runner-deploy: {rollback}", output);
+        }
+        Assert.Contains("2 completion(s) were rejected", output);
+        Assert.Contains(
+            "outgoing-acceptance-output: agent-runner-deploy: release rel-new is active, but " +
+            "no completion was accepted within 600s of its activation; 1 completion(s) were rejected",
+            output);
+        Assert.DoesNotContain("outgoing-acceptance-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("expired-late-acceptance-polls=1", output);
+        Assert.DoesNotContain("expired-late-acceptance-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("no completion was attempted within 600s", output);
+        Assert.DoesNotContain("accepted-output: agent-runner-deploy: rollback", output);
+
+        var helper = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
+        Assert.Contains("readonly completion_watch_seconds=600", helper, StringComparison.Ordinal);
+        Assert.Contains("1:verify-completions)", helper, StringComparison.Ordinal);
+        // Promotion runs the check itself, after it has recorded what to roll back to.
+        var restart = helper.LastIndexOf("  restart_release_services ", StringComparison.Ordinal);
+        var invocation = helper.LastIndexOf("systemctl show --property=InvocationID", StringComparison.Ordinal);
+        var record = helper.LastIndexOf("record_last_promotion \"$release_id\"", StringComparison.Ordinal);
+        var verify = helper.LastIndexOf("  verify_completions\n}", StringComparison.Ordinal);
+        Assert.True(restart > 0 && invocation > restart && record > invocation && verify > record,
+            "promotion must restart, capture the new Coding invocation, record it, then verify");
+        var sudoers = File.ReadAllText(
+            Path.Combine(RepoRoot(), "deploy", "agent-host", "sudoers.d", "agent-runner"));
+        Assert.Contains("/usr/local/sbin/agent-runner-deploy verify-completions,", sudoers, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Host_hardening_installs_the_root_owned_dependency_validator_without_expanding_sudoers()
     {
@@ -725,6 +790,39 @@ public sealed class RunnerServiceUnitTests
             Assert.False(File.Exists(limits));
             Assert.DoesNotContain("CPUQuota", File.ReadAllText(overrideLimits));
             Assert.Contains("RestartSec=20s", File.ReadAllText(overrideLimits));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [SkippableFact]
+    public void Record_owned_profile_replaces_legacy_drop_in_without_adopting_its_values()
+    {
+        PlatformGate.RequiresPosixShell();
+
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var profile = Path.Combine(root, "profile.conf");
+            File.WriteAllText(profile, "REVIEW_MEMORY_MAX=6G\n");
+            var dropInDirectory = Path.Combine(root, "agent-runner-review.service.d");
+            Directory.CreateDirectory(dropInDirectory);
+            var legacy = Path.Combine(dropInDirectory, "10-limits.conf");
+            File.WriteAllText(legacy, "[Service]\nCPUQuota=999%\nMemoryMax=8G\nRestartSec=20s\n");
+
+            var result = RunResourceGovernance(
+                "--role", "review", "--cpu-count", "8", "--coding-slots", "2", "--review-slots", "1",
+                "--profile", profile, "--drop-in-dir", dropInDirectory, "--replace-drop-in-resources");
+
+            AssertScriptSucceeded(result);
+            Assert.Contains("MemoryMax=6G", result.StandardOutput);
+            Assert.DoesNotContain("CPUQuota=999%", result.StandardOutput);
+            Assert.Equal("REVIEW_MEMORY_MAX=6G\n", File.ReadAllText(profile));
+            Assert.DoesNotContain("CPUQuota", File.ReadAllText(legacy));
+            Assert.DoesNotContain("MemoryMax", File.ReadAllText(legacy));
+            Assert.Contains("RestartSec=20s", File.ReadAllText(legacy));
         }
         finally
         {

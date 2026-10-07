@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-09-28</td>
+          <td><code>QS-106</code><br><span class="small">stale-integration-verdict-park (fix <code>AGT-2995</code>)</span></td>
+          <td>No CLI crashed. The immediate integration returned <code>Error</code> after <code>main</code> moved; the log said only <code>outcome=Error</code> and the card read <code>integration: pending</code>, "not yet integrated", parked as <code>review-verdict: Error</code>. When the operator moved the card back to <span class="lane">4-auto-review</span>, deferred post-processing resumed with <code>action=CompleteTransition reason=awaiting-integration-completion integration=Error</code> and parked it again.</td>
+          <td>Merge-runner <code>Error</code> results carried no typed code, and the resume policy read a <code>LaneSettled</code> settlement sidecar as "only the transition is owed", replaying the stale verdict.</td>
+          <td><span class="pill human">re-parked</span> in <span class="lane">5-human-review</span> for eight hours; only a fresh delivery escaped. Now every <code>Error</code> names a <code>failureCode</code> in the log line, the pipeline step, and the park reason (<code>integration: source-needs-rebase</code>), and a <code>LaneSettled</code> card back in Auto Review re-runs the integration decision (<code>operator-reentry-reintegration</code>).</td>
+        </tr>
+        <tr>
           <td>2026-09-27</td>
           <td><code>AGT-2887</code><br><span class="small">product-finding-infrastructure-words</span></td>
           <td>No reviewer crashed. A product block mentioning "infra crash" or "no parseable verdict" was reproduced as a review-infrastructure decision.</td>
@@ -2752,12 +2759,128 @@
             integration branch tip. The observed terminal was manual operator repair.
           </td>
         </tr>
+        <tr id="case-agt-3011-operator-sweeps">
+          <td>2026-10-04</td>
+          <td><code>AGT-3011</code><br><span class="small">operator-sweeps-outside-product</span></td>
+          <td>No CLI crashed. ProductFailure parks, merge-gate parks, and timed-out salvage runs were only driven forward by three scripts in an operator shell loop. The fleet stood still for 41 hours on 2026-09-29/30 with no supervisor running, and on 2026-10-04 the sweeps resumed only at 12:48 when an operator started them by hand. One card reached 13 rounds because every requeue opened a new attempt epoch and refilled the reissue budget.</td>
+          <td>The drive-to-conclusion step after a ProductFailure or gate park had no in-product owner, and the round budget was scoped to the review-attempt epoch.</td>
+          <td><span class="pill ok">fixed in dev</span> <code>OperatorSweepService</code> runs the fix-round, gate-triage and salvage sweeps from one hosted tick. Each sweep charges <code>CardRoundBudget</code>, which counts every round once across all epochs (default 4 per card), and is never reset by a sweep, a requeue or <code>/continue</code>. The orchestrator's common reissue move enforces the same lifetime cap and escalates an exhausted card; backfilling a recorded reissue adds no round. A card with a pending or leased review attempt is held. Pause is per project and persisted. The terminal is <code>WaitForPerson</code> with a stated reason, shown under the pipeline health alarm.</td>
+        </tr>
         <tr id="case-agt-2959-pending-recovery-navigation">
           <td>2026-09-25</td>
           <td><code>AGT-2959</code><br><span class="small">pending recovery obscured task navigation</span></td>
           <td>A real Stable recovery dialog covered AGT-2910 at 16:17:53 Europe/Berlin, 3 h 54 min 53 s after the operator-reported 12:23 restart. The visible dirty-file date was 22 September. The browser replay completed zero task switches; no shared recovery action was taken. Neither the source boot nor continuous display is established.</td>
           <td>The shell automatically opened a global modal for every review-required pending item. The old dirty-file timestamp was shown as its creation time, with no boot or detection identifier to connect the decision to a restart.</td>
           <td>The observed navigation terminal was an intervention-dependent block with no finite duration. The presentation now keeps the pending decision reachable through a quiet entry point; opening and closing the view leave the shared record untouched. Explicit commit or leave-uncommitted actions retain their backend checks. New findings expose boot and detection identifiers; the 12:23 attribution remains unknown.</td>
+        </tr>
+        <tr id="case-agt-2993-compose-scenario-disk-low">
+          <td>2026-09-28</td>
+          <td><code>AGT-2993</code><br><span class="small">compose scenario residue filled the runner disk</span></td>
+          <td>
+            Every <code>scripts/scenario.sh --target compose --level full</code> run (provider reviews with
+            <code>SCENARIO_PROVIDER_REVIEW=1</code>, operator verification, the compose smoke) left four
+            <code>agent-studio-scenario-&lt;pid&gt;-*</code> images (about 2.6 GB) and its BuildKit cache behind, and
+            <code>scripts/compose-smoke-test.sh</code> did the same with <code>agent-studio-smoke-&lt;pid&gt;-*</code>.
+            agent-runner-01 accumulated 257 images (159 GB) and 143 GB of build cache and reached 95-96 % disk twice.
+            A review step that starts a compose build on such a disk dies inside the build and reads like a product
+            failure, or fills the disk for every other slot on the host. The operator pruned by hand.
+          </td>
+          <td>
+            <code>compose_full_cleanup</code> removed the stack and its volumes but never the images it built or the
+            build cache, and nothing on the host aged them out. The review executor started compose scenarios without
+            looking at the free space they need.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> scenario and smoke cleanup (success, failure, SIGTERM) removes the
+            run's images through <code>scripts/docker-scenario-images.sh</code>;
+            <code>scripts/docker-scenario-retention.sh</code> (every scenario run and a daily systemd timer) removes
+            unused scenario/smoke images older than 6 hours and caps the build cache at 40 GB. Before a review step
+            that <em>executes</em> a compose scenario or smoke, the executor logs
+            <code>review-compose-scenario-disk</code> and, below 10 % free on the Docker data root, refuses the step
+            before it builds anything as <code>ReviewInfra</code> / <code>ComposeScenarioDiskLow</code>. That is a new
+            run-outcome classification: it is an infrastructure terminal, no verdict is charged to the change, and the
+            review takes the ordinary bounded <code>ReviewInfra</code> retry once disk is freed. The classifier in
+            <code>runner/ComposeScenarioDiskAdmission.cs</code> parses the <code>sh -lc</code> script shell-aware
+            (quotes, comments, here-documents, command positions, command substitutions), so a step that only
+            mentions the scenario in an <code>echo</code>, quoted data, or a comment is never refused on disk, while
+            one that runs it inside <code>out=$(...)</code> or backticks is gated like a direct call.
+          </td>
+        </tr>
+        <tr id="case-agt-3009-gate-failure-triage">
+          <td>2026-10-04</td>
+          <td><code>AGT-3009</code><br><span class="small">every red merge gate parked as operator-decision</span></td>
+          <td>13 of 14 cards in human review were merge-gate parks with <code>parkedBlocker.blockerType = operator-decision</code>; one was a real acceptance decision. An operator script outside the product (<code>gate-triage.mjs</code>) read the newest gate log and queued a redelivery or a fix round by hand. One red baseline test (<code>orchestrator-side-sheet.pin.spec</code>, AGT-3007) held every gate red from about 2026-09-29 and was graded a flake more than 20 times before a cause card existed.</td>
+          <td>The delivery-chain reconciler parked every failed integration with an untyped reason, so the blocker read as a person's decision. Nothing classified the gate log or counted the same failing item across cards.</td>
+          <td><span class="pill ok">fixed in dev</span> The reconciler routes a red gate through <code>GateFailureRouter</code> first. Environment classes stay in Auto Review and the bounded gate-environment ladder replays them. Transport faults retry the same exact-subject gate at most three times, without integration redelivery. Failed cause-card creation stays pending for another reconciler sweep, including legacy receipts missing the cause key. Unsupported review flake labels require a green repeat of the same command and tree, or settle as undecidable and retain their named failure count. A product class gets one fix round with the failing items. An integration-branch class, or a fingerprint already seen on another card, opens or joins one cause card and waits on it. Only <code>gate-undecidable</code> parks for a person, stating the missing evidence; spent budgets park with their own typed category. See <a href="../system/domains/review.md#merge-gate-failure-triage-agt-3009">merge-gate failure triage</a>.</td>
+        </tr>
+        <tr id="case-stable-canonical-review-polling-thrash">
+          <td>2026-10-04</td>
+          <td><code>Stable incident</code><br><span class="small">canonical-review-polling-thrash</span></td>
+          <td>
+            Three Quality Studio cards repeatedly entered and left local post-processing while their canonical
+            review verdicts were still pending. The operator reported 178 retries and 384 full task scans in
+            one hour, alongside heavy paging and a Stable backend heap oscillating between 4 and 8 GB.
+          </td>
+          <td>
+            Executor registration kept the deferral chain alive and reset its counter every five attempts.
+            The resulting 30/60-second polling repeatedly wrote the running and awaiting-review phases;
+            each changed phase invalidated the full task index. Registration did not establish verdict progress.
+          </td>
+          <td>
+            Registered canonical-verdict waits now retain their attempt count and back off through
+            30, 60, 120, 240, then 300 seconds, remaining scheduled at that cap. Missing-executor exhaustion
+            and earned delivery-resume behavior are unchanged. The card stays in
+            <span class="lane">4-auto-review</span> under the canonical executor's ownership until its verdict
+            settles; the local poll does not manufacture a terminal outcome. Deterministic regression tests
+            cover retained attempts and the capped delay schedule.
+          </td>
+        </tr>
+        <tr id="case-local-integration-gate-remote-placement">
+          <td>2026-10-04</td>
+          <td><code>Stable incident</code><br><span class="small">local-integration-gate-remote-placement</span></td>
+          <td>
+            During the memory incident an automatic merge-result gate still spawned build and test processes
+            on the Windows Studio host, although coding and review execution were remote. The operator
+            required all further verification to execute remotely without creating another task card.
+          </td>
+          <td>
+            The backend bound <code>IBuildTestGateRunner</code> directly to its local executor. The separate
+            Task Server gate pilot accepted only a fenced run's result SHA and did not own newly created
+            integration or promotion candidate commits. Remote Review reuse still required compilation.
+          </td>
+          <td>
+            Backend gates now use an explicitly configured remote transport and fail closed when it is
+            unavailable. A digest-pinned bundle carries the exact commit to a Linux-only worker which runs
+            the existing gate implementation and returns bound evidence. Existing Git merge and rollback
+            ownership is unchanged. This is a bounded emergency SSH bridge, documented in the
+            <a href="../system/domains/pipeline.md">pipeline domain map</a>, while canonical admission for
+            integration and promotion subjects remains the target. No local build/test fallback exists;
+            transport or proof failures produce an infrastructure-failure gate instead of acceptance.
+          </td>
+        </tr>
+        <tr id="case-deployment-smoke-completion-budget">
+          <td>2026-10-04</td>
+          <td><code>Deployment regression</code><br><span class="small">completion-wait-excluded-worker-cleanup</span></td>
+          <td>
+            Two full verification runs passed all 9,114 .NET tests, then the explicit deployment smoke
+            timed out after 30 seconds waiting for <code>run.completed</code>. Identical-environment
+            retries both failed and passed. A diagnostic passing run finished its fake CLI immediately,
+            then spent another 7.1 seconds before the worker published its result.
+          </td>
+          <td>
+            The harness completion wait was shorter than the runner's allowed lifecycle: the CLI may
+            run for 45 seconds, and build-server shutdown may take 30 seconds before
+            <code>result.json</code> appears. The failed runs did not retain the inner worker timing,
+            so the precise delay in those attempts remains unproven; the conflicting budgets are explicit.
+          </td>
+          <td>
+            The test harness now budgets 45 seconds for the CLI, the actual 30-second cleanup allowance,
+            and 10 seconds for result transport, totaling 85 seconds. A runner-side contract test checks
+            the shared harness allowance against the production cleanup budget. The scenario still
+            requires <code>run.completed</code>, durable result evidence, and a real review verdict reaching
+            <span class="lane">5-human-review</span>. Production execution and cleanup limits are unchanged;
+            an earlier failed gate remains failed evidence rather than being relabelled by a retry.
+          </td>
         </tr>
       </tbody>
     </table>
@@ -2826,6 +2949,9 @@
           salvage only on the declared, correctness-floor-safe sibling. Otherwise it escalates.</li>
       <li>A provider capacity or rate-limit failure &rarr; shared capability <strong>Limited</strong> until the reported reset
           or the bounded unknown-limit retry. Admission waits or falls back without changing the capability to Unauthorized.</li>
+      <li>A review step that executes a compose scenario or smoke on a Docker data root below the free-space floor
+          (default 10 %) &rarr; refused before it starts as <strong>ReviewInfra / ComposeScenarioDiskLow</strong>. No
+          verdict is charged to the change; the ordinary bounded ReviewInfra retry applies (AGT-2993).</li>
       <li>Failed exit WITH substantial agent text but no provider failure terminal and no positive sentinel &rarr;
           <strong>NeedsReview</strong> ("failed without terminal sentinel"). No re-issue, no "unknown".</li>
     </ul>

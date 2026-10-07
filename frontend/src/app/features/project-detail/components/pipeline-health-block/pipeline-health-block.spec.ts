@@ -54,9 +54,16 @@ describe('PipelineHealthBlockComponent', () => {
       alerts: [],
     });
     fixture.detectChanges();
+    // AGT-3011: the operator sweeps render under the health alarm.
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-07-23T01:00:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    fixture.detectChanges();
     await fixture.whenStable();
 
     const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="operator-sweeps"]')).not.toBeNull();
     const health = host.querySelector('[data-testid="pipeline-health"]');
     expect(health?.getAttribute('data-status')).toBe('alarm');
     expect(host.querySelector('[data-testid="pipeline-health-gate"]')?.textContent)
@@ -67,5 +74,44 @@ describe('PipelineHealthBlockComponent', () => {
     expect(drain?.textContent).toContain('0/h');
     expect(drain?.textContent).toContain('4 queued');
     expect(drain?.classList.contains('ph__drain--alarm')).toBe(true);
+    expect(host.querySelector('[data-testid="pipeline-health-evidence-flush"]')).toBeNull();
+  });
+
+  it('shows a stalled workspace evidence flush with its repository and error (AGT-3000)', async () => {
+    const fixture = TestBed.createComponent(PipelineHealthBlockComponent);
+    fixture.componentRef.setInput('projectName', 'Agent Taskboard');
+    fixture.detectChanges();
+
+    http.expectOne('/api/projects/Agent%20Taskboard/pipeline-health').flush({
+      project: 'Agent Taskboard',
+      capturedAtUtc: '2026-09-27T15:50:00Z',
+      status: 'alarm',
+      activeGate: null,
+      fingerprint: null,
+      lanes: [],
+      alerts: [{
+        kind: 'evidence-flush-stalled',
+        severity: 'high',
+        summary: 'Workspace evidence flush failing for 17 min',
+        detail: "Repository C:\\Projects\\agent-taskboard-workspace: 9 consecutive evidence flushes failed. "
+          + "Last error: git-add: fatal: Unable to create '.git/index.lock': File exists.",
+        detectedAtUtc: '2026-09-27T15:49:00Z',
+        repository: 'C:\\Projects\\agent-taskboard-workspace',
+      }],
+    });
+    fixture.detectChanges();
+    http.expectOne('/api/projects/Agent%20Taskboard/operator-sweeps').flush({
+      project: 'Agent Taskboard', capturedAtUtc: '2026-09-27T15:50:00Z', status: 'healthy', enabled: true,
+      tickIntervalSeconds: 600, maxRoundsPerCard: 4, sweeps: [], cards: [], waitingForPerson: [],
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const host: HTMLElement = fixture.nativeElement;
+    expect(host.querySelector('[data-testid="pipeline-health"]')?.getAttribute('data-status')).toBe('alarm');
+    const stall = host.querySelector('[data-testid="pipeline-health-evidence-flush"]');
+    expect(stall?.getAttribute('data-repository')).toBe('C:\\Projects\\agent-taskboard-workspace');
+    expect(stall?.textContent).toContain('Workspace evidence flush failing for 17 min');
+    expect(stall?.textContent).toContain('index.lock');
   });
 });

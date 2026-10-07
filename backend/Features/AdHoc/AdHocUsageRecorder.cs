@@ -102,7 +102,10 @@ public sealed class AdHocUsageRecorder
             // failures must not block the canonical write path). When tokens
             // are zero (the plain-text fallback case) we still emit so the
             // per-source call counts on the bus stay accurate.
-            if (_bus is not null)
+            // Chat turns write their ledger row through OrchestratorChatService
+            // and await its receipt. Keep this legacy log without a second
+            // fire-and-forget bus event for the same turn.
+            if (_bus is not null && record.Source != AdHocUsageSources.ChatTurn)
             {
                 var usage = new OrchestratorTokenUsage
                 {
@@ -111,14 +114,12 @@ public sealed class AdHocUsageRecorder
                     OutputTokens = (int)record.OutputTokens,
                     CacheReadTokens = (int)record.CacheReadTokens,
                     CacheCreationTokens = (int)record.CacheCreationTokens,
+                    InputIncludesCached = record.InputIncludesCached,
                 };
-                // Ad-hoc records are workspace-wide by design (the legacy JSONL is
-                // workspace-wide too), so route every message to the _workspace
-                // projection regardless of the record.Project metadata. The
-                // optional project / jobId stay on the message body for
-                // drill-down without affecting workspace-wide aggregation.
+                // Chat turns need project attribution in the token ledger. Other
+                // ad-hoc calls retain their workspace-wide historical scope.
                 _ = _bus.EmitTokenUsageAsync(
-                    project: null,
+                    project: record.Source == AdHocUsageSources.ChatTurn ? record.Project : null,
                     jobId: string.IsNullOrWhiteSpace(record.JobId) ? null : record.JobId,
                     participantId: "support:adhoc",
                     topic: string.IsNullOrWhiteSpace(record.Source) ? AdHocUsageSources.Unknown : record.Source,

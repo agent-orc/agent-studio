@@ -36,9 +36,15 @@ public sealed partial class TaskServerStore
     // 24 adds versioned project placement and admission receipts.
     // 25 adds the host-owned, metadata-only credential registry and typed
     // provider capability observation fields.
-    // The migration block is idempotent; the number guards downgrades from
-    // binaries that do not know this state.
-    public const int CurrentSchemaVersion = 25;
+    // 26 adds ordered continuation rounds with immutable acceptance and fenced
+    // consumption receipts.
+    // 27 adds authenticated per-consumer rotation delivery.
+    // 28 records the I05 installation identity, owner recovery, service
+    // enrolments, canonical project registrations, and repository probes.
+    // 29 combines the I05 identity and ordered continuation schemas after
+    // merging the independently delivered branches. Migrations are idempotent;
+    // this version guards downgrades from binaries without both contracts.
+    public const int CurrentSchemaVersion = 29;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -49,6 +55,19 @@ public sealed partial class TaskServerStore
     /// with an actual project.
     /// </summary>
     public const string UnscopedProjectToken = "-";
+
+    /// <summary>
+    /// Resolves the task routes' <c>{projectId}</c> segment to a project id.
+    /// Studio addresses a project by name, the same identity the orchestrator
+    /// chat and context routes accept through <c>RequireProjectAsync</c>; an
+    /// exact id match still wins over a name match.
+    /// </summary>
+    private const string ProjectIdentityToIdSql = """
+        (SELECT id FROM projects
+          WHERE id = $project OR name = $project COLLATE NOCASE
+          ORDER BY CASE WHEN id = $project THEN 0 ELSE 1 END
+          LIMIT 1)
+        """;
 
     private const string TimestampFormat = "O";
     private readonly TaskServerOptions _options;
@@ -236,7 +255,7 @@ public sealed partial class TaskServerStore
                 version,
                 _serverId,
                 ["studio", "runner", "review-runner", TaskServerProtocol.EngineClientKind, "management"],
-                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2"],
+                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2", "credential-registry-github-v1"],
                 [TaskServerHubProtocol.StudioRange()]),
             _startedAt,
             _outboxBacklog,
@@ -283,25 +302,34 @@ public sealed partial class TaskServerStore
         var now = Iso(UtcNow);
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            await ExecuteAsync(connection, """
-                INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
-                VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
-                INSERT INTO orchestrator_contexts(
-                    context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
-                VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
-                INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
-                VALUES ($id, 0, $stages, $max_reissues, $now);
-                """, ct, transaction,
-                ("$id", id), ("$workspace", request.WorkspaceId), ("$name", request.Name.Trim()),
-                ("$prefix", prefix), ("$now", now),
-                ("$context_key", $"project:{request.Name.Trim()}"),
-                ("$summary", $"Project chat for {request.Name.Trim()}"),
-                ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
-                ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
-            await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
-                JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
+            await CreateProjectInTransactionAsync(connection, transaction, request, id, actorId, now, ct);
         }, ct);
         return new ProjectDto(id, request.WorkspaceId, request.Name.Trim(), prefix, 1, Parse(now), Parse(now));
+    }
+
+    private async Task CreateProjectInTransactionAsync(
+        SqliteConnection connection, SqliteTransaction transaction, CreateProjectRequest request,
+        string id, string actorId, string now, CancellationToken ct)
+    {
+        var name = request.Name.Trim();
+        var prefix = request.TaskKeyPrefix.Trim().ToUpperInvariant();
+        await ExecuteAsync(connection, """
+            INSERT INTO projects(id, workspace_id, name, task_key_prefix, next_task_number, version, created_at, updated_at)
+            VALUES ($id, $workspace, $name, $prefix, 1, 1, $now, $now);
+            INSERT INTO orchestrator_contexts(
+                context_key, kind, project_id, task_id, summary, created_at, updated_at, hidden_at)
+            VALUES ($context_key, 'project', $id, NULL, $summary, $now, $now, NULL);
+            INSERT INTO flow_definitions(project_id, version, stages_json, max_reissue_attempts, updated_at)
+            VALUES ($id, 0, $stages, $max_reissues, $now);
+            """, ct, transaction,
+            ("$id", id), ("$workspace", request.WorkspaceId), ("$name", name),
+            ("$prefix", prefix), ("$now", now),
+            ("$context_key", $"project:{name}"),
+            ("$summary", $"Project chat for {name}"),
+            ("$stages", JsonSerializer.Serialize(OrchestrationDefaults.CreateStages())),
+            ("$max_reissues", OrchestrationDefaults.MaxReissueAttempts));
+        await AuditAsync(connection, transaction, actorId, "project.created", "project", id,
+            JsonSerializer.Serialize(new { request.WorkspaceId, request.Name, taskKeyPrefix = prefix }), ct);
     }
 
     public async Task<IReadOnlyList<ProjectDto>> ListProjectsAsync(string? workspaceId, CancellationToken ct)
@@ -355,10 +383,10 @@ public sealed partial class TaskServerStore
                 FROM tasks
                WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks
-               WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+               WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, ("$project", projectId), ("$identity", taskIdentity));
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -1329,7 +1357,7 @@ public sealed partial class TaskServerStore
                     Message: capabilityAdmission.Message,
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
-                    PlacementReason: "host-capability-unavailable",
+                    PlacementReason: capabilityAdmission.Reason ?? "host-capability-unavailable",
                     ReprobeCapabilities: capabilityAdmission.Required
                         .Where(key => key.StartsWith("provider-auth:", StringComparison.Ordinal))
                         .ToArray());
@@ -1343,6 +1371,23 @@ public sealed partial class TaskServerStore
                     ReconciliationActions: reconciliationActions,
                     RuntimeCapacity: runtimeCapacity,
                     PlacementReason: "host-slots-unavailable");
+                return;
+            }
+            var envelopeAdmission = await EvaluateHostEnvelopeAsync(
+                connection,
+                transaction,
+                capabilityRunner.HostId,
+                HostRoles.Coding,
+                request.RunnerId,
+                ct);
+            if (!envelopeAdmission.Admitted)
+            {
+                response = new ClaimResponse(
+                    "empty",
+                    Message: envelopeAdmission.Message,
+                    ReconciliationActions: reconciliationActions,
+                    RuntimeCapacity: runtimeCapacity,
+                    PlacementReason: envelopeAdmission.Reason);
                 return;
             }
             var occupiedHostSlots = await CountOccupiedHostSlotsAsync(
@@ -1374,6 +1419,18 @@ public sealed partial class TaskServerStore
             var hostAdmission = capabilityAdmission;
             async Task<ClaimPlacementVerdict> EvaluateProjectAsync(string projectId)
             {
+                var registered = Convert.ToInt64(await ScalarAsync(connection, """
+                    SELECT count(*) FROM project_repositories WHERE project_id = $project;
+                    """, ct, transaction, ("$project", projectId))) > 0;
+                var probeVerdict = registered
+                    ? Convert.ToString(await ScalarAsync(connection, """
+                        SELECT verdict FROM project_repository_probes
+                         WHERE project_id = $project AND runner_id = $runner;
+                        """, ct, transaction, ("$project", projectId), ("$runner", request.RunnerId)))
+                    : null;
+                var probeRefusal = ProjectRepositoryPolicy.ClaimRefusal(registered, probeVerdict);
+                if (probeRefusal is not null)
+                    return new ClaimPlacementVerdict(projectId, probeRefusal, null, null);
                 var placement = await ReadProjectPlacementAsync(connection, transaction, projectId, ct);
                 if (placement is null)
                     return new ClaimPlacementVerdict(
@@ -1446,6 +1503,7 @@ public sealed partial class TaskServerStore
 
             var providerContinuation = await ReadProviderFallbackForClaimAsync(
                 connection, transaction, task, ct);
+            var continuationIntent = await ReadNextContinuationAsync(connection, transaction, task.TaskId, ct);
             var mechanicalDelta = await ReadUnclaimedMechanicalDeltaAsync(connection, transaction, task.TaskId, ct);
             SessionContinuationLedgerEntry? previousSession = null;
             var priorSessionJson = Convert.ToString(await ScalarAsync(connection, """
@@ -1474,8 +1532,11 @@ public sealed partial class TaskServerStore
             var leaseId = $"lse_{Guid.NewGuid():N}";
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
-            var followUp = await ReadPendingFollowUpAsync(
-                connection, transaction, task.TaskId, ct);
+            // An ordered continuation round takes precedence. A follow-up row
+            // saved before schema 26 stays queued for a later claim.
+            var followUp = continuationIntent is not null
+                ? ToFollowUpDelivery(continuationIntent, runId)
+                : await ReadPendingFollowUpAsync(connection, transaction, task.TaskId, ct);
             if (followUp is not null)
                 followUp = followUp with { ClaimId = runId };
             await ExecuteAsync(connection, """
@@ -1489,15 +1550,25 @@ public sealed partial class TaskServerStore
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
                 UPDATE pending_follow_ups
                    SET state = 'stashed', run_id = $run
-                 WHERE task_id = $task AND state = 'queued';
+                 WHERE task_id = $task AND state = 'queued' AND $legacyFollowUp = 1;
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now WHERE id = $task;
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
-                ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)));
+                ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
+                ("$legacyFollowUp", continuationIntent is null ? 1 : 0));
             if (mechanicalDelta is not null)
                 await ClaimMechanicalDeltaAsync(connection, transaction, task.TaskId, runId, ct);
+            if (continuationIntent is not null)
+            {
+                await ExecuteAsync(connection, """
+                    UPDATE continuation_intents SET status = 'claimed', run_id = $run, fence = $fence
+                     WHERE command_id = $command AND status = 'queued';
+                    """, ct, transaction, ("$run", runId), ("$fence", fence),
+                    ("$command", continuationIntent.Receipt.CommandId));
+                continuationIntent = continuationIntent with { Status = "claimed", RunId = runId, Fence = fence };
+            }
             await ReserveCanariesAsync(
                 connection,
                 transaction,
@@ -1536,7 +1607,8 @@ public sealed partial class TaskServerStore
                 MechanicalDelta: mechanicalDelta,
                 MechanicalFreshRoute: mechanicalFreshRoute,
                 FollowUp: followUp,
-                PlacementReason: placementReason);
+                PlacementReason: placementReason,
+                ContinuationIntent: continuationIntent);
         }, ct);
         return response!;
     }
@@ -1564,7 +1636,9 @@ public sealed partial class TaskServerStore
             {
                 throw new TaskServerConflictException("lease-expired-process-unknown", "Lease expired. Positive containment proof is required before recovery.");
             }
-            if (!string.IsNullOrWhiteSpace(request.StartedPromptSha256))
+            if (!string.IsNullOrWhiteSpace(request.StartedPromptSha256)
+                && !await ConsumeClaimedContinuationAsync(
+                    connection, transaction, lease, request.StartedPromptSha256, actorId, ct))
             {
                 FollowUpDeliveryDto? reservedFollowUp = null;
                 string? followUpRunId = null;
@@ -1663,6 +1737,7 @@ public sealed partial class TaskServerStore
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
                 ("$now", Iso(UtcNow)), ("$task", lease.TaskId));
+            await RequeueClaimedContinuationAsync(connection, transaction, runId, ct);
             released = lease with { Status = "released" };
             // AGT-2870: a release that follows a lost worker names the salvage
             // ref its work was published under. Recording it on the audit row
@@ -2006,6 +2081,15 @@ public sealed partial class TaskServerStore
             {
                 effectiveSummary = providerRecovery.EscalationReason;
             }
+            // A claim with no spawn acknowledgement has not consumed its round.
+            // It remains first in order for the next admitted run.
+            await RequeueClaimedContinuationAsync(connection, transaction, runId, ct);
+            var waitingRound = Convert.ToInt64(await ScalarAsync(connection, """
+                SELECT count(*) FROM continuation_intents
+                 WHERE task_id = $task AND status = 'queued';
+                """, ct, transaction, ("$task", lease.TaskId)) ?? 0L);
+            if (waitingRound > 0)
+                nextState = StudioTaskLanes.Ready;
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -2471,6 +2555,7 @@ public sealed partial class TaskServerStore
                 UPDATE work_permits SET status = 'fenced'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$now", Iso(UtcNow)), ("$state", targetState), ("$task", lease.TaskId));
+            await RequeueClaimedContinuationAsync(connection, transaction, runId, ct);
             await AppendLifecycleEventAsync(
                 connection,
                 transaction,
@@ -3349,6 +3434,7 @@ public sealed partial class TaskServerStore
                 error_detail TEXT,
                 attachments_json TEXT,
                 receipt_json TEXT,
+                metadata_json TEXT,
                 payload_sha256 TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS runners(
@@ -3456,6 +3542,22 @@ public sealed partial class TaskServerStore
                 received_at TEXT NOT NULL,
                 PRIMARY KEY(runner_id, idempotency_key)
             );
+            CREATE TABLE IF NOT EXISTS host_enrolments(
+                host_id TEXT PRIMARY KEY,
+                host_class TEXT NOT NULL,
+                status TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                enrolled_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                removed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS host_enrolment_principals(
+                principal_id TEXT PRIMARY KEY,
+                host_id TEXT NOT NULL REFERENCES host_enrolments(host_id),
+                role TEXT NOT NULL,
+                UNIQUE(host_id, role)
+            );
             CREATE TABLE IF NOT EXISTS host_admission(
                 host_id TEXT PRIMARY KEY,
                 automatic_drain_reason TEXT,
@@ -3513,6 +3615,32 @@ public sealed partial class TaskServerStore
                 accepted_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_steering_actions_task ON steering_actions(task_id, accepted_at);
+            CREATE TABLE IF NOT EXISTS continuation_intents(
+                command_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                round INTEGER NOT NULL,
+                expected_task_version INTEGER NOT NULL,
+                result_task_version INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                model TEXT,
+                cli_type TEXT,
+                thinking_level TEXT,
+                mode TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                accepted_at TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                explicit_selection INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                run_id TEXT REFERENCES runs(id),
+                fence INTEGER,
+                consumed_at TEXT,
+                UNIQUE(task_id, round)
+            );
+            CREATE INDEX IF NOT EXISTS ix_continuation_intents_task
+                ON continuation_intents(task_id, round);
             CREATE TABLE IF NOT EXISTS leases(
                 task_id TEXT NOT NULL REFERENCES tasks(id),
                 lease_id TEXT PRIMARY KEY,
@@ -3919,6 +4047,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "supported_models_json", "TEXT", ct);
         await EnsureColumnAsync(connection, "orchestration_runs", "task_version", "INTEGER NOT NULL DEFAULT 0", ct);
+        await EnsureColumnAsync(connection, "orchestrator_context_turns", "metadata_json", "TEXT", ct);
         await ExecuteAsync(connection, """
             INSERT INTO runtime_capacity_settings(
                 host_id, max_parallelism, target_load_percent, ramp_strategy,
@@ -3982,6 +4111,50 @@ public sealed partial class TaskServerStore
             """, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
         await ApplyOperationsPrincipalMigrationAsync(connection, ct);
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS principal_rotations(
+                operation_id TEXT PRIMARY KEY,
+                principal_id TEXT NOT NULL REFERENCES principals(principal_id),
+                credential_id TEXT NOT NULL REFERENCES principal_credentials(credential_id),
+                previous_ids_json TEXT NOT NULL,
+                previous_generation TEXT,
+                consumers_json TEXT NOT NULL,
+                acknowledged_json TEXT NOT NULL,
+                acknowledged_at_json TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                overlap_seconds INTEGER NOT NULL,
+                issued_at TEXT NOT NULL,
+                deadline_at TEXT NOT NULL,
+                delivered_at TEXT,
+                delivered_consumers_json TEXT NOT NULL DEFAULT '[]',
+                retired_at TEXT,
+                recovery_closed_at TEXT,
+                revoked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_principal_rotations_principal
+                ON principal_rotations(principal_id, retired_at);
+            CREATE INDEX IF NOT EXISTS ix_principal_rotations_credential
+                ON principal_rotations(credential_id, retired_at);
+            CREATE TABLE IF NOT EXISTS principal_rotation_proofs(
+                credential_id TEXT NOT NULL REFERENCES principal_credentials(credential_id),
+                consumer_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                PRIMARY KEY(credential_id, consumer_id, scope)
+            );
+            """, ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "previous_generation", "TEXT", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "acknowledged_at_json", "TEXT NOT NULL DEFAULT '{}'", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "actor_id", "TEXT NOT NULL DEFAULT ''", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "revoked_at", "TEXT", ct);
+        await EnsureColumnAsync(connection, "principal_rotations", "delivered_consumers_json", "TEXT NOT NULL DEFAULT '[]'", ct);
+        await ExecuteAsync(connection, """
+            UPDATE principal_rotations
+               SET delivered_consumers_json = json_array(json_extract(consumers_json, '$[0].ConsumerId'))
+             WHERE delivered_at IS NOT NULL AND delivered_consumers_json = '[]'
+               AND json_array_length(consumers_json) = 1;
+            """, ct);
+        await ApplyIdentityBootstrapMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 
@@ -4581,9 +4754,9 @@ public sealed partial class TaskServerStore
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
                 FROM tasks WHERE id = $identity;
               """
-            : """
+            : $$"""
               SELECT id, project_id, task_key, title, state, version, created_at, updated_at, body, archive_state, archived_at
-                FROM tasks WHERE project_id = $project AND (id = $identity OR task_key = upper($identity));
+                FROM tasks WHERE project_id = {{ProjectIdentityToIdSql}} AND (id = $identity OR task_key = upper($identity));
               """;
         await using var command = Command(connection, sql, transaction, ("$project", projectId), ("$identity", identity));
         await using var reader = await command.ExecuteReaderAsync(ct);

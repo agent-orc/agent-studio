@@ -127,7 +127,7 @@ describe('App epic tab navigation', () => {
 
   function flushDetail(http: HttpTestingController, jobId: string, watchPath: string, payload: TaskDetail): void {
     const req = http.expectOne((request) =>
-      request.url.endsWith(`/api/tasks/${encodeURIComponent(jobId)}`) &&
+      request.url === `/api/v1/projects/-/tasks/${encodeURIComponent(jobId)}` &&
       request.params.get('watchPath') === watchPath,
     );
     req.flush(payload);
@@ -140,7 +140,7 @@ describe('App epic tab navigation', () => {
     payload: TaskDetail,
   ): void {
     const req = http.expectOne((request) =>
-      request.url.endsWith(`/api/tasks/${encodeURIComponent(jobId)}`) &&
+      request.url === `/api/v1/projects/${encodeURIComponent(project)}/tasks/${encodeURIComponent(jobId)}` &&
       request.params.get('project') === project &&
       !request.params.has('watchPath'),
     );
@@ -223,13 +223,13 @@ describe('App epic tab navigation', () => {
     app.onOpenEpicFromTaskAnchor(child, { jobId: 'epic-a', watchPath: 'C:/watch' });
 
     const projectRequest = http.expectOne((request) =>
-      request.url.endsWith('/api/tasks/epic-a') &&
+      request.url === '/api/v1/projects/Project%20A/tasks/epic-a' &&
       request.params.get('project') === 'Project A',
     );
     projectRequest.flush(null, { status: 404, statusText: 'Not Found' });
 
     const fallbackRequest = http.expectOne((request) =>
-      request.url.endsWith('/api/tasks/epic-a') &&
+      request.url === '/api/v1/projects/-/tasks/epic-a' &&
       request.params.get('watchPath') === 'C:/watch',
     );
     fallbackRequest.flush(null, { status: 404, statusText: 'Not Found' });
@@ -477,7 +477,7 @@ describe('App browser-history lane reconciliation', () => {
       },
     }, '', '/#/tasks/AGT-2124');
     selection.restoreFromUrl(true);
-    http.expectOne(req => req.url.endsWith('/api/tasks/AGT-2124'))
+    http.expectOne(req => req.url.startsWith('/api/v1/projects/') && req.url.endsWith('/tasks/AGT-2124'))
       .flush({ info: restored } as TaskDetail);
     TestBed.tick();
 
@@ -487,6 +487,8 @@ describe('App browser-history lane reconciliation', () => {
     TestBed.tick();
 
     expect(externalChange).toHaveBeenCalledWith('7-archive', restored.taskKey);
+    // The additive task core read (AGT-2956) is covered by task-selection-core.spec.ts.
+    http.match(req => req.url.endsWith('/core')).forEach(req => req.flush(null, { status: 404, statusText: 'Not Found' }));
     http.verify();
   });
 });

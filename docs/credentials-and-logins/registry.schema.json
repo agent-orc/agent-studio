@@ -280,6 +280,25 @@
         "null"
       ],
       "format": "date-time"
+    },
+    "gitHubKeyId": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "provisioningCredentialId": {
+      "type": ["string", "null"],
+      "maxLength": 128
+    },
+    "repositoryPurpose": {
+      "type": ["string", "null"],
+      "enum": ["product", "workspace", null]
+    },
+    "repositoryWriteGrant": {
+      "type": ["boolean", "null"]
+    },
+    "tokenSubtype": {
+      "type": ["string", "null"],
+      "enum": ["fine-grained-pat", "classic-pat", "oauth-app", "unknown", null]
     }
   }
 }

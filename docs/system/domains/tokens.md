@@ -83,6 +83,14 @@ are priced depends on the TokenEconomy catalog version (0.3.5 via AGT-2892).
 
 ## Provider input and cache semantics
 
+Chat replies are a separate `chat-turn` source in the workspace token ledger.
+The turn stores normalized input, cache read, output, and optional reasoning
+tokens, plus the historical TokenEconomy cost, currency, and catalogue version.
+The usage cockpit exposes chat turns per host and project with active and heavy
+counts, CPU percent where sampled, cumulative tokens, and cost beside coding
+slots. The remote work broker owns remote heavy admission and its snapshot;
+the local chat tracker supplies the workstation row with no CPU sample.
+
 The canonical stored dimensions always mean:
 
 - `input` / `inputTokens`: uncached input, priced at the normal input rate.
@@ -97,7 +105,7 @@ The canonical stored dimensions always mean:
 | CLI/provider frame | Raw semantics | Boundary mapping | Context used |
 |---|---|---|---|
 | Codex / OpenAI `turn.completed.usage` | `input_tokens` includes `cached_input_tokens`; cached is a subset. | `input = max(0, input_tokens - cached_input_tokens)`, `cacheRead = cached_input_tokens`, `inputIncludesCached = true`. | Raw `input_tokens`, equivalently normalized `input + cacheRead`. |
-| Claude `result.usage` plus `modelUsage` | `input_tokens` excludes `cache_read_input_tokens`; the fields are separate. `modelUsage` identifies the model or models that incurred them. | Values pass through unchanged with `inputIncludesCached = false`; one receipt is emitted per `modelUsage` entry and retains the card's pinned model separately. | `input_tokens + cache_read_input_tokens`. |
+| Claude `result.usage` plus `modelUsage` | `input_tokens` excludes `cache_read_input_tokens`; the fields are separate. `modelUsage` identifies the model or models that incurred them. | Values pass through unchanged with `inputIncludesCached = false`; one receipt is emitted per `modelUsage` entry and retains the card's pinned model separately. `modelUsage` is the session's running total and is repeated on every `result` frame, so the remote receipt keeps only the last snapshot per `session_id` and model. | `input_tokens + cache_read_input_tokens`. |
 | Gemini CLI `result.stats` | Current `StreamStats` reports `input_tokens` plus its explicit breakdown `cached` and `input` (uncached), with `output_tokens`, totals, and per-model rows. | Studio's deprecated Gemini adapter currently renders these stats into the completion message but has no registered `ICliUsageParser`, so it does not persist or price a canonical usage record. `GeminiEventAdapterTests.ResultSuccess_EmitsTurnCompleted_WithUsageStats` pins the emitted shape, including both `cached` and uncached `input`. | Not recorded until a canonical Gemini usage parser is introduced. |
 
 The arithmetic lives in
@@ -135,6 +143,43 @@ applies the same safe normalization to legacy OpenAI rows before both the
 canonical token readers and `BusAggregationCache` fold them. This keeps bus
 history aligned with repaired task receipts without rewriting evidence logs.
 
+## Duplicate receipt collapse (AGT-3012, 2026-10-04)
+
+AGT-3004's receipt held one Claude session 22 times: the session wrote 22
+`result` frames, each restating the same cumulative `modelUsage`, and the
+remote receipt turned every frame into a call (5.6 billion tokens over 23
+calls instead of about 261 million over two). Three layers now prevent and
+undo this:
+
+- **Write path.** `ClaudeUsageParser` marks `modelUsage` usages with a
+  cumulative scope (`claude-session:<session_id>`);
+  `RemoteTokenReceiptService` keeps only the last snapshot per scope and model.
+  `TaskMutationService.SetRemoteTokenSummaryOnFolder` uses a stable session or
+  log-turn identity in the existing participant field plus timestamp, model,
+  and counts. This makes completion replay a no-op while preserving separate
+  turns that happen to have equal counts in one millisecond. Turn ordinals use
+  the original CLI log position before attempt filtering. Without a Claude
+  `session_id`, result frames remain separate because they have no safe
+  cumulative scope. The writer does not rewrite an unchanged receipt.
+- **Read path.** `TokenLedgerDuplicates` collapses identical rows: bus
+  messages by job, run id, participant, timestamp, model and counts (in
+  `BusTokenEntryConverter`), receipt calls by participant (which carries the
+  run attempt), timestamp, model and counts (in `ProjectTokenReceiptReader`,
+  which subtracts the dropped calls from the receipt totals so they do not
+  return as a residual row). Lists without duplicates are returned unchanged,
+  so `orchestrator.jsonl` parity fixtures stay byte-comparable.
+- **Repair.** `TokenLedgerDuplicateRepair` is a one-time startup migration
+  with completion report `.metadata/migrations/token-ledger-duplicates-v1.json`.
+  It rewrites collapsed task receipts and reports, per project, receipt tasks,
+  entries, tokens and list-price cost collapsed, plus bus entries and tokens
+  that the read path collapses (bus JSONL stays append-only). The report is
+  written only when every rewrite succeeds; a restart after it exists is a
+  no-op.
+
+The receipt reader also applies the AGT-2882 OpenAI normalization to receipt
+calls the historical repair did not reach, so both receipt and bus rows are
+normalized before pricing.
+
 ## Workspace usage cockpit read contract (HUC-S1)
 
 `GET /api/usage/cockpit?workspaceId={id}` returns a versioned, read-only
@@ -168,8 +213,11 @@ empty receipt collection is valid: a complete empty project returns zero,
 while a bus-only project returns its bus-derived amount. Both leave
 `latestReceiptAt` null.
 
-`dailyBudgetUsd` and
-`weeklyBudgetUsd` are null until a real workspace USD budget owner exists.
+The read contract permits optional `cost.dailyBudgetUsd` and
+`cost.weeklyBudgetUsd` fields. The client reads either field when present to
+evaluate a strict daily or weekly ledger-cost overrun; equality does not warn.
+The current projection may omit them or return null until a real workspace
+USD budget owner exists. An absent budget never implies a financial limit.
 The `ledgerEndpointTemplate` points to the existing project token report API.
 
 The cost reader consumes `BusBackedProjectTokenUsageReader.LoadSnapshot`, which
@@ -439,6 +487,17 @@ mixed dashboard:
   does not invent either attribution.
 - Per-task cap forecast (TE-4) is a labelled future integration point only.
 
+Usage-detail links to `#/workspace/settings/tokens[/cli]` carry `ledger-workspace`,
+`ledger-range`, `ledger-from`, `ledger-to`, `ledger-zone`, and optionally
+`ledger-project` hash keys. The settings route reads these through the shared
+hash parser. The workspace timeline applies workspace and project selection on
+the server and reads the exact UTC interval behind the workspace-local day or
+week. Scoped requests are not written to the 24h/7d timeline cache. The
+existing timeline has no CLI dimension, so a CLI deep link does not claim that
+its token events are filtered by provider; provider quota remains in the usage
+detail and CLI account page. The unattributed cost bucket has no project token
+events in this legacy timeline and displays an empty scoped timeline.
+
 Workspace and project usage calculations are unchanged by this navigation
 split. CLI pages are extendable by adding another page key and model mapping.
 
@@ -461,6 +520,8 @@ split. CLI pages are extendable by adding another page key and model mapping.
 | `backend/Features/Tokens/ITokenAggregator.cs` | Canonical interface |
 | `backend/Features/Tokens/TokenAggregationService.cs` | Canonical consumer implementation |
 | `backend/Features/Tokens/ProjectTokenReceiptReader.cs` | Reads both task layouts, converts receipts, and deduplicates overlap with history |
+| `backend/Features/Tokens/TokenLedgerDuplicates.cs` | Pure duplicate policy shared by the bus and receipt readers and the receipt writer |
+| `backend/Features/Tokens/TokenLedgerDuplicateRepair.cs` | One-time receipt collapse with per-project report |
 | `backend/Features/Bus/BusAggregationCache.cs` | In-memory rollup over historical `logs/bus/*.jsonl` |
 | `backend/Features/Bus/AgentMessageBusBridge.cs` | Legacy/local producer side: `EmitTokenUsageAsync` / `EmitTokenUsageRichAsync` |
 | `backend/Features/AdHoc/AdHocClaudeInvoker.cs` | Ad-hoc-call recorder; **also fires `EmitTokenUsageAsync` after Phase 2** |

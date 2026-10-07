@@ -242,8 +242,8 @@ public enum RunnerClaimStatus { Claimed, Empty, PreflightRequired, PreflightFail
 /// <summary>
 /// T0b — the claimed card's execution specification (CAR migration plan §3 T0b).
 /// The server states which CLI, model and reasoning level the <b>card</b> chose;
-/// <see cref="RunnerOptions.CliBin"/> / <see cref="RunnerOptions.CliArgs"/> stop
-/// being the truth and become the fallback for whatever the spec leaves open.
+/// The provider-specific host paths fill only the binary location when the spec
+/// leaves the provider open. CAR remains the sole argv and launch authority.
 ///
 /// <para>
 /// Every field is optional. A server that predates T0b sends no spec at all, and
@@ -365,7 +365,8 @@ public sealed record RemoteChatWorkCompletionRequest(
     string? CliType = null,
     string? ConfiguredCliType = null,
     string? ConfiguredModel = null,
-    string? QuotaFallbackReason = null);
+    string? QuotaFallbackReason = null,
+    string? ProviderThreadId = null);
 
 public sealed record OrchestratorTokenUsage
 {
@@ -374,6 +375,7 @@ public sealed record OrchestratorTokenUsage
     public int OutputTokens { get; init; }
     public int CacheReadTokens { get; init; }
     public int CacheCreationTokens { get; init; }
+    public int? ReasoningTokens { get; init; }
     public bool? InputIncludesCached { get; init; }
 }
 
@@ -498,7 +500,8 @@ public sealed record ArtifactTransferIssue(
     string Path,
     long SizeBytes,
     string Reason,
-    string Outcome = ArtifactTransferOutcomes.ArtifactTooLarge);
+    string Outcome = ArtifactTransferOutcomes.ArtifactTooLarge,
+    int Attempts = 0);
 
 public sealed record ArtifactTransferReportRequest(
     string TaskKey,

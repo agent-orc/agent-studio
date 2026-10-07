@@ -10,6 +10,21 @@ public sealed class GitPushProbeTests : IDisposable
         "agent-runner-git-push-probe-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Product_push_success_does_not_mask_private_workspace_failure()
+    {
+        var product = new GitPushProbeResult(GitPushProbe.Ready, "product verified");
+        var workspace = new RepositoryAccessProof("workspace",
+            "https://github.com/example/private-workspace.git", false, false, false,
+            "fetch-failed");
+
+        var combined = GitPushProbe.WithWorkspaceProof(product, workspace);
+
+        Assert.Equal(GitPushProbe.ReadOnly, combined.Status);
+        Assert.Contains("Workspace repository access failed", combined.Detail);
+        Assert.Contains("product fallback status was ready", combined.Detail);
+    }
+
+    [Fact]
     public async Task Workflow_probe_pushes_and_deletes_its_throwaway_branch()
     {
         var source = Path.Combine(_root, "source");
@@ -40,8 +55,7 @@ public sealed class GitPushProbeTests : IDisposable
                 GitRemote = remote,
                 WorkDir = work,
                 BaseBranch = "main",
-                CliBin = "codex",
-                CliArgs = "",
+                ClaudeCliBin = "codex",
             },
             _ => { },
             CancellationToken.None);

@@ -25,7 +25,9 @@ public enum RunRejectReason
     QuotaCapExceeded,
     /// <summary>A UI feedback continuation was refused because the configured
     /// human-review iteration cap had already been reached.</summary>
-    UiIterationCapReached
+    UiIterationCapReached,
+    /// <summary>The orchestrator cannot run coding work locally.</summary>
+    RemoteExecutionRequired
 }
 
 /// <summary>

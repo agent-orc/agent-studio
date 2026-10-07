@@ -20,8 +20,10 @@ public sealed class TaskServerBootstrapOptions
         string? bootstrapReviewRunnerId,
         string? bootstrapReviewRunnerAuthenticationToken,
         string? legacyRunnerAuthenticationToken,
-        bool usesLegacyRoleAuthentication)
+        bool usesLegacyRoleAuthentication,
+        string? ownerBootstrapCode)
     {
+        OwnerBootstrapCode = ownerBootstrapCode;
         ListenUrl = listenUrl;
         StorePath = storePath;
         BackupPath = backupPath;
@@ -49,6 +51,11 @@ public sealed class TaskServerBootstrapOptions
     public string? BootstrapReviewRunnerId { get; }
     public string? BootstrapReviewRunnerAuthenticationToken { get; }
     public string? LegacyRunnerAuthenticationToken { get; }
+    /// <summary>
+    /// I05 installer-armed one-time owner code, read from a restricted host
+    /// file. It is armed only while no owner exists and is never rotated implicitly.
+    /// </summary>
+    public string? OwnerBootstrapCode { get; }
     public bool UsesSharedBearerAuthentication =>
         string.Equals(AuthenticationMode, BearerAuthentication, StringComparison.Ordinal);
     public bool UsesLegacyRoleAuthentication { get; }
@@ -129,6 +136,15 @@ public sealed class TaskServerBootstrapOptions
             && string.Equals(bootstrapReviewRunnerToken, bootstrapRunnerToken, StringComparison.Ordinal))
             throw new InvalidOperationException("Coding and review runner credentials must be distinct.");
 
+        var ownerBootstrapCode = ReadCredential(
+            configuration,
+            "OWNER_BOOTSTRAP_CODE",
+            $"{TaskServerOptions.SectionName}:OwnerBootstrapCode",
+            "OWNER_BOOTSTRAP_CODE_FILE",
+            $"{TaskServerOptions.SectionName}:OwnerBootstrapCodeFile");
+        if (ownerBootstrapCode is not null && ownerBootstrapCode.Length < 32)
+            throw new InvalidOperationException("OWNER_BOOTSTRAP_CODE must contain at least 32 characters.");
+
         studioToken ??= token;
         if (usesLegacyRoleAuthentication)
             studioToken ??= FirstOrNull(
@@ -190,7 +206,8 @@ public sealed class TaskServerBootstrapOptions
             bootstrapReviewRunnerId,
             bootstrapReviewRunnerToken,
             legacyRunnerToken,
-            usesLegacyRoleAuthentication);
+            usesLegacyRoleAuthentication,
+            ownerBootstrapCode);
     }
 
     private static string? ReadCredential(

@@ -1,11 +1,13 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, computed, effect, inject, input, signal } from '@angular/core';
 import { TaskService } from '../../../../services/task.service';
 import { laneName } from '../../../../models/lane-presentation';
-import type { PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../task-pipeline';
+import type { PipelineHealthAlert, PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../task-pipeline';
+import { OperatorSweepsBlockComponent } from '../operator-sweeps-block/operator-sweeps-block';
 
 @Component({
   selector: 'app-pipeline-health-block',
   standalone: true,
+  imports: [OperatorSweepsBlockComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './pipeline-health-block.html',
   styleUrl: './pipeline-health-block.scss',
@@ -13,6 +15,9 @@ import type { PipelineHealthSnapshot, PipelineLaneDrainHealth } from '../../../t
 export class PipelineHealthBlockComponent implements OnDestroy {
   readonly projectName = input.required<string>();
   readonly health = signal<PipelineHealthSnapshot | null>(null);
+  /** Workspace repositories whose evidence flush keeps failing (AGT-3000). */
+  readonly evidenceFlushStalls = computed<PipelineHealthAlert[]>(() =>
+    (this.health()?.alerts ?? []).filter(alert => alert.kind === 'evidence-flush-stalled'));
   private readonly tasks = inject(TaskService);
   private readonly poll = setInterval(() => this.refresh(), 60_000);
 

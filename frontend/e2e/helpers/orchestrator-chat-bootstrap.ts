@@ -40,7 +40,7 @@ export async function installOrchestratorChatBootstrap(
       return;
     }
 
-    if (pathname === '/api/auth/status') {
+    if (pathname === '/api/v1/studio/auth/status') {
       await fulfillJson(route, {
         profile: 'local',
         bootstrapRequired: false,
@@ -58,7 +58,7 @@ export async function installOrchestratorChatBootstrap(
       }]);
       return;
     }
-    if (pathname === '/api/workspaces') {
+    if (pathname === '/api/v1/workspaces') {
       await fulfillJson(route, [{
         id: 'workspace-composer-fixture',
         displayName: 'Composer fixture',
@@ -76,11 +76,11 @@ export async function installOrchestratorChatBootstrap(
       }]);
       return;
     }
-    if (pathname === '/api/tasks' || pathname === '/api/projects') {
+    if (pathname === '/api/tasks' || pathname === '/api/v1/projects') {
       await fulfillJson(route, []);
       return;
     }
-    if (pathname === '/api/tasks/grouped') {
+    if (pathname === '/api/v1/studio/board') {
       await fulfillJson(route, EMPTY_GROUPED_TASKS);
       return;
     }
@@ -92,7 +92,7 @@ export async function installOrchestratorChatBootstrap(
       await fulfillJson(route, { pending: [] });
       return;
     }
-    if (pathname === '/api/runner/status') {
+    if (pathname === '/api/v1/studio/runner/status') {
       await fulfillJson(route, { projects: {} });
       return;
     }
@@ -110,7 +110,7 @@ export async function installOrchestratorChatBootstrap(
       });
       return;
     }
-    if (pathname === '/api/orchestrator/sessions') {
+    if (pathname === '/api/v1/studio/orchestrator/sessions') {
       await fulfillJson(route, { sessions: [] });
       return;
     }
@@ -122,7 +122,10 @@ export async function installOrchestratorChatBootstrap(
       await fulfillJson(route, { models: [], source: 'fixture' });
       return;
     }
-    if (/^\/api\/runner\/[^/]+\/orchestrator-chat$/.test(pathname)) {
+    if (
+      /^\/api\/v1\/studio\/runner\/[^/]+\/orchestrator-chat$/.test(pathname)
+      || /^\/api\/runner\/[^/]+\/orchestrator-chat$/.test(pathname)
+    ) {
       await fulfillJson(route, { project, turns: [] });
       return;
     }

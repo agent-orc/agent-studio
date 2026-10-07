@@ -1,8 +1,11 @@
 @let v = view();
 <button type="button"
         class="usage-cost-chip"
+        [class.usage-cost-chip--warning]="v.alarm === 'warning'"
         data-testid="usage-cost-chip"
         [attr.data-state]="v.state"
+        [attr.data-alarm]="v.alarm"
+        [attr.data-usage-trigger]="controls() ? 'cost' : null"
         aria-haspopup="dialog"
         [attr.aria-expanded]="expanded()"
         [attr.aria-controls]="controls()"
@@ -17,11 +20,13 @@
       <span class="usage-cost-chip__value"
             [class.usage-cost-chip__value--muted]="v.state !== 'normal' && v.state !== 'partial'"
             data-testid="usage-cost-chip-value">{{ v.value }}</span>
-      @if (v.exact) {
+      @if (v.exact && !compact()) {
         <span class="usage-cost-chip__unit">USD</span>
       }
     }
-    @if (v.state === 'stale') {
+    @if (v.alarm) {
+      <span class="usage-cost-chip__mark usage-cost-chip__mark--alarm" data-testid="usage-cost-chip-alarm-mark" aria-hidden="true"><app-studio-icon name="warn" [size]="14" /></span>
+    } @else if (v.state === 'stale') {
       <span class="usage-cost-chip__mark" aria-hidden="true"><app-studio-icon name="clock" [size]="14" /></span>
     } @else if (v.state === 'suspicious' || v.state === 'partial') {
       <span class="usage-cost-chip__mark" aria-hidden="true"><app-studio-icon name="help" [size]="14" /></span>

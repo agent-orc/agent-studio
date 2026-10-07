@@ -22,6 +22,8 @@ if (allowedOrigins.Length == 0 || allowedOrigins.Any(origin =>
 builder.Services.AddHttpClient("task-server", client =>
 {
     client.BaseAddress = new Uri(taskServerUrl);
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(
+        builder.Configuration.GetValue<int?>("TaskServer:RequestTimeoutSeconds") ?? 100, 1, 600));
     var bearerToken = ReadTaskServerToken(builder.Configuration);
     if (!string.IsNullOrWhiteSpace(bearerToken))
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
@@ -31,11 +33,15 @@ builder.Services.AddHttpClient("task-server", client =>
 })
 .ConfigurePrimaryHttpMessageHandler(() =>
 {
+    // UseCookies = false: the pooled handler is shared by every Studio caller,
+    // so a cookie jar would capture one user's Task Server session cookie
+    // (ts-studio-session) and replay it for everyone else.
     var expectedFingerprint = builder.Configuration["TaskServer:TlsServerCertificateSha256"]?.Trim();
     if (string.IsNullOrWhiteSpace(expectedFingerprint))
-        return new HttpClientHandler();
+        return new HttpClientHandler { UseCookies = false };
     return new HttpClientHandler
     {
+        UseCookies = false,
         ServerCertificateCustomValidationCallback = (_, certificate, _, errors) =>
             certificate is not null
             && (errors & ~System.Net.Security.SslPolicyErrors.RemoteCertificateChainErrors) == 0
@@ -68,6 +74,7 @@ app.Use(async (context, next) =>
     }
     await next(context);
 });
+const string StudioSessionCookie = "ts-studio-session";
 RequestDelegate proxyToTaskServer = async context =>
 {
     context.Response.Headers["X-Studio-Backend"] = "studio-bff";
@@ -83,9 +90,31 @@ RequestDelegate proxyToTaskServer = async context =>
     foreach (var header in new[] { "X-Actor-Id", "X-Client-Id", "Idempotency-Key", "If-Match" })
         if (context.Request.Headers.TryGetValue(header, out var value))
             request.Headers.TryAddWithoutValidation(header, value.ToArray());
+    // I05: the human session rides in the edge's own HttpOnly cookie and is
+    // relayed as a header. The edge's service bearer never leaves this process.
+    if (context.Request.Cookies.TryGetValue(StudioSessionCookie, out var sessionToken)
+        && !string.IsNullOrWhiteSpace(sessionToken))
+        request.Headers.TryAddWithoutValidation("X-Studio-Session-Token", sessionToken);
 
-    using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
+    HttpResponseMessage response;
+    try
+    {
+        response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
+    }
+    catch (Exception ex) when (ex is HttpRequestException
+        || ex is TaskCanceledException && !context.RequestAborted.IsCancellationRequested)
+    {
+        // No local fallback: the edge holds no task store and never writes tasks itself.
+        context.Response.StatusCode = StatusCodes.Status502BadGateway;
+        await context.Response.WriteAsJsonAsync(new ApiError(
+            "task-server-unavailable", "The Task Server is unavailable; nothing was written."));
+        return;
+    }
+    using var _ = response;
     context.Response.StatusCode = (int)response.StatusCode;
+    if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
+        foreach (var cookie in cookies.Where(cookie => cookie.StartsWith("ts-studio-", StringComparison.Ordinal)))
+            context.Response.Headers.Append("Set-Cookie", cookie);
     if (response.Content.Headers.ContentType is not null)
         context.Response.ContentType = response.Content.Headers.ContentType.ToString();
     await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted);

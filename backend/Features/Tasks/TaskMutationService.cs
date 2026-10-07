@@ -489,15 +489,43 @@ public class TaskMutationService
                 }
             }
 
-            var merged = (persisted?.Entries ?? [])
-                .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal))
-                .Concat(entries.Select(entry => entry with
-                {
-                    ParticipantId = participantId,
-                }))
-                .OrderBy(entry => entry.Ts)
+            var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                StringComparison.Ordinal);
+            var retained = (persisted?.Entries ?? [])
+                .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
+                    && !(isRemoteAttempt &&
+                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)))
                 .ToList();
+            var recorded = retained
+                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
+                .Select(TokenLedgerDuplicates.CallIdentityFingerprint)
+                .ToHashSet();
+            var legacy = retained
+                .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is null
+                    && (entry.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                        StringComparison.Ordinal) ?? false))
+                .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
+                .ToHashSet();
+            var attemptEntries = new List<TaskTokenCall>();
+            foreach (var source in entries)
+            {
+                var entry = source with
+                {
+                    ParticipantId = isRemoteAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)
+                        ? source.ParticipantId : participantId,
+                };
+                var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
+                if (identity is not null
+                    && (!recorded.Add(TokenLedgerDuplicates.CallIdentityFingerprint(entry))
+                        || (identity.StartsWith("scope:", StringComparison.Ordinal)
+                            && legacy.Contains(TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false)))))
+                    continue;
+                attemptEntries.Add(entry);
+            }
+            var merged = retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
             if (merged.Count == 0) return false;
+            if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
 
             var lastAgentEntry = merged
                 .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)

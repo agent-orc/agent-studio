@@ -99,11 +99,35 @@
     .evidence-class[data-evidence-class="observed"] { background: var(--article-good-soft); color: var(--article-good); }
     .evidence-class[data-evidence-class="inferred"] { background: var(--article-warn-soft); color: var(--article-warn); }
     .evidence-class[data-evidence-class="proposed"] { background: var(--article-link-soft); color: var(--article-link); }
+    .evidence-class[data-evidence-class="hard"] { background: var(--article-good-soft); color: var(--article-good); }
+    .evidence-class[data-evidence-class="model-judged"] { background: var(--article-warn-soft); color: var(--article-warn); }
+    .evidence-class[data-evidence-class="confounded"] { background: var(--article-bad-soft); color: var(--article-bad); }
     .evidence b { display: block; margin-bottom: 2px; font-size: 0.88rem; }
     .evidence small { display: block; color: var(--article-muted); font-size: 0.78rem; line-height: 1.45; }
     .route-groups { columns: 2; margin: 18px 0; padding: 16px 16px 16px 34px; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-surface); font-size: 0.78rem; }
     .route-groups li { break-inside: avoid; }
     .dim { color: var(--article-muted); }
+    .decision { margin: 24px 0; padding: 18px 22px; border: 1px solid color-mix(in srgb, var(--article-link) 30%, var(--article-line)); border-radius: 10px; background: var(--article-link-soft); font: 0.92rem/1.6 var(--article-sans); }
+    .decision h3 { margin: 0 0 8px; }
+    .decision > p { color: var(--article-muted); }
+    .decision label { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--article-line); border-radius: 8px; background: var(--article-paper); cursor: pointer; }
+    .decision label input { margin-top: 5px; }
+    .decision label b { display: block; font-weight: 650; }
+    .decision label .d { display: block; color: var(--article-muted); font-size: 0.86rem; }
+    .decision textarea { width: 100%; min-height: 60px; margin-top: 8px; padding: 8px; border: 1px solid var(--article-line); border-radius: 6px; background: var(--article-paper); color: var(--article-ink); font: 0.86rem/1.5 var(--article-sans); }
+    .flow { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 12px; background: var(--article-surface); font-family: var(--article-sans); }
+    .flow .box { fill: var(--article-paper); stroke: var(--article-line); stroke-width: 1; }
+    .flow .box.authority { fill: var(--article-link-soft); stroke: color-mix(in srgb, var(--article-link) 48%, var(--article-line)); }
+    .flow .box.execution { fill: var(--article-good-soft); stroke: color-mix(in srgb, var(--article-good) 44%, var(--article-line)); }
+    .flow .box.muted { fill: var(--article-surface-strong); }
+    .flow .t-head { fill: var(--article-ink); font-size: 17px; font-weight: 700; }
+    .flow .t-body { fill: var(--article-muted); font-size: 14px; }
+    .flow .t-small { fill: var(--article-faint); font-size: 12px; }
+    .flow .wire { fill: none; stroke: var(--article-link); stroke-width: 1.5; }
+    .flow .wire.exec { stroke: var(--article-good); }
+    .flow .wire.dashed { stroke-dasharray: 6 5; }
+    .flow .head { fill: var(--article-link); }
+    .flow .head.exec { fill: var(--article-good); }
     @media (max-width: 760px) {
       main { width: min(100% - 28px, 70ch); padding-bottom: 52px; }
       header.page { padding-top: 32px; }
@@ -119,11 +143,15 @@
 <body>
 <main>
   <header class="page">
-    <p class="kicker">Phase B · B1 · Decision dossier</p>
+    <p class="kicker">Phase B · B1 · Decision dossier · Git and intervention extension</p>
     <h1>Studio route ownership and local connector</h1>
-    <p class="lede">A route-counted boundary for the Windows Studio, its loopback connector, and the remote Task Server. The count turns the D4b uncertainty into an ordered migration estimate.</p>
-    <div class="meta"><span><b>Status</b> Decided</span><span><b>Updated</b> 7 September 2026</span><span><b>Source</b> AGT-2731</span></div>
+    <p class="lede">A route-counted boundary for the Windows Studio, its loopback connector, and the remote Task Server. The count turns the D4b uncertainty into an ordered migration estimate. The October extension moves Studio Git views and diffs to the central plane, makes hand interventions an explicit attempt in a central workspace, and leaves the Windows dev seat as an observer.</p>
+    <div class="meta"><span><b>Status</b> B1 decided; Git and intervention extension decision pending</span><span><b>Updated</b> 5 October 2026</span><span><b>Source</b> AGT-2731, AGT-3017</span><span><b>Related</b> AGT-W18 (AGT-2881), AGT-W51, AGT-2954, AGT-2949, AGT-2737</span></div>
   </header>
+  <div class="callout">
+    <h3>Reading order</h3>
+    <p>Sections 01 to 06 are the B1 record of 7 September 2026 and stay unchanged. Sections 07 to 18 extend it for AGT-3017. They classify Studio Git views, diffs and checkout routes, add the intervention workspace from the operator steer of 5 October (section 13), and carry the open decisions D1 to D8. Section 19 is the implementation log.</p>
+  </div>
 
   <section id="inventory">
     <h2><span class="number">01</span> Inventory</h2>
@@ -161,7 +189,7 @@
     </ol>
   </section>
 
-  <section id="alternatives" data-concept-section="alternatives" data-document-section="alternatives">
+  <section id="alternatives" data-document-section="alternatives">
     <h2><span class="number">02</span> Alternatives</h2>
     <div class="variant-grid breakout">
       <article class="variant">
@@ -183,7 +211,7 @@
     </div>
   </section>
 
-  <section id="recommendation" data-concept-section="recommendation" data-document-section="recommendation">
+  <section id="recommendation" data-document-section="recommendation">
     <h2><span class="number">03</span> Recommendation</h2>
     <div class="callout" data-tone="accent">
       <h3>OrchestratorApi connector profile</h3>
@@ -247,7 +275,7 @@
     <p>A Docker Desktop connector is conforming only if it binds the published port specifically to <code>[::1]</code>, uses the secret-file contract, mounts each allowed repository explicitly, has no Docker socket, and removes or delegates every Windows process-launch route. Docker and native modes must expose the same route checksum and security test suite.</p>
   </section>
 
-  <section id="evidence" data-concept-section="evidence" data-document-section="evidence">
+  <section id="evidence" data-document-section="evidence">
     <h2><span class="number">04</span> Evidence</h2>
     <p>The findings below are source observations or stated inferences. This dossier makes no claim about a human sight review and makes no claim about an already working remote Studio.</p>
     <div class="evidence-list">
@@ -281,7 +309,7 @@
     <p>The first release gate is not “all 264 routes exist.” It is that the complete P0 attach path works through the connector while Studio shutdown does not interrupt remote execution. Later bundles can follow without weakening ownership.</p>
   </section>
 
-  <section id="open-decisions" data-concept-section="open-decisions" data-document-section="open-decisions">
+  <section id="open-decisions" data-document-section="open-decisions">
     <h2><span class="number">06</span> Open decisions</h2>
     <p>No product-scope choice remains open in this B1 concept. Human concept review and promotion remain pipeline gates; they do not reopen the recorded operator decision.</p>
     <div class="callout" data-tone="good">
@@ -298,9 +326,627 @@
     <p class="dim"><b>Release gate:</b> the complete P0 attach path works through the connector and remote execution continues while Studio is detached. The accepted D4b estimate is 88 engineering days, with a planning range of 71 to 115.</p>
   </section>
 
+  <!-- AGT-3017 extension: Studio Git views and diffs. Sections 01-06 above remain the 7 September B1 record. -->
+  <section id="git-context">
+    <h2><span class="number">07</span> Git scope</h2>
+    <p class="kicker">Extension · AGT-3017 · 5 October 2026</p>
+    <p>Decision B1 placed every Git, checkout and repository route in the Windows dev seat. Its runtime section treated repository paths as accepted dev-seat scope. Three later operator decisions overrule that assumption. A fourth steer extends the question from Git views to hand interventions.</p>
+    <table>
+      <thead><tr><th>Date</th><th>Decision</th><th>Record</th></tr></thead>
+      <tbody>
+        <tr><td>12 September</td><td>Windows is no longer an execution world. Every execution, including coding runs, gates and review aspects, is isolated.</td><td><a href="../operations/docker-ausfuehrungswelt-migration/index.html">AGT-W51</a>; <a href="../system/architecture/decisions/adr-archive.md">ADR-0073</a></td></tr>
+        <tr><td>18 September</td><td>"The remote host gates, merges and pushes. The local Studio only observes."</td><td>AGT-2881 in <a href="../operations/remote-gate-zielbild/index.html">AGT-W18</a>, <code>remote-gate.md:22-34</code></td></tr>
+        <tr><td>5 October</td><td>Git diffs should be computed centrally.</td><td>Operator direction in the AGT-3017 card</td></tr>
+        <tr><td>5 October</td><td>Hand interventions are real and should get a dedicated container instead of the Windows checkout.</td><td>Operator steer on AGT-3017 (section 13)</td></tr>
+      </tbody>
+    </table>
+    <p>AGT-W18 settles who gates, merges and pushes. Its observer contract has Studio read attempts, receipts and canonical refs from Task Server projections. It does not name the Studio Git read routes or diffs. This extension classifies them. It changes no product code and does not edit <code>routes.json</code>. The revised classification below is a proposal table.</p>
+    <div class="callout" data-tone="warn">
+      <h3>Source facts and proposals</h3>
+      <p>Statements about what the code does cite a file and line at develop commit <code>feb298495</code>. Statements about target owners, caches, limits and cards are proposals and are labelled as such. Nothing in this section is shipped behaviour.</p>
+    </div>
+  </section>
+
+  <section id="git-inventory">
+    <h2><span class="number">08</span> Git inventory</h2>
+    <p>Counted from <a href="routes.json"><code>routes.json</code></a> as of 28 September 2026 and traced into OrchestratorApi handlers. That file is stale. Regenerating it from develop <code>feb298495</code> yields 109 dev-seat operations; the additional one is <code>GET /api/cli/quota/history</code>, which is not a Git route. The two freshness tests in <code>routes-inventory.test.mjs</code> fail on develop for that reason and on shifted call-site lines. The Git counts below are the same in both versions.</p>
+    <div class="metric-grid breakout">
+      <div class="metric"><strong>108</strong><span>dev-seat operations today. B1 approved 95; the 15 September inventory had 99.</span></div>
+      <div class="metric"><strong>29</strong><span><code>/api/git/*</code> and <code>/api/tasks/{taskId}/git|commit|commits/*</code> operations. 23 existed on 15 September; six branch-sweep operations were added later.</span></div>
+      <div class="metric"><strong>35</strong><span>dev-seat operations that run Git or read the project checkout outside the Dossier and wiki document group, plus one <code>task-server</code> route served from local Git.</span></div>
+      <div class="metric"><strong>0</strong><span>of these operations have a Task Server equivalent that computes Git data. The Task Server contract states it has no Git access.</span></div>
+    </div>
+    <p>Every traced handler starts the <code>git</code> CLI as a child process on the OrchestratorApi host (<code>GitNetworkProcessRunner</code>, 30 s timeout). Each handler works in the project checkout resolved from <code>RepositoryPath ?? RootPath</code>; three read the task worktree when one exists. None reads the runner's checkout, a bare mirror, or a Task Server record. After the cutover that checkout is the Windows checkout that no longer receives runs.</p>
+
+    <h3>Proposed classification</h3>
+    <p>Owner vocabulary. <b>Task Server</b>: served from versioned Git facts and diff objects that the runner host publishes (D5). <b>Runner host request</b>: an authenticated operator request through the Task Server, executed as a fenced runner operation under the AGT-W18 ref-mutation lease. <b>Dev seat</b>: stays a local connector route. <b>Retire</b>: remove the Angular call and the handler.</p>
+    <table class="breakout">
+      <thead><tr><th>ID</th><th>Route</th><th>Source today</th><th>Git effect</th><th>Proposed owner</th></tr></thead>
+      <tbody>
+        <tr><td>fe-090</td><td><code>GET /api/git/history</code></td><td><code>SystemEndpoints.cs:145</code> → <code>ProjectGitGraphService.BuildHistory</code>; pages a 400-commit snapshot</td><td>Read</td><td>Task Server</td></tr>
+        <tr><td>fe-091</td><td><code>GET /api/git/hygiene</code></td><td><code>SystemEndpoints.cs:128</code> → <code>GitService.GetProjectHygiene</code>; <code>status</code>, upstream ahead/behind</td><td>Read; plain <code>status</code> may refresh the index</td><td>Split: canonical checkout state to Task Server, local dirty state retired (D4)</td></tr>
+        <tr><td>fe-092</td><td><code>GET /api/git/integration</code></td><td><code>SystemEndpoints.cs:156</code> → <code>ProjectIntegrationViewService.Build</code>; <code>origin/*</code> ancestry, merge log, range diff</td><td>Read, mostly uncached</td><td>Task Server, joined with AGT-W18 attempt projections</td></tr>
+        <tr><td>fe-093</td><td><code>GET /api/git/inventory</code></td><td><code>SystemEndpoints.cs:139</code> → <code>ProjectGitGraphService.BuildInventory</code>; background <code>for-each-ref</code>, <code>worktree list</code>, <code>log</code></td><td>Read</td><td>Task Server</td></tr>
+        <tr><td>fe-094</td><td><code>GET /api/git/project-commit/diff</code></td><td><code>SystemEndpoints.cs:177</code> → <code>GitService.GetProjectCommitDiffResult</code>; <code>git show</code></td><td>Read, uncached</td><td>Task Server (diff object)</td></tr>
+        <tr><td>fe-095</td><td><code>GET /api/git/project-commit/files</code></td><td><code>SystemEndpoints.cs:170</code> → <code>GitService.GetProjectCommitFiles</code></td><td>Read, uncached</td><td>Task Server (diff manifest)</td></tr>
+        <tr><td>fe-096</td><td><code>GET /api/git/summary</code></td><td><code>SystemEndpoints.cs:115</code> → <code>GitService.GetSummaries</code>; <code>status</code> and <code>diff --numstat</code> for every watched checkout</td><td>Read; plain <code>status</code></td><td>Retire (D4); dev seat only under D4 option B</td></tr>
+        <tr><td>fe-089</td><td><code>GET /api/git/cleanup/plan</code></td><td><code>SystemEndpoints.cs:195</code> → <code>GitCleanupService.BuildPlan</code></td><td>Read</td><td>Task Server, from the runner-host maintenance plan</td></tr>
+        <tr><td>fe-088</td><td><code>POST /api/git/cleanup/execute</code></td><td><code>SystemEndpoints.cs:202</code> → <code>GitCleanupService.Execute</code></td><td><b>Writes</b>: <code>branch -D</code>, <code>push origin --delete</code>, <code>update-ref -d</code>, <code>worktree prune</code></td><td>Runner host request (D3)</td></tr>
+        <tr><td>fe-084</td><td><code>GET /api/git/branch-sweep/plan</code></td><td><code>BranchSweepEndpoints.cs:43</code> → <code>BranchSweepService.Plan</code></td><td><b>Writes</b> remote-tracking refs: <code>fetch --prune origin</code> inside a GET</td><td>Runner host request; plan stored as an operation artifact</td></tr>
+        <tr><td>fe-085</td><td><code>POST /api/git/branch-sweep/run</code></td><td><code>BranchSweepEndpoints.cs:53</code> → <code>BranchSweepService.Run</code></td><td><b>Writes</b>: fetch, remote branch deletes in reclaim mode, report files</td><td>Runner host request (D3)</td></tr>
+        <tr><td>fe-082</td><td><code>POST /api/git/branch-sweep/execute</code></td><td><code>BranchSweepEndpoints.cs:63</code> → <code>BranchSweepService.Execute</code></td><td><b>Writes</b>: <code>push --force-with-lease</code> remote deletes</td><td>Runner host request (D3)</td></tr>
+        <tr><td>fe-083</td><td><code>GET /api/git/branch-sweep/latest</code></td><td><code>BranchSweepEndpoints.cs:31</code> → <code>BranchSweepReportStore.Latest</code>; report JSON under the task repository</td><td>No Git</td><td>Task Server (operation report)</td></tr>
+        <tr><td>fe-086</td><td><code>GET /api/git/branch-sweep/settings</code></td><td><code>BranchSweepEndpoints.cs:72</code> → <code>BranchSweepService.ResolveMode</code>; <code>project-settings.json</code></td><td>No Git</td><td>Task Server (project settings)</td></tr>
+        <tr><td>fe-087</td><td><code>PUT /api/git/branch-sweep/settings</code></td><td><code>BranchSweepEndpoints.cs:79</code> → <code>ProjectSettingsService.SetBranchSweep</code></td><td>No Git; settings file write</td><td>Task Server (project settings)</td></tr>
+        <tr><td>fe-277</td><td><code>GET /api/tasks/{taskId}/commit</code></td><td><code>TaskGitEndpoints.cs:98</code> → <code>GitService.GetCommitFiles</code>; newest entry of <code>commits[]</code></td><td>Read</td><td>Task Server</td></tr>
+        <tr><td>fe-278</td><td><code>GET /api/tasks/{taskId}/commit/diff</code></td><td><code>TaskGitEndpoints.cs:113</code> → <code>GitService.GetCommitDiffResult</code>; <code>git show</code></td><td>Read, uncached, uncapped</td><td>Task Server (diff object)</td></tr>
+        <tr><td>fe-283</td><td><code>GET /api/tasks/{taskId}/commits/files</code></td><td><code>TaskGitEndpoints.cs:213</code> → <code>GitService.GetAggregateCommitFiles</code>; one <code>git show</code> per attributed SHA</td><td>Read; the GET may rewrite <code>commits[]</code> through <code>TryBackfillAttribution</code></td><td>Task Server; backfill moves to the completion path</td></tr>
+        <tr><td>fe-282</td><td><code>GET /api/tasks/{taskId}/commits/diff</code></td><td><code>TaskGitEndpoints.cs:228</code> → <code>GitService.GetAggregateCommitDiffResult</code>; concatenated <code>git show</code></td><td>Same as fe-283</td><td>Task Server (diff object list)</td></tr>
+        <tr><td>fe-281</td><td><code>GET /api/tasks/{taskId}/commits/{sha}/files</code></td><td><code>TaskGitEndpoints.cs:252</code>; rebuilds the commit aggregate for <code>IsKnownJobCommit</code> on every call</td><td>Read</td><td>Task Server</td></tr>
+        <tr><td>fe-279</td><td><code>GET /api/tasks/{taskId}/commits/{sha}/diff</code></td><td><code>TaskGitEndpoints.cs:265</code> → <code>GitService.GetCommitDiffResult</code></td><td>Read, uncached</td><td>Task Server (diff object)</td></tr>
+        <tr><td>fe-280</td><td><code>GET /api/tasks/{taskId}/commits/{sha}/file</code></td><td><code>TaskGitEndpoints.cs:283</code> → <code>GitService.GetFileContentResult</code>; <code>git show sha:path</code></td><td>Read</td><td>Task Server (blob by SHA)</td></tr>
+        <tr><td>fe-301</td><td><code>GET /api/tasks/{taskId}/git/status</code></td><td><code>TaskGitEndpoints.cs:25</code> → <code>GitService.GetStatus</code>; task worktree, else main checkout; 1 s cache</td><td>Read, optional locks off</td><td>Task Server, from runner-published run worktree snapshots (D1); local variant D2</td></tr>
+        <tr><td>fe-297</td><td><code>GET /api/tasks/{taskId}/git/diff</code></td><td><code>TaskGitEndpoints.cs:31</code> → <code>GitService.GetDiffResult</code>; <code>git diff HEAD</code> in the task worktree, else main checkout</td><td>Read, uncached, uncapped</td><td>Same as fe-301</td></tr>
+        <tr><td>fe-298</td><td><code>GET /api/tasks/{taskId}/git/file</code></td><td><code>TaskGitEndpoints.cs:40</code> → <code>GitService.GetFileContentResult</code>; working-tree file</td><td>Read</td><td>Same as fe-301</td></tr>
+        <tr><td>fe-300</td><td><code>GET /api/tasks/{taskId}/git/hygiene</code></td><td><code>TaskGitEndpoints.cs:324</code> → <code>GitService.GetJobHygiene</code>; main checkout state plus task commit overlay</td><td>Read</td><td>Task Server (delivery hygiene from facts)</td></tr>
+        <tr><td>fe-295</td><td><code>POST /api/tasks/{taskId}/git/commit</code></td><td><code>TaskGitEndpoints.cs:46</code> → <code>GitService.Commit</code>; main checkout</td><td><b>Writes</b> a local commit when allowed; blocked today (see section 10)</td><td>Retire (D3)</td></tr>
+        <tr><td>fe-296</td><td><code>POST /api/tasks/{taskId}/git/commit-accepted-evidence</code></td><td><code>TaskGitEndpoints.cs:348</code> → <code>GitService.AutoCommitAsync</code></td><td><b>Writes</b> a commit, <code>commits[]</code> and a chat entry when allowed; blocked today</td><td>Retire (D3)</td></tr>
+        <tr><td>fe-299</td><td><code>POST /api/tasks/{taskId}/git/generate-message</code></td><td><code>TaskGitEndpoints.cs:86</code> → <code>GitService.GenerateCommitMessageAsync</code>; <code>git diff HEAD</code> plus a <code>codex exec</code> model call</td><td>No repository write; starts a CLI</td><td>Retire (D3)</td></tr>
+        <tr><td>fe-314</td><td><code>GET /api/tasks/{taskId}/provenance</code></td><td><code>TaskGitEndpoints.cs:302</code> → <code>TaskProvenanceService.BuildView</code>; persisted provenance plus <code>rev-parse</code> and <code>merge-base --is-ancestor</code> per commit</td><td>Read, recomputed per request</td><td>Task Server</td></tr>
+        <tr><td>fe-270</td><td><code>GET /api/tasks/{taskId}/checkout/{path*}</code></td><td><code>TaskFilesEndpoints.cs:77</code> → <code>TaskFileHistoryService.ReadFile</code>; live disk read, or <code>git show at:path</code> for any SHA</td><td>Read</td><td>Split: <code>?at=sha</code> to Task Server blob; live read retired (D4)</td></tr>
+        <tr><td>fe-271</td><td><code>GET /api/tasks/{taskId}/checkout/{path*}/history</code></td><td><code>TaskFilesEndpoints.cs:87</code> → <code>TaskFileHistoryService.GetHistory</code>; <code>git log --follow</code> without a count limit</td><td>Read</td><td>Task Server, paged</td></tr>
+        <tr><td>fe-305</td><td><code>POST /api/tasks/{taskId}/open-in-vscode</code></td><td><code>TaskGitEndpoints.cs:390</code> → <code>GitService.OpenInVsCode</code>; <code>code -r</code> on the main checkout</td><td>No Git; starts a local process</td><td>Retire (D4); dev seat only under D4 option B</td></tr>
+        <tr><td>fe-194</td><td><code>GET /api/projects/{project}/wiki/history/{relPath*}</code></td><td><code>ProjectDocsEndpoints.cs:384</code> → <code>GitService.GetWikiDocGitInfoCached</code>; <code>git log --follow</code>, HEAD-keyed cache</td><td>Read</td><td>Task Server, with the document group (section 11)</td></tr>
+        <tr><td>fe-201</td><td><code>GET /api/projects/{project}/wiki/revisions/{sha}/{relPath*}</code></td><td><code>ProjectDocsEndpoints.cs:397</code> → <code>GitService.GetFileAtCommitCached</code>; <code>git show</code></td><td>Read</td><td>Task Server (blob by SHA)</td></tr>
+        <tr><td>fe-246</td><td><code>GET /api/search/repository</code> <span class="dim">(classified <code>task-server</code>, must-add)</span></td><td><code>GlobalSearchEndpoints.cs:42</code> → <code>GlobalSearchService.Search</code>; <code>git log --all --max-count=2000</code> and <code>ls-files</code> per repository</td><td>Read</td><td>Task Server, from a commit and path index fed by published facts</td></tr>
+      </tbody>
+    </table>
+    <p>The table has 36 rows: the 29 Git operations, both checkout operations, provenance, open-in-vscode, the two wiki Git operations, and repository search. Repository search is a <code>task-server</code> row in <code>routes.json</code> with target <code>/api/v1/studio/search/repository</code> and status must-add. The AGT-2758 log entry above calls it a dev-seat route. Today OrchestratorApi serves it from local Git.</p>
+    <p>Three backend-only writers have no Angular caller, so <code>routes.json</code> does not count them: <code>POST /api/tasks/{taskId}/git/withheld-candidates/commit</code> (<code>TaskGitEndpoints.cs:77</code>), <code>POST /api/tasks/{taskId}/commits/integration</code> (<code>:159</code>) and <code>POST /api/git/branch-reclaim/promotion</code> (<code>SystemEndpoints.cs:217</code>). They follow the D3 outcome.</p>
+    <h3>Inconsistencies found</h3>
+    <ul>
+      <li><b>Different trees.</b> <code>git/status</code>, <code>git/diff</code> and <code>git/file</code> read the task worktree when it exists. <code>generate-message</code>, both commit routes, <code>git/hygiene</code>, <code>checkout</code> and all <code>commit</code>/<code>commits</code> routes read the main checkout. A generated message can therefore describe a different tree than the Git pane shows.</li>
+      <li><b>Writes inside reads.</b> <code>GET /api/git/branch-sweep/plan</code> fetches and prunes remote-tracking refs. <code>GET /commits/files</code> and <code>/commits/diff</code> can rewrite <code>commits[]</code> in <code>task.json</code> through <code>TryBackfillAttribution</code> (<code>TaskGitEndpoints.cs:221</code>, <code>:236</code>).</li>
+      <li><b>Possibly stale key.</b> The run-commit lookup by trailer is cached in the SHA-range LRU under <code>taskruncommits|root|marker</code>. That key has no HEAD component, so the lookup can return results that are out of date until the entry is evicted.</li>
+      <li><b>Invisible load.</b> <code>GitProcessTelemetry</code> counts spawns only inside a <code>BeginRequest</code> scope. None of the routes above open one, so <code>/api/admin/git-telemetry</code> does not show their spawns.</li>
+    </ul>
+  </section>
+
+  <section id="git-diffs">
+    <h2><span class="number">09</span> Diffs</h2>
+    <h3>Where diffs are computed today</h3>
+    <table class="breakout">
+      <thead><tr><th>Diff</th><th>Host and source</th><th>Cache</th><th>Limits</th></tr></thead>
+      <tbody>
+        <tr><td>Review material</td><td>Runner host. <code>runner/RemoteReviewWorkspace.cs</code> fetches the frozen integration ref and resolves the merge-base. It then runs <code>git diff --find-renames --unified=3 &lt;merge-base&gt; &lt;result-sha&gt;</code> (<code>:1977-2050</code>).</td><td>None; computed per review in a disposable checkout</td><td>200 files and 12,000 lines; visible <code>REVIEW_DIFF_TRUNCATED</code> marker (<code>:17-18</code>, <a href="../system/domains/review.md">review.md</a> 114-138)</td></tr>
+        <tr><td>Task commits, single and aggregate</td><td>OrchestratorApi. <code>git show</code> per attributed SHA on the main checkout (<code>GitService.cs:3023</code>, <code>:3098</code>)</td><td>None for the diff text</td><td>None; no byte cap, no paging</td></tr>
+        <tr><td>Commit list per run</td><td>OrchestratorApi. <code>git log a..b</code> over <code>HeadShaBefore..HeadShaAfter</code> (<code>GitService.GetCommitsInShaRange</code>, <code>TaskRunnerEndpoints.cs:299</code>)</td><td>SHA-range LRU, 512 entries, no TTL (<code>GitService.cs:662</code>)</td><td>None</td></tr>
+        <tr><td>Run diff on the Task Server</td><td>Task Server. Returns the first run artifact named <code>*.patch</code> or <code>*.diff</code> (<code>TaskServerStudioTaskHistoryStore.cs:202</code>)</td><td>Stored artifact</td><td>8 MiB per file, 100 MiB per result. No producer uploads such an artifact, so the route answers <code>Available=false</code>.</td></tr>
+        <tr><td>In-flight worktree diff</td><td>OrchestratorApi. <code>git diff HEAD</code> in the local task worktree, else the main checkout (<code>GitService.GetDiffResult</code>, <code>:2356</code>)</td><td>Status 1 s; diff none</td><td>None</td></tr>
+        <tr><td>Integration range</td><td>OrchestratorApi. <code>diff --name-status/--numstat</code> between integration SHAs (<code>GetFilesChangedInRangeAtRoot</code>, <code>:6648</code>)</td><td>SHA-range LRU</td><td>None</td></tr>
+        <tr><td>Commit-message input</td><td>OrchestratorApi. <code>git diff HEAD</code> on the main checkout</td><td>None</td><td>60,000 characters, then <code>[truncated]</code></td></tr>
+      </tbody>
+    </table>
+    <p>The SHA-range LRU already uses the right invariant. Its comment says a diff between two fixed SHAs never changes. However, it lives in one process's memory, it is keyed by a local checkout path, and it never holds the full diff text.</p>
+
+    <h3>Consistency with review and gate</h3>
+    <p>The card states the review scope as the attributed <code>commits[]</code>. The source shows two different objects:</p>
+    <ul>
+      <li><b>Reviewed delivery.</b> The semantic review grades <code>merge-base(integration ref, Result-SHA)..Result-SHA</code> on the runner. Review code never reads <code>commits[]</code>.</li>
+      <li><b>Attributed commits.</b> <code>commits[]</code> is integration and acceptance evidence. On remote completion, <code>LeaseEndpoints.cs:1692-1744</code> derives it from the delivery range and filters it through <code>RemoteCommitAttributionGuard</code>. The Studio's aggregate diff concatenates <code>git show</code> output for those SHAs.</li>
+    </ul>
+    <p>The two usually describe the same change, but nothing guarantees it. Superseded commits, merges, a moved integration base, or the AGT-W18 final merge candidate can make them differ. A central diff service should therefore name the object it shows. It should never present an attributed-commit concatenation as "the diff the reviewer saw".</p>
+
+    <h3>Proposed diff model</h3>
+    <p class="dim">Proposal. Limits are starting values to be confirmed by measurement in card 1.</p>
+    <ul>
+      <li><b>Key.</b> A diff object is immutable and addressed by <code>repositoryId</code>, <code>baseSha</code>, <code>headSha</code>, diff options (rename detection, context lines, first-parent for merges) and a renderer version. Because commits are content-addressed, the object never needs a TTL. Retention follows task archive and result-ref retention, not LRU pressure.</li>
+      <li><b>Named views.</b> <code>reviewed-delivery</code> (merge-base and Result-SHA as recorded in the review receipt), <code>commit</code> (one attributed SHA against its first parent), <code>integration</code> (pre-tip to published tip from the AGT-W18 receipt) and <code>run-checkpoint</code> (see below). The Studio labels the view and both SHAs.</li>
+      <li><b>Manifest and pages.</b> Each object has a manifest listing path, status, rename source, numstat and binary flag, plus one patch per file. The manifest holds up to 5,000 files. Each per-file patch holds up to 256 KiB or 5,000 lines; beyond that the file is marked truncated, never silently. The Studio pages through files by manifest cursor and loads one file patch at a time. Binary files carry metadata only.</li>
+      <li><b>Review alignment.</b> The <code>reviewed-delivery</code> manifest records whether the review prompt was truncated at 200 files or 12,000 lines. The Studio then shows which files the reviewer received in full. Complete paging remains available beyond that budget.</li>
+      <li><b>No Git on read.</b> A read never starts Git. If an object is missing, the read answers <code>warming</code> and enqueues one deduplicated runner operation. Other states are <code>ready</code>, <code>unavailable</code> with a typed reason such as an unknown SHA, or <code>too-large</code>.</li>
+      <li><b>In-flight runs.</b> The runner publishes a bounded <code>run-checkpoint</code> object at defined checkpoints: after each agent turn, before handoff, and on salvage. It covers the worktree against the run's base SHA, including untracked files within the size limit. The Studio shows the latest checkpoint with its timestamp. It does not show live worktree state, because the worktree lives on the runner host.</li>
+    </ul>
+
+    <h3>Relation to AGT-2954</h3>
+    <p>AGT-2954, "Publish versioned Git facts outside read requests", applies the same principle to the OrchestratorApi task detail. Its run commits exist only as runner salvage refs, for example <code>origin/agent-studio/salvage/agent-runner-01/AGT-2954/…</code>, and are not an ancestor of develop. On those refs it adds immutable snapshots keyed by ref, config and generation signatures. It adds the states <code>warming</code>, <code>ready</code>, <code>stale</code> and <code>unavailable</code>, a per-repository Git process budget of four children, and the rule that detail reads never start Git. This proposal reuses that state vocabulary and the no-Git-on-read rule. It moves the computation from the OrchestratorApi checkout to the runner host and the storage to the Task Server. AGT-2954 stays useful as the interim for the legacy OrchestratorApi; it is not a substitute for the central plane.</p>
+
+    <figure class="breakout">
+      <svg class="flow" viewBox="0 0 1000 300" role="img" aria-labelledby="git-flow-title git-flow-desc">
+        <title id="git-flow-title">Proposed Git facts flow</title>
+        <desc id="git-flow-desc">The runner host computes Git facts and diff objects from its canonical checkout and run worktrees and publishes them to the Task Server. The Task Server stores them immutably and serves them to the Studio through the connector. Studio operator requests go to the Task Server, which dispatches fenced runner operations. The Windows dev seat holds no Git route.</desc>
+        <rect class="box execution" x="20" y="40" width="270" height="140" rx="10"></rect>
+        <text class="t-head" x="40" y="72">Runner host</text>
+        <text class="t-body" x="40" y="100">canonical checkout per project</text>
+        <text class="t-body" x="40" y="122">run worktrees, review, gate</text>
+        <text class="t-body" x="40" y="144">computes facts and diff objects</text>
+        <text class="t-body" x="40" y="166">fenced maintenance operations</text>
+        <rect class="box authority" x="365" y="40" width="270" height="140" rx="10"></rect>
+        <text class="t-head" x="385" y="72">Task Server</text>
+        <text class="t-body" x="385" y="100">versioned Git facts</text>
+        <text class="t-body" x="385" y="122">immutable SHA-keyed diff objects</text>
+        <text class="t-body" x="385" y="144">read API, no Git on read</text>
+        <text class="t-body" x="385" y="166">operator request queue</text>
+        <rect class="box" x="710" y="40" width="270" height="140" rx="10"></rect>
+        <text class="t-head" x="730" y="72">Studio on Windows</text>
+        <text class="t-body" x="730" y="100">connector, observer only</text>
+        <text class="t-body" x="730" y="122">diff views by named object</text>
+        <text class="t-body" x="730" y="144">requests, never Git</text>
+        <path class="wire exec" d="M290 92 H365"></path>
+        <path class="wire" d="M635 92 H710"></path>
+        <path class="wire dashed" d="M710 150 H635"></path>
+        <path class="wire dashed exec" d="M365 150 H290"></path>
+        <path class="head exec" d="M365 92 l-9 -5 v10 z"></path>
+        <path class="head" d="M710 92 l-9 -5 v10 z"></path>
+        <path class="head" d="M635 150 l9 -5 v10 z"></path>
+        <path class="head exec" d="M290 150 l9 -5 v10 z"></path>
+        <text class="t-small" x="296" y="84">publish</text>
+        <text class="t-small" x="648" y="84">read</text>
+        <text class="t-small" x="645" y="168">request</text>
+        <text class="t-small" x="296" y="168">dispatch</text>
+        <rect class="box muted" x="710" y="220" width="270" height="56" rx="10"></rect>
+        <text class="t-body" x="730" y="246">Windows dev seat: CLI probes,</text>
+        <text class="t-body" x="730" y="266">launchers; no Git route (D4)</text>
+      </svg>
+      <figcaption><b>Proposed flow.</b> Git computation moves to the host that owns the canonical checkout and the run worktrees. The Task Server stores and serves the results. The Studio observes and sends requests. Solid lines carry data; dashed lines carry operator requests.</figcaption>
+    </figure>
+  </section>
+
+  <section id="git-writes">
+    <h2><span class="number">10</span> Writing routes</h2>
+    <p>The card names four writing routes. The trace adds three branch-sweep routes that write refs, one of them a GET.</p>
+    <table class="breakout">
+      <thead><tr><th>Route</th><th>What it does today</th><th>Proposal (D3)</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /api/tasks/{taskId}/git/commit</code></td><td><code>GitService.Commit</code> (<code>GitService.cs:2542</code>) passes no file list. The commit candidate gate therefore adds the blocking <code>explicit-pathspec-required</code> finding (<code>CommitCandidateGate.cs:186-191</code>). The route answers with a gate block, or with "Nothing to commit" on a clean tree. If it were allowed, it would commit to the main checkout's HEAD with no push.</td><td>Retire. It cannot succeed today. ADR-0052 and the commit-push doctrine keep Git with platform-owned steps, and AGT-W18 makes the remote executor the single publisher.</td></tr>
+        <tr><td><code>POST /api/tasks/{taskId}/git/commit-accepted-evidence</code></td><td><code>GitService.AutoCommitAsync</code> (<code>:3139</code>) hits the same gate block. If allowed, it would commit on the main checkout, stamp <code>commits[]</code>, write a chat entry and clear the hygiene cache.</td><td>Retire. Accepted evidence travels as run artifacts and the immutable result envelope. If evidence is missing from a delivery, the operator uses the existing <code>integration/retry</code> request or starts a new run.</td></tr>
+        <tr><td><code>POST /api/tasks/{taskId}/git/generate-message</code></td><td><code>GitService.GenerateCommitMessageAsync</code> (<code>:2774</code>) runs <code>git diff HEAD</code> on the main checkout and a <code>codex exec</code> model call with a 60 s timeout.</td><td>Retire with <code>git/commit</code>; its only consumer is the manual commit form. Commit messages for platform commits come from the pipeline.</td></tr>
+        <tr><td><code>POST /api/git/cleanup/execute</code></td><td><code>GitCleanupService.Execute</code> deletes local task branches and backup refs, deletes remote task branches by push, and prunes worktrees, after an ancestry recheck.</td><td>Move to the runner host as one operator request, "repository maintenance", merged with branch sweep. The local-branch part disappears with the Windows checkout. The remote-delete part needs the AGT-W18 ref-mutation lease.</td></tr>
+        <tr><td><code>GET /api/git/branch-sweep/plan</code>, <code>POST …/run</code>, <code>POST …/execute</code></td><td><code>BranchSweepService</code> fetches and prunes <code>origin</code>, then optionally deletes remote branches with <code>push --force-with-lease</code>. The same logic runs every 24 h from <code>GitBranchRetention.cs:863</code>.</td><td>Runner host request. The plan becomes an operation artifact that the Task Server serves, so the GET no longer fetches. Settings and reports move to Task Server project settings and operation reports.</td></tr>
+      </tbody>
+    </table>
+    <p>Moving branch maintenance to the runner host matches existing practice. <code>runner/GitWorkspace.cs</code> already fetches with prune, prunes worktrees and deletes branches in its own clone, and the Task Server already deletes result refs in <code>ResultRefGc.cs</code>. The proposal adds an operator-visible plan and receipt. It does not add a second Git authority.</p>
+  </section>
+
+  <section id="git-local">
+    <h2><span class="number">11</span> Local development</h2>
+    <p>After 12 September no run, gate or review executes on Windows, and after AGT-W18 nothing publishes from it. A Windows checkout can remain as a human's own working copy. Two questions follow: whether the Studio still reads it (D2, D4), and whether it stays the place where humans change card code. Section 13 answers the second question with a central intervention workspace (D7). D2 and D4 follow from that answer.</p>
+    <h3>What a supported Windows checkout would need</h3>
+    <p>If the operator keeps it as a use case (D4 option B, which follows D7 a or d), the minimum is three dev-seat reads plus one launcher, each labelled "Local checkout" and never mixed into task, review or integration views:</p>
+    <ul>
+      <li><code>GET /api/tasks/{taskId}/git/status</code>, <code>/git/diff</code> and <code>/git/file</code>, re-scoped to a project-level local working copy with no task fallback and no task identity;</li>
+      <li><code>POST /api/tasks/{taskId}/open-in-vscode</code>, which needs a VS Code binary on the connector host.</li>
+    </ul>
+    <p><code>/api/git/summary</code> and <code>/api/git/hygiene</code> would be optional additions. Under option A all of these routes retire.</p>
+
+    <h3>Repository documents</h3>
+    <p>The card asks for every route that touches repository files. Beyond the Git table, 41 dev-seat operations read or write files in the Windows checkout or the Studio install. They are not Git views, but they share the dependency on the Windows checkout, and several of them write Git.</p>
+    <table class="breakout">
+      <thead><tr><th>Group</th><th>Operations</th><th>Source today</th><th>Git effect</th><th>Proposed owner</th></tr></thead>
+      <tbody>
+        <tr><td>Wiki</td><td>18 (fe-181 to fe-203 without the two Git rows above): 9 reads, 9 writes</td><td><code>ProjectDocsService</code> through <code>ProjectWikiSourceResolver</code>: <code>&lt;checkout&gt;/docs</code>, or a read-only snapshot when <code>wikiSourceBranch</code> is set. <code>recent</code>, <code>pulse</code> and <code>folder</code> run <code>git log</code>.</td><td><b>Writes</b> commit directly to the checked-out branch (<code>CommitWikiChange</code>, <code>ProjectDocsService.cs:575-596</code>) with no push</td><td>Reads: Task Server from a published document snapshot. Writes: repository-write requests (follow-up concept)</td></tr>
+        <tr><td>Dossiers</td><td>9 (fe-097, fe-098, fe-204 to fe-209, fe-419)</td><td><code>WorkbenchCatalogueService</code> scans <code>docs/**/workbench.json</code> in the checkout.</td><td><b>Writes</b>: decision confirm, document and review commit through <code>ManagedRepositoryMutationService.Execute</code> and queue a push of the current branch. Catalogue reads can assign missing keys, then commit and push (<code>EnsureCanonicalKeys</code>, <code>:574-647</code>).</td><td>Same as wiki. Key assignment moves out of the read path.</td></tr>
+        <tr><td>Security</td><td>4 (fe-156, fe-159 to fe-161)</td><td><code>&lt;checkout&gt;/docs/operations/security/</code></td><td>PUT writes files without a commit, leaving the checkout dirty</td><td>Same as wiki</td></tr>
+        <tr><td>Steering, style guides, architecture, skill readiness, build profile</td><td>7 (fe-168 to fe-171, fe-101, fe-107, fe-164)</td><td>Checkout files: steering docs, <code>docs/quality</code>, ADR archive, README and AGENTS shims, <code>.agent-studio/project.yml</code>. <code>read-analytics</code> reads task folders.</td><td>Read, no Git</td><td>Task Server from the published document snapshot</td></tr>
+        <tr><td>Studio install</td><td>3 (fe-060, fe-166, fe-128)</td><td>Concept docs and the skills catalogue come from Agent Studio's own install. The graph reads a saved capture in the task repository.</td><td>Read, no Git</td><td>Unchanged by this extension</td></tr>
+      </tbody>
+    </table>
+    <p>The Dossier writes are a second Windows publisher. A Dossier review or decision commits on the Windows checkout and pushes <code>origin/&lt;current branch&gt;</code>. That push also carries any earlier unpushed wiki commits. This conflicts with the AGT-W18 single-publisher rule as directly as the commit routes do. <a href="../operations/remote-task-server-local-studio.md">remote-task-server-local-studio.md</a> already plans a repository-write contract for wiki and Dossier producers and keeps them backend-bound until it exists. This extension does not design that contract. It records the conflict and proposes a follow-up concept card (section 18).</p>
+  </section>
+
+  <section id="git-cutover">
+    <h2><span class="number">12</span> Cutover</h2>
+    <table>
+      <thead><tr><th>Card</th><th>Recorded state</th><th>Git view dependency</th></tr></thead>
+      <tbody>
+        <tr><td>AGT-2737</td><td>Remote Task Server cutover. The single-host rehearsal completed on 26 September; the production cutover is still closed and escalated on missing production-infrastructure access (<a href="../operations/setup/single-host-task-server.md">single-host-task-server.md</a>, <a href="../operations/delivery-chain/index.html">delivery chain</a>).</td><td>Moves task authority. It does not need the Studio Git views to work.</td></tr>
+        <tr><td>AGT-2949</td><td>No document mentions it. Its only trace is one runner salvage ref dated 4 October with outcome Blocked. That ref adds a "Detached Shape 3 acceptance (I08)" scenario covering durable integration attempts and Studio reattachment readback. This matches I08 in <a href="../operations/deployment-story/index.html">AGT-W63</a> (inference).</td><td>Its readback concerns task and integration state, not diffs.</td></tr>
+        <tr><td>AGT-W18 <code>retire-local</code></td><td>Proposed step 8 of the remote gate. "Studio integration requires no checkout, local gate workspace or canonical push credentials." No card exists yet.</td><td>From this step on, nothing updates the Windows checkout. Every dev-seat Git view is then stale or empty.</td></tr>
+      </tbody>
+    </table>
+    <p>What changes for the interim routes after AGT-2737 (inference from the traced code):</p>
+    <ul>
+      <li><b>Commit views fail visibly.</b> Remote completion currently fetches the delivery branch into the OrchestratorApi checkout (<code>LeaseEndpoints.cs:1692</code>). Once completion goes to the Task Server, that fetch no longer happens on Windows, so <code>git show &lt;sha&gt;</code> fails for new tasks. A failure is visible and acceptable for an interim.</li>
+      <li><b>Worktree views fail silently.</b> <code>git/status</code>, <code>git/diff</code> and <code>git/file</code> fall back to the main checkout when no local task worktree exists (<code>GitService.ResolveRunLocation</code>, <code>:2117</code>). A remote run therefore shows the operator's local changes as if they were the run's. This is the one interim behaviour that misleads, so card 1 guards it before the cutover.</li>
+      <li><b>Project views age.</b> Inventory, history and integration show the last state the Windows checkout fetched.</li>
+    </ul>
+    <p>Conclusion: the reclassification does not block AGT-2949 or AGT-2737. The current routes can serve as the interim if one small guard lands first. The central replacements must land before AGT-W18 <code>retire-local</code>.</p>
+    <p>The same holds for the intervention workspace (section 13). Until <code>retire-local</code>, hand interventions can keep using the Windows checkout, as they do today. From that step on, the workstation has no publication credentials, so the lease, provisioning, attach and attribution slices (cards 9 to 12) must exist by then. The Studio "Intervene" action (card 13) can follow, because the operator request can be sent through the Task Server API without it.</p>
+  </section>
+
+  <section id="intervention">
+    <h2><span class="number">13</span> Intervention workspace</h2>
+    <p class="kicker">Extension · AGT-3017 operator steer · 5 October 2026</p>
+    <p>The product direction is indirection: agents implement, the Studio observes, and the remote host integrates. Operators still intervene by hand. They make quick fixes, salvage a stuck attempt, merge a delivery the server could not push, or unblock a card. The operator said on 5 October (paraphrased from German): "I wanted indirection, but there are always interventions. Then maybe there should be a dedicated Docker container for that."</p>
+    <p>Today these interventions happen in the Windows checkout, outside the card. They do not hold the card's lease. They commit under whatever identity the checkout or tool has. Review and gate see them only if they happen to land between a base and a Result-SHA. Keeping the Windows checkout for this purpose would keep a hidden side channel next to the observer-only Studio. This section proposes to make interventions explicit, central and attributable instead. VS Code on Windows becomes only the user interface. It attaches to a container on the runner host that holds the card's branch and the agent's toolchain.</p>
+    <div class="callout" data-tone="warn">
+      <h3>Name collision</h3>
+      <p>AGT-2765 also uses the word "Intervention", for orchestrator-created root-cause cards (AGT-W51 MK8, <a href="../operations/docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> line 514). The supervisor routes <code>intervene/cancel-run</code> and <code>intervene/force-fail</code> are control actions. In this dossier, "intervention" means a human working on a card's code. The proposed attempt kind is <code>intervention</code>, and the Studio action is "Intervene".</p>
+    </div>
+
+    <h3>Observed interventions</h3>
+    <p>This is counted from Git history at <code>2d6d15f6b</code> and the remote ref list fetched on 5 October 2026. The window runs from 12 September, when Windows stopped being an execution world, to 5 October 2026: 24 days. It covers only what reached a commit or a ref.</p>
+    <table class="breakout">
+      <thead><tr><th>Signal</th><th>Count</th><th>Evidence class</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Hand merges into develop under the operator's personal Git identity</td><td>51 commits on 7 days</td><td>Hard count; kind is model-judged</td><td>29 have the subject <code>Merge commit '&lt;sha&gt;' into develop</code> (12 to 16 September). 22 have named operator merges, such as "operator card-scoped merge" (7 cards on 14 and 15 September), "heal develop by integrating the AGT-2373 merge the server could not push", and two main-hotfix back-merges (4 and 5 October). The kind is judged from the subject line.</td></tr>
+        <tr><td>Direct commits on develop outside any card, same identity</td><td>44 commits on 13 days</td><td>Hard count; confounded</td><td>38 carry an agent co-author trailer and 6 carry none. Examples are "fix(gate): resolve toolchain launchers with their Windows extensions" and "Fix workstation memory pressure and require remote verification". A trailer shows an interactive tool session in the operator's checkout, not who typed the change.</td></tr>
+        <tr><td>Non-runner commits on card refs (<code>agent-studio/results</code>, <code>/salvage</code>, <code>/quarantine</code>) not on develop</td><td>7 commits on 4 cards</td><td>Hard</td><td>AGT-2884 has "operator salvage of the retained worktree" as <code>Agent Studio Operator &lt;operator@agent-studio.local&gt;</code> (18 September). AGT-2804 has "operator salvage of the finished attempt" as <code>agent-runner-01 salvage</code> (25 September). AGT-2912 has a develop merge into the delivery as <code>Codex &lt;codex@openai.com&gt;</code> (25 September). AGT-2944 has a develop merge into the delivery as <code>Agent Studio &lt;agent-studio@local&gt;</code> (4 October). That is four identities, none of them tied to an operator account.</td></tr>
+        <tr><td>Hand-made salvage, fix, delivery and operator branches on <code>origin</code></td><td>8, not time-bounded</td><td>Hard count; purpose is model-judged</td><td><code>salvage/*</code> (2), <code>fix/*</code> (2), <code>delivery/*</code> (2), <code>operator/integration</code>, <code>refs/salvage/agt-2108-…</code>.</td></tr>
+        <tr><td>Platform merges under the same personal identity</td><td>158 commits, excluded</td><td>Model-judged</td><td>These have the subject <code>Merge commit '&lt;sha&gt;' into HEAD</code> and come from the Windows OrchestratorApi using the workstation Git config. They show that author identity alone cannot separate human work from platform work today.</td></tr>
+        <tr><td><code>/continue</code> rounds after a hand fix</td><td>Not counted</td><td>Coverage gap</td><td>Follow-up history lives in the task store (<code>pending_follow_ups</code>, timeline). That store cannot be reached from this runner worktree. Local job folders hold only <code>results/</code>.</td></tr>
+        <tr><td>Uncommitted edits in the Windows checkout</td><td>Not observable</td><td>Coverage gap</td><td>Invisible by construction. This is the side channel the section is about.</td></tr>
+      </tbody>
+    </table>
+    <p>Reading: hand intervention is routine, not exceptional. On at least 13 of 24 days a human-driven commit landed on develop outside the card flow. Card-scoped hand work used four different ad-hoc identities. None of it is visible as human work in <code>commits[]</code>. An earlier dossier reached the same conclusion from another direction: it lists about 25 operator recipes held in session memory, such as clearing a worktree or merging by hand, and none of them exists in the product (<a href="../operations/lieferkette-robustheit/index.html">lieferkette-robustheit</a> line 127; model-judged).</p>
+
+    <h3>Source facts</h3>
+    <ul>
+      <li><b>No human path into a runner worktree.</b> No code or document describes a human editing a runner worktree, a takeover of a workspace, or a shell attach into a run container. The closest is "Operators can fetch that ref to inspect or continue the exact attempt" (<code>linux-runner-host.md:1749-1752</code>).</li>
+      <li><b>No human attempt kind.</b> <code>RunnerAttemptKinds</code> has only <code>coding</code> and <code>review</code> (<code>RunnerContracts.cs:43-47</code>). There is no ad-hoc card. A card without a prompt is possible (<code>TaskRequests.cs:294</code>).</li>
+      <li><b>No author in <code>commits[]</code>.</b> <code>TaskCommitInfo</code> (<code>TaskCommit.cs:19-116</code>) has no author or provenance field. <code>RemoteCommitAttributionGuard</code> (<code>:12-93</code>) never checks author or trailers. It rejects a whole range when a commit subject names another task key. The only product trailers are <code>Task-Id:</code>, <code>Runner-Id:</code> and <code>Commit-Gate:</code> (<code>GitService.cs:2746-2758</code>).</li>
+      <li><b>Continue base.</b> A fenced remote run starts from the integration head unless a continuation base exists (<code>GitWorkspace.cs:162-191</code>). That base is written only for a lost worker or a mechanical fallback (<code>LostWorkerContinuation.cs:97</code>, <code>LeaseEndpoints.cs:2493-2505</code>). The comment at <code>RemoteTaskRunner.cs:861-864</code> says a stopped run's follow-up continues "on that work", but the <code>stopped</code> completion path stores no base.</li>
+      <li><b>Topology.</b> Under the approved single-host exception, the Task Server and the runner share <code>agent-runner-01</code>. "A host outage takes Runner and Task Server down together" (<code>remote-task-server-local-studio.md:22-26</code>). The LinkSupervisor reverse link is Windows-initiated <code>ssh -R</code> carrying HTTP ports 15031→5031, 5031 and 4011 (<code>LinkSupervisor.cs:602-611</code>, <code>remote-runner-persistent-connection.md:55-84</code>). It is interim by design (<code>:190-196</code>). The connector reaches the edge through <code>ssh -N -L 127.0.0.1:18443:…</code> (<code>single-host-task-server.md:82-88</code>).</li>
+      <li><b>No Docker socket outside the runner.</b> B1 requires a Docker Desktop connector to have "no Docker socket" (section 03). Run containers get no socket (<code>container-tranche-plan.md:8</code>). The per-task container itself is planned, not built: the plan's C1 core (<code>:15-20</code>) has no <code>agent-cli</code> image target yet (<code>:28</code>). The <code>project.yml</code> <code>image</code> key is parsed but nothing builds or runs it (<code>ProjectPreparation.cs:352</code>, <code>:871-872</code>).</li>
+    </ul>
+
+    <h3>Attach path</h3>
+    <p class="dim">Comparison of four attach paths. Facts about VS Code products come from their public documentation, not from this repository, and are labelled inferred in section 16.</p>
+    <table class="breakout">
+      <thead><tr><th>Criterion</th><th>Dev Containers over SSH</th><th>Remote-SSH into a container sshd</th><th>Remote Tunnels</th><th>Browser IDE through the Studio</th></tr></thead>
+      <tbody>
+        <tr><td>How it works</td><td>VS Code drives the host's Docker engine through <code>DOCKER_HOST=ssh://</code> and attaches to the container.</td><td>The container runs <code>sshd</code> on a host loopback slot port. VS Code connects through <code>ProxyJump</code> via a forward-only host account.</td><td>A tunnel CLI in the container dials out to Microsoft's dev tunnel relay. VS Code connects through the relay.</td><td>openvscode-server or code-server runs in the container. The Studio proxies it to the browser.</td></tr>
+        <tr><td>Docker socket</td><td><b>Required</b> for the operator's SSH user. Docker group membership is root-equivalent on the host that also runs the Task Server.</td><td>None outside the runner daemon.</td><td>None.</td><td>None, but the Studio edge proxies an IDE with a terminal.</td></tr>
+        <tr><td>Credentials</td><td>The admin SSH key plus a Docker context on Windows.</td><td>The operator's public key, registered once and limited to <code>restrict,permitopen="127.0.0.1:&lt;slot ports&gt;"</code>. Host key pinned. The container holds no push or provider credentials.</td><td>A GitHub or Microsoft account outside the platform. A tunnel token sits in the container.</td><td>The Studio session. The connector allowlist would need a non-<code>/api</code> route class.</td></tr>
+        <tr><td>Topology fit</td><td>Independent of the reverse link. Widens host access on the single host.</td><td>Independent of the reverse link, which carries only HTTP and is interim. Uses the existing SSH administration surface with less privilege.</td><td>Bypasses the platform's network path completely.</td><td>All traffic rides the connector's <code>-L</code> edge into the co-hosted Task Server.</td></tr>
+        <tr><td>Latency</td><td>One SSH hop, plus container steps on each open.</td><td>One SSH hop through the jump, the same as today's admin SSH. Not measured.</td><td>Depends on the relay.</td><td>Browser over the edge; editor round trips go over WebSocket.</td></tr>
+        <tr><td>Extensions</td><td>Full Marketplace, running in the container.</td><td>Full Marketplace, including C# Dev Kit, running in the container.</td><td>Full Marketplace.</td><td>Open VSX only. Microsoft-licensed extensions such as C# Dev Kit and the Remote extensions are unavailable.</td></tr>
+        <tr><td>Onboarding effort</td><td>High: Dev Containers extension, Docker CLI on Windows, Docker context, and a <code>devcontainer.json</code> that becomes a second toolchain truth.</td><td>Low to medium: Remote-SSH extension and one generated SSH config block, once.</td><td>Low: sign in.</td><td>Lowest: nothing to install.</td></tr>
+      </tbody>
+    </table>
+    <p><b>Proposal (D8).</b> Use Remote-SSH into a container <code>sshd</code> through a forward-only host account. It is the only path that needs neither a Docker socket nor a third-party relay, keeps full extension support, and adds nothing to the Task Server edge. The host account <code>intervene</code> has no shell and may only open the loopback slot ports. Two slots start with two static SSH aliases, <code>intervene-1</code> and <code>intervene-2</code>, so the client configuration never changes. The Studio action returns a <code>vscode://vscode-remote/ssh-remote+intervene-&lt;slot&gt;/&lt;worktree path&gt;</code> link. The browser hands it to VS Code, so no connector route launches a process. The admin SSH key with <code>sudo</code> stays an emergency path only. A browser IDE can follow later for users without VS Code, behind its own decision, because it changes the edge's security surface.</p>
+
+    <h3>Provisioning</h3>
+    <p class="dim">Proposal. It reuses the AGT-W51 decision of 12 September: "Die Vorbereitung eines Worktrees ist ein Skript, das mit dem Projekt reist" and the image is only an accelerator (<code>docker-ausfuehrungswelt-migration/index.html:126-127</code>, <code>:157-158</code>).</p>
+    <ol>
+      <li><b>Request.</b> "Intervene" on a card sends an operator request <code>intervention.open</code> to the Task Server. The request carries the operator identity, a request key, the card and the start point.</li>
+      <li><b>Claim.</b> The Task Server claims an <code>intervention</code> attempt under the lease rules below. It dispatches a fenced runner operation through the <code>studio_operations</code> contract from AGT-2757.</li>
+      <li><b>Worktree.</b> The runner uses the same <code>GitWorkspace.PrepareAsync</code> path as agent runs. It fetches, then runs <code>worktree add</code> at the card branch HEAD: the tip of <code>origin/runner/&lt;runnerId&gt;/&lt;taskKey&gt;</code>, which the runner already resumes from (<code>:169-172</code>), or the latest Result-SHA. The worktree goes at the card's usual path <code>$RUNNER_WORKDIR/&lt;project&gt;/worktrees/&lt;taskKey&gt;</code>, and the lease file records kind <code>intervention</code>.</li>
+      <li><b>Prepare.</b> The runner runs the project's <code>.agent-studio/prepare</code> with the shared preparation cache and the 20-minute bound, exactly as for an agent (<code>RemoteTaskRunner.cs:1078-1117</code>). The toolchain comes from the script, not from the image.</li>
+      <li><b>Container.</b> The runner starts the container through the C1 launcher (<code>docker run --rm --init --user uid:gid --pull=never --label agent-studio.attempt=&lt;id&gt;</code>). It bind-mounts the worktree and clone at identical paths, because the worktree's <code>.git</code> file points absolutely into the clone. The image is an <code>intervention</code> target next to the planned <code>agent-cli</code> target: .NET SDK, Node, Git, <code>sshd</code>, no runner daemon, no push or provider credentials. CPU and memory limits apply under the host's delegated cgroup slice, so a human build cannot starve the co-hosted Task Server.</li>
+      <li><b>Connect.</b> <code>sshd</code> listens on <code>127.0.0.1:&lt;slot port&gt;</code> and accepts the operator's registered public key. The Task Server records the slot. The Studio shows the link and the one-time SSH config block.</li>
+    </ol>
+    <table>
+      <thead><tr><th>Lifecycle</th><th>Proposed rule</th><th>Source today</th></tr></thead>
+      <tbody>
+        <tr><td>Admission</td><td>Open only if the host has at least 25 GiB free and fewer than two interventions are active (one per operator).</td><td>No disk admission guard exists. Free space is telemetry only (<code>RunnerCapabilityProbe.cs:254</code>).</td></tr>
+        <tr><td>Idle timeout</td><td>Idle means no SSH session and no worktree change. A Studio warning appears after 1 h idle. The workspace closes automatically after 4 h idle. The hard maximum is 24 h; the operator can extend it once.</td><td>No worktree idle sweep exists. <code>RUNNER_IDLE_WATCHDOG_MINUTES</code> restarts an idle daemon; it is not a workspace timeout.</td></tr>
+        <tr><td>Automatic close</td><td>A dirty tree is committed under the operator's identity as <code>wip(intervention): …</code> to a fenced salvage ref, never to the card branch. The card is parked with an escalation item and is never continued automatically.</td><td>Salvage commits use the runner identity (<code>GitWorkspace.cs:726-734</code>).</td></tr>
+        <tr><td>Cleanup</td><td>The container is removed at release. The worktree is kept until the Task Server acknowledges the result or salvage ref, then removed.</td><td>The handoff rule "never removes a checkout that contains work available only on the host" (<code>linux-runner-host.md:1755-1771</code>).</td></tr>
+        <tr><td>Retention</td><td>Intervention salvage refs follow the salvage retention rule. There are no tarballs or file snapshots.</td><td>Salvage branches are kept 14 days (<code>GitBranchRetention.cs:84-86</code>). The unmerged AGT-2999 branch adds 14 days and at most 3 refs per card.</td></tr>
+        <tr><td>Disk budget</td><td>10 GiB soft budget per intervention for worktree and build output, reported at release. Keep one image per toolchain hash plus the previous one.</td><td>AGT-W51 estimates 3 to 5 GB per project image (<code>:248</code>). The shared preparation cache is limited to 20 GiB per project (<code>ProjectPreparationCacheRetention.cs:20-23</code>).</td></tr>
+        <tr><td>Visibility</td><td>Active interventions, idle time and disk use appear in remote-host telemetry next to the salvage store size.</td><td>AGT-2999 branch: <code>telemetry.salvageStore</code>.</td></tr>
+      </tbody>
+    </table>
+    <p>The lesson behind the budget is AGT-2999. The card cites 94 GB of salvage tarballs on the runner host. That figure is not in the repository. The unmerged AGT-2999 branch documents tarballs written by the retired <code>~/salvage/snap.sh</code>, an example summary with 2,050 tarballs, and the rule that durable salvage is the Git ref. The intervention workspace therefore keeps nothing outside Git once it is released, and its store size is visible.</p>
+
+    <h3>Exclusive lease</h3>
+    <table class="breakout">
+      <thead><tr><th>Question</th><th>Source today</th><th>Proposal</th></tr></thead>
+      <tbody>
+        <tr><td>Does the intervention hold a lease?</td><td>A claim mints <code>last_fence + 1</code> per task and inserts a run and a lease (<code>TaskServerStore.cs:1479-1507</code>).</td><td>Yes. Attempt kind <code>intervention</code> uses the same fence counter, so it holds the newest fence on the card. The runner operation hosting the container renews it. Detaching the Studio does not drop it.</td></tr>
+        <tr><td>Running coding attempt</td><td>A stop is recorded against attempt and fence and reaches the runner at its next renewal. The worker is killed and the dirty tree is salvaged (<code>TaskRunnerEndpoints.cs:42-129</code>, <code>RemoteTaskRunner.cs:206-232</code>).</td><td>"Stop and intervene" is one confirmed request. It records the stop, waits for the release, then claims. The salvage ref is offered as an alternative start point. Nothing is killed without confirmation.</td></tr>
+        <tr><td>Running review or gate</td><td>Review grades a frozen Result-SHA (<code>RemoteReviewWorkspace.cs:1990</code>).</td><td>The intervention queues visibly until the verdict, unless the operator explicitly cancels the review. It never interrupts an integration attempt that holds the AGT-W18 ref-mutation lease.</td></tr>
+        <tr><td>Pickup during the intervention</td><td>A live lease refuses another claim (<code>AttemptAuthorityService.cs:186-194</code>). Follow-ups queue in <code>pending_follow_ups</code>.</td><td>Unchanged. Agent follow-ups queue behind the intervention.</td></tr>
+        <tr><td>Stale fences</td><td><code>ValidateLeaseReference</code> and <code>EnsureLeaseCurrentAsync</code> reject writes from a lower fence (<code>TaskServerStore.cs:4199-4219</code>).</td><td>Unchanged. A late completion, event, artifact or result ref from the stopped attempt fails with <code>StaleFence</code>. The intervention's result ref carries its own fence (<code>FencedGitRefs.cs:28-30</code>).</td></tr>
+        <tr><td>Release</td><td><code>done</code> goes to <code>4-auto-review</code> and needs a Result-SHA and the matching lease (<code>LeaseEndpoints.cs:1413-1438</code>). A continue round starts from the integration head unless a continuation base exists.</td><td>Three modes. <b>Send to review</b>: complete with the Result-SHA, and review grades merge-base..Result-SHA including the human commits. <b>Hand back</b>: queue a continue round whose continuation base is the intervention's Result-SHA. This needs a new <code>intervention</code> source in the continuation base store; otherwise the next round starts from the integration head and silently drops the human commits. <b>Discard</b>: keep only a salvage ref and return the card to its previous lane.</td></tr>
+        <tr><td>Ref-mutation lease</td><td>Proposed in AGT-W18, not built (<code>remote-gate.md:74-76</code>, <code>:122-134</code>).</td><td>The intervention never takes it. It writes only its fenced result ref. Integration, operator merges and hotfix back-merges stay with the integration executor as operator requests.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Attribution</h3>
+    <p class="dim">Proposal.</p>
+    <ul>
+      <li><b>Identity.</b> The container's Git author and committer come from the operator's Task Server user record, never from a workstation or tool default.</li>
+      <li><b>Trailers.</b> A <code>commit-msg</code> hook, installed through the container's global <code>core.hooksPath</code> so agent worktrees are unaffected, adds <code>Task-Id: &lt;key&gt;</code> (existing trailer), <code>Attempt-Id: &lt;intervention attempt&gt;</code> and <code>Intervention: &lt;operator user id&gt;</code>. The trailer keeps Git readable. The authority is the attempt range: at release, every commit in base..Result-SHA belongs to the intervention, even if the hook was bypassed.</li>
+      <li><b><code>commits[]</code>.</b> Add <code>author</code> (name and email as committed) and <code>provenance</code> (<code>agent</code>, <code>intervention</code>, <code>platform</code>) to <code>TaskCommitInfo</code>. Intervention commits get the intervention attempt as <code>RunAttemptId</code>, not the <code>external:&lt;source&gt;</code> form used by external completion today (<code>ExternalCompletionService.cs:337-353</code>).</li>
+      <li><b>Guard.</b> Relax the "subject names another task key" rejection for intervention commits, where a human note such as "see AGT-1234" is normal. In agent ranges, flag commits whose author is neither the runner identity nor an intervention attempt.</li>
+      <li><b>Review and gate.</b> Both use the unchanged range, so human commits are graded and gated like agent commits. The review prompt additionally lists each commit's provenance, so the reviewer knows which changes were made by hand.</li>
+      <li><b>Card history.</b> Timeline events use <code>TimelineActors.Human</code>: intervention opened, each commit, released with its mode, or expired.</li>
+    </ul>
+
+    <h3>Work without a card</h3>
+    <table>
+      <thead><tr><th></th><th>Ad-hoc card spawns the container</th><th>Persistent personal container per project</th></tr></thead>
+      <tbody>
+        <tr><td>Traceability</td><td>Full: lease, commits, review, gate and timeline, like any card.</td><td>Commits have no card, so there is no review scope and no history entry.</td></tr>
+        <tr><td>Publication</td><td>Send to review, then the normal integration.</td><td>Needs a separate operator merge request into the integration executor. That recreates today's hand merge.</td></tr>
+        <tr><td>Friction</td><td>One title and a click. Startup cost is the prepare script, mostly warm-cached.</td><td>Always warm, no startup cost.</td></tr>
+        <tr><td>Disk</td><td>Bounded by the lifecycle above.</td><td>Long-lived. Grows until someone cleans it, which is the AGT-2999 pattern.</td></tr>
+        <tr><td>Board</td><td>One card per fix. A tag <code>intervention</code> and a lane filter keep the board readable.</td><td>No board entry.</td></tr>
+      </tbody>
+    </table>
+    <p><b>Proposal.</b> Use the ad-hoc card. "Intervene without a card" creates a card with a required title, no prompt and the tag <code>intervention</code>. It opens the workspace on a new branch from the integration head. The release modes are the same, except that Hand back requires a written prompt. The persistent personal container moves the side channel to the server but keeps it a side channel.</p>
+
+    <h3>Diffs</h3>
+    <p>The intervention workspace publishes <code>run-checkpoint</code> objects like an in-flight run (D1). It publishes at each commit, at most every 5 minutes while the tree changes, and at release. The Studio shows the latest checkpoint labelled "Intervention" with its time. The operator sees the live diff in VS Code's own source control view. Under D7 option b or c, every change to card code therefore happens in a central workspace whose diff the central plane serves, and no Studio view needs a local worktree diff. Local diffs stay necessary only under D7 options a and d. A Windows-only intervention through the workstation runner profile (below) publishes the same checkpoints and needs no dev-seat route either.</p>
+
+    <h3>Windows-specific work</h3>
+    <p><b>Source facts.</b> After 12 September, Windows tests are limited to a <code>windows-host</code> profile for the host manager, installer and connector (AGT-W51 D4, <code>index.html:453-455</code>). "Linux proof never satisfies a required Windows gate". AGT-W18 D10 recommends a dedicated Windows gate host, and "the workstation is never the fallback Windows host in the target" (<code>remote-gate.md:197</code>, <code>:205-216</code>). No Windows host or VM is provisioned. The remote runners have no Windows workspace. A Windows workstation runner profile exists: <code>RUNNER_WORKSTATION=1</code> registers a scoped runner principal, claims through the ordinary endpoint and renews a fenced lease (<code>workstation-runner-host.md:9-30</code>, D12, AGT-2939). The window above contains at least one Windows-specific hand fix, "fix(gate): resolve toolchain launchers with their Windows extensions".</p>
+    <ul>
+      <li><b>Later Windows host.</b> When the D10 host exists, an intervention with <code>os:windows</code> routes there through the same Remote-SSH path, because Windows OpenSSH serves Remote-SSH. This is the target.</li>
+      <li><b>Local Docker Desktop.</b> This does not cover the case. Docker Desktop runs Linux containers in WSL 2 by default. Windows containers need a Windows Server base image and do not reproduce desktop, installer or path behaviour.</li>
+      <li><b>Explicit exception (proposal until D10).</b> An intervention with <code>os:windows</code> is claimed by the workstation runner profile under the same lease, worktree, prepare, attribution, checkpoint and release rules. VS Code opens the leased local worktree. It never counts as gate evidence. Until AGT-2939 is enabled, the Windows checkout remains the fallback, recorded as an exception on the card.</li>
+    </ul>
+
+    <h3>Dev-seat allowlist after D7</h3>
+    <table class="breakout">
+      <thead><tr><th>D7 outcome</th><th>D2</th><th>D4</th><th>Git and checkout dev-seat routes kept (of 35)</th></tr></thead>
+      <tbody>
+        <tr><td>b · central container per card</td><td>A · drop</td><td>A · not a source</td><td><b>0.</b> Open-in-vscode (fe-305) is replaced by the <code>vscode://</code> link the Task Server returns. The Windows exception is a runner, not a dev-seat route. The dev seat goes from 108 to 73 operations. Three of those 73, the wiki <code>recent</code>, <code>pulse</code> and <code>folder</code> reads, still run <code>git log</code> until the repository-document follow-up (card 8) lands.</td></tr>
+        <tr><td>c · personal container per project</td><td>A · drop</td><td>A · not a source</td><td><b>0</b>, plus a new Task Server view for the personal workspace checkpoint.</td></tr>
+        <tr><td>a · local Windows checkout</td><td>B · keep labelled</td><td>B · optional local view</td><td><b>4</b>: <code>git/status</code>, <code>git/diff</code>, <code>git/file</code> re-scoped to "Local checkout", and <code>open-in-vscode</code>. Optionally <code>git/summary</code> and <code>git/hygiene</code> for 6.</td></tr>
+        <tr><td>d · local Docker Desktop container</td><td>B · keep labelled</td><td>B · container instead of checkout</td><td><b>4</b>, pointed at the container's bind mount. If the local container instead publishes checkpoints as a workstation runner, this becomes option b on a workstation and the count is 0.</td></tr>
+      </tbody>
+    </table>
+
+    <figure class="breakout">
+      <svg class="flow" viewBox="0 0 1000 390" role="img" aria-labelledby="intervention-flow-title intervention-flow-desc">
+        <title id="intervention-flow-title">Proposed intervention workspace topology</title>
+        <desc id="intervention-flow-desc">On the Windows workstation, VS Code is only a user interface and the Studio browser talks to the loopback connector. VS Code connects over SSH through a forward-only jump account to an intervention container on the runner host. The runner host also holds agent worktrees and computes Git facts and diff objects. It publishes them to the Task Server, which holds leases, fences, attempts, the Git object store and operator requests, and dispatches claims back to the runner host. The Studio reads from and sends requests to the Task Server through the connector edge. The Task Server is co-hosted on agent-runner-01 under the single-host exception.</desc>
+        <rect class="box muted" x="20" y="40" width="230" height="330" rx="10"></rect>
+        <text class="t-head" x="36" y="68">Windows workstation</text>
+        <rect class="box" x="36" y="90" width="198" height="96" rx="8"></rect>
+        <text class="t-head" x="52" y="116">VS Code</text>
+        <text class="t-body" x="52" y="140">UI only, no checkout</text>
+        <text class="t-body" x="52" y="162">Remote-SSH client</text>
+        <rect class="box" x="36" y="250" width="198" height="96" rx="8"></rect>
+        <text class="t-head" x="52" y="276">Studio browser</text>
+        <text class="t-body" x="52" y="300">connector, observer</text>
+        <text class="t-body" x="52" y="322">"Intervene" action</text>
+        <rect class="box execution" x="330" y="40" width="400" height="260" rx="10"></rect>
+        <text class="t-head" x="346" y="68">Runner host agent-runner-01</text>
+        <rect class="box" x="346" y="84" width="368" height="58" rx="8"></rect>
+        <text class="t-head" x="362" y="107">Agent worktrees</text>
+        <text class="t-body" x="362" y="130">coding and review attempts, fenced leases</text>
+        <rect class="box" x="346" y="152" width="368" height="74" rx="8"></rect>
+        <text class="t-head" x="362" y="175">Intervention container</text>
+        <text class="t-body" x="362" y="197">card branch HEAD, same prepare script</text>
+        <text class="t-body" x="362" y="217">sshd on loopback, no push credentials</text>
+        <rect class="box" x="346" y="236" width="368" height="54" rx="8"></rect>
+        <text class="t-head" x="362" y="258">Git facts and diff objects</text>
+        <text class="t-body" x="362" y="280">computed here, incl. checkpoints</text>
+        <rect class="box authority" x="790" y="40" width="190" height="330" rx="10"></rect>
+        <text class="t-head" x="806" y="68">Task Server</text>
+        <text class="t-body" x="806" y="100">lease, fence, attempt</text>
+        <text class="t-body" x="806" y="122">kind intervention</text>
+        <text class="t-body" x="806" y="156">Git object store</text>
+        <text class="t-body" x="806" y="178">SHA-keyed diff cache</text>
+        <text class="t-body" x="806" y="212">operator requests</text>
+        <text class="t-body" x="806" y="234">card history</text>
+        <text class="t-small" x="806" y="356">co-hosted, single host</text>
+        <path class="wire exec" d="M234 138 H290 V189 H346"></path>
+        <path class="head exec" d="M346 189 l-9 -5 v10 z"></path>
+        <text class="t-small" x="296" y="170">SSH</text>
+        <path class="wire" d="M234 318 H270 V335 H790"></path>
+        <path class="head" d="M790 335 l-9 -5 v10 z"></path>
+        <text class="t-small" x="420" y="327">connector edge: reads and operator requests</text>
+        <path class="wire exec" d="M730 110 H790"></path>
+        <path class="head exec" d="M790 110 l-9 -5 v10 z"></path>
+        <text class="t-small" x="736" y="102">publish</text>
+        <path class="wire dashed" d="M790 200 H730"></path>
+        <path class="head" d="M730 200 l9 -5 v10 z"></path>
+        <text class="t-small" x="738" y="192">claim</text>
+      </svg>
+      <figcaption><b>Proposed topology (D7 option b, D8 option A).</b> Windows keeps only user interfaces. The card's code, toolchain and Git computation live on the runner host. The Task Server holds the lease and the stored Git objects, and is co-hosted on agent-runner-01 under the single-host exception. Green lines carry work and published facts; blue lines carry reads, requests and claims. Proposal, not shipped behaviour.</figcaption>
+    </figure>
+  </section>
+
+  <section id="git-alternatives" data-concept-section="alternatives">
+    <h2><span class="number">14</span> Alternatives</h2>
+    <p>Two choices carry the others. The first is where Git facts and diffs are computed and stored (D5). The second is where hand interventions happen (D7). D1 to D4 and D6 follow from those two.</p>
+
+    <h3>Git facts plane (D5)</h3>
+    <div class="variant-grid breakout">
+      <article class="variant recommended">
+        <h3>A · Runner host computes, Task Server stores</h3>
+        <p>The runner host owns the canonical checkout per project (ADR-0073), the run worktrees, the review material and, under D7 b, the intervention workspaces. It publishes facts and diff objects through the existing outbox and artifact contracts, and serves misses through a fenced runner operation. The Task Server keeps its no-Git boundary. Cost: a new object kind, publication at run, review and integration events, and a <code>warming</code> state for cold reads.</p>
+      </article>
+      <article class="variant">
+        <h3>B · Task Server keeps a Git mirror</h3>
+        <p>The Task Server holds a bare mirror per project and answers on demand. This gives the simplest read path and lowest latency. It breaks the recorded boundaries that the Task Server has no Git access (<code>StudioTaskHistoryContracts.cs:46-52</code>) and spawns no checkout processes (AGT-W49). It also brings back request-driven Git load on the authority process, and cannot see in-flight run worktrees.</p>
+      </article>
+      <article class="variant">
+        <h3>C · Dedicated Git facts service</h3>
+        <p>A separate service with its own mirror and store, on the runner host or beside it. Isolation is clean and the service can scale independently. It adds another process lifecycle, credential, health check and API version, and it duplicates the runner's checkout. This is the evolution path if A's runner-side load becomes measurable.</p>
+      </article>
+      <article class="variant">
+        <h3>D · Keep the dev seat and sync Windows</h3>
+        <p>Keep all routes local and add a scheduled fetch on Windows. Nothing new is built. It keeps 35 Git-dependent operations, local process load and a second Git reader on the workstation. Diffs depend on fetch freshness, and in-flight runs remain invisible. It contradicts the 12 and 18 September decisions and the 5 October direction.</p>
+      </article>
+    </div>
+
+    <h3>Intervention workspace (D7)</h3>
+    <div class="variant-grid breakout">
+      <article class="variant">
+        <h3>a · Local Windows checkout, as today</h3>
+        <p>Nothing to build. Interventions stay outside the card, hold no lease, commit under ad-hoc identities (four on four cards since 12 September) and are reviewed only by accident. After AGT-W18 <code>retire-local</code> the workstation has no publication credentials, so every hand change needs an operator merge request. Keeps four dev-seat Git routes.</p>
+      </article>
+      <article class="variant recommended">
+        <h3>b · Central intervention container per card</h3>
+        <p>The card's branch, the agent's prepare script and toolchain run in a container on the runner host. The intervention holds the card's newest fence, its commits are attributed, and review and gate see them like agent commits. VS Code is the user interface. Costs five cards, host capacity on the single host, and a dependency on the host being up.</p>
+      </article>
+      <article class="variant">
+        <h3>c · Persistent personal container per project</h3>
+        <p>An always-warm container on the runner host with the operator's own branch. Central and fast to reach, but commits have no card, no review scope and no lease, and publication needs a separate operator merge. Long-lived disk use repeats the AGT-2999 pattern. The side channel moves to the server and remains a side channel.</p>
+      </article>
+      <article class="variant">
+        <h3>d · Local Docker Desktop container as fallback</h3>
+        <p>A container on the workstation with the card branch. It works when the runner host is unreachable, but under the single-host exception the Task Server is then down too. It brings Docker Desktop and a Windows-hosted execution environment back to the workstation, needs local diff routes, and does not solve Windows-only work because its containers are Linux.</p>
+      </article>
+    </div>
+
+    <h3>Attach path (D8)</h3>
+    <p>The four attach paths are compared in section 13: Dev Containers over SSH, Remote-SSH into a container <code>sshd</code>, VS Code Remote Tunnels, and a browser IDE through the Studio. Remote-SSH through a forward-only host account is the only one with no Docker socket, no third-party relay, full extension support and no change to the Task Server edge.</p>
+  </section>
+
+  <section id="git-recommendation" data-concept-section="recommendation">
+    <h2><span class="number">15</span> Recommendation</h2>
+    <div class="callout" data-tone="accent">
+      <h3>Central Git plane, central intervention workspace, observer-only dev seat</h3>
+      <p>Compute Git facts and immutable SHA-keyed diff objects on the runner host, and store and serve them from the Task Server (D5 A). Move the read routes in section 08 to the Task Server. Retire the manual commit routes. Run branch maintenance as a runner-host operator request. Make hand interventions an explicit attempt on the card. They run in a container on the runner host, with VS Code attached over Remote-SSH (D7 b, D8 A). The Windows checkout then stops being a Git data source and stops being the intervention path. Keep the current routes as an interim behind one guard, so the cutover does not wait.</p>
+    </div>
+    <table>
+      <thead><tr><th>Decision</th><th>Working option</th></tr></thead>
+      <tbody>
+        <tr><td>D1 Central diffs</td><td>Yes. Named, immutable, SHA-keyed diff objects for commits, reviewed delivery, integration, run checkpoints and intervention checkpoints, with manifest paging and per-file limits.</td></tr>
+        <tr><td>D2 Local worktree diffs</td><td>Follows D7. Under D7 b, drop them once card 4 and the intervention cards land. Under D7 a or d, keep three separately labelled local reads.</td></tr>
+        <tr><td>D3 Writing routes</td><td>Retire <code>git/commit</code>, <code>commit-accepted-evidence</code> and <code>generate-message</code>. Move cleanup and branch sweep to a runner-host maintenance request. A human commit is made in the intervention workspace, not through a Studio route.</td></tr>
+        <tr><td>D4 Windows checkout</td><td>Follows D7. Under D7 b, it is not a supported Studio data source or intervention path. Windows-only work runs as an explicit exception through the workstation runner profile until the D10 Windows host exists. The repository-document routes keep the checkout as an interim until the repository-write contract exists.</td></tr>
+        <tr><td>D5 Computing plane</td><td>Runner host computes. The Task Server stores the index in SQLite and the objects in its artifact store.</td></tr>
+        <tr><td>D6 Ordering</td><td>Follow the cutover. Land the interim guard before AGT-2737. Land the central Git cards and the intervention workspace before AGT-W18 <code>retire-local</code>. Neither blocks AGT-2949 or AGT-2737.</td></tr>
+        <tr><td>D7 Intervention workspace</td><td>b. A central intervention container per card. Work without a card goes through an ad-hoc card.</td></tr>
+        <tr><td>D8 Attach path</td><td>A. Remote-SSH into a container <code>sshd</code> through a forward-only host account, with two static slot aliases and a <code>vscode://</code> link from the Studio.</td></tr>
+      </tbody>
+    </table>
+    <p>Under this set, the dev seat keeps no route that serves a Git view. It shrinks from 108 to 73 operations, as shown in the section 13 allowlist table.</p>
+    <h3>Storage</h3>
+    <p class="dim">Proposal.</p>
+    <p>A Task Server table <code>git_objects</code> holds the key, kind, state, sizes, truncation flags and retention owner (task, project or result ref). Manifest and per-file patch bodies use the existing artifact store and its limits of 8 MiB per file and 100 MiB per result, with content hashing for deduplication. Project facts are small, versioned rows keyed by repository and ref signature: ref inventory, history pages, integration state and path index. A new version replaces the previous one; it never mutates an existing row. Retention removes objects when their owning task is purged or their result ref is collected, never by memory pressure. Intervention checkpoints are <code>run-checkpoint</code> objects owned by the intervention attempt.</p>
+  </section>
+
+  <section id="git-evidence" data-concept-section="evidence">
+    <h2><span class="number">16</span> Evidence</h2>
+    <p>The entries below are source observations at commit <code>2d6d15f6b</code>, labelled inferences, or proposals. The commit is develop <code>feb298495</code> plus the first draft of this extension. Hand-intervention counts carry the evidence classes hard, model-judged or confounded. No screenshot is included. This section makes no claim about how a visible product surface looks; its claims concern route classification, handler source, Git commands, Git history and contracts.</p>
+    <div class="evidence-list">
+      <a class="evidence" href="routes.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Inventory counts</b><small>108 dev-seat operations, 29 of them under <code>/api/git</code> and the task Git, commit and commits paths. Git history of <code>routes.json</code>: 95 on 7 September, 99 on 15 September with 23 Git operations, 108 on 28 September after six branch-sweep and three other additions.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Tasks/TaskGitEndpoints.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Task Git handlers</b><small>All task commit, diff, status, hygiene and provenance reads run <code>git</code> on the OrchestratorApi host. Status, diff and file prefer the task worktree; the rest read the main checkout.</small></span></a>
+      <a class="evidence" href="../../backend/Features/Git/CommitCandidateGate.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Manual commits blocked</b><small><code>Commit</code> and <code>AutoCommitAsync</code> set <code>requireExplicitPaths</code> when no paths are passed (<code>GitService.cs:2558</code>, <code>:3157</code>). Both routes pass none, so the gate adds the blocking <code>explicit-pathspec-required</code> finding.</small></span></a>
+      <a class="evidence" href="../system/domains/review.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Review material</b><small>The runner grades merge-base..Result-SHA with a 200-file, 12,000-line budget and a visible truncation marker. Review code does not read <code>commits[]</code> and does not filter by author, so any commit in the range is graded.</small></span></a>
+      <a class="evidence" href="../../contracts/TaskServer.Contracts/StudioTaskHistoryContracts.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Task Server has no Git</b><small>The run-commit DTO is "never a computed commit list". The run diff serves an uploaded <code>*.patch</code> or <code>*.diff</code> artifact, and nothing in the repository produces one.</small></span></a>
+      <a class="evidence" href="../../runner/DurableHandoffPayloads.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Runner already publishes Git facts</b><small><code>DurableGitFactsPayload</code> carries repository, base SHA, result SHA and immutable result ref through the outbox as <code>runner.git-facts</code>. That is the natural extension point for diff objects.</small></span></a>
+      <a class="evidence" href="../task-switch-performance/evidence/git-telemetry-before.json"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Git load</b><small>25 September, one-hour window: <code>git-index-run</code> 488 spawns per minute (about 8.1 per second), all scopes 737 per minute. The card's figures, 8.5 spawns per second on 4 October and 30 concurrent Git processes on 5 October, are operator measurements that are not in the repository. Route spawns from section 08 are not in this telemetry at all.</small></span></a>
+      <a class="evidence" href="../operations/remote-gate-zielbild/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Observer contract</b><small>AGT-W18 lets the Studio read attempts, receipts and canonical refs from Task Server projections, and says no lease, publication or recovery may need Studio. It names no Git read routes, diffs or hand interventions. Its project ref-mutation lease is proposed, not built (<code>remote-gate.md:74-76</code>).</small></span></a>
+      <a class="evidence" href="../operations/operations-server-backchannel/index.html"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-W49 dev seat</b><small>W49 places repository reads and writes and Git hygiene with a workstation Operations Agent. It rejects moving dev-seat operations into the Task Server. This extension does not move execution into the Task Server; it moves computation and interventions to the runner host and stores the results in the Task Server.</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="hard">Hard</span><span><b>Hand interventions, 12 September to 5 October</b><small>From Git history: 51 hand merges into develop on 7 days, 44 direct commits on develop outside any card on 13 days, and 7 non-runner commits on the refs of 4 cards under four ad-hoc identities. Also 8 hand-made salvage, fix, delivery and operator branches on <code>origin</code>. Counts are exact; see section 13.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="model-judged">Model-judged</span><span><b>What counts as an intervention</b><small>Commits were classified by subject pattern. 158 <code>Merge commit '&lt;sha&gt;' into HEAD</code> commits and 33 workbench and Dossier commits under the operator's identity were judged platform-produced and excluded. The about 25 session-memory recipes in <a href="../operations/lieferkette-robustheit/index.html">lieferkette-robustheit</a> are an earlier model-judged count.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="confounded">Confounded</span><span><b>Who made a change</b><small>The operator's personal identity is shared by the Windows platform commits, interactive agent sessions in the operator's checkout, and hand edits. An agent co-author trailer shows tool assistance, not authorship. <code>/continue</code> rounds after hand fixes and uncommitted local edits are not countable from this worktree.</small></span></span>
+      <a class="evidence" href="../../contracts/TaskServer.Contracts/RunnerContracts.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No human attempt, no author</b><small>Attempt kinds are <code>coding</code> and <code>review</code> (<code>:43-47</code>). <code>TaskCommitInfo</code> has no author or provenance field (<code>TaskCommit.cs:19-116</code>). <code>RemoteCommitAttributionGuard</code> never checks author or trailers (<code>:12-93</code>).</small></span></a>
+      <a class="evidence" href="../../runner/GitWorkspace.cs"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Continue base</b><small>A fenced run starts from the integration head unless a continuation base exists (<code>:162-191</code>). Bases are written only for lost workers and mechanical fallback. A hand-back after an intervention needs a new base source, or the human commits are dropped.</small></span></a>
+      <a class="evidence" href="../operations/setup/remote-runner-persistent-connection.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Reverse link and single host</b><small>LinkSupervisor opens Windows-initiated <code>ssh -R</code> forwards for HTTP ports 15031, 5031 and 4011 and is interim by design. The Task Server and runner share <code>agent-runner-01</code> under an approved exception (<code>remote-task-server-local-studio.md:22-26</code>).</small></span></a>
+      <a class="evidence" href="../operations/remote-gate-zielbild/remote-gate.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No Windows workspace remotely</b><small>"Linux proof never satisfies a required Windows gate" (<code>:197</code>). D10 recommends a dedicated Windows host, and the workstation is never the fallback Windows gate host (<code>:205-216</code>). No Windows host is provisioned. The workstation runner profile (<code>workstation-runner-host.md</code>, AGT-2939) claims with fenced leases.</small></span></a>
+      <a class="evidence" href="../operations/container-tranche-plan.md"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Per-task container is planned</b><small>The C1 launcher and same-path bind mounts are specified (<code>:15-20</code>). The <code>agent-cli</code> image target is missing (<code>:28</code>), and no code builds the <code>project.yml</code> image. Run containers get no Docker socket (<code>:8</code>).</small></span></a>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>No disk admission guard</b><small>Runner free space is telemetry only (<code>RunnerCapabilityProbe.cs:254</code>). The 94 GB salvage figure from the card is not in the repository. The AGT-2999 retention work exists only on an unmerged branch.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Stale or misleading views after cutover</b><small>Without the delivery fetch on Windows, commit views fail. Without a local task worktree, worktree views show the main checkout. Derived from <code>LeaseEndpoints.cs:1692</code> and <code>GitService.ResolveRunLocation</code>; not observed in a running cutover.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>VS Code attach properties</b><small>Extension availability (Open VSX for browser IDEs), the Microsoft relay used by Remote Tunnels, the Docker engine access needed by Dev Containers on a remote host, and Remote-SSH support for <code>ProxyJump</code> and Windows OpenSSH come from public product documentation. They were not tested in this repository, and latency was not measured.</small></span></span>
+      <span class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Limits, budgets and timeouts</b><small>5,000-file manifests and 256 KiB or 5,000-line file patches. For interventions: 1 h idle warning, 4 h idle close, 24 h maximum, 25 GiB free-disk admission, 10 GiB per intervention, two slots. All are starting values to confirm by measurement.</small></span></span>
+    </div>
+  </section>
+
+  <section id="git-open-decisions" data-concept-section="open-decisions">
+    <h2><span class="number">17</span> Open decisions</h2>
+    <p>Each decision names a recommended working option. The operator decides; until a decision is recorded, promoted cards use the recommendation. D2 and D4 depend on D7, and D8 applies only when D7 resolves to b or c.</p>
+
+    <div class="decision" data-decision-id="central-diffs" data-decision-kind="single" data-decision-label="D1 Central diffs for commits and runs">
+      <h3>D1 · Central diffs for commits and runs</h3>
+      <p>Should committed diffs (single commit, attributed commits, reviewed delivery, integration) and in-flight run and intervention diffs come from immutable, SHA-keyed diff objects on the central plane?</p>
+      <label data-option-id="central" data-option-label="A · Yes, named SHA-keyed diff objects with manifest paging (recommendation)"><input type="radio" name="central-diffs" value="central"><span><b>A · Yes, named SHA-keyed diff objects with manifest paging (recommendation)</b><span class="d">One answer per SHA pair for every reader. The Studio shows exactly which object it renders, and reads never start Git. Intervention checkpoints reuse the run-checkpoint kind. Costs: a new object kind, publication at run, review and integration events, and a <code>warming</code> state for cold reads.</span></span></label>
+      <label data-option-id="artifacts-only" data-option-label="B · Runner uploads a patch artifact per run only"><input type="radio" name="central-diffs" value="artifacts-only"><span><b>B · Runner uploads a patch artifact per run only</b><span class="d">This fills the existing Task Server <code>runs/{runIndex}/diff</code> route with little work. There are no per-commit, reviewed-delivery or integration views, no per-file paging, and the 8 MiB artifact limit truncates large deliveries.</span></span></label>
+      <label data-option-id="local" data-option-label="C · Keep local diffs in the dev seat"><input type="radio" name="central-diffs" value="local"><span><b>C · Keep local diffs in the dev seat</b><span class="d">No new work. The diffs go stale or are missing after the cutover, and the local Git load stays on the workstation.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="local-worktree-diffs" data-decision-kind="single" data-decision-label="D2 Local worktree diffs">
+      <h3>D2 · Local worktree diffs</h3>
+      <p>Should the dev seat keep <code>git/status</code>, <code>git/diff</code> and <code>git/file</code> for a local working copy? This follows D7: a central intervention workspace removes the last need for them.</p>
+      <label data-option-id="drop" data-option-label="A · Drop them after the central run-checkpoint view and the intervention workspace land (recommendation, follows D7 b or c)"><input type="radio" name="local-worktree-diffs" value="drop"><span><b>A · Drop them after the central run-checkpoint view and the intervention workspace land (recommendation, follows D7 b or c)</b><span class="d">The dev seat has no Git route left. Run and intervention changes come from runner checkpoints, and the operator sees the live diff in VS Code. The Windows exception publishes the same checkpoints through the workstation runner.</span></span></label>
+      <label data-option-id="keep-labelled" data-option-label="B · Keep three labelled local reads without task fallback (follows D7 a or d)"><input type="radio" name="local-worktree-diffs" value="keep-labelled"><span><b>B · Keep three labelled local reads without task fallback (follows D7 a or d)</b><span class="d">The routes are re-scoped to a project-level "Local checkout" view, or the local container's mount, and never show a run's state. Three dev-seat routes and their tests remain, along with a second Git reader on the workstation.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="git-write-routes" data-decision-kind="single" data-decision-label="D3 Writing Git routes">
+      <h3>D3 · Writing Git routes</h3>
+      <p>What happens to <code>git/commit</code>, <code>commit-accepted-evidence</code>, <code>generate-message</code> and <code>cleanup/execute</code>, and to the branch-sweep writes found by the trace?</p>
+      <label data-option-id="retire-and-request" data-option-label="A · Retire the three commit routes; cleanup and branch sweep become one runner-host maintenance request (recommendation)"><input type="radio" name="git-write-routes" value="retire-and-request"><span><b>A · Retire the three commit routes; cleanup and branch sweep become one runner-host maintenance request (recommendation)</b><span class="d">The commit routes are blocked by the commit gate today, so no working feature is lost. A human commit is made in the intervention workspace under its lease. Ref deletion runs under the AGT-W18 ref-mutation lease with a plan and a receipt.</span></span></label>
+      <label data-option-id="all-requests" data-option-label="B · All four become runner-host operator requests"><input type="radio" name="git-write-routes" value="all-requests"><span><b>B · All four become runner-host operator requests</b><span class="d">This keeps a manual commit path, but it would need the explicit path set the gate requires and a target branch. It creates a second commit path beside the intervention workspace and the integration executor.</span></span></label>
+      <label data-option-id="keep" data-option-label="C · Keep them in the dev seat"><input type="radio" name="git-write-routes" value="keep"><span><b>C · Keep them in the dev seat</b><span class="d">This contradicts "Studio only observes", and the routes stop working once the Windows checkout is no longer updated.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="windows-checkout" data-decision-kind="single" data-decision-label="D4 Windows checkout as a supported use case">
+      <h3>D4 · Windows checkout as a supported use case</h3>
+      <p>Does the Studio still read a Windows checkout, and is it still where humans change card code? This follows D7.</p>
+      <label data-option-id="not-a-source" data-option-label="A · Not a Studio data source and not the intervention path; Windows-only work as an explicit exception (recommendation, follows D7 b or c)"><input type="radio" name="windows-checkout" value="not-a-source"><span><b>A · Not a Studio data source and not the intervention path; Windows-only work as an explicit exception (recommendation, follows D7 b or c)</b><span class="d">This matches the 12 and 18 September decisions. Summary, local status and diff, and open-in-vscode retire, and the dev seat keeps 0 of 35 Git routes. Windows-only interventions run under the same lease through the workstation runner profile until the D10 Windows host exists. Wiki and Dossier routes still use the checkout until the repository-write follow-up is decided. A human may keep a private clone, but the product does not read it.</span></span></label>
+      <label data-option-id="optional-local" data-option-label="B · Optional, labelled local checkout view in the dev seat (follows D7 a or d)"><input type="radio" name="windows-checkout" value="optional-local"><span><b>B · Optional, labelled local checkout view in the dev seat (follows D7 a or d)</b><span class="d">The local checkout or container stays the intervention path, with local status, diff, file and VS Code launch in the Studio. That is four or six dev-seat routes and a second Git reader on the workstation, read-only and separate from task views. Hand changes reach the card only through an operator merge request.</span></span></label>
+      <label data-option-id="full-source" data-option-label="C · Full Studio data source as approved in B1"><input type="radio" name="windows-checkout" value="full-source"><span><b>C · Full Studio data source as approved in B1</b><span class="d">Status quo. This contradicts the later operator decisions.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="git-facts-plane" data-decision-kind="single" data-decision-label="D5 Computing plane and storage for Git facts and diffs">
+      <h3>D5 · Computing plane and storage for Git facts and diffs</h3>
+      <label data-option-id="runner-computes" data-option-label="A · Runner host computes; Task Server stores the index in SQLite and the objects in its artifact store (recommendation)"><input type="radio" name="git-facts-plane" value="runner-computes"><span><b>A · Runner host computes; Task Server stores the index in SQLite and the objects in its artifact store (recommendation)</b><span class="d">The Task Server keeps its no-Git boundary. The design reuses the canonical checkout, the outbox and the fenced runner operations, and the same host already holds run and intervention worktrees. Cold reads wait for a runner operation.</span></span></label>
+      <label data-option-id="task-server-mirror" data-option-label="B · Task Server holds a Git mirror and computes on demand"><input type="radio" name="git-facts-plane" value="task-server-mirror"><span><b>B · Task Server holds a Git mirror and computes on demand</b><span class="d">The read path is simplest, but it breaks the recorded Task Server boundary and puts request-driven Git load on the authority process. It cannot see run or intervention worktrees.</span></span></label>
+      <label data-option-id="dedicated-service" data-option-label="C · Dedicated Git facts service with its own store"><input type="radio" name="git-facts-plane" value="dedicated-service"><span><b>C · Dedicated Git facts service with its own store</b><span class="d">Isolation is clean, but it adds another process, credential, health check and API version, plus a second checkout. This is the evolution path if A's runner load becomes measurable.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="cutover-order" data-decision-kind="single" data-decision-label="D6 Ordering relative to AGT-2949 and the cutover">
+      <h3>D6 · Ordering relative to AGT-2949 and the cutover</h3>
+      <p>Must the central Git views or the intervention workspace exist before AGT-2737 or AGT-2949?</p>
+      <label data-option-id="follow-with-guard" data-option-label="A · Follow the cutover; interim guard before AGT-2737; central Git cards and the intervention workspace before AGT-W18 retire-local (recommendation)"><input type="radio" name="cutover-order" value="follow-with-guard"><span><b>A · Follow the cutover; interim guard before AGT-2737; central Git cards and the intervention workspace before AGT-W18 retire-local (recommendation)</b><span class="d">AGT-2949 and AGT-2737 are not blocked. During the interim, commit views may fail visibly for new remote tasks, but no view shows another tree as a run's state. Hand interventions keep using the Windows checkout until <code>retire-local</code>. After that step the workstation has no publication credentials, so the intervention workspace (cards 9 to 12) must exist by then. The Studio action (card 13) and a browser IDE can follow.</span></span></label>
+      <label data-option-id="block-cutover" data-option-label="B · Block AGT-2737 until the central task diff views and the intervention workspace exist"><input type="radio" name="cutover-order" value="block-cutover"><span><b>B · Block AGT-2737 until the central task diff views and the intervention workspace exist</b><span class="d">There is no degraded interim, but the cutover waits for cards 2 to 4 and 9 to 12. That cutover is already escalated on infrastructure access.</span></span></label>
+      <label data-option-id="no-guard" data-option-label="C · Follow the cutover without the guard, and retire-local without the intervention workspace"><input type="radio" name="cutover-order" value="no-guard"><span><b>C · Follow the cutover without the guard, and retire-local without the intervention workspace</b><span class="d">This saves work now. The Studio may then show local changes as a remote run's diff. After <code>retire-local</code>, every hand fix becomes an operator merge request with no lease or attribution.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="intervention-workspace" data-decision-kind="single" data-decision-label="D7 Intervention workspace">
+      <h3>D7 · Intervention workspace</h3>
+      <p>Where do humans change a card's code when they intervene?</p>
+      <label data-option-id="local-checkout" data-option-label="a · Local Windows checkout as today"><input type="radio" name="intervention-workspace" value="local-checkout"><span><b>a · Local Windows checkout as today</b><span class="d">No build cost. Interventions stay outside the card, with no lease and ad-hoc identities, and review sees them only by accident. After <code>retire-local</code> they need an operator merge request. Effect: D2 B, D4 B, four dev-seat Git routes stay.</span></span></label>
+      <label data-option-id="central-per-card" data-option-label="b · Central intervention container per card; ad-hoc card for work without a card (recommendation)"><input type="radio" name="intervention-workspace" value="central-per-card"><span><b>b · Central intervention container per card; ad-hoc card for work without a card (recommendation)</b><span class="d">The intervention holds the card's newest fence, uses the agent's prepare script, and its commits are attributed and reviewed like agent commits. Costs: cards 9 to 13, capacity and a disk budget on the single host, and no intervention while the host is down. During an outage the Task Server is down too. Windows-only work uses the workstation runner exception. Effect: D2 A, D4 A, the dev seat keeps 0 of 35 Git routes.</span></span></label>
+      <label data-option-id="personal-per-project" data-option-label="c · Persistent personal container per project"><input type="radio" name="intervention-workspace" value="personal-per-project"><span><b>c · Persistent personal container per project</b><span class="d">Always warm and central. Commits have no card, no lease and no review scope, publication needs an operator merge, and disk grows without a lifecycle. Effect: D2 A, D4 A, 0 dev-seat Git routes, plus a personal-workspace view.</span></span></label>
+      <label data-option-id="local-docker-desktop" data-option-label="d · Local Docker Desktop container as fallback"><input type="radio" name="intervention-workspace" value="local-docker-desktop"><span><b>d · Local Docker Desktop container as fallback</b><span class="d">Works while the runner host is unreachable. It brings Docker Desktop and a Windows-hosted execution environment back, its Linux containers do not solve Windows-only work, and it needs local diff routes unless it registers as a workstation runner. Effect: D2 B, D4 B, four dev-seat Git routes stay.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+
+    <div class="decision" data-decision-id="intervention-attach" data-decision-kind="single" data-decision-label="D8 Attach path for the intervention workspace">
+      <h3>D8 · Attach path for the intervention workspace</h3>
+      <p>How does VS Code on Windows reach the intervention container? This applies to D7 b or c.</p>
+      <label data-option-id="remote-ssh" data-option-label="A · Remote-SSH into a container sshd through a forward-only host account (recommendation)"><input type="radio" name="intervention-attach" value="remote-ssh"><span><b>A · Remote-SSH into a container sshd through a forward-only host account (recommendation)</b><span class="d">No Docker socket outside the runner, no third-party relay, full extensions, no change to the Task Server edge. Needs a registered public key and one SSH config block per operator.</span></span></label>
+      <label data-option-id="dev-containers" data-option-label="B · Dev Containers over SSH"><input type="radio" name="intervention-attach" value="dev-containers"><span><b>B · Dev Containers over SSH</b><span class="d">Familiar devcontainer flow, but the operator's SSH user needs Docker engine access, which is root-equivalent on the host that also runs the Task Server. A <code>devcontainer.json</code> becomes a second toolchain truth.</span></span></label>
+      <label data-option-id="tunnels" data-option-label="C · VS Code Remote Tunnels"><input type="radio" name="intervention-attach" value="tunnels"><span><b>C · VS Code Remote Tunnels</b><span class="d">Easiest to set up, but code and terminal traffic run through an external relay under an identity outside the platform.</span></span></label>
+      <label data-option-id="browser-ide" data-option-label="D · Browser IDE (openvscode-server) through the Studio"><input type="radio" name="intervention-attach" value="browser-ide"><span><b>D · Browser IDE (openvscode-server) through the Studio</b><span class="d">Nothing to install, but the Task Server edge and the connector then proxy an IDE with a terminal, and only Open VSX extensions are available. Worth a later decision for onboarding users without VS Code.</span></span></label>
+      <div data-comment="Note (optional)"><textarea placeholder="Note (optional)"></textarea></div>
+    </div>
+  </section>
+
+  <section id="git-cards">
+    <h2><span class="number">18</span> Proposed cards</h2>
+    <p>Proposals only. No card has been created. The prompts are in <a href="workbench.json"><code>workbench.json</code></a> under <code>implementationTasks</code>. The five B1 cards that used to be listed there were delivered by AGT-2754 to AGT-2758 and are recorded in section 19.</p>
+    <table>
+      <thead><tr><th>Order</th><th>Card</th><th>Decisions</th><th>Before</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Interim guard for dev-seat Git views</td><td>D6</td><td>AGT-2737</td></tr>
+        <tr><td>2</td><td>Git object contract and Task Server store</td><td>D1, D5</td><td>Card 3</td></tr>
+        <tr><td>3</td><td>Runner publication of Git facts and diff objects</td><td>D1, D5</td><td>Cards 4, 5, 12</td></tr>
+        <tr><td>4</td><td>Central task commit, diff and run views</td><td>D1, D2</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>5</td><td>Central project Git views</td><td>D1, D5</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>6</td><td>Repository maintenance as a runner-host request</td><td>D3</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>7</td><td>Retire dev-seat Git routes and reclassify the inventory</td><td>D2, D3, D4, D7</td><td>After cards 4 to 6 and 9 to 12</td></tr>
+        <tr><td>8</td><td>Concept: repository document writes under the remote publisher</td><td>D4</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>9</td><td>Intervention attempt kind and exclusive lease</td><td>D7, D6</td><td>Cards 10, 12; AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>10</td><td>Intervention workspace provisioning on the runner host</td><td>D7</td><td>Card 11; AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>11</td><td>Remote-SSH attach for intervention workspaces</td><td>D8</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>12</td><td>Intervention commit attribution and checkpoints</td><td>D7, D1</td><td>AGT-W18 <code>retire-local</code></td></tr>
+        <tr><td>13</td><td>Studio "Intervene" action and ad-hoc intervention cards</td><td>D7, D8</td><td>After cards 9 to 11</td></tr>
+      </tbody>
+    </table>
+    <p>Cards 9 to 13 are the intervention workspace slices: lease, provisioning, attach, attribution and Studio action. Card 12's checkpoint publication uses card 3's object contract. Commit attribution and the hand-back continuation base work without it.</p>
+  </section>
+
   <!-- agent-studio:implementation-section:start -->
   <section id="implementation">
-    <h2><span class="number">07</span> Implementation</h2>
+    <h2><span class="number">19</span> Implementation</h2>
     <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
     <table>
       <thead><tr><th>Bundle</th><th>State</th><th>What exists in the product</th></tr></thead>
@@ -318,6 +964,7 @@
       <li data-implementation-entry="" data-task-key="AGT-2756" data-delivered-at="2026-09-11" data-slice="task-detail-and-hosts"><b>P1 task detail and host control.</b> Implemented all 111 task-detail-and-hosts route ids from <code>routes.json</code> across nine route groups (host lifecycle, project meta/epics/tags, runner orchestrator projections, per-field task metadata, task lifecycle extras, task-owned files/artifacts, task/attempt history, code review and pipeline, and workspace aggregates), each with its own versioned wire contract, schema migration, and endpoint file, every migration and endpoint map wired into the shared <code>TaskServerStore</code> migration sequence and <code>Program.cs</code>. Split the mixed legacy file-read contract at the connector: task-owned file reads stay on the Task Server-backed <code>/files/{path*}</code> route, while a repository-checkout read (<code>scope=code</code>) is rejected there and routed to a separately named local <code>/checkout/{path*}</code> dev-seat route that never reaches the Task Server. Authorization, optimistic concurrency (stale-expected-version conflicts), idempotent artifact ingestion, and exact-byte artifact content round-trips are proven at the HTTP boundary for every content-bearing route.</li>
       <li data-implementation-entry="" data-task-key="AGT-2757" data-delivered-at="2026-09-11" data-slice="operations-and-insight"><b>P2 operations and insight.</b> Implemented all 102 operations-and-insight route ids from <code>routes.json</code> in the standalone Task Server v1 API, split across eight feature-area files (admin/prompts/utility, analysis and drift, bus/token-usage/runtime/pricing, global CLI and crash-recovery settings, supervisor intervention and queue metrics, project settings and CRUD, design and proposals, security/deployment/publish/wiki-grading) that each own their durable SQLite projections. Added a new fenced Runner-operation dispatch contract (<code>studio_operations</code>, disjoint from task-run leases: claim, heartbeat, events, artifacts, completion, all fence-checked) as the standalone path for routes that need a checkout or CLI - the connector stays a thin proxy, and <code>task-server/*.cs</code> still never spawns a process. Bus messages, token usage, and runtime events are read from durable tables fed by their own small fenced ingestion routes, the same role the existing run-event pipeline plays for the board; cycle time, throughput, regression radar, and supervisor cancel/force-fail reuse the existing <code>audit</code> ledger and lease-release authority rather than a second copy of task history. Proven with 41 new route-level integration tests plus the full existing Task Server suite, run end to end against the real ASP.NET pipeline.</li>
       <li data-implementation-entry="" data-task-key="AGT-2758" data-delivered-at="2026-09-12" data-slice="administration-and-tail"><b>P3 administration and long tail.</b> Implemented all 24 administration-and-tail route ids from <code>routes.json</code> in the standalone Task Server v1 API, in one feature-area file pair (<code>StudioP3AdministrationEndpoints.cs</code> / <code>TaskServerStudioP3AdministrationStore.cs</code>) since every route is a read against a table a P0-P2 bundle already owns, or a small vendored static document (a copy of <code>backend/Policies/model-routing-policy.v1.json</code>, plus the CLI context-mode / permission-mode / lane-sort-strategy enum lists Task Server cannot import from the <code>CodingAgentRunner</code> package). No schema migration and no <code>CurrentSchemaVersion</code> bump were needed. Split the third and last mixed contract named in the recommendation: the legacy <code>GET /api/search</code> mixed Task-Server-ownable task matches with three domains that read a project's live checked-out docs or git history (dossiers, wiki, commits, files). Task matches now come from the durable <code>tasks</code> table at the same <code>/api/search</code> path (forwarded by the connector per its classification); the repository-bound domains moved to a new, distinctly-named dev-seat route, <code>GET /api/search/repository</code>, that never resolves <code>tasks</code>. Proven with new route-level integration tests plus the full existing Task Server and connector-inventory test suites, run end to end against the real ASP.NET pipeline.</li>
+      <li data-implementation-entry="" data-task-key="AGT-2983" data-delivered-at="2026-09-28" data-slice="core-attach"><b>P0 core attach, Studio switch.</b> Angular now calls all 27 core-attach operations on their versioned routes, including <code>/hubs/v1/studio</code> instead of <code>/hubs/jobs</code>, and <code>routes.json</code> shows an empty <code>core-attach</code> bundle. Verified against the Task Server before switching: the single-task detail read already existed as the general v1 task read (now pinned by a Studio contract test), the session shapes matched, the context digest guess <code>context/{contextKey}</code> did not (the Studio now calls each real shape, <code>global</code>, <code>project:{projectId}</code> and <code>task:{projectId}/{taskKey}</code>, which the connector forwards, while the Dossier digest stays a dev-seat read), and the workbench turn had no owner, so a Studio workbench-turn route was added. Task routes resolve <code>{projectId}</code> by id, name, or the unscoped <code>-</code> token. OrchestratorApi keeps serving the same versioned paths from its legacy handlers until cutover; the connector forwards them unchanged, now expands parameters embedded in a segment such as <code>workbench:{project}</code>, and maps its hub from the inventory path.</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

@@ -1,5 +1,6 @@
 import type { OrchestratorChatTurn } from '../../../../features/orchestrator';
 import type { ChatEvent, ConversationEvent, RawLineRange } from 'coding-agent-chat/core';
+import { adaptChatTurnMetadata, chatMetadataLibraryEnabled } from '../../chat-turn-metadata.adapter';
 
 /**
  * Pure helpers for the orchestrator side sheet. Extracted from the
@@ -81,6 +82,7 @@ export function sameOrchestratorChatTurns(
       && (left.errorMessage ?? null) === (right.errorMessage ?? null)
       && sameContextReceipt(left.contextReceipt, right.contextReceipt)
       && sameTokenUsage(left.tokenUsage, right.tokenUsage)
+      && JSON.stringify(left.metadata ?? null) === JSON.stringify(right.metadata ?? null)
       && sameAttachments(left.attachments, right.attachments);
   });
 }
@@ -146,6 +148,7 @@ export function buildOrchestratorConversationEvents(
   inlineEvents: readonly ChatEvent[],
   projectName: string | null,
   source: string,
+  metadataEnabled = true,
 ): ConversationEvent[] {
   const persisted = suppressLocalDuplicates(serverTurns, localTurns);
   const turns: readonly OptimisticOrchestratorChatTurn[] = [...persisted, ...localTurns];
@@ -165,6 +168,8 @@ export function buildOrchestratorConversationEvents(
     const body = error
       ? `${turn.text ? `${turn.text}\n\n` : ''}**Error:** ${error}`
       : turn.text;
+    const libraryMetadata = metadataEnabled && chatMetadataLibraryEnabled()
+      ? adaptChatTurnMetadata(turn.metadata) : null;
 
     projected.push({
       inputIndex: index,
@@ -178,6 +183,10 @@ export function buildOrchestratorConversationEvents(
         rawRange: rangeFor(source, index),
         body,
         actor: turn.role === 'user' ? 'You' : 'Orchestrator',
+        ...(libraryMetadata ? {
+          metadata: libraryMetadata.metadata,
+          metadataCapabilities: libraryMetadata.capabilities,
+        } : {}),
       },
     });
 
@@ -311,5 +320,5 @@ export function resolveAttachmentUrl(projectName: string | null, relativePath: s
   const fileName = relativePath.startsWith('chat-attachments/')
     ? relativePath.substring('chat-attachments/'.length)
     : relativePath;
-  return `/api/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments/${encodeURIComponent(fileName)}`;
+  return `/api/v1/studio/runner/${encodeURIComponent(projectName)}/orchestrator-chat/attachments/${encodeURIComponent(fileName)}`;
 }

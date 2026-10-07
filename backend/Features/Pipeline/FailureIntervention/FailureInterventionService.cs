@@ -180,8 +180,11 @@ public sealed class FailureInterventionService
 
             UpdateOriginReferences(origin, intervention.FollowUpKey);
             Write(origin.WatchPath, records);
+            using var decisionScope = classification.DecidedBy is { } decidedBy
+                ? DecisionModelContext.Use(decidedBy)
+                : null;
             RecordSurfaces(origin, intervention, created);
-            RecordPipelineStep(origin, intervention);
+            RecordPipelineStep(origin, intervention, classification.DecidedBy);
             return new FailureInterventionResult(intervention, created,
                 $"waiting on {intervention.FollowUpKey}: {ShortTitle(classification)}");
         }
@@ -239,7 +242,14 @@ public sealed class FailureInterventionService
             ? FailureDomains.Product
             : FailureDomains.Infrastructure;
         return FailureInterventionPolicy.FromFallback(evidence, domain,
-            $"Economy-model fallback classified the ambiguous failure as {domain}.");
+            $"Economy-model fallback classified the ambiguous failure as {domain}.") with
+        {
+            DecidedBy = StepModelUsage.From(
+                result.Usage,
+                result.EffectiveModel ?? model,
+                result.EffectiveThinkingLevel ?? thinking,
+                economy is not null ? "economy" : resolved?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime),
+        };
     }
 
     public IReadOnlyList<FailureInterventionRecord> List(string watchPath, bool openOnly = false)
@@ -339,13 +349,21 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
         });
     }
 
-    private void RecordPipelineStep(TaskInfo origin, FailureInterventionRecord intervention)
+    private void RecordPipelineStep(
+        TaskInfo origin,
+        FailureInterventionRecord intervention,
+        StepModelUsage? decidedBy)
     {
         if (_pipelineLog is null) return;
         var run = _pipelineLog.Read(origin.FolderPath);
         if (run is null) return;
         var now = _time.GetUtcNow().UtcDateTime;
-        _pipelineLog.RecordStep(origin.FolderPath, new PipelineStepExecution
+        // The rule table classifies most failures; only an ambiguous one
+        // reached the economy model, and only that one carries its receipt.
+        PipelineStepExecution Measured(PipelineStepExecution row) => decidedBy is null
+            ? row with { CostBasis = StepCostBasis.Deterministic }
+            : decidedBy.ApplyTo(row);
+        _pipelineLog.RecordStep(origin.FolderPath, Measured(new PipelineStepExecution
         {
             StepId = PipelineCatalogue.FailureInterventionStepId,
             Kind = StepKind.Orchestrator,
@@ -356,7 +374,9 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
             DurationMs = 0,
             Verdict = "intervention-raised",
             VerdictSummary = $"intervention raised: {intervention.FollowUpKey} ({intervention.FailureClass}, {intervention.Fingerprint})",
-        });
+        }));
+        // The decision row mirrors the intervention; its cost is already on
+        // the intervention row, so it records an explicit rule zero.
         _pipelineLog.RecordStep(origin.FolderPath, new PipelineStepExecution
         {
             StepId = PipelineCatalogue.OrchestratorDecisionStepId,
@@ -368,6 +388,9 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
             DurationMs = 0,
             Verdict = "intervention",
             VerdictSummary = $"intervention raised: {intervention.FollowUpKey} ({intervention.FailureClass}, {intervention.Fingerprint})",
+            CostBasis = StepCostBasis.Deterministic,
+            Model = decidedBy?.Model,
+            ModelSource = decidedBy?.ModelSource,
         });
     }
 
@@ -396,6 +419,7 @@ Keep every affected origin in `references.followUpOf`. Resolve the underlying to
             "ReviewInfra/ToolUnavailable" => "review toolchain unavailable",
             "gate/MissingSource" => "gate source unavailable",
             "gate/build-gate-failed" => "build gate failed",
+            "gate/shared-cause" => "shared merge-gate failure",
             "integration/configuration" => "integration unavailable",
             "run/crash-as-completion" => "run crashed at completion",
             _ => c.FailureClass,

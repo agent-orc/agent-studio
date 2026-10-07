@@ -27,6 +27,7 @@ Use this page as the first stop when you need the right document quickly.
 | [mockups/](../concepts/mockups/) | Locked design references and click-dummies (under `concepts/`). |
 | [assets/](../assets) | Image assets referenced by documentation pages. |
 | [proposals/](../concepts/proposals/README.md) | Dated improvement proposals with durable approval status and implementation-card references. |
+| [docs-drift-audit-2026-09-29/](../docs-drift-audit-2026-09-29/index.html) | Documentation drift audit and its evidence inventory. |
 
 ## Code-Vertrag (`app/`)
 
@@ -61,7 +62,8 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Workspace repository lifecycle and backlog recovery | [operations/workspace-repository-lifecycle.md](../operations/workspace-repository-lifecycle.md) |
 | Temp and cache hygiene on a runner host: the suite temp root, the review executor's per-command purge, the bounded product-owned preparation cache, and how to reset each (AGT-2858) | [operations/temp-and-cache-hygiene.md](../operations/temp-and-cache-hygiene.md) |
 | Torn NuGet preparation cache: recognition, automatic eviction, and integration replay (AGT-2901) | [operations/common-problems/torn-preparation-cache/](../operations/common-problems/torn-preparation-cache/README.md) |
-| Integration worktree: where delivery merges run, why the developer checkout is never used, and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
+| Stale git `index.lock` or ref lock: what the lock means, how the Task Server clears it before a write, and the `evidence-flush-stalled` alarm (AGT-3000) | [operations/common-problems/stale-git-lock/](../operations/common-problems/stale-git-lock/README.md) |
+| Integration worktree: where delivery merges run, why the developer checkout is never used, when the developer checkout's `develop` moves (only after the gated push, AGT-2996), and how to clean the slot up (AGT-2832) | [operations/git/integration-worktree.md](../operations/git/integration-worktree.md) |
 | Interrupted integration gate: the in-flight gate record, restart rollback-or-resume, and why `integrated` requires the pushed remote branch (AGT-2849) | [operations/git/interrupted-integration-gate.md](../operations/git/interrupted-integration-gate.md) |
 | Branch lifecycle and automatic reclamation (AGT-2793) | [concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793](../concepts/task-integration-and-merge-workflow.md#branch-cleanup-agt-2009-agt-2793) |
 | Completion contract: what a card must prove to claim "delivered", containment over stored records, the `next-attempt` placeholder, and the delivery-claim sweep (AGT-2817) | [concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817](../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817) |
@@ -85,6 +87,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Review Plane claim/report/replay contract (two-phase report hand-off, idempotent replay, stale-lease claim requeue; AGT-2762) | [contracts/review-plane.md](../system/contracts/review-plane.md) |
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
+| Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
@@ -99,6 +102,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Finding-first reissue prompt experiment | [design and predeclared analysis](../quality/pipeline-time-economy/reissue-prompt-experiment.md) · [current report](../quality/pipeline-time-economy/reissue-prompt-experiment-analysis.md) |
 | Async validation and test staging lane proposal | [interactive Dossier](../operations/async-validation-staging-lane/index.html) · [brief](../operations/async-validation-staging-lane/brief.md) |
 | Gates theme Dossier: batch gate, remote gate ownership, and the validation-economy principles in one current record, with the 847-task time-economy baseline and the reissue-convergence negative result as an evidence appendix (AGT-2801, consolidates AGT-W36, AGT-W18, AGT-W2) | [decision dossier](../operations/gates/index.html) |
+| Gates D10 prerequisite estimate from historical pipeline data, including sample limits and the same-SHA counter | [measurement](../operations/gates/d10-measurement.md) |
 | Batch Gate decision dossier: one single-flight full suite for a closed delivery wave, with exact-SHA publication, per-member evidence, bounded red isolation, and promotion-train authority (AGT-2648) | [decision dossier](../operations/batch-gate-concept/index.html) |
 | Rebase, merge, and bounce steering decision dossier: stage-specific Git policy through the attribution lens, exact candidate-SHA promotion, deterministic conflict requeue, guardian escalation, and Batch Gate interaction (AGT-2662) | [decision dossier](../operations/rebase-merge-and-steering/index.html) |
 | Concept task pipeline and sight-review defaults | [interactive Dossier](../operations/concept-pipeline/index.html) |
@@ -180,6 +184,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | CLI frame compatibility and capture corpus | [cli/frame-compatibility-matrix.md](../system/cli/frame-compatibility-matrix.md) |
 | Getting started (new install, step by step) | [operations/setup/getting-started.md](../operations/setup/getting-started.md) |
 | Docker one-box install and operations | [operations/setup/docker.md](../operations/setup/docker.md) |
+| Identity and project bootstrap: first owner, recovery, host enrolment, project registration and repository probe (standalone Task Server, I05) | [operations/setup/identity-and-project-bootstrap.md](../operations/setup/identity-and-project-bootstrap.md) |
 | Installation connectivity manifest, resolved ports and single RunnerLinks owner (I04) | [operations/setup/connectivity-manifest.md](../operations/setup/connectivity-manifest.md) |
 | Contributor source-build setup | [operations/setup/contributor-setup.md](../operations/setup/contributor-setup.md) |
 | Preparation, isolation, and orchestrator setup | [operations/setup/preparation-isolation-orchestrator.md](../operations/setup/preparation-isolation-orchestrator.md) |
@@ -233,6 +238,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | MVP presentation storyboard and shot list | [product/mvp-presentation-storyboard.md](../concepts/mvp-presentation-storyboard.md) |
 | Quota snapshot events at run start/end (cap-forecast data collection) | [concepts/quota-snapshot-run-events.md](../concepts/quota-snapshot-run-events.md) |
 | Quota fallback operator help (caps, preference, catalogue routes, evidence) | [app/help/quota-fallback.md](../app/help/quota-fallback.md) |
+| Quota forecast: weekly curve, 3-hour burn rate, time of 100 %, armed fallback, and the `/api/cli/quota/history` series (AGT-3001) | [app/help/quota-forecast.md](../app/help/quota-forecast.md) |
 | Runtime prompt usage audit | [concepts/runtime-prompt-usage-audit.html](../concepts/runtime-prompt-usage-audit.html) |
 | Admin CLI onboarding | [concepts/admin-cli-onboarding.html](../concepts/admin-cli-onboarding.html) |
 | Orchestrator supervision loop | [concepts/orchestrator-supervision-loop.html](../concepts/orchestrator-supervision-loop.html) |

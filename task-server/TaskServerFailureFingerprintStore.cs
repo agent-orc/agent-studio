@@ -102,4 +102,20 @@ public sealed partial class TaskServerStore
             || string.IsNullOrWhiteSpace(request.ReportKey) || request.ReportKey.Length > 256)
             throw new ArgumentException("Failure fingerprint event fields must be nonempty and bounded.");
     }
+
+    private static async Task RecordUnprovenFlakeFailuresAsync(
+        SqliteConnection connection, SqliteTransaction transaction, ReviewReportRequest report,
+        string attemptId, string cardKey, DateTime seenAt, CancellationToken ct)
+    {
+        foreach (var command in ReviewFlakeEvidencePolicy.UnprovenFailures(report))
+            await ExecuteAsync(connection, """
+                INSERT INTO failure_fingerprint_events(
+                    report_key, fingerprint, seen_at, executor, card_key, source)
+                VALUES ($report, $fingerprint, $seen, $executor, $card, 'review-unproven-flake')
+                ON CONFLICT(report_key) DO NOTHING;
+                """, ct, transaction,
+                ("$report", "review-unproven-flake:" + Hash(attemptId + ":" + command.StepId)),
+                ("$fingerprint", FailureItemFingerprint.Compute(command.NewFailures!)),
+                ("$seen", Iso(seenAt)), ("$executor", report.ExecutorId), ("$card", cardKey));
+    }
 }

@@ -37,8 +37,18 @@ public sealed class WorkspaceSettingsServiceTests : IDisposable
 
         Assert.Null(s.OrchestratorModel);
         Assert.Null(s.OrchestratorThinkingLevel);
-        Assert.Null(s.CliExecutionEngine);
         Assert.Null(s.AutonomyLevel);
+        Assert.True(s.ChatMetadataEnabled ?? true);
+    }
+
+    [Fact]
+    public void ChatMetadataSetting_PersistsAndCanReturnToDefault()
+    {
+        var svc = Build();
+        svc.SetChatMetadataEnabled("ws-default", false);
+        Assert.False(Build().Get("ws-default").ChatMetadataEnabled);
+        svc.SetChatMetadataEnabled("ws-default", null);
+        Assert.True(Build().Get("ws-default").ChatMetadataEnabled ?? true);
     }
 
     [Fact]
@@ -101,38 +111,6 @@ public sealed class WorkspaceSettingsServiceTests : IDisposable
         Assert.Equal(3, reloaded.Get("ws-default").AutonomyLevel);
     }
 
-    [Fact]
-    public void SetCliExecutionEngine_PersistsCanonicalValueAcrossReload()
-    {
-        var svc = Build();
-
-        svc.SetCliExecutionEngine("ws-default", " LEGACY ");
-
-        var reloaded = Build();
-        Assert.Equal(CliExecutionEngines.Legacy, reloaded.Get("ws-default").CliExecutionEngine);
-    }
-
-    [Fact]
-    public void SetCliExecutionEngine_BlankClearsWorkspaceDefault()
-    {
-        var svc = Build();
-        svc.SetCliExecutionEngine("ws-default", CliExecutionEngines.Legacy);
-
-        svc.SetCliExecutionEngine("ws-default", null);
-
-        Assert.Null(svc.Get("ws-default").CliExecutionEngine);
-    }
-
-    [Fact]
-    public void SetCliExecutionEngine_InvalidValueIsRejectedWithoutMutation()
-    {
-        var svc = Build();
-        svc.SetCliExecutionEngine("ws-default", CliExecutionEngines.Legacy);
-
-        Assert.Throws<ArgumentException>(() =>
-            svc.SetCliExecutionEngine("ws-default", "automatic"));
-        Assert.Equal(CliExecutionEngines.Legacy, svc.Get("ws-default").CliExecutionEngine);
-    }
 
     [Theory]
     [InlineData(-2, 0)]

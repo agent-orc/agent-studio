@@ -3,8 +3,8 @@
     <div>
       <h2 class="wtt__title">Workspace token usage</h2>
       <p class="wtt__sub">
-        All LLM token usage across every watched project - agent runs,
-        supporting loops, and orchestrator turns - bucketed on the wall clock.
+        {{ scope() ? 'Token events in the selected workspace and calendar range.' :
+          'All LLM token usage across every watched project - agent runs, supporting loops, and orchestrator turns - bucketed on the wall clock.' }}
         @if (timeline(); as t) {
           <span class="wtt__sub-stats">
             · {{ totalCalls() }} call{{ totalCalls() === 1 ? '' : 's' }}
@@ -14,7 +14,7 @@
       </p>
     </div>
     <div class="wtt__controls">
-      <div class="wtt__win" role="radiogroup" aria-label="Window">
+      @if (!scope()) { <div class="wtt__win" role="radiogroup" aria-label="Window">
         @for (opt of windowOptions; track opt.hours) {
           <button type="button"
                   class="wtt__win-btn"
@@ -26,7 +26,7 @@
             {{ opt.label }}
           </button>
         }
-      </div>
+      </div> }
       <button type="button"
               class="wtt__refresh"
               data-testid="wtt-refresh"
@@ -69,7 +69,7 @@
     @if (loading() && !timeline()) {
       <div class="wtt__empty">Loading timeline...</div>
     } @else if (!hasAnyData()) {
-      <div class="wtt__empty">No orchestrator activity in this window.</div>
+      <div class="wtt__empty">{{ scope() ? 'No token events in this ledger scope.' : 'No orchestrator activity in this window.' }}</div>
     } @else {
       <svg class="wtt__svg"
            role="img"
@@ -168,7 +168,7 @@
                   [class.wtt__chip--off]="isProjectDisabled(p.project)"
                   [attr.data-testid]="'wtt-legend-' + p.project"
                   [attr.aria-pressed]="!isProjectDisabled(p.project)"
-                  (click)="toggleProject(p.project)">
+                  [disabled]="!!scope()" (click)="toggleProject(p.project)">
             <span class="wtt__chip-dot"
                   [style.background]="colorFor(p.project)"></span>
             <span class="wtt__chip-name">{{ p.project }}</span>

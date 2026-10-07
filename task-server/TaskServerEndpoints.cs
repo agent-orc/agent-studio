@@ -718,6 +718,30 @@ public static class TaskServerEndpoints
                 : Results.Json(new ApiError("engine-principal-required", "An authenticated Engine principal is required."),
                     statusCode: StatusCodes.Status403Forbidden);
         });
+        steering.MapPost("/continuations", async (
+            HttpContext context, string projectId, string taskIdentity,
+            ContinuationIntentRequest request, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.SubmitContinuationIntentAsync(
+                projectId, taskIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        steering.MapGet("/continuations/{commandId}", async (
+            string projectId, string taskIdentity, string commandId,
+            TaskServerStore store, CancellationToken ct) =>
+            await InvokeNullableAsync(() => store.GetContinuationIntentAsync(
+                projectId, taskIdentity, commandId, ct)));
+        steering.MapGet("/continuations", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.ListContinuationIntentsAsync(
+                projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/continuations", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.ListContinuationIntentsAsync(
+                projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/continuations/{commandId}", async (
+            string projectId, string taskIdentity, string commandId,
+            TaskServerStore store, CancellationToken ct) =>
+            await InvokeNullableAsync(() => store.GetContinuationIntentAsync(
+                projectId, taskIdentity, commandId, ct)));
 
         var management = api.MapGroup("/management")
             .RequireTaskServerScope(TaskServerScopes.Management);
@@ -736,9 +760,60 @@ public static class TaskServerEndpoints
             string principalId,
             RotatePrincipalRequest request,
             TaskServerStore store,
-            CancellationToken ct)
-            => await InvokeAsync(() => store.RotatePrincipalAsync(
-                principalId, request, Actor(context), ct)));
+            CancellationToken ct) => context.TaskServerPrincipal() is { } actor
+                ? actor.PrincipalId == principalId && request.Consumers?.Count > 1
+                    ? Results.Json(new ApiError("rotation-independent-manager-required",
+                        "A shared principal requires a separate management principal for rotation delivery."),
+                        statusCode: StatusCodes.Status409Conflict)
+                    : await InvokeAsync(() => store.RotatePrincipalAsync(
+                        principalId, request, actor.PrincipalId, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated management principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden));
+        management.MapGet("/principals/{principalId}/rotations/{operationId}", async (
+            string principalId, string operationId, TaskServerStore store, CancellationToken ct)
+            => await InvokeNullableAsync(() => store.GetPrincipalRotationAsync(principalId, operationId, ct)));
+        api.MapGet("/principal-rotations/{operationId}", async (
+            HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.InspectPrincipalRotationConsumerAsync(operationId, actor, ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim, TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
+        api.MapPost("/principal-rotations/{operationId}/delivered", async (
+            HttpContext context, string operationId, TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.MarkPrincipalRotationDeliveredAsync(operationId, actor,
+                    context.Request.Headers["X-Principal-Consumer-Id"].FirstOrDefault(),
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(), ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim,
+                TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
+        api.MapPost("/principal-rotations/{operationId}/ack", async (
+            HttpContext context, string operationId, PrincipalRotationAcknowledgement request,
+            TaskServerStore store, CancellationToken ct)
+            => context.TaskServerPrincipal() is { } actor
+                ? await InvokeAsync(() => store.AcknowledgePrincipalRotationAsync(operationId, request, actor,
+                    context.Request.Headers["X-Principal-Consumer-Proof"].FirstOrDefault(), ct))
+                : Results.Json(new ApiError("principal-required", "An authenticated principal is required."),
+                    statusCode: StatusCodes.Status403Forbidden))
+            .RequireAnyTaskServerScope(TaskServerScopes.RunsWrite,
+                TaskServerScopes.Management, TaskServerScopes.TasksRead, TaskServerScopes.TasksWrite,
+                TaskServerScopes.OrchestrationClaim, TaskServerScopes.OrchestrationWrite,
+                TaskServerScopes.RunsClaim,
+                TaskServerScopes.ReviewsClaim, TaskServerScopes.ReviewsWrite,
+                TaskServerScopes.EventsSubscribe, TaskServerScopes.EventsWrite,
+                TaskServerScopes.OperationsInspect, TaskServerScopes.OperationsIssue);
         management.MapPost("/principals/{principalId}/revoke", async (
             HttpContext context,
             string principalId,
@@ -793,6 +868,22 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(() => store.RequestOperatorHostDrainAsync(
                 hostId, request, Actor(context), ct)));
+        management.MapGet("/remote-hosts/enrolments", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListHostEnrolmentsAsync(ct)));
+        management.MapPut("/remote-hosts/{hostId}/enrolment", async (
+            HttpContext context,
+            string hostId,
+            EnrolHostRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.EnrolHostAsync(hostId, request, Actor(context), ct)));
+        management.MapPost("/remote-hosts/{hostId}/enrolment/remove", async (
+            HttpContext context,
+            string hostId,
+            RemoveHostRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.RemoveHostAsync(hostId, request, Actor(context), ct)));
         management.MapPost("/remote-hosts/{hostId}/cli-update", async (
             HttpContext context,
             string hostId,
@@ -953,6 +1044,9 @@ public static class TaskServerEndpoints
         StudioAuthenticationException studioAuth => Results.Json(
             new ApiError(studioAuth.Code, studioAuth.Message),
             statusCode: StatusCodes.Status401Unauthorized),
+        StudioAuthorizationException studioRole => Results.Json(
+            new ApiError(studioRole.Code, studioRole.Message),
+            statusCode: StatusCodes.Status403Forbidden),
         ArtifactArchivedException archived => Results.Json(
             new ApiError(
                 "artifact-archived",

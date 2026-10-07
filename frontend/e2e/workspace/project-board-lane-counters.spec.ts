@@ -142,10 +142,10 @@ function json(route: Route, body: unknown): Promise<void> {
 async function installRoutes(page: Page, grouped: () => typeof GROUPED = () => GROUPED): Promise<void> {
   await page.route('**/api/**', (route) => {
     const url = route.request().url();
-    if (url.includes('/api/auth/status')) {
+    if (url.includes('/api/v1/studio/auth/status')) {
       return json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
-    if (url.includes('/api/tasks/grouped') || url.includes('/api/tasks/grouped')) {
+    if (url.includes('/api/v1/studio/board') || url.includes('/api/v1/studio/board')) {
       return json(route, grouped());
     }
     if (url.includes('/api/tasks/archive')) {
@@ -158,7 +158,7 @@ async function installRoutes(page: Page, grouped: () => typeof GROUPED = () => G
     if (url.includes('/api/watch-paths')) {
       return json(route, [{ name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH }]);
     }
-    if (new URL(url).pathname === '/api/projects') {
+    if (new URL(url).pathname === '/api/v1/projects') {
       return json(route, [{
         id: 'PROJ-LANE',
         displayName: PROJECT,
@@ -173,7 +173,7 @@ async function installRoutes(page: Page, grouped: () => typeof GROUPED = () => G
         createdAt: '2026-06-09T08:00:00Z',
       }]);
     }
-    if (url.includes('/api/workspaces')) {
+    if (url.includes('/api/v1/workspaces') || url.includes('/api/workspaces')) {
       return json(route, [{
         id: 'ws-lane',
         displayName: 'Lane Workspace',
@@ -196,7 +196,7 @@ async function installRoutes(page: Page, grouped: () => typeof GROUPED = () => G
         }],
       }]);
     }
-    if (url.includes('/api/runner/status')) {
+    if (url.includes('/api/v1/studio/runner/status')) {
       return json(route, {
         projects: {
           [PROJECT]: {

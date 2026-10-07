@@ -12,6 +12,21 @@ release yet.
 
 ## [Unreleased]
 
+### Fixed
+
+- The runner's slot attempt id is the lease's attempt id, so no consumer of the slot can drift from the attempt the server fenced; on the legacy runner plane it was the lease id (AGT-2985).
+- On a fresh runner host the project delivery preflight makes a full clone; its `--no-checkout` clone made the first claim of every project fail environment preparation three times with "Stable checkout has local changes" (AGT-2985).
+
+### Added
+
+- Legacy-plane completion contract test: claim over `/api/runner/claim`, the production slot, continuation evidence and completion request, accepted by `POST /api/runner/completion`; it fails on the 0.9.3 runner code (AGT-2985).
+- The deployment regression scenario runs the coding attempt on both runner planes: a new smoke step boots the backend monolith, a second real runner and a smart-HTTP fixture repository for the legacy plane the fleet uses (AGT-2985).
+- `agent-runner-deploy` waits up to ten minutes after a promotion for an accepted completion and otherwise prints the rollback command; `agent-runner-deploy verify-completions` reruns the check (AGT-2985).
+
+### Changed
+
+- A failed merge gate is classified (environment, product, integration branch, undecidable) and routed by the orchestrator: environment failures replay, product failures get one fix round, a fingerprint shared by two cards opens one cause card, and only undecidable failures park for a person (AGT-3009).
+
 ## [0.9.5] - 2026-10-04
 
 Catch-up release after the operations week: 189 commits on develop since 0.9.4
@@ -56,6 +71,7 @@ ledger prices GPT-6 Sol again, the Stable catalogue moves to TokenEconomy 0.3.5.
 - Test-suite audit: time bombs, clock dependencies, line-ending and platform assumptions removed from the test suites (AGT-3003).
 - Acceptance-rail correctness findings from the Quality Studio review (AGT-2990).
 - Security hygiene wave: vulnerable runtime dependencies, secret-scan baseline, bounded whole-file reads (AGT-2991).
+- Stable hotfixes from 4 October, merged back from main (88bee6805..c076d2da9): backend build and test gates run only on the remote Linux worker and fail closed without it; integration status reads each Git origin once per projection instead of once per card (180 to 2-13 Git spawns per index run); deployment smoke budgets the worker cleanup before run.completed; board review reads no longer depend on authority persistence.
 
 ## [0.9.4] - 2026-09-27
 

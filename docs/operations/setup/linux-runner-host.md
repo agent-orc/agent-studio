@@ -114,9 +114,10 @@ checkout fallback.
   UpdateService Windows machinery or live-checkout drift scans. Headless
   Chromium, UI tests, and screenshots are remote-capable and use the host-owned
   Mode-A stack.
-- **The CLI invocation is configurable, not hard-coded.** Headless auth and
-  print-mode flags differ per CLI and per version; `RUNNER_CLI_BIN` /
-  `RUNNER_CLI_ARGS` select them. See the per-CLI defaults below.
+- **The provider and executable are configurable, not the invocation argv.**
+  `RUNNER_CLI_TYPE` selects Claude or Codex; the provider-specific binary
+  settings locate the executable. CodingAgentRunner owns headless and protocol
+  flags.
 
 ## Test host
 
@@ -233,6 +234,164 @@ installed with `dotnet tool`; setup reports that packaging mismatch explicitly
 and does not silently switch to a source build. The source-publish procedure
 below remains a troubleshooting and development fallback, not the product
 onboarding path.
+
+### Host enrolment and capacity record
+
+AGT-W63 I03 (Dossier decision D3, option A: one runner-host family) gives
+each host one identity and one owned desired record. The Coding and Review
+role services stay separate processes with separate principals and token
+files, but they share one bounded slot envelope. Review aspects, gates and
+verification remain pipeline-library steps run by these roles; there is no
+separate quality agent.
+
+**The record.** `/etc/agent-host/host.json` (schema version 1) states the host
+facts once:
+
+```json
+{
+  "schemaVersion": 1,
+  "hostId": "build-02",
+  "hostClass": "linux",
+  "serverUrl": "http://127.0.0.1:15031",
+  "gitRemote": "git@example.invalid:team/project.git",
+  "envelope": { "totalSlots": 3, "codingSlots": 2, "reviewSlots": 1 },
+  "roles": [
+    { "role": "coding", "principalId": "rnr-build-02-coding", "tokenFile": "/etc/agent-runner/coding.token" },
+    { "role": "review", "principalId": "rnr-build-02-review", "tokenFile": "/etc/agent-runner/review.token" }
+  ],
+  "resources": { "REVIEW_MEMORY_MAX": "6G" }
+}
+```
+
+`totalSlots` is conserved across both roles; each role cap is a sub-limit and
+may not exceed it. Two roles may not share a principal or a token file. The
+record holds paths to secrets, never the secrets. An ordinary workstation host
+adds `"workstation": { "roots": [...], "tools": [...] }` and keeps the same
+role services.
+
+**Generate, never hand-edit.** From the immutable release:
+
+```bash
+agent-host host-record check --record /etc/agent-host/host.json
+agent-host host-record render --record /etc/agent-host/host.json --out-dir /tmp/host-render
+# coding  agent-runner.service         /etc/agent-runner/runner.env
+# review  agent-runner-review.service  /etc/agent-runner/review.env
+```
+
+`render` writes `runner.env`, `review.env` and `profile.conf` (mode `600`),
+each stamped with the record digest. Unit names stay static
+(`agent-runner.service`, `agent-runner-review.service`). Every role file pins
+`RUNNER_HOSTNAME`, so a restart or a machine rename keeps the enrolled
+identity. Each file declares both `RUNNER_HOST_CODING_SLOTS` and
+`RUNNER_HOST_REVIEW_SLOTS`, so a value inherited from the service environment
+cannot leak in. `remote-runner-onboard.sh --host-record host.json --role
+<coding|review>` reads the same record and refuses any flag that disagrees
+with it, including an explicit coding or review slot count. The controller
+installs the record at `/etc/agent-host/host.json` on the selected host, runs
+the installed `agent-host host-record render`, then installs the selected role's
+generated EnvironmentFile and generated `profile.conf`. The managed unit's
+resource policy reads that profile. Legacy resource directives in that unit's
+drop-ins are removed so they cannot override the record; unrelated drop-in
+settings remain. Repeat onboarding for each enrolled role service. A record
+without the requested role or with an invalid envelope fails before service
+replacement. Keep each role's token file provisioned separately on that host.
+
+**Migrating an existing host.** Build the first record from the files already
+in place, review the notes, then render and compare:
+
+```bash
+agent-host host-record migrate --runner-env /etc/agent-runner/runner.env \
+  --review-env /etc/agent-runner/review.env --profile /etc/agent-host/profile.conf \
+  --host-class linux --out /etc/agent-host/host.json
+```
+
+The import refuses disagreeing shared facts (server URL, origin, push origin,
+host id) and shared principals instead of choosing one. A shared fact set in
+one role file but absent from the other is also refused, because the record
+would apply it to both roles. After building the record, migration renders it
+and compares every setting each role file declares with the generated file. A
+value the generated file would rewrite stops migration. This includes a
+`RUNNER_HOST_CODING_SLOTS` or `RUNNER_HOST_REVIEW_SLOTS` that disagrees with the
+other role's slot count, in either file. A peer slot count above zero for a
+role whose file was not supplied is refused too. A setting the record cannot
+carry also stops migration, for example a TLS pin, a workstation key, a
+non-standard work or state directory, or a custom CLI path. The importer names
+the file, key and generated value. Remove or align the setting, or keep that
+host on legacy onboarding. The generated service files carry the same CLI
+lines as legacy onboarding (`RUNNER_CLI_TYPE`, `RUNNER_CLAUDE_CLI_BIN`,
+`RUNNER_CODEX_CLI_BIN`). `host-record` refuses an unknown or repeated option,
+and a record field it does not know. Every file named by `--runner-env`,
+`--review-env` or `--profile` must exist; a missing named file stops migration
+before the record is written. Omit `--review-env` only for a coding-only host,
+or omit `--runner-env` only for a review-only host. Omit `--profile` only when
+there is no existing resource profile to import. A missing `RUNNER_HOSTNAME` is
+pinned to the current machine name. Migration preserves `HOST_TOTAL_SLOTS` from
+an existing profile, including a shared ceiling below the sum of the role caps;
+an invalid ceiling or a profile role cap that conflicts with a role file is
+refused. Without that key, the envelope starts at the sum of today's role
+slots. The legacy default of two role slots applies only when
+`RUNNER_MAX_PARALLELISM` is absent from a role file. An explicit value that is
+not an integer stops migration before a record is written. Review the imported
+resource values, then use `--host-record` on the normal onboarding controller. The
+controller replaces the old `runner.env`, `review.env` (one role at a time)
+and `profile.conf` from the record. Legacy onboarding without `--host-record`
+continues to import unit resource drop-ins into the existing profile.
+
+**Enrolment on the Task Server.** The Task Server owns the enrolment. With an
+administrator principal:
+
+```bash
+agent-host host-record enrolment --record /etc/agent-host/host.json --expected-generation 0 \
+  | curl -fsS -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+      --data @- "$TASK_SERVER/api/v1/management/remote-hosts/build-02/enrolment"
+curl -fsS -H "Authorization: Bearer $ADMIN_TOKEN" "$TASK_SERVER/api/v1/management/remote-hosts/enrolments"
+```
+
+Each change carries the current `generation`; a stale or replayed request
+fails with `host-enrolment-generation-mismatch`. A principal can be enrolled
+on only one host. Enrolling a second host with the first host's principal
+fails with `principal-enrolled-elsewhere`, and a copied first-host token
+claiming from another host is refused with `principal-not-enrolled`. Every
+new host therefore needs its own enrolled principals. Hosts without an
+enrolment keep the earlier runtime-capacity behaviour. Enrolment never
+changes a project's parallelism or placement.
+
+**Drain, removal and re-enrolment.** Drain stays on the existing
+`POST .../remote-hosts/{hostId}/operator-drain`. Removal is
+`POST .../remote-hosts/{hostId}/enrolment/remove` with `{ "expectedGeneration": n,
+"reason": "..." }`. It releases the host's principals and refuses new claims
+with `host-removed`; in-flight work settles through leases and fences. To
+re-enrol, issue a new `PUT` at the removed generation, normally with freshly
+enrolled principals.
+
+**Typed claim refusals.** No lease or review attempt is minted when a claim
+is refused. Coding claims report `placementReason`; review claims report
+`admissionReason`:
+
+| Reason | Cause |
+|---|---|
+| `capability-stale` | A required capability advertisement is past its freshness window. |
+| `provider-login-missing` | A required `provider-auth:*` capability is missing or not ready. |
+| `repository-proof-failed` | `repository:access`, `git:fetch`, `git:push`, `git:workflow-push` or `repository:filesystem` is missing or failed. |
+| `capability-missing` / `capability-unavailable` / `capability-draining` | Another required capability is absent, not claimable, or in recovery. |
+| `host-draining` | Operator or automatic whole-host drain. |
+| `host-removed` | The host enrolment was removed. |
+| `principal-not-enrolled` / `role-not-enrolled` | The caller is not this host's enrolled service for that role. |
+| `slot-budget-full` | Coding leases plus review attempts on the host fill `totalSlots`. |
+| `role-slot-budget-full` | This role's cap is full. |
+
+A review re-claim is a repair, not a new admission. It reattaches authority to
+a worker that is still running, or delivers that worker's loss report. The
+envelope therefore does not refuse it, even when the expired lease's slot was
+reused meanwhile. The repaired attempt counts again at once, so fresh claims
+get `slot-budget-full` until the host is back inside its envelope.
+
+**Offline hosts.** A host that stops renewing keeps its expired lease: it is
+not free capacity and the task is not reassigned silently. After the
+authority marks the attempt `process-unknown`, an administrator records
+containment proof with `resolve-unknown`. Only then does another host claim
+the task, under a higher fence. A reconnecting host's late completion with
+the old fence is rejected.
 
 ## 1. Provision the host
 
@@ -545,6 +704,12 @@ the files of a running daemon. The CLR can load metadata and method bodies
 lazily, so replacing only part of a live multi-file application can corrupt the
 running process even before systemd receives the planned restart.
 
+After the restart the helper records the promotion in
+`/var/lib/agent-runner/deploy/last-promotion` and runs its post-restart
+completion check: within ten minutes of the activation at least one completion
+must be accepted, otherwise it prints the rollback command and exits nonzero.
+See [Post-restart completion check](#post-restart-completion-check).
+
 The root-owned deploy helper rejects an invalid or incomplete publish before
 changing `current`. It resolves the selected target in `agent-host.deps.json`
 and requires every managed runtime assembly by its flattened publish name. It
@@ -585,6 +750,8 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_NAME` | `--runner-name` | `agent-runner-01` | Board-facing runner/project name. |
 | `RUNNER_CLIENT_ID` | `--client-id` | (none) | Optional attribution label. It is not authentication and grants no access. |
 | `RUNNER_GIT_REMOTE` | `--git-remote` | (none) | Startup push-probe repository and legacy one-shot fallback. It is never inherited by a project clone. |
+| `RUNNER_WORKSPACE_GIT_REMOTE` | `--workspace-git-remote` | (none) | Exact private workspace origin to check independently at daemon startup. Use a credential-free GitHub URL. |
+| `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH` | `--workspace-git-requires-push` | `false` | Require a managed temporary-ref push and delete proof for the workspace origin. |
 | `RUNNER_GIT_PUSH_REMOTE` | `--git-push-remote` | (fetch URL) | Startup push-probe and legacy one-shot write URL. It is never inherited by a project clone. |
 | `RUNNER_BRANCH` | `--branch` | (base branch) | Branch to check out for the run. |
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
@@ -594,13 +761,10 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
-| `RUNNER_EXEC_ENGINE` | `--exec-engine` | `car` | CLI execution engine inside the detached worker. `car` (default since AGT-2370) drives the CLI through the CodingAgentRunner library: descriptor-built argv, `stream-json` output, permission-mode injection from the card's spec (absent = bypass/yolo), and a task-stable isolated config home whose credential file is linked so OAuth refreshes write through. `legacy` is the pre-AGT-2370 raw spawn and is removed in AGT-2373. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |
-| `RUNNER_CLI_BIN` | `--cli` | `claude` | Agent CLI binary (or a wrapper script). Under the `car` engine only the binary path and the CLI family derived from it are used. |
+| `RUNNER_CLI_TYPE` | `--cli-type` | `claude` | Default coding provider. Accepted values are `claude` and `codex`; a card-level typed run spec may select either available provider. |
 | `RUNNER_CLAUDE_CLI_BIN` | `--claude-cli` | `claude` | Claude binary used for Claude-pinned cards when the primary CLI is Codex. The native setup flow writes the discovered path. |
 | `RUNNER_CODEX_CLI_BIN` | `--codex-cli` | `codex` | Codex binary used for Codex-pinned cards and the GPT-only project chat path when the primary CLI is Claude. The native setup flow writes the discovered path. |
-| `RUNNER_CLI_ARGS` | `--cli-args` | `-p` | Headless CLI args; the prompt is streamed on stdin. **Legacy engine only** — the `car` engine ignores this value (the descriptor owns the argv) and says so at spawn time via the `engine=car` journal line. |
-| `RUNNER_CLI_RESUME_ARGS` | `--cli-resume-args` | (none) | Optional provider-specific same-session arguments containing the literal `{sessionId}` placeholder. A supported infrastructure failure resumes at most once; an invalid session falls back to durable salvage once and then escalates. |
 | `RUNNER_AUTH_TOKEN_FILE` | `--auth-token-file` | (none on loopback) | Protected file containing the owner-enrolled Runner service credential. Required for every non-loopback Task Server. |
 | `RUNNER_AUTH_TOKEN` | none | (none) | Compatibility environment input. Prefer the credential file so the secret is absent from process diagnostics. |
 | `RUNNER_TTL_SECONDS` | `--ttl` | `900` | Requested lease TTL; the server clamps it. The default grants a bounded 15-minute authority window so an already-claimed run can survive ten minutes of transport loss. |
@@ -613,6 +777,13 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_IDLE_WATCHDOG_MINUTES` | `--idle-watchdog-minutes` | `5` | A daemon with no active slots exits after this long without starting a claim poll. The fatal journal line is followed by a service-manager restart. |
 | `RUNNER_CLAIM_MAX_LOAD_PER_CORE` | `--claim-max-load-per-core` | `1.5` | Load-per-core ceiling for new work. Coding uses the sustained gate below; Review checks it immediately before each single-slot claim. |
 | `RUNNER_LOAD_GATE_SUSTAINED_SECONDS` | none | `120` | Continuous high-load duration before Coding claim admission closes. Review admission does not use this delay. |
+| `RUNNER_DOCKER_DATA_ROOT` | none | `/var/lib/docker` | Filesystem the Review executor measures before a compose scenario step. Falls back to the review workspace when the path does not exist. See [Docker scenario image retention](#docker-scenario-image-retention). |
+| `RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT` | none | `10` | A compose scenario review step (`scripts/scenario.sh --target compose`, `scripts/compose-smoke-test.sh`) is refused as `ReviewInfra` / `ComposeScenarioDiskLow` when `RUNNER_DOCKER_DATA_ROOT` has less free space than this. `0` keeps the `review-compose-scenario-disk` log line and disables the refusal. |
+| `RUNNER_SALVAGE_DIR` | `--salvage-dir` | `~/salvage` | Host salvage store owned by the coding daemon's retention sweep. See [Salvage store retention](#salvage-store-retention). |
+| `RUNNER_SALVAGE_RETENTION` | `--salvage-retention` | `apply` | `apply` deletes what the policy selects, `report` only logs `would-delete` lines, `off` only measures the store for the host report. |
+| `RUNNER_SALVAGE_RETENTION_DAYS` | none | `14` | Days a salvage entry survives after its card became completed or archived. |
+| `RUNNER_SALVAGE_MAX_PER_CARD` | none | `3` | Newest tarballs kept per card regardless of card state; for refs, applies only to eligible refs. |
+| `RUNNER_SALVAGE_SWEEP_HOURS` | none | `6` | Hours between retention sweeps. The first sweep runs five minutes after the daemon starts. |
 
 ### Sanctioned role configuration changes
 
@@ -839,21 +1010,18 @@ Execution Hosts shows the review role's quota, adopted ceiling, and throttled
 share. Two consecutive samples at or above 10% raise the existing degraded-host
 alarm with the remediation: raise the review role quota or lower the ceiling.
 
-Recommended per-CLI headless defaults (verify against your installed version):
+Provider selection and executable configuration:
 
 When both CLIs are installed, keep both provider-specific binary variables even
 though only one CLI is primary. Capability advertisement and card routing use
 the provider-specific paths symmetrically. A missing or unauthenticated provider
 is advertised as unavailable and only blocks cards pinned to that provider.
 
-- Claude: `RUNNER_CLI_BIN=claude`, `RUNNER_CLI_ARGS="-p"` (prompt on stdin, final
-  response on stdout; the runner accepts a `[[TASK_*]]` sentinel only as its
-  terminal standalone line).
-- Codex: `RUNNER_CLI_BIN=codex`, plus the non-interactive exec flags your version
-  exposes. The runner reads the last completed `agent_message`, not raw JSONL
-  tool, diff, or diagnostic payloads. When quoting gets awkward, point
-  `RUNNER_CLI_BIN` at a small wrapper script instead of fighting the space-split
-  arg parser.
+- Select the default with `RUNNER_CLI_TYPE=claude` or
+  `RUNNER_CLI_TYPE=codex`.
+- Set `RUNNER_CLAUDE_CLI_BIN` and `RUNNER_CODEX_CLI_BIN` when an executable is
+  not on `PATH`. Do not add headless, JSON, permission, model, or resume flags;
+  CodingAgentRunner renders them from the typed request.
 
 ### Per-worker resource envelope
 
@@ -1051,6 +1219,160 @@ Keep `PrivateTmp=false` on the runner units. Detached workers outlive a daemon
 restart and a namespace-scoped `/tmp` is unmounted underneath them on every
 restart (AGT-2750); the hygiene above is what bounds the shared root instead.
 
+### Docker scenario image retention
+
+Every `scripts/scenario.sh --target compose` run builds four images named
+`<project>-{task-server,studio-bff,orchestrator-engine,agent-host}:local`
+(about 2.6 GB), and `scripts/compose-smoke-test.sh` builds its `-dev` images.
+Before AGT-2993 nothing removed them: on 2026-09-28 agent-runner-01 carried
+257 images (159 GB) and 143 GB of BuildKit cache, the disk reached 95-96 %
+twice, and the operator pruned by hand.
+
+Three layers now bound it:
+
+1. **Per run.** Both scripts remove the images of their own Compose project
+   when they exit, after success, after a failure, and on `SIGTERM`/`SIGINT`
+   (`scripts/docker-scenario-images.sh`, keyed by the
+   `com.docker.compose.project` label). Published images are never touched.
+   `COMPOSE_SMOKE_KEEP_ON_FAIL=1` keeps the stack and its images for
+   debugging. A `SIGKILL` cannot run the cleanup; the next layer covers it.
+2. **Retention.** `scripts/docker-scenario-retention.sh` removes scenario and
+   smoke images that no container (running or stopped) uses and whose
+   creation and last tag are both older than 6 hours, then caps the BuildKit
+   cache at 40 GB (`docker builder prune --max-used-space`, or
+   `--keep-storage` on Docker clients before 28). Images are found by the
+   `io.agent-studio.disposable-image` label that the scenario overlay and the
+   smoke override write, whatever the project is called, plus the
+   `agent-studio-scenario-` and `agent-studio-smoke-` name prefixes for older
+   unlabelled images. `scripts/scenario.sh` runs it before every compose run
+   (`SCENARIO_DOCKER_RETENTION=0` skips it). A retention failure is logged and
+   the scenario continues.
+3. **Admission.** The Review executor logs
+   `review-compose-scenario-disk step=... freePercent=... decision=admit|refuse`
+   before a compose scenario step and refuses the step below 10 % free on the
+   Docker data root. A step counts only when it executes
+   `scripts/scenario.sh --target compose` or `scripts/compose-smoke-test.sh`
+   (directly, through `sh -lc`, or behind environment assignments); a mention
+   in an `echo`, quoted data, or a comment is not gated. The refusal is a `ReviewInfra` outcome typed
+   `ComposeScenarioDiskLow`, so the review is retried and no verdict is
+   recorded against the change (`RUNNER_COMPOSE_SCENARIO_MIN_FREE_PERCENT`,
+   `RUNNER_DOCKER_DATA_ROOT`).
+
+Install the daily timer on each runner host that runs compose scenarios, from
+the trusted operator checkout:
+
+```bash
+sudo install -m 0755 scripts/docker-scenario-retention.sh \
+  /usr/local/libexec/agent-docker-scenario-retention
+sudo install -m 0644 deploy/systemd/agent-docker-scenario-retention.service \
+  deploy/systemd/agent-docker-scenario-retention.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-docker-scenario-retention.timer
+# Optional overrides, read by the unit:
+#   /etc/agent-runner/docker-retention.env
+#   DOCKER_SCENARIO_RETENTION_MAX_AGE_HOURS=6
+#   DOCKER_SCENARIO_BUILD_CACHE_KEEP_STORAGE=40GB
+```
+
+Check and run it by hand:
+
+```bash
+systemctl list-timers agent-docker-scenario-retention.timer
+journalctl -u agent-docker-scenario-retention.service -n 50
+scripts/docker-scenario-retention.sh --dry-run      # what it would remove
+docker system df                                     # images and build cache
+```
+
+Scenario runs from before the label, under a custom
+`COMPOSE_SCENARIO_PROJECT` such as `agt2739-verify`, are not matched by the
+default prefixes. Clear them once with an explicit prefix; the age and in-use
+filters still apply: `scripts/docker-scenario-retention.sh --dry-run --prefix agt`,
+then the same without `--dry-run`.
+
+**Disk alarm threshold.** Alert at 80 % used on the Docker data root
+(`df -P /var/lib/docker`) and treat 90 % used (10 % free) as critical: from
+there the Review executor refuses compose scenarios. At the alert, check that
+the timer ran and that `docker system df` shows no reclaimable scenario
+images, then look for other residue.
+
+### Salvage store retention
+
+The coding daemon owns the host salvage store and sweeps it on its own timer
+(AGT-2999). There is no host cron for it. The store has two parts:
+
+- **Tarballs** in `RUNNER_SALVAGE_DIR` (default `~/salvage`), named
+  `[<project>-]<card>[-<suffix>]-<HHMM>.tgz` or
+  `<card>-<yyyyMMdd>-<HHmmss>.tgz`. They were written by the retired host
+  snapshot script `~/salvage/snap.sh`. Do not reinstall that script: durable
+  salvage is the Git ref below. Other files and directories in the store
+  (`snap.sh`, `snap.log`, `*.bundle`, `runner-state-quarantine/`) are measured
+  but never deleted.
+- **Salvage refs** `agent-studio/salvage/<runner-id>/<card>/<attempt>/fence-<n>/<sha>`
+  on each project origin. The sweep lists only this runner's namespace, so
+  another runner's refs are never touched.
+
+Policy, decided per entry by `SalvageRetentionPolicy`:
+
+| Entry | Kept | Deleted |
+|---|---|---|
+| Any entry of a card with an active run on this host | Always | Never |
+| Name without a recognizable card key | Always | Never |
+| Tarball | While the card is open, missing, or its state is unknown, and for `RUNNER_SALVAGE_RETENTION_DAYS` after the card became completed or archived | After that window, or when it is older than the card's newest `RUNNER_SALVAGE_MAX_PER_CARD` tarballs |
+| Salvage ref | While the card is not completed or archived, or its commit is not contained in the integration branch, or containment is unknown | When the card is completed or archived **and** the commit is on the integration branch, after the window or beyond the newest `RUNNER_SALVAGE_MAX_PER_CARD` integrated refs of the card. Refs not on the integration branch do not consume these slots. |
+
+Card state comes from the Task Server (`GET /api/v1/projects/{project}/tasks/{card}`
+with the runner's `tasks:read` scope). The project is taken from the tarball
+prefix or the clone directory, else from the project whose task key prefix
+matches. The completion time is the later of the card's last update and its
+archive time, so a late edit only extends retention. A Task Server that cannot
+answer leaves the card state unknown; only the per-card limit applies then. The
+integration branch is the branch the project's stable checkout
+(`$RUNNER_WORKDIR/<project>/repo`) was last prepared on. The sweep fetches that
+clone under the same Git metadata lock as task preparation. A ref is deleted
+with a lease-guarded push (`--force-with-lease=<ref>:<sha>`), so a ref that
+moved since it was read is rejected rather than deleted. The Git credential on
+the host therefore needs delete permission on
+`refs/heads/agent-studio/salvage/<runner-id>/**`; without it, deletion fails
+visibly and the ref is kept.
+
+The active-run set (accepted permits, running workers, and persisted attempts
+awaiting finalization) is read before the decision and at each deletion
+boundary. Claim admission and deletion share a gate: a claim cannot become
+active during a tarball deletion or a salvage-ref push. A run that starts
+between deletions protects its card from the remaining deletions.
+
+Each sweep writes one journal line per deletion and one summary:
+
+```text
+salvage-retention deleted kind=tarball entry=PROJ-002-AGT-2177-1430.tgz card=AGT-2177 bytes=40033694 reason=retention-elapsed
+salvage-retention deleted kind=ref ref=agent-studio/salvage/agent-runner-01/AGT-2869/attempt-1/fence-2/8c3c943... card=AGT-2869 sha=8c3c943... integration=main reason=over-per-card-limit
+salvage-retention sweep mode=apply status=completed tarballs=2050 tarballsEligible=... tarballsDeleted=... bytesDeleted=... refs=... refsDeleted=... protectedByActiveRun=... failures=0 kept=[active-run:..,card-open:..,within-retention:..]
+```
+
+```bash
+journalctl -u agent-runner --since '-1 day' | grep salvage-retention
+```
+
+The host report shows the store without a shell on the host.
+`GET /api/v1/management/remote-hosts` carries `telemetry.salvageStore` for each
+coding host: `path`, `sizeBytes`, `entryCount`, `tarballCount`,
+`unrecognizedCount`, `oldestEntry`, `oldestEntryAt`, the effective `mode`,
+`retentionDays`, `maxPerCard`, and `lastSweep` (start and end, status, eligible
+and deleted tarball and ref counts, deleted bytes, `protectedByActiveRun`,
+`failures`). The store is measured every 15 minutes. The last sweep is persisted
+in `$RUNNER_STATE_DIR/salvage-retention.json`, so it survives a daemon restart.
+
+```bash
+curl -sS https://tasks.example.com/api/v1/management/remote-hosts \
+  | jq '.[] | {hostId, salvage: .telemetry.salvageStore}'
+```
+
+Rollout on a host with a large backlog: set `RUNNER_SALVAGE_RETENTION=report`,
+restart the coding daemon, and review the `would-delete` lines and
+`lastSweep.tarballBytesEligible` after the first sweep. Then remove the setting
+to return to `apply`. Moving old tarballs into Git refs is out of scope; copy a
+tarball out of the store before a sweep if it must be kept.
+
 ### Baseline verify result cache
 
 After a candidate verify command fails, the executor runs the same command once
@@ -1143,6 +1465,15 @@ before storing it in the runner user's credential helper. Keep the HTTPS URL
 free of embedded secrets. Do not put a token in `runner.env`, a command line,
 task output, or evidence.
 
+When a private workspace repository is part of the installation, set
+`RUNNER_WORKSPACE_GIT_REMOTE` to its exact origin. The daemon checks that origin
+separately from `RUNNER_GIT_REMOTE`. A product fallback success does not make a
+failed workspace fetch healthy. Set `RUNNER_WORKSPACE_GIT_REQUIRES_PUSH=true`
+only when workspace policy permits publication. The push proof creates and
+deletes a temporary ref. A failed cleanup remains a failed proof and needs
+operator cleanup. This startup check is host diagnostics; project claim
+admission still uses its own registered repository preflight.
+
 ### Token requirements
 
 The coding runner must be able to publish ordinary source changes and changes
@@ -1196,8 +1527,9 @@ standard input so it does not enter shell history. On a headless host, make sure
 the selected credential helper persists for the runner user and protects its
 storage with user-only permissions.
 
-Set an expiration date and record the owner, repositories, permissions, expiry,
-and runner hosts in the operator inventory. Rotate before expiry:
+Record token subtype, owner, exact repository grants, repository purpose, and
+runner hosts separately. Use issuer expiry when known; leave it unknown when
+the issuer does not supply it. Rotate before a known expiry:
 
 1. Create and approve the replacement token with the same repository selection
    and permissions.
@@ -1217,8 +1549,21 @@ and runner hosts in the operator inventory. Rotate before expiry:
    `Fallback repo: ok` plus `Fallback workflow: ok` in
    **Workspace Settings -> Execution Hosts**.
 4. Revoke the old token only after every assigned repository and runner is
-   green. A token owner's departure or repository-access removal also
-   invalidates the runner identity and requires immediate rotation.
+   green and all deploy keys created with that token have been checked.
+   GitHub deletes deploy keys created with a personal access token when that
+   token is deleted, and deletes keys created with an OAuth app token when
+   that token is revoked. A token owner's departure or repository-access
+   removal also invalidates the runner identity and requires immediate
+   rotation.
+
+The renewal adapter stages a replacement in a host-only 0600 Git helper file,
+proves fetch and required push against the exact origin with that generation,
+then updates the active helper after active transports drain. A denied grant,
+failed proof or interruption leaves the old helper generation in place. The
+host journal keeps only operation IDs, generations and proof states. Protected
+human consent remains necessary to obtain a new bearer; it is never written
+to a task command, prompt or result. Revocation is a separate authorized
+step because the provisioning token may own deploy keys.
 
 The guided installer tracked by AGT-2334 must link to this section and include a
 **Create token** step before credential storage. That step shows the
@@ -1262,6 +1607,123 @@ The exact rewrite keeps `remote.origin.url` and `remote.origin.pushurl` equal to
 the registry value while Git uses the deploy-key SSH transport. Add one exact
 rewrite per assigned repository. The `RUNNER_GIT_PUSH_REMOTE` value above is
 still only the startup probe input.
+
+For managed replacement, the host adapter creates a new ed25519 key under a
+protected directory and journals its public fingerprint. An authorized
+administration session registers only the public key and records the GitHub
+key ID and the provisioning credential ID. Missing administration permission
+is a guided repository-administrator step. Before switching the exact
+repository rewrite, the platform Git layer proves fetch with the candidate
+identity alone and, when policy requires write access, proves a real
+temporary-ref push and delete. Active transports must drain first. The old
+GitHub key and known host-local private key are retired only after proof and
+switch. A retry searches GitHub by fingerprint before creating a key, so a
+lost registration receipt does not duplicate the key. The host must supply
+its active-transport drain check and old key path to complete an automatic
+rotation; otherwise the receipt stays pending for guided retirement.
+
+The `agent-host --renew-repository-access` maintenance command is the host
+entry point for these two flows. Put a metadata-only JSON request outside any
+checkout and run it as the target host's runner account. Use the
+`RepositoryHttpsRotationRequest` or `RepositoryRotationRequest` fields in the
+runner contract. The request includes the exact origin, repository purpose,
+expected generation and stable operation ID; it must contain no bearer or
+private key. The command writes a redacted status and exit code `0` when
+complete, `3` when a guided step or proof is pending, or `2` on a failed
+operation. Reuse the same operation ID on retry.
+
+The host operation has a five-minute deadline; each workstation
+administration command has a two-minute deadline.
+
+A deploy-key request has this shape; replace each fixture identifier with the
+current registry and GitHub values. `OldHostLocalRef` is the existing host
+key path outside the checkout. The host generates the replacement path.
+
+```json
+{
+  "OperationId": "rotation-2026-10-fixture",
+  "HostId": "runner-host-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Owner": "example",
+  "Repository": "private-workspace",
+  "Purpose": "workspace",
+  "Origin": "git@github.com:example/private-workspace.git",
+  "RequiresPush": true,
+  "OldGitHubKeyId": 42,
+  "ProvisioningCredentialId": "workstation-oauth-record",
+  "OldHostLocalRef": "/protected/old-deploy-key"
+}
+```
+
+Use `agent-host --renew-repository-access discover-https
+/protected/discovery-request.json` before R4 when subtype or grants need
+discovery. The metadata request names the credential ID, exact origin,
+repository purpose, required push policy, and issuer subtype or expiry if
+actually known. Supply the current bearer on protected standard input. The
+command queries the exact GitHub repository and prints subtype, fetch and
+push grants, and issuer expiry as separate metadata fields. Unknown issuer
+expiry remains unknown. Never put the bearer in the JSON request.
+
+```json
+{
+  "CredentialId": "runner-https-record",
+  "RepositoryPurpose": "workspace",
+  "Origin": "https://github.com/example/private-workspace.git",
+  "RequiresPush": true,
+  "IssuerSubtype": null,
+  "IssuerExpiresAt": null
+}
+```
+
+An HTTPS renewal request uses the discovered metadata as its `Metadata`
+object. Unknown issuer expiry is represented by `null` and `unknown`:
+
+```json
+{
+  "OperationId": "https-rotation-fixture",
+  "ExpectedGeneration": "old-generation-fixture",
+  "Metadata": {
+    "CredentialId": "runner-https-record",
+    "TokenSubtype": "unknown",
+    "RepositoryPurpose": "workspace",
+    "Origin": "https://github.com/example/private-workspace.git",
+    "RequiresPush": true,
+    "FetchGrant": true,
+    "PushGrant": true,
+    "IssuerExpiresAt": null,
+    "ExpiryKnowledge": "unknown"
+  },
+  "OldCredentialId": "prior-runner-https-record"
+}
+```
+
+For HTTPS renewal, supply the new token through protected standard input to
+`agent-host --renew-repository-access https /protected/request.json`. The token
+input must be closed after the value so the command can continue. The token
+is staged in a host-only Git credential file and never appears in the request
+or result. For deploy-key renewal, run
+`agent-host --renew-repository-access deploy-key /protected/request.json` on
+the target host. Configure `RUNNER_GITHUB_ADMIN_SSH_HOST` to a trusted SSH
+alias for the provisioning workstation. The fixed workstation command uses
+that account's authorized `gh` provisioning session for GitHub administration;
+only the public key and repository metadata cross SSH. The workstation must
+have `agent-host` on `PATH`, `RUNNER_WORKSTATION=1`, and a comma-separated
+`RUNNER_GITHUB_ADMIN_REPOSITORIES` allowlist of exact `owner/repository`
+names in its SSH command environment. Restrict the SSH identity to this
+administration command. A workstation that is itself the target host may use its local
+`gh` session with `RUNNER_WORKSTATION=1`. Record the actual provisioning-token
+subtype from its issuance receipt; do not infer OAuth from `gh auth token`.
+If no protected administration
+session is available, the command returns `administrator-action-required`
+without creating a host key. After the runner has completed active Git
+transports, repeat the same command with `--drained` to permit the switch and
+retirement. The flag is an operator assertion that active transports have
+finished; do not set it while a Git operation is in flight. Keep the old
+GitHub key and host key until the exact-origin fetch and required push proof
+have passed. Subsequent rotations fence the active HTTPS generation with a
+host-local marker and the active deploy-key generation with the resolved
+managed SSH alias. Token revocation remains a separate administrator action after
+checking its dependent deploy keys.
 
 At daemon startup, the runner first performs `git push --dry-run` to
 `refs/heads/runner-capability-probe/<runner-id>`. It then commits a disabled
@@ -1329,7 +1791,8 @@ slots. The server only returns pickup-eligible `2-ready` cards from assigned,
 remote-capable projects and moves a successful fenced claim to `3-progress`.
 Before the first lease for each host/project pair, the server offers the
 registered repository without moving the card. The daemon creates or refreshes
-`$RUNNER_WORKDIR/<project-id>/repo`, sets both `origin` URLs to the registered
+`$RUNNER_WORKDIR/<project-id>/repo` (a full clone, the same checkout the first
+claim prepares), sets both `origin` URLs to the registered
 URL, verifies them with `git remote get-url`, fetches, and runs
 a real write probe that creates and removes a temporary
 `runner/<runner-id>/delivery-preflight-*` ref. It reports that result in a
@@ -1594,7 +2057,9 @@ first, or the helper refuses. The helper records the previous release,
 validates the dependency closure, runs the
 service-user boot smoke check, atomically switches `/opt/agent-host/current`,
 starts the already-drained Review role, restarts Coding, waits for both
-replacement processes, and watches for an immediate restart loop.
+replacement processes, and watches for an immediate restart loop. It then runs
+the [post-restart completion check](#post-restart-completion-check), which can
+take up to ten minutes.
 
 ```bash
 sudo /usr/local/sbin/agent-runner-deploy drain
@@ -1606,6 +2071,45 @@ sudo journalctl -u agent-host --since '-2 minutes' \
 
 sudo journalctl -u agent-runner-review --since '-2 minutes' \
   | grep -E 'planned shutdown|review daemon draining|review handoff lease extended|review daemon handoff|persisted review accepted|adopting persisted review|review adoption lease verified|review lease re-claimed|review adoption failed'
+```
+
+#### Post-restart completion check
+
+A clean restart does not prove a working release. Stable 0.9.3 restarted
+without a fault and then had every completion rejected with
+`400 Session continuation evidence does not match the fenced attempt.` for
+almost two hours, while each rejected run was requeued and re-run (AGT-2985).
+After every promotion the helper records the new Coding service invocation ID
+after the restart checks finish, then watches that invocation's journal for up
+to ten minutes. It limits journal evidence to the ten-minute deadline,
+including when the check is rerun later. A
+completion logged by the outgoing daemon during restart cannot satisfy the
+check:
+
+- The first `task '<key>' handed back to the local board: <outcome>` line
+  passes the check. The runner logs it only after the Task Server accepted the
+  completion, on the legacy and the v1 plane alike.
+- If the window closes without one, the helper reports how many completions
+  were rejected (`/completion -> 4xx`) or that none was attempted, prints the
+  previous release and the rollback command, writes an
+  `action=verify-completions ... result=failed` journal record, and exits
+  nonzero. The new release stays active; the operator decides.
+
+```text
+agent-runner-deploy: release <new> is active, but no completion was accepted within 600s of its activation; 14 completion(s) were rejected
+agent-runner-deploy: previous release: <previous>
+agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/<previous> /opt/agent-host/current && /usr/local/sbin/agent-runner-deploy restart-review --force && systemctl restart agent-runner.service'
+```
+
+Rejected completions mean the release is broken for this fleet: run the printed
+command. "No completion was attempted" means the host had no finished work in
+the window, so the release is unproven rather than broken. Rerun the check once
+cards are flowing; it reads only the recorded Coding invocation's journal
+through the original deadline and waits only for the rest of the window. A
+completion after that deadline cannot make a later rerun pass:
+
+```bash
+sudo /usr/local/sbin/agent-runner-deploy verify-completions
 ```
 
 On SIGTERM the old daemon stops making claims, leaves detached coding and review
@@ -1720,7 +2224,9 @@ heartbeating, checks out the branch from origin, fetches `prompt.md` over the
 API, spawns the CLI in the working tree, journals and ships stdout/stderr,
 snapshots `results/` under attempt evidence, secures the exact result on an immutable
 remote ref, obtains the durable Task Server acknowledgement, removes the
-worktree, posts the idempotent fenced completion, and releases the lease.
+worktree, transfers bounded artifacts and any partial-transfer receipt while
+the lease is still active, posts the idempotent fenced completion, and releases
+the lease.
 Exit code `0` means a clean handoff; `1` a
 blocked/needs-input outcome; `2` lease not granted; `3` lease lost mid-run; `4`
 the task server was unreachable or rejected a call.
@@ -1730,22 +2236,30 @@ For unattended operation, run `agent-host --health-check` as a readiness probe
 a service. Both are covered in
 [remote-runner-persistent-connection.md](./remote-runner-persistent-connection.md).
 
-### Durable result handoff before teardown
+### Durable result handoff and artifacts
 
 Result evidence is uploaded one file per request after the runner has pushed
-the delivery ref and the Task Server has accepted completion. The Task Server
-advertises the request, file, and total byte limits. The default per-file cap
-is 8 MiB; the request cap remains 25 MiB. Playwright `trace.zip` files and
-videos are withheld even when smaller than the cap. Screenshots and reports
-within budget are transported. The artifact manifest records each withheld
-file's `results/` path, byte size, SHA-256 digest, and reason. The runner keeps
-those files under `<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/`
-on the host, where a later attempt cannot clear them.
+the delivery ref and the Task Server has acknowledged that delivery, but before
+the RunAttempt is settled. The Task Server advertises the request, file, and
+total byte limits. The default per-file cap is 8 MiB; the request cap remains
+25 MiB. Playwright `trace.zip` files and videos are withheld even when smaller
+than the cap. Screenshots and reports within budget are transported. The
+artifact manifest records each withheld file's `results/` path, byte size,
+SHA-256 digest, and reason. The runner keeps those files under
+`<RUNNER_WORKDIR>/evidence/<task-key>/<attempt-id>/results/` on the host, where
+a later attempt cannot clear them.
 `results/deliverables.md` lists them for the reviewer. A partial artifact
-transfer is a typed card fact and does not undo a completed delivery.
-Transient file uploads are retried three times. The versioned Task Server
-runner records remaining transfer failures as `artifact-replay` in its durable
-outbox and replays from the attempt evidence copy without rerunning the worker.
+transfer is a typed card fact with retry details and does not block code
+delivery. Transient file uploads are retried three times. If the host crashes
+before settlement, durable recovery replays from the attempt evidence copy.
+If an upload or its partial-transfer report still fails, the outbox retains
+`artifact-replay` after completion. Later recovery sends any persisted report
+and retries the bounded files with the original exact runner, lease, and fence.
+The same artifact idempotency keys prevent duplicate storage, and a newer
+fence denies stale replay. If the host stopped after the server accepted the
+completion but before the local acknowledgement, the next recovery replays that
+completion under the same fence and settles the outbox as `completed`. The
+worker is not rerun.
 
 While completion is being retried, the runner reports its persisted terminal
 attempt in the active task set even though the coding process has exited. This
@@ -1911,6 +2425,19 @@ proof.
   intentionally skips the same assigned project.
 - **`lease not granted: Held` in one-task mode** - another runner already holds
   the task. The daemon claim path normally avoids this before launch.
+- **`POST /api/runner/completion -> 400: Session continuation evidence does not
+  match the fenced attempt.`** - the runner's continuation evidence names an
+  attempt the server did not fence. Runner 0.9.3 built it from the slot's
+  attempt id, which on the legacy plane was the lease id; every completion
+  failed and was requeued. Roll the host back with the command the deploy
+  helper printed (or to the last release before 0.9.3), then deploy 0.9.4 or
+  later. The server-side check is correct; do not relax it.
+- **`Stable checkout '<path>' has local changes and cannot be updated.` on the
+  first claim of a project** - a runner up to 0.9.4 created the shared clone
+  during the delivery preflight with `--no-checkout`, leaving an empty index.
+  Remove `$RUNNER_WORKDIR/<project-id>/repo` while the host holds no claim for
+  that project, or deploy a later release, whose preflight makes a full clone
+  (AGT-2985).
 - **`Project delivery preflight failed`** - read the full reason on both the
   Execution Hosts card and the project's Execution card. Run the printed failing
   Git operation on the host against the registered repository URL and confirm
@@ -1941,8 +2468,9 @@ proof.
 - **No output shipped** - the server rejects logs for an unknown task key; the
   console still shows the CLI output locally. Check `RUNNER_SERVER_URL` and the
   task key.
-- **CLI exits immediately / wrong flags** - the headless flags do not match the
-  installed CLI version. Adjust `RUNNER_CLI_ARGS` or wrap the CLI in a script.
+- **CLI exits immediately / protocol mismatch** - verify the installed CLI
+  version and the matching provider-specific binary path. Invocation flags are
+  owned by the pinned CodingAgentRunner version, not host configuration.
 - **`outcome Unknown` after a substantive final reply** - first confirm the run
   log contains `remote-completion-protocol appended to task prompt`. Its absence
   means the host is running a pre-AGT-2148 runner build. If the line is present,

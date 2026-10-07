@@ -85,7 +85,7 @@ async function installRoutes(page: Page): Promise<void> {
   }).catch(() => {
     // A more specific route may already have completed this request.
   }));
-  await page.route('**/api/auth/status', route => route.fulfill({
+  await page.route('**/api/v1/studio/auth/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -95,7 +95,7 @@ async function installRoutes(page: Page): Promise<void> {
       user: null,
     }),
   }));
-  await page.route('**/api/runner/status**', route => route.fulfill({
+  await page.route('**/api/v1/studio/runner/status**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ projects: {} }),
@@ -114,7 +114,7 @@ async function installRoutes(page: Page): Promise<void> {
     contentType: 'application/json',
     body: '[]',
   }));
-  await page.route('**/api/tasks/grouped**', route => route.fulfill({
+  await page.route('**/api/v1/studio/board**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
@@ -129,12 +129,12 @@ async function installRoutes(page: Page): Promise<void> {
       { name: PROJECT, path: WATCH_PATH, rootPath: WATCH_PATH, repositoryPath: WATCH_PATH },
     ]),
   }));
-  await page.route('**/api/workspaces**', route => route.fulfill({
+  await page.route(/\/api\/(?:workspaces|v1\/workspaces(?:\?|$))/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: '[]',
   }));
-  await page.route('**/api/projects**', route => route.fulfill({
+  await page.route(/\/api\/(?:projects|v1\/projects(?:\?|$))/, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: '[]',
@@ -193,7 +193,7 @@ async function installRoutes(page: Page): Promise<void> {
       },
     }),
   }));
-  await page.route(new RegExp(`/api/tasks/${jobId}(\\?|$)`), route => route.fulfill({
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${jobId}(\\?|$)`), route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify(taskDetail()),

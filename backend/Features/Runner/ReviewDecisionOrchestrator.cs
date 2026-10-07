@@ -757,6 +757,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 throw;
             }
+            catch (RemoteVerificationRequiredException ex)
+            {
+                result = PostProcessingCardResult.Deferred(ex.FailureCode);
+            }
             catch (Exception ex)
             {
                 // Isolate one card's failure from the rest of the parallel pool.
@@ -947,6 +951,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         await ProcessDoneAsync(workspace, entry, pending, aspects, cliBinary,
                             aspectModel, perAspectTimeout, ct);
                         _statusSnapshot.RecordAspectsRun(aspects.Count);
+                    }
+                    catch (RemoteVerificationRequiredException ex)
+                    {
+                        _logger.LogInformation("ReviewDecisionOrchestrator deferred {Project}/{JobId}: {Reason}",
+                            entry.Name, pending.Job.Id, ex.FailureCode);
                     }
                     catch (Exception ex)
                     {
@@ -1290,6 +1299,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         var prompt = BuildPrompt(entry, pending, workspace);
         string response = string.Empty;
+        StepModelUsage? decisionUsage = null;
         try
         {
             var sw = AgentStudio.AdHoc.AdHocClaudeInvoker.StartTiming();
@@ -1315,6 +1325,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 project: entry.Name,
                 jobId: pending.Job.Id);
             response = parsedText;
+            decisionUsage = StepModelUsage.From(callUsage, model, thinkingLevel: null, modelSource: DecisionModelSource);
             RecordRateLimitedCall();
         }
         catch (Exception ex)
@@ -1325,6 +1336,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
+        // Everything recorded while carrying out this verdict (the decision
+        // step row and the chat line on the bus) names the deciding model.
+        using var decisionScope = decisionUsage is null ? null : DecisionModelContext.Use(decisionUsage);
         var verdict = ReviewDecisionParsing.ParseDecision(response);
         if (verdict == null)
         {
@@ -1548,21 +1562,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
         var reason = "Agent emitted [[TASK_NOOP]] but the task description is real; reissuing with sharpened framing.";
 
-        _chatLog.Append(current, OrchestratorMessageKind.Reissue,
+        var moved = MoveReissueToReadyTop(current, entry, "noop-recovery", workspace);
+        if (moved == null) return;
+        _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
             $"Decision: reissue (NOOP recovery). Reason: {reason}");
-
-        var moved = MoveReissueToReadyTop(current, entry, "noop-recovery");
-        if (moved != null)
-        {
-            var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
-            var steering = new SteeringContext("noop-recovery", "reissue", priorReissues, reason);
-            followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
-            EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
-                TimelineActors.QualityLoop,
-                "Reopened: NOOP recovery, reissued with sharpened framing.",
-                BuildReopenDetails("noop-recovery", priorReissues, reason,
-                    followUpPrompt: followUp, context: steering));
-        }
+        var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var steering = new SteeringContext("noop-recovery", "reissue", priorReissues, reason);
+        followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
+        EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            "Reopened: NOOP recovery, reissued with sharpened framing.",
+            BuildReopenDetails("noop-recovery", priorReissues, reason,
+                followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
@@ -1574,7 +1585,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Response: "(no fast-model call)",
             FollowUp: followUp),
             current.FolderPath,
-            moved?.FolderPath);
+            moved.FolderPath);
     }
 
     private Task EscalateNoOpAsync(
@@ -1691,6 +1702,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     project: entry.Name,
                     jobId: pending.Job.Id);
                 RecordRateLimitedCall();
+                using var decisionScope = DecisionModelContext.Use(
+                    StepModelUsage.From(callUsage, model, thinkingLevel: null, modelSource: DecisionModelSource));
 
                 var verdict = ReviewDecisionParsing.ParseDecision(response);
                 if (verdict != null)
@@ -1783,28 +1796,25 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ? $"Run finished without a terminal sentinel and its own close-out lists {gateFindings} unfinished item(s); reissuing with them foregrounded."
             : "Run finished without a terminal sentinel; reissuing and demanding a deterministic close-out signal.";
 
-        _chatLog.Append(current, OrchestratorMessageKind.Reissue,
+        var moved = MoveReissueToReadyTop(current, entry, "no-completion-signal", workspace);
+        if (moved == null) return;
+        _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
             $"Decision: reissue (no completion signal). Reason: {reason}");
-
-        var moved = MoveReissueToReadyTop(current, entry, "no-completion-signal");
-        if (moved != null)
-        {
-            // Post-core Orchestrator-Review row: the silent-finish reissue is the
-            // same completeness gate firing without a sentinel, so record it for
-            // the Overview pipeline.
-            RecordOrchestratorReviewStep(moved.FolderPath, PipelineStepStatus.Failed,
-                DecisionVerdictReissue, reason);
-            var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
-            var priorCommits = RunOutcomePolicy.PriorCommitLines(current);
-            var steering = new SteeringContext("no-completion-signal", "reissue", priorReissues, reason,
-                PriorCommits: priorCommits);
-            followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
-            EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
-                TimelineActors.QualityLoop,
-                "Reopened: run finished without a terminal sentinel, reissued demanding one.",
-                BuildReopenDetails("no-completion-signal", priorReissues, reason,
-                    followUpPrompt: followUp, context: steering));
-        }
+        // Post-core Orchestrator-Review row: the silent-finish reissue is the
+        // same completeness gate firing without a sentinel, so record it for
+        // the Overview pipeline.
+        RecordOrchestratorReviewStep(moved.FolderPath, PipelineStepStatus.Failed,
+            DecisionVerdictReissue, reason);
+        var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
+        var priorCommits = RunOutcomePolicy.PriorCommitLines(current);
+        var steering = new SteeringContext("no-completion-signal", "reissue", priorReissues, reason,
+            PriorCommits: priorCommits);
+        followUp = await WriteFollowUpFileAsync(moved, followUp, ct, steering);
+        EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
+            TimelineActors.QualityLoop,
+            "Reopened: run finished without a terminal sentinel, reissued demanding one.",
+            BuildReopenDetails("no-completion-signal", priorReissues, reason,
+                followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
@@ -1816,7 +1826,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Response: "(no fast-model call)",
             FollowUp: followUp),
             current.FolderPath,
-            moved?.FolderPath);
+            moved.FolderPath);
     }
 
     private Task EscalateNoCompletionSignalAsync(
@@ -1955,6 +1965,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private void ProcessUnworkedCard(string workspace, WatchPathEntry entry, PendingDecision pending)
     {
         var current = _scanner.FindJob(pending.Job.Id, entry.Path) ?? pending.Job;
+        if (EscalateIfCardRoundBudgetSpent(workspace, entry, current, UnworkedNoCoreRunCause))
+            return;
         var move = GuardedMoveJob(
             current.Id, TaskStates.Ready, entry.Path,
             transitionCause: LaneChangeCauses.QualityLoop, transitionDetail: UnworkedNoCoreRunCause);
@@ -2028,7 +2040,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         if (verdict == ReviewDecisionKind.Reissue)
         {
-            var moved = MoveReissueToReadyTop(current, entry, "stale-verdict-backfill");
+            var moved = MoveReissueToReadyTop(current, entry, "stale-verdict-backfill", workspace, alreadyCharged: true);
             if (moved == null)
             {
                 _logger.LogWarning(
@@ -2421,6 +2433,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     cliForAspect?.Invoke(aspectId) ?? NormalizeReviewCliType(cliBinary),
                     resolvedModel);
             };
+        Func<string, string?>? modelSourceForAspect = settings is null
+            ? null
+            : aspectId => economyRecommendations.ContainsKey(aspectId)
+                ? "economy"
+                : PipelineStepConfigResolver.ResolveModelWithSource(settings, $"aspect-{aspectId}", aspectModel).Source;
         Func<string, string?>? promptForAspect = settings is null
             ? null
             : aspectId => PipelineStepConfigResolver.ResolvePrompt(settings, $"aspect-{aspectId}");
@@ -2449,7 +2466,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Aspects);
         var report = await _aspectRunner.RunAsync(inputs, enabledAspects, cliBinary, aspectModel, perAspectTimeout, ct,
-            modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect);
+            modelForAspect, thinkingLevelForAspect, promptForAspect, cliForAspect, modelSourceForAspect);
         if (scopedReview.CarriedVerdicts.Count > 0)
         {
             var merged = report.Verdicts.Concat(scopedReview.CarriedVerdicts).ToArray();
@@ -2532,6 +2549,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // record; Fail short-circuits the move-to-review path with a
         // reissue (or, if we've already reissued once, an escalation).
         var lintResult = await RunLintScssPostStepAsync(workspace, entry, current, ct);
+        if (lintResult?.InfrastructureFailureCode is { } infrastructureFailureCode)
+            throw new RemoteVerificationRequiredException(infrastructureFailureCode, lintResult.Reason);
 
         // Regression radar post-step: a deterministic spec-change classification
         // recorded alongside lint so the Overview pipeline lists it with a
@@ -2848,7 +2867,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "code-review-council",
                 reaction.Summary,
                 evidence: AgentStudio.Review.CouncilReviewPolicy.BuildTargetedFollowUp(reaction));
-            var moved = MoveReissueToReadyTop(current, entry, "code-review-council");
+            var moved = MoveReissueToReadyTop(current, entry, "code-review-council", workspace);
             if (moved is null) return true;
 
             AgentStudio.Review.CouncilReviewReactionStore.Write(moved.FolderPath, reaction);
@@ -2959,7 +2978,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "then re-run the task and end with [[TASK_DONE]]:\n\n" +
             report.FollowUpSummary;
 
-        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-block");
+        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-block", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing "sent back to ready" banner.
@@ -3066,6 +3085,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ReviewFollowUpDecision decision,
         CancellationToken ct)
     {
+        // The concern ledger must only be consumed for a round that can start.
+        if (EscalateIfCardRoundBudgetSpent(workspace, entry, current, "multi-aspect-concern"))
+            return;
         var maximum = ConfiguredMaxConcernRounds(entry.Name);
         var attempt = _pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1;
         var attemptId = $"local-review-{attempt}";
@@ -3097,7 +3119,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
 
         var followUp = BuildConcernFollowUp(decision.Findings, attemptId);
-        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-concern");
+        var moved = MoveReissueToReadyTop(current, entry, "multi-aspect-concern", workspace);
         if (moved is null)
         {
             var latest = _scanner.FindJob(current.Id, entry.Path);
@@ -3238,17 +3260,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 
@@ -3759,7 +3771,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Reissue: foreground the verification demand so the next run proves the
         // result instead of re-asserting it.
         var followUp = EvidenceGate.BuildFollowUp(gate);
-        var moved = MoveReissueToReadyTop(current, entry, "evidence-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "evidence-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -3885,7 +3897,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "solution-quality-gate",
             gate.Reason,
             evidence: SolutionQualityGate.BuildFollowUp(gate));
-        var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "solution-quality-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -4081,6 +4093,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             result = await _lintScssRunner.RunAsync(repoPath, mode, TimeSpan.FromSeconds(timeoutSeconds), ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
@@ -4107,7 +4123,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             LintScssVerdict.Skipped => "skipped",
             _ => "skipped",
         };
-        RecordLintScssStep(current.FolderPath, status, result.DurationMs, verdictToken, result.Reason);
+        RecordLintScssStep(current.FolderPath, status, result.DurationMs,
+            result.InfrastructureFailureCode ?? verdictToken, result.Reason);
         WriteLintScssLog(current.FolderPath, result);
         return result;
     }
@@ -4627,7 +4644,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Reissue: foreground the gate's findings so the next run finishes the
         // open work instead of restarting blind.
         var followUp = CompletionGate.BuildFollowUp(gate.Findings);
-        var moved = MoveReissueToReadyTop(current, entry, "completion-gate");
+        var moved = MoveReissueToReadyTop(current, entry, "completion-gate", workspace);
         if (moved == null)
         {
             // Move failed -> no operator-facing banner; the DONE stays unresolved
@@ -4765,6 +4782,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var startedAt = DateTime.UtcNow;
         string? selectedModel = null;
         string? selectedThinkingLevel = null;
+        string? selectedModelSource = null;
         try
         {
             // Quality over cost: the grade pass defaults to the live Codex
@@ -4774,15 +4792,17 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var (defaultModel, defaultCli) = AgentStudio.Review.CodeReviewGradeModelSelector.Resolve(
                 _configuration["CodeReviewStep:DefaultModel"],
                 _configuration["CodeReviewStep:DefaultCli"]);
-            var model = catalogueStep is null
-                ? defaultModel
-                : PipelineStepConfigResolver.ResolveModel(projectSettings, catalogueStep, defaultModel);
+            var modelResolution = catalogueStep is null
+                ? null
+                : PipelineStepConfigResolver.ResolveModelWithSource(projectSettings, catalogueStep, defaultModel);
+            var model = modelResolution?.Model ?? defaultModel;
             var cli = PipelineStepConfigResolver.ResolveCliType(projectSettings, stepId) ?? defaultCli;
             var thinkingLevel = catalogueStep is null
                 ? null
                 : PipelineStepConfigResolver.ResolveThinkingLevel(projectSettings, catalogueStep, cli, model);
             selectedModel = model;
             selectedThinkingLevel = thinkingLevel;
+            selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
             // Persist dispatch before the one-shot begins. A slow or interrupted
             // reviewer now reads Running instead of the misleading Pending state.
@@ -4794,6 +4814,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 StartedAt = startedAt,
                 Model = selectedModel,
                 ThinkingLevel = selectedThinkingLevel,
+                ModelSource = selectedModelSource,
             });
 
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
@@ -4827,7 +4848,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     "Quality-grade step error: " + report.ExecutionError,
                     startedAt,
                     report.Model,
-                    report.ThinkingLevel);
+                    report.ThinkingLevel,
+                    selectedModelSource,
+                    report.Usage,
+                    report.FileName);
                 return report;
             }
 
@@ -4840,19 +4864,22 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ? PipelineStepStatus.Failed
                 : PipelineStepStatus.Passed;
 
-            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
-            {
-                StepId = stepId,
-                Kind = StepKind.Orchestrator,
-                Status = status,
-                StartedAt = startedAt,
-                CompletedAt = DateTime.UtcNow,
-                DurationMs = report.DurationMs,
-                Model = report.Model,
-                ThinkingLevel = report.ThinkingLevel,
-                Verdict = gradeToken,
-                VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
-            });
+            _pipelineLog?.RecordStep(job.FolderPath, StepModelUsage
+                .From(report.Usage, report.Model, report.ThinkingLevel, selectedModelSource)
+                .ApplyTo(new PipelineStepExecution
+                {
+                    StepId = stepId,
+                    Kind = StepKind.Orchestrator,
+                    Status = status,
+                    StartedAt = startedAt,
+                    CompletedAt = DateTime.UtcNow,
+                    DurationMs = report.DurationMs,
+                    Model = report.Model,
+                    ThinkingLevel = report.ThinkingLevel,
+                    Verdict = gradeToken,
+                    VerdictSummary = string.IsNullOrWhiteSpace(report.Summary) ? null : report.Summary,
+                    EvidenceRef = report.FileName,
+                }));
 
             WritePostProcessingOutcome(job, PostProcessingOutcomes.FindingsAdded,
                 summary: $"Quality grade {gradeToken}: {report.Summary}",
@@ -4873,7 +4900,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Quality-grade step was cancelled before completion.",
                 startedAt,
                 selectedModel,
-                selectedThinkingLevel);
+                selectedThinkingLevel,
+                selectedModelSource);
             throw;
         }
         catch (Exception ex)
@@ -4887,7 +4915,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 "Quality-grade step error: " + ex.Message,
                 startedAt,
                 selectedModel,
-                selectedThinkingLevel);
+                selectedThinkingLevel,
+                selectedModelSource);
             return null;
         }
     }
@@ -4898,7 +4927,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string reason,
         DateTime? startedAt = null,
         string? model = null,
-        string? thinkingLevel = null)
+        string? thinkingLevel = null,
+        string? modelSource = null,
+        OrchestratorTokenUsage? usage = null,
+        string? evidenceRef = null)
     {
         if (status is PipelineStepStatus.Failed or PipelineStepStatus.Skipped)
         {
@@ -4907,7 +4939,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (_pipelineLog == null) return;
         var completedAt = DateTime.UtcNow;
         var started = startedAt ?? completedAt;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.CodeReviewGradeStepId,
             Kind = StepKind.Orchestrator,
@@ -4917,8 +4949,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = Math.Max(0L, (long)(completedAt - started).TotalMilliseconds),
             Model = model,
             ThinkingLevel = thinkingLevel,
+            ModelSource = model is null ? null : modelSource,
             Reason = reason,
-        });
+            EvidenceRef = evidenceRef,
+            // A grade that never reached its model call (disabled, skipped,
+            // missing diff) spent nothing; record that zero explicitly.
+            CostBasis = model is null ? StepCostBasis.Deterministic : null,
+        };
+        _pipelineLog.RecordStep(
+            jobFolderPath,
+            usage is null ? row : StepModelUsage.From(usage, model, thinkingLevel, modelSource).ApplyTo(row));
     }
 
     /// <summary>
@@ -4992,9 +5032,11 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 _configuration["TaskSpawnerStep:DefaultModel"],
                 _configuration["TaskSpawnerStep:DefaultCli"],
                 _configuration["TaskSpawnerStep:DefaultThinkingLevel"]);
-            var model = catalogueStep is null
-                ? defaultModel
-                : PipelineStepConfigResolver.ResolveModel(settings, catalogueStep, defaultModel);
+            var modelResolution = catalogueStep is null
+                ? null
+                : PipelineStepConfigResolver.ResolveModelWithSource(settings, catalogueStep, defaultModel);
+            var model = modelResolution?.Model ?? defaultModel;
+            var modelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
             var cli = PipelineStepConfigResolver.ResolveCliType(settings, stepId) ?? defaultCli;
             var thinking = catalogueStep is null
                 ? defaultThinking
@@ -5025,7 +5067,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 case TaskSpawnerVerdict.Spawned:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Passed, durationMs,
                         "spawned", result.Reason, result.Model,
-                        verdictSummary: $"{result.TargetKey} in {result.TargetProjectName}");
+                        verdictSummary: $"{result.TargetKey} in {result.TargetProjectName}",
+                        result: result, modelSource: modelSource);
                     WritePostProcessingOutcome(current, PostProcessingOutcomes.NeedsFollowUpTask,
                         summary: $"Spawned {result.TargetKey} in {result.TargetProjectName}: {result.Reason}",
                         performerCliType: cli,
@@ -5048,19 +5091,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     break;
                 case TaskSpawnerVerdict.NotRelevant:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "not-relevant", result.Reason, result.Model);
+                        "not-relevant", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 case TaskSpawnerVerdict.Deduped:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "deduped", result.Reason, result.Model);
+                        "deduped", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 case TaskSpawnerVerdict.Error:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Failed, durationMs,
-                        "error", result.Reason, result.Model);
+                        "error", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
                 default:
                     RecordTaskSpawnerStep(current.FolderPath, PipelineStepStatus.Skipped, durationMs,
-                        "skipped", result.Reason, result.Model);
+                        "skipped", result.Reason, result.Model, result: result, modelSource: modelSource);
                     break;
             }
         }
@@ -5086,11 +5129,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         string verdictToken,
         string? reason,
         string? model = null,
-        string? verdictSummary = null)
+        string? verdictSummary = null,
+        TaskSpawnerResult? result = null,
+        string? modelSource = null)
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.TaskSpawnerStepId,
             Kind = StepKind.Orchestrator,
@@ -5102,7 +5147,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Verdict = verdictToken,
             VerdictSummary = string.IsNullOrWhiteSpace(verdictSummary) ? null : verdictSummary,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+        };
+        // Only a result that carries a call receipt reached the model; a
+        // dedup or config skip keeps the configured model for display only.
+        _pipelineLog.RecordStep(jobFolderPath, result?.Usage is { } usage
+            ? StepModelUsage.From(usage, model, result.ThinkingLevel, modelSource).ApplyTo(row)
+            : row with { CostBasis = StepCostBasis.Deterministic });
     }
 
     /// <summary>
@@ -5365,7 +5415,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     {
         if (_pipelineLog == null) return;
         var now = DateTime.UtcNow;
-        _pipelineLog.RecordStep(jobFolderPath, new PipelineStepExecution
+        var row = new PipelineStepExecution
         {
             StepId = PipelineCatalogue.OrchestratorDecisionStepId,
             Kind = StepKind.Orchestrator,
@@ -5375,8 +5425,21 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             DurationMs = 0,
             Verdict = verdict,
             Reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
-        });
+            // Outside a decision-model scope the verdict was aggregated by
+            // rule from the aspect results: an explicit zero, not a gap.
+            CostBasis = StepCostBasis.Deterministic,
+        };
+        _pipelineLog.RecordStep(
+            jobFolderPath,
+            DecisionModelContext.Current is { } usage ? usage.ApplyTo(row) : row);
     }
+
+    /// <summary>
+    /// The review-decision model comes from host configuration
+    /// (<c>ReviewDecisionOrchestrator:Model</c>), not from the per-step
+    /// resolver chain, so its resolution path is reported as <c>config</c>.
+    /// </summary>
+    private const string DecisionModelSource = "config";
 
     /// <summary>
     /// Persist the truncated stylelint output for the FE timeline to
@@ -6174,7 +6237,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause);
+        var moved = MoveReissueToReadyTop(current, entry, BuildTestGateReopenCause, workspace);
         if (moved == null) return;
         if (SessionContinuationLedgerStore.Latest(moved.FolderPath)?.MechanicalResumesUsed >= 1)
             SessionContinuationLedgerStore.SaveFreshReason(
@@ -6323,7 +6386,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var moved2 = MoveReissueToReadyTop(current, entry, "lint-scss-fail");
+        var moved2 = MoveReissueToReadyTop(current, entry, "lint-scss-fail", workspace);
         if (moved2 == null) return;
 
         // Final verdict step: reissue (lint-scss gate failed once).
@@ -7140,7 +7203,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Move first so the operator-visible "sent back to ready" notification
         // only fires once the folder has actually left 4-auto-review. A failed
         // move must not produce a banner that claims the task moved.
-        var moved = MoveReissueToReadyTop(current, entry, "needs-input");
+        var moved = MoveReissueToReadyTop(current, entry, "needs-input", workspace);
         if (moved == null)
         {
             return;
@@ -7875,8 +7938,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// is also stamped onto the lane row: a build/test gate failure is its own
     /// ledger cause, every other reopen is a quality-loop reopen.
     /// </param>
-    private TaskInfo? MoveReissueToReadyTop(TaskInfo current, WatchPathEntry entry, string reopenCause)
+    private TaskInfo? MoveReissueToReadyTop(
+        TaskInfo current, WatchPathEntry entry, string reopenCause, string workspace,
+        bool alreadyCharged = false)
     {
+        // Backfilling a recorded verdict completes an already charged round.
+        // Every new reissue, including deterministic gates, spends the same
+        // lifetime budget as an operator sweep regardless of attempt epoch.
+        if (!alreadyCharged && EscalateIfCardRoundBudgetSpent(workspace, entry, current, reopenCause))
+            return null;
         var move = GuardedMoveJob(
             current.Id, TaskStates.Ready, entry.Path,
             transitionCause: ReopenLaneChangeCause(reopenCause),
@@ -7908,6 +7978,52 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ConcernTagWriter.MergeConcernTags(moved.FolderPath, new[] { ReissueTagId }, _logger);
         _scanner.InvalidateCache();
         return moved;
+    }
+
+    private bool EscalateIfCardRoundBudgetSpent(
+        string workspace, WatchPathEntry entry, TaskInfo current, string reopenCause)
+    {
+        var budget = CardRoundBudget.Evaluate(
+            ReviewDecisionLog.ReadAll(workspace, entry.Name),
+            _timeline?.ReadAll(current.FolderPath) ?? [],
+            current.Id,
+            CardRoundBudget.ResolveAllowed(_configuration));
+        if (!budget.Exhausted) return false;
+
+        var reason = $"Automatic round budget spent ({budget.Used} of {budget.Allowed}); " +
+                     $"{reopenCause} needs a person to decide the next step.";
+        var move = GuardedMoveJob(
+            current.Id, TaskStates.Escalated, entry.Path,
+            transitionCause: LaneChangeCauses.Escalated,
+            transitionDetail: "card-round-budget");
+        if (move.Status != MoveJobStatus.Success)
+        {
+            _logger.LogWarning(
+                "ReviewDecisionOrchestrator: failed to escalate {Project}/{JobId} at card round budget: {Status} {Message}",
+                entry.Name, current.Id, move.Status, move.Message);
+            return true;
+        }
+
+        var folder = move.NewFolderPath ?? current.FolderPath;
+        var moved = current with { FolderPath = folder, State = TaskStates.Escalated };
+        _chatLog.AppendSupervisor(moved, "escalate", reason);
+        EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
+            TimelineActors.Orchestrator, reason,
+            BuildEscalateDetails("card-round-budget", reason,
+                CountPriorReissues(workspace, entry.Name, current.Id)));
+        AppendReviewDecision(workspace, new ReviewDecisionRecord(
+            CreatedAt: DateTime.UtcNow,
+            JobId: current.Id,
+            Project: entry.Name,
+            Kind: ReviewDecisionKind.Escalate,
+            Reason: reason,
+            Prompt: "(shared card round budget)",
+            Response: string.Empty,
+            FollowUp: string.Empty),
+            current.FolderPath,
+            folder);
+        _statusSnapshot.RecordEscalate();
+        return true;
     }
 
     /// <summary>Quality-loop reopen cause id of the ledger row to the lane-change cause of the same row.</summary>

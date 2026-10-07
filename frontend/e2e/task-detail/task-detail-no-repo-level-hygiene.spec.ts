@@ -122,7 +122,7 @@ async function installFixtureRoutes(page: Page, state: string) {
 
   await page.route('**/api/tasks', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route('**/api/tasks/grouped**', (route) =>
+  await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -152,7 +152,7 @@ async function installFixtureRoutes(page: Page, state: string) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
   // Fixture is NOT the runner's active job - mirrors the user's
   // 2026-05-09 case where they were just reviewing an auto-review task.
-  await page.route(/\/api\/runner\/status(\?|$)/, (route) =>
+  await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
@@ -179,7 +179,7 @@ async function installFixtureRoutes(page: Page, state: string) {
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
   await page.route(new RegExp(`/api/tasks/${idEsc}/git/hygiene(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: jobHygiene }));
-  await page.route(new RegExp(`/api/tasks/${idEsc}(\\?|$)`), (route) =>
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: detail }));
 }
 

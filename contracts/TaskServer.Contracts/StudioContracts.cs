@@ -15,7 +15,12 @@ public static class StudioUserRoles
     public const string Viewer = "viewer";
 }
 
-public sealed record StudioBootstrapRequest(string Username, string Password, string? DisplayName = null);
+/// <summary>
+/// <see cref="BootstrapCode"/> is the installer-armed one-time owner code.
+/// Every authenticated installation requires it; see IdentityBootstrapContracts.
+/// </summary>
+public sealed record StudioBootstrapRequest(
+    string Username, string Password, string? DisplayName = null, string? BootstrapCode = null);
 public sealed record StudioLoginRequest(string Username, string Password);
 public sealed record StudioChangePasswordRequest(string CurrentPassword, string NewPassword);
 
@@ -76,11 +81,14 @@ public sealed record ContinueTaskRequest(
     string? CliType = null,
     string? ThinkingLevel = null,
     string? Mode = null,
+    string? CommandId = null,
+    long? ExpectedTaskVersion = null,
     string? Reason = null);
 
 public sealed record StopTaskRequest(string? Reason = null);
 
-public sealed record TaskLifecycleResponse(TaskDto Task, RunDto? Run = null);
+public sealed record TaskLifecycleResponse(TaskDto Task, RunDto? Run = null,
+    ContinuationIntentReceipt? ContinuationReceipt = null);
 public sealed record MoveTaskResponse(TaskDto Task, int Position);
 
 public sealed record StudioOrchestratorChatMessageRequest(
@@ -88,6 +96,22 @@ public sealed record StudioOrchestratorChatMessageRequest(
     IReadOnlyList<OrchestratorContextAttachmentDto>? Attachments = null,
     string? Model = null,
     string? ThinkingLevel = null);
+
+/// <summary>
+/// One operator prompt queued onto a workbench orchestrator context (the
+/// Studio "discuss this workbench decision" turn). The Task Server records
+/// it as a user turn on that context; execution stays with the engine that
+/// drains the context, exactly as for a project chat message.
+/// </summary>
+public sealed record StudioOrchestratorTurnRequest(
+    string Prompt,
+    string? CliType = null,
+    string? Model = null,
+    string? ThinkingLevel = null);
+
+public sealed record StudioOrchestratorTurnResponse(
+    string ContextKey,
+    OrchestratorContextTurnDto Turn);
 
 public sealed record OrchestratorChatResponse(
     string Project,

@@ -469,3 +469,113 @@ describe('BoardFiltersService waiting-for-release facet', () => {
     expect(svc.waitingForReleaseOnly()).toBe(false);
   });
 });
+
+/**
+ * AGT-2805 review finding: the shared area/tag selection follows the operator
+ * across board, list, Dossier list and wiki. Every writer of the tag filter
+ * must keep the shared selection in step, and a project board route must keep
+ * the develop reset of its other facets.
+ */
+describe('BoardFiltersService shared tag selection across routes', () => {
+  let svc: BoardFiltersService;
+
+  const navigate = (hash: string) => {
+    history.replaceState(null, '', `/${hash}`);
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  };
+  const stored = () => JSON.parse(localStorage.getItem('sharedTagFilters') ?? '[]');
+
+  beforeEach(() => {
+    localStorage.clear();
+    history.replaceState(null, '', '/#/board');
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
+    });
+    svc = TestBed.inject(BoardFiltersService);
+  });
+
+  it('keeps a tag cleared through the legacy board toggle cleared on the next route', () => {
+    svc.setTagSelection(new Set(['decision']));
+    svc.toggleTagFilter('decision');
+
+    navigate('#/projects/alpha/dossiers');
+
+    expect([...svc.activeTagFilter()]).toEqual([]);
+    expect(stored()).toEqual([]);
+  });
+
+  it('keeps a tag added through the legacy board toggle on the next route', () => {
+    svc.toggleTagFilter('decision');
+
+    navigate('#/projects/alpha/wiki');
+
+    expect([...svc.activeTagFilter()]).toEqual(['decision']);
+  });
+
+  it('keeps a tag removed through its filter pill removed on the next route', () => {
+    svc.setTagSelection(new Set(['decision', 'execution-and-runner']));
+    svc.removeFilterPill(svc.activeFilterPills().find(p => p.value === 'decision')!);
+
+    navigate('#/projects/alpha/wiki');
+
+    expect([...svc.activeTagFilter()]).toEqual(['execution-and-runner']);
+  });
+
+  it('keeps tags cleared by clear-all cleared on the next route', () => {
+    svc.setTagSelection(new Set(['decision']));
+    svc.clearSearchAndFilters();
+
+    navigate('#/projects/alpha/dossiers');
+
+    expect([...svc.activeTagFilter()]).toEqual([]);
+  });
+
+  it('lets a deep-linked filters= tag replace an older saved selection on the next route', () => {
+    localStorage.setItem('sharedTagFilters', JSON.stringify(['stale']));
+    history.replaceState(null, '', '/#/board&filters=tags%3Adecision');
+    svc.hydrateFromUrl();
+
+    navigate('#/projects/alpha/wiki');
+
+    expect([...svc.activeTagFilter()]).toEqual(['decision']);
+    expect(stored()).toEqual(['decision']);
+  });
+
+  it('lets a deep-linked ?tag= query replace an older saved selection on the next route', () => {
+    localStorage.setItem('sharedTagFilters', JSON.stringify(['stale']));
+    history.replaceState(null, '', '/?tag=decision#/projects/alpha/dossiers');
+    svc.hydrateFromUrl();
+
+    navigate('#/projects/alpha/wiki');
+
+    expect([...svc.activeTagFilter()]).toEqual(['decision']);
+  });
+
+  it('resets the other facets on a project board route but keeps the shared tags', () => {
+    history.replaceState(null, '', '/#/board&filters=owner%3Aclient-1%3Btype%3Abug%3Btags%3Adecision');
+    svc.hydrateFromUrl();
+    expect(svc.activeType()).toBe('bug');
+
+    navigate('#/projects/alpha/board');
+
+    expect(svc.activeType()).toBeNull();
+    expect(svc.activeClientFilter()).toBeNull();
+    expect(svc.activeProjects().size).toBe(0);
+    expect([...svc.activeTagFilter()]).toEqual(['decision']);
+  });
+
+  it('still clears every filter on an unfiltered board-to-board navigation', () => {
+    history.replaceState(null, '', '/#/board&filters=type%3Abug%3Btags%3Adecision');
+    svc.hydrateFromUrl();
+
+    navigate('#/board');
+
+    expect(svc.activeType()).toBeNull();
+    expect([...svc.activeTagFilter()]).toEqual([]);
+    expect(stored()).toEqual([]);
+  });
+});

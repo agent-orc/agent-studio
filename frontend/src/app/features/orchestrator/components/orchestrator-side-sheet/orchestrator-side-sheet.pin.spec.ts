@@ -40,6 +40,20 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     return TestBed.createComponent(OrchestratorSideSheetComponent);
   }
 
+  // AGT-2970: the chat usage header reads the project's chat-metadata default.
+  // Whether the header has rendered yet depends on scheduling, so flush any
+  // pending read without requiring one. A read for an earlier project can only
+  // remain as a request the header cancelled on the project switch.
+  function flushChatMetadataDefault(http: HttpTestingController, project: string) {
+    const current = `/api/projects/${encodeURIComponent(project)}/chat-metadata`;
+    const requests = http.match(request => /^\/api\/projects\/[^/]+\/chat-metadata$/.test(request.url));
+    for (const request of requests) {
+      expect(request.request.method).toBe('GET');
+      if (request.request.url !== current) expect(request.cancelled).toBe(true);
+      else if (!request.cancelled) request.flush({ chatMetadataEnabled: true });
+    }
+  }
+
   it('derives a project context on the board and a task context on a task page', async () => {
     const fixture = await makeFixture();
     const c = fixture.componentInstance;
@@ -103,6 +117,9 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     const route = '/api/runner/task:Quality%20Studio/QS-54/orchestrator-chat';
 
     c.activeProject.set('stale-project');
+    // Render the usage header for the stale project first (the ordering a slow
+    // full-suite run produces) so its superseded chat-metadata read is covered.
+    await fixture.whenStable();
     fixture.componentRef.setInput('composerContext', {
       project: 'Quality Studio',
       surface: 'Task',
@@ -146,10 +163,11 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       read.flush({ project: 'Quality Studio', turns: [] });
     }
 
-    for (const sessions of http.match('/api/orchestrator/sessions')) {
+    for (const sessions of http.match('/api/v1/studio/orchestrator/sessions')) {
       expect(sessions.request.method).toBe('GET');
       sessions.flush({ sessions: [] });
     }
+    flushChatMetadataDefault(http, 'Quality Studio');
     http.verify();
   });
 
@@ -173,7 +191,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     c.refresh();
     http.expectOne('/api/runner/task:Quality%20Studio/QS-54/orchestrator-chat')
       .flush({ project: 'Quality Studio', turns: [] });
-    http.expectOne('/api/orchestrator/sessions').flush({
+    http.expectOne('/api/v1/studio/orchestrator/sessions').flush({
       sessions: [{
         contextKey,
         kind: 'task',
@@ -282,7 +300,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
       project: 'demo-project',
       turns: [{ id: 't1', ts: '2026-07-09T00:00:00Z', role: 'user', text: 'task thread' }],
     });
-    const sessions = http.expectOne('/api/orchestrator/sessions');
+    const sessions = http.expectOne('/api/v1/studio/orchestrator/sessions');
     expect(sessions.request.method).toBe('GET');
     sessions.flush({ sessions: [{
       contextKey: 'task:demo-project/AGT-1916',
@@ -317,7 +335,7 @@ describe('OrchestratorSideSheetComponent · navigation context + pin', () => {
     const req = http.expectOne('/api/runner/project:demo-project/orchestrator-chat');
     expect(req.request.method).toBe('GET');
     req.flush({ project: 'demo-project', turns: [] });
-    const sessions = http.expectOne('/api/orchestrator/sessions');
+    const sessions = http.expectOne('/api/v1/studio/orchestrator/sessions');
     expect(sessions.request.method).toBe('GET');
     sessions.flush({ sessions: [] });
     http.verify();

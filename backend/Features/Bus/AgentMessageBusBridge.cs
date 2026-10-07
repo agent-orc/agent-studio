@@ -122,8 +122,10 @@ public sealed class AgentMessageBusBridge
     /// Mirror an orchestrator chat-log line. Mapping:
     /// <c>Decision -&gt; decision/Info</c>, <c>Reissue -&gt; decision/Warn</c>,
     /// <c>HeuristicFallback -&gt; decision/Warn</c>, <c>GiveUp -&gt; decision/High</c>.
+    /// The payload identifies the deciding model when one was called.
     /// </summary>
-    public Task EmitOrchestratorChatAsync(TaskInfo info, OrchestratorMessageKind kind, string text, CancellationToken ct = default)
+    public Task EmitOrchestratorChatAsync(TaskInfo info, OrchestratorMessageKind kind, string text,
+        CancellationToken ct = default, StepModelUsage? decidedBy = null)
     {
         if (info == null) return Task.CompletedTask;
         var severity = kind switch
@@ -159,11 +161,21 @@ public sealed class AgentMessageBusBridge
             topic: topic,
             summary: TruncateSummary(text),
             body: text,
+            payload: DecisionPayload(decidedBy),
             artifacts: new[] { LogSliceArtifact(info) },
             tags: new[] { "orchestrator-chat", topic });
 
         return EmitAsync(msg, ct);
     }
+
+    /// <summary>Decision model when present; otherwise an explicit rule marker.</summary>
+    public static OrchestratorDecisionPayload DecisionPayload(StepModelUsage? decidedBy)
+        => decidedBy is null || string.IsNullOrWhiteSpace(decidedBy.Model)
+            ? new OrchestratorDecisionPayload("rule", null, null, null)
+            : new OrchestratorDecisionPayload(
+                "model", decidedBy.Model,
+                string.IsNullOrWhiteSpace(decidedBy.ThinkingLevel) ? null : decidedBy.ThinkingLevel,
+                string.IsNullOrWhiteSpace(decidedBy.ModelSource) ? null : decidedBy.ModelSource);
 
     /// <summary>
     /// Mirror a supervisor chat-log line (the <c>[supervisor]</c>-stream lines
@@ -1204,3 +1216,10 @@ public sealed class AgentMessageBusBridge
         return s.Length == 0 ? "unknown" : s;
     }
 }
+
+/// <summary>Attribution of an orchestrator decision to a model or rule.</summary>
+public sealed record OrchestratorDecisionPayload(
+    string DecidedBy,
+    string? DecidedByModel,
+    string? DecidedByThinkingLevel,
+    string? DecidedByModelSource);

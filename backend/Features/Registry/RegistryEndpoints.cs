@@ -58,8 +58,7 @@ public static class RegistryEndpoints
         {
             var human = context.Items[AccessSecurityMiddleware.HumanPrincipalItem] as HumanPrincipal;
             Func<ProjectRecord, bool>? projectAllowed = human is null
-                || human.User.Role == StudioRoles.Owner
-                || human.User.Projects.Count == 0
+                || ProjectAccessAuthorization.HasUnrestrictedProjectAccess(human.User)
                     ? null
                     : project => ProjectAccessAuthorization.Allows(human.User, project.Id, projects);
             return Results.Ok(BuildWorkspaceListing(

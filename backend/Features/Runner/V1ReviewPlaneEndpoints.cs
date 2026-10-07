@@ -624,6 +624,7 @@ public static class V1ReviewPlaneEndpoints
             TaskSessionLog sessions,
             HumanReviewEscalation escalation,
             RemoteDeliveryIntegrationCoordinator remoteIntegration,
+            BatchGatePilotService batchPilot,
             TimelineLog timeline,
             FailureInterventionService failureInterventions,
             IntegrationBranchGateReporter integrationGates,
@@ -649,6 +650,10 @@ public static class V1ReviewPlaneEndpoints
                 return error!;
             var currentReview = current!;
             var authoritativeLease = currentReview.Lease!;
+            // AGT-3016: an executor that still reads verdict markers out of
+            // command output must not downgrade a command that exited 0.
+            request = Contract.ReviewCommandVerdictPolicy.NormalizeReport(
+                request, currentReview.Subject.Plan);
             request = Contract.ReviewVerdictCitationPolicy.NormalizeReport(
                 request,
                 currentReview.Subject.Plan?.Commands
@@ -736,6 +741,17 @@ public static class V1ReviewPlaneEndpoints
                     "Outcome must be Pass, ProductFailure, IntegrationBranchDefect, ReviewInfra, "
                     + "Inconclusive, or Cancellation."));
 
+            var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
+            if (batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+            {
+                request = request with
+                {
+                    Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
+                        "build-tests", "deferred-to-batch", "DeferredToBatch",
+                        "The complete suite is owned by the documentation-only batch gate.")).ToArray(),
+                };
+            }
+
             // Prepare the canonical payload before the authority can become terminal.
             // A killed process between SettleReview and any projection can then be
             // recovered without accepting a second review or guessing a gate verdict.
@@ -763,7 +779,11 @@ public static class V1ReviewPlaneEndpoints
                         "The review report key is bound to a different payload."));
             }
             RemoteDeliverySettlementRecord? preparedDelivery = null;
+            // A batch-deferred pass owes no per-card integration: the batch gate
+            // publishes it, so no delivery record may tell recovery to integrate
+            // or to settle it as a failed gate.
             if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
+                && !(batchDeferred && outcome == ReviewTerminalOutcome.Pass)
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -858,6 +878,12 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            if (context.RequestServices.GetService<IGateFailureFingerprintCounter>() is { } fingerprints)
+                foreach (var command in Contract.ReviewFlakeEvidencePolicy.UnprovenFailures(request))
+                    await fingerprints.RecordAndReadCardsAsync(
+                        Contract.FailureItemFingerprint.Compute(command.NewFailures!), task.Key ?? task.Id,
+                        $"review-unproven-flake:{attemptId}:{command.StepId}", ct);
+
             var receivedAt = settled.ReviewAttempt.Reports
                 .LastOrDefault(report => string.Equals(
                     report.IdempotencyKey,
@@ -865,6 +891,43 @@ public static class V1ReviewPlaneEndpoints
                     StringComparison.Ordinal))
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
+            string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
+            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                && task.State == TaskStates.AutoReview)
+            {
+                var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
+                if (batchSource is null)
+                    return Results.Json(new Contract.ApiError(
+                        "batch-gate-evidence-missing", "The batch source run is missing."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                try
+                {
+                    batchPilot.Enqueue(task, settled.ReviewAttempt, batchSource,
+                        new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)));
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "batch-gate-enqueue-failed attempt={AttemptId}", attemptId);
+                    try
+                    {
+                        await batchPilot.RunEmergencyFallbackAsync(task,
+                            settled.ReviewAttempt, batchSource,
+                            new DateTimeOffset(DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)),
+                            ct).ConfigureAwait(false);
+                        emergencyBatchState = FindTask(scanner, task.Id)?.State;
+                    }
+                    catch (Exception fallbackError)
+                    {
+                        logger.LogError(fallbackError,
+                            "batch-gate-emergency-fallback-failed attempt={AttemptId}", attemptId);
+                    }
+                    if (emergencyBatchState is not (TaskStates.HumanReview or TaskStates.Escalated))
+                        return Results.Json(new Contract.ApiError(
+                            "batch-gate-evidence-missing",
+                            "The settled review could not enter the durable batch queue or finish its per-task gate."),
+                            statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+            }
             var reportHash = preparedHash;
 
             // The authority already settled this delivery. Requeue unfinished
@@ -893,7 +956,7 @@ public static class V1ReviewPlaneEndpoints
                     reportHash,
                     receivedAt,
                     RetryScheduled: false,
-                    task.State,
+                    emergencyBatchState ?? task.State,
                     EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Duplicate));
             }
 
@@ -919,7 +982,7 @@ public static class V1ReviewPlaneEndpoints
                     string.Join(", ", branchGateFindings.Select(finding => finding.StepId)));
             }
 
-            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass && !batchDeferred)
             {
                 settings.MarkBuildProfileRemotelyValidated(
                     task.ProjectName,
@@ -951,6 +1014,18 @@ public static class V1ReviewPlaneEndpoints
                 reportHash,
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
+
+            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            {
+                EnqueueEvidenceProjection();
+                return Results.Ok(new Contract.ReviewReportDto(
+                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                    attemptId, settled.ReviewAttempt.Subject.SubjectId,
+                    request.Outcome, request.FailureClassification, request.Summary,
+                    reportHash, receivedAt, RetryScheduled: false,
+                    emergencyBatchState ?? TaskStates.AutoReview,
+                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+            }
 
             var infrastructureFailure = string.Equals(
                 request.Outcome,
@@ -1445,7 +1520,7 @@ public static class V1ReviewPlaneEndpoints
                         // is what a successor still refuses.
                         var integrated = await remoteIntegration.EnqueueAsync(integrationRequest).ConfigureAwait(false);
                         integrationOutcome = integrated.Outcome.ToString();
-                        integrationParkReason = integrated.AutomaticRecoveryDetail;
+                        integrationParkReason = RemoteDeliveryParkReason.For(integrated);
                     }
                     else
                     {
@@ -2369,17 +2444,7 @@ public static class V1ReviewPlaneEndpoints
             "Fix exactly the actionable concerns below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 
@@ -2457,7 +2522,7 @@ public static class V1ReviewPlaneEndpoints
         return createdKey;
     }
 
-    private static string BuildRemoteFindingFollowUp(
+    internal static string BuildRemoteFindingFollowUp(
         IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
         string reviewAttemptId)
     {
@@ -2468,17 +2533,7 @@ public static class V1ReviewPlaneEndpoints
             "Fix exactly the blocking findings below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",
         };
-        foreach (var finding in findings)
-        {
-            lines.Add($"## {finding.Aspect}");
-            lines.Add("");
-            lines.Add($"- Summary: {finding.Summary}");
-            if (!string.IsNullOrWhiteSpace(finding.EvidenceChecked))
-                lines.Add($"- Evidence checked: {finding.EvidenceChecked}");
-            if (!string.IsNullOrWhiteSpace(finding.Finding))
-                lines.Add($"- Finding: {finding.Finding}");
-            lines.Add("");
-        }
+        lines.Add(AgentStudio.Review.ReviewFindingDataBlock.RenderAspectFindings(findings));
         return string.Join('\n', lines).TrimEnd();
     }
 

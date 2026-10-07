@@ -98,6 +98,40 @@ removed before retrying the same marker.
    `main`, waits for Stable to become safe to restart, runs `update-stable.sh`,
    and verifies the deployed checkout.
 
+### Detached launch
+
+A train that must outlive the operator's terminal or SSH session is started
+with exactly this pattern:
+
+```sh
+setsid env --default-signal=HUP,INT,QUIT,TERM,PIPE \
+  ./scripts/release/promote-develop-to-main.sh \
+    --execute \
+    --tag "release/$(date -u +%Y%m%d-%H%M%SZ)" \
+  > "promotion-$(date -u +%Y%m%d-%H%M%SZ).log" 2>&1 < /dev/null &
+```
+
+`setsid` gives the train its own session without a controlling terminal, so a
+closing terminal never sends it `SIGHUP` and no `nohup` is needed. `env
+--default-signal` (coreutils 8.32 or newer) starts the train with the default
+disposition for every stop signal, whatever the launching shell handed down.
+Stop a detached train with `kill -TERM <pid>` (or `-INT`, `-HUP`); the gate
+capacity window then stops the gate and restores the runner quotas.
+
+Do not launch with `nohup` and do not rely on a bare `&` from a script. Both
+hand the whole process tree an ignored signal, and bash cannot trap a signal
+that was ignored when it started: `nohup` sets `SIGHUP` to ignored, and a
+non-interactive shell starts every `&` command with `SIGINT` and `SIGQUIT`
+ignored. The train's `HUP` or `INT` path then silently does nothing. On
+4 October this blocked two trains in the release shell contract tests
+(`SIGHUP exit code: expected '129', got '0'` under `nohup`, then the same for
+`SIGINT` under `setsid ... &`). Since AGT-3014 the gate-window tests reset the
+dispositions for the helper they test, so they pass under any launcher, and the
+helper logs `SIG<name> was ignored when this process tree started` and records
+`signals-ignored-at-entry` in `gate-window.env` instead of failing the gate.
+That signal is still not available to stop the train, which is why the pattern
+above stays the contract.
+
 The 1 August pre-promotion convergence at `0d8d6794a` merged the remaining
 `main` fixes into `develop`. Any later `main`-only change must likewise be
 converged into `develop` before promotion. The exact-SHA train does not create a
@@ -112,11 +146,19 @@ not publish versioned binaries. It runs, in order:
 2. frontend `npm ci` and the critical production dependency audit;
 3. release shell contract tests, including promotion and deploy-watcher tests;
 4. the .NET Release build;
-5. every non-machine-bound .NET test in the solution and the deployment
-   regression scenario smoke;
-6. frontend lint and type-check;
-7. frontend unit tests; and
-8. the production frontend build.
+5. every non-machine-bound .NET test in the solution, including the
+   legacy-plane completion contract test
+   (`backend.Tests/LegacyRunnerCompletionContractTests.cs`);
+6. the [deployment regression scenario](testing/deployment-scenario.md) at
+   `smoke` level, which runs the coding attempt on the v1 plane and on the
+   legacy runner plane the production fleet uses;
+7. frontend lint and type-check;
+8. frontend unit tests; and
+9. the production frontend build.
+
+A gate that exercises only the v1 plane is not evidence for the fleet: Stable
+0.9.3 passed it and then had every production completion rejected on the
+legacy plane (AGT-2985).
 
 Machine-bound suites remain separately scheduled evidence and are never hidden
 inside the normal green result. The promotion gate excludes them explicitly,
@@ -160,7 +202,10 @@ full gate and, on every `--execute` run:
    after `RELEASE_GATE_STOP_GRACE_SECONDS` (default `30`), and restores the
    quotas only once no process of the group remains, so no orphaned test or
    build process keeps running at full runner load. An unlimited unit is
-   restored with the empty `CPUQuota=` reset.
+   restored with the empty `CPUQuota=` reset. A stop signal that was already
+   ignored when the train started (see "Detached launch") cannot be trapped;
+   the helper logs it, records `signals-ignored-at-entry`, and keeps the other
+   signal paths.
 
 `RELEASE_GATE_WINDOW` selects the policy: `auto` (default) applies the window
 when the units are loaded and, when a quota cannot be set (for example the
@@ -297,6 +342,10 @@ condition and a later cron tick retries. The watcher never changes task state.
   `hostLoadAtGateEnd`, and `gateDurationSeconds` with a quiet run before
   debugging the failing test. Confirm `gateWindow.mode=applied`; `unavailable`
   means the sudoers rule is missing and the gate ran unthrottled.
+- `[release-gate-window] SIG<name> was ignored when this process tree started`
+  in the train log: the train was launched with `nohup` or a bare `&`. The gate
+  still runs, but that signal cannot stop it. Use the "Detached launch" pattern
+  for the next train.
 - Candidate-ancestry or gate failure: inspect the evidence, converge the branch
   if needed, fetch the new tips, and start a new run. A `develop` advance alone
   does not invalidate a gated candidate.
@@ -312,6 +361,12 @@ condition and a later cron tick retries. The watcher never changes task state.
 - Deploy failure: the promotion remains a valid release fact. Diagnose the
   external updater and use its rollback procedure; do not rewrite `main` or
   move the release marker.
+- Runner host deploy: `agent-runner-deploy` waits up to ten minutes after the
+  restart for one accepted completion from the new Coding service invocation
+  and otherwise prints the rollback command to the previous runner release.
+  Follow the
+  [post-restart completion check](setup/linux-runner-host.md#post-restart-completion-check)
+  before you declare a runner release deployed.
 - Released regression: revert the offending change through normal `develop`
   work and run a new promotion. Reserve an immutable Stable rollback for the
   deployment incident response path.

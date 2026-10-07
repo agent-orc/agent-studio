@@ -288,7 +288,7 @@ async function installMocks(
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: summaryBody });
   });
-  await page.route('**/api/tasks/grouped**', async (route) => {
+  await page.route('**/api/v1/studio/board**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: groupedBody });
   });
   await page.route('**/api/watch-paths**', async (route) => {
@@ -315,7 +315,7 @@ async function installMocks(
       }),
     });
   });
-  await page.route('**/api/runner/status**', async (route) => {
+  await page.route('**/api/v1/studio/runner/status**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -344,7 +344,7 @@ async function installMocks(
 
   const escId = encodeURIComponent(target.id);
   const taskEndpoint = (suffix = '') => new RegExp(`/api/(?:jobs|tasks)/${escId}${suffix}(?:\\?.*)?$`);
-  await page.route(taskEndpoint(''), async (route) => {
+  await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${escId}(?:\\?.*)?$`), async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: detailBody });
   });
   await page.route(taskEndpoint('/output'), async (route) => {

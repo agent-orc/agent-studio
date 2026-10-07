@@ -1,6 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse, HttpHeaders, HttpParams } from '@angular/common/http';
-import { catchError, finalize, map } from 'rxjs';
+import { Subject, catchError, finalize, map, tap, throwError, type Observable } from 'rxjs';
+import type { TaskCore } from '../models/task-core.model';
 import type {
   ArchivedTasksResponse,
   BatchMoveItemInput,
@@ -77,6 +78,7 @@ import type {
   PipelineStepCondition,
   StepPromptsResponse,
   PipelineHealthSnapshot,
+  OperatorSweepProjection,
 } from '../features/task-pipeline';
 import type { TaskScreenshotsResponse, WorkspaceScreenshotsResponse } from '../features/screenshots';
 import type { ExecutiveSummaryResponse } from '../features/summary';
@@ -202,6 +204,25 @@ export interface IntegrationRetryResponse {
 }
 
 type LaneKey = keyof GroupedJobs;
+
+/**
+ * A per-task change for resource caches. Row events (`upserted`, a pushed
+ * `deleted`, `snapshot`) are published after the board store has applied
+ * them. Own mutation replies (`mutated`, a replied `deleted`) are published
+ * when the reply lands; the store converges through the push that follows.
+ * `moved`, `bulk` and `reconnected` announce a change the store is about to
+ * reconcile with a grouped read.
+ */
+export type TaskStoreEvent =
+  | { kind: 'upserted'; info: TaskInfo }
+  /** `taskKey` is null when the caller named only the id and it is ambiguous. */
+  | { kind: 'deleted'; id: string; taskKey: string | null }
+  | { kind: 'moved'; id: string }
+  /** A successful own mutation reply; `lane` is set when the reply implies it. */
+  | { kind: 'mutated'; id: string; watchPath?: string; lane?: string }
+  | { kind: 'bulk' }
+  | { kind: 'reconnected' }
+  | { kind: 'snapshot' };
 // ADR-0025: state strings use the new seven-lane order.
 // ADR-0026: 1a-orchestrator-prep joins the catalog. The 1b-needs-human-review
 // bounce lane has been retired (its "Human decision needed" concept was
@@ -246,6 +267,15 @@ function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
 }
 
 /**
+ * `{projectId}` segment of the versioned task routes
+ * (`/api/v1/projects/{projectId}/tasks/{taskId}`) when a call knows only the
+ * task id and its watch path. The Task Server resolves the task by id alone
+ * (`TaskServerStore.UnscopedProjectToken`); OrchestratorApi resolves it from
+ * the `watchPath` query as before (`StudioV1LegacyRouteAlias`).
+ */
+export const UNSCOPED_TASK_PROJECT = '-';
+
+/**
  * Turn an orchestrator context key (`project:<PROJ>` or `task:<PROJ>/<KEY>`,
  * mirroring the backend `OrchestratorContextKey`) into the URL path segment(s)
  * for the `/api/runner/{contextKey}/orchestrator-chat` route. Each id part is
@@ -280,6 +310,39 @@ export function orchestratorContextChatSegment(contextKey: string): string {
   return encodeURIComponent(contextKey);
 }
 
+/**
+ * Split an orchestrator context key into the parts its digest route carries:
+ * `global`, `project:<PROJ>`, `task:<PROJ>/<KEY>` or `workbench:<PROJ>/<KEY>`.
+ * Any other shape (including a missing `/<KEY>`) has no digest route.
+ */
+function orchestratorDigestContext(
+  contextKey: string,
+): { kind: 'global' | 'project' | 'task' | 'workbench'; projectId: string; key: string } | null {
+  if (contextKey === 'global') return { kind: 'global', projectId: '', key: '' };
+  const colon = contextKey.indexOf(':');
+  const kind = contextKey.slice(0, colon);
+  const rest = contextKey.slice(colon + 1);
+  if (colon < 0 || !rest) return null;
+  if (kind === 'project') return rest.includes('/') ? null : { kind, projectId: rest, key: '' };
+  if (kind !== 'task' && kind !== 'workbench') return null;
+  const slash = rest.indexOf('/');
+  if (slash <= 0 || slash === rest.length - 1) return null;
+  return { kind, projectId: rest.slice(0, slash), key: rest.slice(slash + 1) };
+}
+
+/**
+ * A context key no digest route accepts fails locally with the backend's own
+ * 400 wording, so the digest panel shows its "context no longer available"
+ * hint instead of sending an unroutable request.
+ */
+function invalidOrchestratorContextKey<T>(): Observable<T> {
+  return throwError(() => new HttpErrorResponse({
+    status: 400,
+    statusText: 'Bad Request',
+    error: { error: 'Invalid orchestrator context key.' },
+  }));
+}
+
 @Injectable({ providedIn: 'root' })
 export class TaskService {
   private http = inject(HttpClient);
@@ -304,7 +367,7 @@ export class TaskService {
   private runnerRefreshQueued = false;
   private runnerRefreshQueuedSilent = true;
 
-  // Push (SignalR `/hubs/jobs`) is the primary update path. The poll is
+  // Push (SignalR `/hubs/v1/studio`) is the primary update path. The poll is
   // demoted to a slow heartbeat that reconciles drift and backs up the socket
   // when it is down — 30 s keeps server load low while staying inside the
   // documented 30-60 s fallback window.
@@ -316,6 +379,33 @@ export class TaskService {
 
   /** True while the job-events socket is connected (diagnostics / e2e). */
   readonly pushConnected = this.jobsHub.connected;
+
+  private readonly taskEventSubject = new Subject<TaskStoreEvent>();
+  /**
+   * Per-task changes the board store has applied: pushed rows, deletes, moves,
+   * a reconnect resync and each accepted grouped snapshot. Resource caches
+   * (the task core cache) subscribe so they can revalidate exactly the task
+   * that changed instead of discarding everything on a global generation.
+   */
+  readonly taskEvents = this.taskEventSubject.asObservable();
+
+  /** Publish a successful mutation reply for one task (see `taskEvents`). */
+  private afterMutation<T>(id: string, watchPath?: string, lane?: string) {
+    return tap<T>({ next: () => this.taskEventSubject.next({ kind: 'mutated', id, watchPath, lane }) });
+  }
+
+  /**
+   * Publish a successful delete or project change. Without a watch path the
+   * task is resolved from the board by id; an id held by two projects stays
+   * unresolved (`taskKey: null`) so no other project's entry is evicted.
+   */
+  private afterRemoval<T>(id: string, watchPath?: string) {
+    return tap<T>({ next: () => {
+      const matches = watchPath ? [] : this.jobs().filter((job) => job.id === id);
+      const taskKey = watchPath ? `${watchPath}::${id}` : matches.length === 1 ? matches[0].taskKey : null;
+      this.taskEventSubject.next({ kind: 'deleted', id, taskKey });
+    } });
+  }
 
   /**
    * AGT-2726 — the background Git-index freshness stamp folded into the last
@@ -459,7 +549,7 @@ export class TaskService {
       ? new HttpHeaders({ 'If-None-Match': this.groupedETag })
       : undefined;
 
-    this.http.get<GroupedJobsResponse>(`${this.baseUrl}/tasks/grouped`, {
+    this.http.get<GroupedJobsResponse>('/api/v1/studio/board', {
       headers,
       params: new HttpParams().set('includeLegacyReviewLane', false),
       observe: 'response',
@@ -475,6 +565,7 @@ export class TaskService {
           this.gitStateAt.set(gitStateAt);
           this.gitStateStale.set(stale);
           this.groupedETag = response.headers.get('ETag');
+          this.taskEventSubject.next({ kind: 'snapshot' });
         } else {
           // The optimistic guards discarded this snapshot, so the rendered board
           // no longer corresponds to any tag. Drop it rather than let the next
@@ -697,11 +788,29 @@ export class TaskService {
     );
   }
 
+  /**
+   * Bounded task core (AGT-2953). A conditional read: when `etag` names the
+   * core the caller still holds, an unchanged task answers 304 with no body.
+   * Callers go through `TaskDetailPrefetchService`, which owns the shared
+   * cache, coalescing and lookahead cancellation.
+   */
+  getCore(jobId: string, project: string, etag?: string | null) {
+    return this.http.get<TaskCore>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/core`,
+      {
+        params: new HttpParams().set('project', project),
+        headers: etag ? new HttpHeaders({ 'If-None-Match': etag }) : undefined,
+        observe: 'response',
+      },
+    );
+  }
+
   getDetail(jobId: string, watchPath?: string, project?: string) {
     let params = this.withWatchPath(watchPath).params ?? new HttpParams();
     if (project) params = params.set('project', project);
+    const projectId = project?.trim() || UNSCOPED_TASK_PROJECT;
     return this.http.get<TaskDetail>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
+      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
       params.keys().length ? { params } : {},
     );
   }
@@ -712,12 +821,12 @@ export class TaskService {
    * away from filesystem-addressed task lookups.
    */
   getDetailByProject(jobId: string, project: string, fallbackWatchPath?: string) {
-    const handle = project.trim();
-    if (!handle) return this.getDetail(jobId, fallbackWatchPath);
+    const projectId = project.trim();
+    if (!projectId) return this.getDetail(jobId, fallbackWatchPath);
 
     const request = this.http.get<TaskDetail>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
-      { params: new HttpParams().set('project', handle) },
+      `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`,
+      { params: new HttpParams().set('project', projectId) },
     );
     return fallbackWatchPath
       ? request.pipe(catchError(() => this.getDetail(jobId, fallbackWatchPath)))
@@ -726,7 +835,7 @@ export class TaskService {
 
   updateState(jobId: string, state: string, watchPath?: string) {
     return this.http.put(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/state`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/state`,
       { targetState: state },
       this.withWatchPath(watchPath),
     );
@@ -750,10 +859,10 @@ export class TaskService {
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
     return this.http.post(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/move`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/move`,
       body,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath, targetState));
   }
 
   /** Queue independent task moves and return the server-side job handle. */
@@ -838,7 +947,7 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryWorkspaceListItem[]>(`${this.baseUrl}/workspaces`, { params });
+    return this.http.get<RegistryWorkspaceListItem[]>('/api/v1/workspaces', { params });
   }
 
   /**
@@ -850,13 +959,13 @@ export class TaskService {
     const params = opts?.includeArchived
       ? new HttpParams().set('includeArchived', 'true')
       : undefined;
-    return this.http.get<RegistryProjectSummary[]>(`${this.baseUrl}/projects`, { params });
+    return this.http.get<RegistryProjectSummary[]>('/api/v1/projects', { params });
   }
 
   /** F45b — create a workspace. Returns the new record. */
   createRegistryWorkspace(displayName: string, color?: string | null) {
     return this.http.post<{ id: string; displayName: string }>(
-      `${this.baseUrl}/workspaces`, { displayName, color: color ?? null });
+      '/api/v1/workspaces', { displayName, color: color ?? null });
   }
 
   /** F45b — patch a workspace (rename / color edit). */
@@ -907,7 +1016,7 @@ export class TaskService {
 
   /** Create a registry project. Backend chooses projects/PROJ-NNN/tasks; no storage path is accepted from the UI. */
   createRegistryProject(body: CreateRegistryProjectRequest) {
-    return this.http.post<RegistryProjectSummary>(`${this.baseUrl}/projects`, body);
+    return this.http.post<RegistryProjectSummary>('/api/v1/projects', body);
   }
 
   // ----- Project URLs (per-project watchable dev-server / preview URLs) -----
@@ -1100,7 +1209,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/tags`,
       { tags },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /**
@@ -1335,7 +1444,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/task-type`,
       { taskType },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   updateJobFile(jobId: string, fileName: string, content: string, watchPath?: string) {
@@ -1343,7 +1452,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/files/${encodeURIComponent(fileName)}`,
       { content },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /**
@@ -1468,10 +1577,10 @@ export class TaskService {
    */
   moveJobToTop(jobId: string, watchPath?: string) {
     return this.http.post<{ position: number }>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/move-to-top`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/move-to-top`,
       null,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   changeProject(jobId: string, targetWatchPath: string, watchPath?: string) {
@@ -1479,14 +1588,14 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/change-project`,
       { targetWatchPath },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
   deleteJob(jobId: string, watchPath?: string) {
     return this.http.delete(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}`,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterRemoval(jobId, watchPath));
   }
 
   // Git
@@ -1802,7 +1911,7 @@ export class TaskService {
     if (cliType) body.cliType = cliType;
     if (thinkingLevel) body.thinkingLevel = thinkingLevel;
     return this.http.post<ContinueTaskResponse>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/start`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/start`,
       body,
       this.withWatchPath(watchPath),
     );
@@ -1823,7 +1932,7 @@ export class TaskService {
     const base = this.withWatchPath(watchPath);
     const params = (base.params ?? new HttpParams()).set('reason', reason);
     return this.http.post(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/stop`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/stop`,
       {},
       { ...base, params },
     );
@@ -1856,7 +1965,7 @@ export class TaskService {
     if (modeOverride) body.modeOverride = modeOverride;
     if (reason) body.reason = reason;
     return this.http.post<ContinueTaskResponse>(
-      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/continue`,
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/continue`,
       body,
       this.withWatchPath(watchPath),
     );
@@ -1867,7 +1976,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/model`,
       { model },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   setJobThinkingLevel(jobId: string, thinkingLevel: string | null, watchPath?: string) {
@@ -1875,7 +1984,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/thinking-level`,
       { thinkingLevel },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   setJobCliType(jobId: string, cliType: CliType, watchPath?: string, useOwnSession?: boolean) {
@@ -1885,7 +1994,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/cli-type`,
       body,
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   getCliModelCatalog(cliType: CliType, refresh = false) {
@@ -1955,7 +2064,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/title`,
       { title },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   // --- Epics -------------------------------------------------------------
@@ -1968,7 +2077,7 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/epic`,
       { epicId: epicId ?? '' },
       this.withWatchPath(watchPath),
-    );
+    ).pipe(this.afterMutation(jobId, watchPath));
   }
 
   /** All epics with their live sub-task rollups. */
@@ -2054,7 +2163,7 @@ export class TaskService {
 
   // Runner management
   getRunnerStatus() {
-    return this.http.get<RunnerStatus>(`${this.baseUrl}/runner/status`);
+    return this.http.get<RunnerStatus>('/api/v1/studio/runner/status');
   }
 
   /**
@@ -2316,6 +2425,21 @@ export class TaskService {
     );
   }
 
+  /** AGT-3011: operator sweep health, per-card round budget and reasons. Read-only. */
+  getProjectOperatorSweeps(projectName: string) {
+    return this.http.get<OperatorSweepProjection>(
+      `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/operator-sweeps`,
+    );
+  }
+
+  /** Pause or resume one operator sweep for one project; persisted across restarts. */
+  setOperatorSweepPaused(projectName: string, sweep: string, paused: boolean, reason?: string) {
+    const base = `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/operator-sweeps/${encodeURIComponent(sweep)}`;
+    return paused
+      ? this.http.post<OperatorSweepProjection>(`${base}/pause`, { reason: reason ?? null })
+      : this.http.post<OperatorSweepProjection>(`${base}/resume`, {});
+  }
+
   probePipelineStep(projectName: string, stepId: string) {
     return this.http.post<PipelineStepProbeResult>(
       `${this.baseUrl}/projects/${encodeURIComponent(projectName)}/pipeline-steps/${encodeURIComponent(stepId)}/probe`,
@@ -2472,26 +2596,61 @@ export class TaskService {
 
   getOrchestratorContextSessions() {
     return this.http.get<import('../features/orchestrator').OrchestratorContextSessionsResponse>(
-      `${this.baseUrl}/orchestrator/sessions`,
-    );
-  }
-
-  /** Read the compact ORCH-1 application digest for one multichat context. */
-  getOrchestratorContextDigest(contextKey: string) {
-    return this.http.get<OrchestratorContextDigest>(
-      `${this.baseUrl}/orchestrator/context/${orchestratorContextChatSegment(contextKey)}`,
+      '/api/v1/studio/orchestrator/sessions',
     );
   }
 
   /**
+   * Read the compact ORCH-1 application digest for one multichat context.
+   * Every context shape has its own literal route (AGT-2983): the Task Server
+   * serves `global`, `project:{projectId}` and `task:{projectId}/{taskKey}`,
+   * and the Studio connector forwards exactly those shapes. A Dossier
+   * (`workbench:`) digest composes the local repository's Dossier descriptors,
+   * so it stays a dev-seat read like the other workbench routes.
+   */
+  getOrchestratorContextDigest(contextKey: string) {
+    const context = orchestratorDigestContext(contextKey);
+    if (!context) return invalidOrchestratorContextKey<OrchestratorContextDigest>();
+    // Named after the route parameters they fill: routes.json and the
+    // connector read these names from the call sites below.
+    const { projectId, key: taskKey, key: workbenchKey } = context;
+    switch (context.kind) {
+      case 'global':
+        return this.http.get<OrchestratorContextDigest>('/api/v1/studio/orchestrator/context/global');
+      case 'project':
+        return this.http.get<OrchestratorContextDigest>(
+          `/api/v1/studio/orchestrator/context/project:${encodeURIComponent(projectId)}`);
+      case 'task':
+        return this.http.get<OrchestratorContextDigest>(
+          `/api/v1/studio/orchestrator/context/task:${encodeURIComponent(projectId)}/${encodeURIComponent(taskKey)}`);
+      case 'workbench':
+        return this.http.get<OrchestratorContextDigest>(
+          `/api/orchestrator/context/workbench:${encodeURIComponent(projectId)}/${encodeURIComponent(workbenchKey)}`);
+    }
+  }
+
+  /**
    * Rebuild one context digest on demand. Unlike the cheap read path this
-   * explicitly asks the backend to re-probe quota before assembling it.
+   * explicitly asks the backend to re-probe quota before assembling it. The
+   * routes mirror {@link getOrchestratorContextDigest} with a `/refresh` tail.
    */
   refreshOrchestratorContextDigest(contextKey: string) {
-    return this.http.post<OrchestratorContextDigest>(
-      `${this.baseUrl}/orchestrator/context/${orchestratorContextChatSegment(contextKey)}/refresh`,
-      null,
-    );
+    const context = orchestratorDigestContext(contextKey);
+    if (!context) return invalidOrchestratorContextKey<OrchestratorContextDigest>();
+    const { projectId, key: taskKey, key: workbenchKey } = context;
+    switch (context.kind) {
+      case 'global':
+        return this.http.post<OrchestratorContextDigest>('/api/v1/studio/orchestrator/context/global/refresh', null);
+      case 'project':
+        return this.http.post<OrchestratorContextDigest>(
+          `/api/v1/studio/orchestrator/context/project:${encodeURIComponent(projectId)}/refresh`, null);
+      case 'task':
+        return this.http.post<OrchestratorContextDigest>(
+          `/api/v1/studio/orchestrator/context/task:${encodeURIComponent(projectId)}/${encodeURIComponent(taskKey)}/refresh`, null);
+      case 'workbench':
+        return this.http.post<OrchestratorContextDigest>(
+          `/api/orchestrator/context/workbench:${encodeURIComponent(projectId)}/${encodeURIComponent(workbenchKey)}/refresh`, null);
+    }
   }
 
   // Cycle 10d: token-aggregate endpoints moved to TokensApiService
@@ -2646,7 +2805,7 @@ export class TaskService {
    */
   getOrchestratorChat(projectName: string) {
     return this.http.get<OrchestratorChatResponse>(
-      `${this.baseUrl}/runner/${encodeURIComponent(projectName)}/orchestrator-chat`,
+      `/api/v1/studio/runner/${encodeURIComponent(projectName)}/orchestrator-chat`,
     );
   }
 
@@ -2705,7 +2864,7 @@ export class TaskService {
       reply: OrchestratorChatTurn;
       executionContext?: import('../features/orchestrator').ChatExecutionContext | null;
     }>(
-      `${this.baseUrl}/runner/${encodeURIComponent(projectName)}/orchestrator-chat`,
+      `/api/v1/studio/runner/${encodeURIComponent(projectName)}/orchestrator-chat`,
       body,
     );
   }
@@ -2875,7 +3034,7 @@ export class TaskService {
   }
 
   /**
-   * Wire the `/hubs/jobs` push events into the board signals.
+   * Wire the `/hubs/v1/studio` push events into the board signals.
    *
    * Two delivery shapes:
    *  - Unambiguous, self-contained payloads (create / update carry the full
@@ -2900,9 +3059,15 @@ export class TaskService {
       jobCreated: (info) => this.upsertJobLocal(info),
       jobUpdated: (info) => this.upsertJobLocal(info),
       jobDeleted: (e) => this.removeJobLocal(e.id, e.watchPath),
-      jobMoved: () => this.scheduleSilentRefresh(),
+      jobMoved: (e) => {
+        this.taskEventSubject.next({ kind: 'moved', id: e.id });
+        this.scheduleSilentRefresh();
+      },
       jobsReordered: () => this.scheduleSilentRefresh(),
-      jobsBulkChanged: () => this.scheduleSilentRefresh(),
+      jobsBulkChanged: () => {
+        this.taskEventSubject.next({ kind: 'bulk' });
+        this.scheduleSilentRefresh();
+      },
       // Quiet, immediate stamp update from the push payload itself (no round
       // trip needed to know the index moved forward), plus a silent re-pull
       // so the merge/integration/publish/test-run signals that repository's
@@ -2917,7 +3082,10 @@ export class TaskService {
       cliFinished: () => this.scheduleSilentRefresh(),
       // Initial connect + every reconnect: re-pull the full board so anything
       // emitted while the socket was down is reconciled.
-      reconnected: () => this.refresh(true),
+      reconnected: () => {
+        this.taskEventSubject.next({ kind: 'reconnected' });
+        this.refresh(true);
+      },
     });
   }
 
@@ -2965,12 +3133,12 @@ export class TaskService {
       );
     }
     this.grouped.set(next);
+    this.taskEventSubject.next({ kind: 'upserted', info });
   }
 
   /** Remove a task from the local `jobs` + `grouped` signals. Idempotent. */
   private removeJobLocal(jobId: string, watchPath: string): void {
     const key = `${watchPath}::${jobId}`;
-
     const flat = this.jobs();
     const nextFlat = flat.filter((j) => `${j.watchPath}::${j.id}` !== key);
     if (nextFlat.length !== flat.length) this.jobs.set(nextFlat);
@@ -2987,6 +3155,7 @@ export class TaskService {
       }
     }
     if (changed) this.grouped.set(next);
+    this.taskEventSubject.next({ kind: 'deleted', id: jobId, taskKey: key });
   }
 
   // CLI settings

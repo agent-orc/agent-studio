@@ -25,7 +25,7 @@ public sealed class TaskServerClient : IDisposable
     private readonly string? _configuredClientId;
     private readonly string? _runnerInstanceIdOverride;
     private readonly RunnerOptions? _options;
-    // Per-run caches, evicted on release after post-completion evidence transport
+    // Per-run caches, evicted on release after pre-settlement evidence transport
     // so the long-lived daemon does not retain every claimed task's lease and prompt.
     private readonly ConcurrentDictionary<string, (string RunId, RunLeaseInfoDto Lease, string InstanceId)> _v1Leases = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _v1CompletedLeases = new(StringComparer.OrdinalIgnoreCase);
@@ -69,6 +69,8 @@ public sealed class TaskServerClient : IDisposable
                         StringComparison.OrdinalIgnoreCase),
             };
         }
+        if (!string.IsNullOrWhiteSpace(options.AuthTokenFile))
+            handler = new ReloadingPrincipalCredentialHandler(options.AuthTokenFile, handler);
         _http = new HttpClient(handler)
         {
             BaseAddress = new Uri(options.ServerUrl),
@@ -76,7 +78,8 @@ public sealed class TaskServerClient : IDisposable
         };
         _configuredClientId = options.ClientId;
         _usesServiceCredential = !string.IsNullOrWhiteSpace(options.AuthToken);
-        if (!string.IsNullOrWhiteSpace(options.AuthToken))
+        _http.DefaultRequestHeaders.TryAddWithoutValidation("X-Principal-Consumer-Id", options.RunnerId);
+        if (!string.IsNullOrWhiteSpace(options.AuthToken) && string.IsNullOrWhiteSpace(options.AuthTokenFile))
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", options.AuthToken);
         // X-Client-Id is attribution only. Seed it with the configured label or
         // Runner id; authentication is supplied independently by the service
@@ -782,6 +785,13 @@ public sealed class TaskServerClient : IDisposable
             claim.Run.RunId);
         _v1Leases[claim.Task.TaskKey] = (claim.Run.RunId, legacyLease, RunnerInstanceId);
         if (!string.IsNullOrWhiteSpace(claim.Task.Body)) _v1TaskBodies[claim.Task.TaskKey] = claim.Task.Body;
+        var selectedIntent = claim.ContinuationIntent is { Receipt.ExplicitSelection: true } intent
+            ? intent : null;
+        var selectedFields = selectedIntent?.Selection;
+        // Provider fallback is a whole route from a previous refusal. Once an
+        // operator selects any continuation field, filling the other fields
+        // from that route can cross provider boundaries.
+        var providerFallback = selectedIntent is null ? claim.ModelFallback : null;
         return new RunnerClaimResponse(
             RunnerClaimStatus.Claimed,
             claim.Task.TaskKey,
@@ -800,17 +810,23 @@ public sealed class TaskServerClient : IDisposable
             RunId: claim.Run.RunId,
             LeaseInstanceId: RunnerInstanceId,
             ReconciliationActions: FromContract(claim.ReconciliationActions),
+            // A required mechanical route wins. Otherwise operator fields
+            // resolve with normal host settings as one route.
             RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
                     FollowUp: claim.FollowUp)
-                : claim.ModelFallback is null && claim.FollowUp is null
+                : selectedIntent is null && providerFallback is null && claim.FollowUp is null
                     ? null
                     : new RunSpecDto(
-                        claim.ModelFallback?.CliType,
-                        claim.ModelFallback?.To,
-                        claim.ModelFallback?.ThinkingLevel,
-                        ContextMode: claim.ModelFallback is null
+                        selectedIntent is not null && (selectedFields is null || selectedFields.CliType
+                            || selectedFields.Model || selectedFields.ThinkingLevel)
+                            ? selectedIntent.CliType : providerFallback?.CliType,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.Model)
+                            ? selectedIntent.Model : providerFallback?.To,
+                        selectedIntent is not null && (selectedFields is null || selectedFields.ThinkingLevel)
+                            ? selectedIntent.ThinkingLevel : providerFallback?.ThinkingLevel,
+                        ContextMode: providerFallback is null
                             ? null
                             : CodingAgentRunner.Model.CliContextModes.Clean,
                         FollowUp: claim.FollowUp),
@@ -951,6 +967,29 @@ public sealed class TaskServerClient : IDisposable
         if (!response.IsSuccessStatusCode)
             throw new TaskServerException((int)response.StatusCode, $"Gate status failed: {Trim(detail)}");
         return JsonSerializer.Deserialize<Contract.GateStatus>(detail, Json);
+    }
+
+    /// <summary>Registered projects, used to map a card key prefix to its project (salvage retention).</summary>
+    public async Task<IReadOnlyList<Contract.ProjectDto>> ListProjectsAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("/api/v1/projects", ct);
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Project list failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.ProjectDto[]>(detail, TaskServerContractJson) ?? [];
+    }
+
+    /// <summary>One card's lifecycle state by project and key. Returns null on 404.</summary>
+    public async Task<Contract.TaskDto?> GetTaskAsync(string projectId, string taskKey, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/v1/projects/{Uri.EscapeDataString(projectId)}/tasks/{Uri.EscapeDataString(taskKey)}",
+            ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        var detail = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+            throw new TaskServerException((int)response.StatusCode, $"Task lookup failed: {Trim(detail)}");
+        return JsonSerializer.Deserialize<Contract.TaskDto>(detail, TaskServerContractJson);
     }
 
     public async Task<Contract.ReviewLeaseDto> RenewReviewLeaseAsync(
@@ -1343,9 +1382,9 @@ public sealed class TaskServerClient : IDisposable
     }
 
     /// <summary>
-    /// Restore the original fence for artifact-only replay after completion.
-    /// The Task Server validates that fence and permits completed-run artifact
-    /// writes; renewing a completed lease would correctly be rejected.
+    /// Restore the exact completed lease for bounded artifact replay. The Task
+    /// Server checks runner, instance, lease, and fence on each write and
+    /// rejects replay after a successor fence is issued.
     /// </summary>
     public void RestoreCompletedOutboxAuthority(RunOutboxAuthority authority)
     {
@@ -1560,11 +1599,9 @@ public sealed class TaskServerClient : IDisposable
     public async Task<ArtifactIngestResponse?> UploadArtifactsAsync(ArtifactIngestRequest req, CancellationToken ct)
     {
         if (!_useV1) return await PostJsonAsync<ArtifactIngestRequest, ArtifactIngestResponse>("/api/runner/artifacts", req, ct);
-        // Result evidence is uploaded after the fenced completion (AGT-2890), so
-        // the lease is already "completed" on the v1 plane. The Task Server admits
-        // that only with the exact outbox authority (runner, instance, lease),
-        // exactly as the durable outbox replay sends it; the fence alone is
-        // answered with 409 lease-not-active and the artifact is lost.
+        // Result evidence is uploaded before the fenced completion. The exact
+        // runner, instance, lease, and fence still bind every write so a stale
+        // host cannot add evidence to a successor attempt.
         var authority = OutboxAuthority(req.TaskKey);
         var files = new List<string>();
         foreach (var artifact in req.Artifacts)

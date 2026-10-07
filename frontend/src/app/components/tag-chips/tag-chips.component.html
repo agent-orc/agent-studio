@@ -1,0 +1,8 @@
+@if (chips().length) {
+  <span class="tag-chips" aria-label="Tags" data-testid="tag-chips">
+    @for (tag of chips(); track tag.id) {
+      <span class="tag-chip" [style.--tag-color]="tag.color" [attr.data-tag-id]="tag.id"
+            [attr.title]="tag.description">{{ tag.label }}</span>
+    }
+  </span>
+}

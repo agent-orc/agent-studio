@@ -297,6 +297,21 @@ public sealed class RemoteReviewWorkspace
                         $"planned={plannedCommand.TimeoutSeconds}s effective={command.TimeoutSeconds}s");
                 }
 
+                if (ComposeScenarioDiskAdmission.IsComposeScenario(command))
+                {
+                    var disk = ComposeScenarioDiskGate(command.StepId);
+                    if (!disk.Admit)
+                    {
+                        SaveCaches(candidateCache);
+                        throw await InfrastructureFailureAsync(
+                            ComposeScenarioDiskAdmission.DiskLowClassification,
+                            disk.RefusalSummary(command.StepId, CommandLine(command) ?? command.FileName),
+                            commands,
+                            artifacts,
+                            ct);
+                    }
+                }
+
                 var execution = ReviewCommandKinds.IsAgent(command.ExecutionKind)
                     ? await _agentCommands.RunAsync(command, ct)
                     : await RunCommandAsync(command, RepositoryPath, ct);
@@ -631,7 +646,8 @@ public sealed class RemoteReviewWorkspace
                         }
                         comparison = comparison.Reclassify(
                             SubjectFailures(command, cleanRepeat.Process),
-                            reviewFlakyTests);
+                            reviewFlakyTests,
+                            repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
                     comparison = requiredComparison with
@@ -1531,6 +1547,31 @@ public sealed class RemoteReviewWorkspace
     private static string ArtifactName(string workspaceRole, string stepId, string stream)
         => $"{SafeSegment(workspaceRole)}.{SafeSegment(stepId)}.{stream}.log";
 
+    /// <summary>
+    /// AGT-2993: measures the Docker data root (or, where it does not exist, the
+    /// review workspace's filesystem) and logs it before a compose scenario step.
+    /// </summary>
+    private ComposeScenarioDiskDecision ComposeScenarioDiskGate(string stepId)
+    {
+        var path = Directory.Exists(_options.DockerDataRoot) ? _options.DockerDataRoot : RepositoryPath;
+        long? free = null;
+        long? total = null;
+        try
+        {
+            var drive = new DriveInfo(path);
+            free = drive.AvailableFreeSpace;
+            total = drive.TotalSize;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            _log($"review-compose-scenario-disk step={stepId} path={path} probe-failed={exception.Message}");
+        }
+        var decision = ComposeScenarioDiskAdmission.Decide(
+            path, free, total, _options.ComposeScenarioMinFreePercent);
+        _log(decision.Describe(stepId));
+        return decision;
+    }
+
     private static string CommandLine(ReviewPreparationCommandDto command)
         => string.Join(' ', new[] { command.FileName }.Concat(command.Arguments));
 
@@ -2377,20 +2418,16 @@ public sealed class RemoteReviewWorkspace
             _reviewedIntegrationTipSha);
 
     private static ReviewVerdictDto ParseVerdict(ReviewCommandDto command, ProcessResult result)
-    {
-        // Tool output can contain a quoted aspect marker from a test log. Only
-        // agent aspects are required to return a parseable verdict.
-        if (!ReviewCommandKinds.IsAgent(command.ExecutionKind))
-            return new ReviewVerdictDto(
-                command.Aspect,
-                result.Success ? "pass" : "block",
-                result.Success ? "CommandPassed" : "CommandFailed",
-                result.Success
-                    ? $"Review command '{command.StepId}' passed."
-                    : $"Review command '{command.StepId}' exited {result.ExitCode}.",
-                $"command:{command.StepId}",
-                result.Success ? "none" : $"successful execution of {command.StepId}");
+        // AGT-3016: command steps are judged by exit status; verdict markers
+        // come only from aspect replies. A test log can quote a literal
+        // [[ASPECT_VERDICT: ...]] sentinel, so command output never reaches
+        // the marker parser.
+        => ReviewCommandKinds.IsAgent(command.ExecutionKind)
+            ? ParseAspectReplyVerdict(command, result)
+            : ReviewCommandVerdictPolicy.FromExitCode(command.Aspect, command.StepId, result.ExitCode);
 
+    private static ReviewVerdictDto ParseAspectReplyVerdict(ReviewCommandDto command, ProcessResult result)
+    {
         var marker = AspectVerdictMarkerParser.ParseLast(result.StdOut);
         if (marker is not null)
         {
@@ -2405,7 +2442,9 @@ public sealed class RemoteReviewWorkspace
             return new ReviewVerdictDto(
                 command.Aspect,
                 status,
-                AspectVerdictMarkerParser.ClassificationWithMalformed(marker, "RemoteAspectVerdict"),
+                AspectVerdictMarkerParser.ClassificationWithMalformed(
+                    marker,
+                    ReviewCommandVerdictPolicy.AspectMarkerClassification),
                 summary,
                 marker.EvidenceChecked,
                 marker.Missing);
@@ -2413,7 +2452,7 @@ public sealed class RemoteReviewWorkspace
         return new ReviewVerdictDto(
             command.Aspect,
             result.Success ? "concerns" : "block",
-            result.Success ? "review:unparseable" : "CommandFailed",
+            result.Success ? ReviewCommandVerdictPolicy.UnparseableClassification : "CommandFailed",
             result.Success
                 ? $"Review command '{command.StepId}' produced no parseable aspect verdict."
                 : $"Review command '{command.StepId}' exited {result.ExitCode}.",
@@ -2901,7 +2940,8 @@ internal sealed record BaselineComparison(
 
     public BaselineComparison Reclassify(
         IReadOnlyList<string> subjectFailures,
-        ReviewFlakyTestIndex reviewFlakyTests)
+        ReviewFlakyTestIndex reviewFlakyTests,
+        bool repeatPassed)
     {
         var retried = Create(
             BaselineSha,
@@ -2915,7 +2955,7 @@ internal sealed record BaselineComparison(
         return retried with
         {
             InitialFailures = InitialFailures,
-            FlakyQuarantinedFailures = NewFailures
+            FlakyQuarantinedFailures = (repeatPassed ? NewFailures : [])
                 .Where(failure => !retriedFailures.Contains(failure) && reviewFlakyTests.Contains(failure))
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
