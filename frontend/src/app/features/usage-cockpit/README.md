@@ -2,10 +2,10 @@
 
 Header usage cockpit chips from the Dossier
 [docs/header-usage-cockpit/index.html](../../../../../docs/header-usage-cockpit/index.html)
-(AGT-2913). This folder holds the shared chips (HUC-S2), the usage detail
-popover and sheet (HUC-S3) and usage alarm transitions (HUC-S5). The
-production host mounts the chips in the existing Studio header and opens the
-existing usage destination. Responsive header integration remains in HUC-S4.
+(AGT-2913). This folder holds the shared chips (HUC-S2), usage detail
+(HUC-S3), responsive Studio header (HUC-S4), and alarm transitions (HUC-S5).
+The Studio shell mounts the header and its detail surface in the existing
+titlebar.
 
 ## Public API
 
@@ -24,13 +24,20 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   snapshot, then passes `alarmsFor('cli:<id>')`, `alarmsFor('cost')`, and
   `hiddenAlarms(visibleCliIds)` into the chips. Pass hidden alarms only to the
   primary chip.
-- `UsageCockpitHostComponent`: polls the authorized cockpit read endpoint while
-  visible, isolates workspace changes, and supplies the latched alarms to
-  production chips. Secondary CLIs move out of the header at narrow widths;
-  their alarms appear as one nonnumeric mark on the primary chip. A failed
-  first read shows unavailable rather than loading indefinitely. If a refresh
-  fails after a successful read, last-known values are marked stale and
-  confirmed alarms stay visible until a trusted recovery.
+- `UsageCockpitHostComponent`: a standalone S5 host retained for its component
+  tests and alarm gallery. The Studio shell uses `UsageCockpitHeaderComponent`
+  and `UsageCockpitService` for the production strip. Both mark a failed first
+  read unavailable and retained values stale; confirmed alarms persist until
+  a trusted recovery.
+- `UsageCockpitHeaderComponent` (`app-usage-cockpit-header`): the production
+  Studio header. It uses a 44 px navigation row above a 40 px usage row, 48 px
+  rows on coarse pointers, and one 48 px row on phone. It measures whole chip
+  variants and moves secondary CLIs into Details before any value is clipped.
+- `UsageCockpitService`: one shared workspace-scoped cockpit poll for the
+  Studio shell. It marks failed reads, keeps last-known values stale, and drops
+  results for a workspace that is no longer selected.
+- `usage-header-layout.ts`: pure container tier, primary ordering, and
+  content-fit policy.
 - `usage-alarm.policy.ts`: pure alarm evaluation and transition reducer.
 - `UsageDetailSurfaceComponent` (`app-usage-detail-surface`): one native
   `<dialog>`. Desktop opens it with `show()` as a nonmodal popover anchored
@@ -119,6 +126,21 @@ Imports via `from './features/usage-cockpit'`. See [`index.ts`](./index.ts).
   on hidden CLIs add one nonnumeric mark and a spoken explanation to the
   primary chip. No alarm changes routing or model pins.
 
+## Header layout (HUC-S4)
+
+- The tier follows the header container width (768 / 1200 / 1600 CSS px), so
+  a narrow container and 200% zoom use the same priorities as the viewport.
+- Primary CLI order is selected CLI, saved default, then provider order.
+- Collapse order: drop the breadcrumb; move optional navigation into the
+  text-only More menu; move entire secondary CLI chips to Details; use the
+  phone composition with weekly quota and today cost; abbreviate the provider
+  and drop the wordmark, then visible labels. Whole values stay readable.
+- Hidden chips leave the focus order. Focus from a hidden navigation control
+  goes to More; focus from a hidden usage chip goes to Details or the visible
+  usage trigger. The detail surface returns focus to a visible trigger.
+- Slot counters, model names, and weekly cost stay outside the strip. The
+  detail surface shows model and reasoning per CLI without changing routing.
+
 ## Evidence
 
 The standalone `usage-chips-mockup` app (`src/mockups/usage-chips/`) mounts
@@ -131,3 +153,9 @@ checks warning boundaries, limit precedence, data quality states, polite
 announcements and a hidden-provider phone alarm in both themes. Its screenshots
 and contrast JSON are written under `JOB_RESULTS_DIR/usage-alarms`. Build first
 with `npm run build:mockup:usage`.
+
+The `usage-header-mockup` app mounts the real header with a stand-in
+navigation row. `e2e/mockups/usage-header.spec.ts` checks responsive rows,
+whole-value fit, coarse targets, keyboard navigation, and focus restoration.
+Build it with `npm run build:mockup:usage-header`; with `JOB_RESULTS_DIR` set,
+the spec writes `--mocked.png` screenshots to `usage-header/` in that directory.

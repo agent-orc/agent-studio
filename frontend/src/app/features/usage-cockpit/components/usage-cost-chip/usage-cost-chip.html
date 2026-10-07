@@ -4,6 +4,7 @@
         [class.usage-cost-chip--warning]="v.alarm === 'warning'"
         data-testid="usage-cost-chip"
         [attr.data-state]="v.state"
+        [attr.data-fit]="fit()"
         [attr.data-alarm]="v.alarm"
         [attr.data-usage-trigger]="controls() ? 'cost' : null"
         aria-haspopup="dialog"
@@ -13,14 +14,16 @@
         [cacTooltip]="v.detail"
         (click)="activate.emit()">
   <span class="usage-cost-chip__body">
-    <span class="usage-cost-chip__label">Today</span>
+    @if (fit() !== 'bare') {
+      <span class="usage-cost-chip__label">Today</span>
+    }
     @if (v.state === 'loading') {
       <span class="usage-cost-chip__placeholder" aria-hidden="true"></span>
     } @else {
       <span class="usage-cost-chip__value"
             [class.usage-cost-chip__value--muted]="v.state !== 'normal' && v.state !== 'partial'"
             data-testid="usage-cost-chip-value">{{ v.value }}</span>
-      @if (v.exact && !compact()) {
+      @if (v.exact && fit() === 'full' && !compact()) {
         <span class="usage-cost-chip__unit">USD</span>
       }
     }
