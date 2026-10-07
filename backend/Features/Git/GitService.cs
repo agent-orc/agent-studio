@@ -47,6 +47,22 @@ public record IntegrationBranchSyncResult(
 }
 
 /// <summary>
+/// Result of <see cref="GitService.ReleaseIntegrationBranchToCheckout"/>: what
+/// happened to the developer checkout's local branch, with the SHAs the
+/// decision was made on.
+/// </summary>
+public sealed record DeveloperCheckoutRelease(
+    DeveloperCheckoutReleaseAction? Action,
+    string? LocalTip,
+    string? OriginTip,
+    string? Error)
+{
+    public bool Success => Error is null;
+
+    public static DeveloperCheckoutRelease Failed(string error) => new(null, null, null, error);
+}
+
+/// <summary>
 /// Result of a single-file content lookup that backs the git-pane's
 /// rendered md/html preview (AGT-2008). <paramref name="Content"/> is the
 /// UTF-8 text of the file at the requested ref (working tree or commit);
@@ -147,6 +163,12 @@ public static class MergeIntoIntegrationOutcomePolicy
 /// SHA remains historical attribution and points to the replacement SHA.
 /// </summary>
 public sealed record RebasedCommitReplacement(string OriginalSha, string RebasedSha);
+
+/// <summary>Conflict-free replay in a disposable detached worktree without moving a canonical ref.</summary>
+public sealed record BatchReplayResult(
+    bool Success, string? TipSha, IReadOnlyList<RebasedCommitReplacement> Replacements,
+    IReadOnlyList<string> ConflictedFiles, string? Error);
+public sealed record BatchCandidateRefResult(bool Success, string? Error);
 
 /// <summary>
 /// Result of <see cref="GitService.MergeBranchIntoIntegration"/>. On
@@ -3410,9 +3432,15 @@ public class GitService
     /// <paramref name="approvedSha"/> pins the exact object that is pushed. The
     /// caller passes the merge result its gate approved, so a merge that landed
     /// on the branch after the approval can never ride along to origin; the
-    /// branch tip is only used when no approval SHA is known (the durable restart
-    /// backstop). An approved SHA that is missing or not contained in the local
-    /// branch is a fail-closed <c>missing-sha</c> / <c>sha-not-on-branch</c>.
+    /// branch tip is only used by legacy callers without an approval SHA; the
+    /// durable restart backstop supplies the recorded approval. An approved SHA
+    /// that is missing or not contained in the integration line is a fail-closed <c>missing-sha</c> / <c>sha-not-on-branch</c>.
+    /// </para>
+    /// <para>
+    /// The integration line is the Studio lane (<see cref="IntegrationLaneRef"/>)
+    /// once one exists, so the push publishes what the gate approved without the
+    /// local branch ever having carried it (AGT-2996). A repository that has not
+    /// integrated on a lane yet pushes from its local branch as before.
     /// </para>
     /// </summary>
     public Task<GitPushResult> PushIntegrationBranchAsync(
@@ -3430,8 +3458,10 @@ public class GitService
         if (!IsLikelyBranchName(branch))
             return Task.FromResult(new GitPushResult(false, string.Empty, "invalid-branch", $"Invalid integration branch '{branch}'."));
 
-        // Resolve the local branch tip for reporting / the ancestor short-circuit.
-        var (headRaw, headErr, headCode) = RunGitArgs(repoRoot, "rev-parse", "--verify", $"refs/heads/{branch}");
+        // Resolve the integration line tip for reporting / the ancestor short-circuit.
+        var line = IntegrationLineRef(repoRoot, branch);
+        var lineRef = string.Equals(line, branch, StringComparison.Ordinal) ? $"refs/heads/{branch}" : line;
+        var (headRaw, headErr, headCode) = RunGitArgs(repoRoot, "rev-parse", "--verify", lineRef);
         if (headCode != 0)
             return Task.FromResult(new GitPushResult(false, string.Empty, "missing-branch", headErr.Trim()));
         var sha = headRaw.Trim();
@@ -3451,11 +3481,11 @@ public class GitService
             if (approvedCode != 0)
                 return Task.FromResult(new GitPushResult(false, string.Empty, "missing-sha", approvedErr.Trim()));
             var approved = approvedRaw.Trim();
-            // Fail closed rather than push an object the branch does not contain:
-            // that would advance origin/<branch> to something the local branch
-            // never carried (e.g. after a gate rollback).
+            // Fail closed rather than push an object the line does not contain:
+            // that would advance origin/<branch> to something the integration
+            // line never carried (e.g. after a gate rollback).
             var (_, _, containedCode) =
-                RunGitArgs(repoRoot, "merge-base", "--is-ancestor", approved, $"refs/heads/{branch}");
+                RunGitArgs(repoRoot, "merge-base", "--is-ancestor", approved, lineRef);
             if (containedCode != 0)
             {
                 return Task.FromResult(new GitPushResult(
@@ -3508,6 +3538,64 @@ public class GitService
                 ? "remote-rejected"
                 : "failed";
         return Task.FromResult(new GitPushResult(false, sha, status, err));
+    }
+
+    /// <summary>
+    /// Lets the developer checkout's local <paramref name="branch"/> follow a
+    /// gated integration result once it is published (AGT-2996). Called by the
+    /// integration push worker after <c>status=pushed</c> (or
+    /// <c>already-remote</c>), never earlier: until then the
+    /// result lives only on the integration lane. The branch only ever
+    /// fast-forwards. When someone committed on it, so it is ahead of
+    /// <c>origin/&lt;branch&gt;</c>, it is left exactly where it is and a warning
+    /// names both SHAs. A checkout that holds the branch is fast-forwarded with
+    /// it the same way an integration always did (<see cref="AdvanceIntegrationBranch"/>).
+    /// </summary>
+    public DeveloperCheckoutRelease ReleaseIntegrationBranchToCheckout(
+        string repoRoot,
+        string branch,
+        string publishedSha)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return DeveloperCheckoutRelease.Failed("Repo root does not exist.");
+        if (!IsLikelyBranchName(branch))
+            return DeveloperCheckoutRelease.Failed($"Invalid integration branch '{branch}'.");
+        if (!IsLikelyShaOrRef(publishedSha))
+            return DeveloperCheckoutRelease.Failed($"Invalid published commit '{publishedSha}'.");
+
+        var localTip = GetBranchTip(repoRoot, $"refs/heads/{branch}");
+        var originTip = HasRemote(repoRoot, "origin")
+            ? GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}")
+            : null;
+        var action = IntegrationLanePolicy.DecideRelease(new DeveloperCheckoutReleaseState(
+            localTip,
+            originTip,
+            LocalContainsPublished: localTip is not null && IsAncestor(repoRoot, publishedSha, localTip),
+            PublishedContainsLocal: localTip is not null && IsAncestor(repoRoot, localTip, publishedSha),
+            OriginContainsLocal: localTip is not null && originTip is not null && IsAncestor(repoRoot, localTip, originTip)));
+
+        switch (action)
+        {
+            case DeveloperCheckoutReleaseAction.FastForward:
+                if (AdvanceIntegrationBranch(repoRoot, branch, publishedSha, localTip) is { } error)
+                    return new DeveloperCheckoutRelease(action, localTip, originTip, error);
+                _logger.LogInformation(
+                    "Developer checkout {Path}: {Branch} follows the published integration result {From} -> {Sha}",
+                    repoRoot, branch, AbbreviateSha(localTip!), AbbreviateSha(publishedSha));
+                break;
+            case DeveloperCheckoutReleaseAction.LocalAhead:
+                _logger.LogWarning(
+                    "Developer checkout {Path}: local {Branch} ({LocalSha}) is ahead of origin/{Branch} ({OriginSha}); " +
+                    "it keeps its commits and is not moved to the published integration result {PublishedSha}",
+                    repoRoot, branch, localTip, branch, originTip ?? "none", publishedSha);
+                break;
+            case DeveloperCheckoutReleaseAction.NotFastForward:
+                _logger.LogInformation(
+                    "Developer checkout {Path}: local {Branch} ({LocalSha}) is not a fast-forward of the published integration result {PublishedSha}; left unchanged",
+                    repoRoot, branch, localTip, publishedSha);
+                break;
+        }
+        return new DeveloperCheckoutRelease(action, localTip, originTip, null);
     }
 
     public GitWorktreeResult DeleteRemoteBranch(
@@ -3971,8 +4059,10 @@ public class GitService
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Error, error: "Invalid source or target branch.");
 
-        var sourceSha = GetBranchTip(repoRoot, sourceBranch);
-        var targetSha = GetBranchTip(repoRoot, targetBranch);
+        var sourceLine = IntegrationLineAt(repoRoot, sourceBranch);
+        var targetLine = IntegrationLineAt(repoRoot, targetBranch);
+        var sourceSha = GetBranchTip(repoRoot, sourceLine);
+        var targetSha = GetBranchTip(repoRoot, targetLine);
         if (!string.Equals(sourceSha, expectedSourceSha, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(targetSha, expectedTargetSha, StringComparison.OrdinalIgnoreCase))
         {
@@ -3981,9 +4071,9 @@ public class GitService
                 error: "Source or target branch moved after the pre-main test run; release merge was not attempted.");
         }
 
-        if (IsAncestor(repoRoot, sourceBranch, targetBranch))
+        if (IsAncestor(repoRoot, sourceLine, targetLine))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.AlreadyMerged);
-        if (!IsAncestor(repoRoot, targetBranch, sourceBranch))
+        if (!IsAncestor(repoRoot, targetLine, sourceLine))
         {
             return MergeIntoIntegrationResult.Of(
                 MergeIntoIntegrationOutcome.Error,
@@ -4797,6 +4887,9 @@ public class GitService
         string integrationBranch,
         CancellationToken cancellationToken = default)
     {
+        if (IsLinkedWorktree(repoRoot))
+            return SynchronizeIntegrationLane(repoRoot, integrationBranch, cancellationToken);
+
         var refreshed = RefreshIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
         if (!refreshed.Success
             || refreshed.Outcome != IntegrationBranchSyncOutcome.RemoteAhead)
@@ -4852,6 +4945,72 @@ public class GitService
             AbbreviateSha(localTip),
             AbbreviateSha(remoteTip));
         return new(IntegrationBranchSyncOutcome.FastForwarded);
+    }
+
+    /// <summary>
+    /// Brings the integration lane (<see cref="IntegrationLaneRef"/>) up to the
+    /// published branch before a merge in the Studio-owned worktree (AGT-2996).
+    /// The published branch is <c>origin/&lt;branch&gt;</c>; a repository without
+    /// an origin publishes nothing but its local branch. Gated merges the push
+    /// worker has not published yet stay on the lane, so the next delivery builds
+    /// on them. Commits someone made on the developer checkout's local branch are
+    /// deliberately not part of the lane: only published history is.
+    /// </summary>
+    private IntegrationBranchSyncResult SynchronizeIntegrationLane(
+        string repoRoot,
+        string integrationBranch,
+        CancellationToken cancellationToken)
+    {
+        var fetched = FetchIntegrationBranch(repoRoot, integrationBranch, cancellationToken);
+        if (!fetched.Success) return fetched;
+
+        var publishedRef = fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote
+            ? $"refs/heads/{integrationBranch}"
+            : $"refs/remotes/origin/{integrationBranch}";
+        var lane = IntegrationLaneRef(integrationBranch);
+        var laneTip = GetBranchTip(repoRoot, lane);
+        var publishedTip = GetBranchTip(repoRoot, publishedRef);
+        var bothKnown = laneTip is not null && publishedTip is not null;
+        var action = IntegrationLanePolicy.DecideSync(new IntegrationLaneSyncState(
+            laneTip,
+            publishedTip,
+            LaneContainsPublished: bothKnown && IsAncestor(repoRoot, publishedTip!, laneTip!),
+            PublishedContainsLane: bothKnown && IsAncestor(repoRoot, laneTip!, publishedTip!)));
+
+        switch (action)
+        {
+            case IntegrationLaneSyncAction.Seed:
+            case IntegrationLaneSyncAction.FastForward:
+                if (UpdateLaneRef(repoRoot, integrationBranch, publishedTip!, laneTip) is { } moveError)
+                    return new(IntegrationBranchSyncOutcome.Error, moveError);
+                _logger.LogInformation(
+                    "Integration lane {Lane} at {Path} {Action} to {Published} {Sha}",
+                    lane,
+                    repoRoot,
+                    action == IntegrationLaneSyncAction.Seed ? "seeded" : "fast-forwarded",
+                    publishedRef,
+                    AbbreviateSha(publishedTip!));
+                return new(IntegrationBranchSyncOutcome.FastForwarded);
+            case IntegrationLaneSyncAction.KeepPending:
+                return new(IntegrationBranchSyncOutcome.LocalAhead);
+            case IntegrationLaneSyncAction.Diverged:
+                _logger.LogWarning(
+                    "Integration lane {Lane} ({LaneSha}) at {Path} diverged from {Published} ({PublishedSha}); refusing to overwrite either tip",
+                    lane,
+                    AbbreviateSha(laneTip!),
+                    repoRoot,
+                    publishedRef,
+                    AbbreviateSha(publishedTip!));
+                return new(
+                    IntegrationBranchSyncOutcome.Diverged,
+                    $"Integration branch '{integrationBranch}' diverged from origin - heal or recreate it via project settings before accepting deliveries. " +
+                    $"The integration lane {lane} carries gated merges that were never published; " +
+                    $"drop it with `git update-ref -d {lane}` to restart integration from {publishedRef}.");
+            default:
+                return new(fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote
+                    ? IntegrationBranchSyncOutcome.NoRemote
+                    : IntegrationBranchSyncOutcome.UpToDate);
+        }
     }
 
     private IntegrationBranchSyncResult FetchIntegrationBranch(
@@ -4987,19 +5146,52 @@ public class GitService
     }
 
     /// <summary>
+    /// The ref Studio's integration lane keeps for <paramref name="branch"/>
+    /// (AGT-2996). Merges, build gates, and rollbacks in the integration worktree
+    /// move this ref and never <c>refs/heads/&lt;branch&gt;</c>: a linked worktree
+    /// shares its branches with the developer checkout, so moving the branch
+    /// itself handed every un-gated merge to anyone who pushed from there. The
+    /// local branch follows only after the integration push worker published the
+    /// gated result (<see cref="ReleaseIntegrationBranchToCheckout"/>).
+    /// </summary>
+    public static string IntegrationLaneRef(string branch) => $"refs/agent-studio/integration/{branch}";
+
+    /// <summary>
+    /// The ref that carries the integration line of <paramref name="branch"/>:
+    /// the lane ref once an integration created it, otherwise the branch itself
+    /// (a repository that has not integrated since AGT-2996, or a task branch
+    /// passed through a lane primitive).
+    /// </summary>
+    public string IntegrationLineRef(string repoRoot, string branch)
+    {
+        if (!IsLikelyBranchName(branch)) return branch;
+        var lane = IntegrationLaneRef(branch);
+        return GetBranchTip(repoRoot, lane) is null ? branch : lane;
+    }
+
+    /// <summary>
+    /// The integration line a merge primitive reads and moves at
+    /// <paramref name="repoRoot"/>. Only the detached, Studio-owned integration
+    /// worktree integrates on the lane; a primary checkout that runs a merge
+    /// itself holds the branch and moves it directly.
+    /// </summary>
+    private string IntegrationLineAt(string repoRoot, string branch)
+        => IsLinkedWorktree(repoRoot) ? IntegrationLineRef(repoRoot, branch) : branch;
+
+    /// <summary>
     /// Puts the working tree at <paramref name="repoRoot"/> onto the commit of
     /// <paramref name="integrationBranch"/> so a merge can run there. A checkout
     /// that already carries the branch keeps it and git advances the ref itself;
-    /// the Studio-owned integration worktree is detached at the branch tip, and
-    /// <see cref="PublishIntegrationHead"/> moves the branch afterwards. Returns
-    /// the git error, or null on success.
+    /// the Studio-owned integration worktree is detached at the tip of the
+    /// integration lane, and <see cref="PublishIntegrationHead"/> moves the lane
+    /// afterwards. Returns the git error, or null on success.
     /// </summary>
     private string? EnterIntegrationHead(string repoRoot, string integrationBranch)
     {
         if (IsIntegrationHeadAttached(repoRoot, integrationBranch)) return null;
 
         var (_, error, code) = IsLinkedWorktree(repoRoot)
-            ? RunGitArgs(repoRoot, "checkout", "--detach", integrationBranch)
+            ? RunGitArgs(repoRoot, "checkout", "--detach", IntegrationLineRef(repoRoot, integrationBranch))
             : RunGitArgs(repoRoot, "checkout", integrationBranch);
         if (code == 0) return null;
 
@@ -5010,14 +5202,12 @@ public class GitService
     }
 
     /// <summary>
-    /// Moves <paramref name="integrationBranch"/> onto the commit the detached
-    /// integration worktree just produced. When a checkout still holds the
-    /// branch, the fast-forward is asked of that checkout first: git refuses it
-    /// rather than overwriting a developer's local modifications, and a clean
-    /// checkout stays in step with the branch exactly as if it had pulled. Only
-    /// then is the ref advanced directly, compare-and-swapped against
-    /// <paramref name="expectedPreviousTip"/> so a concurrent mutation is never
-    /// overwritten. Returns the failure reason, or null on success.
+    /// Moves the integration lane of <paramref name="integrationBranch"/> onto
+    /// the commit the detached integration worktree just produced,
+    /// compare-and-swapped against <paramref name="expectedPreviousTip"/> so a
+    /// concurrent mutation is never overwritten. The local branch, and with it
+    /// the developer checkout, is left alone until the gated result is published
+    /// (AGT-2996). Returns the failure reason, or null on success.
     /// </summary>
     private string? PublishIntegrationHead(
         string repoRoot,
@@ -5029,10 +5219,43 @@ public class GitService
         var head = ReadHeadShaAt(repoRoot);
         if (string.IsNullOrWhiteSpace(head))
             return "Could not read the integration worktree HEAD after the merge.";
-        if (string.Equals(GetBranchTip(repoRoot, integrationBranch), head, StringComparison.OrdinalIgnoreCase))
+
+        var lane = IntegrationLaneRef(integrationBranch);
+        var laneTip = GetBranchTip(repoRoot, lane);
+        if (string.Equals(laneTip, head, StringComparison.OrdinalIgnoreCase))
             return null;
 
-        return AdvanceIntegrationBranch(repoRoot, integrationBranch, head!, expectedPreviousTip);
+        return UpdateLaneRef(repoRoot, integrationBranch, head!, laneTip is null ? null : expectedPreviousTip);
+    }
+
+    /// <summary>
+    /// Compare-and-swap on the integration lane. A null
+    /// <paramref name="expectedPreviousTip"/> creates the lane and fails when it
+    /// already exists, so two writers can never both seed it.
+    /// </summary>
+    private string? UpdateLaneRef(
+        string repoRoot,
+        string integrationBranch,
+        string newSha,
+        string? expectedPreviousTip,
+        bool retryOnTimeout = false)
+    {
+        if (!IsLikelyBranchName(integrationBranch)) return $"Invalid integration branch '{integrationBranch}'.";
+        if (!IsLikelyShaOrRef(newSha)) return $"Invalid integration commit '{newSha}'.";
+
+        var lane = IntegrationLaneRef(integrationBranch);
+        var args = new[] { "update-ref", lane, newSha, expectedPreviousTip ?? string.Empty };
+        var (_, updateError, updateCode) = retryOnTimeout
+            ? RollbackGitArgs(repoRoot, args)
+            : RunGitArgs(repoRoot, args);
+        if (updateCode == 0
+            || (retryOnTimeout && string.Equals(GetBranchTip(repoRoot, lane), newSha, StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        _logger.LogWarning(
+            "Integration lane {Lane} at {Path} could not be moved to {Sha}: {Error}",
+            lane, repoRoot, AbbreviateSha(newSha), updateError.Trim());
+        return $"Integration lane of '{integrationBranch}' could not be moved to {AbbreviateSha(newSha)}: {updateError.Trim()}";
     }
 
     /// <summary>
@@ -5166,12 +5389,14 @@ public class GitService
             ?.Path;
 
     /// <summary>
-    /// Returns <paramref name="integrationBranch"/> and the integration working
-    /// tree to <paramref name="toSha"/> after a gate rejected a merge this
-    /// process created. The detached integration worktree needs both halves -
-    /// working tree and branch ref - and a checkout that was fast-forwarded
-    /// along with the branch is returned as well, but only while it is clean and
-    /// still sits exactly on the commit being rolled back.
+    /// Returns the integration line of <paramref name="integrationBranch"/> and
+    /// the integration working tree to <paramref name="toSha"/> after a gate
+    /// rejected a merge this process created. The detached integration worktree
+    /// needs both halves - working tree and lane ref. The developer checkout
+    /// never received the rejected merge (AGT-2996), so it is not touched. Only
+    /// a repository that still integrates on the branch itself (no lane yet)
+    /// returns a checkout that was fast-forwarded along, and only while it is
+    /// clean and still sits exactly on the commit being rolled back.
     /// </summary>
     public GitWorktreeResult ResetIntegrationBranch(string repoRoot, string integrationBranch, string toSha)
     {
@@ -5184,6 +5409,19 @@ public class GitService
 
         if (IsIntegrationHeadAttached(repoRoot, integrationBranch))
             return ResetHardForIntegrationRollback(repoRoot, toSha);
+
+        if (IntegrationLineAt(repoRoot, integrationBranch) is var line
+            && !string.Equals(line, integrationBranch, StringComparison.Ordinal))
+        {
+            var laneTip = GetBranchTip(repoRoot, line);
+            var laneReset = ResetHardForIntegrationRollback(repoRoot, toSha);
+            if (!laneReset.Success
+                || string.Equals(laneTip, toSha, StringComparison.OrdinalIgnoreCase))
+                return laneReset;
+            return UpdateLaneRef(repoRoot, integrationBranch, toSha, laneTip, retryOnTimeout: true) is { } laneError
+                ? new GitWorktreeResult(false, repoRoot, laneError)
+                : laneReset;
+        }
 
         var rolledBackFrom = GetBranchTip(repoRoot, integrationBranch);
         // Observed before the ref moves: afterwards the holder's HEAD already
@@ -5247,7 +5485,7 @@ public class GitService
         string sourceRef,
         string integrationBranch)
     {
-        var tipBeforeMerge = GetBranchTip(repoRoot, integrationBranch);
+        var tipBeforeMerge = GetBranchTip(repoRoot, IntegrationLineAt(repoRoot, integrationBranch));
         var merged = MergeRefIntoIntegrationCore(repoRoot, sourceRef, integrationBranch);
         if (merged.Outcome is not (MergeIntoIntegrationOutcome.Merged or MergeIntoIntegrationOutcome.MergedAfterRebase))
             return merged;
@@ -5267,7 +5505,8 @@ public class GitService
         string sourceRef,
         string integrationBranch)
     {
-        if (!BranchExists(repoRoot, integrationBranch))
+        var integrationLine = IntegrationLineAt(repoRoot, integrationBranch);
+        if (GetBranchTip(repoRoot, integrationLine) is null)
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Error, error: $"Integration branch '{integrationBranch}' does not exist.");
 
         // Never merge into a dirty tree - that would entangle leftover edits
@@ -5287,10 +5526,10 @@ public class GitService
         }
 
         // Idempotent: a re-trigger after a successful merge is a clean no-op.
-        if (IsAncestor(repoRoot, sourceRef, integrationBranch))
+        if (IsAncestor(repoRoot, sourceRef, integrationLine))
             return MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.AlreadyMerged);
 
-        var integrationTip = GetBranchTip(repoRoot, integrationBranch);
+        var integrationTip = GetBranchTip(repoRoot, integrationLine);
         if (string.IsNullOrWhiteSpace(integrationTip))
         {
             return MergeIntoIntegrationResult.Of(
@@ -5378,7 +5617,7 @@ public class GitService
                 error: recovery.Error);
         }
 
-        var currentIntegrationTip = GetBranchTip(repoRoot, integrationBranch);
+        var currentIntegrationTip = GetBranchTip(repoRoot, integrationLine);
         if (!string.Equals(
                 currentIntegrationTip,
                 integrationTip,
@@ -5483,6 +5722,140 @@ public class GitService
         RunGitArgs(repoRoot, "merge", "--abort");
         return MechanicalMergeAttempt.Failed(
             $"Mechanical three-way merge resolved its index but could not create the merge commit: {commitError.Trim()}");
+    }
+
+    /// <summary>
+    /// Replays one immutable batch member using the conflict-free mechanical
+    /// rebase rule and returns the original-to-replacement SHA mapping.
+    /// </summary>
+    public BatchReplayResult ReplayBatchMember(
+        string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
+    {
+        var (resolved, error, code) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        if (code != 0
+            && immutableResultRef.StartsWith("refs/heads/agent-studio/results/", StringComparison.Ordinal))
+        {
+            var (_, fetchError, fetchCode) = RunGitArgs(
+                repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
+            if (fetchCode != 0)
+                return new BatchReplayResult(false, null, [], [], fetchError.Trim());
+            (resolved, error, code) = RunGitArgs(
+                repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
+        }
+        if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
+            return new BatchReplayResult(false, null, [], [],
+                code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
+        // A delivery already based on the batch tip needs no rewritten commit
+        // objects. Preserve an explicit identity mapping for every original
+        // commit so the member evidence is complete on the common fast path.
+        var (_, _, descendantCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", batchTip, expectedResultSha);
+        if (descendantCode == 0)
+        {
+            var (merges, mergeError, mergeCode) = RunGitArgs(
+                repoRoot, "rev-list", "--count", "--merges",
+                $"{batchTip}..{expectedResultSha}", RevisionsOnly);
+            if (mergeCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount)
+                || mergeCount != 0)
+                return new BatchReplayResult(false, null, [], [],
+                    mergeCode == 0 ? "Non-linear batch member history has ambiguous SHA attribution."
+                        : mergeError.Trim());
+            var commits = ReadFirstParentRange(
+                repoRoot, batchTip, expectedResultSha, out var rangeError);
+            if (commits is null || commits.Count == 0)
+                return new BatchReplayResult(false, null, [], [],
+                    rangeError ?? "Batch member adds no commits to the candidate.");
+            return new BatchReplayResult(true, expectedResultSha,
+                commits.Select(sha => new RebasedCommitReplacement(sha, sha)).ToArray(), [], null);
+        }
+        if (descendantCode != 1)
+            return new BatchReplayResult(false, null, [], [],
+                "Batch tip ancestry could not be verified.");
+        var replay = TryMechanicalRebase(repoRoot, immutableResultRef, batchTip);
+        return new BatchReplayResult(
+            replay.Success, replay.RebasedTip, replay.Replacements,
+            replay.ConflictedFiles, replay.Error);
+    }
+
+    public BatchCandidateRefResult UpdateBatchCandidateRef(
+        string repoRoot, string candidateRef, string nextSha, string? expectedOldSha)
+    {
+        if (!Regex.IsMatch(candidateRef,
+                @"^refs/agent-studio/batch-candidates/[a-f0-9]{32}/[a-f0-9]{64}/[1-9][0-9]*$",
+                RegexOptions.CultureInvariant)
+            || !Regex.IsMatch(nextSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant)
+            || expectedOldSha is not null
+            && !Regex.IsMatch(expectedOldSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant))
+            return new BatchCandidateRefResult(false, "Invalid batch candidate ref or SHA.");
+        var old = expectedOldSha ?? new string('0', nextSha.Length);
+        var (_, error, code) = RunGitArgs(repoRoot, "update-ref", candidateRef, nextSha, old);
+        return new BatchCandidateRefResult(code == 0, code == 0 ? null : error.Trim());
+    }
+
+    /// <summary>Publish only the tested batch SHA with an exact remote pre-tip lease.</summary>
+    public GitPushResult PublishBatchCandidate(
+        string repoRoot, string integrationBranch, string preTipSha,
+        string testedCandidateSha, CancellationToken ct)
+    {
+        if (!IsLikelyBranchName(integrationBranch)
+            || !ReviewSubjectStore.IsValidResultSha(preTipSha)
+            || !ReviewSubjectStore.IsValidResultSha(testedCandidateSha))
+            return new GitPushResult(false, testedCandidateSha, "invalid-subject", "Invalid batch publication subject.");
+        if (!IsAncestor(repoRoot, preTipSha, testedCandidateSha))
+            return new GitPushResult(false, testedCandidateSha, "untested-topology", "Candidate does not descend from the recorded pre-tip.");
+        var (before, lookupError, lookupCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "--heads", "origin", integrationBranch);
+        var remoteBefore = lookupCode == 0 ? before.Split('\t')[0].Trim() : null;
+        if (!string.Equals(remoteBefore, preTipSha, StringComparison.OrdinalIgnoreCase))
+            return new GitPushResult(false, testedCandidateSha, "stale-base",
+                lookupCode == 0 ? "Remote integration tip moved before publication." : lookupError.Trim());
+        var refName = $"refs/heads/{integrationBranch}";
+        // The shared ref lease excludes platform publishers. Keep the network
+        // mutation an ordinary fast-forward push; no forced update is allowed.
+        var (_, pushError, pushCode) = RunGitArgs(repoRoot, ct,
+            "push", "origin", $"{testedCandidateSha}:{refName}");
+        if (pushCode != 0)
+            return new GitPushResult(false, testedCandidateSha, "stale-base", pushError.Trim());
+        var (after, verifyError, verifyCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "--heads", "origin", integrationBranch);
+        var remoteAfter = verifyCode == 0 ? after.Split('\t')[0].Trim() : null;
+        return string.Equals(remoteAfter, testedCandidateSha, StringComparison.OrdinalIgnoreCase)
+            ? new GitPushResult(true, testedCandidateSha, "verified", null)
+            : new GitPushResult(false, testedCandidateSha, "integration-unverified", verifyError.Trim());
+    }
+
+    public string? FetchBatchIntegrationTip(string repoRoot, string branch, CancellationToken ct)
+    {
+        if (!IsLikelyBranchName(branch)) return null;
+        var (_, _, code) = RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
+        return code == 0 ? GetBranchTip(repoRoot, $"origin/{branch}") : null;
+    }
+
+    public GitPushResult PushBatchCandidateRef(
+        string repoRoot, string candidateRef, string expectedSha, CancellationToken ct)
+    {
+        if (!Regex.IsMatch(candidateRef,
+                @"^refs/agent-studio/batch-candidates/[a-f0-9]{32}/[a-f0-9]{64}/[1-9][0-9]*$",
+                RegexOptions.CultureInvariant)
+            || !Regex.IsMatch(expectedSha, "^[a-fA-F0-9]{40,64}$", RegexOptions.CultureInvariant))
+            return new GitPushResult(false, expectedSha, "invalid-batch-ref", "Invalid candidate ref or SHA.");
+        var (local, localError, localCode) = RunGitArgs(
+            repoRoot, "rev-parse", "--verify", candidateRef);
+        if (localCode != 0 || !string.Equals(local.Trim(), expectedSha, StringComparison.OrdinalIgnoreCase))
+            return new GitPushResult(false, expectedSha, "candidate-mismatch", localError.Trim());
+        var (_, pushError, pushCode) = RunGitArgs(
+            repoRoot, ct, "push", "origin", $"{expectedSha}:{candidateRef}");
+        if (pushCode != 0)
+            return new GitPushResult(false, expectedSha, "push-failed", pushError.Trim());
+        var (remote, remoteError, remoteCode) = RunGitArgs(
+            repoRoot, ct, "ls-remote", "origin", candidateRef);
+        var resolved = remote.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split('\t')[0].Trim())
+            .FirstOrDefault();
+        return remoteCode == 0 && string.Equals(resolved, expectedSha, StringComparison.OrdinalIgnoreCase)
+            ? new GitPushResult(true, expectedSha, "verified", null)
+            : new GitPushResult(false, expectedSha, "remote-unverified", remoteError.Trim());
     }
 
     /// <summary>
@@ -6425,6 +6798,7 @@ public class GitService
     public string? ReadOriginUrlAt(string root)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return null;
+        if (GitConfigScope.TryReadOrigin(root, out var indexedOrigin)) return indexedOrigin;
         var (output, _, code) = RunGitArgs(root, "config", "--get", "remote.origin.url");
         if (code != 0) return null;
         var url = output.Trim();
@@ -7824,11 +8198,14 @@ public class GitService
         string? stdin,
         CancellationToken cancellationToken)
     {
+        using var processSlot = GitProcessBudget.Acquire();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, GitProcessBudget.Token);
         var result = GitNetworkProcessRunner.Run(
             psi,
             stdin,
             GitNetworkProcessRunner.DefaultTimeout,
-            cancellationToken);
+            linked.Token);
         return result;
     }
 

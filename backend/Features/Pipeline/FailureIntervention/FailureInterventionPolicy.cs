@@ -27,7 +27,14 @@ public sealed record FailureClassificationResult(
     string Fingerprint,
     string Signature,
     bool Deterministic,
-    string Reason);
+    string Reason)
+{
+    /// <summary>
+    /// Model, level and call receipt of the economy classifier when an
+    /// ambiguous failure reached it; null when the rule table decided.
+    /// </summary>
+    public StepModelUsage? DecidedBy { get; init; }
+}
 
 /// <summary>Pure first-pass policy. Unknown failures return null so only those reach an LLM fallback.</summary>
 public static partial class FailureInterventionPolicy

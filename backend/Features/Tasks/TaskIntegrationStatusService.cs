@@ -71,6 +71,7 @@ public sealed class TaskIntegrationStatusService
     private readonly PipelineExecutionLog _pipelineLog;
     private readonly ILogger<TaskIntegrationStatusService> _logger;
     private readonly ProjectRegistry? _registry;
+    private readonly Func<string, string?> _readOriginUrl;
 
     /// <summary>The delivered lanes this verdict applies to. Cards outside get no entry.</summary>
     internal static readonly HashSet<string> DeliveredLanes = new(StringComparer.Ordinal)
@@ -107,13 +108,15 @@ public sealed class TaskIntegrationStatusService
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
         TimeProvider timeProvider,
-        ProjectRegistry? registry = null)
+        ProjectRegistry? registry = null,
+        Func<string, string?>? readOriginUrl = null)
     {
         _git = git;
         _settings = settings;
         _pipelineLog = pipelineLog;
         _logger = logger;
         _registry = registry;
+        _readOriginUrl = readOriginUrl ?? _git.ReadOriginUrlAt;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -132,13 +135,13 @@ public sealed class TaskIntegrationStatusService
 
         using var _t = GitProcessTelemetry.BeginRequest("board/integration-status", _logger);
 
-        // Share effective Git origin configuration within this projection only.
-        // The next lookup re-reads it, including external includes and worktree
-        // overrides that are not represented by the repository ref fingerprint.
-        var origins = new Dictionary<string, string?>(
-            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
+        // One Git-config resolution per primary repository in this computation.
+        // Git itself interprets includes, conditional includes and worktree config.
+        // A new background generation resolves it again, so external config edits
+        // cannot be hidden behind a partial filesystem parser or a long TTL.
+        var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
             var groups = BuildRepositoryGroups(job, origins);
@@ -680,7 +683,7 @@ public sealed class TaskIntegrationStatusService
         if (!string.IsNullOrWhiteSpace(primaryRoot)
             && !origins.TryGetValue(primaryRoot, out primaryOrigin))
         {
-            primaryOrigin = _git.ReadOriginUrlAt(primaryRoot);
+            primaryOrigin = _readOriginUrl(primaryRoot);
             origins[primaryRoot] = primaryOrigin;
         }
         IReadOnlyList<ProjectRecord> registeredProjects = [];
@@ -1291,9 +1294,11 @@ public sealed class TaskIntegrationStatusService
                 ? integrationRef["origin/".Length..]
                 : integrationRef;
 
+            // AGT-2996: a merge waiting for its push lives on the integration
+            // lane, not on the local branch; it is present locally all the same.
             var succeeded = _git.TryGetAncestorShaSet(
                 root,
-                [integrationBranch, "origin/" + integrationBranch],
+                [integrationBranch, "origin/" + integrationBranch, GitService.IntegrationLaneRef(integrationBranch)],
                 out var ancestors);
 
             var releaseSucceeded = _git.TryGetAncestorShaSet(

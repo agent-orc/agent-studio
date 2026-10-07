@@ -146,11 +146,19 @@ not publish versioned binaries. It runs, in order:
 2. frontend `npm ci` and the critical production dependency audit;
 3. release shell contract tests, including promotion and deploy-watcher tests;
 4. the .NET Release build;
-5. every non-machine-bound .NET test in the solution and the deployment
-   regression scenario smoke;
-6. frontend lint and type-check;
-7. frontend unit tests; and
-8. the production frontend build.
+5. every non-machine-bound .NET test in the solution, including the
+   legacy-plane completion contract test
+   (`backend.Tests/LegacyRunnerCompletionContractTests.cs`);
+6. the [deployment regression scenario](testing/deployment-scenario.md) at
+   `smoke` level, which runs the coding attempt on the v1 plane and on the
+   legacy runner plane the production fleet uses;
+7. frontend lint and type-check;
+8. frontend unit tests; and
+9. the production frontend build.
+
+A gate that exercises only the v1 plane is not evidence for the fleet: Stable
+0.9.3 passed it and then had every production completion rejected on the
+legacy plane (AGT-2985).
 
 Machine-bound suites remain separately scheduled evidence and are never hidden
 inside the normal green result. The promotion gate excludes them explicitly,
@@ -353,6 +361,12 @@ condition and a later cron tick retries. The watcher never changes task state.
 - Deploy failure: the promotion remains a valid release fact. Diagnose the
   external updater and use its rollback procedure; do not rewrite `main` or
   move the release marker.
+- Runner host deploy: `agent-runner-deploy` waits up to ten minutes after the
+  restart for one accepted completion from the new Coding service invocation
+  and otherwise prints the rollback command to the previous runner release.
+  Follow the
+  [post-restart completion check](setup/linux-runner-host.md#post-restart-completion-check)
+  before you declare a runner release deployed.
 - Released regression: revert the offending change through normal `develop`
   work and run a new promotion. Reserve an immutable Stable rollback for the
   deployment incident response path.

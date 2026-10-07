@@ -10,6 +10,48 @@ public sealed class ProjectPlacementTests
     private static readonly DateTimeOffset Start = new(2026, 9, 27, 8, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Registered_project_claim_requires_selected_runners_successful_origin_probe()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var project = await ReadyProjectAsync(store, 2);
+        const string origin = "https://github.com/org/repo.git";
+        await store.RegisterProjectRepositoryAsync(
+            new RegisterProjectRepositoryRequest(project.ProjectId, project.WorkspaceId,
+                project.Name, project.TaskKeyPrefix, origin, "develop"), "owner", default);
+        await HostAsync(store, clock, "runner-a", "host-a", "platform:linux");
+        await HostAsync(store, clock, "runner-b", "host-b", "platform:linux");
+
+        var noProbe = await store.ClaimAsync(AcknowledgedClaim("runner-a"), "runner-a", default);
+        Assert.Equal("empty", noProbe.Status);
+        Assert.Equal(ProjectRepositoryPolicy.ProbeRequired, noProbe.PlacementReason);
+
+        await store.RecordProjectRepositoryProbeAsync(project.ProjectId, "runner-a",
+            new ProjectRepositoryProbeRequest("https://github.com/org/fallback.git", null,
+                true, true, true), default);
+        var fallback = await store.ClaimAsync(AcknowledgedClaim("runner-a"), "runner-a", default);
+        Assert.Equal("empty", fallback.Status);
+        Assert.Equal(ProjectRepositoryPolicy.ProbeDenied, fallback.PlacementReason);
+
+        await store.RecordProjectRepositoryProbeAsync(project.ProjectId, "runner-b",
+            new ProjectRepositoryProbeRequest(origin, origin, true, true, false), default);
+        Assert.Equal(ProjectRepositoryPolicy.ProbeDenied,
+            (await store.ClaimAsync(AcknowledgedClaim("runner-a"), "runner-a", default)).PlacementReason);
+
+        await store.RecordProjectRepositoryProbeAsync(project.ProjectId, "runner-a",
+            new ProjectRepositoryProbeRequest(origin, origin, true, true, false), default);
+        Assert.Equal("claimed", (await store.ClaimAsync(AcknowledgedClaim("runner-a"), "runner-a", default)).Status);
+
+        await store.RecordProjectRepositoryProbeAsync(project.ProjectId, "runner-a",
+            new ProjectRepositoryProbeRequest(origin, origin, true, false, false), default);
+        var deniedAgain = await store.ClaimAsync(AcknowledgedClaim("runner-a"), "runner-a", default);
+        Assert.Equal("empty", deniedAgain.Status);
+        Assert.Equal(ProjectRepositoryPolicy.ProbeDenied, deniedAgain.PlacementReason);
+    }
+
+    [Fact]
     public async Task Matching_peer_claims_after_drain_without_task_rewrite()
     {
         using var temp = new TempDirectory();

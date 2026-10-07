@@ -121,7 +121,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var outcome = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "main").Code);
 
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath);
@@ -238,6 +238,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         File.WriteAllText(Path.Combine(_repo, "shared.txt"), "develop version\n");
         RunGit(_repo, "add", "shared.txt");
         RunGit(_repo, "commit", "-q", "-m", "develop edits shared");
+        // AGT-2996: the integration lane follows origin, so the conflicting
+        // develop commit must be published for the conflict to be real.
+        RunGit(_repo, "push", "-q", "origin", "develop");
         RunGit(_repo, "checkout", "-q", "main");
         var deps = Build(
             deliverySha,
@@ -879,7 +882,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var outcome = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
         Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
 
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath);
         Assert.NotNull(reviewed);
@@ -907,6 +910,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         File.WriteAllText(Path.Combine(_repo, "shared.txt"), "develop version\n");
         RunGit(_repo, "add", "shared.txt");
         RunGit(_repo, "commit", "-q", "-m", "develop edits shared");
+        // AGT-2996: the integration lane follows origin, so the conflicting
+        // develop commit must be published for the conflict to be real.
+        RunGit(_repo, "push", "-q", "origin", "develop");
         var developBefore = Git(_repo, "rev-parse", "develop").Out.Trim();
         var deps = Build(deliverySha);
         var delivery = deps.Scanner.FindJob(Slug, _watchPath)!;
@@ -1104,7 +1110,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var remoteTip = Git(integrator, "rev-parse", "develop").Out.Trim();
 
         Assert.NotEqual(staleLocalTip, remoteTip);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "origin/develop").Code);
 
         var gate = new CountingBuildTestGateRunner();
@@ -1506,7 +1512,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
 
-        var localDevelop = Git(_repo, "rev-parse", "develop").Out.Trim();
+        // AGT-2996: the merge sits on the Studio integration lane until pushed.
+        var localDevelop = Git(_repo, "rev-parse", GitService.IntegrationLaneRef("develop")).Out.Trim();
         var remoteBefore = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
         Assert.NotEqual(localDevelop, remoteBefore);
 
@@ -1516,21 +1523,50 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var archived = deps.States.MoveJob(Slug, TaskStates.Archive, _watchPath);
         Assert.Equal(MoveJobStatus.Success, archived.Status);
 
-        // Simulate a fresh backend process: the in-memory IntegrationPushQueue
-        // is gone, but pipeline-execution.json still proves merge=Passed and
-        // push=Pending. The startup backstop must re-drive the push.
+        var archivedFolder = deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath;
+        var mergeStep = deps.Pipeline.Read(archivedFolder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+        Assert.Equal(localDevelop, mergeStep.ApprovedIntegrationSha);
+
+        // A legacy or torn record with no exact approval cannot authorize the
+        // backstop to publish whatever happens to be at the lane tip.
+        deps.Pipeline.RecordStep(archivedFolder, mergeStep with { ApprovedIntegrationSha = null });
+        var recoveredPipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         var backstop = new IntegrationPushBackstopHostedService(
             deps.Scanner,
             deps.Settings,
-            deps.Pipeline,
+            recoveredPipeline,
             deps.Merge,
             deps.Configuration,
             NullLogger<IntegrationPushBackstopHostedService>.Instance);
+        Assert.Equal(0, await backstop.RunOnceAsync());
+        Assert.Equal(remoteBefore, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
+        deps.Pipeline.RecordStep(archivedFolder, mergeStep);
+
+        // A later, unverified lane commit must not ride along with the earlier
+        // card's approval, even when the backstop sees no in-memory busy gate.
+        RunGit(_repo, "checkout", "-q", "-b", "unverified-tip", localDevelop);
+        File.WriteAllText(Path.Combine(_repo, "unverified.txt"), "not gated\n");
+        RunGit(_repo, "add", "unverified.txt");
+        RunGit(_repo, "commit", "-q", "-m", "test: unverified lane tip");
+        var unverifiedSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), unverifiedSha);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "unverified-tip");
+
+        // Simulate a fresh backend process: the in-memory IntegrationPushQueue
+        // is gone, but pipeline-execution.json still proves merge=Passed and
+        // push=Pending. The startup backstop must re-drive the push.
         var recovered = await backstop.RunOnceAsync();
 
         Assert.Equal(1, recovered);
         var remoteAfter = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
         Assert.Equal(localDevelop, remoteAfter);
+        Assert.NotEqual(unverifiedSha, remoteAfter);
+        var pushStep = recoveredPipeline.Read(archivedFolder)!.Steps.Single(
+            step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
+        Assert.Equal(PipelineStepStatus.Passed, pushStep.Status);
+        Assert.Equal("pushed", pushStep.Verdict);
     }
 
     [Fact]
@@ -1543,7 +1579,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // TaskTransitionService could run its post-move merge side effect.
         var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, moved.Status);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
 
         var backstop = new AcceptedIntegrationBackstopHostedService(
             deps.Scanner,
@@ -1556,7 +1592,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var recovered = backstop.RunOnce();
 
         Assert.Equal(1, recovered);
-        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         var completed = deps.Scanner.FindJob(Slug, _watchPath);
         Assert.NotNull(completed);
         Assert.DoesNotContain(
@@ -1639,7 +1675,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.NotNull(integrating);
         Assert.Equal(TaskStates.HumanReview, integrating!.State);
         Assert.Equal(LifecyclePhases.Integrating, integrating.Phase);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
 
         // Simulate a restart that drops the volatile queue item. The durable
         // Human Review + integrating phase is the transaction recovery record.
@@ -1656,7 +1692,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var recovered = backstop.RunOnce();
 
         Assert.Equal(1, recovered);
-        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         var completed = deps.Scanner.FindJob(Slug, _watchPath);
         Assert.NotNull(completed);
         Assert.Equal(TaskStates.Completed, completed!.State);
@@ -1681,7 +1717,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.Success, moved.Status);
         var completedBefore = deps.Scanner.FindJob(Slug, _watchPath);
         Assert.NotNull(completedBefore);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
 
         // Reproduce the status contradiction from AGT-2424: the pipeline says
         // Passed while the reviewed ResultSha is not reachable from develop.
@@ -1707,7 +1743,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var recovered = backstop.RunOnce();
 
         Assert.Equal(1, recovered);
-        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         Assert.DoesNotContain(
             deps.Scanner.FindJob(Slug, _watchPath)!.Tags,
             IntegrationStatuses.IsPendingTag);
@@ -1721,7 +1757,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, moved.Status);
-        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.NotEqual(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
 
         var backstop = new AcceptedIntegrationBackstopHostedService(
             deps.Scanner,
@@ -1734,7 +1770,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var recovered = backstop.RunOnce();
 
         Assert.Equal(1, recovered);
-        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, "develop").Code);
+        Assert.Equal(0, Git(_repo, "merge-base", "--is-ancestor", deliverySha, GitService.IntegrationLaneRef("develop")).Code);
         Assert.Null(ReviewSubjectStore.Read(
             deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath));
     }
@@ -1750,9 +1786,14 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // the durable merge step or enqueued the integration push.
         var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, moved.Status);
-        RunGit(_repo, "checkout", "-q", "-b", "develop", "origin/develop");
+        // AGT-2996: integration merges land on the Studio-owned lane, never on
+        // the checkout's develop, so the crash leaves the merge on the lane.
+        RunGit(_repo, "checkout", "-q", "-b", "crash-merge", "origin/develop");
         RunGit(_repo, "merge", "-q", "--no-ff", "--no-edit", deliverySha);
-        var localDevelop = Git(_repo, "rev-parse", "develop").Out.Trim();
+        var localDevelop = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), localDevelop);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "crash-merge");
         var remoteBefore = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
         Assert.NotEqual(localDevelop, remoteBefore);
         var pendingMerge = deps.Pipeline.Read(Path.Combine(_watchPath, TaskStates.Completed, Slug))?.Steps.LastOrDefault(
@@ -1816,9 +1857,14 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // the exact-SHA gate verdict, pipeline step, and push request are durable.
         var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, moved.Status);
-        RunGit(_repo, "checkout", "-q", "-b", "develop", "origin/develop");
+        // AGT-2996: integration merges land on the Studio-owned lane, never on
+        // the checkout's develop, so the crash leaves the merge on the lane.
+        RunGit(_repo, "checkout", "-q", "-b", "crash-merge", "origin/develop");
         RunGit(_repo, "merge", "-q", "--no-ff", "--no-edit", deliverySha);
-        var localDevelop = Git(_repo, "rev-parse", "develop").Out.Trim();
+        var localDevelop = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), localDevelop);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "crash-merge");
         var remoteBefore = Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim();
         Assert.NotEqual(localDevelop, remoteBefore);
 

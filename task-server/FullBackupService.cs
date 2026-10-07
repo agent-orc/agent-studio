@@ -173,7 +173,11 @@ public sealed partial class TaskServerStore
         var verified = string.Equals(actualHash, inventory.SetSha256, StringComparison.OrdinalIgnoreCase)
                        && string.Equals(actualHash, completion.SetSha256, StringComparison.OrdinalIgnoreCase)
                        && actual.SequenceEqual(inventory.Files);
-        return new VerifyFullBackupResult(backupId, verified, ToFullBackupSummary(backupId, inventory) with { SetSha256 = actualHash });
+        var identity = verified
+            ? await FullBackupIdentitySha256Async(Path.Combine(root, "snapshot.db"), ct)
+            : null;
+        return new VerifyFullBackupResult(backupId, verified,
+            ToFullBackupSummary(backupId, inventory) with { SetSha256 = actualHash }, identity);
     }
 
     /// <summary>
@@ -226,8 +230,12 @@ public sealed partial class TaskServerStore
                     connection, transaction, actorId, "backup-full.restored", "backup-full", backupId,
                     JsonSerializer.Serialize(new { archiveRoot, manifests = manifests.Count }), ct),
                 ct);
+            var restoredIdentity = await FullBackupIdentitySha256Async(DatabasePath, ct);
+            if (restoredIdentity != verification.IdentitySha256)
+                throw new InvalidDataException("Restored authority identity differs from the verified full backup snapshot.");
             if (previousArchiveMoved && Directory.Exists(previousArchive)) Directory.Delete(previousArchive, recursive: true);
-            return new RestoreFullBackupResult(backupId, true, "Full backup restored and archive manifest paths were rebound to this host.");
+            return new RestoreFullBackupResult(backupId, true,
+                "Full backup restored and archive manifest paths were rebound to this host.", restoredIdentity);
         }
         catch (Exception restoreException)
         {
@@ -250,6 +258,49 @@ public sealed partial class TaskServerStore
             if (Directory.Exists(stagedArchive)) Directory.Delete(stagedArchive, recursive: true);
             if (Directory.Exists(previousArchive) && !previousArchiveMoved) Directory.Delete(previousArchive, recursive: true);
         }
+    }
+
+    // Stable authority facts only: health checks and the restore audit may update other rows.
+    // The same digest is calculated from the verified snapshot and the live store after restore.
+    private static async Task<string> FullBackupIdentitySha256Async(string databasePath, CancellationToken ct)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        await connection.OpenAsync(ct);
+        var content = new StringBuilder();
+        foreach (var (name, sql) in new (string Name, string Sql)[]
+        {
+            ("server", "SELECT value FROM meta WHERE key = 'server_id' ORDER BY value"),
+            ("principals", "SELECT principal_id, kind, runner_id, revoked_at FROM principals ORDER BY principal_id"),
+            ("principal-credentials", "SELECT credential_id, principal_id, secret_hash, expires_at, revoked_at FROM principal_credentials ORDER BY credential_id"),
+            ("users", "SELECT id, username, role, password_hash, disabled FROM studio_users ORDER BY id"),
+            ("projects", "SELECT id, workspace_id, task_key_prefix FROM projects ORDER BY id"),
+            ("project-urls", "SELECT id, project_id, url FROM studio_project_urls ORDER BY id"),
+        })
+        {
+            if (name is "users" or "project-urls")
+            {
+                await using var presence = connection.CreateCommand();
+                presence.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name";
+                presence.Parameters.AddWithValue("$name", name == "users" ? "studio_users" : "studio_project_urls");
+                if (await presence.ExecuteScalarAsync(ct) is null) continue;
+            }
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var fields = new string?[reader.FieldCount];
+                for (var index = 0; index < fields.Length; index++)
+                    fields[index] = reader.IsDBNull(index) ? null : Convert.ToString(reader.GetValue(index), CultureInfo.InvariantCulture);
+                content.Append(name).Append(':').Append(JsonSerializer.Serialize(fields)).Append('\n');
+            }
+        }
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content.ToString())));
     }
 
     internal async Task<int> ThinFullBackupsAsync(FullBackupRetentionPolicy policy, string actorId, CancellationToken ct)

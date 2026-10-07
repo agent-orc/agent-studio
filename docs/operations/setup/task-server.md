@@ -354,6 +354,13 @@ ownership. Hosts without a registered runner can update only from the instance
 that created the record. The management principal is required; secret values, token
 hashes and credential-bearing URLs are never accepted. The host or CLI retains
 native refresh and custody.
+GitHub records may additionally carry a token subtype, repository purpose and
+write grant. A deploy-key record can carry its GitHub key ID, public fingerprint
+and the credential ID of the provisioning token. These fields are metadata,
+not authority to register or revoke a key. The server advertises
+`credential-registry-github-v1` for clients that consume the expanded record;
+older records omit the nullable fields. Repository key operations still require
+an authorized administration session and a generation-matched host observation.
 
 Management routes, all under `/api/v1/management/retention`:
 
@@ -476,6 +483,13 @@ dotnet task-server.dll backup full --TaskServer:DataDirectory /srv/agent-orchest
 dotnet task-server.dll backup verify-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 dotnet task-server.dll backup restore-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 ```
+
+The authenticated full-backup verify and restore API responses include
+`identitySha256`, a digest of stable authority, principal, human-account,
+project and project-URL identity. Restore compares the verified snapshot
+digest with the live store after restore and fails if they differ. The setup
+relocation gate requires the matching response digests and the preserved
+`installation.json` before it records the authority as relocated.
 
 ## Container images
 
@@ -727,6 +741,14 @@ For a zero-argument local profile, set `TASK_SERVER_PROFILE=local-compatibility`
 The service listens on `127.0.0.1:5031` and uses the current user's application
 data directory. The topology test separately proves the service with another
 process and temporary data root.
+
+## Owner bootstrap, enrolment and project registration
+
+`OWNER_BOOTSTRAP_CODE_FILE` arms the one-time first-owner code. Host
+principals join through one-time enrolment codes, and projects register one
+canonical repository through `POST /api/v1/projects/registrations`. The
+contract, closure rules and host scripts are in
+[identity-and-project-bootstrap.md](./identity-and-project-bootstrap.md).
 
 ## Rotate and revoke principals
 

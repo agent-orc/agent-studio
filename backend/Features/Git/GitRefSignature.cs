@@ -11,7 +11,8 @@ internal readonly record struct GitRefSignature(
     long RefsLength,
     long HeadWriteTicks,
     long HeadLength,
-    ulong SelectedRefsSignature)
+    ulong SelectedRefsSignature,
+    ulong CommonRefsSignature)
 {
     public static GitRefSignature Capture(string? repositoryPath)
     {
@@ -20,8 +21,12 @@ internal readonly record struct GitRefSignature(
         var packed = FileFacts(Path.Combine(gitDirectory, "packed-refs"));
         var refs = DirectoryFacts(Path.Combine(gitDirectory, "refs"));
         var head = FileFacts(Path.Combine(gitDirectory, "HEAD"));
+        var commonDirectory = ResolveCommonGitDirectory(gitDirectory);
+        var common = commonDirectory == gitDirectory ? 0UL : SelectedRefsHash(commonDirectory);
+        var commonPacked = commonDirectory == gitDirectory ? default : FileFacts(Path.Combine(commonDirectory, "packed-refs"));
         return new(packed.WriteTicks, packed.Length, refs.WriteTicks, refs.Length,
-            head.WriteTicks, head.Length, SelectedRefsHash(gitDirectory));
+            head.WriteTicks, head.Length, SelectedRefsHash(gitDirectory),
+            common ^ unchecked((ulong)commonPacked.WriteTicks) ^ unchecked((ulong)commonPacked.Length));
     }
 
     /// <summary>
@@ -50,6 +55,21 @@ internal readonly record struct GitRefSignature(
             SilentCatch.Note(ex, "GitRefSignature: git directory resolution failed");
             return null;
         }
+    }
+
+    internal static string ResolveCommonGitDirectory(string gitDirectory)
+    {
+        try
+        {
+            var commonDir = Path.Combine(gitDirectory, "commondir");
+            if (File.Exists(commonDir))
+                return Path.GetFullPath(File.ReadAllText(commonDir).Trim(), gitDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            SilentCatch.Note(ex, "GitRefSignature: common directory resolution failed");
+        }
+        return gitDirectory;
     }
 
     private static (long WriteTicks, long Length) FileFacts(string path)
