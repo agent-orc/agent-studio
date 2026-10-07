@@ -122,8 +122,9 @@ function runScript(
       } : {}),
     },
     encoding: 'utf8',
-    // The API health wait is 420 seconds for this fixture by default.
-    timeout: 450_000,
+    // Keep the launcher above the API's health wait, including overrides on busy hosts.
+    timeout: Number(process.env.DEV_BACKEND_START_TIMEOUT_MS
+      ?? (Number(process.env.API_START_TIMEOUT_SECS ?? 420) + 30) * 1000),
   });
   return {
     code: result.status ?? 1,

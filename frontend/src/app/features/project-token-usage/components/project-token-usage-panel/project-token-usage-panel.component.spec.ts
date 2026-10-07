@@ -117,6 +117,29 @@ describe('ProjectTokenUsagePanelComponent (pipeline cost)', () => {
     };
   }
 
+  it('shows pipeline decisions when the separate token activity summary is empty', async () => {
+    await TestBed.configureTestingModule({
+      imports: [ProjectTokenUsagePanelComponent],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(ProjectTokenUsagePanelComponent);
+    fixture.componentRef.setInput('projectName', 'demo');
+    fixture.detectChanges();
+    fixture.componentInstance.summary.set({ project: 'demo', hasData: false } as ProjectTokenUsageSummary);
+    fixture.componentInstance.pipelineCost.set(fakeTimeline());
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    expect(host.querySelector('[data-testid="token-usage-empty"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="pipeline-cost-legend-core"]')).toBeTruthy();
+  });
+
   it('renders the per-kind legend, total, and one stacked bar per day', async () => {
     await TestBed.configureTestingModule({
       imports: [ProjectTokenUsagePanelComponent],

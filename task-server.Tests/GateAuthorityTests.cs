@@ -37,6 +37,44 @@ public sealed class GateAuthorityTests
     }
 
     [Fact]
+    public async Task Batch_subject_uses_combined_candidate_not_member_result_sha()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-09-25T12:00:00Z"));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var member = await SeedRequestAsync(store, clock);
+        var batchId = Guid.NewGuid().ToString("N");
+        var digest = new string('d', 64);
+        var candidate = new string('e', 40);
+        var plan = member.Plan with { SubjectBindingDigest = digest };
+        var planJson = JsonSerializer.Serialize(plan, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var planHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(planJson)))
+            .ToLowerInvariant();
+        var request = member with
+        {
+            ExpectedSha = candidate,
+            ResultRef = $"refs/agent-studio/batch-candidates/{batchId}/{digest}/1",
+            Plan = plan,
+            PlanHash = planHash,
+            BatchId = batchId,
+            MembershipDigest = digest,
+            BaseSha = Sha,
+            MemberRunIds = [member.SourceRunId],
+        };
+        var status = await store.CreateGateSubjectAsync(request, "engine", default);
+        Assert.Equal(candidate, status.Subject.ExpectedSha);
+        Assert.Equal(batchId, status.Subject.BatchId);
+        Assert.Equal(digest, status.Subject.MembershipDigest);
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        Assert.Equal(candidate,
+            (await restarted.GetGateStatusAsync(status.Subject.SubjectId, default))!.Subject.ExpectedSha);
+        await Assert.ThrowsAsync<ArgumentException>(() => restarted.CreateGateSubjectAsync(
+            request with { ResultRef = member.ResultRef }, "engine", default));
+    }
+
+    [Fact]
     public async Task Claim_report_and_retry_are_fenced_across_restart()
     {
         using var temp = new TempDirectory();
@@ -66,6 +104,8 @@ public sealed class GateAuthorityTests
         Assert.Equal(subject.Subject.SubjectId, retried.Subject.SubjectId);
         Assert.Equal(0, (await first.ListRunnerCapabilitySnapshotsAsync(default))
             .Single(item => item.RunnerId == "gate-a").ActiveGateCount);
+        Assert.Equal("empty", (await first.ClaimGateAsync(
+            new GateClaimRequest("gate-a", "instance-a"), "gate-a", default)).Status);
 
         var restarted = Store(temp.Path, clock);
         await restarted.InitializeAsync();

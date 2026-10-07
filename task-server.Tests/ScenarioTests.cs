@@ -14,10 +14,12 @@ namespace TaskServer.Tests;
 [Trait("Category", "ReviewFlaky")]
 public sealed class ScenarioTests
 {
-    [Fact(Timeout = 170_000)]
+    // The legacy runner plane step (AGT-2985) boots the backend monolith and a
+    // second runner, which adds about a minute on a loaded host.
+    [Fact(Timeout = 300_000)]
     public Task Deployment_regression_scenario_smoke() => RunAsync("smoke");
 
-    [Fact(Timeout = 300_000)]
+    [Fact(Timeout = 420_000)]
     public Task Deployment_regression_scenario_full() => RunAsync("full");
 
     private static async Task RunAsync(string level)

@@ -81,6 +81,7 @@ import { distinctStepVerdict, reviewRoundStatus } from './pipeline-status-verdic
 import type { ProtocolVerdict } from '../../protocol-pane/protocol-verdict';
 import { outcomeDecisionBadge, type DecisionBadgeVm } from './outcome-decision-badge.util';
 import { PipelineAspectResultComponent } from './pipeline-aspect-result/pipeline-aspect-result.component';
+import { PipelineDecisionChainComponent } from './pipeline-decision-chain/pipeline-decision-chain.component';
 import {
   type PipelineRowVm, type PipelineRunOptionVm, type PipelineTotalVm,
 } from './pipeline-row.vm';
@@ -96,12 +97,13 @@ import {
   buildStepStatusTooltip,
   decisionTooltipSeverity,
   reconcileCoreVerdict,
+  modelSourceLabel,
 } from './pipeline-step-tooltips.util';
 @Component({
   selector: 'app-overview-pane',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent],
+  imports: [FormsModule, CliModelSelectorComponent, RegressionRadarComponent, ReferencesSectionComponent, TooltipDirective, CompletionLoopIndicatorComponent, PipelineRunHistoryComponent, PipelineTokenUsageComponent, PipelineStepDetailsComponent, PipelineStepToggleComponent, PostStepControlsComponent, StudioIconComponent, DisclosureMarkerComponent, CostBreakdownTriggerDirective, PipelineHistoryNoticeComponent, OverviewRunsComponent, OverviewTitleBlockComponent, OverviewStepTokenModalComponent, OverviewAgentWorkComponent, PipelineAspectResultComponent, PipelineDecisionChainComponent],
   templateUrl: './overview-pane.component.html',
   styleUrl: './overview-pane.component.scss',
 })
@@ -305,7 +307,8 @@ export class OverviewPaneComponent {
       const thinkingLevel = e?.thinkingLevel ?? null;
       const cliType = this.asCliType(cfg?.cliType ?? step.cliType ?? this.effectiveCliType());
       const modelIsResolved = recordedModel == null && model != null;
-      const modelTooltip = this.buildModelTooltip(label, model, modelIsResolved, cfg?.modelSource ?? null);
+      const modelTooltip = this.buildModelTooltip(
+        label, model, modelIsResolved, (modelIsResolved ? cfg?.modelSource : e?.modelSource) ?? null, e?.runs ?? 0);
       const modelEditable = false;
       const modelOverride = cfg?.model ?? '';
       const thinkingLevelOverride = cfg?.thinkingLevel ?? null;
@@ -785,28 +788,21 @@ export class OverviewPaneComponent {
     model: string | null,
     isResolved: boolean,
     source: string | null,
+    runs = 0,
   ): StructuredTooltip | null {
     if (!model) return null;
     if (!isResolved) {
-      return { title: `${label} model`, body: `Model used for this step: ${model}` };
+      const sourceLabel = modelSourceLabel(source);
+      const lines = [`Model used for this step: ${model}`];
+      if (sourceLabel) lines.push(`Chosen by: ${sourceLabel}`);
+      if (runs > 1) lines.push(`Ran ${runs} times in this run`);
+      return { title: `${label} model`, body: lines.join('\n') };
     }
-    const sourceLabel = this.modelSourceLabel(source);
+    const sourceLabel = modelSourceLabel(source);
     const body = sourceLabel
       ? `Will run on ${model}\nSource: ${sourceLabel}`
       : `Will run on ${model} (configured before the run)`;
     return { title: `${label} model`, body };
-  }
-
-  /** Human-readable label for a resolved model's source token. */
-  private modelSourceLabel(source: string | null): string | null {
-    switch ((source ?? '').toLowerCase()) {
-      case 'step':      return 'per-step override';
-      case 'project':   return 'project model';
-      case 'global':    return 'global default';
-      case 'catalogue': return 'step default';
-      case 'runtime':   return 'built-in default';
-      default:          return null;
-    }
   }
 
   /** Step ids with a per-step agent write in flight (disable the selector). */
@@ -883,7 +879,7 @@ export class OverviewPaneComponent {
   /** 1-based run counter for the current pipeline run (1 when never restarted). */
   readonly pipelineAttempt = computed<number>(() => this.pipelineExecution()?.attempt ?? 1);
 
-  private readonly selectedPipelineExecution = computed<PipelineExecutionRecord | null>(() => {
+  readonly selectedPipelineExecution = computed<PipelineExecutionRecord | null>(() => {
     const current = this.pipelineExecution();
     if (current == null) return null;
     const selected = this.selectedPipelineAttempt();

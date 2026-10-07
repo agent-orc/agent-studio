@@ -182,6 +182,19 @@ public class RunnerOptionsTests
         Assert.Equal("git@github.com:acme/repo.git", options.GitPushRemote);
     }
 
+    [Fact]
+    public void Private_workspace_origin_and_required_write_are_separate_from_product_remote()
+    {
+        var (options, _, _, _) = RunnerOptions.Parse([
+            "--git-remote", "https://github.com/acme/product.git",
+            "--workspace-git-remote", "https://github.com/acme/private-workspace.git",
+            "--workspace-git-requires-push", "true"]);
+
+        Assert.Equal("https://github.com/acme/product.git", options.GitRemote);
+        Assert.Equal("https://github.com/acme/private-workspace.git", options.WorkspaceGitRemote);
+        Assert.True(options.WorkspaceGitRequiresPush);
+    }
+
     [Theory]
     [InlineData("AGT-20", "AGT-20")]
     [InlineData("project/task 20", "project-task-20")]

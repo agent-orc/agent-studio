@@ -281,6 +281,25 @@ public sealed class RemoteRunnerDaemon
         // decided by the repository-specific preflight before each project can
         // receive a lease.
         var gitCapability = await GitPushProbe.RunAsync(_options, _log, shutdown);
+        if (!string.IsNullOrWhiteSpace(_options.WorkspaceGitRemote))
+        {
+            try
+            {
+                var workspaceBinding = new RepositoryAccessBinding(
+                    "workspace", _options.WorkspaceGitRemote, _options.WorkspaceGitRequiresPush);
+                var workspaceProof = await RepositoryAccessRenewal.ProbeBindingsAsync(
+                    [workspaceBinding], new PlatformRepositoryGitProof(_ => null, _options.WorkDir), shutdown);
+                var proof = workspaceProof.Proofs[0];
+                _log($"runner-workspace-git-access status={proof.Status} fetch={proof.FetchVerified} push={proof.PushVerified}");
+                gitCapability = GitPushProbe.WithWorkspaceProof(gitCapability, proof);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log($"runner-workspace-git-access status=unverified error={ex.GetType().Name}");
+                gitCapability = new GitPushProbeResult(GitPushProbe.ReadOnly,
+                    "Workspace repository access could not be verified. Check the exact configured origin and host transport.");
+            }
+        }
         await WithServerRetryAsync<object?>(
             "git-capability report",
             async () =>

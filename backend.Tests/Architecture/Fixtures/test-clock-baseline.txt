@@ -94,7 +94,6 @@ wall-clock backend.Tests/HostTelemetryStoreTests.cs 6
 wall-clock backend.Tests/HumanReviewVerdictBackfillTests.cs 11
 wall-clock backend.Tests/InMemoryStoreTests.cs 2
 wall-clock backend.Tests/IntegrationGateReusePolicyTests.cs 1
-wall-clock backend.Tests/IntegrationWorktreeProviderTests.cs 2
 wall-clock backend.Tests/InterruptedIntegrationGateRecoveryTests.cs 2
 wall-clock backend.Tests/JobCommitsAggregationTests.cs 10
 wall-clock backend.Tests/LaneChangeCauseLedgerTests.cs 2
@@ -284,7 +283,6 @@ wall-clock task-server.Tests/ResultFinalizationStoreTests.cs 1
 wall-clock task-server.Tests/RetentionStoreTests.cs 3
 wall-clock task-server.Tests/RunnerReleaseIdentityStoreTests.cs 1
 wall-clock task-server.Tests/RuntimeCapacitySettingsTests.cs 2
-wall-clock task-server.Tests/ScenarioContext.cs 3
 wall-clock task-server.Tests/StudioEndpointsTests.cs 3
 wall-clock task-server.Tests/StudioHostsTests.cs 2
 wall-clock task-server.Tests/StudioP2ComplianceEndpointsTests.cs 1
