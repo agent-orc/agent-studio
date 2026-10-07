@@ -1,6 +1,7 @@
 using System.Diagnostics;
 
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -17,6 +18,7 @@ namespace AgentStudio.Tests;
 public sealed class IntegrationWorktreeProviderTests : IDisposable
 {
     private readonly string _tempDir;
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero));
 
     public IntegrationWorktreeProviderTests()
     {
@@ -106,9 +108,9 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
             : Path.GetFullPath(Path.Combine(first.Path!, pointer));
         var lockPath = Path.Combine(gitDir, "index.lock");
         File.WriteAllText(lockPath, "orphaned reset");
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-2));
+        File.SetLastWriteTimeUtc(lockPath, _time.GetUtcNow().UtcDateTime.AddMinutes(-2));
         File.WriteAllText(Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker),
-            DateTimeOffset.UtcNow.ToString("O"));
+            _time.GetUtcNow().ToString("O"));
 
         var second = provider.Resolve(repo, "develop");
 
@@ -117,6 +119,36 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
         Assert.Equal(RunGit(repo, "rev-parse develop").Out.Trim(),
             RunGit(second.Path!, "rev-parse HEAD").Out.Trim());
         Assert.Equal(string.Empty, RunGit(second.Path!, "status --porcelain").Out.Trim());
+    }
+
+    /// <summary>
+    /// AGT-3000: the Temp slot failed every merge for 92 hours because its
+    /// index lock was newer than the last rollback marker, which the slot's own
+    /// rule reads as "an integration is writing". The general stale-lock guard
+    /// clears it: older than the threshold and no git process holds it.
+    /// </summary>
+    [Fact]
+    public void Resolve_ClearsAnAgedUnownedIndexLockNewerThanTheRollbackMarker()
+    {
+        var repo = SeedRepo("stale-lock-after-marker");
+        RunGit(repo, "checkout -q -b develop");
+        var provider = Provider(repo);
+        var first = provider.Resolve(repo, "develop");
+        Assert.True(first.Success, first.Error);
+
+        var gitDir = IntegrationWorktreeProvider.WorktreeGitDirectory(first.Path!)!;
+        var markerPath = Path.Combine(gitDir, IntegrationWorktreeProvider.LastIntegrationMarker);
+        File.WriteAllText(markerPath, _time.GetUtcNow().AddHours(-100).ToString("O"));
+        File.SetLastWriteTimeUtc(markerPath, _time.GetUtcNow().UtcDateTime.AddHours(-100));
+        var lockPath = Path.Combine(gitDir, "index.lock");
+        File.WriteAllBytes(lockPath, []);
+        File.SetLastWriteTimeUtc(lockPath, _time.GetUtcNow().UtcDateTime.AddHours(-92));
+
+        var second = provider.Resolve(repo, "develop");
+
+        Assert.True(second.Success, second.Error);
+        Assert.Equal(IntegrationWorktreeAction.Reuse, second.Action);
+        Assert.False(File.Exists(lockPath));
     }
 
     /// <summary>
@@ -201,7 +233,13 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
         return new IntegrationWorktreeProvider(
             git,
             NullLogger<IntegrationWorktreeProvider>.Instance,
-            Path.Combine(_tempDir, "fallback"));
+            Path.Combine(_tempDir, "fallback"),
+            staleLocks: new GitStaleLockGuard(probe: new NoGitOwnerProbe(), time: _time));
+    }
+
+    private sealed class NoGitOwnerProbe : IGitLockOwnerProbe
+    {
+        public GitLockOwnership Probe(GitLockScope scope) => GitLockOwnership.None;
     }
 
     private string SeedRepo(string name)

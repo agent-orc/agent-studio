@@ -354,6 +354,13 @@ ownership. Hosts without a registered runner can update only from the instance
 that created the record. The management principal is required; secret values, token
 hashes and credential-bearing URLs are never accepted. The host or CLI retains
 native refresh and custody.
+GitHub records may additionally carry a token subtype, repository purpose and
+write grant. A deploy-key record can carry its GitHub key ID, public fingerprint
+and the credential ID of the provisioning token. These fields are metadata,
+not authority to register or revoke a key. The server advertises
+`credential-registry-github-v1` for clients that consume the expanded record;
+older records omit the nullable fields. Repository key operations still require
+an authorized administration session and a generation-matched host observation.
 
 Management routes, all under `/api/v1/management/retention`:
 
@@ -476,6 +483,13 @@ dotnet task-server.dll backup full --TaskServer:DataDirectory /srv/agent-orchest
 dotnet task-server.dll backup verify-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 dotnet task-server.dll backup restore-full <backup-id> --TaskServer:DataDirectory /srv/agent-orchestrator/data
 ```
+
+The authenticated full-backup verify and restore API responses include
+`identitySha256`, a digest of stable authority, principal, human-account,
+project and project-URL identity. Restore compares the verified snapshot
+digest with the live store after restore and fails if they differ. The setup
+relocation gate requires the matching response digests and the preserved
+`installation.json` before it records the authority as relocated.
 
 ## Container images
 

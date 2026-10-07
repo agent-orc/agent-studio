@@ -679,7 +679,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <a class="evidence" href="#sect4"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Review execution moved; the dedicated gate-step contract remains open</b><small>Develop on 24 September 2026 runs canonical Remote Review build/test commands through claimed, fenced ReviewAttempts. Integration and release gates remain local exact-subject transactions; the proposed GateSubject and GateAttempt types do not exist.</small></span></a>
     <a class="evidence" href="#sect3"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The integration-record endpoint is not a gate authority</b><small>Added 11 August 2026. Five-class historical schema, appendable only from Human Review onward, rejects in-flight lanes, never moves a card and never mutates Git.</small></span></a>
     <a class="evidence" href="#d1"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>About half of today's suite runs are spent on rounds that never ship</b><small>Operator reading of 18 August 2026 behind the review-first amendment. Stated as an estimate; the measurement that would confirm it is the same one D10 needs.</small></span></a>
-    <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>Batch green rate and same-SHA re-test rate, not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. No number in this Dossier should be read as if they had already been measured.</small></span></a>
+    <a class="evidence" href="#d10"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>At decision time, batch green rate and same-SHA re-test rate were not yet measured</b><small>Both are derivable from existing pipeline data without building anything. They decide D5, D6 and D10. The later proxy and counter are linked under D10; neither observes a combined candidate.</small></span></a>
   </div>
 
   <h2 id="sect9" data-concept-section="open-decisions" data-document-section="open-decisions"><span class="number">&sect;9</span> Operator decisions</h2>
@@ -773,6 +773,9 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     <label data-option-id="cache-only" data-option-label="C &middot; Per-SHA cache and scoping only"><input type="radio" name="staging-lane" value="cache-only"><span><b>C &middot; Build only the per-SHA gate cache and deterministic scoping; drop the lane permanently</b><span class="d">Takes the largest lever for the smallest effort and closes the question. Gives up the concurrency relief that the 11 August host evidence asked for.</span></span></label>
     <div data-comment="Note for implementation (optional)"><textarea placeholder="Note for implementation (optional)"></textarea></div>
   <p><b>Decision, 2026-09-25, operator: A.</b> Measure batch green rate and same-SHA re-test rate before deciding on a staging lane.</p>
+  <p><b>Measurement follow-up, 2026-09-27.</b> A historical per-card proxy and the available
+  same-SHA counter are recorded in <a href="d10-measurement.md">the D10 measurement</a>. The
+  proxy does not observe combined-tree outcomes; the pilot must report its actual green rate.</p>
   </div>
 
   <div class="box">
@@ -862,6 +865,14 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     &sect;7 and become cards only once the operator records selections in &sect;9.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+      <li><b>27 September 2026, AGT-2926.</b> The documentation-only batch pilot is wired from
+      settled Remote Review through durable formation, mechanical replay, a complete suite on the
+      candidate SHA, fenced publication, append-only per-member evidence, and fail-closed lane
+      release. Project routing is default-off and configurable; code-bearing deliveries retain
+      the per-card gate. D1 to D6 use the recorded option A outcomes, and the D10 estimate is
+      recorded in <a href="d10-measurement.md">the measurement note</a>. The pilot uses the
+      backend gate runner; an independently claimable remote GateAttempt remains a separate
+      delivery under &sect;4.</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

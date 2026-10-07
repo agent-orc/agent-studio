@@ -48,6 +48,7 @@ public sealed record BuildTestGateRequest(
     string Executor,
     bool RequireExactSubject = true)
 {
+    public bool DisableVerdictCache { get; init; }
     public string GateId { get; init; } = PipelineCatalogue.BuildTestGateStepId;
     public string? Project { get; init; }
     public string? WatchPath { get; init; }
@@ -356,6 +357,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     private readonly ILoadThrottleGate? _loadThrottle;
     private readonly IPipelineHealthSensor? _health;
     private readonly IHttpClientFactory? _failureHistoryClients;
+    private readonly GitStaleLockGuard _staleLocks;
     private readonly BuildTestMachineGateMode _machineGateMode;
     private readonly Func<int, IGateProcessResources> _resourceFactory = pid => new GateProcessResources(pid);
     private readonly Func<CancellationToken, Task<bool>> _composeRenderHost = ComposeRenderHostProbe.IsAvailableAsync;
@@ -364,12 +366,14 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         ILogger<BuildTestGateRunner> logger,
         ILoadThrottleGate? loadThrottle = null,
         IPipelineHealthSensor? health = null,
-        IHttpClientFactory? failureHistoryClients = null)
+        IHttpClientFactory? failureHistoryClients = null,
+        GitStaleLockGuard? staleLocks = null)
     {
         _logger = logger;
         _loadThrottle = loadThrottle;
         _health = health;
         _failureHistoryClients = failureHistoryClients;
+        _staleLocks = staleLocks ?? new GitStaleLockGuard();
         _machineGateMode = BuildTestMachineGateMode.Shared;
         _verdictCache = new GateResultCache();
     }
@@ -414,7 +418,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
 
         var repositoryPath = Path.GetFullPath(request.RepositoryPath);
         var cacheProject = request.Project ?? repositoryPath;
-        using var verdictLease = request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
+        using var verdictLease = !request.DisableVerdictCache
+            && request.RequireExactSubject && SafeSha.IsMatch(request.ExpectedSha ?? "")
             ? await _verdictCache.AcquireAsync(cacheProject, ct).ConfigureAwait(false)
             : null;
         string? toolchainIdentity = request.ToolchainIdentity;
@@ -555,7 +560,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             // A hit must bypass project preparation as well as verification.
             // The SHA fixes repository-owned command definitions. Resolve the
             // same deterministic scope used after preparation before lookup.
-            if (completed is null && request.RequireExactSubject
+            if (completed is null && !request.DisableVerdictCache && request.RequireExactSubject
                 && SafeSha.IsMatch(testedSha ?? "")
                 && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase))
             {
@@ -677,7 +682,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     // The digest covers the resolved command plan as well as the
                     // inputs that selected it. A different selection never borrows
                     // a verdict merely because the tree SHA is unchanged.
-                    if (request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
+                    if (!request.DisableVerdictCache && request.RequireExactSubject && SafeSha.IsMatch(testedSha ?? "")
                         && string.Equals(request.ExpectedSha, testedSha, StringComparison.OrdinalIgnoreCase)
                         && commands.Count > 0)
                     {
@@ -832,7 +837,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         .Distinct(StringComparer.Ordinal).ToArray()
                     : completed.Requirements,
             };
-            if (profileDigest is not null && completed.VerdictSource == GateVerdictSource.Executed)
+            if (!request.DisableVerdictCache && profileDigest is not null
+                && completed.VerdictSource == GateVerdictSource.Executed)
                 completed = _verdictCache.Record(cacheProject, testedSha!, profileDigest, completed);
             return completed;
         }
@@ -1103,6 +1109,7 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                     ["clone", "--shared", "--no-checkout", repositoryPath, clonePath],
                     infrastructureTimeout, ct).ConfigureAwait(false);
                 if (cloned.ExitCode != 0) return null;
+                await EnsureGateWorkspaceWritableAsync(clonePath, ct).ConfigureAwait(false);
                 var checkedOut = await RunGitAsync(clonePath,
                     ["checkout", "--detach", sha], infrastructureTimeout, ct).ConfigureAwait(false);
                 if (checkedOut.ExitCode != 0) return null;
@@ -1884,6 +1891,11 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
         try
         {
             Directory.CreateDirectory(ReviewWorkspaceRoot);
+            // The fetch and `worktree add` below write the shared ref store; a
+            // ref lock left by a dead git process would fail every gate
+            // (AGT-3000). The project checkout's own index is not ours to clear.
+            await _staleLocks.EnsureWritableAsync(repositoryPath, GitLockSurface.SharedRefs, bounded.Token)
+                .ConfigureAwait(false);
             var selfHealed = false;
             var available = await RunGitAsync(
                 repositoryPath, ["cat-file", "-e", expectedSha + "^{commit}"],
@@ -1965,7 +1977,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         add));
             }
 
-            var lease = new ExactWorkspaceLease(repositoryPath, workspace, "missing", _logger);
+            await EnsureGateWorkspaceWritableAsync(workspace, bounded.Token).ConfigureAwait(false);
+            var lease = new ExactWorkspaceLease(repositoryPath, workspace, "missing", _logger, _staleLocks);
             string? testedSha;
             try
             {
@@ -2006,6 +2019,9 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                 violatedBudget: budget);
         }
     }
+
+    internal Task<GitLockGuardResult> EnsureGateWorkspaceWritableAsync(string workspacePath, CancellationToken ct)
+        => _staleLocks.EnsureWritableAsync(workspacePath, GitLockSurface.All, ct);
 
     internal static IReadOnlyList<string> SubjectFetchTargets(string expectedSha, string? subjectRef)
     {
@@ -2107,14 +2123,17 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
     {
         private readonly string _repositoryPath;
         private readonly ILogger _logger;
+        private readonly GitStaleLockGuard _staleLocks;
         private bool _removed;
 
-        public ExactWorkspaceLease(string repositoryPath, string path, string testedSha, ILogger logger)
+        public ExactWorkspaceLease(string repositoryPath, string path, string testedSha, ILogger logger,
+            GitStaleLockGuard staleLocks)
         {
             _repositoryPath = repositoryPath;
             Path = path;
             TestedSha = testedSha;
             _logger = logger;
+            _staleLocks = staleLocks;
         }
 
         public string Path { get; }
@@ -2134,6 +2153,8 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
             {
                 for (var attempt = 1; attempt <= 3; attempt++)
                 {
+                    await _staleLocks.EnsureWritableAsync(Path, GitLockSurface.All, bounded.Token)
+                        .ConfigureAwait(false);
                     var remove = await RunGitAsync(
                         _repositoryPath,
                         ["worktree", "remove", "--force", Path],

@@ -58,6 +58,12 @@ export interface PipelineStepExecution {
   recommendedThinkingLevel?: string | null;
   /** Effective route source: policy, policy-economy, or task-override. */
   selectionSource?: string | null;
+  /**
+   * Which resolution level chose `model`: step, project, global, catalogue or
+   * runtime from the step resolver; task / client-default / policy for the
+   * core run; config for a host-configured decision model.
+   */
+  modelSource?: string | null;
   estimatedSavingsPercent?: number | null;
   status: PipelineStepStatus;
   startedAt?: string | null;
@@ -68,6 +74,16 @@ export interface PipelineStepExecution {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   tokenUsageSource?: string | null;
+  /** How the cost was measured; null on legacy rows and on a measurement gap. */
+  costBasis?: StepCostBasis | null;
+  /** Estimated cost; 0 for a deterministic or not-run step, null when unpriced. */
+  estimatedCostUsd?: number | null;
+  /** False when the model has no catalogue price; null when no model ran. */
+  modelPriced?: boolean | null;
+  /** Executions of this step in this attempt, review rounds included. */
+  runs?: number;
+  /** Earlier executions in this attempt, oldest first. */
+  earlierRuns?: PipelineStepRunSummary[] | null;
   reason?: string | null;
   /** Task-folder-relative detailed evidence artifact for this step. */
   evidenceRef?: string | null;
@@ -84,6 +100,48 @@ export interface PipelineStepExecution {
   carriedOverFrom?: string | null;
   fixedInRun?: number | null;
   stillOpen?: boolean | null;
+}
+
+/** `model`: an LLM call; `deterministic`: no model call, a measured zero; `not-run`: skipped. */
+export type StepCostBasis = 'model' | 'deterministic' | 'not-run';
+
+/** One earlier execution of a step inside the same attempt. */
+export interface PipelineStepRunSummary {
+  status: PipelineStepStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  durationMs: number;
+  model?: string | null;
+  thinkingLevel?: string | null;
+  modelSource?: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costBasis?: StepCostBasis | null;
+  estimatedCostUsd?: number | null;
+  modelPriced?: boolean | null;
+  verdict?: string | null;
+  reason?: string | null;
+  evidenceRef?: string | null;
+}
+
+/** One side of the "what did deciding cost" comparison. */
+export interface DecisionCostBucket {
+  tokens: number;
+  /** Sum of priced executions only. */
+  pricedCostUsd: number;
+  /** Tokens on models without a catalogue price; never folded into a zero. */
+  unpricedTokens: number;
+  runs: number;
+  unpricedRuns: number;
+}
+
+/** Cost of deciding (orchestrator steps) against the agent runs and the rest. */
+export interface DecisionCostRollup {
+  deciding: DecisionCostBucket;
+  agentRuns: DecisionCostBucket;
+  other: DecisionCostBucket;
 }
 
 export interface IntegrationConflictStageReport {
@@ -155,6 +213,8 @@ export interface PipelineStepCost {
   cacheReadCostUsd: number;
   cacheCreationCostUsd: number;
   costUsd: number;
+  /** Executions in this attempt the cost covers. */
+  runs?: number;
 }
 
 /** Per-step rows plus the task total. */
@@ -450,6 +510,8 @@ export interface TaskPipelineResponse {
    * the backend always emits it (possibly empty).
    */
   tokensByModel?: PipelineModelUsageSummary | null;
+  /** What deciding cost on this card against its agent runs, over every attempt. */
+  decisionCost?: DecisionCostRollup | null;
   config: Record<string, PipelineStepConfig>;
   /**
    * Step id to verified job-root result file. Entries only exist when the

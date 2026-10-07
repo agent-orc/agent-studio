@@ -53,6 +53,18 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
                 step => step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
             if (previousPush?.Status is PipelineStepStatus.Passed or PipelineStepStatus.Skipped) continue;
 
+            // A passed merge step authorizes only its recorded commit. A gate
+            // may begin after this scan, or an interrupted gate may outlive the
+            // process that held the in-memory busy flag. Never infer approval
+            // from the integration lane's current tip.
+            if (!ReviewSubjectStore.IsValidResultSha(merge.ApprovedIntegrationSha))
+            {
+                _logger.LogWarning(
+                    "integration-push-backstop blocked project={Project} job={JobId}: passed merge has no durable approved SHA; revalidate integration before publishing",
+                    job.ProjectName, job.Id);
+                continue;
+            }
+
             var settings = PipelineTypeSettings.ForTask(_settings.Get(job.ProjectName), job)!;
             if (!PipelineStepConfigResolver.IsEnabled(settings, PipelineCatalogue.MergeIntoDevelopPushStepId))
                 continue;
@@ -63,7 +75,8 @@ public sealed class IntegrationPushBackstopHostedService : BackgroundService
                 job.FolderPath,
                 job.WatchPath,
                 settings.IntegrationBranch,
-                ct);
+                ct,
+                merge.ApprovedIntegrationSha);
             if (result.Success) pushed++;
         }
 
