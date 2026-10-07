@@ -493,6 +493,13 @@ public record ReopenDecisionRequest
     public string? Note { get; init; }
 }
 
+/// <summary>One-off, guarded conversion of an active prose request.</summary>
+public record MigrateDecisionRequest
+{
+    public string? ExpectedPromptSha256 { get; init; }
+    public DecisionContent? Decision { get; init; }
+}
+
 /// <summary>Typed outcome of a decision-card operation, mapped to HTTP by the endpoint.</summary>
 public enum DecisionCardStatus
 {
