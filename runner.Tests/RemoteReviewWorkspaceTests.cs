@@ -1585,6 +1585,178 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2993: a compose scenario on an almost full runner disk is refused as
+    /// a typed infrastructure outcome before it builds anything, with the
+    /// measured free space in the journal.
+    /// </summary>
+    [Fact]
+    public async Task A_compose_scenario_below_the_free_disk_floor_is_refused_before_it_starts()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-started");
+        var command = await FakeComposeScenarioCommandAsync(marker);
+        var journal = new List<string>();
+        // Every real disk has less than 100 % free, so this floor always refuses.
+        var (workspace, _) = Workspace(
+            "attempt-scenario-disk-low",
+            sha,
+            [command],
+            26990,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.Equal("ReviewInfra", exception.Evidence?.Outcome);
+        Assert.Contains("below the 100 % floor", exception.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("minFreePercent=100 decision=refuse", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2993 review finding: <c>out=$(scripts/scenario.sh --target compose)</c>
+    /// executes the scenario as much as a bare call does, so it is refused too.
+    /// </summary>
+    [Fact]
+    public async Task A_compose_scenario_inside_a_command_substitution_is_refused_below_the_floor()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-substituted");
+        var command = await FakeComposeScenarioCommandAsync(marker, viaCommandSubstitution: true);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-substitution",
+            sha,
+            [command],
+            27005,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.False(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("decision=refuse", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("-u FOO")]
+    [InlineData("-a scenario-run")]
+    [InlineData("--argv0 scenario-run")]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task An_env_operand_wrapped_compose_scenario_is_refused_before_it_starts(string envOptions)
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-env-operand");
+        var command = await FakeComposeScenarioCommandAsync(marker, envOptions: envOptions);
+        var (workspace, _) = Workspace(
+            "attempt-scenario-env-operand",
+            sha,
+            [command],
+            27006,
+            composeScenarioMinFreePercent: 100);
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal(ComposeScenarioDiskAdmission.DiskLowClassification, exception.Classification);
+        Assert.False(File.Exists(marker));
+    }
+
+    [Fact]
+    public async Task A_compose_scenario_above_the_floor_runs_and_logs_the_free_disk()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = Path.Combine(_root, "compose-scenario-admitted");
+        var command = await FakeComposeScenarioCommandAsync(marker);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-disk-ok",
+            sha,
+            [command],
+            26995,
+            composeScenarioMinFreePercent: 0,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.True(File.Exists(marker));
+        Assert.Contains(journal, line =>
+            line.StartsWith("review-compose-scenario-disk step=verify-scenario ", StringComparison.Ordinal)
+            && line.Contains("decision=admit", StringComparison.Ordinal)
+            && !line.Contains("freeBytes=unknown", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// AGT-2993 review finding: a step that only mentions the scenario (in a
+    /// comment, an <c>echo</c> or quoted data) never builds an image, so even a
+    /// floor that refuses every real compose scenario must not refuse it.
+    /// </summary>
+    [Fact]
+    public async Task A_command_that_only_mentions_the_compose_scenario_is_not_gated_on_disk()
+    {
+        var sha = await SeedOriginAsync();
+        var marker = PosixShell.ToShellPath(Path.Combine(_root, "mention-only-ran"));
+        var command = new ReviewCommandDto(
+            "verify-mention",
+            "build-tests",
+            PosixShell.RequirePath(),
+            ["-lc", $"echo 'scripts/scenario.sh --target compose' && touch '{marker}' # scripts/scenario.sh --target compose --level full"]);
+        var journal = new List<string>();
+        var (workspace, _) = Workspace(
+            "attempt-scenario-mention",
+            sha,
+            [command],
+            27000,
+            composeScenarioMinFreePercent: 100,
+            log: line => { lock (journal) journal.Add(line); });
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("Pass", evidence.Outcome);
+        Assert.True(File.Exists(Path.Combine(_root, "mention-only-ran")));
+        Assert.DoesNotContain(journal, line =>
+            line.StartsWith("review-compose-scenario-disk ", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A stand-in <c>scripts/scenario.sh</c> outside the checkout that only
+    /// touches <paramref name="marker"/>, executed the way a verify command
+    /// runs the real one: <c>sh -lc 'SCENARIO_PROVIDER_REVIEW=1 sh .../scripts/scenario.sh --target compose --level full'</c>,
+    /// or captured as <c>out=$(...)</c>.
+    /// </summary>
+    private async Task<ReviewCommandDto> FakeComposeScenarioCommandAsync(
+        string marker,
+        bool viaCommandSubstitution = false,
+        string? envOptions = null)
+    {
+        var script = Path.Combine(_root, "fake-scenario", "scripts", "scenario.sh");
+        Directory.CreateDirectory(Path.GetDirectoryName(script)!);
+        await File.WriteAllTextAsync(script, $"touch '{PosixShell.ToShellPath(marker)}'\n");
+        return new ReviewCommandDto(
+            "verify-scenario",
+            "scenario",
+            PosixShell.RequirePath(),
+            ["-lc", viaCommandSubstitution
+                ? $"out=$(SCENARIO_PROVIDER_REVIEW=1 sh '{PosixShell.ToShellPath(script)}' --target compose --level full) && echo \"$out\""
+                : $"SCENARIO_PROVIDER_REVIEW=1 {(envOptions is not null ? $"env {envOptions} " : "")}sh '{PosixShell.ToShellPath(script)}' --target compose --level full"]);
+    }
+
+    /// <summary>
     /// AGT-2820: four concurrent reviews sat on the same <c>dotnet test</c> at
     /// 0.0% CPU with nothing written for ten minutes and a host load average of
     /// 0.47. Each would have held its review slot for the full two-hour command
@@ -1890,7 +2062,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         IReadOnlyList<string>? preserveGlobs = null,
         string? codexCliBin = null,
         int commandSilenceWatchdogSeconds = 600,
-        int reviewNoCpuProgressSeconds = 900)
+        int reviewNoCpuProgressSeconds = 900,
+        int composeScenarioMinFreePercent = ComposeScenarioDiskAdmission.DefaultMinFreePercent,
+        Action<string>? log = null)
     {
         var repositoryId = TaskServerClient.RepositoryIdentity(_origin)!;
         var subject = new ReviewSubjectDto(
@@ -1942,8 +2116,9 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             HeartbeatSeconds = 30,
             CommandSilenceWatchdogSeconds = commandSilenceWatchdogSeconds,
             ReviewNoCpuProgressSeconds = reviewNoCpuProgressSeconds,
+            ComposeScenarioMinFreePercent = composeScenarioMinFreePercent,
         };
-        return (new RemoteReviewWorkspace(options, subject, lease, _ => { },
+        return (new RemoteReviewWorkspace(options, subject, lease, log ?? (_ => { }),
             _ => Task.FromResult<FailureFingerprintHistoryDto?>(null)), subject);
     }
 

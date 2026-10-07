@@ -2787,6 +2787,39 @@
           <td>The runner could not reclaim files written by the container, and the released prelaunch fault consumed the same 120-second grace as lost mid-run authority.</td>
           <td><span class="pill ok">fixed in dev</span> The allowlisted <code>chown-results</code> helper repairs ownership and retries the operation. If it cannot, the typed release records path and owner; the third identical failure reaches <span class="lane">5e-escalated</span> with the fingerprint and recovery hint.</td>
         </tr>
+        <tr id="case-agt-2993-compose-scenario-disk-low">
+          <td>2026-09-28</td>
+          <td><code>AGT-2993</code><br><span class="small">compose scenario residue filled the runner disk</span></td>
+          <td>
+            Every <code>scripts/scenario.sh --target compose --level full</code> run (provider reviews with
+            <code>SCENARIO_PROVIDER_REVIEW=1</code>, operator verification, the compose smoke) left four
+            <code>agent-studio-scenario-&lt;pid&gt;-*</code> images (about 2.6 GB) and its BuildKit cache behind, and
+            <code>scripts/compose-smoke-test.sh</code> did the same with <code>agent-studio-smoke-&lt;pid&gt;-*</code>.
+            agent-runner-01 accumulated 257 images (159 GB) and 143 GB of build cache and reached 95-96 % disk twice.
+            A review step that starts a compose build on such a disk dies inside the build and reads like a product
+            failure, or fills the disk for every other slot on the host. The operator pruned by hand.
+          </td>
+          <td>
+            <code>compose_full_cleanup</code> removed the stack and its volumes but never the images it built or the
+            build cache, and nothing on the host aged them out. The review executor started compose scenarios without
+            looking at the free space they need.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> scenario and smoke cleanup (success, failure, SIGTERM) removes the
+            run's images through <code>scripts/docker-scenario-images.sh</code>;
+            <code>scripts/docker-scenario-retention.sh</code> (every scenario run and a daily systemd timer) removes
+            unused scenario/smoke images older than 6 hours and caps the build cache at 40 GB. Before a review step
+            that <em>executes</em> a compose scenario or smoke, the executor logs
+            <code>review-compose-scenario-disk</code> and, below 10 % free on the Docker data root, refuses the step
+            before it builds anything as <code>ReviewInfra</code> / <code>ComposeScenarioDiskLow</code>. That is a new
+            run-outcome classification: it is an infrastructure terminal, no verdict is charged to the change, and the
+            review takes the ordinary bounded <code>ReviewInfra</code> retry once disk is freed. The classifier in
+            <code>runner/ComposeScenarioDiskAdmission.cs</code> parses the <code>sh -lc</code> script shell-aware
+            (quotes, comments, here-documents, command positions, command substitutions), so a step that only
+            mentions the scenario in an <code>echo</code>, quoted data, or a comment is never refused on disk, while
+            one that runs it inside <code>out=$(...)</code> or backticks is gated like a direct call.
+          </td>
+        </tr>
         <tr id="case-agt-3009-gate-failure-triage">
           <td>2026-10-04</td>
           <td><code>AGT-3009</code><br><span class="small">every red merge gate parked as operator-decision</span></td>
@@ -2930,6 +2963,9 @@
           salvage only on the declared, correctness-floor-safe sibling. Otherwise it escalates.</li>
       <li>A provider capacity or rate-limit failure &rarr; shared capability <strong>Limited</strong> until the reported reset
           or the bounded unknown-limit retry. Admission waits or falls back without changing the capability to Unauthorized.</li>
+      <li>A review step that executes a compose scenario or smoke on a Docker data root below the free-space floor
+          (default 10 %) &rarr; refused before it starts as <strong>ReviewInfra / ComposeScenarioDiskLow</strong>. No
+          verdict is charged to the change; the ordinary bounded ReviewInfra retry applies (AGT-2993).</li>
       <li>Failed exit WITH substantial agent text but no provider failure terminal and no positive sentinel &rarr;
           <strong>NeedsReview</strong> ("failed without terminal sentinel"). No re-issue, no "unknown".</li>
     </ul>
