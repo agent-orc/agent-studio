@@ -1118,6 +1118,19 @@ public class TaskMutationService
         return Updated(info);
     }
 
+    /// <summary>Atomically changes kind and content for the operator migration.</summary>
+    public bool ConvertJobToDecision(string jobId, DecisionContent decision, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null || !string.Equals(info.Kind, TaskKinds.Task, StringComparison.OrdinalIgnoreCase)
+            || info.State != TaskStates.Preparation) return false;
+        if (!TaskJsonFile.UpdateFields(info.FolderPath,
+            new Dictionary<string, object> { ["kind"] = TaskKinds.Decision, ["decision"] = decision,
+                ["noBranchExpected"] = true, ["requiresIntegration"] = false },
+            _logger, _keyFileWriter)) return false;
+        return Updated(info);
+    }
+
     public bool SetTaggingStatus(string jobId, string status, string? watchPath = null)
     {
         if (status is not ("tagged" or "tags-proposed")) return false;

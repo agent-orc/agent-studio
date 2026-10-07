@@ -69,6 +69,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Completion contract: what a card must prove to claim "delivered", containment over stored records, the `next-attempt` placeholder, and the delivery-claim sweep (AGT-2817) | [concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817](../concepts/task-integration-and-merge-workflow.md#the-completion-contract-agt-2817) |
 | Stale-branch sweep: all-namespace classification, reports, report-only vs reclaim, operator reclamation (AGT-2794) | [concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794](../concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
+| Decision cards: lifecycle, fields, decider, apply step, reminders, API, and migration | [operations/decision-cards.md](../operations/decision-cards.md) |
 | Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
