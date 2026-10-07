@@ -343,17 +343,6 @@ public static class TaskCrudEndpoints
             });
         });
 
-        group.MapGet("/{jobId}/details/git", (string jobId, string? project, string? watchPath,
-            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects,
-            TaskListGitProjectionCache gitProjection, ILoggerFactory loggerFactory) =>
-        {
-            using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail/git",
-                loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
-            watchPath = ResolveWatchPath(projects, project, watchPath);
-            var task = scanner.FindJob(jobId, watchPath);
-            return task is null ? Results.NotFound() : Results.Ok(gitProjection.ReadTask(task));
-        });
-
         group.MapGet("/{jobId}", (string jobId, string? project, string? watchPath, HttpContext context, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest("tasks/detail",

@@ -19,8 +19,10 @@ public static class TaskDetailResources
     {
         group.MapGet("/{jobId}/details/git", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots) =>
+            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots, ILoggerFactory loggerFactory) =>
         {
+            using var gitTelemetry = AgentStudio.Git.GitProcessTelemetry.BeginRequest("tasks/detail/git",
+                loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
             var core = lookup.Core!;

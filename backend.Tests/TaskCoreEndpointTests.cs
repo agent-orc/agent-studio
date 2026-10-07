@@ -127,6 +127,11 @@ public sealed class TaskCoreEndpointTests : IDisposable
         history.EnsureSuccessStatusCode();
         using var git = await client.GetAsync($"/api/tasks/AGT-core/details/git?project={project.Id}&generation={generation}");
         git.EnsureSuccessStatusCode();
+        using var gitBody = JsonDocument.Parse(await git.Content.ReadAsStringAsync());
+        Assert.Equal("git", gitBody.RootElement.GetProperty("resource").GetString());
+        Assert.Equal(JsonValueKind.Object, gitBody.RootElement.GetProperty("data").ValueKind);
+        Assert.False(gitBody.RootElement.TryGetProperty("info", out _));
+        Assert.NotNull(git.Headers.ETag);
         Assert.Equal(scans, index.Misses);
     }
 
