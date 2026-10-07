@@ -6020,6 +6020,94 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     }
 
     [Fact]
+    public void Cause_breaker_rechecks_pending_review_when_an_already_observed_project_meets_the_open_cause()
+    {
+        const string otherProjectName = "other-project";
+        const string otherFailingKey = "OTH-FAILING";
+        const string otherPendingKey = "OTH-PENDING";
+        var otherWatchPath = Path.Combine(_workspace, "projects", otherProjectName);
+        foreach (var state in TaskStates.All)
+            Directory.CreateDirectory(Path.Combine(otherWatchPath, state));
+        SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
+        SeedTask(TaskStates.AutoReview, otherFailingKey, "Failing review elsewhere", "Build and verify.",
+            watchPath: otherWatchPath);
+        SeedTask(TaskStates.AutoReview, otherPendingKey, "Pending review elsewhere", "Build and verify.",
+            watchPath: otherWatchPath, order: 2);
+        foreach (var (watchPath, key) in new[]
+                 { (_watchPath, TaskKey), (otherWatchPath, otherFailingKey), (otherWatchPath, otherPendingKey) })
+        {
+            Directory.CreateDirectory(TaskStorageLayout.BucketDir(watchPath, 0));
+            Directory.Move(Path.Combine(watchPath, TaskStates.AutoReview, key),
+                TaskStorageLayout.JobDir(watchPath, 0, key));
+        }
+        var pendingFolder = TaskStorageLayout.JobDir(otherWatchPath, 0, otherPendingKey);
+        using var factory = BuildFactory(
+            additionalProjectName: otherProjectName,
+            additionalWatchPath: otherWatchPath);
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: otherPendingKey);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        var first = scanner.FindJob(TaskKey, _watchPath)!;
+        var otherFailing = scanner.FindJob(otherFailingKey, otherWatchPath)!;
+
+        // The other project is already known to the breaker store through a
+        // different, still closed fingerprint.
+        var dotnetEvidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "dotnet restore: command not found");
+        var dotnetFingerprint = CauseFingerprintPolicy.Compute("ReviewInfra", "PreparationFailed",
+            dotnetEvidence.StderrTail, 127, "tool:dotnet");
+        Assert.Equal(CauseBreakerAction.Retry, breaker.Observe(otherFailing, otherFailingKey, "rva-other-dotnet",
+            dotnetFingerprint, dotnetEvidence, dotnetEvidence.StderrTail).Decision.Action);
+        var fingerprint = OpenPreparationBreaker(breaker, first);
+
+        Assert.DoesNotContain(otherPendingKey, breaker.HoldPendingReviews());
+        Assert.Null(CauseWaitMarker.TryRead(pendingFolder));
+
+        var evidence = new FailureCommandEvidence("PreparationFailed", "ReviewInfra", 127,
+            StderrTail: "npm ci: command not found");
+        Assert.Equal(CauseBreakerAction.Wait, breaker.Observe(otherFailing, otherFailingKey, "rva-other-npm",
+            fingerprint, evidence, evidence.StderrTail).Decision.Action);
+        // A second observation of the open cause in the same project changes
+        // nothing that was checked; the claim still holds the pending review.
+        Assert.Contains(otherPendingKey, breaker.HoldPendingReviews());
+        Assert.NotNull(CauseWaitMarker.TryRead(pendingFolder));
+        Assert.Contains(otherPendingKey, breaker.HoldPendingReviews());
+    }
+
+    [Fact]
+    public void Cause_breaker_rechecks_pending_review_whose_card_reaches_auto_review_after_the_check()
+    {
+        const string nextTaskKey = "AGT-RUNNER-E2E-NEXT";
+        SeedTask(TaskStates.AutoReview, TaskKey, "First affected review", "Build and verify.");
+        SeedTask(TaskStates.Progress, nextTaskKey, "Card still finishing its run", "Build and verify.");
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
+        var nextTaskFolder = TaskStorageLayout.JobDir(_watchPath, 0, nextTaskKey);
+        Directory.Move(Path.Combine(_watchPath, TaskStates.Progress, nextTaskKey), nextTaskFolder);
+        using var factory = BuildFactory();
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, taskKey: nextTaskKey);
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var breaker = factory.Services.GetRequiredService<CauseBreakerService>();
+        OpenPreparationBreaker(breaker, scanner.FindJob(TaskKey, _watchPath)!);
+        Assert.Equal(TaskStates.Progress, scanner.FindJob(nextTaskKey, _watchPath)!.State);
+
+        // The attempt is minted before the board shows the lane move: not
+        // held yet, and not settled either.
+        Assert.DoesNotContain(nextTaskKey, breaker.HoldPendingReviews());
+        Assert.Null(CauseWaitMarker.TryRead(nextTaskFolder));
+
+        var taskJson = JsonNode.Parse(File.ReadAllText(Path.Combine(nextTaskFolder, "task.json")))!;
+        taskJson["state"] = TaskStates.AutoReview;
+        File.WriteAllText(Path.Combine(nextTaskFolder, "task.json"), taskJson.ToJsonString());
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        Assert.Equal(TaskStates.AutoReview, scanner.FindJob(nextTaskKey, _watchPath)!.State);
+
+        Assert.Contains(nextTaskKey, breaker.HoldPendingReviews());
+        Assert.NotNull(CauseWaitMarker.TryRead(nextTaskFolder));
+    }
+
+    [Fact]
     public void Cause_breaker_opens_once_parks_claims_and_closes_on_green_probe()
     {
         SeedTask(TaskStates.AutoReview, TaskKey, "Repeated preparation failure", "Build and verify.");

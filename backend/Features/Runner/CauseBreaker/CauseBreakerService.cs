@@ -101,7 +101,7 @@ public sealed class CauseBreakerService
     private readonly TimeProvider _time;
     private List<CauseBreakerRecord>? _records;
     private readonly HashSet<string> _checkedPendingReviewIds = new(StringComparer.OrdinalIgnoreCase);
-    private long _checkedPendingSettingsVersion = -1;
+    private string? _checkedPendingStamp;
 
     public CauseBreakerService(
         IConfiguration configuration,
@@ -173,7 +173,6 @@ public sealed class CauseBreakerService
             var variants = record.Variants.Contains(variant, StringComparer.Ordinal) || record.Variants.Count >= MaxVariants
                 ? record.Variants
                 : [.. record.Variants, variant];
-            var previousObservations = record.Observations;
             var observations = record.Observations.Any(item => Same(item.AttemptId, attemptId))
                 ? record.Observations
                 : record.Observations
@@ -194,7 +193,6 @@ public sealed class CauseBreakerService
             FailureInterventionResult? intervention = null;
             if (decision.Action == CauseBreakerAction.Open)
             {
-                _checkedPendingReviewIds.Clear();
                 var classification = Classification(fingerprint, decision);
                 var cutoff = now - thresholds.Window;
                 var causeEvidence = evidence with
@@ -253,12 +251,6 @@ public sealed class CauseBreakerService
             }
             else if (decision.Action == CauseBreakerAction.Wait)
             {
-                // A first observation in another project widens where the open
-                // cause applies; pending attempts checked before it must be
-                // reconsidered by the next claim poll.
-                if (!previousObservations.Any(item =>
-                        string.Equals(item.Project, task.ProjectName, StringComparison.OrdinalIgnoreCase)))
-                    _checkedPendingReviewIds.Clear();
                 intervention = _interventions.RaiseCause(
                     task, evidence, Classification(fingerprint, decision), record.CauseWatchPath);
                 var isProbeCard = Same(record.ProbeTaskKey, taskKey);
@@ -293,14 +285,15 @@ public sealed class CauseBreakerService
         {
             if (!Records().Any(item => item.IsOpen))
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            // A pending attempt checked while its project was disabled must be
-            // reconsidered when an operator enables the breaker. Settings
-            // mutations are rare; retain the fast cache on ordinary polls.
-            var settingsVersion = _settings.Version;
-            if (_checkedPendingSettingsVersion != settingsVersion)
+            // A checked pending attempt stays admitted only while every input
+            // of that decision is unchanged. Opening or resolving a breaker, an
+            // observation in another project, a pruned observation or a
+            // settings change all change the stamp and force a recheck.
+            var stamp = PendingCheckStamp();
+            if (!string.Equals(_checkedPendingStamp, stamp, StringComparison.Ordinal))
             {
                 _checkedPendingReviewIds.Clear();
-                _checkedPendingSettingsVersion = settingsVersion;
+                _checkedPendingStamp = stamp;
             }
             var held = HeldLocked();
             var pending = _authority.ListPendingReviewAttempts();
@@ -318,6 +311,9 @@ public sealed class CauseBreakerService
                 foreach (var review in uncheckedReviews)
                 {
                     if (!tasks.TryGetValue(review.TaskKey, out var task)) continue;
+                    // A card whose lane has not reached Auto Review in this
+                    // snapshot is not decided yet; check it again next poll.
+                    if (!string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase)) continue;
                     _checkedPendingReviewIds.Add(review.AttemptId);
                     HoldLocked(task, review.TaskKey, review.Subject.Plan);
                 }
@@ -386,6 +382,22 @@ public sealed class CauseBreakerService
             return false;
         return record.Observations.Any(item => string.Equals(item.Project, task.ProjectName, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// Every input <see cref="HoldLocked"/> reads besides the attempt's own
+    /// plan and lane: the settings version (enabled flag, thresholds) and, per
+    /// breaker that can hold new work, its toolchain and observed projects.
+    /// Holding a card only adds to <c>Waiting</c>, which is not part of it.
+    /// </summary>
+    private string PendingCheckStamp()
+        => string.Join(";", Records()
+            .Where(item => item.IsOpen && item.CloseReason is null)
+            .OrderBy(item => item.Fingerprint, StringComparer.OrdinalIgnoreCase)
+            .Select(item => item.Fingerprint + "|" + item.Toolchain + "|" + string.Join(",", item.Observations
+                .Select(observation => (observation.Project ?? string.Empty).ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)))
+            .Prepend(_settings.Version.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
     private HashSet<string> HeldLocked()
         => Records()
@@ -665,7 +677,6 @@ public sealed class CauseBreakerService
         CauseBreakerCloseReason reason,
         string? exceptTaskKey)
     {
-        _checkedPendingReviewIds.Clear();
         var now = _time.GetUtcNow().UtcDateTime;
         var closeReason = reason == CauseBreakerCloseReason.CauseIntegrated ? "cause-integrated" : "probe-green";
         var stillWaiting = new List<CauseBreakerWaitingCard>();
