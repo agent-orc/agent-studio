@@ -103,6 +103,9 @@ Do **not** select by CSS class names; they belong to styling and change often.
   fixture exposes `{ port, baseUrl, workspace }` to the test; resolve the
   workspace path from `DEV_CHECKOUT` env, the backend's `/api/watch-paths`,
   or fall back to the script default — never hard-code the path in a spec.
+  For pinned product captures, `test.use({ demoWorkspace: true })` seeds the
+  isolated ADR-0056 demo store before boot. This option requires port 5030 to
+  be offline so a capture cannot replace an operator backend.
 
   ```ts
   import { test, expect } from './fixtures/dev-backend';
@@ -644,6 +647,12 @@ Do **not** select by CSS class names; they belong to styling and change often.
 | `undo-toast-bottom-right.spec.ts` | Move/Undo toast docks bottom-right; top-right corner stays free |
 | `unified-dialog-screenshots.spec.ts` | Unified confirm + notify visuals |
 | `visual-evidence-strip-and-reel.spec.ts` | Visual evidence: per-task strip + lightbox + workspace reel |
+
+### `usage-cockpit/` - 1 spec
+
+| Spec | Summary |
+|------|---------|
+| `cockpit-integration-matrix.spec.ts` | HUC-S7 product UI captures and integration geometry over the pinned demo workspace; set `HUC_RESULTS_DIR` for the evidence folder |
 
 ### `workspace/` - 8 specs
 
