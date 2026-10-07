@@ -1,0 +1,31 @@
+:host { display: contents; }
+
+.receipt {
+  display: grid;
+  grid-template-columns: var(--ov-label-col) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--studio-spacing-2);
+  min-height: var(--studio-row-min-h);
+  padding-block: var(--studio-row-pad-block);
+}
+
+.receipt__label { color: var(--studio-fg-muted); }
+.receipt__value {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--studio-fg);
+}
+
+.receipt__state { flex: 0 0 auto; }
+.receipt__identity {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--studio-fg-muted);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+}

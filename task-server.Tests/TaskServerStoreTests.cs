@@ -13,6 +13,44 @@ namespace TaskServer.Tests;
 public sealed partial class TaskServerStoreTests
 {
     [Fact]
+    public async Task Steering_feedback_rebuilds_the_same_command_and_attempt_in_all_read_views_after_restart()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        var instruction = new ContinuationIntentRequest(1, "receipt-round-1", task.Version,
+            "Continue this task", null, null, null, "continue", "operator correction");
+        await store.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            instruction, "human:owner", default);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await store.RenewLeaseAsync(claim.Run!.RunId,
+            new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, StartedPromptSha256: claim.FollowUp!.PromptSha256),
+            "runner-a", default);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var feedback = (await restarted.GetSteeringFeedbackAsync(project.ProjectId, task.TaskId, default))!;
+        var receipt = Assert.Single(feedback.History, fact => fact.CommandId == instruction.CommandId);
+        Assert.Equal("consumed", receipt.State);
+        Assert.Equal(claim.Run.RunId, receipt.AttemptId);
+        Assert.Equal(receipt, feedback.Current);
+        var timeline = await restarted.GetTaskTimelineAsync(project.ProjectId, task.TaskId, default);
+        Assert.Single(timeline.Entries, entry => entry.SteeringFeedback?.CommandId == instruction.CommandId);
+        var feed = await restarted.GetOrchestratorFeedAsync(500, default);
+        Assert.Single(feed.Entries, entry => entry.SteeringFeedback?.CommandId == instruction.CommandId);
+
+        var current = (await restarted.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
+        await restarted.SubmitContinuationIntentAsync(project.ProjectId, task.TaskId,
+            instruction with { CommandId = "receipt-round-2", ExpectedTaskVersion = current.Version,
+                Prompt = "Later correction" }, "human:owner", default);
+        feedback = (await restarted.GetSteeringFeedbackAsync(project.ProjectId, task.TaskId, default))!;
+        Assert.Equal("receipt-round-2", feedback.Current?.CommandId);
+    }
+
+    [Fact]
     public async Task Follow_up_is_reserved_on_claim_and_consumed_only_after_worker_start_acknowledgement()
     {
         using var temp = new TempDirectory();
