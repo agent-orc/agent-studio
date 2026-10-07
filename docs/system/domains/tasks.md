@@ -265,9 +265,63 @@ move cannot return a decided card to Preparation; only the reopen lifecycle has
 the permit for that transition. A dependant
 whose `references.dependsOn` points to a pending decision reports the key in
 `blockedBy`; moves into Ready or Progress and runner claims are refused while
-the decision is pending. Deciding only releases that dependency gate. Applying
-the choice to prompts or creating implementation cards belongs to the separate
-apply delivery.
+the decision is pending.
+
+Deciding also applies the choice (`DecisionApplyService`). Keys listed in
+`decision.appliesTo` are linked implementation cards (blank keys and the
+decision's own key are ignored): each one waiting in Backlog, Preparation,
+Orchestrator Prep (`1a-orchestrator-prep`), or Escalated receives a decision block in `prompt.md`
+(question, chosen option, rationale, record link) and moves to `2-ready`; a card
+already in `2-ready` receives the block only, and a card past that point is left
+unchanged and named in the apply notes. With no linked card, the chosen option's
+`requirements` (Dossier implementation items) become `2-ready` coding cards
+through `ConceptPromotionService.CreateCards`, the ledger-backed mechanism
+concept promotion uses. The history entry records `applyOutcome` and
+`appliedTaskKeys`, and the wiki record lists them. A failed apply leaves the
+decision recorded and posts an activity feed alert. If the apply receipt or
+outcome cannot be saved after the choice is recorded, the endpoint returns a
+conflict; repeating the same choice resumes the apply step without adding
+another decision entry or duplicating cards. A linked card counts as applied
+only once its block and its move to `2-ready` both landed; a refused move or an
+unwritten block records `applyOutcome: failed`, and repeating the same choice
+resumes a failed apply the same way.
+
+Decision cards are also raised automatically through `DecisionCardRequests`:
+by the runner's Blocked outcome when the agent's final message states a question
+with two to four options, by `FailureInterventionService` when the failure
+evidence carries a `fork`, and by concept promotion for a Dossier implementation
+item with a `decision` block (descriptor shape in
+[workflow-sized task cutting](../../operations/workflow-sized-task-cutting.md#decision-items)).
+The runner fills the failure `fork` at its run-failure boundary
+(`ProjectRunner`, core agent run step) with `BlockedForkReader.ReadRun`: only the
+agent turn that owns the final Blocked or NeedsInput sentinel is read, so crash
+output or build logs never become a decision; gate and review-plane failures carry
+no agent turn and keep the prose intervention. The blocked card becomes a
+dependant and apply target and gets a `dependsOn` edge to the decision card.
+A request counts as raised only once that edge is written. When the write fails
+the request reports no card; the decision already names the blocked card in
+`appliesTo`, so the next request for the same question reuses it and writes the
+missing edge instead of raising a second card. The Blocked outcome has already
+moved its card to Escalated, so no later request comes for it; the decision
+sweep (`DecisionCardRequests.RepairLinks`) writes the missing edge of every
+escalated card an open decision names as dependant and apply target. A failure that a further card hits
+attaches it to the open decision under the decision write gate, so a choice
+taken meanwhile is never overwritten; a failed attach is not recorded as an
+affected card and is retried on the next raise.
+
+`DecisionReminderSweep` runs every 30 minutes
+(`Supervisor:DecisionReminderSweepIntervalMinutes`). Once a pending decision
+passes its due date (`dueDate`, or three days after it was requested or last
+reopened), it posts one reminder per pending cycle: the wiki record gains
+lifecycle frontmatter (`pageKind: decision`, `review-requested`) so the
+workbench inbox lists it, and the activity feed gets an alert naming the decider
+and the blocked cards. Deciding rewrites the record without that frontmatter.
+The sweep stamps `remindedAt` only after both writes succeed. A failed inbox
+or feed write remains due for the next sweep, and a feed line already posted
+before a failed stamp is reused on retry.
+The sweep reads each due card again under the decision write gate that decide,
+reopen, and apply hold, and skips it when it is no longer pending, so a decision
+taken after the scan is never overwritten by the reminder stamp.
 
 ## Task Server failure fingerprint API
 

@@ -15,8 +15,8 @@
     },
     "pageKind": {
       "type": "string",
-      "enum": ["design", "concept", "exploration", "workbench"],
-      "description": "Lifecycle-aware page family."
+      "enum": ["design", "concept", "exploration", "workbench", "decision"],
+      "description": "Lifecycle-aware page family. A decision record under operations/decisions/ carries decision while an overdue reminder asks for review."
     },
     "historyEntry": {
       "type": "object",
