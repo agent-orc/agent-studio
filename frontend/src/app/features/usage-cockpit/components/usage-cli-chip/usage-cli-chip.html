@@ -1,6 +1,8 @@
 @let v = view();
 <button type="button"
         class="usage-cli-chip"
+        [class.usage-cli-chip--warning]="v.alarm === 'warning'"
+        [class.usage-cli-chip--limited]="v.alarm === 'limited'"
         [attr.data-testid]="'usage-cli-chip-' + v.cliId"
         [attr.data-state]="v.state"
         [attr.data-fit]="fit()"
@@ -30,10 +32,20 @@
         </span>
       }
     }
-    @if (v.state === 'stale') {
+    @if (v.alarmLabel && !compact()) {
+      <span class="usage-cli-chip__alarm" data-testid="usage-cli-chip-alarm-label">{{ v.alarmLabel }}</span>
+    } @else if (v.alarm) {
+      <span class="usage-cli-chip__mark usage-cli-chip__mark--alarm" data-testid="usage-cli-chip-alarm-mark" aria-hidden="true"><app-studio-icon name="warn" [size]="14" /></span>
+    } @else if (v.state === 'stale') {
       <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="clock" [size]="14" /></span>
     } @else if (v.state === 'suspicious') {
       <span class="usage-cli-chip__mark" aria-hidden="true"><app-studio-icon name="help" [size]="14" /></span>
+    }
+    @if (v.hiddenAlarm) {
+      <span class="usage-cli-chip__hidden"
+            [attr.data-severity]="v.hiddenAlarm"
+            data-testid="usage-hidden-alarm"
+            aria-hidden="true"><app-studio-icon name="warn" [size]="14" /></span>
     }
   </span>
 </button>
