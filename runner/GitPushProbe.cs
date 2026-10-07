@@ -9,6 +9,11 @@ public static class GitPushProbe
     public const string TokenRequirementsPath =
         "docs/operations/setup/linux-runner-host.md#token-requirements";
 
+    public static GitPushProbeResult WithWorkspaceProof(
+        GitPushProbeResult product, RepositoryAccessProof workspace)
+        => workspace.Ready ? product : new(ReadOnly,
+            $"Workspace repository access failed ({workspace.Status}); product fallback status was {product.Status}.");
+
     public static async Task<GitPushProbeResult> RunAsync(RunnerOptions options, Action<string> log, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(options.GitRemote))
