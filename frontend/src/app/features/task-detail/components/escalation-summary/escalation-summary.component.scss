@@ -1,37 +1,21 @@
 @use '../../../../../styles/mixins' as m;
+@use '../escalation-section' as section;
 @use './escalation-summary-actions';
 
 :host { display: block; }
 
 .escalation {
+  @include section.surface(var(--severity-high));
   display: flex;
   flex-direction: column;
   gap: var(--studio-spacing-3);
-  padding: var(--studio-spacing-3) var(--studio-spacing-4);
-  border-block: 1px solid color-mix(in srgb, var(--severity-high) 52%, var(--studio-border));
-  border-inline: 0;
-  border-radius: 0;
-  background: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--severity-high) 10%, var(--studio-bg-raised, var(--studio-bg))) 0%,
-    color-mix(in srgb, var(--severity-high) 4%, var(--studio-bg-raised, var(--studio-bg))) 48%,
-    var(--studio-bg-raised, var(--studio-bg)) 100%
-  );
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--severity-high) 8%, transparent);
+  padding: var(--studio-spacing-3);
 
   &--collapsed { padding-block: var(--studio-spacing-2); }
 
   // System give-ups use an all-round amber wash, never a decorative side bar.
   &--gave-up {
-    border-block-color: color-mix(in srgb, var(--severity-warn) 52%, var(--studio-border));
-    background: linear-gradient(
-      100deg,
-      color-mix(in srgb, var(--severity-warn) 11%, var(--studio-bg-raised, var(--studio-bg))) 0%,
-      color-mix(in srgb, var(--severity-warn) 4%, var(--studio-bg-raised, var(--studio-bg))) 48%,
-      var(--studio-bg-raised, var(--studio-bg)) 100%
-    );
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--severity-warn) 8%, transparent);
-
+    @include section.surface(var(--severity-warn));
     .escalation__eyebrow { color: var(--severity-warn); }
   }
 
@@ -98,18 +82,16 @@
   }
 
   &__delivery {
+    @include section.surface(var(--studio-accent));
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: var(--studio-spacing-2);
     padding: var(--studio-spacing-2) var(--studio-spacing-3);
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--studio-fg) 3%, transparent);
-    color: var(--studio-fg-dim);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
 
-    strong { color: var(--studio-fg-strong); }
+    strong { @include section.heading; }
   }
 
   &__delivery-lines {

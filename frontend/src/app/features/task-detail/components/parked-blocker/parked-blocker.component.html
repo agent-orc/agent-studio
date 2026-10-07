@@ -6,16 +6,22 @@
     [attr.data-decision]="v.isDecision ? 'true' : null"
     [attr.aria-label]="v.blockerLabel">
     <header class="park__head">
-      <span class="park__badge" data-testid="parked-blocker-type">{{ v.blockerLabel }}</span>
-      <span class="park__since" data-testid="parked-blocker-since">
-        Parked {{ v.parkedFor }} ago · {{ parkedAtLabel() }}
-      </span>
-      <span
-        class="park__recall"
-        [attr.data-tone]="v.recall.tone"
-        data-testid="parked-blocker-recall"
-        [cacTooltip]="v.recall.detail">{{ v.recall.label }}</span>
+      <button type="button" class="park__toggle" data-testid="parked-blocker-toggle"
+        [attr.aria-expanded]="!collapsed()" aria-controls="parked-blocker-body"
+        (click)="toggleCollapsed()">
+        <app-disclosure-marker [open]="!collapsed()" [size]="10" />
+        <span class="park__badge" data-testid="parked-blocker-type">{{ v.blockerLabel }}</span>
+        <span class="park__since" data-testid="parked-blocker-since">Parked {{ v.parkedFor }} ago @if (!collapsed()) { · {{ parkedAtLabel() }} }</span>
+      </button>
+      @if (!collapsed()) {
+        <span class="park__recall" [attr.data-tone]="v.recall.tone"
+          data-testid="parked-blocker-recall" [cacTooltip]="v.recall.detail">{{ v.recall.label }}</span>
+      }
     </header>
+    @if (collapsed()) {
+      <p class="park__collapsed-reason" data-testid="parked-blocker-collapsed-reason">{{ reasonLine() }}</p>
+    } @else {
+    <div id="parked-blocker-body" class="park__body">
 
     @if (v.question) {
       <p class="park__question" data-testid="parked-blocker-question">{{ v.question }}</p>
@@ -86,15 +92,6 @@
       </ul>
     }
 
-    <div class="park__open" data-testid="parked-blocker-open-items">
-      <strong>Open while parked</strong>
-      <ul>
-        @for (item of v.openItems; track item) {
-          <li>{{ item }}</li>
-        }
-      </ul>
-    </div>
-
     <div class="park__session">
       <button
         type="button"
@@ -161,5 +158,7 @@
         </div>
       }
     </div>
+    </div>
+    }
   </section>
 }
