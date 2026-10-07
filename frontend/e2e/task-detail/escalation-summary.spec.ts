@@ -259,7 +259,14 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
   const info = {
     ...buildInfo(state, emptyContext),
     ...(recentAttempt ? {
-      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+      parkedBlocker: {
+        blockerType: 'operator-decision', conditionKind: 'manual',
+        conditionDescription: 'Waiting for an operator decision.',
+        lane: state, parkedAt: '2026-10-06T04:22:54Z', parkedForSeconds: 59,
+        reason: 'Push protection rejected the branch.', recallStatus: 'blocked',
+        lastEvaluatedAt: null, detail: '', decision: null, needsInputFile: null,
+        evaluationAgeSeconds: null, evaluationStale: false, requiresDecisionCard: true,
+      },
     } : {}),
   };
   const detail = buildDetail(state, emptyContext);
@@ -301,8 +308,26 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: {} }) }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-07-09T20:00:00Z', snapshots: [] }) }));
+  await page.route('**/api/usage/cockpit**', (route) => {
+    const calendar = {
+      timeZone: 'UTC', weekStart: 1, dayStartUtc: '2026-10-06T00:00:00Z',
+      dayEndUtc: '2026-10-07T00:00:00Z', weekStartUtc: '2026-10-05T00:00:00Z',
+      weekEndUtc: '2026-10-12T00:00:00Z',
+    };
+    const unavailable = { status: 'unavailable', observedAt: null, ttlSeconds: null };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      snapshotVersion: 1, workspaceId: 'fixture', timeZone: 'UTC', weekStart: 1,
+      generatedAt: '2026-10-06T00:00:00Z', calendar, clis: [],
+      cost: { currency: 'USD', calendar, todayUsd: null, weekUsd: null, projects: [],
+        coverage: unavailable, pricingVersion: 'fixture', normalizationVersion: 'fixture',
+        ledgerEndpointTemplate: '' },
+      runs: [], slots: [], sources: {},
+    }) });
+  });
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) }));
+  await page.route('**/api/projects/*/workbenches**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
 
   // Detail (broad) — must be registered before the narrower sub-routes below.
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
@@ -312,6 +337,10 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
   // (`null` = no pipeline yet) so no shell-error overlay floats over the panel.
   await page.route(/\/api\/tasks\/[^/]+\/pipeline(\?|$)/, (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }));
+  await page.route(/\/api\/tasks\/[^/]+\/session-events(\?|$)/, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      events: [], sessionChain: [], currentSessionId: null,
+    }) }));
 
   // Narrow sub-routes win over the detail route (registered later).
   await page.route('**/code-review/list**', (route) =>
@@ -354,7 +383,7 @@ async function installRoutes(page: Page, state: string, emptyContext = false, re
 async function dismissAppErrorDialog(page: Page): Promise<void> {
   const dialog = page.getByTestId('error-dialog');
   for (let i = 0; i < 3 && (await dialog.isVisible().catch(() => false)); i++) {
-    await page.keyboard.press('Escape');
+    await page.getByTestId('error-dialog-close').click();
     await dialog.waitFor({ state: 'hidden', timeout: 2_000 }).catch(() => undefined);
   }
 }
