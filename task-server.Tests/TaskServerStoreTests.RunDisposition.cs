@@ -1,11 +1,48 @@
 using AgentStudio.TaskServer;
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace TaskServer.Tests;
 
 public sealed partial class TaskServerStoreTests
 {
+    [Fact]
+    public async Task Failed_lane_placement_keeps_the_claim_and_fence_live()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+
+        await using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TRIGGER reject_lane_placement BEFORE UPDATE OF rank ON tasks
+                BEGIN SELECT RAISE(ABORT, 'lane placement failed'); END;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await Assert.ThrowsAsync<SqliteException>(() => store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("0-backlog", RunIntent: "revoke"), "human:owner", default));
+
+        Assert.Equal("3-progress", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        await store.RenewLeaseAsync(claim.Run!.RunId,
+            new LeaseRenewRequest("runner-a", "instance-a", claim.Lease!.LeaseId, claim.Lease.Fence),
+            "runner-a", default);
+        await using var verify = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False");
+        await verify.OpenAsync();
+        await using var fence = verify.CreateCommand();
+        fence.CommandText = "SELECT last_fence FROM fence_counters WHERE task_id = $task";
+        fence.Parameters.AddWithValue("$task", task.TaskId);
+        Assert.Equal(claim.Lease.Fence, (long)(await fence.ExecuteScalarAsync())!);
+    }
+
     [Fact]
     public async Task Operator_move_revokes_claim_and_old_completion_cannot_change_lane()
     {

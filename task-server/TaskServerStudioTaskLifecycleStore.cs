@@ -50,19 +50,6 @@ public sealed partial class TaskServerStore
                         throw new TaskServerConflictException("steer-follow-up-required",
                             "A move that keeps the run alive requires a queued follow-up.");
                 }
-                else
-                {
-                    await ExecuteAsync(connection, """
-                        UPDATE leases SET status = 'revoked' WHERE run_id = $run;
-                        UPDATE runs SET status = 'superseded', finished_at = $now WHERE id = $run;
-                        INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, 1)
-                        ON CONFLICT(task_id) DO UPDATE SET last_fence = last_fence + 1;
-                        """, ct, transaction,
-                        ("$run", activeRunId), ("$task", existing.TaskId), ("$now", Iso(now)));
-                    await AuditAsync(connection, transaction, actorId, "run.revoked", "run", activeRunId,
-                        JsonSerializer.Serialize(new { reason = request.Reason, taskId = existing.TaskId,
-                            salvage = "quarantine ref retained by runner after lease rejection" }), ct);
-                }
             }
             var position = await PlaceInLaneAsync(
                 connection, transaction, existing.ProjectId, request.TargetState, existing.TaskId, request.TargetIndex, ct);
@@ -73,6 +60,23 @@ public sealed partial class TaskServerStore
                  WHERE task_id = $id;
                 """, ct, transaction,
                 ("$state", request.TargetState), ("$updated", Iso(now)), ("$id", existing.TaskId));
+            // Revoke only after the lane write succeeds; the transaction still
+            // rolls both changes back if a later step fails.
+            if (request.TargetState != existing.State
+                && activeRunId is not null
+                && request.RunIntent == "revoke")
+            {
+                await ExecuteAsync(connection, """
+                    UPDATE leases SET status = 'revoked' WHERE run_id = $run;
+                    UPDATE runs SET status = 'superseded', finished_at = $now WHERE id = $run;
+                    INSERT INTO fence_counters(task_id, last_fence) VALUES ($task, 1)
+                    ON CONFLICT(task_id) DO UPDATE SET last_fence = last_fence + 1;
+                    """, ct, transaction,
+                    ("$run", activeRunId), ("$task", existing.TaskId), ("$now", Iso(now)));
+                await AuditAsync(connection, transaction, actorId, "run.revoked", "run", activeRunId,
+                    JsonSerializer.Serialize(new { reason = request.Reason, taskId = existing.TaskId,
+                        salvage = "quarantine ref retained by runner after lease rejection" }), ct);
+            }
             if (request.TargetState is StudioTaskLanes.Completed or StudioTaskLanes.Archive)
                 await SupersedePendingFollowUpAsync(
                     connection, transaction, existing.TaskId, actorId, ct);
