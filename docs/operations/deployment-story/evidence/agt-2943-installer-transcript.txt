@@ -1,0 +1,273 @@
+# AGT-2943 installer transcript
+host: agent-studio-runner
+captured (UTC): 2026-10-05T07:49:38Z
+platform: Linux 6.8.0-124-generic x86_64; Ubuntu 24.04.4 LTS
+dotnet: 10.0.301; docker: 29.1.3
+base (develop merged into the delivery): c64ff00b170604573414bd1b37d50dd905ee21a6
+origin/develop: b60de354d7325a3f1ed6d4f070e59a63f553746e
+setup sources sha256 (sha256sum setup/*.cs | sha256sum): 56988ff2133952b6f356b6d0cabff22eee90696658a38f6719b7a599f383942d
+uncommitted delivery files at capture: 12
+Secrets are files under $WORK with mode 600; no token value is printed.
+
+## 1. Preflight, one box (Docker target and native target)
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey one-box --target docker --install-dir $WORK/one-box
+Journey: one-box (--mode studio)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Human identity: A personal operator account signs in through the browser edge; service tokens never enter a browser.
+  Project origin: The canonical Git repository registered in the Task Server project registry.
+  First runner: One runner-host identity with probed coding and review capabilities.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> release-verified -> services-healthy -> identity-bootstrapped -> authenticated-canary -> recovery-checkpoint
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Docker: Docker engine running
+  [ok  ] Docker Compose: Compose v2 available
+  [ok  ] Storage: 33 GiB free
+  [n/a ] Authority URL: not required for this journey
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [n/a ] Connectivity: not required for this journey
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+[exit 0]
+
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey one-box --target native --install-dir $WORK/one-box
+Journey: one-box (--mode studio)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Human identity: A personal operator account signs in through the browser edge; service tokens never enter a browser.
+  Project origin: The canonical Git repository registered in the Task Server project registry.
+  First runner: One runner-host identity with probed coding and review capabilities.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> release-verified -> services-healthy -> identity-bootstrapped -> authenticated-canary -> recovery-checkpoint
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Storage: 33 GiB free
+  [n/a ] Authority URL: not required for this journey
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [n/a ] Connectivity: not required for this journey
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+[exit 0]
+
+## 2. Preflight, attach-studio without an authority URL
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey attach-studio
+Journey: attach-studio (--mode connector)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Human identity: A personal operator account signs in through the browser edge; service tokens never enter a browser.
+  Authority origin: The private HTTPS Task Server origin; no silent local fallback.
+  Studio token: A protected token file; Studio observes and submits requests only.
+  Checkpoints: preflight -> release-verified -> authority-reachable -> identity-confirmed
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [n/a ] Storage: not probed
+  [FAIL] Authority URL: missing: existing authority URL known
+         Recovery: Pass --server-url with the authority's https URL; a join-host run reads it from the join token issued by that authority.
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [n/a ] Connectivity: not required for this journey
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+[exit 1]
+
+## 3. Join-host preflight probes the authority inside the join token
+Task Server A (real process, bearer auth) listens on a loopback port; the join token names it.
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey join-host --join-token-file $WORK/join.token --install-dir $WORK/host
+Journey: join-host (--mode agent-host)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Join token: A protected, single-purpose join token file from the existing authority.
+  Project origin: The same project id and repository; joining a host is not project migration.
+  First runner: One runner-host identity with probed coding and review capabilities.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> release-verified -> host-enrolled -> repository-proof -> authenticated-canary
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Storage: 33 GiB free
+  [ok  ] Authority URL: existing authority URL known
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [ok  ] Connectivity: authority reachable
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [ok  ] Provider: provider CLI installed (login is proven at host enrolment)
+  [ok  ] Secret file: token file owner-only
+[exit 0]
+
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey join-host --join-token-file $WORK/join.token --server-url https://other.wg.internal
+Setup failed: The join token names authority http://127.0.0.1:52649, but --server-url is https://other.wg.internal. Remove --server-url or request a join token from that authority.
+[exit 1]
+
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey join-host --join-token-file $WORK/bad.token
+Setup failed: Join token checksum is invalid. Copy the token again.
+[exit 1]
+
+## 4. Dry-run of the Docker one-box install
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll --journey one-box --target docker --dry-run --unattended --install-dir $WORK/one-box
+Journey: one-box (--mode studio)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Human identity: A personal operator account signs in through the browser edge; service tokens never enter a browser.
+  Project origin: The canonical Git repository registered in the Task Server project registry.
+  First runner: One runner-host identity with probed coding and review capabilities.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> release-verified -> services-healthy -> identity-bootstrapped -> authenticated-canary -> recovery-checkpoint
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Docker: Docker engine running
+  [ok  ] Docker Compose: Compose v2 available
+  [ok  ] Storage: 33 GiB free
+  [n/a ] Authority URL: not required for this journey
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [n/a ] Connectivity: not required for this journey
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+[dry-run] installation manifest: Create inst_59aec79987c24475a08c9601dd5745d2
+[dry-run] install verified Compose bundle v0.9.5 at $WORK/one-box/releases/0.9.5
+[dry-run] docker compose --project-name agent-studio --env-file $WORK/one-box/.env -f $WORK/one-box/releases/0.9.5/docker-compose.yml pull
+[dry-run] docker compose --project-name agent-studio --env-file $WORK/one-box/.env -f $WORK/one-box/releases/0.9.5/docker-compose.yml up -d --wait
+Studio: http://127.0.0.1:4011/
+One runner container is started with the stack.
+Add a project and configure runner CLI credentials before running tasks.
+[exit 0]
+
+$ ls -A $WORK/one-box (a dry run writes nothing)
+ls: cannot access '$WORK/one-box': No such file or directory
+
+## 5. Wrong release version leaves no release pin
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll --journey one-box --target docker --release-version 9.9.9 --unattended --install-dir $WORK/wrong
+Journey: one-box (--mode studio)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Human identity: A personal operator account signs in through the browser edge; service tokens never enter a browser.
+  Project origin: The canonical Git repository registered in the Task Server project registry.
+  First runner: One runner-host identity with probed coding and review capabilities.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> release-verified -> services-healthy -> identity-bootstrapped -> authenticated-canary -> recovery-checkpoint
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Docker: Docker engine running
+  [ok  ] Docker Compose: Compose v2 available
+  [ok  ] Storage: 33 GiB free
+  [n/a ] Authority URL: not required for this journey
+  [n/a ] DNS: not required for this journey
+  [n/a ] WireGuard: not required for this journey
+  [n/a ] Connectivity: not required for this journey
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+  Downloading agent-studio-compose-9.9.9.tar.gz
+Setup failed: Release asset was not found: https://github.com/agent-orc/agent-studio/releases/download/v9.9.9/agent-studio-compose-9.9.9.tar.gz
+[exit 1]
+
+$ ls -A $WORK/wrong
+ls: cannot access '$WORK/wrong': No such file or directory
+
+## 6. Acceptance against Task Server A
+No Compose release is published for this development build, so the one-box
+installation.json below is seeded with the schema setup writes after service
+health (phase awaiting-acceptance). Everything after it is a real run.
+### 6a. Before the first runner contacted the authority
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll accept --install-dir $WORK/accept --server-url http://127.0.0.1:52649 --token-file $WORK/server-A/studio.token
+Acceptance pending at identity-bootstrapped: No runner has contacted the Task Server yet. Enrol the first runner with its coding and review budgets, then rerun accept.
+Installation inst_agt2943evidence stays awaiting-acceptance.
+[exit 2]
+
+$ (runner principal contacts Task Server A with its own token)
+
+### 6b. Identity observed; a full set is created and verified, rehearsal pending
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll accept --install-dir $WORK/accept --server-url http://127.0.0.1:52649 --token-file $WORK/server-A/studio.token --backup-path $WORK/server-A/backups
+Acceptance pending at recovery-checkpoint: Rehearse restore of 20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3 into an isolated empty Task Server store, record $WORK/server-A/backups/full/20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3.rehearsal.json, then rerun accept with --recovery-checkpoint $WORK/server-A/backups/full/20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3.
+Installation inst_agt2943evidence stays awaiting-acceptance.
+[exit 2]
+
+### 6c. The Task Server answers 426 to a management call without the protocol header
+$ curl -X POST $URL_A/api/v1/management/backups/full/20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3/verify  (no X-Task-Protocol-Version)
+HTTP 426
+
+### 6d. Empty-target rehearsal on a second, empty Task Server B
+Task Server B (empty store) at http://127.0.0.1:38461; set 20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3 staged in its backup directory.
+A verify: {"backupId":"20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3","verified":true,"identitySha256":"92afd2481e46c6ea03428decdf3925081008695f63f5c6f3aaa959eb8b49a10c","setSha256":"05034bbf796698209a2264d39859d7a958e20f97857b24a59bef2a74d49be866"}
+B mode: {"mode":3} (3 = Maintenance)
+B restore: {"backupId":"20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3","restored":true,"identitySha256":"92afd2481e46c6ea03428decdf3925081008695f63f5c6f3aaa959eb8b49a10c"}
+Rehearsal receipt written: the restore succeeded and the identity digests match.
+
+### 6e. Acceptance with the rehearsed set and a configured canary
+Canary used here: scripts/scenario-remote-smoke.sh, the AGT-2739 remote management-plane
+slice. It proves the installer's canary contract and authenticated API wiring; it is not
+the provider-authenticated coding, review and publication canary.
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll accept --install-dir $WORK/accept --server-url http://127.0.0.1:52649 --token-file $WORK/server-A/studio.token --recovery-checkpoint $WORK/server-A/backups/full/20261005074959953-full-set-4af6871bdbe14a579cf15ddf59d292b3
+readyz=reachable
+bootstrap-principals=issued credential for runner:scenario-remote-20261005075015-4128781
+create-task=task RMT-1 created in project prj_674afcb0cce946819a2013bc0265ab78
+backup=sha256=9ef0566fb853...
+cleanup=task RMT-1 archived
+Installation inst_agt2943evidence is accepted (phase complete).
+[exit 0]
+
+$ jq -c '{InstallationId, Journey, Phase, ReleaseVersion}' $WORK/accept/installation.json
+{"InstallationId":"inst_agt2943evidence","Journey":"one-box","Phase":"complete","ReleaseVersion":"0.9.5"}
+
+$ jq -c '{checkpoint, outcome, installationId, releaseVersion, setupVersion, host, atUtc}' $WORK/accept/checkpoints.jsonl
+{"checkpoint":"identity-bootstrapped","outcome":"not reached","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:49:58.9627889Z"}
+{"checkpoint":"identity-bootstrapped","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:49:59.8582418Z"}
+{"checkpoint":"recovery-set-verified","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:00.3897027Z"}
+{"checkpoint":"recovery-checkpoint","outcome":"not reached","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:00.3921827Z"}
+{"checkpoint":"identity-bootstrapped","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:15.5300892Z"}
+{"checkpoint":"recovery-checkpoint","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:15.7386665Z"}
+{"checkpoint":"authenticated-canary","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:17.4755434Z"}
+{"checkpoint":"accepted","outcome":"observed","installationId":"inst_agt2943evidence","releaseVersion":"0.9.5","setupVersion":"0.9.5","host":"agent-studio-runner","atUtc":"2026-10-05T07:50:17.5033156Z"}
+
+## 7. Relocation preflight on this host
+$ dotnet $REPO/setup/bin/Debug/net10.0/agent-studio-setup.dll preflight --journey relocate-authority --target docker --server-url http://127.0.0.1:38461
+Journey: relocate-authority (--mode control-plane)
+  Prerequisites: Run preflight; every failed check names its recovery action.
+  Storage: Free space for repositories, run worktrees and backups, plus an off-host recovery copy.
+  Release pin: One verified X.Y.Z release for every component; latest is never accepted.
+  Verified recovery set: A verified, empty-target-rehearsed recovery checkpoint of the current authority.
+  Freeze: The current authority is in Maintenance with resolved attempts.
+  Connectivity: WireGuard peers, private DNS and TLS trust for the new authority origin.
+  Project origin: The canonical Git repository registered in the Task Server project registry.
+  Budgets: A finite coding and review slot budget per host; budgets are never summed twice.
+  Checkpoints: preflight -> recovery-verified -> authority-frozen -> control-plane-installed -> workspace-restored -> identity-matched -> authenticated-canary
+Preflight:
+  [ok  ] Platform: x64 host
+  [n/a ] VM / virtualization: not required for this journey
+  [ok  ] Docker: Docker engine running
+  [ok  ] Docker Compose: Compose v2 available
+  [ok  ] Storage: 33 GiB free
+  [ok  ] Authority URL: existing authority URL known
+  [n/a ] DNS: not required for this journey
+  [FAIL] WireGuard: missing: WireGuard interface up
+         Recovery: Install WireGuard, import this peer's configuration from the control-plane administrator and bring the tunnel up ('wg-quick up wg0').
+  [ok  ] Connectivity: authority reachable
+  [n/a ] TLS: not required for this journey
+  [n/a ] Backup mount: not required for this journey
+  [n/a ] Provider: not required for this journey
+  [n/a ] Secret file: not required for this journey
+[exit 1]
+
