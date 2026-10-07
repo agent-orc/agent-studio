@@ -54,6 +54,16 @@ One push of `HEAD` publishes the entire reachable backlog, including a
 `workspace-repository-push-failed`, naming the repository, branch, job, and
 ahead count. It also emits the existing managed-repository push failure event.
 
+## Stale git locks and the stall alarm
+
+A git process that dies mid-write leaves `.git/index.lock` (or a ref lock)
+behind, and every later evidence flush then fails on "File exists". Before each
+workspace commit the server clears a lock that is older than 10 minutes and held
+by no git process (`git-stale-lock-cleared repo=... age=...`), and a flush
+failure that repeats for more than 15 minutes raises the
+`evidence-flush-stalled` pipeline health alarm. See
+[stale-git-lock](common-problems/stale-git-lock/README.md) (AGT-3000).
+
 ## Object maintenance
 
 `WorkspaceRepositoryMaintenanceWorker` is the scheduler. It runs at boot and
