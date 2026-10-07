@@ -2636,6 +2636,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
+        // Degraded findings move to the linked follow-up card below; they must
+        // not start a further automatic concern round on this delivery.
+        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
         if (roundBudget.Degrade)
         {
             if (!CreateReviewBudgetFollowUp(current, localAttemptId, report, roundBudget)) return;
@@ -2652,10 +2655,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     : verdict).ToArray());
             if (!TryRecordDegradedAspects(current.FolderPath, report, roundBudget)) return;
         }
-
-        // The degraded findings now live on the linked follow-up card; they
-        // must not start a further automatic concern round on this delivery.
-        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
 
         if (report.Overall == AspectStatus.Block)
         {
@@ -3346,7 +3345,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
                 .Append(createdKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
         }, source.WatchPath);
-        ReviewRoundBudgetStore.MarkFollowUp(source.FolderPath, attemptId, createdKey);
+        ReviewRoundBudgetStore.MarkFollowUp(latestSource.FolderPath, attemptId, createdKey);
         return true;
     }
 

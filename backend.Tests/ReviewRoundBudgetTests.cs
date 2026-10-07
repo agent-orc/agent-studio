@@ -115,7 +115,8 @@ public sealed class ReviewRoundBudgetTests
     [Fact]
     public void AcceptedAttempt_IsChargedOnceAndFollowUpLinkIsStableAcrossReplay()
     {
-        var folder = Path.Combine(Path.GetTempPath(), "review-budget-" + Guid.NewGuid().ToString("N"));
+        var folder = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "review-budget-" + Guid.NewGuid().ToString("N"))).FullName;
         try
         {
             var seed = ReviewRoundBudgetLedger.Empty;
@@ -133,6 +134,28 @@ public sealed class ReviewRoundBudgetTests
         finally
         {
             if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Record_OnAMovedCardFolder_FailsInsteadOfRecreatingTheOldLane()
+    {
+        var root = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), "review-budget-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var staleFolder = Path.Combine(root, "4-auto-review", "AGT-1");
+            var round = new DeliveredReviewRound("r1", ["code-quality"], []);
+
+            Assert.Throws<DirectoryNotFoundException>(() =>
+                ReviewRoundBudgetStore.Record(staleFolder, ReviewRoundBudgetLedger.Empty, round));
+            Assert.Throws<DirectoryNotFoundException>(() =>
+                ReviewRoundBudgetStore.MarkFollowUp(staleFolder, "r1", "AGT-2"));
+            Assert.False(Directory.Exists(Path.Combine(root, "4-auto-review")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
         }
     }
 

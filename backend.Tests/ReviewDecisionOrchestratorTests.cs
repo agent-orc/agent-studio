@@ -1680,6 +1680,71 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TaskDone_BlockAfterLifetimeBudgetSpent_AcceptsWithConcernsAndRaisesOneFollowUp()
+    {
+        // AGT-3008: the local path degrades a spent-budget code-quality block to
+        // concerns. The finding moves to one linked follow-up card, so the
+        // delivery reaches human review without another automatic fix round.
+        // Seeded in the flat task store because the follow-up card lands there.
+        var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspect => aspect switch
+        {
+            "code-quality" => "[[ASPECT_VERDICT: status=block; summary=Rename the helper in backend/Other.cs.]]\n[[TASK_DONE]]",
+            _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
+        }, withTaskMutations: true);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["WatchPaths:0:Name"] = Project,
+            ["WatchPaths:0:Path"] = _watchPath,
+            ["WatchPaths:0:RootPath"] = _watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var sourceId = BuildTaskMutations(scanner, config).CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Id = "budget-spent",
+            Title = "Budget spent",
+            Agent = CliTypes.Claude,
+            CliType = CliTypes.Claude,
+            WatchPath = _watchPath,
+            TargetState = TaskStates.AutoReview,
+            PromptMarkdown = "Do the thing.",
+        });
+        var folder = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, _watchPath)).FolderPath;
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        File.WriteAllText(Path.Combine(folder, "logs", "cli-output.log"),
+            $"[12:00:00.000] [stdout] starting{Environment.NewLine}[12:00:01.000] [stdout] [[TASK_DONE]]{Environment.NewLine}");
+        File.WriteAllText(Path.Combine(folder, ReviewRoundBudgetStore.FileName),
+            System.Text.Json.JsonSerializer.Serialize(new ReviewRoundBudgetLedger(
+                    Enumerable.Range(1, 3).Select(round =>
+                        new DeliveredReviewRound($"review-{round}", ["code-quality"], [])).ToArray()),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, _watchPath));
+        Assert.Equal(TaskStates.HumanReview, source.State);
+        var record = ReadOnlyDecisionRecord();
+        Assert.Equal(ReviewDecisionKind.AcceptAsDone, record.Kind);
+        var qualityMd = File.ReadAllText(Path.Combine(source.FolderPath, "aspect-code-quality.md"));
+        Assert.Equal(AspectStatus.Concerns, AspectVerdictParsing.ReadStatusFromReport(qualityMd));
+        Assert.Contains("Rename the helper", qualityMd);
+
+        var ledger = ReviewRoundBudgetStore.Read(source.FolderPath);
+        Assert.Equal(4, ledger.Delivered);
+        var charged = ledger.Rounds[^1];
+        Assert.Equal(["code-quality"], charged.DegradedAspects);
+        Assert.Equal("code-quality", charged.SpentBy);
+        var followUp = Assert.Single(scanner.ScanAllJobs(), task => task.CreationSource == "review-budget-follow-up");
+        Assert.Equal(charged.FollowUpTaskKey, followUp.Key ?? followUp.Id);
+        Assert.Equal(TaskStates.Ready, followUp.State);
+        Assert.Contains(sourceId!, followUp.References?.FollowUpOf ?? []);
+        Assert.Equal([charged.FollowUpTaskKey!], source.References?.RaisedFollowUps);
+        Assert.Contains("Rename the helper", File.ReadAllText(Path.Combine(followUp.FolderPath, "prompt.md")));
+    }
+
+    [Fact]
     public async Task TaskDone_PostProcessingEvidence_AttributesDeterministicDecisionWithoutInventedCli()
     {
         SeedReviewJobWithDone("codex-main-deterministic-post", agent: CliTypes.Codex);
@@ -2377,7 +2442,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     private ReviewDecisionOrchestrator BuildOrchestratorWithAspects(
         Func<string, string> aspectStub,
         IReadOnlyList<string>? aspectRunners = null,
-        AutoReviewStatusSnapshot? statusSnapshot = null)
+        AutoReviewStatusSnapshot? statusSnapshot = null,
+        bool withTaskMutations = false)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -2420,9 +2486,13 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot ?? new AutoReviewStatusSnapshot(), config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
-            timeline: _timeline);
+            timeline: _timeline,
+            taskMutations: withTaskMutations ? BuildTaskMutations(scanner, config) : null);
         return orchestrator;
     }
+
+    private static TaskMutationService BuildTaskMutations(TaskScannerService scanner, IConfiguration config)
+        => new(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
 
     private static AgentStudio.TaskAccess.TaskAccessService BuildTaskAccess(
         TaskScannerService scanner,
@@ -2431,7 +2501,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     {
         var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(indexCache);
-        var mutations = new TaskMutationService(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
+        var mutations = BuildTaskMutations(scanner, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);

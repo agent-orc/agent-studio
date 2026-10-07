@@ -186,7 +186,11 @@ public static class ReviewRoundBudgetStore
 
     private static void Write(string folder, ReviewRoundBudgetLedger ledger)
     {
-        Directory.CreateDirectory(folder);
+        // The sidecar lives inside the card folder. A lane move renames that
+        // folder, so a caller holding a stale path must fail instead of
+        // recreating an empty card folder in the lane the card already left.
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException($"Card folder {folder} no longer exists.");
         var path = Path.Combine(folder, FileName);
         var temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
         File.WriteAllText(temp, JsonSerializer.Serialize(ledger, Json));

@@ -913,6 +913,38 @@ public static class V1ReviewPlaneEndpoints
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
 
+            // Record only accepted deliveries, keyed by the fenced attempt id.
+            // A report replay repairs this projection without charging twice.
+            // Charge the round while the card is still in the folder resolved
+            // above: the batch-gate fallback below can move it to another lane.
+            try
+            {
+                if (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
+                    or ReviewTerminalOutcome.IntegrationBranchDefect)
+                    ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed,
+                        new DeliveredReviewRound(
+                            attemptId,
+                            originalVerdicts.Where(verdict =>
+                                    Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                                .Select(verdict => verdict.Aspect).ToArray(),
+                            shouldDegrade ? roundBudget.DegradedAspects : [],
+                            SpentBy: roundBudget.SpentBy));
+                if (shouldDegrade && CreateReviewBudgetFollowUpCard(
+                        task, attemptId, originalVerdicts, roundBudget, mutations, scanner) is null)
+                    return Results.Json(new Contract.ApiError(
+                        "review-budget-follow-up-create-failed",
+                        "The review report was recorded, but its budget follow-up card could not be created."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogError(ex, "review-round-budget-write-failed attempt={AttemptId}", attemptId);
+                return Results.Json(new Contract.ApiError(
+                    "review-round-budget-write-failed",
+                    "The review report was recorded, but its lifetime round budget could not be written."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
             if (context.RequestServices.GetService<IGateFailureFingerprintCounter>() is { } fingerprints)
                 foreach (var command in Contract.ReviewFlakeEvidencePolicy.UnprovenFailures(request))
                     await fingerprints.RecordAndReadCardsAsync(
@@ -964,36 +996,6 @@ public static class V1ReviewPlaneEndpoints
                 }
             }
             var reportHash = preparedHash;
-
-            // Record only accepted deliveries, keyed by the fenced attempt id.
-            // A report replay repairs this projection without charging twice.
-            try
-            {
-                if (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
-                    or ReviewTerminalOutcome.IntegrationBranchDefect)
-                    ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed,
-                        new DeliveredReviewRound(
-                            attemptId,
-                            originalVerdicts.Where(verdict =>
-                                    Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
-                                .Select(verdict => verdict.Aspect).ToArray(),
-                            shouldDegrade ? roundBudget.DegradedAspects : [],
-                            SpentBy: roundBudget.SpentBy));
-                if (shouldDegrade && CreateReviewBudgetFollowUpCard(
-                        task, attemptId, originalVerdicts, roundBudget, mutations, scanner) is null)
-                    return Results.Json(new Contract.ApiError(
-                        "review-budget-follow-up-create-failed",
-                        "The review report was recorded, but its budget follow-up card could not be created."),
-                        statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                logger.LogError(ex, "review-round-budget-write-failed attempt={AttemptId}", attemptId);
-                return Results.Json(new Contract.ApiError(
-                    "review-round-budget-write-failed",
-                    "The review report was recorded, but its lifetime round budget could not be written."),
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
 
             // The authority already settled this delivery. Requeue unfinished
             // journaled evidence, then return without repeating integration.
