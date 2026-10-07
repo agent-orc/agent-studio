@@ -1806,6 +1806,9 @@ public sealed partial class TaskServerStore
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
                 ("$now", Iso(UtcNow)), ("$task", lease.TaskId), ("$state", targetState));
+            // Lost-worker releases also requeue the claimed continuation, as before.
+            // The durable plane does not open continuation rounds (AGT-2870).
+            // See Lost_worker_release_after_prelaunch_failures_keeps_release_semantics_and_breaks_the_chain.
             await RequeueClaimedContinuationAsync(connection, transaction, runId, ct);
             released = lease with { Status = "released" };
             // AGT-2870: a release that follows a lost worker names the salvage
