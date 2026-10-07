@@ -121,6 +121,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
 
         RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry);
         if (entry.Delivery is null
+            && !RemoteReviewSettlementPolicy.IsBatchDeferredPass(entry)
             && AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome)
             && string.Equals(task.State, TaskStates.AutoReview, StringComparison.Ordinal))
             return RemoteReviewSettlementReconcileStatus.Repair;

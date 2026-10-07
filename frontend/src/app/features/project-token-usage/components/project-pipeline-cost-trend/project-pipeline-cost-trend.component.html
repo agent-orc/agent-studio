@@ -28,6 +28,9 @@
             }
           </span>
           <span class="trend__legend-tokens">{{ formatTokens(row.tokens) }}</span>
+          @if (row.runs > 0) {
+            <span class="trend__legend-runs" [attr.data-testid]="'pipeline-cost-runs-' + row.kind">{{ row.runs }} run{{ row.runs === 1 ? '' : 's' }}</span>
+          }
         </span>
       }
       @let total = timeline()!;
@@ -44,6 +47,42 @@
         <span class="trend__legend-tokens">{{ formatTokens(total.totalTokens) }}</span>
       </span>
     </div>
+
+    @if (decisionSummary(); as d) {
+      <div class="trend__deciding" data-testid="pipeline-cost-deciding"
+           [cacTooltip]="'Deciding = orchestrator steps (the decisions between steps); agent runs = the core run; other = reviews, drift, analysis and tools. Priced amounts only; the unpriced share is stated separately.'">
+        <span class="trend__legend-label">Cost of deciding</span>
+        <span><strong class="trend__num" data-testid="pipeline-cost-deciding-amount">{{ d.decidingText }}</strong> · {{ d.decidingRuns }} decision{{ d.decidingRuns === 1 ? '' : 's' }}</span>
+        <span>vs agent runs <strong class="trend__num">{{ d.agentRunsText }}</strong> · {{ d.agentRuns }} run{{ d.agentRuns === 1 ? '' : 's' }}</span>
+        <span>other <span class="trend__num">{{ d.otherText }}</span></span>
+        @if (d.decidingShare) { <span class="trend__num">{{ d.decidingShare }} of priced cost</span> }
+        @if (d.unpricedText) { <span class="trend__incomplete" data-testid="pipeline-cost-deciding-unpriced">{{ d.unpricedText }}</span> }
+      </div>
+    }
+    @if (decisionSteps().length > 0) {
+      <table class="trend__decisions" data-testid="pipeline-cost-decision-steps">
+        <thead>
+          <tr><th scope="col">Decision step</th><th scope="col">Runs</th><th scope="col">Cards</th><th scope="col">Model</th><th scope="col">Tokens</th><th scope="col">Cost</th></tr>
+        </thead>
+        <tbody>
+          @for (step of decisionSteps(); track step.stepId) {
+            <tr data-testid="pipeline-cost-decision-step" [attr.data-step-id]="step.stepId">
+              <td class="trend__step-id">{{ step.stepId }}</td>
+              <td class="trend__num">{{ step.runs }}</td>
+              <td class="trend__num">{{ step.tasks }}</td>
+              <td class="trend__step-model">{{ step.models }}</td>
+              <td class="trend__num">{{ formatTokens(step.tokens) }}</td>
+              <td class="trend__num" [cacTooltip]="costTooltip(step.cost, step.tokens, step.unpricedRuns, step.pricingGaps, step.stepId)">
+                {{ step.tokens > 0 ? costDisplay(step.cost, step.tokens, step.unpricedRuns) : '$0 · rule' }}
+                @if (isPartialCost(step.cost, step.unpricedRuns)) {
+                  <span class="trend__incomplete">{{ incompleteCostLabel(step.unpricedRuns) }}</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
 
     <div class="trend__bars" role="list" data-testid="pipeline-cost-bars">
       @for (column of stackColumns(); track column.day) {

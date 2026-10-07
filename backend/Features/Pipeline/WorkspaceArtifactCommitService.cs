@@ -22,6 +22,7 @@ public sealed class WorkspaceArtifactCommitService
     private readonly IConfiguration _configuration;
     private readonly ILogger<WorkspaceArtifactCommitService> _logger;
     private readonly WorkspaceArtifactPushQueue? _pushQueue;
+    private readonly AgentStudio.Git.GitStaleLockGuard _staleLocks;
     private readonly int _indexLockRetryAttempts;
     private readonly int _indexLockRetryBackoffMs;
     private readonly long _maximumFileBytes;
@@ -41,11 +42,13 @@ public sealed class WorkspaceArtifactCommitService
     public WorkspaceArtifactCommitService(
         IConfiguration configuration,
         ILogger<WorkspaceArtifactCommitService> logger,
-        WorkspaceArtifactPushQueue? pushQueue = null)
+        WorkspaceArtifactPushQueue? pushQueue = null,
+        AgentStudio.Git.GitStaleLockGuard? staleLocks = null)
     {
         _configuration = configuration;
         _logger = logger;
         _pushQueue = pushQueue;
+        _staleLocks = staleLocks ?? new AgentStudio.Git.GitStaleLockGuard(configuration);
         _indexLockRetryAttempts = Math.Clamp(
             configuration.GetValue<int?>("WorkspaceEvidence:IndexLockRetryAttempts") ?? 5, 1, 50);
         _indexLockRetryBackoffMs = Math.Clamp(
@@ -154,9 +157,11 @@ public sealed class WorkspaceArtifactCommitService
             // Serialize with the Transition-Committer's evidence batches (and
             // any concurrent job-folder commit) on this repo, with an
             // index.lock retry so a lost race with an external git process is
-            // recovered rather than surfaced as a failure.
+            // recovered rather than surfaced as a failure. A lock left by a dead
+            // git process is cleared first (AGT-3000).
             lock (RepositoryGate(gitRoot))
             {
+                _staleLocks.EnsureWritable(gitRoot);
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
@@ -448,6 +453,7 @@ public sealed class WorkspaceArtifactCommitService
             string? shortSha;
             lock (RepositoryGate(gitRoot))
             {
+                _staleLocks.EnsureWritable(gitRoot);
                 var oversized = FindOversizedFiles(gitRoot, pathspecs);
                 UnstageRefusedFiles(gitRoot, oversized);
                 var refusedSpecs = BuildLiteralExcludePathspecs(oversized);
@@ -529,6 +535,7 @@ public sealed class WorkspaceArtifactCommitService
             string? shortSha;
             lock (RepositoryGate(gitRoot))
             {
+                _staleLocks.EnsureWritable(gitRoot);
                 var modified = RunGit(gitRoot, ["diff", "--name-only", "--diff-filter=ACMRTUXB"]);
                 if (modified.Code != 0)
                     return WorkspaceArtifactCommitResult.Failed("git-diff", modified.ErrorText);
@@ -809,6 +816,7 @@ public sealed class WorkspaceArtifactCommitService
         };
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
+        using var tracked = AgentStudio.Git.GitChildProcessRegistry.Track(cwd);
         using var p = Process.Start(psi)!;
         if (stdin != null)
         {

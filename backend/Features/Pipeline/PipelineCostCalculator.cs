@@ -34,7 +34,8 @@ public sealed record PipelineStepCost(
     decimal OutputCostUsd,
     decimal CacheReadCostUsd,
     decimal CacheCreationCostUsd,
-    decimal CostUsd);
+    decimal CostUsd,
+    int Runs = 0);
 
 /// <summary>
 /// Cost summary for one task's whole pipeline run: per-step rows plus the
@@ -157,10 +158,22 @@ public static class PipelineCostCalculator
 
         foreach (var s in record.Steps)
         {
-            var est = TokenPricing.Estimate(
-                s.Model, s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheCreationTokens,
-                record.StartedAt);
-            var stepTokens = s.InputTokens + s.OutputTokens + s.CacheReadTokens + s.CacheCreationTokens;
+            // A step repeated inside this attempt (a second review round, a
+            // repeated decision) keeps each earlier execution; the row's cost
+            // is the sum of every execution, each priced at its own model.
+            var executions = s.EarlierRuns is { Count: > 0 }
+                ? StepCostMeasurement.Executions(s)
+                : null;
+            var est = executions is null
+                ? TokenPricing.Estimate(
+                    s.Model, s.InputTokens, s.OutputTokens, s.CacheReadTokens, s.CacheCreationTokens,
+                    record.StartedAt)
+                : SumEstimates(executions, record.StartedAt);
+            var input = executions?.Sum(run => run.InputTokens) ?? s.InputTokens;
+            var output = executions?.Sum(run => run.OutputTokens) ?? s.OutputTokens;
+            var cacheRead = executions?.Sum(run => run.CacheReadTokens) ?? s.CacheReadTokens;
+            var cacheCreation = executions?.Sum(run => run.CacheCreationTokens) ?? s.CacheCreationTokens;
+            var stepTokens = input + output + cacheRead + cacheCreation;
             // Only a step that actually consumed tokens but has no resolved
             // historical price should flag a gap; a 0-token tool step is not a
             // pricing gap.
@@ -173,21 +186,22 @@ public static class PipelineCostCalculator
                 TokenUsageSource: s.TokenUsageSource,
                 ModelKnown: est.ModelKnown,
                 PricingGaps: PricingGapsFor(est, stepTokens, s.Model),
-                InputTokens: s.InputTokens,
-                OutputTokens: s.OutputTokens,
-                CacheReadTokens: s.CacheReadTokens,
-                CacheCreationTokens: s.CacheCreationTokens,
+                InputTokens: input,
+                OutputTokens: output,
+                CacheReadTokens: cacheRead,
+                CacheCreationTokens: cacheCreation,
                 TotalTokens: stepTokens,
                 InputCostUsd: Round(est.InputUsd),
                 OutputCostUsd: Round(est.OutputUsd),
                 CacheReadCostUsd: Round(est.CacheReadUsd),
                 CacheCreationCostUsd: Round(est.CacheWriteUsd),
-                CostUsd: Round(est.Total)));
+                CostUsd: Round(est.Total),
+                Runs: StepCostMeasurement.RunCount(s)));
 
-            totalInput += s.InputTokens;
-            totalOutput += s.OutputTokens;
-            totalCacheRead += s.CacheReadTokens;
-            totalCacheCreation += s.CacheCreationTokens;
+            totalInput += input;
+            totalOutput += output;
+            totalCacheRead += cacheRead;
+            totalCacheCreation += cacheCreation;
             totalTokens += stepTokens;
             totalInputCost += est.InputUsd;
             totalOutputCost += est.OutputUsd;
@@ -211,6 +225,98 @@ public static class PipelineCostCalculator
             anyUnknown,
             anyUnknown ? 1 : 0,
             MergePricingGaps(steps.SelectMany(step => step.PricingGaps), oneRun: true));
+    }
+
+    /// <summary>
+    /// Sum the per-execution estimates of a repeated step. The priced parts
+    /// add up; the result is unknown when any execution with tokens is
+    /// unpriced, so the row never presents a partial sum as complete.
+    /// </summary>
+    private static TokenCostEstimate SumEstimates(
+        IReadOnlyList<PipelineStepRunSummary> executions,
+        DateTime recordedAt)
+    {
+        TokenCostEstimate? first = null;
+        TokenCostEstimate? firstUnknown = null;
+        decimal input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
+        foreach (var run in executions)
+        {
+            var estimate = TokenPricing.Estimate(
+                run.Model, run.InputTokens, run.OutputTokens, run.CacheReadTokens, run.CacheCreationTokens,
+                run.StartedAt ?? recordedAt);
+            first ??= estimate;
+            if (StepCostMeasurement.Tokens(run) > 0 && !estimate.ModelKnown) firstUnknown ??= estimate;
+            input += estimate.InputUsd;
+            output += estimate.OutputUsd;
+            cacheRead += estimate.CacheReadUsd;
+            cacheWrite += estimate.CacheWriteUsd;
+        }
+        var basis = firstUnknown ?? first!;
+        return basis with
+        {
+            InputUsd = input,
+            OutputUsd = output,
+            CacheReadUsd = cacheRead,
+            CacheWriteUsd = cacheWrite,
+            Total = input + output + cacheRead + cacheWrite,
+            ModelKnown = firstUnknown is null,
+        };
+    }
+
+    /// <summary>
+    /// Cost of deciding against the agent runs for one card, over the live
+    /// attempt and every archived attempt. Each execution is priced at its own
+    /// model and run date; ledger calls replace a remote step's row tokens the
+    /// same way <see cref="SummarizeWithLedger"/> does for the live attempt.
+    /// </summary>
+    public static DecisionCostRollup SummarizeDecisionCost(
+        PipelineExecutionRecord? record,
+        IReadOnlyDictionary<string, IReadOnlyList<TaskTokenCall>>? ledgerCalls = null)
+    {
+        if (record is null) return DecisionCostRollup.Empty;
+        var acc = new DecisionCostAccumulator();
+        var attempts = new[] { record }.Concat(record.PreviousAttempts);
+        foreach (var attempt in attempts)
+        {
+            var isLive = ReferenceEquals(attempt, record);
+            foreach (var step in attempt.Steps)
+            {
+                if (isLive
+                    && ledgerCalls is not null
+                    && ledgerCalls.TryGetValue(step.StepId, out var calls)
+                    && calls.Count > 0)
+                {
+                    for (var i = 0; i < StepCostMeasurement.RunCount(step); i++)
+                        acc.AddExecution(step.Kind, 0, null);
+                    foreach (var call in calls)
+                    {
+                        var tokens = call.InputTokens + call.OutputTokens
+                            + call.CacheReadTokens + call.CacheCreationTokens;
+                        if (call.ModelPriced)
+                        {
+                            acc.AddPricedTokens(step.Kind, tokens, call.EstimatedApiCostUsd);
+                            continue;
+                        }
+                        acc.AddTokens(step.Kind, tokens, TokenPricing.Estimate(
+                            call.Model, call.InputTokens, call.OutputTokens,
+                            call.CacheReadTokens, call.CacheCreationTokens, call.Ts));
+                    }
+                    continue;
+                }
+
+                foreach (var run in StepCostMeasurement.Executions(step))
+                {
+                    var tokens = StepCostMeasurement.Tokens(run);
+                    acc.AddExecution(step.Kind, tokens, tokens <= 0
+                        ? null
+                        : TokenPricing.Estimate(
+                            run.Model, run.InputTokens, run.OutputTokens,
+                            run.CacheReadTokens, run.CacheCreationTokens,
+                            run.StartedAt ?? attempt.StartedAt));
+                }
+            }
+        }
+        return acc.Build();
     }
 
     /// <summary>

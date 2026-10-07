@@ -27,6 +27,36 @@ if (args is ["--detached-review-worker", var detachedReviewSpec])
 if (args is ["host-record", ..])
     return RunnerHostRecordCommand.Run(args[1..], Console.Out, Console.Error);
 
+if (args.Length is 3 or 4 && args[0] == "--renew-repository-access"
+    && (args.Length == 3 || args[3] == "--drained"))
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        return await RepositoryRenewalCommand.RunAsync(args[1], args[2],
+            args.Length == 4, Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository renewal failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
+if (args is ["--repository-admin"])
+{
+    try
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        return await RepositoryRenewalCommand.RunAdminAsync(Console.In, Console.Out, deadline.Token);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"repository administration failed: {ex.GetType().Name}");
+        return 2;
+    }
+}
+
 var (options, taskKey, once, help) = RunnerOptions.Parse(args);
 
 void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] [agent-host] {message}");

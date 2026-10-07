@@ -8,7 +8,10 @@ namespace AgentStudio.Setup;
 
 internal static class SetupApplication
 {
-    public static async Task<int> RunAsync(string[] args)
+    /// <param name="releaseVerified">Runs once the selected release artifacts passed verification,
+    /// before any host change; the product installer records its release pin there.</param>
+    public static async Task<int> RunAsync(string[] args, InstallPaths? installationPaths = null,
+        Func<Task>? releaseVerified = null)
     {
         try
         {
@@ -31,7 +34,8 @@ internal static class SetupApplication
                 eventArgs.Cancel = true;
                 shutdown.Cancel();
             };
-            await RunSetupAsync(options, shutdown.Token);
+            await RunSetupAsync(options, shutdown.Token, installationPaths ?? InstallPaths.Load(),
+                releaseVerified ?? (() => Task.CompletedTask));
             return 0;
         }
         catch (OperationCanceledException)
@@ -48,7 +52,9 @@ internal static class SetupApplication
 
     private static async Task RunSetupAsync(
         SetupOptions original,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        InstallPaths paths,
+        Func<Task> releaseVerified)
     {
         PrintHeader();
         var prompter = new ConsolePrompter(original.NonInteractive);
@@ -73,7 +79,9 @@ internal static class SetupApplication
             return;
         }
 
-        await CheckRootAsync(processes);
+        // A dry run plans the native installation without writing system paths.
+        if (!options.DryRun)
+            await CheckRootAsync(processes);
         await CheckPlatformAsync(
             processes,
             native: true,
@@ -94,13 +102,15 @@ internal static class SetupApplication
                 payload.ReleaseVersion,
                 options.ReleaseDirectory);
             var hostRelease = await hostArtifacts.ExtractHostAsync(cancellationToken);
+            await releaseVerified();
             await ConfigureAndInstallHostAsync(
                 options,
                 prompter,
                 processes,
                 hostRelease,
                 payload,
-                cancellationToken);
+                cancellationToken,
+                paths);
             PrintHostFinish(payload.ServerUrl);
             return;
         }
@@ -121,7 +131,8 @@ internal static class SetupApplication
 
             await using var dockerArtifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
             var dockerOrchestratorRelease = await dockerArtifacts.ExtractOrchestratorAsync(cancellationToken);
-            var docker = new DockerInstaller(InstallPaths.Load(), processes, options.DryRun);
+            await releaseVerified();
+            var docker = new DockerInstaller(paths, processes, options.DryRun);
             var dockerControl = await docker.InstallControlPlaneAsync(
                 dockerOrchestratorRelease,
                 wgAddress,
@@ -166,7 +177,8 @@ internal static class SetupApplication
         await using var artifacts = new ReleaseArtifacts(version, options.ReleaseDirectory);
         var orchestratorRelease = await artifacts.ExtractOrchestratorAsync(cancellationToken);
         var studioRelease = await artifacts.ExtractStudioAsync(cancellationToken);
-        var native = new NativeInstaller(InstallPaths.Load(), processes, options.DryRun);
+        await releaseVerified();
+        var native = new NativeInstaller(paths, processes, options.DryRun);
         var control = await native.InstallControlPlaneAsync(
             orchestratorRelease,
             studioRelease,
@@ -190,7 +202,8 @@ internal static class SetupApplication
                 processes,
                 hostRelease,
                 joinPayload,
-                cancellationToken);
+                cancellationToken,
+                paths);
             Console.WriteLine();
             Console.WriteLine("Single-machine setup is complete.");
             Console.WriteLine($"Task Server: {control.ServerUrl}");
@@ -209,7 +222,8 @@ internal static class SetupApplication
         ProcessRunner processes,
         string hostRelease,
         JoinPayload payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        InstallPaths paths)
     {
         var executionUser = options.ExecutionUser
                             ?? Environment.GetEnvironmentVariable("SUDO_USER");
@@ -293,7 +307,7 @@ internal static class SetupApplication
             gitRemote,
             gitPushRemote,
             options.MaxParallelism);
-        var native = new NativeInstaller(InstallPaths.Load(), processes, options.DryRun);
+        var native = new NativeInstaller(paths, processes, options.DryRun);
 
         if (gitRemote is not null)
         {

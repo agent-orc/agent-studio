@@ -735,6 +735,30 @@ public static class TaskServerEndpoints
                 : Results.Json(new ApiError("engine-principal-required", "An authenticated Engine principal is required."),
                     statusCode: StatusCodes.Status403Forbidden);
         });
+        steering.MapPost("/continuations", async (
+            HttpContext context, string projectId, string taskIdentity,
+            ContinuationIntentRequest request, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.SubmitContinuationIntentAsync(
+                projectId, taskIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Continue);
+        steering.MapGet("/continuations/{commandId}", async (
+            string projectId, string taskIdentity, string commandId,
+            TaskServerStore store, CancellationToken ct) =>
+            await InvokeNullableAsync(() => store.GetContinuationIntentAsync(
+                projectId, taskIdentity, commandId, ct)));
+        steering.MapGet("/continuations", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.ListContinuationIntentsAsync(
+                projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/continuations", async (
+            string projectId, string taskIdentity, TaskServerStore store, CancellationToken ct) =>
+            await InvokeAsync(() => store.ListContinuationIntentsAsync(
+                projectId, taskIdentity, ct)));
+        api.MapGet("/projects/{projectId}/tasks/{taskIdentity}/continuations/{commandId}", async (
+            string projectId, string taskIdentity, string commandId,
+            TaskServerStore store, CancellationToken ct) =>
+            await InvokeNullableAsync(() => store.GetContinuationIntentAsync(
+                projectId, taskIdentity, commandId, ct)));
 
         var management = api.MapGroup("/management")
             .RequireTaskServerScope(TaskServerScopes.Management);
