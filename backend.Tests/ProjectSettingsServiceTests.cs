@@ -100,6 +100,19 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void ReviewRoundBudgets_PersistPerProject()
+    {
+        var svc = Build();
+        svc.SetReviewRoundBudgets("demo", 5, 3);
+
+        var stored = Build().Get("demo");
+        Assert.Equal(5, stored.MaxDeliveredReviewRounds);
+        Assert.Equal(3, stored.MaxAutoReissueAttempts);
+        Assert.Equal(4, Build().Get("other").MaxDeliveredReviewRounds);
+        Assert.Null(Build().Get("other").MaxAutoReissueAttempts);
+    }
+
+    [Fact]
     public void SetExecutionRunner_Persists_assignment_and_remote_eligibility_together()
     {
         var svc = Build();

@@ -15,10 +15,8 @@ public sealed record RepeatedAspectBlockDiagnosis(
 }
 
 /// <summary>
-/// Detects one semantic aspect returning the same blocking reason across
-/// consecutive review rounds. It reads only structured decision fields in the
-/// active operator epoch; prose and old epochs never replenish or contaminate
-/// the bounded retry chain.
+/// Detects an aspect blocking consecutive review rounds, regardless of the
+/// summary's wording or the operator epoch. Summaries remain evidence only.
 /// </summary>
 public static partial class RepeatedAspectBlockPolicy
 {
@@ -37,14 +35,14 @@ public static partial class RepeatedAspectBlockPolicy
             .Select(verdict =>
             {
                 var finding = $"{verdict.Aspect}: {verdict.Summary.Trim()}";
-                return (Fingerprint: Fingerprint(finding), Finding: finding);
+                return (Fingerprint: Fingerprint(verdict.Aspect), Finding: finding);
             })
             .ToList();
         if (blocked.Count == 0) return null;
 
+        _ = attemptEpoch; // Evidence rotation does not reset aspect recurrence.
         var relevantRecords = records
-            .Where(record => record.JobId == jobId
-                             && ReviewDecisionOrchestrator.IsInAttemptEpoch(record, attemptEpoch))
+            .Where(record => record.JobId == jobId)
             .Reverse()
             .ToList();
         var candidates = new List<(string Fingerprint, string Finding, int Rounds)>();
@@ -53,7 +51,7 @@ public static partial class RepeatedAspectBlockPolicy
             var consecutivePrior = 0;
             foreach (var record in relevantRecords)
             {
-                if (record.Kind == ReviewDecisionKind.Skipped) continue;
+                if (record.Kind is ReviewDecisionKind.Skipped or ReviewDecisionKind.OperatorRequeue) continue;
                 var fingerprints = record.FailureFingerprints ?? [];
                 var matches = fingerprints.Contains(block.Fingerprint, StringComparer.Ordinal)
                               || string.Equals(

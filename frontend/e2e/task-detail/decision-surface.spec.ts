@@ -307,6 +307,13 @@ test.describe('operator decision surface', () => {
           ...taskDetail(),
           info: {
             ...taskInfo(),
+            reviewProjection: {
+              attempts: [], rounds: 4, latestPlane: 'remote', latestOutcome: 'Pass',
+              latestReceivedAt: null, blockingAspects: [],
+              delivery: { status: 'not-attempted', reason: null },
+              decisionRequired: { required: false, source: null, reason: null },
+              roundBudget: { delivered: 4, maximum: 4, spentBy: 'code-quality' },
+            },
             olderBriefDelivery: {
               attemptId: 'run_older_brief',
               briefVersion: 'old-version',
@@ -328,10 +335,13 @@ test.describe('operator decision surface', () => {
     await expect(page.getByTestId('older-brief-starting-point')).toBeVisible();
     await expect(page.getByTestId('older-brief-discard')).toBeVisible();
     await expect(page.getByTestId('older-brief-accept')).toHaveCSS('border-top-width', '1px');
+    await expect(page.getByTestId('task-detail-review-round-budget'))
+      .toContainText('Review round 4 of 4');
     mkdirSync(SHOTS_DIR, { recursive: true });
     for (const theme of ['dark', 'light'] as const) {
       await setTheme(page, theme);
       await offer.screenshot({ path: path.join(SHOTS_DIR, `older-brief-delivery-${theme}--mocked.png`) });
+      await page.screenshot({ path: path.join(SHOTS_DIR, `older-brief-and-review-budget-${theme}--mocked.png`) });
     }
   });
 

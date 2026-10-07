@@ -454,7 +454,7 @@ public sealed class TaskTransitionAutoCommitAttributionTests : IDisposable
         var boundary = Assert.Single(decisions, r => r.Kind == ReviewDecisionKind.OperatorRequeue);
         Assert.Equal(1, boundary.AttemptEpoch);
         Assert.Contains("Infrastructure repaired", boundary.Reason);
-        Assert.Equal(0, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(decisions, slug));
+        Assert.Equal(2, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(decisions, slug));
         Assert.True(ReviewDecisionOrchestrator.IsPendingOperatorRequeueAssessment(
             boundary, 1));
 

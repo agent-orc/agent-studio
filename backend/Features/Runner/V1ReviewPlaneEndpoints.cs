@@ -31,6 +31,14 @@ internal static class ReviewRestartOutcomePolicy
 public static class V1ReviewPlaneEndpoints
 {
     private const string LoggerName = "AgentStudio.Runner.V1ReviewPlaneEndpoints";
+    internal static int CountPriorAutomaticReissues(string? workspace, string project, string taskId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspace);
+        return ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+            ReviewDecisionLog.ReadAll(workspace, project), taskId);
+    }
+    private static readonly ConcurrentDictionary<string, object> ReviewBudgetFollowUpGates =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -629,6 +637,8 @@ public static class V1ReviewPlaneEndpoints
             FailureInterventionService failureInterventions,
             IntegrationBranchGateReporter integrationGates,
             IRemoteReviewEvidenceProjectionQueue evidenceQueue,
+            AgentStudio.Review.ReviewProjectionService projections,
+            IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -759,6 +769,29 @@ public static class V1ReviewPlaneEndpoints
             if (preparedTask is null)
                 return Results.Json(new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+            var originalVerdicts = request.Verdicts;
+            var previousRounds = projections.Read(preparedTask).Attempts
+                .Where(round => round.AttemptId != attemptId).ToArray();
+            var roundSeed = ReviewRoundBudgetStore.Read(preparedTask.FolderPath, previousRounds);
+            var roundBudget = ReviewRoundBudgetPolicy.Decide(
+                roundSeed,
+                attemptId,
+                originalVerdicts.Where(verdict =>
+                        Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                    .Select(verdict => verdict.Aspect),
+                settings.Get(preparedTask.ProjectName).MaxDeliveredReviewRounds,
+                ReviewRoundBudgetPolicy.DefaultConsecutiveBlockRounds,
+                CountPriorAutomaticReissues(
+                    configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
+                settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
+                    ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2));
+            var shouldDegrade = outcome == ReviewTerminalOutcome.ProductFailure && roundBudget.Degrade;
+            if (shouldDegrade)
+            {
+                request = ReviewRoundBudgetPolicy.ApplyRemoteReport(request, roundBudget);
+                if (string.Equals(request.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
+                    outcome = ReviewTerminalOutcome.Pass;
+            }
             var preparedHash = RemoteReviewSettlementJournal.Hash(request);
             // Only an accepted report owns a journal; a replayed rejected key is
             // answered by the authority like any other unaccepted report.
@@ -840,6 +873,8 @@ public static class V1ReviewPlaneEndpoints
                             ReportSha256 = preparedHash,
                             Report = request,
                             Delivery = preparedDelivery,
+                            ReviewBudgetDecision = shouldDegrade ? roundBudget : null,
+                            ReviewBudgetOriginalVerdicts = shouldDegrade ? originalVerdicts : null,
                             ReceivedAtUtc = DateTime.UtcNow,
                         },
                         () => authority.GetReview(attemptId)?.Reports
@@ -877,6 +912,38 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Json(
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+
+            // Record only accepted deliveries, keyed by the fenced attempt id.
+            // A report replay repairs this projection without charging twice.
+            // Charge the round while the card is still in the folder resolved
+            // above: the batch-gate fallback below can move it to another lane.
+            try
+            {
+                if (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
+                    or ReviewTerminalOutcome.IntegrationBranchDefect)
+                    ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed,
+                        new DeliveredReviewRound(
+                            attemptId,
+                            originalVerdicts.Where(verdict =>
+                                    Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                                .Select(verdict => verdict.Aspect).ToArray(),
+                            shouldDegrade ? roundBudget.DegradedAspects : [],
+                            SpentBy: roundBudget.SpentBy));
+                if (shouldDegrade && CreateReviewBudgetFollowUpCard(
+                        task, attemptId, originalVerdicts, roundBudget, mutations, scanner) is null)
+                    return Results.Json(new Contract.ApiError(
+                        "review-budget-follow-up-create-failed",
+                        "The review report was recorded, but its budget follow-up card could not be created."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogError(ex, "review-round-budget-write-failed attempt={AttemptId}", attemptId);
+                return Results.Json(new Contract.ApiError(
+                    "review-round-budget-write-failed",
+                    "The review report was recorded, but its lifetime round budget could not be written."),
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
 
             if (context.RequestServices.GetService<IGateFailureFingerprintCounter>() is { } fingerprints)
                 foreach (var command in Contract.ReviewFlakeEvidencePolicy.UnprovenFailures(request))
@@ -1116,6 +1183,8 @@ public static class V1ReviewPlaneEndpoints
                         verdict.Classification)),
                     concernLedger?.Used ?? 0,
                     projectSettingsForFollowUp.MaxReviewConcernRounds);
+                if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
+                    reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
                 if (concernLedger is { StillOpen: true }
                     && !string.Equals(
                         concernLedger.ReviewAttemptId,
@@ -2457,6 +2526,79 @@ public static class V1ReviewPlaneEndpoints
             FailureClassification = "AspectVerdictUnparseable",
             Summary = decision.Reason,
         };
+
+    internal static string? CreateReviewBudgetFollowUpCard(
+        TaskInfo source,
+        string reviewAttemptId,
+        IReadOnlyList<Contract.ReviewVerdictDto> originalVerdicts,
+        ReviewRoundBudgetDecision budget,
+        TaskMutationService mutations,
+        TaskScannerService scanner)
+    {
+        lock (ReviewBudgetFollowUpGates.GetOrAdd(Path.GetFullPath(source.FolderPath), _ => new object()))
+            return CreateReviewBudgetFollowUpCardCore(
+                source, reviewAttemptId, originalVerdicts, budget, mutations, scanner);
+    }
+
+    private static string? CreateReviewBudgetFollowUpCardCore(
+        TaskInfo source,
+        string reviewAttemptId,
+        IReadOnlyList<Contract.ReviewVerdictDto> originalVerdicts,
+        ReviewRoundBudgetDecision budget,
+        TaskMutationService mutations,
+        TaskScannerService scanner)
+    {
+        var title = $"Follow-up: review budget in {source.Key ?? source.Id}";
+        var created = scanner.ScanAllJobs().FirstOrDefault(task =>
+            task.CreationSource == "review-budget-follow-up"
+            && string.Equals(task.Title, title, StringComparison.Ordinal));
+        var findings = string.Join("\n", originalVerdicts
+            .Where(verdict => !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            .Select(verdict =>
+                $"- **{verdict.Aspect}**: {verdict.Summary}"
+                + (string.IsNullOrWhiteSpace(verdict.Missing) ? "" : $" Missing: {verdict.Missing}")
+                + (string.IsNullOrWhiteSpace(verdict.EvidenceChecked) ? "" : $" Evidence: {verdict.EvidenceChecked}")));
+        if (created is null)
+        {
+            var id = mutations.CreateJob(new CreateTaskRequest
+            {
+                Title = title,
+                Agent = source.Agent,
+                CliType = source.CliType,
+                Model = source.Model,
+                ThinkingLevel = source.ThinkingLevel,
+                WatchPath = source.WatchPath,
+                PromptMarkdown = $"Review round {budget.RoundNumber} of {budget.MaximumRounds} spent the source card's budget at {budget.SpentBy}. Address these open findings in a linked follow-up. Source card: {source.Key ?? source.Id}.\n\n{findings}",
+                TargetState = TaskStates.Ready,
+                TaskType = TaskTypes.Bug,
+                OwnerClientId = source.OwnerClientId,
+                CreationSource = "review-budget-follow-up",
+                CreatedBy = "pipeline",
+            });
+            created = id is null ? null : scanner.FindJob(id, source.WatchPath);
+        }
+        else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
+                     .All(round => round.AttemptId != reviewAttemptId || round.FollowUpTaskKey is null))
+        {
+            mutations.AppendContinuationNote(created.Id,
+                $"Review attempt {reviewAttemptId} added open findings:\n\n{findings}", created.WatchPath);
+        }
+        if (created is null) return null;
+        var sourceKey = source.Key ?? source.Id;
+        var createdKey = created.Key ?? created.Id;
+        mutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+        {
+            FollowUpOf = [sourceKey],
+        }, created.WatchPath);
+        var latestSource = scanner.FindJob(source.Id, source.WatchPath) ?? source;
+        mutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
+        {
+            RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
+                .Append(createdKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        }, source.WatchPath);
+        ReviewRoundBudgetStore.MarkFollowUp(latestSource.FolderPath, reviewAttemptId, createdKey);
+        return createdKey;
+    }
 
     private static string? CreateRemoteConcernFollowUpCard(
         TaskInfo source,
