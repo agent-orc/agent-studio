@@ -220,6 +220,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly HumanReviewEscalation? _humanReviewEscalation;
     private readonly FailureInterventionService? _failureInterventions;
     private readonly TaskMutationService? _taskMutations;
+    private readonly DecisionCardRequests? _decisionRequests;
 
     /// <summary>
     /// Stable prefix on the <c>Reason</c> field of every
@@ -274,7 +275,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         AgentStudio.Pipeline.IQualityAnalysisStepRunner? qualityAnalysisRunner = null,
         FailureInterventionService? failureInterventions = null,
         TaskIntegrationStatusService? integrationStatus = null,
-        TaskMutationService? taskMutations = null)
+        TaskMutationService? taskMutations = null,
+        DecisionCardRequests? decisionRequests = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -309,6 +311,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _qualityAnalysisRunner = qualityAnalysisRunner;
         _failureInterventions = failureInterventions;
         _integrationStatus = integrationStatus;
+        _decisionRequests = decisionRequests;
 
         _statusSnapshot.ConfigureEscalationRateAlert(
             _configuration.GetValue(
@@ -461,7 +464,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var aspectTimeoutSeconds = ReviewAspectTimeoutPolicy
             .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
             .Seconds;
-        var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
         var maxParallelReviews = ParallelSlotPolicy.ClampMax(
             _configuration.GetValue("ReviewDecisionOrchestrator:MaxParallelReviews", DefaultMaxParallelReviews));
         var aspects = ResolveAspectRunners();
@@ -555,7 +557,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         {
                             // NOOP is fully deterministic: no fast-model call,
                             // no per-hour rate consumption.
-                            await ProcessNoOpAsync(workspace, entry, pending, maxReissues, ct);
+                            await ProcessNoOpAsync(workspace, entry, pending, ConfiguredMaxReissues(entry.Name), ct);
                             _statusSnapshot.RecordReissue();
                             continue;
                         }
@@ -569,7 +571,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             // if the model is unavailable or malformed.
                             await ProcessNoCompletionSignalAsync(
                                 workspace, entry, pending, cliBinary, model,
-                                maxPerHour, maxReissues, ct);
+                                maxPerHour, ConfiguredMaxReissues(entry.Name), ct);
                             _statusSnapshot.RecordReissue();
                             continue;
                         }
@@ -713,7 +715,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             .Derive(cliBinary, aspectModel, thinkingLevel: null, materialCharacters: 0, _configuration)
             .Seconds;
         var maxPerHour = _configuration.GetValue("ReviewDecisionOrchestrator:CallsPerHour", DefaultCallsPerHour);
-        var maxReissues = _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
 
         var entry = _scanner.GetWatchPaths().FirstOrDefault(e =>
             !string.IsNullOrWhiteSpace(e.Path) &&
@@ -751,7 +752,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             {
                 result = await DispatchPendingCardAsync(
                     workspace, entry, pending, cliBinary, model, aspectModel,
-                    TimeSpan.FromSeconds(aspectTimeoutSeconds), maxPerHour, maxReissues, ct);
+                    TimeSpan.FromSeconds(aspectTimeoutSeconds), maxPerHour,
+                    ConfiguredMaxReissues(entry.Name), ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -1572,7 +1574,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             "Reopened: NOOP recovery, reissued with sharpened framing.",
-            BuildReopenDetails("noop-recovery", priorReissues, reason,
+            BuildReopenDetails(entry.Name, "noop-recovery", priorReissues, reason,
                 followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -1614,7 +1616,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // timeline and leaves it in the intervention lane - no wrapper card.
         EmitVerdictTimeline(move.NewFolderPath ?? current.FolderPath,
             TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, reason,
-            BuildEscalateDetails("noop-escalate", reason,
+            BuildEscalateDetails(entry.Name, "noop-escalate", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -1813,7 +1815,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             "Reopened: run finished without a terminal sentinel, reissued demanding one.",
-            BuildReopenDetails("no-completion-signal", priorReissues, reason,
+            BuildReopenDetails(entry.Name, "no-completion-signal", priorReissues, reason,
                 followUpPrompt: followUp, context: steering));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -1872,7 +1874,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         EmitVerdictTimeline(escalatedFolder,
             TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, reason,
-            BuildEscalateDetails("no-completion-signal", reason,
+            BuildEscalateDetails(entry.Name, "no-completion-signal", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
         // The status stub is the card's own summary. Give it the withheld list
@@ -1931,8 +1933,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // no wrapper card.
         EmitVerdictTimeline(move.NewFolderPath ?? current.FolderPath,
             TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, reason,
-            BuildEscalateDetails("agent-blocked", reason,
+            BuildEscalateDetails(entry.Name, "agent-blocked", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
+
+        var decisionCard = move.Status == MoveJobStatus.Success
+            ? RequestDecisionForFork(entry, current, pending)
+            : null;
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
@@ -1942,11 +1948,63 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             Reason: reason,
             Prompt: "(deterministic BLOCKED branch)",
             Response: "(no fast-model call)",
-            FollowUp: string.Empty),
+            FollowUp: decisionCard is null ? string.Empty : $"decision card {decisionCard.Key}"),
             current.FolderPath,
             move.NewFolderPath);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A blocked run that stopped at a fork (a stated question with two to four
+    /// options) raises a decision card instead of leaving the question in prose.
+    /// The escalated card waits on it through <c>dependsOn</c>; deciding appends
+    /// the choice to its prompt and returns it to <c>2-ready</c>.
+    /// </summary>
+    private DecisionCardRequestResult? RequestDecisionForFork(
+        WatchPathEntry entry, TaskInfo current, PendingDecision pending)
+    {
+        if (_decisionRequests is null) return null;
+        try
+        {
+            var escalated = _scanner.FindJob(current.Id, entry.Path);
+            if (escalated is null) return null;
+            // Agent lines only: the escalation above already appended a
+            // supervisor line that quotes [[TASK_BLOCKED]].
+            var agentTurn = CliOutputLogParser.ParseFile(TaskPaths.CliOutputLog(escalated.FolderPath))
+                .Where(line => line is not null && !PendingDecisionScanner.IsFollowUpLine(line))
+                .ToList();
+            var fork = BlockedForkReader.Read(pending.Reason, AgentOutcomeAnalyzer.ExtractBlockedMessage(agentTurn));
+            if (fork is null) return null;
+            var result = _decisionRequests.Request(new DecisionCardRequest
+            {
+                Title = $"Decision: {escalated.Title}",
+                WatchPath = entry.Path,
+                Content = fork,
+                BlockedCard = escalated,
+                PromptMarkdown = $"Raised from the Blocked outcome of {escalated.Key ?? escalated.Id}. " +
+                    "The run stopped at a fork it must not take alone; its options are the fields of this card.",
+            });
+            if (result is not null)
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    $"Orchestrator raised decision card {result.Key} for the fork this run stopped at.");
+            else
+            {
+                // A decision card whose dependsOn edge could not be written
+                // still names this card; the decision sweep retries the edge.
+                _logger.LogWarning(
+                    "ReviewDecisionOrchestrator: decision card request for BLOCKED fork on {JobId} did not complete; the decision sweep retries the link",
+                    current.Id);
+                _chatLog.AppendSupervisor(escalated, "escalate",
+                    "Orchestrator could not finish the decision card for the fork this run stopped at; the decision sweep retries the missing link.");
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "ReviewDecisionOrchestrator: decision card for BLOCKED fork on {JobId} failed", current.Id);
+            return null;
+        }
     }
 
     /// <summary>
@@ -2055,7 +2113,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
                 TimelineActors.QualityLoop,
                 "Backfill: recorded reissue verdict had no lane move; sent to 2-ready.",
-                BuildReopenDetails("stale-verdict-backfill",
+                BuildReopenDetails(entry.Name, "stale-verdict-backfill",
                     CountPriorReissues(workspace, entry.Name, current.Id),
                     "Recorded reissue verdict never completed its lane move."));
             _statusSnapshot.RecordReissue();
@@ -2110,7 +2168,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             EmitVerdictTimeline(movedFolderPath, TimelineEventKinds.OrchestratorEscalated,
                 TimelineActors.Orchestrator,
                 "Backfill: recorded escalate verdict had no lane move; moved to 5e-escalated.",
-                BuildEscalateDetails("stale-verdict-backfill",
+                BuildEscalateDetails(entry.Name, "stale-verdict-backfill",
                     "Recorded escalate verdict never completed its lane move.",
                     CountPriorReissues(workspace, entry.Name, current.Id)));
             _statusSnapshot.RecordEscalate();
@@ -2160,7 +2218,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (!hasPrimaryResult)
         {
             var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
-            var maxReissues = ConfiguredMaxReissues();
+            var maxReissues = ConfiguredMaxReissues(entry.Name);
             var requiredArtifact = isResearch
                 ? "a valid HTML document at results/report.html"
                 : "a primary artifact under results/";
@@ -2308,7 +2366,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var gate = CompletionGate.EvaluateStructured(
             acceptance,
             CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues());
+            ConfiguredMaxReissues(entry.Name));
         if (gate.IsIncomplete)
         {
             await HandleCompletionGateAsync(workspace, entry, pending, current, gate, ct);
@@ -2321,7 +2379,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var priorReissues = CountPriorReissues(workspace, entry.Name, current.Id);
             var dossierGate = new CompletionGate.Decision
             {
-                Action = priorReissues >= ConfiguredMaxReissues()
+                Action = priorReissues >= ConfiguredMaxReissues(entry.Name)
                     ? CompletionGate.CompletionGateAction.Escalate
                     : CompletionGate.CompletionGateAction.Reissue,
                 Findings = dossierReview.Findings.ToList(),
@@ -2375,7 +2433,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             : BuildQualityAnalysisGateDecision(
                 qualityAnalysis,
                 CountPriorReissues(workspace, entry.Name, current.Id),
-                ConfiguredMaxReissues());
+                ConfiguredMaxReissues(entry.Name));
         if (qualityGate is not null)
         {
             await HandleCompletionGateAsync(workspace, entry, pending, current, qualityGate, ct);
@@ -2502,7 +2560,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Decision);
 
-        var followUpDecision = ReviewFollowUpPolicy.Decide(
+        var initialFollowUpDecision = ReviewFollowUpPolicy.Decide(
             report.Verdicts.Select(verdict => new ReviewFollowUpFinding(
                 verdict.Aspect,
                 AspectVerdictParsing.StatusToken(verdict.Status),
@@ -2513,8 +2571,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ReportBody: verdict.Body)),
             ReviewConcernRoundStore.Read(current.FolderPath)?.Used ?? 0,
             ConfiguredMaxConcernRounds(entry.Name));
-        if (followUpDecision.Action == ReviewFollowUpAction.RetryAspect)
-            report = MarkRetryAspectAsInfrastructure(report, followUpDecision);
+        if (initialFollowUpDecision.Action == ReviewFollowUpAction.RetryAspect)
+            report = MarkRetryAspectAsInfrastructure(report, initialFollowUpDecision);
 
         // Aspect-verdict infra crash (AGT-2021): one or more aspects produced no
         // verdict because the reviewing CLI died - even after the aspect runner's
@@ -2614,6 +2672,51 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             current.FolderPath,
             pendingStepReason: "Not run in this completed pipeline attempt.");
 
+        // Charge the delivered aspect review once, across operator epochs and
+        // lane continuations. The local grade artifact seeds pre-policy cards.
+        var projectedRounds = AgentStudio.Review.ReviewProjectionReader.Read(
+            current, _timeline?.ReadAll(current.FolderPath) ?? [], null).Attempts;
+        var localAttemptId = gradeReport is null
+            ? $"local-review-{_pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1}"
+            : projectedRounds.FirstOrDefault(round =>
+                  round.Plane == AgentStudio.Review.ReviewPlane.Local)?.AttemptId
+              ?? $"local-review-{_pipelineLog?.Read(current.FolderPath)?.Attempt ?? 1}";
+        var roundSeed = ReviewRoundBudgetStore.Read(
+            current.FolderPath,
+            projectedRounds.Where(round => round.AttemptId != localAttemptId).ToArray());
+        var blockedAspects = report.Verdicts.Where(verdict => verdict.Status == AspectStatus.Block)
+            .Select(verdict => verdict.Aspect).ToArray();
+        var roundBudget = ReviewRoundBudgetPolicy.Decide(
+            roundSeed, localAttemptId, blockedAspects,
+            _projectSettings?.Get(entry.Name).MaxDeliveredReviewRounds ?? ReviewRoundBudgetPolicy.DefaultMaximumRounds,
+            ConfiguredIdenticalBlockRounds(),
+            CountPriorReissues(workspace, entry.Name, current.Id),
+            ConfiguredMaxReissues(entry.Name));
+        ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
+            new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
+                SpentBy: roundBudget.SpentBy));
+        // The roundBudget decision above and the initialFollowUpDecision from
+        // the settled verdicts determine followUpDecision before degradation.
+        // Degraded findings move to the linked follow-up card below; they must
+        // not start a further automatic concern round on this delivery.
+        var followUpDecision = ReviewRoundBudgetPolicy.ApplyFollowUp(initialFollowUpDecision, roundBudget);
+        if (roundBudget.Degrade)
+        {
+            if (!CreateReviewBudgetFollowUp(current, localAttemptId, report, roundBudget)) return;
+            report = AspectRunReport.From(report.Verdicts.Select(verdict =>
+                verdict.Status == AspectStatus.Block
+                && roundBudget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)
+                    ? verdict with
+                    {
+                        Status = AspectStatus.Concerns,
+                        Body = $"**Orchestrator disposition:** Block recorded as concerns after review round "
+                               + $"{roundBudget.RoundNumber} of {roundBudget.MaximumRounds} spent the lifetime budget. "
+                               + "The original reviewer response follows.\n\n" + verdict.Body,
+                    }
+                    : verdict).ToArray());
+            if (!TryRecordDegradedAspects(current.FolderPath, report, roundBudget)) return;
+        }
+
         if (report.Overall == AspectStatus.Block)
         {
             // Reissue-loop breaker (ASS-794). The aspect-block path is the one
@@ -2633,10 +2736,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ConfiguredIdenticalBlockRounds());
             var loopBreak = ReissueLoopBreaker.Evaluate(
                 CountReissuesInCurrentChain(reviewRecords, current.Id),
-                ConfiguredMaxReissues(),
+                ConfiguredMaxReissues(entry.Name),
                 emptyFollowupDiff: IsLatestRunEmptyDiff(current, entry.Path),
-                stateAcceptable: true,
-                repeatedBlock);
+                stateAcceptable: true);
             switch (loopBreak.Action)
             {
                 case ReissueLoopBreaker.LoopBreakAction.AcceptEmptyDiff:
@@ -2680,7 +2782,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             EvidenceGate.HasVisualEvidence(current.FolderPath),
             report,
             CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues());
+            ConfiguredMaxReissues(entry.Name));
         if (evidenceGate.IsBlocking)
         {
             await HandleEvidenceGateAsync(workspace, entry, pending, current, report, evidenceGate, ct);
@@ -2688,9 +2790,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         }
 
         var solutionQualityGate = SolutionQualityGate.Evaluate(
-            report,
+            roundBudget.Degrade
+                ? AspectRunReport.From(report.Verdicts.Where(verdict =>
+                    !roundBudget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)).ToArray())
+                : report,
             CountPriorReissues(workspace, entry.Name, current.Id),
-            ConfiguredMaxReissues());
+            ConfiguredMaxReissues(entry.Name));
         if (solutionQualityGate.IsBlocking)
         {
             await HandleSolutionQualityGateAsync(workspace, entry, pending, current, report, solutionQualityGate, ct);
@@ -2885,7 +2990,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 $"Council reaction reopened \"{(moved.Title ?? moved.Id)}\" for {reaction.Assessments.Count} named review finding(s). Next round: {moved.Id} attempt {reaction.TargetRunAttempt}.");
             EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
                 TimelineActors.QualityLoop, reaction.Summary,
-                BuildReopenDetails("code-review-council", priorReissues, followUp));
+                BuildReopenDetails(entry.Name, "code-review-council", priorReissues, followUp));
             _statusSnapshot.RecordReissue();
 
             AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -2955,7 +3060,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             gradeReport.Findings ?? Array.Empty<string>(),
             CountPriorReissues(workspace, entry.Name, current.Id),
             _projectSettings?.Get(current.ProjectName).AutomaticFailureContinuationsEnabled == false
-                ? 0 : Math.Min(1, ConfiguredMaxReissues()),
+                ? 0 : Math.Min(1, ConfiguredMaxReissues(entry.Name)),
             current.Id,
             targetRunAttempt: (_pipelineLog?.Read(current.FolderPath)?.Attempt
                 ?? CountPriorReissues(workspace, entry.Name, current.Id) + 1) + 1,
@@ -3017,7 +3122,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: {blockCount} blocking {blockNoun} from auto-review.",
-            BuildReopenDetails("multi-aspect-block",
+            BuildReopenDetails(entry.Name, "multi-aspect-block",
                 CountPriorReissues(workspace, entry.Name, current.Id),
                 report.FollowUpSummary,
                 report.Verdicts));
@@ -3158,7 +3263,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Concern round {ledger.Used} of {ledger.Maximum} used.",
-            BuildReopenDetails(
+            BuildReopenDetails(entry.Name,
                 "multi-aspect-concern",
                 CountPriorReissues(workspace, entry.Name, current.Id),
                 followUp,
@@ -3247,6 +3352,99 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ["followUpTaskId"] = created.Id,
                 ["followUpTaskKey"] = createdKey,
             });
+    }
+
+    private bool CreateReviewBudgetFollowUp(
+        TaskInfo source,
+        string attemptId,
+        AspectRunReport report,
+        ReviewRoundBudgetDecision budget)
+    {
+        if (_taskMutations is null) return false;
+        var title = $"Follow-up: review budget in {source.Key ?? source.Id}";
+        var created = _scanner.ScanAllJobs().FirstOrDefault(task =>
+            task.CreationSource == "review-budget-follow-up"
+            && string.Equals(task.Title, title, StringComparison.Ordinal));
+        var findings = string.Join("\n\n", report.Verdicts
+            .Where(verdict => verdict.Status != AspectStatus.Pass)
+            .Select(verdict => $"## {verdict.Aspect}: {verdict.Summary}\n\n{verdict.Body}"));
+        if (created is null)
+        {
+            var id = _taskMutations.CreateJob(new AgentStudio.Shared.CreateTaskRequest
+            {
+                Title = title,
+                Agent = source.Agent,
+                CliType = source.CliType,
+                Model = source.Model,
+                ThinkingLevel = source.ThinkingLevel,
+                WatchPath = source.WatchPath,
+                PromptMarkdown = $"Review round {budget.RoundNumber} of {budget.MaximumRounds} spent the source card's budget at {budget.SpentBy}. Address the open findings below in this follow-up. Source card: {source.Key ?? source.Id}.\n\n{findings}",
+                TargetState = TaskStates.Ready,
+                TaskType = TaskTypes.Bug,
+                OwnerClientId = source.OwnerClientId,
+                CreationSource = "review-budget-follow-up",
+                CreatedBy = "pipeline",
+            });
+            created = id is null ? null : _scanner.FindJob(id, source.WatchPath);
+        }
+        else if (ReviewRoundBudgetStore.Read(source.FolderPath).Rounds
+                     .All(round => round.AttemptId != attemptId || round.FollowUpTaskKey is null))
+        {
+            _taskMutations.AppendContinuationNote(created.Id,
+                $"Review attempt {attemptId} added open findings:\n\n{findings}", created.WatchPath);
+        }
+        if (created is null) return false;
+        var sourceKey = source.Key ?? source.Id;
+        var createdKey = created.Key ?? created.Id;
+        _taskMutations.SetTaskReferences(created.Id, (created.References ?? new TaskReferences()) with
+        {
+            FollowUpOf = [sourceKey],
+        }, created.WatchPath);
+        var latestSource = _scanner.FindJob(source.Id, source.WatchPath) ?? source;
+        _taskMutations.SetTaskReferences(source.Id, (latestSource.References ?? new TaskReferences()) with
+        {
+            RaisedFollowUps = (latestSource.References?.RaisedFollowUps ?? [])
+                .Append(createdKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+        }, source.WatchPath);
+        ReviewRoundBudgetStore.MarkFollowUp(latestSource.FolderPath, attemptId, createdKey);
+        return true;
+    }
+
+    private bool TryRecordDegradedAspects(
+        string folderPath,
+        AspectRunReport report,
+        ReviewRoundBudgetDecision budget)
+    {
+        try
+        {
+            foreach (var verdict in report.Verdicts.Where(verdict =>
+                         budget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)))
+            {
+                var jsonPath = Path.Combine(folderPath, $"aspect-{verdict.Aspect}.json");
+                var previous = File.Exists(jsonPath)
+                    ? AspectVerdictParsing.TryParseJson(File.ReadAllText(jsonPath))
+                    : null;
+                var recordedAt = previous?.CreatedAt ?? DateTime.UtcNow;
+                File.WriteAllText(jsonPath,
+                    AspectVerdictParsing.RenderJson(verdict, previous?.Model, recordedAt));
+                File.WriteAllText(Path.Combine(folderPath, $"aspect-{verdict.Aspect}.md"),
+                    AspectVerdictParsing.RenderReport(verdict, recordedAt));
+                var step = _pipelineLog?.Read(folderPath)?.Steps.FirstOrDefault(item =>
+                    string.Equals(item.StepId, $"aspect-{verdict.Aspect}", StringComparison.OrdinalIgnoreCase));
+                if (step is not null)
+                    _pipelineLog?.RecordStep(folderPath, step with
+                    {
+                        Verdict = "concerns",
+                        Reason = "review-round-budget-degraded",
+                    });
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogError(ex, "review-round-budget-aspect-record-failed folder={FolderPath}", folderPath);
+            return false;
+        }
     }
 
     private static string BuildConcernFollowUp(
@@ -3678,7 +3876,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         EmitVerdictTimeline(escalatedFolder, TimelineEventKinds.OrchestratorEscalated,
             TimelineActors.Orchestrator, loopBreak.Reason,
-            BuildEscalateDetails(loopBreak.Cause, loopBreak.Reason,
+            BuildEscalateDetails(entry.Name, loopBreak.Cause, loopBreak.Reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
         _statusSnapshot.RecordEscalate();
@@ -3750,7 +3948,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             EmitVerdictTimeline(escalatedFolder,
                 TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, gate.Reason,
-                BuildEscalateDetails("evidence-gate", gate.Reason, priorReissues));
+                BuildEscalateDetails(entry.Name, "evidence-gate", gate.Reason, priorReissues));
 
             AppendReviewDecision(workspace, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,
@@ -3793,7 +3991,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: evidence gate requires verification for {count} {noun}.",
-            BuildReopenDetails("evidence-gate",
+            BuildReopenDetails(entry.Name, "evidence-gate",
                 CountPriorReissues(workspace, entry.Name, current.Id), findingsBlock));
 
         _statusSnapshot.RecordReissue();
@@ -3870,7 +4068,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             EmitVerdictTimeline(escalatedFolder,
                 TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, gate.Reason,
-                BuildEscalateDetails("solution-quality-gate", gate.Reason, priorReissues));
+                BuildEscalateDetails(entry.Name, "solution-quality-gate", gate.Reason, priorReissues));
 
             AppendReviewDecision(workspace, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,
@@ -3930,7 +4128,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: solution-quality gate requires follow-up for {count} {noun}.",
-            BuildReopenDetails("solution-quality-gate",
+            BuildReopenDetails(entry.Name, "solution-quality-gate",
                 CountPriorReissues(workspace, entry.Name, current.Id), findingsBlock));
 
         _statusSnapshot.RecordReissue();
@@ -4623,7 +4821,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
             EmitVerdictTimeline(escalatedFolder,
                 TimelineEventKinds.OrchestratorEscalated, TimelineActors.Orchestrator, escalationReason,
-                BuildEscalateDetails("completion-gate", escalationReason, priorReissues));
+                BuildEscalateDetails(entry.Name, "completion-gate", escalationReason, priorReissues));
 
             AppendReviewDecision(workspace, new ReviewDecisionRecord(
                 CreatedAt: DateTime.UtcNow,
@@ -4670,7 +4868,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: {gate.Reason}",
-            BuildReopenDetails("completion-gate",
+            BuildReopenDetails(entry.Name, "completion-gate",
                 CountPriorReissues(workspace, entry.Name, current.Id), findingsBlock));
 
         _statusSnapshot.RecordReissue();
@@ -6165,7 +6363,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             && string.Equals(r.SubjectSha, result.ExpectedSha, StringComparison.OrdinalIgnoreCase)
             && string.Equals(r.FailureFingerprint, result.FailureFingerprint, StringComparison.Ordinal));
         var taskReissueCeilingReached = CountPriorReissues(workspace, entry.Name, current.Id)
-            >= ConfiguredMaxReissues();
+            >= ConfiguredMaxReissues(entry.Name);
         var failureIdentity = BuildTestGateFailureIdentity(result);
         var lastGateCacheDecision = BuildTestGateRunner.DependencyCacheDecisionSummary(
             result.DependencyCacheDecision);
@@ -6205,7 +6403,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     $"Build/test gate failed twice in a row. Promoted to {TaskStates.Escalated}. Output:\n{result.Output}");
                 EmitVerdictTimeline(movedFolderPath, TimelineEventKinds.OrchestratorEscalated,
                     TimelineActors.Orchestrator, reason,
-                    BuildEscalateDetails("build-test-gate-double-fail", reason,
+                    BuildEscalateDetails(entry.Name, "build-test-gate-double-fail", reason,
                         CountPriorReissues(workspace, entry.Name, current.Id)));
             }
             else
@@ -6268,7 +6466,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: build/test gate failed ({result.Reason}).",
-            BuildReopenDetails(BuildTestGateReopenCause,
+            BuildReopenDetails(entry.Name, BuildTestGateReopenCause,
                 CountPriorReissues(workspace, entry.Name, current.Id),
                 followUp));
 
@@ -6362,7 +6560,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 // ADR-0049: timeline event on the original card, no wrapper card.
                 EmitVerdictTimeline(movedFolderPath, TimelineEventKinds.OrchestratorEscalated,
                     TimelineActors.Orchestrator, reason,
-                    BuildEscalateDetails("lint-scss-double-fail", reason,
+                    BuildEscalateDetails(entry.Name, "lint-scss-double-fail", reason,
                         CountPriorReissues(workspace, entry.Name, current.Id)));
             }
             else
@@ -6403,7 +6601,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved2.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: lint-scss post-step failed (exit {result.ExitCode}).",
-            BuildReopenDetails("lint-scss-fail",
+            BuildReopenDetails(entry.Name, "lint-scss-fail",
                 CountPriorReissues(workspace, entry.Name, current.Id),
                 result.Output));
 
@@ -6714,33 +6912,12 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         => CountReissuesInCurrentChain(ReviewDecisionLog.ReadAll(workspace, project), jobId);
 
     /// <summary>
-    /// Count the reissues in the job's current operator-owned attempt epoch.
-    /// The epoch changes only when an explicit
-    /// <see cref="ReviewDecisionKind.OperatorRequeue"/> boundary is appended.
-    /// Automatic escalate, accept, and lane moves stay in the same epoch and
-    /// therefore retain the anti-churn budget.
-    ///
-    /// <para>
-    /// Legacy records without <see cref="ReviewDecisionRecord.AttemptEpoch"/>
-    /// belong to epoch 0. Once an operator requeue opens epoch N, only reissues
-    /// stamped with N count. Old rows remain readable history. This deliberately
-    /// does not infer a reset from an Escalate or AcceptAsDone verdict: an
-    /// automated move must never replenish an agent loop's budget.
-    /// </para>
-    ///
-    /// <para><see cref="ReviewDecisionKind.Skipped"/> is neither a count nor a
-    /// boundary. Records are consumed in append order, the order
-    /// <see cref="ReviewDecisionLog.ReadAll"/> returns them.</para>
+    /// Count every automatic reissue in the card's lifetime. Operator epochs
+    /// rotate evidence but never replenish an automatic budget.
     /// </summary>
     internal static int CountReissuesInCurrentChain(IEnumerable<ReviewDecisionRecord> records, string jobId)
     {
-        var jobRecords = records.Where(r => r.JobId == jobId).ToList();
-        var currentEpoch = jobRecords.Count == 0
-            ? 0
-            : jobRecords.Max(r => Math.Max(0, r.AttemptEpoch ?? 0));
-        return jobRecords.Count(r =>
-            r.Kind == ReviewDecisionKind.Reissue
-            && IsInAttemptEpoch(r, currentEpoch));
+        return records.Count(r => r.JobId == jobId && r.Kind == ReviewDecisionKind.Reissue);
     }
 
     internal static bool IsInAttemptEpoch(ReviewDecisionRecord record, int epoch)
@@ -6888,13 +7065,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// events so the FE can render "Attempt N of M" without re-reading
     /// config itself.
     /// </summary>
-    private int ConfiguredMaxReissues() =>
-        _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts);
+    private int ConfiguredMaxReissues(string? projectName = null) =>
+        projectName is null
+            ? _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts)
+            : Math.Clamp(_projectSettings?.Get(projectName).MaxAutoReissueAttempts
+                         ?? _configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", MaxAutoReissueAttempts), 0, 20);
 
     /// <summary>
-    /// Consecutive rounds allowed to return the exact same aspect/reason pair.
-    /// This is narrower than the shared reissue budget: changing findings may
-    /// still use that budget, while an unchanged semantic block stops early.
+    /// Prior consecutive rounds allowed to block on one aspect id. The
+    /// historical setting name remains compatible; finding text is evidence,
+    /// not part of the recurrence key.
     /// </summary>
     private int ConfiguredIdenticalBlockRounds() =>
         Math.Clamp(_configuration.GetValue(
@@ -6930,7 +7110,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// the upcoming attempt is <c>priorReissues + 2</c> (initial run = 1).
     /// </summary>
     private Dictionary<string, string> BuildReopenDetails(
-        string cause, int priorReissues, string? gap = null,
+        string projectName, string cause, int priorReissues, string? gap = null,
         IReadOnlyList<AspectVerdict>? verdicts = null,
         string? followUpPrompt = null,
         SteeringContext? context = null)
@@ -6940,7 +7120,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         {
             ["cause"] = cause,
             ["attempt"] = (priorReissues + 2).ToString(inv),
-            ["maxAttempts"] = (ConfiguredMaxReissues() + 1).ToString(inv),
+            ["maxAttempts"] = (ConfiguredMaxReissues(projectName) + 1).ToString(inv),
         };
         // Traceability (ASS-734): carry the exact steering prompt the agent
         // received so the FE timeline/protocol pane can show "Prompt + Context"
@@ -6996,7 +7176,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <c>priorReissues + 1</c> (initial run = 1); recording it next to the
     /// budget makes a budget-exhaustion escalation legible on the timeline.
     /// </summary>
-    private Dictionary<string, string> BuildEscalateDetails(string cause, string reason, int priorReissues)
+    private Dictionary<string, string> BuildEscalateDetails(string projectName, string cause, string reason, int priorReissues)
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         return new Dictionary<string, string>
@@ -7004,7 +7184,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ["cause"] = cause,
             ["reason"] = Truncate(reason ?? string.Empty, 600),
             ["attempt"] = (priorReissues + 1).ToString(inv),
-            ["maxAttempts"] = (ConfiguredMaxReissues() + 1).ToString(inv),
+            ["maxAttempts"] = (ConfiguredMaxReissues(projectName) + 1).ToString(inv),
         };
     }
 
@@ -7217,7 +7397,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         EmitVerdictTimeline(moved.FolderPath, TimelineEventKinds.QualityLoopReopened,
             TimelineActors.QualityLoop,
             $"Reopened: orchestrator answered NEEDS_INPUT. {verdict.Reason}",
-            BuildReopenDetails("needs-input",
+            BuildReopenDetails(entry.Name, "needs-input",
                 CountPriorReissues(workspace, entry.Name, current.Id),
                 verdict.Reason));
 
@@ -7284,7 +7464,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         EmitVerdictTimeline(movedFolderPath, TimelineEventKinds.OrchestratorEscalated,
             TimelineActors.Orchestrator, escalationReason,
-            BuildEscalateDetails("needs-input-escalate", escalationReason,
+            BuildEscalateDetails(entry.Name, "needs-input-escalate", escalationReason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
 
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
@@ -8009,7 +8189,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _chatLog.AppendSupervisor(moved, "escalate", reason);
         EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
             TimelineActors.Orchestrator, reason,
-            BuildEscalateDetails("card-round-budget", reason,
+            BuildEscalateDetails(entry.Name, "card-round-budget", reason,
                 CountPriorReissues(workspace, entry.Name, current.Id)));
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,

@@ -1,5 +1,7 @@
 import type { CliModelInfo } from '../../features/cli';
+import { mapThinkingLevel, mappedThinkingLevelNote } from '../../features/cli/thinking-levels';
 
+/** Same rule as the backend: an unoffered known rung maps to the highest offered rung below it. */
 export function normalizeThinkingLevel(
   models: readonly CliModelInfo[],
   modelId: string,
@@ -7,10 +9,13 @@ export function normalizeThinkingLevel(
 ): string | null {
   if (!modelId) return null;
   const model = models.find((candidate) => candidate.id === modelId);
-  const levels = model?.thinkingLevels ?? [];
-  if (levels.length === 0) return null;
-  if (requested && levels.includes(requested)) return requested;
-  return model?.defaultThinkingLevel ?? levels[0] ?? null;
+  return mapThinkingLevel(model?.thinkingLevels, model?.defaultThinkingLevel, requested ?? model?.defaultThinkingLevel).level;
+}
+
+/** AGT-2903: note shown when the pinned level is not offered by the model and runs at another rung. */
+export function levelMappingNote(model: CliModelInfo | null, pinned: string | null): string | null {
+  if (!model) return null;
+  return mappedThinkingLevelNote(mapThinkingLevel(model.thinkingLevels, model.defaultThinkingLevel, pinned), model.id);
 }
 
 export function modelAvailabilityNote(model: CliModelInfo): string | null {

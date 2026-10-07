@@ -1,0 +1,17 @@
+@if (receipt(); as current) {
+  <div class="receipt" data-testid="overview-steering-receipt">
+    <span class="receipt__label">Steering</span>
+    <span class="receipt__value">
+      <span class="receipt__state">{{ current.summary }}</span>
+      @if (current.details?.['commandId']; as commandId) {
+        <span class="receipt__identity" [title]="commandId">command {{ commandId }}</span>
+      }
+      @if (current.details?.['attemptId']; as attemptId) {
+        <span class="receipt__identity" [title]="attemptId">attempt {{ attemptId }}</span>
+      }
+      @if (current.details?.['settlementId']; as settlementId) {
+        <span class="receipt__identity" [title]="settlementId">settlement {{ settlementId }}</span>
+      }
+    </span>
+  </div>
+}

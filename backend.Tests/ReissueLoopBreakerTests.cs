@@ -7,9 +7,8 @@ namespace AgentStudio.Tests;
 /// Pure-policy coverage for <see cref="ReissueLoopBreaker"/> (ASS-794): the
 /// deterministic loop-breaker that stops a finished task from penduluming
 /// between <c>2-ready</c> and the run loop on the multi-aspect BLOCK path. Two
-/// rules in precedence order: identical aspect block at its limit escalates;
-/// otherwise an empty follow-up diff on an already-reissued clean card accepts;
-/// budget spent escalates; otherwise there is no loop-break.
+/// rules in precedence order: an empty follow-up diff on an already-reissued
+/// clean card accepts; budget spent escalates; otherwise there is no loop-break.
 /// </summary>
 public class ReissueLoopBreakerTests
 {
@@ -92,24 +91,15 @@ public class ReissueLoopBreakerTests
     }
 
     [Fact]
-    public void Evaluate_RepeatedAspectBlockEscalatesBeforeEmptyDiffAcceptance()
+    public void Evaluate_AspectRecurrenceIsHandledBeforeLoopBreaker()
     {
-        var diagnosis = new RepeatedAspectBlockDiagnosis(
-            "fingerprint",
-            "requirement-fit: Required S1 slice is still missing.",
-            ConsecutiveRounds: 2,
-            MaximumRounds: 2);
-
         var decision = ReissueLoopBreaker.Evaluate(
             priorReissues: 1,
             maxReissues: 5,
             emptyFollowupDiff: true,
-            stateAcceptable: true,
-            repeatedBlock: diagnosis);
+            stateAcceptable: true);
 
-        Assert.Equal(ReissueLoopBreaker.LoopBreakAction.Escalate, decision.Action);
-        Assert.Equal("identical-aspect-block", decision.Cause);
-        Assert.Contains("Required S1 slice is still missing", decision.Reason);
+        Assert.Equal(ReissueLoopBreaker.LoopBreakAction.AcceptEmptyDiff, decision.Action);
     }
 
     [Fact]
@@ -129,7 +119,7 @@ public class ReissueLoopBreakerTests
         var records = new[]
         {
             new ReviewDecisionRecord(
-                DateTime.UtcNow,
+                DateTime.UnixEpoch,
                 "AGT-1",
                 "Project",
                 ReviewDecisionKind.Reissue,
@@ -167,7 +157,7 @@ public class ReissueLoopBreakerTests
         var records = new[]
         {
             new ReviewDecisionRecord(
-                DateTime.UtcNow,
+                DateTime.UnixEpoch,
                 "AGT-2",
                 "Project",
                 ReviewDecisionKind.Reissue,
@@ -194,7 +184,38 @@ public class ReissueLoopBreakerTests
             secondReport, records, "AGT-2", attemptEpoch: 1, maximumRounds: 2)!;
 
         Assert.True(second.MustEscalate);
-        Assert.Equal("requirement-fit: Same missing slice.", second.Finding);
+        Assert.Equal("code-quality: Different quality issue.", second.Finding);
+    }
+
+    [Fact]
+    public void Diagnose_ChangedSummaryAndEpoch_StillMatchTheAspect()
+    {
+        var firstReport = AspectRunReport.From([
+            new AspectVerdict("code-quality", AspectStatus.Block, "First file", "body", "quality:concerns"),
+        ]);
+        var first = RepeatedAspectBlockPolicy.Diagnose(
+            firstReport, [], "AGT-3", attemptEpoch: 0, maximumRounds: 2)!;
+        var record = new ReviewDecisionRecord(
+            DateTime.UnixEpoch, "AGT-3", "Project", ReviewDecisionKind.Reissue,
+            "blocked", "prompt", "response", "follow-up")
+        {
+            AttemptEpoch = 0,
+            FailureKind = RepeatedAspectBlockPolicy.FailureKind,
+            FailureFingerprint = first.Fingerprint,
+        };
+        var changedReport = AspectRunReport.From([
+            new AspectVerdict("code-quality", AspectStatus.Block, "Another method", "body", "quality:concerns"),
+        ]);
+
+        var boundary = new ReviewDecisionRecord(
+            DateTime.UnixEpoch, "AGT-3", "Project", ReviewDecisionKind.OperatorRequeue,
+            "continue", "", "", "") { AttemptEpoch = 1 };
+        var second = RepeatedAspectBlockPolicy.Diagnose(
+            changedReport, [record, boundary], "AGT-3", attemptEpoch: 1, maximumRounds: 2)!;
+
+        Assert.Equal(first.Fingerprint, second.Fingerprint);
+        Assert.Equal(2, second.ConsecutiveRounds);
+        Assert.Equal("code-quality: Another method", second.Finding);
     }
 
     [Fact]

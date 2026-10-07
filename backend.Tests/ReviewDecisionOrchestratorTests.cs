@@ -148,15 +148,15 @@ public class ReviewDecisionOrchestratorTests : IDisposable
                 seededAt.AddMinutes(index), slug, Project,
                 ReviewDecisionKind.Reissue, "prior automatic round", "(seed)", "(seed)", string.Empty));
 
-        // A fresh operator epoch leaves the local reissue count at zero, but
-        // cannot replenish the card's lifetime allowance.
+        // A fresh operator epoch rotates evidence without replenishing the
+        // card's lifetime allowance or automatic reissue count.
         ReviewDecisionLog.Append(_workspace, new ReviewDecisionRecord(
             seededAt.AddMinutes(CardRoundBudget.DefaultRoundsPerCard), slug, Project, ReviewDecisionKind.OperatorRequeue,
             "operator reopened the card", "(seed)", "(seed)", string.Empty)
         {
             AttemptEpoch = 1,
         });
-        Assert.Equal(0, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
+        Assert.Equal(CardRoundBudget.DefaultRoundsPerCard, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(
             ReviewDecisionLog.ReadAll(_workspace, Project), slug));
 
         await BuildOrchestrator("[[ORCHESTRATOR_DECISION: action=reissue; reason=try again]]")
@@ -1109,6 +1109,78 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Blocked_WithFork_RaisesDecisionCard_AndEscalatedCardWaitsOnIt()
+    {
+        // Decision cards live in the job-store layout, so the blocked card is
+        // created there too instead of in the legacy lane folders.
+        var (scanner, originId) = SeedJobStoreCardWithBlockedLog("Stable release gate",
+            $"[12:00:00.000] [stdout] Should the Stable release ship with a lock file?{Environment.NewLine}" +
+            $"[12:00:00.100] [stdout] - Option A: Keep the lock file. Reproducible installs (recommended).{Environment.NewLine}" +
+            $"[12:00:00.200] [stdout] - Option B: Drop the lock file. Identity from the manifest.{Environment.NewLine}" +
+            $"[12:00:01.000] [stdout] [[TASK_BLOCKED:choose-lockfile-strategy]]{Environment.NewLine}");
+        var orchestrator = BuildOrchestrator(cliResponse: "", withDecisionRequests: true);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        var record = ReadOnlyDecisionRecord();
+        Assert.Equal(ReviewDecisionKind.Escalate, record.Kind);
+        Assert.StartsWith("decision card ", record.FollowUp);
+        var decisionKey = record.FollowUp["decision card ".Length..];
+        var decision = scanner.FindJob(decisionKey, _watchPath)!;
+        Assert.Equal(TaskKinds.Decision, decision.Kind);
+        Assert.Equal(TaskStates.Preparation, decision.State);
+        Assert.Equal("Should the Stable release ship with a lock file?", decision.Decision!.Question);
+        Assert.Equal(["a", "b"], decision.Decision.Options.Select(option => option.Id));
+        Assert.Equal("Keep the lock file.", decision.Decision.Options[0].Label);
+        Assert.Equal("a", decision.Decision.RecommendedOptionId);
+        var origin = scanner.FindJob(originId, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, origin.State);
+        Assert.Equal([origin.Key ?? origin.Id], decision.Decision.AppliesTo);
+        Assert.Contains(origin.References.DependsOn, edge => edge.Key == decisionKey);
+    }
+
+    private (TaskScannerService Scanner, string JobId) SeedJobStoreCardWithBlockedLog(string title, string log)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TaskRepository"] = _workspace,
+                ["WatchPaths:0:Name"] = Project,
+                ["WatchPaths:0:Path"] = _watchPath,
+                ["WatchPaths:0:RootPath"] = _watchPath,
+            }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var mutations = new TaskMutationService(scanner,
+            new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+            new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            NullLogger<TaskMutationService>.Instance);
+        var jobId = mutations.CreateJob(new CreateTaskRequest
+        {
+            Title = title, WatchPath = _watchPath, TargetState = TaskStates.AutoReview,
+            PromptMarkdown = "# Stable release gate\n\nShip the release contract.\n",
+        })!;
+        var folder = scanner.FindJob(jobId, _watchPath)!.FolderPath;
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        File.WriteAllText(TaskPaths.CliOutputLog(folder), log);
+        return (scanner, jobId);
+    }
+
+    [Fact]
+    public async Task Blocked_WithoutFork_KeepsTheProseEscalationOnly()
+    {
+        SeedReviewJobWithBlocked("no-fork", "missing-sdk");
+        var orchestrator = BuildOrchestrator(cliResponse: "", withDecisionRequests: true);
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        Assert.Equal(string.Empty, ReadOnlyDecisionRecord().FollowUp);
+        Assert.DoesNotContain(Directory.EnumerateFiles(_watchPath, "task.json", SearchOption.AllDirectories),
+            path => File.ReadAllText(path).Contains("\"kind\": \"decision\""));
+    }
+
+    [Fact]
     public async Task Blocked_DoesNotReprocess_OnceSupervisorEscalateLineIsPresent()
     {
         SeedReviewJobWithBlocked("already-escalated", "needs human");
@@ -1680,6 +1752,71 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TaskDone_BlockAfterLifetimeBudgetSpent_AcceptsWithConcernsAndRaisesOneFollowUp()
+    {
+        // AGT-3008: the local path degrades a spent-budget code-quality block to
+        // concerns. The finding moves to one linked follow-up card, so the
+        // delivery reaches human review without another automatic fix round.
+        // Seeded in the flat task store because the follow-up card lands there.
+        var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspect => aspect switch
+        {
+            "code-quality" => "[[ASPECT_VERDICT: status=block; summary=Rename the helper in backend/Other.cs.]]\n[[TASK_DONE]]",
+            _ => "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]"
+        }, withTaskMutations: true);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["WatchPaths:0:Name"] = Project,
+            ["WatchPaths:0:Path"] = _watchPath,
+            ["WatchPaths:0:RootPath"] = _watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var sourceId = BuildTaskMutations(scanner, config).CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Id = "budget-spent",
+            Title = "Budget spent",
+            Agent = CliTypes.Claude,
+            CliType = CliTypes.Claude,
+            WatchPath = _watchPath,
+            TargetState = TaskStates.AutoReview,
+            PromptMarkdown = "Do the thing.",
+        });
+        var folder = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, _watchPath)).FolderPath;
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        File.WriteAllText(Path.Combine(folder, "logs", "cli-output.log"),
+            $"[12:00:00.000] [stdout] starting{Environment.NewLine}[12:00:01.000] [stdout] [[TASK_DONE]]{Environment.NewLine}");
+        File.WriteAllText(Path.Combine(folder, ReviewRoundBudgetStore.FileName),
+            System.Text.Json.JsonSerializer.Serialize(new ReviewRoundBudgetLedger(
+                    Enumerable.Range(1, 3).Select(round =>
+                        new DeliveredReviewRound($"review-{round}", ["code-quality"], [])).ToArray()),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId!, _watchPath));
+        Assert.Equal(TaskStates.HumanReview, source.State);
+        var record = ReadOnlyDecisionRecord();
+        Assert.Equal(ReviewDecisionKind.AcceptAsDone, record.Kind);
+        var qualityMd = File.ReadAllText(Path.Combine(source.FolderPath, "aspect-code-quality.md"));
+        Assert.Equal(AspectStatus.Concerns, AspectVerdictParsing.ReadStatusFromReport(qualityMd));
+        Assert.Contains("Rename the helper", qualityMd);
+
+        var ledger = ReviewRoundBudgetStore.Read(source.FolderPath);
+        Assert.Equal(4, ledger.Delivered);
+        var charged = ledger.Rounds[^1];
+        Assert.Equal(["code-quality"], charged.DegradedAspects);
+        Assert.Equal("code-quality", charged.SpentBy);
+        var followUp = Assert.Single(scanner.ScanAllJobs(), task => task.CreationSource == "review-budget-follow-up");
+        Assert.Equal(charged.FollowUpTaskKey, followUp.Key ?? followUp.Id);
+        Assert.Equal(TaskStates.Ready, followUp.State);
+        Assert.Contains(sourceId!, followUp.References?.FollowUpOf ?? []);
+        Assert.Equal([charged.FollowUpTaskKey!], source.References?.RaisedFollowUps);
+        Assert.Contains("Rename the helper", File.ReadAllText(Path.Combine(followUp.FolderPath, "prompt.md")));
+    }
+
+    [Fact]
     public async Task TaskDone_PostProcessingEvidence_AttributesDeterministicDecisionWithoutInventedCli()
     {
         SeedReviewJobWithDone("codex-main-deterministic-post", agent: CliTypes.Codex);
@@ -2228,7 +2365,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
             .ToList();
         Assert.Equal(ReviewDecisionKind.AcceptAsDone, records[^1].Kind);
         Assert.Equal(1, records[^1].AttemptEpoch);
-        Assert.Equal(0, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, slug));
+        Assert.Equal(2, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(records, slug));
     }
 
     private void SeedHumanReviewCard(string slug, IReadOnlyList<string> tags)
@@ -2377,7 +2514,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     private ReviewDecisionOrchestrator BuildOrchestratorWithAspects(
         Func<string, string> aspectStub,
         IReadOnlyList<string>? aspectRunners = null,
-        AutoReviewStatusSnapshot? statusSnapshot = null)
+        AutoReviewStatusSnapshot? statusSnapshot = null,
+        bool withTaskMutations = false)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -2420,9 +2558,13 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot ?? new AutoReviewStatusSnapshot(), config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
-            timeline: _timeline);
+            timeline: _timeline,
+            taskMutations: withTaskMutations ? BuildTaskMutations(scanner, config) : null);
         return orchestrator;
     }
+
+    private static TaskMutationService BuildTaskMutations(TaskScannerService scanner, IConfiguration config)
+        => new(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
 
     private static AgentStudio.TaskAccess.TaskAccessService BuildTaskAccess(
         TaskScannerService scanner,
@@ -2431,7 +2573,7 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     {
         var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(indexCache);
-        var mutations = new TaskMutationService(scanner, new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance), new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
+        var mutations = BuildTaskMutations(scanner, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
@@ -2578,7 +2720,8 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         Action? onCall = null,
         OrchestratorChatLog? chatLogOverride = null,
         string? reviewCli = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        bool withDecisionRequests = false)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -2600,11 +2743,21 @@ public class ReviewDecisionOrchestratorTests : IDisposable
         var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
         var statusSnapshot = new AutoReviewStatusSnapshot();
         var taskAccess = BuildTaskAccess(scanner, stateMachine, config);
+        var decisionRequests = withDecisionRequests
+            ? new DecisionCardRequests(scanner,
+                new TaskMutationService(scanner,
+                    new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
+                    new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
+                    new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+                    NullLogger<TaskMutationService>.Instance, _timeline),
+                NullLogger<DecisionCardRequests>.Instance)
+            : null;
         var orchestrator = new ReviewDecisionOrchestrator(
             scanner, stateMachine, taskAccess, chatLog, prompts, aspectRunner, statusSnapshot, config,
             NullLogger<ReviewDecisionOrchestrator>.Instance,
             timeline: _timeline,
-            attemptAuthority: attemptAuthority);
+            attemptAuthority: attemptAuthority,
+            decisionRequests: decisionRequests);
         orchestrator.CliRunner = (cli, model, prompt, timeout, ct) =>
         {
             onCall?.Invoke();

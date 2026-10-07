@@ -150,6 +150,26 @@
       <p class="proj-detail__hint">
         Bounded automatic rounds use the recorded failure context. When off or the budget is spent, the task stays for review with a continuation action.
       </p>
+      <div class="proj-detail__model-row">
+        <label for="review-round-limit">Delivered review rounds per card</label>
+        <input id="review-round-limit"
+               class="proj-detail__model-select studio-measure studio-measure--tabular"
+               data-testid="project-detail-review-round-limit"
+               type="number" min="1" max="20"
+               [(ngModel)]="maxDeliveredReviewRoundsDraft"
+               (change)="onReviewRoundBudgetsChange('rounds', $event)" />
+        <span class="proj-detail__hint proj-detail__hint--inline">Default 4. Operator continuations use the same lifetime budget.</span>
+      </div>
+      <div class="proj-detail__model-row">
+        <label for="review-reissue-limit">Automatic reissues per card</label>
+        <input id="review-reissue-limit"
+               class="proj-detail__model-select studio-measure studio-measure--tabular"
+               data-testid="project-detail-review-reissue-limit"
+               type="number" min="0" max="20"
+               [(ngModel)]="maxAutoReissueAttemptsDraft"
+               (change)="onReviewRoundBudgetsChange('reissues', $event)" />
+        <span class="proj-detail__hint proj-detail__hint--inline">Default 2 across operator epochs.</span>
+      </div>
     </section>
 
     <section class="proj-detail__group">

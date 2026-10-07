@@ -67,7 +67,7 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
     }
 
     [Fact]
-    public async Task Unsupported_pinned_floor_waits_without_dispatch_or_fallback_cycle()
+    public async Task Pinned_max_uses_a_supported_codex_equivalent_without_downgrading()
     {
         var claude = new RecordingOneShot(CliTypes.Claude);
         var codex = new RecordingOneShot(CliTypes.Codex);
@@ -83,14 +83,16 @@ public sealed class QuotaAwareOneShotRegistryTests : IDisposable
             Source = "orchestrator-preparation",
         });
 
-        Assert.False(result.Ok);
-        Assert.True(result.QuotaDeferred);
-        Assert.Equal(QuotaAdmissionOutcome.Wait, result.QuotaAdmission?.Outcome);
-        Assert.Equal(CliTypes.Claude, result.EffectiveCliType);
-        Assert.Equal(ModelIds.ClaudeOpus5, result.EffectiveModel);
+        Assert.True(result.Ok);
+        Assert.False(result.QuotaDeferred);
+        Assert.Equal(QuotaAdmissionOutcome.LaunchFallback, result.QuotaAdmission?.Outcome);
+        Assert.Equal(CliTypes.Codex, result.EffectiveCliType);
+        Assert.Equal(ModelIds.Gpt56Sol, result.EffectiveModel);
         Assert.Equal("max", result.EffectiveThinkingLevel);
         Assert.Empty(claude.Requests);
-        Assert.Empty(codex.Requests);
+        var dispatched = Assert.Single(codex.Requests);
+        Assert.Equal(ModelIds.Gpt56Sol, dispatched.Model);
+        Assert.Equal("max", dispatched.ThinkingLevel);
     }
 
     [Fact]

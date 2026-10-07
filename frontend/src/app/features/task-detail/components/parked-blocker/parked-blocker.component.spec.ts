@@ -153,6 +153,23 @@ describe('ParkedBlockerComponent', () => {
     expect(render(null).querySelector('[data-testid="parked-blocker"]')).toBeNull();
   });
 
+  it('persists the collapsed park per task and keeps its reason visible', () => {
+    const first = TestBed.createComponent(ParkedBlockerComponent);
+    first.componentRef.setInput('detail', detail(park()));
+    first.detectChanges();
+    (first.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('[data-testid="parked-blocker-toggle"]')!.click();
+    first.detectChanges();
+    expect((first.nativeElement as HTMLElement).querySelector('[data-testid="parked-blocker-question"]')).toBeNull();
+    expect((first.nativeElement as HTMLElement).querySelector('[data-testid="parked-blocker-collapsed-reason"]')?.textContent).toContain('requires operator input');
+    first.destroy();
+
+    const second = TestBed.createComponent(ParkedBlockerComponent);
+    second.componentRef.setInput('detail', detail(park()));
+    second.detectChanges();
+    expect((second.nativeElement as HTMLElement).querySelector('[data-testid="parked-blocker-toggle"]')?.getAttribute('aria-expanded')).toBe('false');
+    expect((second.nativeElement as HTMLElement).querySelector('[data-testid="parked-blocker-question"]')).toBeNull();
+  });
+
   it('shows when it was parked, the park type, the question, the options, and the document', () => {
     const el = render(park());
 
@@ -193,12 +210,11 @@ describe('ParkedBlockerComponent', () => {
     expect(text(el, 'parked-blocker-question-id')).toContain('choose-primary-column');
   });
 
-  it('never presents a parked card as having nothing open', () => {
+  it('shows the park reason and clearing condition once', () => {
     const el = render(park({ decision: null }));
-    const items = el.querySelectorAll('[data-testid="parked-blocker-open-items"] li');
-
-    expect(items.length).toBeGreaterThan(0);
-    for (const item of items) expect(item.textContent).not.toMatch(/\bnone\b/i);
+    expect(el.querySelector('[data-testid="parked-blocker-open-items"]')).toBeNull();
+    expect(el.querySelectorAll('[data-testid="parked-blocker-reason"]')).toHaveLength(1);
+    expect(el.querySelectorAll('[data-testid="parked-blocker-condition"]')).toHaveLength(1);
   });
 
   it('marks a park as a decision so the surface reads distinctly from a failure', () => {

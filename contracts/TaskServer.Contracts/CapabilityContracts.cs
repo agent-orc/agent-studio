@@ -133,7 +133,11 @@ public sealed record HostTelemetrySnapshotDto(
     DateTime? TaskServerConnectionLastRecoveredAt = null,
     long? CliProcessesReaped = null,
     ReviewPlaneBudgetDto? ReviewPlane = null,
-    SalvageStoreDto? SalvageStore = null);
+    SalvageStoreDto? SalvageStore = null,
+    int? DotnetProcesses = null,
+    int? StaleBuildNodes = null,
+    long? StaleBuildNodesReaped = null,
+    DateTime? BuildNodeSweepAt = null);
 
 /// <summary>
 /// The coding host's salvage store (AGT-2999): the tarball directory the

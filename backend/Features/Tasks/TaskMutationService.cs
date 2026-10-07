@@ -40,9 +40,9 @@ public class TaskMutationService
     private readonly LaneMutexRegistry _laneMutex;
 
     /// <summary>
-    /// Atomic-write boundary for the two task-key sweeps. Null in
-    /// production, where <c>TaskJsonFile</c> uses its own writer; a test
-    /// passes one in to prove what a sweep does when a write fails.
+    /// Atomic-write boundary for task-key sweeps and decision-content writes.
+    /// Null in production, where <c>TaskJsonFile</c> uses its own writer; tests
+    /// pass one in to prove how these operations handle a failed write.
     /// </summary>
     private readonly IAtomicJsonFileWriter? _keyFileWriter;
     private readonly bool _guardedDelivery;
@@ -1028,7 +1028,7 @@ public class TaskMutationService
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
-        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger)) return false;
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "decision", decision, _logger, _keyFileWriter)) return false;
         _logger.LogInformation(
             "decision-content-set job={JobId} status={Status} chosen={Chosen}",
             jobId, decision.Status, decision.ChosenOptionId ?? "");
@@ -1109,13 +1109,116 @@ public class TaskMutationService
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return false;
         var clean = TaskReferenceValidator.Normalize(references ?? new TaskReferences());
-        TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger);
+        if (!TaskJsonFile.UpdateField(info.FolderPath, "references", clean, _logger, _keyFileWriter)) return false;
         _logger.LogInformation(
             "task-references-set job={JobId} dependsOn={DependsOn} relatedTo={RelatedTo} blockedBy={BlockedBy} supersedes={Supersedes} followUpOf={FollowUpOf} raisedFollowUps={RaisedFollowUps} workbenches={Workbenches}",
             jobId, clean.DependsOn.Count, clean.RelatedTo.Count, clean.BlockedBy.Count,
             clean.Supersedes.Count, clean.FollowUpOf.Count, clean.RaisedFollowUps.Count,
             clean.Workbenches.Count);
         return Updated(info);
+    }
+
+    /// <summary>Atomically changes kind and content for the operator migration.</summary>
+    public bool ConvertJobToDecision(string jobId, DecisionContent decision, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null || !string.Equals(info.Kind, TaskKinds.Task, StringComparison.OrdinalIgnoreCase)
+            || info.State != TaskStates.Preparation) return false;
+        if (!TaskJsonFile.UpdateFields(info.FolderPath,
+            new Dictionary<string, object> { ["kind"] = TaskKinds.Decision, ["decision"] = decision,
+                ["noBranchExpected"] = true, ["requiresIntegration"] = false },
+            _logger, _keyFileWriter)) return false;
+        return Updated(info);
+    }
+
+    /// <summary>
+    /// Converts an escalated prose request without ever moving an ordinary
+    /// task into or out of the escalated lane on a failed conversion.
+    /// </summary>
+    public (bool Success, string? Error) MigrateJobToDecision(
+        string jobId, DecisionContent decision, TaskStateMachine states, string? watchPath = null)
+    {
+        var info = _scanner.FindJob(jobId, watchPath);
+        if (info == null || !string.Equals(info.Kind, TaskKinds.Task, StringComparison.OrdinalIgnoreCase)
+            || info.State is not (TaskStates.Preparation or TaskStates.Escalated))
+            return (false, "Only active prose requests in preparation or escalated may be migrated.");
+
+        if (info.State == TaskStates.Preparation)
+            return ConvertJobToDecision(jobId, decision, watchPath)
+                ? (true, null) : (false, "Decision conversion failed; the card remains in its original lane.");
+
+        var jsonPath = Path.Combine(info.FolderPath, "task.json");
+        var originalJson = File.ReadAllText(jsonPath);
+        var fields = new Dictionary<string, object>
+        {
+            ["kind"] = TaskKinds.Decision, ["decision"] = decision,
+            ["noBranchExpected"] = true, ["requiresIntegration"] = false,
+        };
+        // In flat storage, task.json is the lane authority. Change the kind
+        // and lane in one atomic replacement; the lane index is derived data.
+        var flatLayout = string.Equals(
+            Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(info.FolderPath))),
+            TaskStorageLayout.JobsDirName, StringComparison.Ordinal);
+        if (flatLayout)
+        {
+            fields["state"] = TaskStates.Preparation;
+            fields["enteredLaneAt"] = DateTime.UtcNow.ToString("o");
+        }
+        if (!TaskJsonFile.UpdateFields(info.FolderPath, fields, _logger, _keyFileWriter))
+            return (false, "Decision conversion failed; the card remains in its original lane.");
+
+        _scanner.InvalidateCache();
+        if (flatLayout)
+        {
+            try { TaskLayoutIndex.Rebuild(info.WatchPath, _logger); }
+            catch (Exception ex)
+            {
+                // The index is rebuilt from task.json at boot. The canonical
+                // decision and lane change already committed successfully.
+                _logger.LogWarning(ex, "Decision migration index rebuild deferred for {JobId}", jobId);
+            }
+            _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName,
+                TaskStates.Preparation);
+            _notifier.PublishUpdated(info.ProjectName, info.Id, info.WatchPath);
+            try
+            {
+                _timeline?.Append(info.FolderPath, TimelineEventKinds.LaneChanged,
+                    TimelineActors.System, summary: $"{TaskStates.Escalated} → {TaskStates.Preparation}",
+                    details: new Dictionary<string, string>
+                    {
+                        ["from"] = TaskStates.Escalated,
+                        ["to"] = TaskStates.Preparation,
+                        ["reason"] = "Migrate active prose decision request",
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not record decision migration lane change for {JobId}", jobId);
+            }
+            return (true, null);
+        }
+
+        var moved = states.MoveJob(jobId, TaskStates.Preparation, watchPath,
+            expectedSourceState: TaskStates.Escalated, reason: "Migrate active prose decision request");
+        if (moved.Status == MoveJobStatus.Success) return (true, null);
+        // A move may have landed even if its later bookkeeping failed. In that
+        // case the card is already the intended decision in preparation.
+        _scanner.InvalidateCache();
+        var current = _scanner.FindJob(jobId, watchPath);
+        if (current?.State == TaskStates.Preparation && TaskKinds.IsDecision(current.Kind))
+            return (true, null);
+        try
+        {
+            new AtomicJsonFileWriter().ReplaceExisting(jsonPath, originalJson);
+            _scanner.InvalidateCache();
+            _scanner.PublishCoreFromFolder(info.FolderPath, info.WatchPath, info.ProjectName, info.State);
+            return (false, $"Decision migration failed; the original lane and card were restored: {moved.Message ?? moved.Status.ToString()}.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not restore prose card after decision migration failure for {JobId}", jobId);
+            return (false, "Decision migration failed and the original card could not be restored; operator repair is required.");
+        }
     }
 
     public bool SetTaggingStatus(string jobId, string status, string? watchPath = null)
@@ -1698,6 +1801,12 @@ public class TaskMutationService
                     .Select(key => key.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList(),
+                AppliesTo = (req.Decision?.AppliesTo ?? [])
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Select(key => key.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                RemindedAt = null,
                 Decider = string.IsNullOrWhiteSpace(req.Decision?.Decider)
                     ? DecisionDeciders.Operator : req.Decision.Decider.Trim(),
             };

@@ -159,6 +159,14 @@ file journal, `RemoteDeliverySettlementStore`, evidence worker, or integration
 and Human Review lane continuation. This monolith repair does not establish
 those projections for standalone deployments.
 
+The D10 steering feedback read uses a settled ReviewAttempt and its accepted
+report key as authority. On the file-backed path it reads the matching journal
+and delivery stage for `requested`, `consumed`, `recovered`, or `unresolved`
+feedback, but it never writes a gate verdict or lane. A stale review generation
+remains visible in history and cannot become the current task status. On the
+standalone path, a reported review receipt describes that SQLite settlement;
+it makes no claim that the monolith integration and lane continuation ran.
+
 ## Claim poll semantics: stale-lease requeue
 
 `ReviewAttemptTaskLifecycleService.ClaimNextReview` used to return

@@ -1,6 +1,6 @@
 # Runner Domain Map
 
-Version: 2026-09-26
+Version: 2026-10-06
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
@@ -1435,6 +1435,14 @@ rollout decision.
   an exhausted or genuinely unrecoverable git failure retains the worktree and
   uses the existing `worktree-blocked` escalation with the preserved tips and
   next safe action (AGT-2177).
+- A salvage commit scans added staged lines for common provider-shaped credentials
+  before committing. GitHub GH013 push-protection findings carry the provider,
+  commit, and path:line into the blocked reason and gate item. The runner retains
+  the checkout and writes a host-side recovery marker. A later claim can start
+  its agent in that checkout only after the original lease, base ancestry,
+  offending commit, local HEAD, and remote containment checks agree. The agent
+  must remove the literal and rewrite its unpushed history. When those checks do
+  not agree, the gate item names the host, worktree, location, and manual recipe.
 - Every moving salvage push passes a final card-scope allowlist at the Git
   mutation boundary. The only accepted targets are the exact
   `runner/<runner-id>/<task-key>` branch and collision refs derived from that

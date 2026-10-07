@@ -36,39 +36,56 @@ public sealed class ConceptPromotionService
             throw new ArgumentOutOfRangeException(
                 nameof(request.ItemIndexes), "A selected implementation item does not exist.");
 
+        var spawns = requested.Select(index =>
+        {
+            var item = plan.Items[index];
+            return new ConceptCardSpawn(
+                ReasonFor(plan.Source.RepoRelativePath, index),
+                item.Decision is null ? CodingRequest(plan.Source, item) : DecisionRequest(plan.Source, item));
+        }).ToList();
+
+        return new PromoteConceptTasksResponse
+        {
+            Source = plan.Source,
+            Created = CreateCards(source, spawns).ToList(),
+        };
+    }
+
+    /// <summary>
+    /// The promotion mechanism: creates one card per spawn, links it to the
+    /// source card, and records it in the source's spawn ledger so a repeated
+    /// request returns the existing card instead of creating a second one.
+    /// Concept promotion and the decision apply step both create cards here.
+    /// </summary>
+    public IReadOnlyList<PromotedConceptTask> CreateCards(TaskInfo source, IReadOnlyList<ConceptCardSpawn> spawns)
+    {
         var promoted = new List<PromotedConceptTask>();
         lock (_gate)
         {
-            foreach (var index in requested)
+            foreach (var (spawn, position) in spawns.Select((spawn, position) => (spawn, position)))
             {
-                var reason = ReasonFor(plan.Source.RepoRelativePath, index);
+                var title = spawn.Request.Title?.Trim() ?? "";
                 var existing = SpawnedTaskLedger.Read(source.FolderPath, _logger)
-                    .FirstOrDefault(record => string.Equals(record.Reason, reason, StringComparison.Ordinal));
+                    .FirstOrDefault(record => string.Equals(record.Reason, spawn.Reason, StringComparison.Ordinal));
                 if (existing != null)
                 {
                     promoted.Add(new PromotedConceptTask
                     {
                         JobId = existing.TargetJobId ?? "",
                         TaskKey = existing.TargetKey,
-                        Title = plan.Items[index].Title,
+                        Title = title,
                     });
                     continue;
                 }
 
-                var item = plan.Items[index];
-                var acceptanceScope = DossierImplementationCardPolicy.AcceptanceScopeFor(item);
-                var jobId = _mutations.CreateJob(new CreateTaskRequest
+                var jobId = _mutations.CreateJob(spawn.Request with
                 {
-                    Title = item.Title.Trim(),
-                    PromptMarkdown = BuildPrompt(plan.Source, item),
-                    AcceptanceScope = acceptanceScope,
+                    Title = title,
                     WatchPath = source.WatchPath,
-                    Mode = TaskModes.Coding,
-                    TargetState = TaskStates.Preparation,
                 });
                 if (string.IsNullOrWhiteSpace(jobId))
                     throw new InvalidOperationException(
-                        $"Could not create implementation card {index + 1}.");
+                        $"Could not create implementation card {position + 1}.");
 
                 var created = _scanner.FindJob(jobId, source.WatchPath);
                 if (!string.IsNullOrWhiteSpace(source.Key) && created != null)
@@ -88,7 +105,7 @@ public sealed class ConceptPromotionService
                         TargetProject = source.ProjectName,
                         TargetKey = targetKey,
                         TargetJobId = jobId,
-                        Reason = reason,
+                        Reason = spawn.Reason,
                     }, _logger))
                 {
                     throw new IOException(
@@ -99,20 +116,41 @@ public sealed class ConceptPromotionService
                 {
                     JobId = jobId,
                     TaskKey = targetKey,
-                    Title = item.Title.Trim(),
+                    Title = title,
                 });
             }
         }
-
-        return new PromoteConceptTasksResponse
-        {
-            Source = plan.Source,
-            Created = promoted,
-        };
+        return promoted;
     }
+
+    private static CreateTaskRequest CodingRequest(ConceptSourceDocument source, ConceptImplementationTask item) => new()
+    {
+        Title = item.Title.Trim(),
+        PromptMarkdown = BuildPrompt(source, item),
+        AcceptanceScope = DossierImplementationCardPolicy.AcceptanceScopeFor(item),
+        Mode = TaskModes.Coding,
+        TargetState = TaskStates.Preparation,
+    };
+
+    /// <summary>A single fork surfaced by the Dossier becomes a decision card, not a prose request.</summary>
+    private static CreateTaskRequest DecisionRequest(ConceptSourceDocument source, ConceptImplementationTask item) => new()
+    {
+        Title = item.Title.Trim(),
+        Kind = TaskKinds.Decision,
+        Decision = item.Decision,
+        PromptMarkdown = BuildDecisionPrompt(source, item),
+        TargetState = TaskStates.Preparation,
+    };
 
     private static string ReasonFor(string sourcePath, int index)
         => $"{ReasonPrefix}{sourcePath}:{index}";
+
+    internal static string BuildDecisionPrompt(ConceptSourceDocument source, ConceptImplementationTask item)
+    {
+        var context = string.IsNullOrWhiteSpace(item.PromptMarkdown) ? "" : "\n\n" + item.PromptMarkdown.Trim();
+        return $"Decision surfaced by the Dossier `{source.RepoRelativePath}`. The question and options are "
+            + "fields on this card; the chosen option's requirements become implementation cards." + context;
+    }
 
     internal static string BuildPrompt(
         ConceptSourceDocument source,
@@ -144,3 +182,6 @@ public sealed class ConceptPromotionService
            """;
     }
 }
+
+/// <summary>One card to create through <see cref="ConceptPromotionService.CreateCards"/>, keyed by its ledger reason.</summary>
+public sealed record ConceptCardSpawn(string Reason, CreateTaskRequest Request);

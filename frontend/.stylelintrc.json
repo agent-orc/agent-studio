@@ -213,6 +213,7 @@
         "src/app/features/quota/components/quota-forecast-panel/quota-forecast-panel.scss",
         "src/app/features/board/components/task-column/task-column.scss",
         "src/app/features/orchestrator/components/orchestrator-feed-entry/orchestrator-feed-entry.scss",
+        "src/app/features/task-detail/components/prompt-pane/overview-pane/steering-receipt-status/steering-receipt-status.component.scss",
         "src/app/features/orchestrator/components/prompt-catalogue-nav/prompt-catalogue-nav.component.scss",
         "src/app/features/orchestrator/components/orchestrator-context-picker/orchestrator-context-picker.component.scss",
         "src/app/features/orchestrator/components/orchestrator-context-receipt/orchestrator-context-receipt.component.scss",

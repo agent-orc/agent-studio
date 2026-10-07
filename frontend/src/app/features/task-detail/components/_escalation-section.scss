@@ -1,0 +1,21 @@
+// Shared grammar for the task-detail decision stack. Tone only changes the surface wash.
+@mixin surface($tone: var(--studio-accent)) {
+  border: 1px solid color-mix(in srgb, #{$tone} 38%, var(--studio-border));
+  border-radius: var(--studio-spacing-1);
+  background: color-mix(in srgb, #{$tone} 7%, var(--studio-bg-elevated));
+  color: var(--studio-fg-strong);
+}
+
+@mixin heading {
+  color: var(--studio-fg-strong);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+@mixin actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--studio-spacing-2);
+}

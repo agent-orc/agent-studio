@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -40,6 +41,112 @@ public class DecisionCardServiceTests : IDisposable
         RecommendationReason = "Reproducibility outweighs churn.",
         Decider = DecisionDeciders.Operator,
     };
+
+    [Fact]
+    public void ProseMigration_ConvertsOnlyActivePreparationCard_WithoutChangingItsKeyOrPrompt()
+    {
+        var h = Build();
+        const string prose = "## Decision needed (operator)\n\nOption A, lock file.\n\nOption B, no lock file.";
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "old-prose", Title = "Stable release contract", WatchPath = _watchPath,
+            TargetState = TaskStates.Preparation, PromptMarkdown = prose,
+        })!;
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var originalPrompt = File.ReadAllText(Path.Combine(before.FolderPath, "prompt.md"));
+
+        Assert.True(h.Mutations.ConvertJobToDecision(id, SampleContent(), _watchPath));
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(before.Key, after.Key);
+        Assert.Equal(TaskKinds.Decision, after.Kind);
+        Assert.True(after.NoBranchExpected);
+        Assert.Equal(DecisionStatuses.Pending, after.Decision!.Status);
+        Assert.Equal(originalPrompt, File.ReadAllText(Path.Combine(after.FolderPath, "prompt.md")));
+        Assert.False(h.Mutations.ConvertJobToDecision(id, SampleContent(), _watchPath));
+        Assert.Equal(MoveJobStatus.Failure, h.States.MoveJob(id, TaskStates.Ready, _watchPath).Status);
+    }
+
+    [Fact]
+    public void ProseMigration_EscalatedConversionWriteFailure_RestoresOriginalLaneAndKind()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "escalated-prose", Title = "Operator decision needed", WatchPath = _watchPath,
+            TargetState = TaskStates.Escalated, PromptMarkdown = "## Decision needed (operator)",
+        })!;
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var prompt = File.ReadAllText(Path.Combine(before.FolderPath, "prompt.md"));
+        writer.ShouldFail = (path, _) => path == Path.Combine(before.FolderPath, "task.json");
+
+        var outcome = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+
+        Assert.False(outcome.Success);
+        Assert.Contains("original lane", outcome.Error);
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, after.State);
+        Assert.Equal(TaskKinds.Task, after.Kind);
+        Assert.Null(after.Decision);
+        Assert.Equal(before.Key, after.Key);
+        Assert.Equal(prompt, File.ReadAllText(Path.Combine(after.FolderPath, "prompt.md")));
+
+        writer.ShouldFail = null;
+        var retry = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+        Assert.True(retry.Success);
+        Assert.Equal(TaskStates.Preparation, h.Scanner.FindJob(id, _watchPath)!.State);
+        Assert.Equal(TaskKinds.Decision, h.Scanner.FindJob(id, _watchPath)!.Kind);
+    }
+
+    [Fact]
+    public void ProseMigration_EscalatedFlatCard_WritesKindAndLaneTogether()
+    {
+        var writer = new ControllableAtomicJsonFileWriter();
+        var h = Build(writer);
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "escalated-atomic", Title = "Operator decision needed", WatchPath = _watchPath,
+            TargetState = TaskStates.Escalated, PromptMarkdown = "## Decision needed (operator)",
+        })!;
+        var before = h.Scanner.FindJob(id, _watchPath)!;
+        var jsonPath = Path.Combine(before.FolderPath, "task.json");
+
+        var outcome = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+
+        Assert.True(outcome.Success);
+        Assert.Equal(1, writer.WritesFor(jsonPath));
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(before.FolderPath, after.FolderPath);
+        Assert.Equal(TaskStates.Preparation, after.State);
+        Assert.Equal(TaskKinds.Decision, after.Kind);
+        Assert.Equal(DecisionStatuses.Pending, after.Decision!.Status);
+        var byState = TaskLayoutIndex.ReadByState(_watchPath);
+        Assert.Contains(byState[TaskStates.Preparation], location =>
+            location.EndsWith('/' + Path.GetFileName(after.FolderPath), StringComparison.Ordinal));
+        var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance).ReadAll(after.FolderPath);
+        Assert.Contains(timeline, item => item.Kind == TimelineEventKinds.LaneChanged
+            && item.Details?.GetValueOrDefault("from") == TaskStates.Escalated
+            && item.Details?.GetValueOrDefault("to") == TaskStates.Preparation);
+    }
+
+    [Fact]
+    public void ProseMigration_EscalatedConversionSuccess_MovesToPreparation()
+    {
+        var h = Build();
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "escalated-prose", Title = "Operator decision needed", WatchPath = _watchPath,
+            TargetState = TaskStates.Escalated, PromptMarkdown = "## Decision needed (operator)",
+        })!;
+
+        var outcome = h.Mutations.MigrateJobToDecision(id, SampleContent(), h.States, _watchPath);
+
+        Assert.True(outcome.Success);
+        var after = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.Preparation, after.State);
+        Assert.Equal(TaskKinds.Decision, after.Kind);
+        Assert.Equal(DecisionStatuses.Pending, after.Decision!.Status);
+    }
 
     [Fact]
     public void CreateDecisionCard_PersistsContent_LandsInPreparation_IsNoBranch()
@@ -398,7 +505,7 @@ public class DecisionCardServiceTests : IDisposable
         TaskTransitionService Transitions,
         OrchestratorLog ActivityFeed);
 
-    private Harness Build()
+    private Harness Build(IAtomicJsonFileWriter? fileWriter = null)
     {
         var config = BuildConfig();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
@@ -413,7 +520,7 @@ public class DecisionCardServiceTests : IDisposable
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance,
-            timeline, activityFeed: activityFeed);
+            timeline, fileWriter: fileWriter, activityFeed: activityFeed);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var transitions = new TaskTransitionService(
             scanner,

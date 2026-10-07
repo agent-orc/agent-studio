@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using AgentStudio.Pipeline;
+using AgentStudio.Tasks;
 
 namespace AgentStudio.Runner;
 
@@ -16,6 +17,7 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     private readonly RemoteReviewEvidenceProjectionQueue _queue;
     private readonly AutoReviewDeliveryResumeService _resume;
     private readonly ILogger<RemoteReviewSettlementReconciler> _logger;
+    private readonly TaskMutationService? _mutations;
 
     // Keyed by task key; the value is the review generation it was observed for.
     // An archived card has no lane continuation: once its current review settled
@@ -30,13 +32,15 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         AttemptAuthorityService authority,
         RemoteReviewEvidenceProjectionQueue queue,
         AutoReviewDeliveryResumeService resume,
-        ILogger<RemoteReviewSettlementReconciler> logger)
+        ILogger<RemoteReviewSettlementReconciler> logger,
+        TaskMutationService? mutations = null)
     {
         _scanner = scanner;
         _authority = authority;
         _queue = queue;
         _resume = resume;
         _logger = logger;
+        _mutations = mutations;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -117,6 +121,11 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         }
         var entry = read.Entry;
         if (!RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, review))
+            return RemoteReviewSettlementReconcileStatus.Repair;
+
+        if (entry.ReviewBudgetDecision is not null
+            && (_mutations is null || !RemoteReviewSettlementPolicy.RestoreReviewBudgetSideEffects(
+                task, entry, _mutations, _scanner)))
             return RemoteReviewSettlementReconcileStatus.Repair;
 
         RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry);

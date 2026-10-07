@@ -1,4 +1,5 @@
 @use '../../../../../styles/mixins' as m;
+@use '../escalation-section' as section;
 
 :host { display: block; }
 
@@ -6,18 +7,38 @@
 // left accent bar. R5: every colour is read from a token or mixed from one, so
 // both themes track automatically.
 .park {
+  @include section.surface(var(--severity-warn));
   display: flex;
   flex-direction: column;
-  gap: var(--studio-spacing-3);
-  padding: var(--studio-spacing-3) var(--studio-spacing-4);
-  border-block: 1px solid color-mix(in srgb, var(--severity-warn) 48%, var(--studio-border));
-  border-inline: 0;
-  background: color-mix(in srgb, var(--severity-warn) 8%, var(--studio-bg-elevated));
+  gap: var(--studio-spacing-2);
+  padding: var(--studio-spacing-3);
 
   // A park that waits for a person's choice reads as a question, not a fault.
   &[data-decision='true'] {
-    border-block-color: color-mix(in srgb, var(--studio-accent) 48%, var(--studio-border));
-    background: color-mix(in srgb, var(--studio-accent) 8%, var(--studio-bg-elevated));
+    @include section.surface(var(--studio-accent));
+  }
+
+  &__body { display: flex; flex-direction: column; gap: var(--studio-spacing-3); }
+
+  &__toggle {
+    @include m.disclosure-control;
+    @include section.heading;
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--studio-spacing-2);
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  &__collapsed-reason {
+    margin: 0;
+    color: var(--studio-fg-strong);
+    font-size: 0.8125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   &__head {
@@ -29,8 +50,11 @@
 
   // The shared chip owns the pill geometry; this only picks the accent.
   &__badge {
-    @include m.chip(var(--studio-accent), 0.22, 0.45);
+    @include m.chip(var(--studio-accent), 0.28, 0.55);
     color: var(--studio-fg-strong);
+    font-size: 0.75rem;
+    font-weight: 700;
+    height: 24px;
   }
 
   &__since {
@@ -66,7 +90,7 @@
     line-height: 1.4;
 
     &--missing {
-      color: var(--studio-fg);
+      color: var(--studio-fg-strong);
       font-weight: 400;
     }
   }
@@ -140,13 +164,13 @@
     display: contents;
 
     dt {
-      color: var(--studio-fg);
+      color: var(--studio-fg-strong);
       white-space: nowrap;
     }
 
     dd {
       margin: 0;
-      color: var(--studio-fg);
+      color: var(--studio-fg-strong);
       min-width: 0;
       overflow-wrap: anywhere;
     }
