@@ -64,6 +64,7 @@ export class DeliveryClaimPanelComponent {
   private readonly tasks = inject(TaskService);
 
   readonly job = input.required<TaskInfo>();
+  readonly escalated = computed(() => this.job().state === TaskState.Escalated);
 
   readonly answer = signal<TaskDeliveryClaimAnswer | null>(null);
 

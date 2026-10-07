@@ -1,0 +1,22 @@
+:host { display: block; }
+
+.resource-status:empty { display: none; }
+
+.resource-status {
+  padding-inline: var(--studio-spacing-4);
+  color: var(--studio-fg-dim);
+  background: var(--studio-bg-surface);
+}
+
+.resource-status__line {
+  margin: 0;
+  padding-block: var(--studio-spacing-2);
+}
+
+.resource-status__retry {
+  margin-inline-start: var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-fg);
+  background: transparent;
+  cursor: pointer;
+}

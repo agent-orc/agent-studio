@@ -30,6 +30,12 @@ public record TaskTokenSummary
     public bool AllModelsPriced { get; init; }
     /// <summary>Most recent coding-agent model when present, otherwise the most recent recorded model. Null when no model was recorded.</summary>
     public string? LastModel { get; init; }
+    /// <summary>
+    /// Stored model id behind <see cref="LastModel"/> (AGT-2986). The id is
+    /// the durable value; <see cref="LastModel"/> is the label resolved from
+    /// the registry when the summary is built and falls back to the id.
+    /// </summary>
+    public string? LastModelId { get; init; }
     /// <summary>Timestamp of the most recent attributed token usage entry. Null when never updated.</summary>
     public DateTime? LastUpdate { get; init; }
     /// <summary>Per-call rows for the popover, oldest first.</summary>
@@ -59,6 +65,13 @@ public record TaskTokenCall
     public string? ThinkingLevel { get; init; }
     /// <summary>Bus participant that produced this token usage row, e.g. <c>agent:codex</c> or <c>orchestrator:Project</c>.</summary>
     public string? ParticipantId { get; init; }
+    /// <summary>CLI that made the call (<c>claude</c>, <c>codex</c>, ...). Null on rows written before AGT-2986.</summary>
+    public string? CliType { get; init; }
+    /// <summary>
+    /// Host that executed the call: the remote runner id, or <c>local</c> for
+    /// the workstation runner. Null on rows written before AGT-2986.
+    /// </summary>
+    public string? Host { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
     public long CacheReadTokens { get; init; }

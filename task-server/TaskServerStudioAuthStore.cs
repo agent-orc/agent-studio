@@ -24,11 +24,14 @@ public sealed partial class TaskServerStore
         await using var connection = await OpenReadyAsync(ct);
         var bootstrapRequired = Convert.ToInt64(
             await ScalarAsync(connection, "SELECT count(*) FROM studio_users;", ct)) == 0;
+        var bootstrapCodeRequired = bootstrapRequired
+            && await ReadMetaAsync(connection, null, OwnerBootstrapCodeHashKey, ct) is not null;
         var session = await ResolveStudioSessionAsync(connection, null, sessionToken, ct);
         return new StudioAuthStatusDto(
             bootstrapRequired,
             session is not null,
-            session is null ? null : ToStudioAuthUserDto(session.Value.User));
+            session is null ? null : ToStudioAuthUserDto(session.Value.User),
+            bootstrapCodeRequired);
     }
 
     public async Task<StudioOwnerBootstrapSessionDto> BootstrapStudioAuthAsync(

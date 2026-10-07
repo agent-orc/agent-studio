@@ -34,6 +34,7 @@ import { LayoutPanesService } from './services/layout-panes.service';
 import { TaskArtifactsService } from './services/task-artifacts.service';
 import { LanePagerService } from './state/lane-pager.service';
 import { TaskSelectionService } from './state/task-selection.service';
+import { TaskResourceStatusComponent } from './components/task-resource-status/task-resource-status.component';
 import { ClaudeSessionPollService } from '../polling/services/claude-session-poll.service';
 import { SessionEventsPollService } from '../polling/services/session-events-poll.service';
 import { RunTimelinePollService } from '../polling/services/run-timeline-poll.service';
@@ -95,6 +96,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
+    TaskResourceStatusComponent,
   ],
   providers: [
     LayoutPanesService,
@@ -483,21 +485,15 @@ export class TaskDetailComponent implements OnDestroy {
     // state on actual job changes, no-ops on same-job refreshes.
     this.git.setJob(d.info);
 
-    this.errorMsg.set(null);
-    if (d.info.model) {
-      this.modelDraft.set(d.info.model);
-    } else {
-      const def = this.availableModels().find((m) => m.isDefault);
-      this.modelDraft.set(def?.id ?? '');
-    }
-    this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
-    const nextCliType = (d.info.cliType ?? 'claude') as CliType;
-    if (nextCliType !== this.cliTypeDraft()) {
-      this.cliTypeDraft.set(nextCliType);
-      this.loadModelCatalog(nextCliType);
-    }
-
     if (isJobSwitch) {
+      this.errorMsg.set(null);
+      this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault)?.id ?? ''));
+      this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
+      const nextCliType = (d.info.cliType ?? 'claude') as CliType;
+      if (nextCliType !== this.cliTypeDraft()) {
+        this.cliTypeDraft.set(nextCliType);
+        this.loadModelCatalog(nextCliType);
+      }
       // Reset job-scoped UI state only when switching to a different job —
       // refreshes for the same job (e.g. execution status changes) must
       // preserve the live CLI output and view state.

@@ -1,5 +1,14 @@
 # Filesystem Contract
 
+`review-round-budget.json` is an optional card-folder sidecar. It records one
+entry per delivered review attempt with its blocking aspect ids, any aspects
+degraded to concerns, the aspect that spent the lifetime budget, and the
+linked follow-up key. Entries are deduped by attempt id and move with the card
+between lanes. Missing legacy files seed from existing review artifacts when
+the next round is delivered; an operator epoch does not clear this file.
+A write against a card folder that no longer exists fails instead of
+recreating the folder, so a stale lane path cannot duplicate a card.
+
 ## Where Jobs Live
 
 For every newly onboarded project, task metadata and evidence live in the
@@ -174,6 +183,8 @@ Each job folder uses this structure:
                     # Optional: structured requirements, evidence, blockers, and completion lifecycle
   post-processing-outcomes.jsonl
                     # Optional: typed Post Processing outcomes
+  integration-verification.json
+                    # Optional: latest gate evidence for the integrated tree, integrated-verified or integrated-unverified, with the delivery SHAs that tree contained (AGT-3002)
   .metadata/        # Application-owned sidecars (pipeline-execution.json, files.json, ...)
                     # Optional: .metadata/prompts.jsonl (raw step-call prompts)
                     # Optional: .metadata/spawned-tasks.jsonl (task-spawner dedup ledger, AGT-2028)

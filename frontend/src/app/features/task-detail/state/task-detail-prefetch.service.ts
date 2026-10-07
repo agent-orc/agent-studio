@@ -1,7 +1,7 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import { HttpErrorResponse, type HttpResponse } from '@angular/common/http';
 import { Observable, of, ReplaySubject, Subject, type Subscription } from 'rxjs';
-import { TaskDetail, type TaskInfo } from '../../../models/task.model';
+import type { TaskInfo } from '../../../models/task.model';
 import {
   taskCoreKey,
   type TaskCore,
@@ -39,6 +39,8 @@ interface CoreFlight {
   subscription: Subscription | null;
   /** Lookahead flights are cancellable until a foreground read joins them. */
   lookahead: boolean;
+  /** Live foreground readers; the last one leaving aborts the request. */
+  readers: number;
   /** Set when the task changed while this request was in flight. */
   superseded: boolean;
   /** Set when the task was deleted or its project left view mid-flight. */
@@ -46,39 +48,20 @@ interface CoreFlight {
 }
 
 /**
- * Tiny in-memory prefetch + cache for `TaskDetail` payloads keyed by
- * `watchPath::id` (`taskKey`). Owns three jobs:
- *
- * 1. **Prefetch** the next 1-2 peers in the active lane-pager iteration
- *    while the user is reading the current task, so the accept → next-task
- *    navigation feels instant: when the user clicks Mark-as-Done, the
- *    detail for the next peer is already in memory and the panel
- *    re-renders without waiting for a roundtrip.
- * 2. **Coalesce** in-flight fetches: a `prefetch` while the same key has
- *    a pending response is a no-op, and a parallel `take` subscriber on
- *    the same key shares the existing response stream.
- * 3. **Stale-guard**: each cache entry stores a wall-clock timestamp; reads
- *    older than `TTL_MS` are treated as a miss so the caller fetches a
- *    fresh detail. The TTL is short on purpose - detail payloads include
- *    log / status that move under polling, and we'd rather pay one extra
- *    GET than render an obviously-stale panel.
- *
- * Not a general-purpose cache: the only entry point that populates it
- * is the lane-pager iteration's "what's next?" question, and the only
- * consumer is the triage / pager navigation path.
- *
- * AGT-2956 adds a second, independent store: the bounded task core
- * (`/api/tasks/{id}/core`). Its contract is documented in
+ * In-memory store of bounded task cores (`/api/tasks/{id}/core`, AGT-2953).
+ * The selection paints a core from here, then loads enrichment resources
+ * (`/details/*`, AGT-2955) for the selected task only; enrichment is never
+ * prefetched. The core store (AGT-2956) is documented in
  * `docs/system/domains/frontend.md` (Task core cache):
  *
- * - Keyed by registry project handle plus task id, never by the full-detail
- *   `watchPath::id` key, so full-detail TTL expiry never drops a core.
+ * - Keyed by registry project handle plus task id.
  * - Bounded by entry count and estimated bytes; least recently used first.
  * - Concurrent reads of one key share one request; lookahead requests are
- *   cancelled once they leave the lookahead window.
+ *   cancelled once they leave the lookahead window, and a foreground request
+ *   is aborted once its last reader unsubscribed (a superseded selection).
  * - Invalidation is per task and per resource. A board-store event marks only
  *   that task's core stale; the next read revalidates with `If-None-Match`.
- *   Git state, sidecar generations and full-detail changes never touch it.
+ *   Git state and sidecar generations never touch it.
  *   Deletes of an exactly identified task, 404 and 403 evict; a delete that
  *   names only the id revalidates instead.
  */
@@ -86,15 +69,11 @@ interface CoreFlight {
 export class TaskDetailPrefetchService {
   private readonly jobService = inject(TaskService);
 
-  private static readonly TTL_MS = 30_000;
   /** A visited core is at most 16 KiB; 48 of them stay under the byte bound. */
   static readonly MAX_CORE_ENTRIES = 48;
   static readonly MAX_CORE_BYTES = 512 * 1024;
   /** The lookahead warms at most the next two pager cores. */
   static readonly CORE_LOOKAHEAD = 2;
-
-  private readonly cache = new Map<string, { detail: TaskDetail; cachedAt: number }>();
-  private readonly inFlight = new Map<string, ReplaySubject<TaskDetail>>();
 
   /** Insertion order is recency order: a read re-inserts its entry. */
   private readonly cores = new Map<string, CoreEntry>();
@@ -113,110 +92,13 @@ export class TaskDetailPrefetchService {
     inject(DestroyRef).onDestroy(() => subscription.unsubscribe());
   }
 
-  private keyOf(id: string, watchPath: string): string {
-    return `${watchPath}::${id}`;
-  }
-
   /**
-   * Fire-and-forget prefetch. Idempotent: skipped when the key is
-   * already cached fresh, or another prefetch is in flight. Errors are
-   * swallowed - prefetch is a best-effort hint, not a contract.
+   * Mark every cached core of one task stale after a mutation of it, so the
+   * next read revalidates instead of serving the pre-mutation core.
    */
-  prefetch(id: string, watchPath: string): void {
-    const key = this.keyOf(id, watchPath);
-    const cached = this.cache.get(key);
-    if (cached && Date.now() - cached.cachedAt < TaskDetailPrefetchService.TTL_MS) return;
-    if (this.inFlight.has(key)) return;
-
-    const subject = new ReplaySubject<TaskDetail>(1);
-    this.inFlight.set(key, subject);
-    this.jobService.getDetail(id, watchPath).subscribe({
-      next: (detail) => {
-        this.cache.set(key, { detail, cachedAt: Date.now() });
-        subject.next(detail);
-        subject.complete();
-        this.inFlight.delete(key);
-      },
-      error: () => {
-        // Treat as a soft miss; the caller's eventual real fetch will
-        // surface the error if it still applies.
-        subject.complete();
-        this.inFlight.delete(key);
-      },
-    });
+  invalidate(id: string): void {
+    for (const key of this.coreKeysFor(id, null)) this.markCoreStale(key, false);
   }
-
-  /**
-   * Synchronous peek. Returns the cached detail when fresh, otherwise
-   * null. Use this when you need the instant-paint path and have a real
-   * fetch lined up as the source-of-truth fallback (the move / pager
-   * paths do exactly this: peek to repaint instantly, refetch to
-   * reconcile drift). Peek (not consume) so a quick back-nav or retry
-   * within the same lane walk still paints instantly without firing a
-   * second prefetch round.
-   */
-  take(id: string, watchPath: string): TaskDetail | null {
-    const key = this.keyOf(id, watchPath);
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-    if (Date.now() - entry.cachedAt >= TaskDetailPrefetchService.TTL_MS) {
-      this.cache.delete(key);
-      return null;
-    }
-    return entry.detail;
-  }
-
-  /**
-   * Observable read. Returns the cached detail when fresh (sync via
-   * `of`); subscribes to an in-flight prefetch when one is pending;
-   * otherwise issues a fresh GET. The result is cached on success so a
-   * subsequent `take` lands the same payload without re-fetching.
-   */
-  getOrFetch(id: string, watchPath: string): Observable<TaskDetail> {
-    const cached = this.take(id, watchPath);
-    if (cached) return of(cached);
-
-    const key = this.keyOf(id, watchPath);
-    const pending = this.inFlight.get(key);
-    if (pending) return pending.asObservable();
-
-    const subject = new ReplaySubject<TaskDetail>(1);
-    this.inFlight.set(key, subject);
-    this.jobService.getDetail(id, watchPath).subscribe({
-      next: (detail) => {
-        this.cache.set(key, { detail, cachedAt: Date.now() });
-        subject.next(detail);
-        subject.complete();
-        this.inFlight.delete(key);
-      },
-      error: (err) => {
-        subject.error(err);
-        this.inFlight.delete(key);
-      },
-    });
-    return subject.asObservable();
-  }
-
-  /**
-   * Drop a single entry. Use after a mutation that we know stales the
-   * cached detail (e.g. the user just acted on the job - the next
-   * render needs the post-mutation state, not the prefetched snapshot).
-   */
-  invalidate(id: string, watchPath: string): void {
-    this.cache.delete(this.keyOf(id, watchPath));
-  }
-
-  /**
-   * Drop every full-detail entry. Cores are a separate resource and survive:
-   * they are invalidated per task, never by a global reset.
-   */
-  clear(): void {
-    this.cache.clear();
-    // In-flight prefetches keep going; their results just won't be
-    // consumed. Cheap enough that we don't bother aborting.
-  }
-
-  // ---- Task core ---------------------------------------------------------
 
   /** The cached core, current or stale, without a request. Refreshes recency. */
   peekCore(project: string, id: string): TaskCore | null {
@@ -243,14 +125,35 @@ export class TaskDetailPrefetchService {
     const entry = this.cores.get(key);
     if (entry && !entry.stale) {
       this.touchCore(key, entry);
-      return of({ state: entry.core.state, core: entry.core });
+      return of({ state: entry.core.state === 'stale' ? 'stale' : 'ready', core: entry.core });
     }
-    const flight = this.coreFlights.get(key);
-    if (flight) {
-      flight.lookahead = false;
-      return flight.subject.asObservable();
-    }
-    return this.startCoreRequest(key, project, id, taskKey, false).subject.asObservable();
+    const flight = this.coreFlights.get(key) ?? this.startCoreRequest(key, project, id, taskKey, false);
+    flight.lookahead = false;
+    return this.joinFlight(key, flight);
+  }
+
+  /**
+   * Revalidate a core regardless of its freshness (a resource answered for
+   * another generation). An unchanged core still costs only a 304.
+   */
+  revalidateCore(project: string, id: string, taskKey: string): Observable<TaskCoreResult> {
+    this.markCoreStale(taskCoreKey(project, id), false);
+    return this.getCore(project, id, taskKey);
+  }
+
+  /** Count a foreground reader; the last one to leave aborts a pending request. */
+  private joinFlight(key: string, flight: CoreFlight): Observable<TaskCoreResult> {
+    return new Observable<TaskCoreResult>((subscriber) => {
+      flight.readers++;
+      const inner = flight.subject.subscribe(subscriber);
+      return () => {
+        inner.unsubscribe();
+        if (--flight.readers > 0 || flight.lookahead || this.coreFlights.get(key) !== flight) return;
+        this.coreFlights.delete(key);
+        flight.subscription?.unsubscribe();
+        flight.subject.complete();
+      };
+    });
   }
 
   /**
@@ -307,6 +210,7 @@ export class TaskDetailPrefetchService {
       subject: new ReplaySubject<TaskCoreResult>(1),
       subscription: null,
       lookahead,
+      readers: 0,
       superseded: false,
       evicted: false,
     };
@@ -376,7 +280,7 @@ export class TaskDetailPrefetchService {
       entry.etag = err.headers.get('ETag') ?? entry.etag;
       entry.stale = entry.core.state === 'stale' || flight.superseded;
       this.storeCore(key, entry);
-      return { state: entry.stale ? 'stale' : entry.core.state, core: entry.core };
+      return { state: entry.stale ? 'stale' : 'ready', core: entry.core };
     }
     if (err.status === 404) {
       this.evictCore(key);
@@ -533,7 +437,6 @@ export class TaskDetailPrefetchService {
           for (const key of this.coreKeysFor(event.id, null)) this.markCoreStale(key);
           return;
         }
-        this.cache.delete(event.taskKey);
         for (const key of this.coreKeysFor(event.id, event.taskKey)) this.evictCore(key);
         return;
       }

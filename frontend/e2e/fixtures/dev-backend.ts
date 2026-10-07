@@ -108,6 +108,9 @@ function runScript(
     env: {
       ...process.env,
       DEV_PORT: String(DEV_PORT),
+      // A cold worktree build shares this host with other test jobs. Keep the
+      // fixture's process timeout above the API's bounded health wait.
+      API_START_TIMEOUT_SECS: process.env.API_START_TIMEOUT_SECS ?? '420',
       ...(devCheckout ? { DEV_CHECKOUT: devCheckout } : {}),
       ...(isolated && !process.env.WatchPaths__0__Path ? {
         TaskRepository: isolated.taskRepository,
@@ -119,10 +122,9 @@ function runScript(
       } : {}),
     },
     encoding: 'utf8',
-    // Keep the fixture's launcher budget aligned with API_START_TIMEOUT_SECS.
-    // Busy test hosts may need a longer cold compile without changing the
-    // default for routine runs.
-    timeout: Number(process.env.DEV_BACKEND_START_TIMEOUT_MS ?? 180_000),
+    // Keep the launcher above the API's health wait, including overrides on busy hosts.
+    timeout: Number(process.env.DEV_BACKEND_START_TIMEOUT_MS
+      ?? (Number(process.env.API_START_TIMEOUT_SECS ?? 420) + 30) * 1000),
   });
   return {
     code: result.status ?? 1,

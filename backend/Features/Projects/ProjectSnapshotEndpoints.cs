@@ -46,7 +46,8 @@ public static class ProjectSnapshotEndpoints
             OrchestratorSessionStore sessionStore,
             ITaskAccess taskAccess,
             PublishTargetService publish,
-            AgentStudio.Registry.ProjectRegistry projectRegistry) =>
+            AgentStudio.Registry.ProjectRegistry projectRegistry,
+            IConfiguration configuration) =>
         {
             // Resolve the watch path once. Every per-project field below
             // either filters from cached state or reads a single
@@ -127,6 +128,9 @@ public static class ProjectSnapshotEndpoints
                     autoCommit = settings.AutoCommit,
                     crashRecoveryEnabled = settings.CrashRecoveryEnabled,
                     automaticFailureContinuationsEnabled = settings.AutomaticFailureContinuationsEnabled,
+                    maxDeliveredReviewRounds = settings.MaxDeliveredReviewRounds,
+                    maxAutoReissueAttempts = settings.MaxAutoReissueAttempts
+                        ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
                     autoPushStrategy = AutoPushStrategies.Normalize(settings.AutoPushStrategy),
                     runnerMode = settings.RunnerMode,
                     pickupMode = ProjectExecutionPolicy.ResolvePickupMode(settings),

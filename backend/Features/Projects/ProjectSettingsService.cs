@@ -123,6 +123,22 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetReviewRoundBudgets(string projectName, int maxDeliveredReviewRounds, int maxAutoReissueAttempts)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with
+            {
+                MaxDeliveredReviewRounds = Math.Clamp(maxDeliveredReviewRounds, 1, 20),
+                MaxAutoReissueAttempts = Math.Clamp(maxAutoReissueAttempts, 0, 20),
+            };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// AGT-3011: pause or resume one operator sweep for one project. The sweep
     /// id is validated by the calling boundary; resuming a sweep that is not

@@ -1,0 +1,96 @@
+<section class="deployment" data-testid="deployment-checkpoints" aria-labelledby="deployment-title">
+  <header class="deployment__head">
+    <div>
+      <h3 id="deployment-title">Installation checkpoints</h3>
+      <p>Observed Task Server facts. A missing acceptance receipt remains unverified.</p>
+    </div>
+    <button type="button" (click)="reload()" [disabled]="loading()" data-testid="deployment-refresh">
+      {{ loading() ? 'Checking…' : 'Refresh checkpoints' }}
+    </button>
+  </header>
+  <div class="deployment__grid">
+    <section class="deployment__item" data-testid="deployment-identity">
+      <h4>H1 · Installation and access</h4>
+      @if (identity(); as installation) {
+        <dl>
+          <div><dt>Installation</dt><dd><code>{{ installation.installationId }}</code></dd></div>
+          <div><dt>Browser origin</dt><dd><code>{{ origin }}</code></dd></div>
+          <div><dt>Owner</dt><dd>{{ installation.ownerBootstrapped ? 'Bootstrapped' : 'Not bootstrapped' }}</dd></div>
+          <div><dt>Human session</dt><dd>{{ user()?.authenticated ? (user()?.user?.username || 'Signed in') : 'No signed-in user' }}</dd></div>
+        </dl>
+        @if (!installation.ownerBootstrapped || !user()?.authenticated) {
+          <p class="deployment__action">Complete owner bootstrap or sign in with a personal account at this origin.</p>
+        }
+      } @else {
+        <p class="deployment__action">{{ identityError() || 'Reading installation identity…' }}</p>
+      }
+      <p class="deployment__limit">Installed placement and completion phase live in the installer manifest. Inspect <code>installation.json</code> on the authority host.</p>
+    </section>
+
+    <section class="deployment__item" data-testid="deployment-projects">
+      <h4>H2 · Project repository</h4>
+      @if (projectsError()) {
+        <p class="deployment__action">{{ projectsError() }}</p>
+      } @else if (!projects().length) {
+        <p class="deployment__action">No project is registered. Register its canonical origin and integration ref, then probe it from the selected host.</p>
+      } @else {
+        @for (row of projects(); track row.project.projectId) {
+          <div class="deployment__project" [attr.data-testid]="'deployment-project-' + row.project.projectId">
+            <strong>{{ row.project.name }} · {{ row.project.projectId }}</strong>
+            @if (row.status; as status) {
+              <span><code>{{ status.registration.repositoryUrl }}</code> · integration {{ status.registration.integrationRef }}
+                @if (status.registration.releaseRef) { · release {{ status.registration.releaseRef }} }
+                · {{ status.registration.deliveryPolicy }}
+              </span>
+              @if (latestProbes(status).length) {
+                @for (probe of latestProbes(status); track probe.runnerId) {
+                  <span [attr.data-proof-connected]="proofHostConnected(probe)">
+                    {{ hostName(probe.runnerId) }}: {{ proofLabel(probe) }}
+                    · {{ probe.observedAt | date:'short' }}
+                  </span>
+                }
+              } @else {
+                <span class="deployment__action">No host proof. Run the repository fetch and dry-run push probe from an enrolled host.</span>
+              }
+            } @else {
+              <span class="deployment__action">{{ row.error }}</span>
+            }
+            @if (row.placement; as placement) {
+              <span>Requires {{ placement.requiredCapabilities.length ? placement.requiredCapabilities.join(', ') : 'no capability class' }}
+                · {{ placement.maxParallelism }} project slot{{ placement.maxParallelism === 1 ? '' : 's' }}
+                @if (placement.pinnedRunnerId) { · pinned to {{ placement.pinnedRunnerId }} }
+              </span>
+            } @else {
+              <span class="deployment__action">{{ row.placementError }}</span>
+            }
+          </div>
+        }
+      }
+    </section>
+
+    <section class="deployment__item" data-testid="deployment-upgrade">
+      <h4>H6 · Deployed versions</h4>
+      @if (stableRelease(); as stable) {
+        <p>Task Server reference: <code>{{ stable.version }}</code>. Host role versions and drift are in the table below.</p>
+      } @else {
+        <p class="deployment__action">Release reference unavailable. Refresh host release telemetry.</p>
+      }
+      <p class="deployment__limit">Admission state, selected candidate, retained rollback and final canary are installer-owned. Inspect <code>installation.json</code> and <code>checkpoints.jsonl</code> before calling an upgrade complete.</p>
+    </section>
+
+    <section class="deployment__item" data-testid="deployment-recovery">
+      <h4>H7 · Recovery</h4>
+      @if (backupsError()) {
+        <p class="deployment__action">{{ backupsError() }}</p>
+      } @else if (latestBackup(); as backup) {
+        <p>Latest Task Server full set <code>{{ backup.id }}</code>, created {{ backup.createdAt | date:'short' }}. {{ backup.taskCount }} tasks; {{ backup.coldPayloadCount }} cold payloads.</p>
+        @if (backup.warnings.length) {
+          <p class="deployment__action">Set warnings: {{ backup.warnings.join('; ') }}. Resolve these and verify the set again.</p>
+        }
+      } @else {
+        <p class="deployment__action">No full set is listed. Create one and verify it before rehearsal.</p>
+      }
+      <p class="deployment__limit">This list does not prove off-host custody, current integrity or empty-target rehearsal. Check the installer recovery receipt and compare the restored inventory before reopening admission.</p>
+    </section>
+  </div>
+</section>

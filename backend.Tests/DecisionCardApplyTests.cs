@@ -276,6 +276,54 @@ public sealed class DecisionCardApplyTests : IDisposable
     // ---- apply on decide: cards from the chosen option ----
 
     [Fact]
+    public async Task MigratedAgt2792_OptionA_CreatesReadyImplementationWithDecisionReference()
+    {
+        var h = Build();
+        var id = h.Mutations.CreateJob(new CreateTaskRequest
+        {
+            Id = "agt-2792-prose", Title = "Stable release contract", WatchPath = _watchPath,
+            TargetState = TaskStates.Preparation,
+            PromptMarkdown = "## Decision needed (operator)\nOption A, lock file. Option B, no lock file.",
+        })!;
+        var old = h.Scanner.FindJob(id, _watchPath)!;
+        var content = LockFileDecision() with
+        {
+            Options =
+            [
+                new DecisionOption
+                {
+                    Id = "a", Label = "Lock file",
+                    Consequences = "Locked restore, committed lock, and dependency-update cost",
+                    Requirements = [new ConceptImplementationTask
+                    {
+                        Title = "Implement Stable release lock identity",
+                        PromptMarkdown = "Commit backend/packages.lock.json, restore with --locked-mode, and prove the first tagged release.",
+                    }],
+                },
+                new DecisionOption { Id = "b", Label = "No lock file",
+                    Consequences = "Derive identity from package metadata and update validation." },
+            ],
+        };
+        Assert.True(h.Mutations.ConvertJobToDecision(id, content, _watchPath));
+
+        var decided = await h.Decisions.DecideAsync(id, _watchPath,
+            new DecideCardRequest { OptionId = "a", Rationale = "The locked restore probe passed." }, "operator");
+
+        Assert.Equal(DecisionCardStatus.Success, decided.Status);
+        var record = h.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(old.Key, record.Key);
+        Assert.Equal(DecisionStatuses.Decided, record.Decision!.Status);
+        Assert.Equal("a", record.Decision.ChosenOptionId);
+        Assert.Equal("The locked restore probe passed.", record.Decision.Rationale);
+        var implementation = h.Scanner.FindJob(Assert.Single(record.Decision.History[^1].AppliedTaskKeys), _watchPath)!;
+        Assert.Equal(TaskStates.Ready, implementation.State);
+        Assert.Contains(record.Key!, implementation.References.RelatedTo);
+        var prompt = File.ReadAllText(Path.Combine(implementation.FolderPath, "prompt.md"));
+        Assert.Contains($"## Decision {record.Key}", prompt);
+        Assert.Contains("backend/packages.lock.json", prompt);
+    }
+
+    [Fact]
     public async Task Decide_WithoutLinkedCard_CreatesReadyCardsFromChosenOption_ThroughPromotionLedger()
     {
         var h = Build();

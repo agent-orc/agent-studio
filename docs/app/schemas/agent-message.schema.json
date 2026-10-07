@@ -139,6 +139,14 @@
           "type": ["string", "null"],
           "description": "Stable repair marker when a legacy stored row was normalized after capture, for example openai-input-includes-cached-v1."
         },
+        "cliType": {
+          "type": ["string", "null"],
+          "description": "CLI that made the call, e.g. claude or codex. Null on legacy rows."
+        },
+        "host": {
+          "type": ["string", "null"],
+          "description": "Executing host: the remote runner id for remote runs and remote chat turns, or local for the workstation. Null on legacy rows, which readers attribute to local."
+        },
         "dollars": {
           "type": ["number", "null"],
           "minimum": 0

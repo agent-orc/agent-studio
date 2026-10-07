@@ -42,6 +42,12 @@ public record ProjectSettings
     /// <summary>Allow bounded automatic failure continuations for this project's integration and review gates.</summary>
     public bool AutomaticFailureContinuationsEnabled { get; init; } = true;
 
+    /// <summary>Lifetime delivered review rounds allowed for one card. Operator continuations do not reset this bound.</summary>
+    public int MaxDeliveredReviewRounds { get; init; } = 4;
+
+    /// <summary>Automatic reissues allowed for one card across all operator epochs.</summary>
+    public int? MaxAutoReissueAttempts { get; init; }
+
     /// <summary>
     /// AGT-3011: operator sweeps (<c>fix-rounds</c>, <c>gate-triage</c>,
     /// <c>salvage</c>) an operator paused for this project. Persisted so a pause

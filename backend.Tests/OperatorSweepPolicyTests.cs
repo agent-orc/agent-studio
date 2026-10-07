@@ -211,8 +211,8 @@ public sealed class OperatorSweepPolicyTests
         };
 
         Assert.Equal(6, CardRoundBudget.CountRoundsUsed(journal, timeline, "J1"));
-        // The orchestrator's own epoch-scoped count sees only one of them.
-        Assert.Equal(1, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(journal, "J1"));
+        // The orchestrator charges all three reissues across the epoch boundary.
+        Assert.Equal(3, ReviewDecisionOrchestrator.CountReissuesInCurrentChain(journal, "J1"));
         var state = CardRoundBudget.Evaluate(journal, timeline, "J1", allowed: 4);
         Assert.True(state.Exhausted);
         Assert.Equal(0, state.Remaining);
