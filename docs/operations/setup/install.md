@@ -236,6 +236,32 @@ that was installed in control-plane mode or relocated earlier is still
 restored from a new set. Setup sends the Task Server protocol header on every
 management call.
 
+### Check installation facts in Studio
+
+Open Workspace Settings, then Execution Hosts. The Installation checkpoints
+section reads the Task Server installation id and owner bootstrap state, the
+current human session and browser origin, each registered project's canonical
+repository and latest per-runner origin probe, the server release reference,
+and the full-backup inventory. The host rows below it show the observed daemon
+versions, role slot budgets and capability freshness. A role progresses from
+enrolled to connected to capability ready; a project still needs its own
+repository proof and placement admission. A successful host probe from another
+project or runner does not establish this project's access.
+
+The first-owner form asks for the installer owner code only while the Task
+Server reports an armed code and bootstrap is still open. Once the owner exists,
+the code is consumed; later sign-ins do not use it. A rejected code leaves the
+first-owner form open so the operator can correct it and retry.
+
+Studio cannot infer installation completion from service health, or a verified
+recovery from a listed backup. Read `installation.json` and `checkpoints.jsonl`
+on the authority host for the accepted release, canary and phase. Check the
+off-host set, its integrity verification, matching empty-target rehearsal
+receipt and restored inventory before declaring recovery complete. A missing
+checkpoint names its action in the panel; refresh after repairing it. Keep
+the AGT-2739 fake-CLI scenario separate from the provider-authenticated
+coding, review and publication canary required by `accept`.
+
 ## Native installation without Docker
 
 `--target native` installs services instead of containers. It is the path for
