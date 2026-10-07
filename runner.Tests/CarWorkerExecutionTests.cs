@@ -368,6 +368,30 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    public async Task A_caller_deadline_stops_the_cli_before_the_run_timeout()
+    {
+        if (NodeMissing()) return;
+        var fixture = Fixture.Load("p1-happy-done.claude.fixture");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var watch = Stopwatch.StartNew();
+        var run = await RunFixtureAsync(
+            fixture,
+            timeoutSeconds: 120,
+            extraEnvironment: new Dictionary<string, string> { ["FAKE_CLI_DELAY_MS"] = "60000" },
+            stopToken: deadline.Token);
+
+        Assert.True(run.TimedOut);
+        Assert.Equal("Runner timeout", run.Result.StdErr);
+        Assert.Contains(run.Shipped, line => line.Text.Contains("caller deadline expired"));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30),
+            $"the caller deadline must stop the CLI, not the 120s run timeout ({watch.Elapsed})");
+        Assert.NotNull(run.SpawnedProcess);
+        Assert.True(
+            run.SpawnedProcess!.WaitForExit(10_000),
+            "the fake CLI process must be killed with the caller deadline, not orphaned");
+    }
+
+    [Fact]
     public async Task Launch_failure_is_preserved_as_an_explicit_pre_agent_fact()
     {
         var workerDirectory = Path.Combine(_root, "launch-failure");
@@ -474,7 +498,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
         string? contextMode = null,
         int timeoutSeconds = 120,
         IReadOnlyDictionary<string, string>? extraEnvironment = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        CancellationToken stopToken = default)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         var workingDirectory = Path.Combine(workerDirectory, "worktree");
@@ -515,7 +540,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 Spawner = spawner,
                 EnvironmentOverrides = environment,
             },
-            cleanContextRoot: Path.Combine(_root, "clean-context"));
+            cleanContextRoot: Path.Combine(_root, "clean-context"),
+            stopToken: stopToken);
 
         JsonDocument? capture = null;
         if (File.Exists(capturePath))
