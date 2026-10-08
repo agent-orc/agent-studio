@@ -183,11 +183,13 @@ export interface ProviderRejectionDailyCount {
 }
 
 export type CapabilityHealthState = 'healthy' | 'suspect' | 'draining' | 'half-open';
+export type ProviderHealthOutcome = 'healthy' | 'indeterminate' | 'credential_invalid'
+  | 'provider_incident' | 'quota_exhausted' | 'network_failure';
 
 export interface CapabilityRecoveryEvent {
   occurredAt: string;
-  fromState: CapabilityHealthState | 'ready' | 'unavailable' | 'unknown';
-  toState: CapabilityHealthState | 'ready' | 'unavailable' | 'unknown';
+  fromState: CapabilityHealthState | 'ready' | 'unavailable' | 'unknown' | ProviderHealthOutcome;
+  toState: CapabilityHealthState | 'ready' | 'unavailable' | 'unknown' | ProviderHealthOutcome;
   reason: string;
   claimId?: string | null;
 }
@@ -210,7 +212,12 @@ export interface RemoteHostCapabilityHealth {
   identity?: string | null;
   detail?: string | null;
   /** Typed provider condition. A ready transient state retains last-good admission. */
-  signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'binary-missing' | null;
+  signal?: 'ok' | 'transient-auth-error' | 'rate-limited' | 'signed-out' | 'credentials-expiring' | 'binary-missing'
+    | 'healthy' | 'indeterminate' | 'credential_invalid' | 'provider_incident' | 'quota_exhausted' | 'network_failure' | null;
+  /** Negotiated credential-health-v2 fields. Older hosts omit them. */
+  healthOutcome?: ProviderHealthOutcome | null;
+  credentialHealth?: 'valid' | 'invalid' | 'unknown' | null;
+  serviceAvailability?: 'available' | 'unavailable' | 'limited' | 'unknown' | null;
   /** Optional provider-reported credential expiry. Older runners omit it. */
   expiresAt?: string | null;
   limitedUntil?: string | null;

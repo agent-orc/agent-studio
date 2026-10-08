@@ -10,7 +10,8 @@ function json(route: Route, body: unknown) {
   return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'): Promise<void> {
+async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude',
+  health: 'login' | 'incident' = 'login'): Promise<void> {
   const now = new Date();
   const providerLabel = provider === 'claude' ? 'Claude' : 'Codex';
   const task = {
@@ -62,8 +63,13 @@ async function installRoutes(page: Page, provider: 'claude' | 'codex' = 'claude'
       capabilities: [
         capability(`cli-execution:${provider}`, 'ready'),
         {
-          ...capability(`provider-auth:${provider}`, 'unavailable', 'Not logged in'),
-          signal: 'signed-out', consecutiveFailures: 2,
+          ...capability(`provider-auth:${provider}`, 'unavailable',
+            health === 'incident' ? 'Applicable provider incident; retry scheduled' : 'Not logged in'),
+          signal: health === 'incident' ? 'provider_incident' : 'signed-out',
+          healthOutcome: health === 'incident' ? 'provider_incident' : undefined,
+          credentialHealth: health === 'incident' ? 'unknown' : undefined,
+          serviceAvailability: health === 'incident' ? 'unavailable' : undefined,
+          consecutiveFailures: 2,
         },
       ], telemetry: null,
     }]);
@@ -83,9 +89,12 @@ test('Ready card shows the provider sign-in wait reason in both themes', async (
   const resultsDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'provider-auth');
   mkdirSync(resultsDir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
-    v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
-  })));
+  await page.addInitScript(() => {
+    localStorage.setItem('atp.flag.vsCodeLayout', '0');
+    localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+      v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+    }));
+  });
   await installRoutes(page);
   await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
   await dismissDevErrorDialog(page);
@@ -102,6 +111,49 @@ test('Ready card shows the provider sign-in wait reason in both themes', async (
     await setTheme(page, theme);
     await page.getByTestId('lane-2-ready').screenshot({
       path: join(resultsDir, `ready-card-provider-auth-wait-${theme}--mocked.png`),
+    });
+  }
+});
+
+test('Ready card shows incident retry without a sign-in action in both themes', async ({ page }) => {
+  const resultsDir = resolve(process.env.JOB_RESULTS_DIR ?? '../results', 'provider-auth');
+  mkdirSync(resultsDir, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem('atp.flag.vsCodeLayout', '0');
+    localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+      v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+    }));
+  });
+  await installRoutes(page, 'codex', 'incident');
+  await page.goto('/?includeFixtures=true', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  await page.addStyleTag({
+    content: 'app-error-dialog, app-offline-banner, [data-testid="error-dialog-overlay"] { display: none !important; }',
+  });
+  const wait = page.getByTestId('task-card-provider-auth-wait');
+  await expect(wait).toContainText('Codex provider incident');
+  await expect(wait.getByRole('button', { name: /sign in/i })).toHaveCount(0);
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await page.getByTestId('lane-2-ready').screenshot({
+      path: join(resultsDir, `ready-card-provider-incident-${theme}--mocked.png`),
+    });
+  }
+  await page.goto('/#/workspace/settings/remote-hosts', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+  await page.addStyleTag({
+    content: 'app-error-dialog, [data-testid="error-dialog-overlay"] { display: none !important; }',
+  });
+  const host = page.getByTestId('remote-host-card').filter({ hasText: 'runner-berlin' });
+  await host.getByTestId('remote-host-disclosure').click();
+  await host.getByTestId('remote-host-detail-toggle-capabilities').click();
+  await expect(host.getByTestId('remote-host-provider-auth-codex')).toHaveAttribute('data-state', 'retrying');
+  await expect(host.getByTestId('remote-host-codex-sign-in')).toHaveCount(0);
+  for (const theme of ['dark', 'light'] as const) {
+    await setTheme(page, theme);
+    await host.getByTestId('remote-host-provider-auth').screenshot({
+      path: join(resultsDir, `execution-host-provider-incident-${theme}--mocked.png`),
     });
   }
 });
@@ -129,9 +181,12 @@ test('Ready card prefers the supervised link resource while it reconnects', asyn
 
 test('Codex Ready-card wait chip opens the host-owned device sign-in dialog', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
-    v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
-  })));
+  await page.addInitScript(() => {
+    localStorage.setItem('atp.flag.vsCodeLayout', '0');
+    localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({
+      v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__',
+    }));
+  });
   await installRoutes(page, 'codex');
   await page.route('**/api/v1/management/remote-hosts/*/codex-sign-in', route => json(route, {
     handle: 'codex_ready_card_session', state: 'pending',

@@ -85,13 +85,26 @@ authentication** on the affected host. The badge exposes these states:
 - **Unknown**: no current provider-auth advertisement exists, the advertisement
   is stale, or the runner is unreachable.
 
-Provider transitions are retained in the capability recovery history. An
+On older capability paths, provider transitions are retained in the capability recovery history. An
 `OK -> Unavailable` transition creates an operator notification only after two
 consecutive explicit login failures. Tool errors, generic exit 1 output,
 timeouts, and rate limits never create a sign-in notification. A later positive
 probe clears the matching provider-auth circuit and re-advertises recovery
 without a runner restart. Ready cards show sign-in blocking only for the
 confirmed unavailable state.
+
+For a runner that negotiates `credential-health-v2` with the standalone Task
+Server, use the typed `credentialHealth`, `serviceAvailability` and
+`healthOutcome` fields before giving sign-in advice. A confirmed provider
+incident pauses the matching service cohort and produces no renewal item.
+An indeterminate 401 holds matching new claims while diagnosis runs; one
+diagnosis item appears only after 15 minutes. A missing or confirmed invalid
+effective credential produces one renewal item for its generation and exact
+registry runbook. Quota and network outcomes retain their separate recovery
+policies. The Task Server issues one bounded real-canary permit per held cohort,
+and only a newer success for that permit's effective source and known credential
+generation releases the hold. A status command, old last-good result or successful unrelated provider
+cannot clear it. Active attempts continue to their ordinary fenced settlement.
 
 If the runner advertises a credential expiry, Studio warns once when it enters
 the final 14 days. An absent expiry is reported as unknown and is never guessed
