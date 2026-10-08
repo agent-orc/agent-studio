@@ -1,0 +1,20 @@
+@if (task().olderBriefDelivery?.status === 'pending') {
+  <section class="older-brief-offer" data-testid="older-brief-delivery-offer" aria-label="Older brief delivery">
+    <strong>Delivered against an older brief</strong>
+    <p>This run used an earlier version of the task prompt. Its result is retained for your decision.</p>
+    @if (task().olderBriefDelivery?.resultRef || task().olderBriefDelivery?.salvageBranch) {
+      <p class="older-brief-offer__reference">Retained reference:
+        <code>{{ task().olderBriefDelivery?.resultRef ?? task().olderBriefDelivery?.salvageBranch }}</code>
+      </p>
+    }
+    <div class="older-brief-offer__actions" role="group" aria-label="Older brief delivery decisions">
+      <button type="button" [disabled]="pending() !== null" [appPendingButton]="pending() === 'accept'"
+              pendingLabel="Accepting…" data-testid="older-brief-accept" (click)="decide('accept')">Accept</button>
+      <button type="button" [disabled]="pending() !== null" [appPendingButton]="pending() === 'starting-point'"
+              pendingLabel="Preparing…" data-testid="older-brief-starting-point"
+              (click)="decide('starting-point')">Use as a starting point</button>
+      <button type="button" [disabled]="pending() !== null" [appPendingButton]="pending() === 'discard'"
+              pendingLabel="Discarding…" data-testid="older-brief-discard" (click)="decide('discard')">Discard</button>
+    </div>
+  </section>
+}

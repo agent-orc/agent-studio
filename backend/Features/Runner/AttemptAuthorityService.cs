@@ -169,7 +169,8 @@ public sealed class AttemptAuthorityService
         string? backendName = null,
         int processId = 0,
         string? clientId = null,
-        string? leaseInstanceId = null)
+        string? leaseInstanceId = null,
+        string? briefVersion = null)
     {
         if (Blank(taskKey) || Blank(repositoryId) || Blank(executorId) || Blank(hostId) || Blank(idempotencyKey))
             return InvalidRun("TaskKey, RepositoryId, ExecutorId, HostId, and IdempotencyKey are required.");
@@ -213,6 +214,7 @@ public sealed class AttemptAuthorityService
                 State = AttemptLifecycleState.Leased,
                 LastFence = fence,
                 AuthorityEpoch = _state.AuthorityEpoch,
+                BriefVersion = NormalizeNull(briefVersion),
                 CreatedAt = now,
                 Lease = NewLease(executorId, hostId, fence, requestedTtlSeconds, now,
                     executorDisplayName, backendName, processId, clientId, leaseInstanceId),
@@ -223,6 +225,32 @@ public sealed class AttemptAuthorityService
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, attempt.AttemptId, RunAttempt: ToDto(attempt));
         }
+    }
+
+    /// <summary>Invalidate a live coding attempt after an explicit operator revoke.</summary>
+    public bool RevokeRunForOperatorMove(string taskKey, string attemptId, string reason)
+    {
+        lock (_gate)
+        {
+            var run = CurrentRun(taskKey);
+            if (run is null || !Same(run.AttemptId, attemptId)
+                || run.State != AttemptLifecycleState.Leased)
+                return false;
+            var now = _utcNow();
+            run.State = AttemptLifecycleState.Superseded;
+            run.TerminalAt = now;
+            run.TerminalOutcome = "operator-revoked";
+            run.TerminalReason = reason;
+            NextFenceLocked(taskKey);
+            PersistLocked();
+            return true;
+        }
+    }
+
+    public long CurrentFence(string taskKey)
+    {
+        lock (_gate)
+            return _state.LastFenceByTask.GetValueOrDefault(Normalize(taskKey));
     }
 
     /// <summary>
@@ -2686,7 +2714,8 @@ public sealed class AttemptAuthorityService
         TerminalReason: run.TerminalReason,
         EvidenceDigests: run.EvidenceDigests,
         ResultEnvelope: run.ResultEnvelope,
-        ResultEnvelopeDigest: run.ResultEnvelopeDigest);
+        ResultEnvelopeDigest: run.ResultEnvelopeDigest,
+        BriefVersion: run.BriefVersion);
     private static ReviewAttemptDto ToDto(ReviewAttemptRecord review) => new(
         AttemptId: review.AttemptId,
         TaskKey: review.TaskKey,
@@ -2788,6 +2817,7 @@ public sealed class AttemptAuthorityService
 
     private sealed class RunAttemptRecord
     {
+        public string? BriefVersion { get; set; }
         public string AttemptId { get; set; } = string.Empty;
         public string TaskKey { get; set; } = string.Empty;
         public string RepositoryId { get; set; } = string.Empty;

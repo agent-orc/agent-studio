@@ -42,6 +42,7 @@ public sealed class LeaseHeartbeat
 
     /// <summary>Set when a heartbeat is rejected: the run must stop, the lease is gone.</summary>
     public bool LeaseLost { get; private set; }
+    public string? LeaseLossReason { get; private set; }
 
     /// <summary>
     /// Set when the server answered a renewal with an operator stop request for
@@ -216,6 +217,7 @@ public sealed class LeaseHeartbeat
     private void MarkLeaseLost(CancellationTokenSource stopRun, string reason)
     {
         LeaseLost = true;
+        LeaseLossReason = reason;
         _log($"lease lost; terminating CLI process group: {reason}");
         stopRun.Cancel();
     }

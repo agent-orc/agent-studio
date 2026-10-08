@@ -265,7 +265,8 @@ public sealed record RunSpecDto(
     // Server-composed mode framing and prompt enrichment. Keeping both in one
     // field gives daemon claims and persisted slots one deterministic seam.
     string? ModeFraming = null,
-    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null);
+    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null,
+    string? BriefVersion = null);
 
 public sealed record RunnerClaimResponse(
     RunnerClaimStatus Status,

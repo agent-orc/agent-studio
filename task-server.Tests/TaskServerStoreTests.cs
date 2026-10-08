@@ -798,20 +798,21 @@ public sealed partial class TaskServerStoreTests
                     Detail: "fatal: not a git repository"), "runner-a", default);
         }
         var third = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        var held = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
-        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
-            new UpdateTaskRequest(null, null, "5-human-review", held.Version), "operator", default);
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("5-human-review", RunIntent: "revoke"), "operator", default);
 
-        await store.ReleaseLeaseAsync(third.Run!.RunId,
+        var denied = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.ReleaseLeaseAsync(third.Run!.RunId,
             new LeaseReleaseRequest("runner-a", "instance-a", third.Lease!.LeaseId,
                 third.Lease.Fence, "runner-environment-preparation-failed",
-                Detail: "fatal: not a git repository"), "runner-a", default);
+                Detail: "fatal: not a git repository"), "runner-a", default));
 
+        Assert.Equal("lease-not-active", denied.Code);
         Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.Empty(await store.ListRunnerInfrastructureFailuresAsync(default));
         var audit = await store.ListAuditAsync(0, default);
         Assert.DoesNotContain(audit, record => record.Action == "runner-environment-broken");
-        Assert.Contains("\"infrastructureFailure\":null", Assert.Single(audit,
-            record => record.Action == "lease.released" && record.TargetId == third.Run.RunId).DetailJson);
+        Assert.Contains(audit, record => record.Action == "run.revoked" && record.TargetId == third.Run!.RunId);
+        Assert.DoesNotContain(audit, record => record.Action == "lease.released" && record.TargetId == third.Run!.RunId);
     }
 
     [Fact]
@@ -887,6 +888,8 @@ public sealed partial class TaskServerStoreTests
     [Theory]
     [InlineData(27, "project_repositories")]
     [InlineData(28, "continuation_intents")]
+    [InlineData(30, "provider_health_circuits")]
+    [InlineData(30, "older_brief_deliveries")]
     public async Task Merged_schema_upgrades_stores_from_either_delivery_branch(
         int previousVersion, string missingTable)
     {
@@ -903,12 +906,13 @@ public sealed partial class TaskServerStoreTests
 
         var upgraded = Store(temp.Path);
         await upgraded.InitializeAsync();
+        Assert.True(TaskServerStore.CurrentSchemaVersion > 30);
         Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
         await using var verification = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False");
         await verification.OpenAsync();
         await using var query = verification.CreateCommand();
-        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents');";
-        Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
+        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents', 'provider_health_circuits', 'older_brief_deliveries');";
+        Assert.Equal(4L, (long)(await query.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -2727,6 +2731,9 @@ public sealed partial class TaskServerStoreTests
             acknowledgement.RetainUntil);
 
         clock.Advance(TimeSpan.FromDays(10));
+        await store.ReleaseLeaseAsync(claim.Run.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, "completed"), "runner-a", default);
         var current = await store.GetTaskAsync(
             project.ProjectId,
             task.TaskKey,

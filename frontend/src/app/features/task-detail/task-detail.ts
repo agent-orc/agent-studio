@@ -73,8 +73,9 @@ import {
 } from './services/task-detail-formatters';
 import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
-
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
+
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -96,6 +97,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
+    OlderBriefOfferComponent,
     TaskResourceStatusComponent,
   ],
   providers: [
@@ -1056,7 +1058,7 @@ export class TaskDetailComponent implements OnDestroy {
     else if (thinkingChanged) thinkingPut();
   }
 
-  private showError(err: unknown): string {
+  protected showError(err: unknown): string {
     const detail = err as { status?: number; statusText?: string; message?: string; error?: unknown };
     const bodyError =
       typeof detail.error === 'object' && detail.error !== null && 'error' in detail.error

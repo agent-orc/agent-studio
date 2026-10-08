@@ -226,6 +226,8 @@ public record TaskInfo
     /// <see cref="PendingIntent"/>.
     /// </summary>
     public PendingIntent? PendingIntent { get; init; }
+    /// <summary>A remote result held for a decision because the card brief changed after claim.</summary>
+    public AgentStudio.Tasks.OlderBriefDeliveryOffer? OlderBriefDelivery { get; init; }
 
     /// <summary>
     /// Snapshot of the auto-mode "stuck loop" counter for this job, populated

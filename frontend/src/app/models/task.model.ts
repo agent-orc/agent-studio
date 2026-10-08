@@ -35,6 +35,7 @@ export interface BatchMoveItemInput {
   jobId: string;
   watchPath: string;
   targetState: string;
+  runIntent?: 'revoke' | 'steer';
 }
 
 /** Final outcome for one batch item, available as soon as that item finishes. */
@@ -517,6 +518,18 @@ export interface BetterCandidateNote {
 export interface TaskInfo {
   id: string;
   taskKey: string;
+  olderBriefDelivery?: {
+    attemptId: string;
+    briefVersion: string;
+    currentBriefVersion: string;
+    resultSha?: string | null;
+    resultRef?: string | null;
+    salvageBranch?: string | null;
+    salvageCommitSha?: string | null;
+    offeredAtUtc: string;
+    status: 'pending' | 'accept' | 'starting-point' | 'discard';
+    decidedAtUtc?: string | null;
+  } | null;
   key?: string | null;
   displayKey?: string | null;
   title: string;

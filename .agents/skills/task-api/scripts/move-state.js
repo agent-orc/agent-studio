@@ -58,5 +58,7 @@ async function resolveWatchPath() {
 
 const watchPath = await resolveWatchPath();
 const path = `/api/tasks/${encodeURIComponent(taskId)}/move?watchPath=${encodeURIComponent(watchPath)}`;
-const res = await request('POST', path, { targetState });
+// A scripted lane move is an operator revoke. Steering requires a queued
+// follow-up and should use the dedicated continuation route.
+const res = await request('POST', path, { targetState, runIntent: 'revoke' });
 console.log('status:', res.status, '| body:', res.body.slice(0, 200) || '(empty)');

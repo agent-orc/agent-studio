@@ -52,7 +52,7 @@ import { MenuComponent, MenuItemClickEvent } from '../../../../components/menu';
 import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
-import { ExecutionLocationBadgeComponent } from '../../../../components/execution-location-badge/execution-location-badge.component';
+import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-disposition-badges.component';
 import { IntegrationStatusBadgeComponent } from '../../../../components/integration-status-badge/integration-status-badge.component';
 import { ReviewDecisionBadgesComponent } from '../review-decision-badges/review-decision-badges.component';
 import { TaskLiveStatusComponent } from '../../../../components/task-live-status/task-live-status.component';
@@ -84,7 +84,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, ExecutionLocationBadgeComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',

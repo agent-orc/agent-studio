@@ -123,6 +123,8 @@ async function installRoutes(
     }));
   await page.route('**/api/projects/settings**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await page.route('**/api/projects/*/workbenches**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }));
   await page.route('**/api/environment**', (route) =>
     route.fulfill({
       status: 200,
@@ -143,6 +145,25 @@ async function installRoutes(
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ at: '2026-07-28T12:00:00Z', snapshots: [] }),
+    }));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        snapshotVersion: 1,
+        workspaceId: 'fixture',
+        timeZone: 'UTC',
+        weekStart: 1,
+        generatedAt: '2026-10-04T15:14:00Z',
+        calendar: { timeZone: 'UTC', weekStart: 1 },
+        clis: [],
+        cost: { currency: 'USD', todayUsd: null, weekUsd: null, projects: [],
+          coverage: { status: 'unavailable', observedAt: null, ttlSeconds: null } },
+        runs: [],
+        slots: [],
+        sources: {},
+      }),
     }));
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({
@@ -245,7 +266,8 @@ async function openDecision(
 ): Promise<void> {
   await page.setViewportSize({ width: 1480, height: 1600 });
   await installRoutes(page, capture, artifact);
-  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await expect(page.getByTestId('decision-surface')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -273,7 +295,97 @@ async function saveDecisionShot(
 }
 
 test.describe('operator decision surface', () => {
-  test.beforeEach(() => test.setTimeout(90_000));
+  test.beforeEach(() => test.setTimeout(150_000));
+
+  test('shows the older brief delivery choices in both themes', async ({ page }) => {
+    await openDecision(page, () => undefined);
+    await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${JOB_ID}(\\?|$)`), (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...taskDetail(),
+          info: {
+            ...taskInfo(),
+            reviewProjection: {
+              attempts: [], rounds: 4, latestPlane: 'remote', latestOutcome: 'Pass',
+              latestReceivedAt: null, blockingAspects: [],
+              delivery: { status: 'not-attempted', reason: null },
+              decisionRequired: { required: false, source: null, reason: null },
+              roundBudget: { delivered: 4, maximum: 4, spentBy: 'code-quality' },
+            },
+            olderBriefDelivery: {
+              attemptId: 'run_older_brief',
+              briefVersion: 'old-version',
+              currentBriefVersion: 'new-version',
+              resultRef: 'refs/heads/agent-studio/result/run_older_brief',
+              status: 'pending',
+              offeredAtUtc: '2026-10-04T15:14:00Z',
+            },
+          },
+        }),
+      }));
+    await page.reload();
+
+    const offer = page.getByTestId('older-brief-delivery-offer');
+    await expect(offer).toBeVisible();
+    await expect(offer).toContainText('Delivered against an older brief');
+    await expect(offer).toContainText('refs/heads/agent-studio/result/run_older_brief');
+    await expect(page.getByTestId('older-brief-accept')).toBeVisible();
+    await expect(page.getByTestId('older-brief-starting-point')).toBeVisible();
+    await expect(page.getByTestId('older-brief-discard')).toBeVisible();
+    await expect(page.getByTestId('older-brief-accept')).toHaveCSS('border-top-width', '1px');
+    await expect(page.getByTestId('task-detail-review-round-budget'))
+      .toContainText('Review round 4 of 4');
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await offer.screenshot({ path: path.join(SHOTS_DIR, `older-brief-delivery-${theme}--mocked.png`) });
+      await page.screenshot({ path: path.join(SHOTS_DIR, `older-brief-and-review-budget-${theme}--mocked.png`) });
+    }
+  });
+
+  test('marks a Ready card while its remote run is still live', async ({ page }) => {
+    await page.setViewportSize({ width: 1480, height: 1000 });
+    await installRoutes(page, () => undefined);
+    const steered = {
+      ...taskInfo(),
+      state: '2-ready',
+      executionLocation: {
+        state: 'remote-running',
+        executionKind: 'remote',
+        runnerId: 'agent-runner-01',
+        startedAt: new Date().toISOString(),
+        lastHeartbeat: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        connectionState: 'connected',
+        leaseState: 'active',
+        trustReason: 'The steered remote run still holds its lease.',
+      },
+    };
+    await page.route('**/api/v1/studio/board**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          backlog: [], preparation: [], orchestratorPrep: [], ready: [steered],
+          progress: [], failedPickup: [], codeNotComplete: [], review: [],
+          autoReview: [], humanReview: [], escalated: [], completed: [], archive: [],
+        }),
+      }));
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    const badge = page.getByTestId('task-card-live-remote-outside-progress');
+    await expect(badge).toBeVisible();
+    // The broad API fixture leaves unrelated shell reads incomplete. Its
+    // generic error dialog is hidden only for this visual capture.
+    await page.addStyleTag({ content: 'app-dialog[role="alertdialog"] { display: none !important; }' });
+    mkdirSync(SHOTS_DIR, { recursive: true });
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await page.mouse.move(0, 0);
+      await page.screenshot({ path: path.join(SHOTS_DIR, `ready-card-live-remote-${theme}--mocked.png`) });
+    }
+  });
 
   test('steers the recommended icon choice through the existing endpoint', async ({ page }) => {
     let mutation: CapturedMutation | null = null;
