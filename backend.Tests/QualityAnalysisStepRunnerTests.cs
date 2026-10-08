@@ -142,6 +142,66 @@ public sealed class QualityAnalysisStepRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Http_adapter_scans_requested_angular_workspace_outside_frontend_and_deduplicates_findings()
+    {
+        var first = "apps/portal/src/app/first.component.ts";
+        var second = "apps/portal/src/app/second.component.ts";
+        Directory.CreateDirectory(Path.Combine(Repository, "apps", "portal"));
+        File.WriteAllText(Path.Combine(Repository, "apps", "portal", "angular.json"), "{}");
+        var scans = new List<string>();
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/repos")
+                return Json($$"""{"repositories":[{"id":"subject","rootPath":"{{Repository.Replace("\\", "\\\\")}}"}]}""");
+            scans.Add(request.RequestUri.PathAndQuery);
+            return Json($$"""
+                {"available":true,"provenance":{"sensorVersion":"1.2.3"},"findings":[
+                  {"id":"one","ruleId":"QS-NG-002","aspect":"maintainability","severity":"medium","title":"Rule matched","description":"A detail","recommendation":"A fix","fingerprint":"sha256:one","locations":[{"path":"{{first}}"}]},
+                  {"id":"one-again","ruleId":"QS-NG-002","aspect":"maintainability","severity":"medium","title":"Rule matched","description":"A detail","recommendation":"A fix","fingerprint":"sha256:one","locations":[{"path":"{{first}}"}]},
+                  {"id":"two","ruleId":"QS-NG-003","aspect":"maintainability","severity":"low","title":"Second rule","description":"A detail","recommendation":"A fix","fingerprint":"sha256:two","locations":[{"path":"{{second}}"}]}
+                ]}
+                """);
+        });
+        var adapter = new QualityStudioAnalysisCoreAdapter(
+            new HttpClient(handler), Settings("http://127.0.0.1:5127"));
+
+        var result = await adapter.RunAsync(Repository,
+            QualityStudioAnalysisCoreAdapter.RulesAnalysisName,
+            new Dictionary<string, string>(), [second, first], CancellationToken.None);
+
+        Assert.True(result.Available);
+        Assert.Equal(["QS-NG-002", "QS-NG-003"], result.Findings.Select(finding => finding.RuleId));
+        Assert.Equal(["/api/repos/subject/sensors/eslint/scan?path=apps%2Fportal"], scans);
+    }
+
+    [Fact]
+    public async Task Http_adapter_does_not_report_a_partial_scan_as_available()
+    {
+        var calls = 0;
+        var handler = new StubHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/repos")
+                return Json($$"""{"repositories":[{"id":"subject","rootPath":"{{Repository.Replace("\\", "\\\\")}}"}]}""");
+            calls++;
+            return Json(calls == 1
+                ? """{"available":true,"provenance":{"sensorVersion":"1.2.3"},"findings":[]} """
+                : """{"available":false,"unavailableReason":"ESLint configuration missing","provenance":{"sensorVersion":"1.2.3"},"findings":[]} """);
+        });
+        var adapter = new QualityStudioAnalysisCoreAdapter(
+            new HttpClient(handler), Settings("http://127.0.0.1:5127"));
+
+        var result = await adapter.RunAsync(Repository,
+            QualityStudioAnalysisCoreAdapter.RulesAnalysisName,
+            new Dictionary<string, string>(),
+            ["apps/a/one.component.ts", "apps/b/two.component.ts"], CancellationToken.None);
+
+        Assert.False(result.Available);
+        Assert.Empty(result.Findings);
+        Assert.Contains("apps/b/two.component.ts", result.UnavailableReason);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task Http_adapter_rejects_a_registration_for_a_different_checkout()
     {
         var calls = 0;

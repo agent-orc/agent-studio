@@ -27,7 +27,7 @@ test('coverage registration preserves other Quality Studio sensors', async () =>
     const child = spawn(process.execPath, [
       'scripts/register-quality-studio-coverage.mjs',
       `http://127.0.0.1:${address.port}`, 'subject',
-    ], { cwd: checkout, stdio: 'pipe' });
+    ], { cwd: checkout, stdio: 'pipe', windowsHide: true });
     const exit = await new Promise((resolve) => child.on('close', resolve));
     assert.equal(exit, 0);
     assert.equal(update.sensors[0].id, 'eslint');

@@ -470,7 +470,11 @@ Agent Studio host (environment key `QualityStudio__BaseUrl`); hosted QS also
 needs `QualityStudio:ApiToken` and `QualityStudio:ClientId`. The adapter reads
 `GET /api/repos`, requires a registration whose root is the exact checkout
 being reviewed, then calls
-`POST /api/repos/{id}/sensors/eslint/scan?path=frontend`. A missing API or
+`POST /api/repos/{id}/sensors/eslint/scan?path=<workspace>` for each
+Angular workspace containing changed files. A file without a discoverable
+`angular.json` is scanned at its own path. The adapter keeps findings only for
+requested files, deduplicates them by fingerprint, and treats any unavailable
+scan as an unavailable analysis step. A missing API or
 missing matching registration records an unavailable analysis step. It never borrows
 findings from a sibling checkout. Rule content and sensor configuration stay
 owned by Quality Studio.

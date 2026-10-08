@@ -217,23 +217,39 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
             if (registered.ValueKind == JsonValueKind.Undefined)
                 return Unavailable("Quality Studio has no registration for this exact checkout.");
             var repositoryId = registered.GetProperty("id").GetString()!;
-            var route = $"api/repos/{Uri.EscapeDataString(repositoryId)}/sensors/eslint/scan?path=frontend";
-            using var scan = await SendAsync(origin, HttpMethod.Post, route, cancellationToken);
-            var root = scan.RootElement;
-            var available = root.GetProperty("available").GetBoolean();
-            var reason = root.TryGetProperty("unavailableReason", out var unavailable) && unavailable.ValueKind == JsonValueKind.String
-                ? unavailable.GetString() : null;
-            var provenance = root.GetProperty("provenance");
-            var version = provenance.TryGetProperty("sensorVersion", out var sensorVersion)
-                ? sensorVersion.GetString() : null;
             var wanted = relativePaths.Select(path => path.Replace('\\', '/'))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var findings = root.GetProperty("findings").EnumerateArray()
-                .Select(MapFinding)
-                .Where(finding => finding.Locations.Any(location => wanted.Contains(location.Path)))
+            if (wanted.Count == 0)
+                return Unavailable("Quality Studio analysis has no requested files to scan.");
+
+            var findings = new List<QualityStudioFinding>();
+            string? version = null;
+            var scanPaths = wanted.Select(path => ScanScope(repositoryPath, path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in scanPaths)
+            {
+                var route = $"api/repos/{Uri.EscapeDataString(repositoryId)}/sensors/eslint/scan?path={Uri.EscapeDataString(path)}";
+                using var scan = await SendAsync(origin, HttpMethod.Post, route, cancellationToken);
+                var root = scan.RootElement;
+                if (!root.GetProperty("available").GetBoolean())
+                {
+                    var reason = root.TryGetProperty("unavailableReason", out var unavailable)
+                        && unavailable.ValueKind == JsonValueKind.String
+                        ? unavailable.GetString() : null;
+                    return Unavailable($"Quality Studio scan of '{path}' was unavailable: {reason ?? "no reason reported"}.");
+                }
+                var provenance = root.GetProperty("provenance");
+                version ??= provenance.TryGetProperty("sensorVersion", out var sensorVersion)
+                    ? sensorVersion.GetString() : null;
+                findings.AddRange(root.GetProperty("findings").EnumerateArray()
+                    .Select(MapFinding)
+                    .Where(finding => finding.Locations.Any(location => wanted.Contains(location.Path))));
+            }
+            var distinctFindings = findings
                 .DistinctBy(finding => finding.Fingerprint, StringComparer.Ordinal)
                 .ToArray();
-            return new QualityStudioCoreResult(available, reason, "quality-studio:eslint", version, findings);
+            return new QualityStudioCoreResult(true, null, "quality-studio:eslint", version, distinctFindings);
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -254,6 +270,18 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+    }
+
+    private static string ScanScope(string repositoryPath, string path)
+    {
+        var directory = Path.GetDirectoryName(path.Replace('/', Path.DirectorySeparatorChar));
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(repositoryPath, directory, "angular.json")))
+                return directory.Length == 0 ? "." : directory.Replace('\\', '/');
+            directory = Path.GetDirectoryName(directory);
+        }
+        return path;
     }
 
     private static QualityStudioFinding MapFinding(JsonElement finding)
