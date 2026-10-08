@@ -581,6 +581,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var backup = prefix + ".previous";
         var placed = false;
         var hadPrior = false;
+        var backupReady = false;
         IssuedPrincipalCredential issued;
         try
         {
@@ -594,12 +595,13 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                     stream.Flush(flushToDisk: true);
                 }
                 hadPrior = File.Exists(target);
-                if (PlaceCredentialFile is not null) PlaceCredentialFile(staging, target, backup);
-                else if (hadPrior)
+                if (hadPrior)
                 {
                     File.Copy(target, backup);
-                    File.Move(staging, target, overwrite: true);
+                    backupReady = true;
                 }
+                if (PlaceCredentialFile is not null) PlaceCredentialFile(staging, target, backup);
+                else if (hadPrior) File.Move(staging, target, overwrite: true);
                 else File.Move(staging, target);
                 placed = true;
                 if (AfterCredentialPlaced is not null) await AfterCredentialPlaced(token);
@@ -613,7 +615,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             {
                 try
                 {
-                    if (hadPrior && File.Exists(backup))
+                    if (hadPrior && backupReady && File.Exists(backup))
                     {
                         // Placement can fail after moving the old target. Trust the files on disk,
                         // not the flag set only after placement returns.
@@ -623,6 +625,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                     }
                     else if (hadPrior && (placed || !File.Exists(target)))
                         throw new IOException($"The prior credential backup '{backup}' is missing.");
+                    else if (hadPrior) File.Delete(backup); // A failed copy may have left a partial backup.
                     else if (!hadPrior && File.Exists(target)) File.Delete(target);
                 }
                 finally { File.Delete(staging); }

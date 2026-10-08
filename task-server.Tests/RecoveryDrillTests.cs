@@ -461,7 +461,7 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         {
             PlaceCredentialFile = (_, destination, backup) =>
             {
-                File.Move(destination, backup);
+                File.Move(destination, backup, overwrite: true);
                 throw new IOException("simulated partial replacement failure");
             },
         };
