@@ -134,8 +134,10 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // AGT-3001 added GET /api/cli/quota/history on Preview: read-only
             // quota history is denied in public demo like GET /api/cli/quota.
             // Decision-card decide, reopen, and prose migration are execution mutations on Start.
+            // The revoked-reference post step and older-brief decision are
+            // execution mutations and must remain in the denial inventory.
             // Project model migration is an operator-triggered Preview mutation.
-            Assert.Equal(90, routes.Count);
+            Assert.Equal(92, routes.Count);
             // Pin their identities too: an unrelated route must not mask the loss
             // of either decision mutation from the denial inventory.
             foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
@@ -144,6 +146,16 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                 Assert.Equal(ExecutionAdmissionPath.Start,
                     decisionRoute.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
                 Assert.Contains("POST", decisionRoute.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
+            }
+            foreach (var (routePath, admissionPath) in new[]
+            {
+                ("/api/runner/lease/{attemptId}/revoked-reference", ExecutionAdmissionPath.PostStep),
+                ("/api/tasks/{jobId}/older-brief-delivery/decision", ExecutionAdmissionPath.Continue)
+            })
+            {
+                var route = Assert.Single(routes, candidate => candidate.RoutePattern.RawText == routePath);
+                Assert.Equal(admissionPath, route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path);
+                Assert.Contains("POST", route.Metadata.GetMetadata<IHttpMethodMetadata>()!.HttpMethods);
             }
             var migrationRoute = Assert.Single(routes, route =>
                 route.RoutePattern.RawText == "/api/projects/{project}/model-migrations/apply");
@@ -159,11 +171,11 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                 {
                     [ExecutionAdmissionPath.Claim] = 6,
                     [ExecutionAdmissionPath.Start] = 15,
-                    [ExecutionAdmissionPath.Continue] = 14,
+                    [ExecutionAdmissionPath.Continue] = 15,
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
                     [ExecutionAdmissionPath.Preview] = 26,
-                    [ExecutionAdmissionPath.PostStep] = 11,
+                    [ExecutionAdmissionPath.PostStep] = 12,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                     .ToDictionary(group => group.Key, group => group.Count()));

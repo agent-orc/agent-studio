@@ -156,13 +156,56 @@ public interface IBatchMoveItemExecutor
         string cause);
 }
 
-public sealed class BatchMoveItemExecutor(TaskTransitionService transitions) : IBatchMoveItemExecutor
+public sealed class BatchMoveItemExecutor(
+    TaskTransitionService transitions,
+    TaskScannerService scanner,
+    RunLeaseService leases,
+    AttemptAuthorityService authority,
+    TimelineLog timeline) : IBatchMoveItemExecutor
 {
-    public Task<BatchMoveItemResult> ExecuteAsync(
+    public async Task<BatchMoveItemResult> ExecuteAsync(
         BatchMoveItem item,
         CancellationToken cancellationToken,
         string cause)
-        => transitions.MoveBatchItemAsync(item, cancellationToken, cause);
+    {
+        await LeaseEndpoints.ClaimGate.WaitAsync(cancellationToken);
+        try
+        {
+            var card = scanner.FindJob(item.JobId, item.WatchPath);
+            var live = card is not null && item.TargetState != card.State
+                ? leases.Peek(card.TaskKey).Lease : null;
+            var intent = RunDispositionPolicy.ParseMoveIntent(item.RunIntent);
+            if (live is not null && intent is null)
+                return new BatchMoveItemResult { JobId = item.JobId, Status = "rejected", Message = "run-intent-required" };
+            if (live is not null && intent == RunMoveIntent.Steer
+                && card!.PendingIntent?.RunIntent != "steer")
+                return new BatchMoveItemResult { JobId = item.JobId, Status = "rejected", Message = "steer-follow-up-required" };
+
+            var result = await transitions.MoveBatchItemAsync(item, cancellationToken, cause);
+            if (result.Status == "moved" && live?.AttemptId is { } attemptId
+                && intent == RunMoveIntent.Revoke
+                && authority.RevokeRunForOperatorMove(card!.TaskKey, attemptId,
+                    item.Reason ?? "Operator batch move revoked the run."))
+            {
+                var moved = scanner.FindJob(item.JobId, item.WatchPath);
+                if (moved is not null)
+                    timeline.Append(moved.FolderPath, TimelineEventKinds.RunAttemptRevoked, cause,
+                        $"Run {attemptId} was revoked by the operator batch move. Its result remains reference material; it cannot deliver this card.",
+                        attemptId,
+                        details: new Dictionary<string, string>
+                        {
+                            ["attemptId"] = attemptId,
+                            ["fence"] = live.FencingToken.ToString(),
+                            ["runIntent"] = "revoke",
+                        });
+            }
+            return result;
+        }
+        finally
+        {
+            LeaseEndpoints.ClaimGate.Release();
+        }
+    }
 }
 
 /// <summary>

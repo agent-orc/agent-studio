@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-10-04</td>
+          <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>
+          <td>No CLI crashed. An operator moved a running remote card from Progress to Backlog, edited its brief, and returned it to Ready. The old fenced run kept working and later delivered into Auto Review.</td>
+          <td>The lane move did not revoke the live attempt, and completion did not compare the claimed brief version with the current brief.</td>
+          <td>The operator move now requires an explicit revoke or steer intent. Revocation consumes a fence and stops the worker at renewal. A result against an older brief is retained as an operator decision, outside Auto Review.</td>
+        </tr>
+        <tr>
           <td>2026-09-28</td>
           <td><code>QS-106</code><br><span class="small">stale-integration-verdict-park (fix <code>AGT-2995</code>)</span></td>
           <td>No CLI crashed. The immediate integration returned <code>Error</code> after <code>main</code> moved; the log said only <code>outcome=Error</code> and the card read <code>integration: pending</code>, "not yet integrated", parked as <code>review-verdict: Error</code>. When the operator moved the card back to <span class="lane">4-auto-review</span>, deferred post-processing resumed with <code>action=CompleteTransition reason=awaiting-integration-completion integration=Error</code> and parked it again.</td>

@@ -124,6 +124,10 @@ public static class TimelineEventKinds
     public const string IntegrationLease = "integration_lease";
     /// <summary>The CLI invocation ended; <see cref="TimelineEvent.Summary"/> carries the outcome.</summary>
     public const string AgentRunFinished = "agent_run_finished";
+    /// <summary>An operator move fenced a remote attempt while retaining its work as reference.</summary>
+    public const string RunAttemptRevoked = "run_attempt_revoked";
+    /// <summary>A remote result awaits an operator decision because its brief is older.</summary>
+    public const string OlderBriefDeliveryOffered = "older_brief_delivery_offered";
     /// <summary>A result producer replaced status.md after preserving the prior version.</summary>
     public const string ResultReplaced = "result_replaced";
     /// <summary>

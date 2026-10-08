@@ -474,6 +474,16 @@ public static class TaskServerEndpoints
                     statusCode: StatusCodes.Status426UpgradeRequired);
             return await InvokeAsync(() => store.CompleteRunAsync(runId, request, Actor(context), ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        runs.MapPost("/{runId}/revoked-reference", async (
+            HttpContext context, string runId, RevokedRunReferenceRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                await store.RecordRevokedRunReferenceAsync(runId, request, Actor(context), ct);
+                return new { status = "recorded" };
+            }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.EventsWrite);
         runs.MapPut("/{runId}/result-handoff", async (
             HttpContext context,
             string runId,

@@ -180,10 +180,15 @@ The full template is in [`scripts/create-task.js`](scripts/create-task.js).
 
 ## Process: moving a task between lanes
 
-`POST /api/tasks/{jobId}/move?watchPath=...` with body `{"targetState":"6-completed"}`.
+`POST /api/tasks/{jobId}/move?watchPath=...` with body
+`{"targetState":"6-completed","runIntent":"revoke"}`. A move of a card with
+a live remote attempt returns `run-intent-required` unless the request says
+`revoke` or `steer`. `revoke` fences and stops that attempt, including a run
+kept live after a prior steer. Use `steer` only with a queued follow-up; the
+`/continue` route is the usual steering path.
 
 ```js
-const body = JSON.stringify({ targetState: '6-completed' });
+const body = JSON.stringify({ targetState: '6-completed', runIntent: 'revoke' });
 const path = `/api/tasks/${encodeURIComponent(jobId)}/move` +
              `?watchPath=${encodeURIComponent(watchPath)}`;
 // POST, same headers as create
@@ -201,7 +206,9 @@ For more than one independent move, send one `POST /api/tasks/batch-move`
 request with an `items` array. The endpoint returns `202` and a job handle
 immediately. Poll `GET /api/tasks/batch-move/{id}` until `status` is
 `completed` or `failed`. A failed item appears in `results` and does not stop
-the rest of the batch.
+the rest of the batch. Set `runIntent: "revoke"` on each item that may have a
+live remote run. An item without explicit intent is rejected with
+`run-intent-required` when the run is live.
 
 ## Process: releasing a task for its gated dependents
 

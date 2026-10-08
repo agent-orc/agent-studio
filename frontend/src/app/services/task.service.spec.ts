@@ -453,6 +453,7 @@ describe('TaskService', () => {
     expect(req.request.body).toEqual({
       targetState: '6-completed',
       reason: 'Decision icon-source: selected "Keep current glyphs".',
+      runIntent: 'revoke',
     });
     req.flush({});
   });
@@ -476,7 +477,16 @@ describe('TaskService', () => {
       targetState: '6-completed',
       reason: 'No delivery branch is expected.',
       operatorOverride: true,
+      runIntent: 'revoke',
     });
+    req.flush({});
+  });
+
+  it('sends an explicit steer intent only when the caller requests it', () => {
+    service.moveJob('AGT-3021', '2-ready', undefined, undefined, undefined, false, 'steer').subscribe();
+
+    const req = http.expectOne('/api/v1/projects/-/tasks/AGT-3021/move');
+    expect(req.request.body).toEqual({ targetState: '2-ready', runIntent: 'steer' });
     req.flush({});
   });
 
@@ -490,7 +500,7 @@ describe('TaskService', () => {
     service.startBatchMove(items).subscribe((job) => { batchId = job.id; });
     const start = http.expectOne('/api/tasks/batch-move');
     expect(start.request.method).toBe('POST');
-    expect(start.request.body).toEqual({ items });
+    expect(start.request.body).toEqual({ items: items.map((item) => ({ ...item, runIntent: 'revoke' })) });
     start.flush({ id: 'batch-123', status: 'queued', total: 2, completed: 0, results: [] });
     expect(batchId).toBe('batch-123');
 
@@ -498,6 +508,16 @@ describe('TaskService', () => {
     const progress = http.expectOne('/api/tasks/batch-move/batch-123');
     expect(progress.request.method).toBe('GET');
     progress.flush({ id: batchId, status: 'running', total: 2, completed: 1, results: [] });
+  });
+
+  it('preserves an explicit steer intent for a batch move item', () => {
+    service.startBatchMove([
+      { jobId: 'alpha', watchPath: '/project', targetState: '2-ready', runIntent: 'steer' },
+    ]).subscribe();
+
+    const request = http.expectOne('/api/tasks/batch-move');
+    expect(request.request.body.items[0].runIntent).toBe('steer');
+    request.flush({ id: 'batch-steer', status: 'queued', total: 1, completed: 0, results: [] });
   });
 });
 

@@ -798,20 +798,21 @@ public sealed partial class TaskServerStoreTests
                     Detail: "fatal: not a git repository"), "runner-a", default);
         }
         var third = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
-        var held = (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!;
-        await store.UpdateTaskAsync(project.ProjectId, task.TaskId,
-            new UpdateTaskRequest(null, null, "5-human-review", held.Version), "operator", default);
+        await store.MoveTaskAsync(project.ProjectId, task.TaskId,
+            new MoveTaskRequest("5-human-review", RunIntent: "revoke"), "operator", default);
 
-        await store.ReleaseLeaseAsync(third.Run!.RunId,
+        var denied = await Assert.ThrowsAsync<TaskServerConflictException>(() => store.ReleaseLeaseAsync(third.Run!.RunId,
             new LeaseReleaseRequest("runner-a", "instance-a", third.Lease!.LeaseId,
                 third.Lease.Fence, "runner-environment-preparation-failed",
-                Detail: "fatal: not a git repository"), "runner-a", default);
+                Detail: "fatal: not a git repository"), "runner-a", default));
 
+        Assert.Equal("lease-not-active", denied.Code);
         Assert.Equal("5-human-review", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.Empty(await store.ListRunnerInfrastructureFailuresAsync(default));
         var audit = await store.ListAuditAsync(0, default);
         Assert.DoesNotContain(audit, record => record.Action == "runner-environment-broken");
-        Assert.Contains("\"infrastructureFailure\":null", Assert.Single(audit,
-            record => record.Action == "lease.released" && record.TargetId == third.Run.RunId).DetailJson);
+        Assert.Contains(audit, record => record.Action == "run.revoked" && record.TargetId == third.Run!.RunId);
+        Assert.DoesNotContain(audit, record => record.Action == "lease.released" && record.TargetId == third.Run!.RunId);
     }
 
     [Fact]
@@ -2727,6 +2728,9 @@ public sealed partial class TaskServerStoreTests
             acknowledgement.RetainUntil);
 
         clock.Advance(TimeSpan.FromDays(10));
+        await store.ReleaseLeaseAsync(claim.Run.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, "completed"), "runner-a", default);
         var current = await store.GetTaskAsync(
             project.ProjectId,
             task.TaskKey,

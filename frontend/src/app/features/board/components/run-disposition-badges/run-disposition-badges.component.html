@@ -1,0 +1,7 @@
+<app-execution-location-badge [execution]="execution()" />
+@if (state() !== '3-progress' && execution()?.state === 'remote-running') {
+  <span class="run-disposition-badge" data-testid="task-card-live-remote-outside-progress">Remote run still live</span>
+}
+@if (olderBriefPending()) {
+  <span class="run-disposition-badge" data-testid="task-card-older-brief-offer">Older brief delivery</span>
+}

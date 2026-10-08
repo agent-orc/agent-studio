@@ -266,7 +266,7 @@
         [jobId]="job().id" [project]="job().projectName"
         [watchPath]="job().watchPath"
         testId="task-card-model-migration" />
-      <app-execution-location-badge [execution]="displayedExecutionLocation()" />
+      <app-run-disposition-badges [execution]="displayedExecutionLocation()" [state]="job().state" [olderBriefPending]="job().olderBriefDelivery?.status === 'pending'" />
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge
           [integration]="integ"

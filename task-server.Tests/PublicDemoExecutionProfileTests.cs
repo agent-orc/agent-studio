@@ -84,7 +84,15 @@ public sealed class PublicDemoExecutionProfileTests
         var routes = ExecutionRoutes(factory.Services);
         // Security inventory tripwire: adding, removing, or reclassifying an
         // executable endpoint requires an explicit update to this matrix.
-        Assert.Equal(41, routes.Count);
+        Assert.Equal(43, routes.Count);
+        var revokedReference = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/runs/{runId}/revoked-reference");
+        Assert.Equal(ExecutionAdmissionPath.PostStep,
+            revokedReference.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
+        var olderBriefDecision = Assert.Single(routes, route => route.RoutePattern.RawText ==
+            "/api/v1/projects/{projectId}/tasks/{taskIdentity}/older-brief-delivery/decision");
+        Assert.Equal(ExecutionAdmissionPath.Continue,
+            olderBriefDecision.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path);
         Assert.Contains(routes, route => route.RoutePattern.RawText ==
             "/api/v1/steering/projects/{projectId}/tasks/{taskIdentity}/actions");
         Assert.Contains(routes, route => route.RoutePattern.RawText ==
@@ -108,11 +116,11 @@ public sealed class PublicDemoExecutionProfileTests
             {
                 [ExecutionAdmissionPath.Claim] = 5,
                 [ExecutionAdmissionPath.Start] = 7,
-                [ExecutionAdmissionPath.Continue] = 11,
+                [ExecutionAdmissionPath.Continue] = 12,
                 [ExecutionAdmissionPath.Review] = 2,
                 // Includes the Studio workbench orchestrator turn (AGT-2983).
                 [ExecutionAdmissionPath.Chat] = 5,
-                [ExecutionAdmissionPath.PostStep] = 11,
+                [ExecutionAdmissionPath.PostStep] = 12,
             },
             routes.GroupBy(route => route.Metadata.GetMetadata<TaskServerExecutionRouteMetadata>()!.Path)
                 .ToDictionary(group => group.Key, group => group.Count()));

@@ -135,6 +135,8 @@ public record ExternalCompletionResponse
 public record MoveJobRequest
 {
     public string TargetState { get; init; } = "";
+    /// <summary>Explicit handling of a live remote attempt when leaving Progress: revoke or steer.</summary>
+    public string? RunIntent { get; init; }
     /// <summary>
     /// Legacy completion exception for a code-free deliverable with a written
     /// reason. A repository change still requires integration.
@@ -241,6 +243,8 @@ public record BatchMoveItem
     public string TargetState { get; init; } = "";
     public int? TargetIndex { get; init; }
     public string? Reason { get; init; }
+    /// <summary>Explicit disposition of a live remote attempt for this item.</summary>
+    public string? RunIntent { get; init; }
 }
 
 public record BatchMoveRequest
