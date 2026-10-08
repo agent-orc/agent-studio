@@ -34,6 +34,15 @@ export interface ProviderAuthBadge {
   history: readonly CapabilityRecoveryEvent[];
 }
 
+export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
+  if (!['codex', 'claude'].includes(badge.provider)) return null;
+  if (badge.state === 'unavailable'
+    && badge.healthOutcome !== 'credential_invalid'
+    && !(badge.healthOutcome == null && badge.signal === 'signed-out' && badge.consecutiveFailures >= 2)) return null;
+  if (badge.state !== 'unavailable' && badge.state !== 'expiring') return null;
+  return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
+}
+
 export interface ProviderAuthWaitReason {
   provider: string;
   label: string;

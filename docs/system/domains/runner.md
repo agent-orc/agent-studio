@@ -914,7 +914,10 @@ rollout decision.
   after 15 minutes; a confirmed incident creates no renewal item. A confirmed
   invalid credential creates one generation-keyed renewal item linked to its
   discovered runbook. Coding and Review request the same Task Server permit
-  before a real recovery probe. Only a newer real success from that permit's
+  before a real probe. An allowed `no-hold` permit runs initial and healthy
+  checks within the host's budget and 30-minute ceiling; an allowed `canary`
+  permit runs recovery even when cached health would defer a normal check.
+  Only a newer real success from that permit's
   owner, effective source and known credential generation clears the hold.
   Active attempts keep their
   fences and settle normally; no product card is used as a provider canary.

@@ -10,21 +10,31 @@ internal static class RunnerCapabilityProbe
 {
     public static async Task RefreshDueCanariesAsync(
         RunnerOptions options, TaskServerClient client, Action<string> log, CancellationToken ct)
+        => await RefreshPermittedProvidersAsync(
+            CodingCliBinaries(options).Select(item => item.Binary),
+            client.ReserveProviderCanaryAsync, ProviderAuthProbe.Shared, log, ct);
+
+    internal static async Task RefreshPermittedProvidersAsync(
+        IEnumerable<string> binaries,
+        Func<string, CancellationToken, Task<ProviderCanaryPermitDto>> reserve,
+        ProviderAuthProbe probe,
+        Action<string> log,
+        CancellationToken ct)
     {
-        foreach (var group in CodingCliBinaries(options).GroupBy(item => item.Binary, StringComparer.Ordinal))
+        foreach (var binary in binaries.Distinct(StringComparer.Ordinal))
         {
-            var provider = Provider(group.Key);
+            var provider = Provider(binary);
             ProviderCanaryPermitDto permit;
-            try { permit = await client.ReserveProviderCanaryAsync(provider, ct); }
+            try { permit = await reserve(provider, ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception exception)
             {
                 log($"provider canary permit unavailable provider={provider}: {exception.Message}");
                 continue;
             }
-            if (permit is not { Allowed: true, Reason: "canary" }) continue;
-            var status = await ProviderAuthProbe.Shared.RefreshAsync(group.Key, ct);
-            log($"provider canary completed provider={provider} outcome={status.Outcome}");
+            if (!permit.Allowed || permit.Reason is not ("canary" or "no-hold")) continue;
+            var status = await probe.RefreshAsync(binary, ct);
+            log($"provider auth probe completed provider={provider} outcome={status.Outcome}");
         }
     }
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
