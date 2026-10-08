@@ -19,7 +19,7 @@
         <span class="escalation__headline">
           <span class="escalation__title" data-testid="escalation-title">{{ headTitle() }}</span>
           <span class="escalation__essence" data-testid="escalation-essence">
-            <span class="escalation__essence-copy">{{ v.essence.label }}</span>
+            <span class="escalation__essence-copy">{{ v.latestAttempt ?? v.essence.label }}</span>
             @if (v.delivery.merge; as m) {
               <span
                 class="escalation__essence-merge"

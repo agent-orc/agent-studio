@@ -13,6 +13,7 @@ import { TaskState } from '../../../../models/task.model';
 import type { TaskDetail, TaskInfo } from '../../../../models/task.model';
 import { CodeReviewListEntry, TaskService } from '../../../../services/task.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
+import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import {
   isSteeringKind,
   steeringInfoFromEvent,
@@ -71,6 +72,7 @@ export class EscalationSummaryComponent {
 
   private readonly jobs = inject(TaskService);
   private readonly timelinePoll = inject(TaskTimelinePollService);
+  private readonly runTimelinePoll = inject(RunTimelinePollService);
 
   /** Newest-first code-review list for the open job; drives the verdict head. */
   readonly codeReviews = signal<CodeReviewListEntry[]>([]);
@@ -160,6 +162,7 @@ export class EscalationSummaryComponent {
       steering: this.steering(),
       statusMarkdown: this.detail().statusMarkdown,
       timeline: this.timelinePoll.events(),
+      runs: this.runTimelinePoll.runs(),
     }),
   );
 

@@ -193,6 +193,24 @@ describe('TriageController · optimistic navigation on Accept', () => {
     movePost.complete();
   });
 
+  it('keeps the selected escalated task tab on reissue to Ready', () => {
+    const taskA = makeJob('task-a', '5e-escalated');
+    const readyDetail = makeDetail('task-a', '2-ready');
+    TestBed.inject(LanePagerService).capture('5e-escalated', [taskA], taskA.taskKey);
+    selection.triageLaneState = '5e-escalated';
+    selection.selected.set(makeDetail('task-a', '5e-escalated'));
+    vi.spyOn(jobService, 'getDetail').mockReturnValue(of(readyDetail));
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    const movePost = new Subject<object>();
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(movePost.asObservable());
+
+    ctrl.move(taskA, { targetState: '2-ready', actionId: 'reissue-escalated' });
+    expect(selection.selected()?.info.taskKey).toBe(taskA.taskKey);
+    movePost.next({});
+    expect(selection.selected()?.info).toMatchObject({ id: 'task-a', state: '2-ready' });
+    expect(selection.triageLaneState).toBe('2-ready');
+  });
+
   it('paints the prefetched core of the next peer synchronously without the legacy detail route', () => {
     const taskA = makeJob('task-a', '5-human-review');
     const taskB = makeJob('task-b', '5-human-review');
