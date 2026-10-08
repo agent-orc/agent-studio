@@ -312,9 +312,6 @@ export class TaskDetailComponent implements OnDestroy {
   readonly elapsedTime = this.cliPoll.elapsedTime;
   readonly errorMsg = signal<string | null>(null);
   readonly starting = signal(false);
-
-  onOlderBriefDecisionError(error: unknown): void { this.showError(error); }
-
   readonly continuing = signal(false);
   readonly regeneratingSummary = signal(false);
   private regenPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -1061,7 +1058,7 @@ export class TaskDetailComponent implements OnDestroy {
     else if (thinkingChanged) thinkingPut();
   }
 
-  private showError(err: unknown): string {
+  protected showError(err: unknown): string {
     const detail = err as { status?: number; statusText?: string; message?: string; error?: unknown };
     const bodyError =
       typeof detail.error === 'object' && detail.error !== null && 'error' in detail.error

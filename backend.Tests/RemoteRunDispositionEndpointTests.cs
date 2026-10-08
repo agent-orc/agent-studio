@@ -135,14 +135,13 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
         await using var factory = BuildFactory();
         using var client = Client(factory);
         var (_, attempt) = Claim(factory, "AGT-UNCHANGED-BRIEF");
-        var folder = Current(factory, "AGT-UNCHANGED-BRIEF").FolderPath;
-
         var save = await client.PutAsJsonAsync(
             $"/api/tasks/AGT-UNCHANGED-BRIEF/files/status.md?watchPath={Uri.EscapeDataString(WatchPath)}",
             new { content = "Progress note" });
 
         Assert.NotEqual(HttpStatusCode.OK, save.StatusCode);
-        Assert.Equal(attempt.BriefVersion, BriefVersionStore.ReadOrCreate(folder));
+        Assert.Equal(attempt.BriefVersion,
+            BriefVersionStore.ReadOrCreate(Current(factory, "AGT-UNCHANGED-BRIEF").FolderPath));
     }
 
     private (string TaskKey, RunAttemptDto Attempt) Claim(WebApplicationFactory<Program> factory, string id)
