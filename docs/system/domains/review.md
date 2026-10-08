@@ -3,6 +3,14 @@
 Version: 2026-10-08
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
 
+## Quality Studio shadow evidence
+
+The local post-core Quality Studio Angular rule pass records canonical sensor
+findings in the task's review evidence log. Each entry carries the Quality
+Studio `ruleId`, source location, and analysis artifact. The pipeline step is
+report-only while the Quality Studio verdict contract is compared in shadow;
+its findings do not override the existing review verdict or trigger a reissue.
+
 ## Lifetime review budget
 
 Each card carries `review-round-budget.json`, an attempt-id deduped count of

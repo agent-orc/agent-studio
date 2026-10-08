@@ -148,7 +148,7 @@ public enum StepKind
     Tool,
     /// <summary>
     /// A named Quality Studio analysis executed against the checked-out
-    /// repository through the in-process analysis-core package. Analysis steps
+    /// repository through the Quality Studio HTTP API. Analysis steps
     /// emit canonical findings and provenance; they are not generic shell tools.
     /// </summary>
     Analysis,

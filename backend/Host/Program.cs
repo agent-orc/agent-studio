@@ -740,8 +740,9 @@ builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
-    AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>();
+builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
+    AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>(client =>
+        client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();
