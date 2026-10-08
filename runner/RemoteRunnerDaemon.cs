@@ -547,6 +547,7 @@ public sealed class RemoteRunnerDaemon
                 }
                 if (DateTime.UtcNow >= nextCapabilityAdvertisement)
                 {
+                    await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                     var capabilityTelemetry = TakeTelemetry();
                     var generation = ++capabilityGeneration;
                     await CapabilityAdvertisementRecovery.ExecuteAsync(

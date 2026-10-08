@@ -364,6 +364,10 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Conflict(new Contract.ApiError(
                     "review-dependency-preparation-required",
                     "Update this Review Executor to one that advertises dependency-preparation support."));
+            executor = executor with
+            {
+                Capabilities = registry.AdmittedReviewCapabilities(runnerId, request.InstanceId),
+            };
             // A drained capability pauses this executor rather than feeding it
             // attempts it just reported itself unable to materialize. The pause
             // lifts on cooldown expiry or on the next full registration (a
@@ -3192,7 +3196,10 @@ public sealed class V1ReviewExecutorRegistry
                     capability.CredentialModifiedAt,
                     capability.EvidenceId,
                     capability.EvidenceExcerpt,
-                    capability.SupportedModels);
+                    capability.SupportedModels,
+                    HealthOutcome: request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null,
+                    ServiceAvailability: request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null,
+                    CredentialHealth: request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null);
             })
             .GroupBy(capability => capability.Key, StringComparer.Ordinal)
             .Select(group => group.Last())
@@ -3637,6 +3644,29 @@ public sealed class V1ReviewExecutorRegistry
         return false;
     }
 
+    public IReadOnlySet<string> AdmittedReviewCapabilities(string runnerId, string instanceId)
+    {
+        lock (_gate)
+        {
+            if (!_registrations.TryGetValue(runnerId, out var registration)
+                || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
+            var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
+            if (!_capabilityStates.TryGetValue(runnerId, out var state)
+                || state.InstanceId != instanceId) return admitted;
+            var now = _time.GetUtcNow().UtcDateTime;
+            foreach (var capability in state.Capabilities.Where(item =>
+                         item.Key.StartsWith("provider-auth:", StringComparison.Ordinal)))
+            {
+                var unavailable = capability.FreshUntil <= now
+                    || !Claimable(capability.AdvertisedStatus)
+                    || (capability.HealthOutcome ?? capability.Signal) is
+                        "credential_invalid" or "provider_incident" or "indeterminate";
+                if (unavailable) admitted.Remove(capability.Key);
+            }
+            return admitted;
+        }
+    }
+
     /// <summary>
     /// Heartbeat staleness budget for <see cref="EvaluateReviewExecutorAvailability"/>.
     /// Generous relative to the daemon's registration/advertisement cadence
@@ -3752,6 +3782,11 @@ public sealed class V1ReviewExecutorRegistry
                     return CodingCapabilityAdmission.Blocked(
                         required,
                         $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
+                if (key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                    && (capability.HealthOutcome ?? capability.Signal) is
+                        "credential_invalid" or "provider_incident" or "indeterminate")
+                    return CodingCapabilityAdmission.Blocked(required,
+                        $"Required capability '{key}' is held for {capability.HealthOutcome ?? capability.Signal}.");
                 if (!Claimable(capability.AdvertisedStatus))
                     return CodingCapabilityAdmission.Blocked(
                         required,

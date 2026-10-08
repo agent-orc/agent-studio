@@ -304,7 +304,11 @@ export class RemoteHostCardComponent {
   }
 
   signInLabel(badge: ProviderAuthBadge): string | null {
-    if (!['codex', 'claude'].includes(badge.provider) || !['unavailable', 'expiring'].includes(badge.state)) return null;
+    if (!['codex', 'claude'].includes(badge.provider)) return null;
+    if (badge.state === 'unavailable'
+      && badge.healthOutcome !== 'credential_invalid'
+      && !(badge.healthOutcome == null && badge.signal === 'signed-out' && badge.consecutiveFailures >= 2)) return null;
+    if (badge.state !== 'unavailable' && badge.state !== 'expiring') return null;
     return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
   }
 

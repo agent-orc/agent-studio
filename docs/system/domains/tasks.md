@@ -116,6 +116,17 @@ scan stops at the first admissible task. The claim response carries
 `placementReason`: `matched` for configured placement, `legacy-routing` for a
 project without placement, or the last refusal when nothing is admitted. The
 successful claim audit records the placement version and reason.
+
+When `credential-health-v2` is negotiated, both Coding claims and Review
+candidate claims also consult the Task Server's persisted provider health
+circuits before minting a lease. A service incident holds the matching provider
+across hosts; a credential failure or indeterminate diagnosis holds only its
+host credential binding. Other providers and active fenced attempts continue.
+The runner's isolated real probe obtains a single cohort permit after the
+recorded retry deadline. A newer, source and generation matched healthy
+advertisement from that permit owner releases the hold. This admission path
+does not select another model, alter terminal cards or use a product attempt
+as a provider canary.
 `GET /api/v1/projects/{projectId}/placement/admissions` reads each runner's
 last placement decision with its timestamp. The placement GET, runner
 capability snapshot, runtime capacity GET, and host admission projection

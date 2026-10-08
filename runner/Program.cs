@@ -171,6 +171,7 @@ ProviderAuthProbe.Shared.UseRealRequest(
     ProviderStatusIncidentAdapter.Official(providerStatusHttp),
     client.ReadProviderComparisonAsync,
     options.Hostname);
+ProviderAuthProbe.Shared.UseCanaryPermit(client.ReserveProviderCanaryAsync);
 
 if (help)
 {

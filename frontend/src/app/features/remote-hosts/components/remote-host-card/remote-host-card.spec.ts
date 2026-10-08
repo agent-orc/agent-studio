@@ -187,6 +187,25 @@ describe('RemoteHostCardComponent', () => {
       .toContain('ready → unavailable');
   });
 
+  it('shows provider incident retry without a sign-in action', () => {
+    const fixture = mount({
+      ...HOST,
+      capabilityHealth: [{
+        key: 'provider-auth:codex', category: 'provider-auth', advertisedStatus: 'unavailable',
+        healthState: 'draining', advertisedAt: '2026-07-10T11:59:30Z',
+        freshUntil: '2026-07-10T12:02:30Z', isFresh: true, consecutiveFailures: 2,
+        detail: 'Applicable provider incident; retry scheduled', signal: 'provider_incident',
+        healthOutcome: 'provider_incident', credentialHealth: 'unknown', serviceAvailability: 'unavailable',
+        affectedClaims: [], recoveryHistory: [],
+      }],
+    });
+    const badge = fixture.nativeElement.querySelector(
+      '[data-testid="remote-host-provider-auth-codex"]',
+    ) as HTMLElement;
+    expect(badge.getAttribute('data-state')).toBe('retrying');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-codex-sign-in"]')).toBeNull();
+  });
+
   it('offers Codex sign-in for an expiring host badge and keeps the SSH target host-owned', () => {
     const fixture = mount({
       ...HOST,

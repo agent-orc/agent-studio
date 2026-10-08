@@ -31,7 +31,7 @@ public sealed partial class TaskServerStore
             throw new ArgumentException("Capability freshness must be between 30 and 900 seconds.");
         if (request.Generation <= 0 || request.Capabilities.Count == 0)
             throw new ArgumentException("Capability generation and at least one capability are required.");
-        if (request.CredentialHealthVersion is not null and not 1 ||
+        if (request.CredentialHealthVersion is not null and not (1 or 2) ||
             request.SchemaVersion == CapabilityProtocol.LegacySchemaVersion && request.CredentialHealthVersion is not null)
             throw new ArgumentException("Credential health version requires capability schema 2.");
 
@@ -92,7 +92,7 @@ public sealed partial class TaskServerStore
                         $"A newer credential observation already exists for {key}.");
                 var advertisedStatus = capability.Status.Trim().ToLowerInvariant();
                 var tracksProbeHistory = key.StartsWith("provider-auth:", StringComparison.Ordinal);
-                var positiveRecovery = tracksProbeHistory
+                var positiveRecovery = request.CredentialHealthVersion != 2 && tracksProbeHistory
                                        && advertisedStatus == ProviderAuthProbeStatuses.Ready
                                        && capability.Signal is ProviderAuthProbeSignals.Ok
                                            or ProviderAuthProbeSignals.CredentialsExpiring;
@@ -100,6 +100,18 @@ public sealed partial class TaskServerStore
                     ? await ReadCapabilityRowAsync(connection, transaction, request.RunnerId, key, ct)
                     : null;
                 var probeHistory = previous?.RecoveryHistory ?? [];
+                if (tracksProbeHistory && request.CredentialHealthVersion == 2
+                    && capability.HealthOutcome is { } outcome)
+                {
+                    var oldOutcome = await ScalarAsync(connection, """
+                        SELECT health_outcome FROM runner_capabilities
+                         WHERE runner_id = $runner AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", key)) as string;
+                    if (oldOutcome != outcome)
+                        probeHistory = AppendHistory(probeHistory, new CapabilityRecoveryEventDto(
+                            advertisedAt, oldOutcome ?? "unknown", outcome,
+                            "Provider credential health outcome changed."));
+                }
                 if (previous is not null
                     && !string.Equals(previous.AdvertisedStatus, advertisedStatus, StringComparison.Ordinal))
                 {
@@ -131,6 +143,7 @@ public sealed partial class TaskServerStore
                         limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                         credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
                         access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
+                        health_outcome, service_availability, credential_health,
                         advertised_instance_id, advertised_at, fresh_until,
                         generation, recovery_history_json, updated_at)
                     VALUES (
@@ -139,6 +152,7 @@ public sealed partial class TaskServerStore
                         $limited, $credential_modified, $evidence_id, $evidence_excerpt, $supported_models,
                         $credential_generation, $credential_observed, $last_real_success, $expiry_provenance,
                         $access_expires, $effective_source, $native_shadowed, $evidence_refs,
+                        $health_outcome, $service_availability, $credential_health,
                         $instance, $advertised,
                         $fresh, $generation, $history, $updated)
                     ON CONFLICT(runner_id, capability_key) DO UPDATE SET
@@ -170,6 +184,9 @@ public sealed partial class TaskServerStore
                         effective_source = excluded.effective_source,
                         native_file_shadowed = excluded.native_file_shadowed,
                         evidence_refs_json = excluded.evidence_refs_json,
+                        health_outcome = excluded.health_outcome,
+                        service_availability = excluded.service_availability,
+                        credential_health = excluded.credential_health,
                         advertised_instance_id = excluded.advertised_instance_id,
                         advertised_at = excluded.advertised_at,
                         fresh_until = excluded.fresh_until,
@@ -203,6 +220,9 @@ public sealed partial class TaskServerStore
                     ("$effective_source", carriesCredentialObservation ? capability.EffectiveSource : null),
                     ("$native_shadowed", carriesCredentialObservation && capability.NativeFileShadowed is { } shadowed ? shadowed ? 1 : 0 : null),
                     ("$evidence_refs", carriesCredentialObservation && capability.EvidenceRefs is not null ? JsonSerializer.Serialize(capability.EvidenceRefs) : null),
+                    ("$health_outcome", request.CredentialHealthVersion == 2 ? capability.HealthOutcome : null),
+                    ("$service_availability", request.CredentialHealthVersion == 2 ? capability.ServiceAvailability : null),
+                    ("$credential_health", request.CredentialHealthVersion == 2 ? capability.CredentialHealth : null),
                     ("$instance", request.InstanceId),
                     ("$advertised", Iso(advertisedAt)),
                     ("$fresh", Iso(freshUntil)),
@@ -211,6 +231,7 @@ public sealed partial class TaskServerStore
                     ("$tracks_history", tracksProbeHistory ? 1 : 0),
                     ("$positive_recovery", positiveRecovery ? 1 : 0),
                     ("$updated", now));
+                await ObserveProviderFleetAsync(connection, transaction, request, capability, ct);
             }
             if (request.Telemetry is not null)
             {
@@ -287,6 +308,19 @@ public sealed partial class TaskServerStore
                 !reference.StartsWith("evidence:", StringComparison.Ordinal) ||
                 reference.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not (':' or '-' or '_' or '.')))))
             throw new ArgumentException("Credential evidence references must be bounded opaque identifiers.");
+        if (request.CredentialHealthVersion == 2 &&
+            (capability.HealthOutcome is not null and not
+                ("healthy" or "indeterminate" or "credential_invalid" or "provider_incident" or
+                 "quota_exhausted" or "network_failure") ||
+             capability.ServiceAvailability is not null and not
+                ("available" or "unavailable" or "limited" or "unknown") ||
+             capability.CredentialHealth is not null and not ("valid" or "invalid" or "unknown")))
+            throw new ArgumentException("Credential health outcome or service availability is unsupported.");
+        if (request.CredentialHealthVersion == 2
+            && capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
+            && (capability.HealthOutcome is null || capability.CredentialHealth is null
+                || capability.ServiceAvailability is null))
+            throw new ArgumentException("Provider authentication requires separated credential and service health.");
     }
 
     public async Task<CapabilityFailureResponse> ReportCapabilityFailureAsync(
@@ -393,6 +427,32 @@ public sealed partial class TaskServerStore
                 ("$updated", Iso(UtcNow)),
                 ("$runner", request.RunnerId),
                 ("$capability", capability.Key));
+            if (capability.Key.StartsWith("provider-auth:", StringComparison.Ordinal)
+                && request.Classification == "ProviderUnauthorized")
+            {
+                var healthVersion = await ScalarAsync(connection, """
+                    SELECT health_outcome FROM runner_capabilities
+                     WHERE runner_id = $runner AND capability_key = $key;
+                    """, ct, transaction, ("$runner", request.RunnerId), ("$key", capability.Key));
+                if (healthVersion is string)
+                {
+                    var source = await ScalarAsync(connection, """
+                        SELECT effective_source FROM runner_capabilities
+                         WHERE runner_id = $runner AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", capability.Key));
+                    var generation = await ScalarAsync(connection, """
+                        SELECT credential_generation FROM runner_capabilities
+                         WHERE runner_id = $runner AND capability_key = $key;
+                        """, ct, transaction, ("$runner", request.RunnerId), ("$key", capability.Key));
+                    await ObserveProviderFleetAsync(connection, transaction,
+                        new CapabilityAdvertisementRequest(request.RunnerId, request.InstanceId, 2,
+                            occurredAt, 180, 1, [], CredentialHealthVersion: 2),
+                        new AdvertisedCapabilityDto(capability.Key, "provider-auth",
+                            CredentialGeneration: generation as string, CredentialObservedAt: occurredAt,
+                            EffectiveSource: source as string, HealthOutcome: "indeterminate",
+                            ServiceAvailability: "unknown"), ct);
+                }
+            }
             if (wholeHost)
             {
                 await ExecuteAsync(connection, """
@@ -504,7 +564,8 @@ public sealed partial class TaskServerStore
                        recovery_history_json, signal, credential_expires_at,
                        limited_until, credential_modified_at, evidence_id, evidence_excerpt, supported_models_json,
                        credential_generation, credential_observed_at, last_real_success_at, expiry_provenance,
-                       access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json
+                       access_token_expires_at, effective_source, native_file_shadowed, evidence_refs_json,
+                       health_outcome, service_availability, credential_health
                   FROM runner_capabilities
                  WHERE runner_id = $runner
                  ORDER BY category, capability_key;
@@ -548,7 +609,10 @@ public sealed partial class TaskServerStore
                         reader.IsDBNull(27) ? null : Parse(reader.GetString(27)),
                         reader.IsDBNull(28) ? null : reader.GetString(28),
                         reader.IsDBNull(29) ? null : reader.GetInt32(29) != 0,
-                        reader.IsDBNull(30) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(30))));
+                        reader.IsDBNull(30) ? null : JsonSerializer.Deserialize<string[]>(reader.GetString(30)),
+                        reader.IsDBNull(31) ? null : reader.GetString(31),
+                        reader.IsDBNull(32) ? null : reader.GetString(32),
+                        reader.IsDBNull(33) ? null : reader.GetString(33)));
                 }
             }
             HostTelemetrySnapshotDto? telemetry = null;
@@ -735,6 +799,25 @@ public sealed partial class TaskServerStore
                 return CapabilityAdmission.Blocked(
                     HostAdmissionReasons.CapabilityStale,
                     $"Required capability '{key}' is stale since {capability.FreshUntil:O}.");
+            if (key.StartsWith("provider-auth:", StringComparison.Ordinal))
+            {
+                var provider = key["provider-auth:".Length..];
+                var binding = await BindingScopeAsync(connection, transaction,
+                    runnerId, provider, null, null, ct);
+                var held = await ReadProviderCircuitAsync(connection, transaction, ServiceCohort(provider), ct)
+                    ?? await ReadProviderCircuitAsync(connection, transaction, binding.Key, ct);
+                if (held is not null)
+                    return CapabilityAdmission.Blocked(HostAdmissionReasons.CapabilityDraining,
+                        $"Required capability '{key}' is held for {held.Outcome}; next retry {held.NextRetryAt:O}.");
+                var currentOutcome = await ScalarAsync(connection, """
+                    SELECT health_outcome FROM runner_capabilities
+                     WHERE runner_id = $runner AND capability_key = $key;
+                    """, ct, transaction, ("$runner", runnerId), ("$key", key));
+                if (currentOutcome is "credential_invalid" or "provider_incident" or
+                    "indeterminate" or "network_failure")
+                    return CapabilityAdmission.Blocked(HostAdmissionReasons.CapabilityUnavailable,
+                        $"Required capability '{key}' reports {currentOutcome}.");
+            }
             if (!Claimable(capability.AdvertisedStatus))
                 return CapabilityAdmission.Blocked(
                     HostAdmissionReasons.ForCapability(key, HostAdmissionReasons.CapabilityUnavailable),

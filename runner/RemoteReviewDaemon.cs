@@ -518,6 +518,7 @@ public sealed class RemoteReviewDaemon
                     var admissionTelemetry = TakeTelemetry(force: true);
                     if (DateTime.UtcNow >= nextCapabilityAdvertisement)
                     {
+                        await RunnerCapabilityProbe.RefreshDueCanariesAsync(_options, _client, _log, shutdown);
                         var generation = ++capabilityGeneration;
                         await AdvertiseCapabilitiesWithControlAsync(generation, shutdown);
                         observedServer = true;
