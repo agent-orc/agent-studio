@@ -146,9 +146,16 @@ public static class MergeIntoIntegrationOutcomePolicy
             or MergeIntoIntegrationOutcome.MergedAfterRebase;
 
     public static bool IsSuccessfulIntegration(this MergeIntoIntegrationOutcome outcome)
-        => outcome.IsFreshMerge()
-            || outcome is MergeIntoIntegrationOutcome.AlreadyMerged
-                or MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch;
+        => outcome.IsFreshMerge() || outcome.IsAlreadyContained();
+
+    /// <summary>
+    /// The branch already carried the delivery; this call created no merge. The
+    /// runner completes such an outcome only on gate evidence for the exact
+    /// tree (AGT-3002, <see cref="IntegrationVerificationPolicy"/>).
+    /// </summary>
+    public static bool IsAlreadyContained(this MergeIntoIntegrationOutcome outcome)
+        => outcome is MergeIntoIntegrationOutcome.AlreadyMerged
+            or MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch;
 }
 
 /// <summary>
@@ -3974,6 +3981,34 @@ public class GitService
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Find the merge that first brought a contained delivery onto the target's
+    /// first-parent line, then diff the delivery against that merge's old tip.
+    /// A later docs-only tip must not hide code in the delivered commit range.
+    /// Null means the range cannot be established (for example a fast-forward).
+    /// </summary>
+    public IReadOnlyList<string>? ChangedPathsForContainedDelivery(
+        string repoRoot, string targetSha, string deliverySha)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(targetSha)
+            || !ReviewSubjectStore.IsValidResultSha(deliverySha)
+            || !IsAncestor(repoRoot, deliverySha, targetSha)) return null;
+
+        var (merges, _, code) = RunGitArgs(
+            repoRoot, "rev-list", "--first-parent", "--merges", "-n", "256", targetSha, RevisionsOnly);
+        if (code != 0) return null;
+        foreach (var merge in merges.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var (line, _, parentsCode) = RunGitArgs(repoRoot, "rev-list", "--parents", "-n", "1", merge, RevisionsOnly);
+            if (parentsCode != 0) return null;
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 3 || IsAncestor(repoRoot, deliverySha, parts[1])) continue;
+            if (!parts.Skip(2).Any(parent => IsAncestor(repoRoot, deliverySha, parent))) continue;
+            return ChangedPathsAgainstMergeBase(repoRoot, parts[1], deliverySha);
+        }
+        return null;
     }
 
     /// <summary>

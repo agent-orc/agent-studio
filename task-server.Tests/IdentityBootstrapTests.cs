@@ -136,6 +136,9 @@ public sealed class IdentityBootstrapTests
             var installation = await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation");
             Assert.True(installation!.OwnerBootstrapArmed);
             Assert.False(installation.OwnerBootstrapped);
+            var beforeBootstrap = await edge.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
+            Assert.True(beforeBootstrap!.BootstrapRequired);
+            Assert.True(beforeBootstrap.BootstrapCodeRequired);
 
             Assert.Equal("owner-bootstrap-code-required", await ErrorCodeAsync(await edge.PostAsJsonAsync(
                 "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner", OwnerPassword)), HttpStatusCode.Unauthorized));
@@ -146,6 +149,9 @@ public sealed class IdentityBootstrapTests
             var owner = await BootstrapOwnerAsync(edge);
             Assert.StartsWith("rcv_", owner.RecoveryCode, StringComparison.Ordinal);
             Assert.DoesNotContain("ats_", owner.SessionToken, StringComparison.Ordinal);
+            var afterBootstrap = await edge.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
+            Assert.False(afterBootstrap!.BootstrapRequired);
+            Assert.False(afterBootstrap.BootstrapCodeRequired);
 
             Assert.Equal("studio-already-bootstrapped", await ErrorCodeAsync(await edge.PostAsJsonAsync(
                 "/api/v1/studio/auth/bootstrap",
@@ -159,6 +165,8 @@ public sealed class IdentityBootstrapTests
             var installation = await edge.GetFromJsonAsync<InstallationIdentityDto>("/api/v1/installation");
             Assert.True(installation!.OwnerBootstrapped);
             Assert.False(installation.OwnerBootstrapArmed);
+            Assert.False((await edge.GetFromJsonAsync<StudioAuthStatusDto>(
+                "/api/v1/studio/auth/status"))!.BootstrapCodeRequired);
             Assert.Equal("studio-already-bootstrapped", await ErrorCodeAsync(await edge.PostAsJsonAsync(
                 "/api/v1/studio/auth/bootstrap",
                 new StudioBootstrapRequest("intruder", OwnerPassword, BootstrapCode: OtherOwnerCode)), HttpStatusCode.Conflict));

@@ -22,9 +22,12 @@ export class ProjectLookupService {
   private readonly workspaces = signal<readonly RegistryWorkspaceListItem[]>([]);
 
   readonly allProjects = computed(() => this.workspaces().flatMap(ws => ws.projects));
+  /** True once any registry response arrived, so an empty list means "no projects", not "not loaded". */
+  readonly loaded = signal(false);
 
   setWorkspaces(workspaces: readonly RegistryWorkspaceListItem[]): void {
     this.workspaces.set(workspaces ?? []);
+    this.loaded.set(true);
   }
 
   getProjectDisplay(projectName: string, storagePath?: string | null, projectId?: string | null): ProjectDisplay {

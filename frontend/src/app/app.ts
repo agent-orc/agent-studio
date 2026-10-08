@@ -267,6 +267,8 @@ export class App implements OnInit, OnDestroy {
   private readonly lanePager = inject(LanePagerService);
   readonly selectedJob = this.jobSelection.selected;
   readonly detailPreview = this.jobSelection.detailPreview;
+  readonly selectedCore = this.jobSelection.selectedCore;
+  readonly detailResourceStates = this.jobSelection.resourceStates;
   readonly boardLoading = this.jobService.loading;
   readonly detailLoading = this.jobSelection.detailLoading;
   readonly detailLoadError = this.jobSelection.detailLoadError;
@@ -872,19 +874,16 @@ export class App implements OnInit, OnDestroy {
     // path would set selectedJob() but the new shell would show no tab.
     effect(() => {
       const selected = this.selectedJob();
-      // Consume the pager/cursor retarget hint up-front (and unconditionally,
-      // so a no-op step never leaks the flag into a later genuine open).
-      const retargetNav = this.laneNavRetarget
-        || (!!selected && this.jobSelection.consumeTaskTabReplacement(selected.info.taskKey));
-      this.laneNavRetarget = false;
+      const visible = selected?.info ?? (this.selectedCore() ? this.detailPreview() : null);
+      // A core-first step keeps the retarget hint until its first visible task.
+      const retargetNav = !!visible && (this.laneNavRetarget || this.jobSelection.consumeTaskTabReplacement(visible.taskKey));
+      if (visible) this.laneNavRetarget = false;
       if (!this.featureFlags.vsCodeLayout()) return;
-      if (!selected) return;
+      if (!visible) return;
       untracked(() => {
-        this.mirrorSelectionToStudioTab(selected, retargetNav);
+        this.mirrorSelectionToStudioTab(visible, retargetNav);
         if (this.pendingStudioTaskReference) {
-          const publicReference = selected.info.key?.trim()
-            || selected.info.displayKey?.trim()
-            || selected.info.id;
+          const publicReference = visible.key?.trim() || visible.displayKey?.trim() || visible.id;
           if (publicReference.toLowerCase() === this.pendingStudioTaskReference.toLowerCase()) {
             this.pendingStudioTaskReference = null;
             this.studioRouteReady.set(true);
@@ -1191,7 +1190,7 @@ export class App implements OnInit, OnDestroy {
       this.openEpicAsTab(job);
       return;
     }
-    this.routeDetailTab.set(null);
+    this.onTaskDetailTabChange(null);
     this.routeInspectorTab.set(null);
     if (this.featureFlags.vsCodeLayout()) {
       this.studioTabState.open({ kind: 'task', taskKey: job.taskKey });
@@ -1857,21 +1856,21 @@ export class App implements OnInit, OnDestroy {
    * trail of them. Extracted from the mirror effect so the open-vs-retarget
    * decision is unit-testable without driving the full app lifecycle.
    */
-  private mirrorSelectionToStudioTab(selected: TaskDetail, retargetNav: boolean): void {
-    if (selected.info.kind === 'epic') {
-      const key = `epic:${selected.info.taskKey}`;
+  private mirrorSelectionToStudioTab(selected: TaskInfo, retargetNav: boolean): void {
+    if (selected.kind === 'epic') {
+      const key = `epic:${selected.taskKey}`;
       const present = this.studioTabState.tabs().some(
-        (t) => t.kind === 'epic' && t.epicKey === selected.info.taskKey,
+        (t) => t.kind === 'epic' && t.epicKey === selected.taskKey,
       );
       if (!present) {
-        this.studioTabState.open({ kind: 'epic', epicKey: selected.info.taskKey });
+        this.studioTabState.open({ kind: 'epic', epicKey: selected.taskKey });
       } else {
         this.studioTabState.select(key);
       }
       return;
     }
     this.studioTabState.open(
-      { kind: 'task', taskKey: selected.info.taskKey },
+      { kind: 'task', taskKey: selected.taskKey },
       retargetNav ? 'replace-current' : 'new',
     );
   }
@@ -2146,8 +2145,9 @@ export class App implements OnInit, OnDestroy {
     return true;
   }
 
-  onTaskDetailTabChange(tab: TaskDetailRouteTab): void {
+  onTaskDetailTabChange(tab: TaskDetailRouteTab | null): void {
     this.routeDetailTab.set(tab);
+    this.jobSelection.loadResourcesForTab(tab);
   }
 
   onTaskInspectorTabChange(tab: TaskInspectorRouteTab): void {

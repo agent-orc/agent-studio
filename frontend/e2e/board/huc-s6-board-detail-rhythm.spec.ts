@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
+import { SNAPSHOT } from '../../src/mockups/usage-chips/app/usage-chips.fixtures';
 
 /**
  * HUC-S6 (AGT-2965): board and task protocol rhythm.
@@ -155,6 +156,12 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/cli/usage**', (route) => route.fulfill(json({ at: '2026-09-25T07:00:00Z', sessions: [] })));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill(json({ at: '2026-09-25T07:00:00Z', ttlSeconds: 600, snapshots: [] })));
+  // The shell now reads a workspace cockpit projection. Keep its real header
+  // component on the same pinned data as the HUC integration matrix.
+  await page.route('**/api/usage/cockpit**', (route) => {
+    const workspaceId = new URL(route.request().url()).searchParams.get('workspaceId') || SNAPSHOT.workspaceId;
+    return route.fulfill(json({ ...SNAPSHOT, workspaceId }));
+  });
 }
 
 async function cleanOverlays(page: Page): Promise<void> {

@@ -71,6 +71,15 @@ public record SetReviewFollowUpRequest
     public int ScopedReviewMaximumDeltaFiles { get; init; } = 20;
 }
 
+/// <summary>AGT-W57 cause breaker parameters for one project.</summary>
+public record SetCauseBreakerRequest
+{
+    public bool Enabled { get; init; } = true;
+    public int AttemptThreshold { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultAttemptThreshold;
+    public int CardThreshold { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultCardThreshold;
+    public int WindowHours { get; init; } = AgentStudio.Runner.CauseBreakerPolicy.DefaultWindowHours;
+}
+
 /// <summary>
 /// Per-project preferences under <c>/api/projects</c>, including read-all
 /// for the header bar plus the per-project auto-commit toggle.
@@ -277,6 +286,10 @@ public static class ProjectSettingsEndpoints
                         ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
                     scopedReviewAfterFinding = kv.Value.ScopedReviewAfterFinding,
                     scopedReviewMaximumDeltaFiles = kv.Value.ScopedReviewMaximumDeltaFiles,
+                    causeBreakerEnabled = kv.Value.CauseBreakerEnabled,
+                    causeBreakerAttemptThreshold = kv.Value.CauseBreakerAttemptThreshold,
+                    causeBreakerCardThreshold = kv.Value.CauseBreakerCardThreshold,
+                    causeBreakerWindowHours = kv.Value.CauseBreakerWindowHours,
                     // Slice P (ASS-1663): per-project build profile + onboarding
                     // status. Null when the project never declared one (legacy
                     // "no gate" behaviour). pickupAllowed mirrors the runner's
@@ -722,6 +735,22 @@ public static class ProjectSettingsEndpoints
                 req.ScopedReviewAfterFinding,
                 req.ScopedReviewMaximumDeltaFiles);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/cause-breaker", (
+            string projectName,
+            SetCauseBreakerRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            return Results.Ok(settings.SetCauseBreaker(
+                projectName,
+                req.Enabled,
+                req.AttemptThreshold,
+                req.CardThreshold,
+                req.WindowHours));
         });
 
         // Per-project CLI permission modes. GET returns the resolved mode +

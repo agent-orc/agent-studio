@@ -34,6 +34,7 @@ import { LayoutPanesService } from './services/layout-panes.service';
 import { TaskArtifactsService } from './services/task-artifacts.service';
 import { LanePagerService } from './state/lane-pager.service';
 import { TaskSelectionService } from './state/task-selection.service';
+import { TaskResourceStatusComponent } from './components/task-resource-status/task-resource-status.component';
 import { ClaudeSessionPollService } from '../polling/services/claude-session-poll.service';
 import { SessionEventsPollService } from '../polling/services/session-events-poll.service';
 import { RunTimelinePollService } from '../polling/services/run-timeline-poll.service';
@@ -74,6 +75,7 @@ import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
+
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -96,6 +98,7 @@ import { OlderBriefOfferComponent } from './components/older-brief-offer/older-b
     ArchivedTaskNoticeComponent,
     TooltipDirective,
     OlderBriefOfferComponent,
+    TaskResourceStatusComponent,
   ],
   providers: [
     LayoutPanesService,
@@ -309,7 +312,9 @@ export class TaskDetailComponent implements OnDestroy {
   readonly elapsedTime = this.cliPoll.elapsedTime;
   readonly errorMsg = signal<string | null>(null);
   readonly starting = signal(false);
+
   onOlderBriefDecisionError(error: unknown): void { this.showError(error); }
+
   readonly continuing = signal(false);
   readonly regeneratingSummary = signal(false);
   private regenPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -322,10 +327,12 @@ export class TaskDetailComponent implements OnDestroy {
   readonly availableModels = signal<CliModelInfo[]>([]);
   readonly cliTypes = CLI_TYPES;
   readonly cliTypeDraft = signal<CliType>('claude');
+
   modelMultiplier(id: string | null | undefined): number | null {
     if (!id) return null;
     return this.availableModels().find((m) => m.id === id)?.multiplier ?? null;
   }
+
   formatMultiplier(mult: number | null): string {
     return formatMultiplier(mult);
   }
@@ -483,21 +490,15 @@ export class TaskDetailComponent implements OnDestroy {
     // state on actual job changes, no-ops on same-job refreshes.
     this.git.setJob(d.info);
 
-    this.errorMsg.set(null);
-    if (d.info.model) {
-      this.modelDraft.set(d.info.model);
-    } else {
-      const def = this.availableModels().find((m) => m.isDefault);
-      this.modelDraft.set(def?.id ?? '');
-    }
-    this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
-    const nextCliType = (d.info.cliType ?? 'claude') as CliType;
-    if (nextCliType !== this.cliTypeDraft()) {
-      this.cliTypeDraft.set(nextCliType);
-      this.loadModelCatalog(nextCliType);
-    }
-
     if (isJobSwitch) {
+      this.errorMsg.set(null);
+      this.modelDraft.set(d.info.model || (this.availableModels().find((m) => m.isDefault)?.id ?? ''));
+      this.thinkingLevelDraft.set(d.info.thinkingLevel ?? null);
+      const nextCliType = (d.info.cliType ?? 'claude') as CliType;
+      if (nextCliType !== this.cliTypeDraft()) {
+        this.cliTypeDraft.set(nextCliType);
+        this.loadModelCatalog(nextCliType);
+      }
       // Reset job-scoped UI state only when switching to a different job —
       // refreshes for the same job (e.g. execution status changes) must
       // preserve the live CLI output and view state.

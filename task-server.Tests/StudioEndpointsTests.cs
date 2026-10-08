@@ -23,6 +23,7 @@ public sealed class StudioEndpointsTests
         var initialStatus = await client.GetFromJsonAsync<StudioAuthStatusDto>("/api/v1/studio/auth/status");
         Assert.True(initialStatus!.BootstrapRequired);
         Assert.False(initialStatus.Authenticated);
+        Assert.False(initialStatus.BootstrapCodeRequired);
 
         var bootstrap = await client.PostAsJsonAsync(
             "/api/v1/studio/auth/bootstrap", new StudioBootstrapRequest("owner", "correct horse battery staple"));

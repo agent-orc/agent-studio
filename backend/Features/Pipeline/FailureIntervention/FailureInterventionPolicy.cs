@@ -68,7 +68,16 @@ public static partial class FailureInterventionPolicy
         string failureClass = code;
         string reason = string.Empty;
 
-        if (EqualsAny(code, "ToolUnavailable") || lower.Contains("model is not supported")
+        // AGT-3002: decided by code first, because the gate output it carries
+        // may itself mention a missing command. The defect belongs to the
+        // integration branch, not to the card that found it.
+        if (EqualsAny(code, "IntegrationUnverified"))
+        {
+            domain = FailureDomains.Product;
+            failureClass = "integration/unverified-branch";
+            reason = "The integration branch carries a delivery whose merged tree never passed a gate; the branch needs repair.";
+        }
+        else if (EqualsAny(code, "ToolUnavailable") || lower.Contains("model is not supported")
             || lower.Contains("tool unavailable") || lower.Contains("command not found"))
         {
             domain = FailureDomains.Infrastructure;
@@ -186,6 +195,7 @@ public static partial class FailureInterventionPolicy
             "integration/configuration" => new[] { "origin is not configured", "fetch timed out", "fetch timeout" },
             "gate/MissingSource" => new[] { "missing source", "source checkout missing" },
             "run/crash-as-completion" => new[] { "crash-as-completion", "process exited" },
+            "integration/unverified-branch" => new[] { "unverified integration branch" },
             "gate/shared-cause" => new[] { GateFingerprintLinePrefix },
             _ => [],
         };

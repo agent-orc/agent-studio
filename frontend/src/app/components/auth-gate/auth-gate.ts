@@ -17,6 +17,7 @@ export class AuthGateComponent {
   username = '';
   displayName = '';
   password = '';
+  bootstrapCode = '';
   newPassword = '';
   readonly submitting = signal(false);
   readonly error = signal('');
@@ -26,16 +27,18 @@ export class AuthGateComponent {
     this.submitting.set(true);
     this.error.set('');
     const request: Observable<unknown> = status?.bootstrapRequired
-      ? this.auth.bootstrap(this.username, this.password, this.displayName)
+      ? this.auth.bootstrap(this.username, this.password, this.displayName, this.bootstrapCode)
       : status?.user?.mustChangePassword
         ? this.auth.changePassword(this.password, this.newPassword)
         : this.auth.login(this.username, this.password);
     request.subscribe({
-      next: () => { this.password = ''; this.newPassword = ''; this.submitting.set(false); },
+      next: () => { this.password = ''; this.newPassword = ''; this.bootstrapCode = ''; this.submitting.set(false); },
       error: (error: HttpErrorResponse) => {
         this.error.set(error?.error?.message ?? 'Sign-in failed.');
         this.submitting.set(false);
       },
     });
   }
+
+  acknowledgeRecoveryCode(): void { this.auth.acknowledgeRecoveryCode(); }
 }

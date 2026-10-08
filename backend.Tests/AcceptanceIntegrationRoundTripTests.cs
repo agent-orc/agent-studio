@@ -21,7 +21,8 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Integration-before-review regression coverage. Remote deliveries are fenced
 /// by <c>logs/review-subject.json</c>; immediate integration consumes that exact
-/// ref and SHA, while acceptance only validates current lineage and Git ancestry.
+/// ref and SHA, while acceptance validates current lineage, Git ancestry, and
+/// exact-tree gate evidence.
 /// </summary>
 public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 {
@@ -35,6 +36,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     private const string Slug = "remote-delivery";
     private const string TaskKey = "AGT-2227";
     private const string DeliveryRef = "runner/agent-runner-01/AGT-2227";
+    // Exact-tree evidence is independent of wall-clock recency in these fixtures.
+    private static readonly DateTime VerificationFixtureAtUtc = DateTime.UnixEpoch.AddDays(1);
 
     private readonly string _tempDir;
     private readonly string _watchPath;
@@ -993,7 +996,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
-    public async Task AcceptOutOfBandIntegratedCard_CompletesWithoutOwnMergeAttempt()
+    public async Task AcceptOutOfBandIntegratedCard_RequiresVerificationBeforeCompletion()
     {
         var deliverySha = PublishDelivery("out-of-band.txt", "already integrated\n");
         RunGit(_repo, "checkout", "-q", "-b", "develop", "origin/develop");
@@ -1004,24 +1007,24 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
         var statusBeforeAccept = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
         // AGT-2849: the out-of-band merge is local only, so it reads
-        // merged-locally - and acceptance still moves the card, because the merge
-        // is what acceptance waits for and the push has its own backstop.
+        // merged-locally; the out-of-band merge still needs exact-tree gate
+        // evidence before acceptance can complete the card.
         Assert.Equal(IntegrationStatuses.MergedLocally, statusBeforeAccept.Status);
+        Assert.Equal(IntegrationVerificationStates.Unverified, statusBeforeAccept.Verification?.State);
 
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
-        Assert.Equal(MoveJobStatus.Success, accepted.Status);
-        var completed = deps.Scanner.FindJob(Slug, _watchPath);
-        Assert.NotNull(completed);
-        Assert.Equal(TaskStates.Completed, completed!.State);
-        Assert.Null(completed.Phase);
+        Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
+        var stillReviewed = deps.Scanner.FindJob(Slug, _watchPath);
+        Assert.NotNull(stillReviewed);
+        Assert.Equal(TaskStates.HumanReview, stillReviewed!.State);
         Assert.False(deps.AcceptedQueue!.Reader.TryRead(out _));
-        var mergeStep = deps.Pipeline.Read(completed.FolderPath)?.Steps.LastOrDefault(
+        var mergeStep = deps.Pipeline.Read(stillReviewed.FolderPath)?.Steps.LastOrDefault(
             step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
         Assert.NotNull(mergeStep);
         Assert.Equal(PipelineStepStatus.Pending, mergeStep!.Status);
         Assert.DoesNotContain(
-            deps.Timeline.ReadAll(completed.FolderPath),
+            deps.Timeline.ReadAll(stillReviewed.FolderPath),
             entry => entry.Kind == TimelineEventKinds.IntegrationSucceeded
                      && entry.Details?.GetValueOrDefault("outcome") == "AlreadyMerged");
     }
@@ -1057,7 +1060,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     [Fact]
-    public async Task AcceptAlreadyIntegratedMainOnlyCard_MovesWithoutMergeOrGate()
+    public async Task AcceptAlreadyIntegratedMainOnlyCard_RequiresVerificationBeforeCompletion()
     {
         var deliverySha = PublishDelivery("main-only-integrated.txt", "already integrated\n");
         RunGit(_repo, "merge", "-q", "--no-ff", "--no-edit", deliverySha);
@@ -1075,11 +1078,12 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // AGT-2849: merged into the local main, not pushed.
         Assert.Equal(IntegrationStatuses.MergedLocally, before.Status);
         Assert.Equal("main", before.IntegrationBranch);
+        Assert.Equal(IntegrationVerificationStates.Unverified, before.Verification?.State);
 
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
-        Assert.Equal(MoveJobStatus.Success, accepted.Status);
-        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)?.State);
+        Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)?.State);
         Assert.False(deps.AcceptedQueue!.Reader.TryRead(out _));
         Assert.Equal(0, gate.Invocations);
         var mergeStep = deps.Pipeline.Read(
@@ -1505,6 +1509,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             IntegrationStrategies.DirectMerge,
             PipelineTypes.Task);
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, immediate.Outcome);
+        var mergedCard = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var mergedStatus = deps.Integration.BuildLookup([mergedCard])[mergedCard.TaskKey];
+        Assert.Equal(IntegrationStatuses.MergedLocally, mergedStatus.Status);
+        Assert.Equal(IntegrationVerificationStates.Verified, mergedStatus.Verification?.State);
+        Assert.Equal(immediate.MergedSha, mergedStatus.Verification?.Sha);
         var accepted = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
 
@@ -1914,6 +1923,273 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(localDevelop, Git(_origin, "-c", "safe.bareRepository=all", "rev-parse", "develop").Out.Trim());
     }
 
+    /// <summary>
+    /// AGT-3002 - replay of the 2026-09-28 incident. An operator script pushed
+    /// develop carrying a delivery whose only gate had failed, and the lane
+    /// completed the card as AlreadyMerged. The backstop now applies the lane's
+    /// rule: no gate evidence for the exact tree, so it records
+    /// integrated-unverified, runs the gate once on the tip, and on red returns
+    /// the card to Human Review with the verdict. It never runs that gate a
+    /// second time, and plain acceptance on containment alone is refused. The
+    /// branch cause card is covered by <see cref="ContainedDeliveryCauseCardTests"/>.
+    /// </summary>
+    [Fact]
+    public async Task Backstop_CompletedAlreadyMergedWithoutGateEvidence_RedGateReturnsToReviewOnce()
+    {
+        var deliverySha = PublishDelivery("ungated.txt", "pushed by an operator script\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "2 tests failed on the pushed tree");
+        var deps = Build(deliverySha, gateRunner: gate);
+        var completed = CompleteAsAlreadyMergedWithoutEvidence(deps);
+        var before = deps.Integration.BuildLookup([completed])[completed.TaskKey];
+        Assert.True(IntegrationStatuses.IsMerged(before.Status));
+        Assert.Equal(IntegrationVerificationStates.Unverified, before.Verification?.State);
+        Assert.False(IntegrationVerificationStates.PermitsCompletion(before.Verification));
+        Assert.Equal(deliverySha, before.Verification?.Sha);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(completed, before).Action);
+
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            VerifyingRunner(deps, gate),
+            deps.Integration,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            deps.Pipeline);
+
+        Assert.Equal(0, backstop.RunOnce());
+
+        Assert.Equal(1, gate.Invocations);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, reviewed.State);
+        var verification = IntegrationVerificationStore.Read(reviewed.FolderPath);
+        Assert.NotNull(verification);
+        Assert.Equal(IntegrationVerificationStates.Unverified, verification!.State);
+        Assert.Equal(deliverySha, verification.Sha);
+        Assert.Equal(IntegrationVerificationEvidence.GateRun, verification.Evidence);
+        Assert.Equal(nameof(BuildTestGateVerdict.Fail), verification.GateVerdict);
+        Assert.True(verification.GateFailed);
+        var step = deps.Pipeline.Read(reviewed.FolderPath)!.Steps.Last(
+            item => item.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+        Assert.Equal("gate-failed", step.Verdict);
+        Assert.Contains("integrated-unverified", step.Reason);
+        Assert.Contains("2 tests failed on the pushed tree", step.Reason);
+        Assert.Contains(
+            deps.Timeline.ReadAll(reviewed.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.IntegrationVerificationRecorded
+                     && entry.Details?.GetValueOrDefault("state") == IntegrationVerificationStates.Unverified
+                     && entry.Details?.GetValueOrDefault("sha") == deliverySha);
+
+        var projected = deps.Integration.BuildLookup([reviewed])[reviewed.TaskKey];
+        Assert.True(IntegrationStatuses.IsMerged(projected.Status));
+        Assert.Equal(IntegrationVerificationStates.Unverified, projected.Verification?.State);
+        Assert.True(projected.Verification!.GateFailed);
+
+        // The gate ran once on this tree; another sweep does not run it again.
+        backstop.RunOnce();
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+
+        var refused = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.IntegrationFailed, refused.Status);
+        Assert.Contains("integrated-unverified", refused.Message);
+        var overridden = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            reason: "Operator repaired develop by hand and takes responsibility for the tree.",
+            operatorOverride: true);
+        Assert.Equal(MoveJobStatus.Success, overridden.Status);
+    }
+
+    [Fact]
+    public void Backstop_CompletedAlreadyMergedWithStaleVerifiedRecord_GreenGateVerifiesCurrentTreeOnce()
+    {
+        var deliverySha = PublishDelivery("ungated-green.txt", "pushed by an operator script\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner();
+        var deps = Build(deliverySha, gateRunner: gate);
+        CompleteAsAlreadyMergedWithoutEvidence(deps);
+        var before = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Null(IntegrationVerificationStore.Read(before.FolderPath));
+        IntegrationVerificationStore.Write(before.FolderPath, new IntegrationVerificationRecord
+        {
+            State = IntegrationVerificationStates.Verified,
+            Sha = new string('a', 40),
+            IntegrationBranch = "develop",
+            Evidence = IntegrationVerificationEvidence.GateRun,
+            GateVerdict = nameof(BuildTestGateVerdict.Ok),
+            Reason = "A gate passed on an older integration tree.",
+        });
+        var stale = deps.Integration.BuildLookup([before])[before.TaskKey].Verification;
+        Assert.Equal(IntegrationVerificationStates.Unverified, stale?.State);
+        Assert.Equal(deliverySha, stale?.Sha);
+        Assert.Contains("differs", stale?.Reason);
+        Assert.False(IntegrationVerificationStates.PermitsCompletion(
+            stale));
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Retry,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(before,
+                deps.Integration.BuildLookup([before])[before.TaskKey]).Action);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            VerifyingRunner(deps, gate),
+            deps.Integration,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            deps.Pipeline);
+
+        backstop.RunOnce();
+        backstop.RunOnce();
+
+        Assert.Equal(1, gate.Invocations);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        var verification = IntegrationVerificationStore.Read(completed.FolderPath);
+        Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
+        Assert.Equal(IntegrationVerificationEvidence.GateRun, verification?.Evidence);
+        Assert.Equal(deliverySha, verification?.Sha);
+        var projected = deps.Integration.BuildLookup([completed])[completed.TaskKey];
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.Verification?.State);
+    }
+
+    [Fact]
+    public async Task ContainedDelivery_WithIntegratedVerifiedRecordForTheExactTree_CompletesWithoutAGateRun()
+    {
+        var deliverySha = PublishDelivery("recorded.txt", "verified by an earlier gate\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner(BuildTestGateVerdict.Fail, "must not run");
+        var deps = Build(deliverySha, gateRunner: gate);
+        var card = deps.Scanner.FindJob(Slug, _watchPath)!;
+        TaskJsonFile.UpdateFieldOrThrow(
+            card.FolderPath,
+            "integrationRecords",
+            new[]
+            {
+                new TaskIntegrationRecord
+                {
+                    Id = "gate-verified-" + deliverySha[..8],
+                    Classification = IntegrationRecordClasses.IntegratedVerified,
+                    RecordedAtUtc = VerificationFixtureAtUtc,
+                    IntegrationBranch = "develop",
+                    IntegrationSha = deliverySha,
+                    Evidence = "The pre-develop gate passed on this exact tree.",
+                },
+            });
+        var result = await VerifyingRunner(deps, gate).RunAsync(
+            Project, Slug, card.FolderPath, _watchPath, "develop", CancellationToken.None);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, result.Outcome);
+        Assert.Equal(deliverySha, result.MergedSha);
+        Assert.Equal(0, gate.Invocations);
+        var verification = IntegrationVerificationStore.Read(card.FolderPath);
+        Assert.Equal(IntegrationVerificationStates.Verified, verification?.State);
+        Assert.Equal(IntegrationVerificationEvidence.IntegrationRecord, verification?.Evidence);
+    }
+
+    /// <summary>
+    /// The state the old lane left behind: Completed with a Passed
+    /// <c>already-merged</c> step that carries no gate verdict.
+    /// </summary>
+    /// <summary>
+    /// AGT-3002 - once a gate passed on a tree carrying this delivery, later
+    /// commits on develop belong to other cards. The card keeps its verdict for
+    /// that exact tree, so the backstop neither re-gates every completed card
+    /// on each tip change nor lets a red tip it did not cause reopen it.
+    /// </summary>
+    [Fact]
+    public void Backstop_VerifiedCardStaysVerifiedAfterDevelopAdvances_WithoutAnotherGate()
+    {
+        var deliverySha = PublishDelivery("verified-then-advanced.txt", "gated delivery\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner();
+        var deps = Build(deliverySha, gateRunner: gate);
+        CompleteAsAlreadyMergedWithoutEvidence(deps);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            VerifyingRunner(deps, gate),
+            deps.Integration,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            deps.Pipeline);
+
+        backstop.RunOnce();
+
+        Assert.Equal(1, gate.Invocations);
+        var verified = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var record = IntegrationVerificationStore.Read(verified.FolderPath);
+        Assert.Equal(IntegrationVerificationStates.Verified, record?.State);
+        Assert.Equal(deliverySha, record?.Sha);
+        Assert.Contains(deliverySha, record!.DeliveryShas);
+
+        // Another card's commit lands on develop after the verification.
+        RunGit(_repo, "fetch", "-q", "origin");
+        RunGit(_repo, "checkout", "-q", "-B", "advance-develop", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "someone-else.txt"), "a later card\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "feat(OTHER-1): a later delivery");
+        var laterTip = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "push", "-q", "origin", "HEAD:refs/heads/develop");
+        RunGit(_repo, "fetch", "-q", "origin");
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "advance-develop");
+        Assert.NotEqual(deliverySha, laterTip);
+
+        var projected = deps.Integration.BuildLookup([verified])[verified.TaskKey];
+        Assert.True(IntegrationStatuses.IsMerged(projected.Status));
+        Assert.Equal(IntegrationVerificationStates.Verified, projected.Verification?.State);
+        Assert.Equal(deliverySha, projected.Verification?.Sha);
+        Assert.Contains(laterTip, projected.Verification?.Reason);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.Finalize,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(verified, projected).Action);
+
+        backstop.RunOnce();
+
+        Assert.Equal(1, gate.Invocations);
+        Assert.Equal(TaskStates.Completed, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
+    private TaskInfo CompleteAsAlreadyMergedWithoutEvidence(Deps deps)
+    {
+        Assert.Equal(MoveJobStatus.Success, deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath).Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        deps.Pipeline.RecordStep(completed.FolderPath, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Passed,
+            StartedAt = VerificationFixtureAtUtc,
+            CompletedAt = VerificationFixtureAtUtc.AddSeconds(1),
+            Verdict = "already-merged",
+            Reason = "Task branch already contained in develop; no merge needed.",
+        });
+        return deps.Scanner.FindJob(Slug, _watchPath)!;
+    }
+
+    /// <summary>The harness runner plus the task scanner and timeline the verification reads and writes.</summary>
+    private static MergeIntoDevelopRunner VerifyingRunner(Deps deps, IBuildTestGateRunner gate)
+        => new(
+            new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration),
+            deps.Pipeline,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            projectSettings: deps.Settings,
+            preDevelopBuildGate: new PreDevelopBuildGate(gate),
+            preDevelopTimeout: TimeSpan.FromSeconds(30),
+            attemptAuthority: deps.Authority,
+            taskScanner: deps.Scanner,
+            timeline: deps.Timeline);
+
     private string PublishDelivery(string relativePath, string content)
     {
         RunGit(_repo, "checkout", "-q", "-b", DeliveryRef, "origin/develop");
@@ -2232,7 +2508,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             => Entries.Add((logLevel, formatter(state, exception)));
     }
 
-    private sealed class CountingBuildTestGateRunner : IBuildTestGateRunner
+    private sealed class CountingBuildTestGateRunner(
+        BuildTestGateVerdict verdict = BuildTestGateVerdict.Ok,
+        string reason = "gate passed") : IBuildTestGateRunner
     {
         public int Invocations { get; private set; }
 
@@ -2246,11 +2524,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         {
             Invocations++;
             return Task.FromResult(new BuildTestGateResult(
-                BuildTestGateVerdict.Ok,
-                0,
+                verdict,
+                verdict == BuildTestGateVerdict.Ok ? 0 : 1,
                 0,
                 string.Empty,
-                "gate passed",
+                reason,
                 true,
                 false)
             {

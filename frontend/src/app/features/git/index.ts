@@ -17,6 +17,8 @@ export type {
   TaskMergeSignal,
   TaskIntegrationStatus,
   IntegrationStatusValue,
+  IntegrationVerificationState,
+  TaskIntegrationVerification,
   TaskRepositoryIntegrationStatus,
   // Project Hub Git View inventory.
   GitBranchCategory,

@@ -580,6 +580,18 @@ export interface TaskInfo {
     scope?: 'quota' | 'provider' | string;
   } | null;
   /**
+   * AGT-W57: the card waits on a cause card opened by the fleet-wide cause
+   * breaker. It stays in its lane and shows "Waiting for <key>" instead of
+   * being escalated or retried.
+   */
+  causeWait?: {
+    causeKey: string;
+    fingerprint: string;
+    failureClass: string;
+    since: string;
+    reason: string;
+  } | null;
+  /**
    * Card kind. `epic` cards are containers for sub-tasks; `task` (the default
    * when omitted) is an ordinary card. See backend `TaskKinds`.
    */
