@@ -12,7 +12,7 @@
 # time zone Pacific/Chatham; the entries below are the files that stayed green under it.
 # New test files never go here: inject a clock instead.
 
-wall-clock backend.Tests/AcceptanceIntegrationRoundTripTests.cs 13
+wall-clock backend.Tests/AcceptanceIntegrationRoundTripTests.cs 11
 wall-clock backend.Tests/AcceptanceRailHostedServiceTests.cs 4
 wall-clock backend.Tests/AcceptanceRailPolicyTests.cs 1
 wall-clock backend.Tests/AccessSecurityTests.cs 11

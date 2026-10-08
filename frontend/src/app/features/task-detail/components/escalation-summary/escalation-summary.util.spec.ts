@@ -14,10 +14,43 @@ import {
   gateItemsFromEvidence,
   gateItemsFromFindings,
   gradeTone,
+  latestParkedAttempt,
   parseStatusStubEscalation,
   pickReviewHead,
   resolveGateItems,
 } from './escalation-summary.util';
+
+describe('latestParkedAttempt', () => {
+  const timeline = [
+    { ts: '2026-10-06T04:21:54Z', kind: 'agent_run_started', actor: 'agent', summary: 'Run started' },
+    { ts: '2026-10-06T04:22:53Z', kind: 'agent_run_finished', actor: 'agent', summary: 'Run failed', details: { status: 'failed' } },
+  ];
+
+  it('shows the fresh parked attempt and its current reason', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+    } as Partial<TaskInfo>), timeline)).toBe(
+      'Latest attempt ended 2026-10-06 04:22 UTC: Push protection rejected the branch.',
+    );
+  });
+
+  it('uses the latest run record when the remote attempt has no task-ledger run events', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+    } as Partial<TaskInfo>), [], [{
+      startedAt: '2026-10-06T04:21:54Z', endedAt: '2026-10-06T04:22:53Z',
+    } as import('../../../run-timeline').RunRecord])).toContain('Latest attempt ended 2026-10-06 04:22 UTC');
+  });
+
+  it('does not present an older park as the latest attempt', () => {
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-10-06T04:20:00Z', reason: 'Old decision.' },
+    } as Partial<TaskInfo>), timeline)).toBeNull();
+  });
+});
 
 function evidence(over: Partial<ReviewEvidenceEntry> = {}): ReviewEvidenceEntry {
   return {

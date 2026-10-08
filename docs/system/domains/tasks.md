@@ -74,6 +74,23 @@ or commit attribution.
   mode back on `ContinueJobRequest.ModeOverride`; any other value, including a
   mismatched mode, does not bypass it. The guard runs before the follow-up is
   written to disk, so a rejected continue leaves no trace on the card.
+- `POST /api/tasks/{id}/failure/continue` on a parked delivered card saves the
+  failure-aware follow-up and promotes the card to `2-ready` for pickup. Its
+  response reports `queued` and the saved reason only after that move succeeds.
+  If promotion fails, the intent remains saved and the response reports `saved`
+  with the reason; the task detail offers a direct Ready move. Reissue from an
+  escalation also moves to Ready and keeps the same task selected. When a new
+  run parks again, the escalation header uses the newest run and current park
+  marker to show when that attempt ended and why.
+- The general `POST /api/tasks/{id}/continue` and `/start` endpoints return
+  `200` with `started` when execution begins, or `202` with `queued` after
+  promotion to Ready. Both endpoint handlers map a runner `saved` result to
+  `202`; for `/continue`, this means a follow-up prompt persisted but promotion
+  failed and an operator Ready move is required. A promptless `/start` reports
+  a failed promotion as a conflict instead.
+  The `queued.reason` field is a string reason code, including
+  `project-busy`, `lane-not-runnable`, `remote-execution`, and
+  `delivery-under-review`; clients must not assume only `project-busy`.
 
 ## Entry Points
 

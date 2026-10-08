@@ -5,6 +5,7 @@ import { of, throwError } from 'rxjs';
 import { EscalationSummaryComponent } from './escalation-summary.component';
 import { TaskService } from '../../../../services/task.service';
 import { TaskTimelinePollService } from '../../../polling/services/task-timeline-poll.service';
+import { RunTimelinePollService } from '../../../polling/services/run-timeline-poll.service';
 import type { TaskDetail, ReviewProjectionView } from '../../../../models/task.model';
 import type { TaskTimelineEvent } from '../../../task-timeline';
 
@@ -91,6 +92,7 @@ function mount(opts: {
       provideZonelessChangeDetection(),
       { provide: TaskService, useValue: taskStub },
       { provide: TaskTimelinePollService, useValue: timelineStub },
+      { provide: RunTimelinePollService, useValue: { runs: signal([]) } },
     ],
   });
   const fixture = TestBed.createComponent(EscalationSummaryComponent);
@@ -104,6 +106,23 @@ beforeEach(() => {
 });
 
 describe('EscalationSummaryComponent', () => {
+  it('puts the latest ended attempt and its fresh park reason in the header', () => {
+    const parked = detail();
+    parked.info.parkedBlocker = {
+      parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.',
+    } as TaskDetail['info']['parkedBlocker'];
+    const fixture = mount({
+      detail: parked,
+      events: [
+        { ts: '2026-10-06T04:21:54Z', kind: 'agent_run_started', actor: 'agent', summary: 'Run started' },
+        { ts: '2026-10-06T04:22:53Z', kind: 'agent_run_finished', actor: 'agent', summary: 'Run failed' },
+      ],
+    });
+    const header = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="escalation-essence"]');
+    expect(header?.textContent).toContain('Latest attempt ended 2026-10-06 04:22 UTC');
+    expect(header?.textContent).toContain('Push protection rejected the branch.');
+  });
+
   it('renders the AGT-2736 question and options and submits the answer as a steer', () => {
     const continueJob = vi.fn(() => of({ status: 'queued' }));
     const fixture = mount({
@@ -255,12 +274,20 @@ describe('EscalationSummaryComponent', () => {
     expect(el.querySelector('[data-testid="escalation-action-accept-escalated"]')?.textContent?.trim()).toBe('Accept as-is');
     expect(el.querySelector('[data-testid="escalation-action-discard-escalated"]')?.textContent?.trim()).toBe('Abort');
 
+    (el.querySelector('[data-testid="escalation-action-reissue-escalated"]') as HTMLButtonElement).click();
     (el.querySelector('[data-testid="escalation-action-accept-escalated"]') as HTMLButtonElement).click();
-    expect(emitted).toEqual([{
-      id: 'accept-escalated',
-      label: 'Accept as-is',
-      intent: { kind: 'move', targetState: '6-completed' },
-    }]);
+    expect(emitted).toEqual([
+      {
+        id: 'reissue-escalated',
+        label: 'Continue (reissue)',
+        intent: { kind: 'move', targetState: '2-ready' },
+      },
+      {
+        id: 'accept-escalated',
+        label: 'Accept as-is',
+        intent: { kind: 'move', targetState: '6-completed' },
+      },
+    ]);
   });
 
   it('replaces three empty context columns with one compact message', () => {
