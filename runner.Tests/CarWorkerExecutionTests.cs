@@ -368,6 +368,87 @@ public sealed class CarWorkerExecutionTests : IDisposable
     }
 
     [Fact]
+    public async Task A_caller_deadline_stops_the_cli_before_the_run_timeout()
+    {
+        if (NodeMissing()) return;
+        var fixture = Fixture.Load("p1-happy-done.claude.fixture");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var watch = Stopwatch.StartNew();
+        var run = await RunFixtureAsync(
+            fixture,
+            timeoutSeconds: 120,
+            extraEnvironment: new Dictionary<string, string> { ["FAKE_CLI_DELAY_MS"] = "60000" },
+            stopToken: deadline.Token);
+
+        Assert.True(run.TimedOut);
+        Assert.Equal("Runner timeout", run.Result.StdErr);
+        Assert.Contains(run.Shipped, line => line.Text.Contains("caller deadline expired"));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(30),
+            $"the caller deadline must stop the CLI, not the 120s run timeout ({watch.Elapsed})");
+        Assert.NotNull(run.SpawnedProcess);
+        Assert.True(
+            run.SpawnedProcess!.WaitForExit(10_000),
+            "the fake CLI process must be killed with the caller deadline, not orphaned");
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
+    public async Task Provider_host_flight_deadline_stops_car_cli_and_releases_lock()
+    {
+        if (NodeMissing()) return;
+        var worker = Path.Combine(_root, "provider-flight-worker");
+        var workspace = Path.Combine(worker, "worktree");
+        var results = Path.Combine(worker, "results");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(results);
+        var lockPath = Path.Combine(_root, ".provider-real-probe.lock");
+        var spawner = new FixtureSpawner(Fixture.Load("p1-happy-done.claude.fixture").Path);
+        var spec = new DetachedJobSpec(
+            "unused-by-the-car-engine", [], workspace, "Reply with OK.", results,
+            TimeoutSeconds: 120, CliType: "claude", RunId: "provider-flight-car");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        var watch = Stopwatch.StartNew();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ProviderRealRequestHostFlight.RunAsync(
+                lockPath,
+                stop => CarWorkerExecution.RunAsync(
+                    spec, worker, (_, _) => { },
+                    options => options with
+                    {
+                        ClaudePath = "node",
+                        Spawner = spawner,
+                        EnvironmentOverrides = new Dictionary<string, string>
+                        {
+                            ["FAKE_CLI_DELAY_MS"] = "60000",
+                        },
+                    },
+                    cleanContextRoot: Path.Combine(_root, "clean-context"),
+                    stopToken: stop),
+                deadline.Token));
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5),
+            $"the caller must return near its 1s deadline ({watch.Elapsed})");
+        Assert.NotNull(spawner.Spawned);
+        Assert.True(spawner.Spawned!.WaitForExit(10_000),
+            "the CAR CLI must exit after the caller deadline");
+
+        var acquireWatch = Stopwatch.StartNew();
+        ProcessResult second;
+        do
+        {
+            second = await ProviderRealRequestHostFlight.RunAsync(
+                lockPath,
+                _ => Task.FromResult((new ProcessResult(0, "OK", ""), false, false)),
+                CancellationToken.None);
+            if (second.StdErr != ProviderRealRequestHostFlight.InProgress) break;
+            await Task.Delay(20);
+        } while (acquireWatch.Elapsed < TimeSpan.FromSeconds(35));
+        Assert.Equal(0, second.ExitCode);
+    }
+
+    [Fact]
     public async Task Launch_failure_is_preserved_as_an_explicit_pre_agent_fact()
     {
         var workerDirectory = Path.Combine(_root, "launch-failure");
@@ -474,7 +555,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
         string? contextMode = null,
         int timeoutSeconds = 120,
         IReadOnlyDictionary<string, string>? extraEnvironment = null,
-        string? cleanContextKey = null)
+        string? cleanContextKey = null,
+        CancellationToken stopToken = default)
     {
         var workerDirectory = Path.Combine(_root, Guid.NewGuid().ToString("N"));
         var workingDirectory = Path.Combine(workerDirectory, "worktree");
@@ -515,7 +597,8 @@ public sealed class CarWorkerExecutionTests : IDisposable
                 Spawner = spawner,
                 EnvironmentOverrides = environment,
             },
-            cleanContextRoot: Path.Combine(_root, "clean-context"));
+            cleanContextRoot: Path.Combine(_root, "clean-context"),
+            stopToken: stopToken);
 
         JsonDocument? capture = null;
         if (File.Exists(capturePath))

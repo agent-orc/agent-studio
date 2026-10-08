@@ -54,13 +54,17 @@ internal static class CarWorkerExecution
     /// production-built options and may swap the binary paths / inject a fixture
     /// spawner - so the parity tests exercise exactly the production settings
     /// (stdin transport, delegation off, guard off) minus the real binary.
+    /// <paramref name="stopToken"/> is a caller deadline: when it fires, the CLI
+    /// is stopped exactly like the watchdog stops it, so the run does not outlive
+    /// a caller that has already returned.
     /// </summary>
     public static async Task<(ProcessResult Result, bool TimedOut, bool LaunchFailed)> RunAsync(
         DetachedJobSpec spec,
         string workerDirectory,
         Action<string, string> append,
         Func<CliOptions, CliOptions>? optionsCustomizer = null,
-        string? cleanContextRoot = null)
+        string? cleanContextRoot = null,
+        CancellationToken stopToken = default)
     {
         var runId = string.IsNullOrWhiteSpace(spec.RunId)
             ? Path.GetFileName(Path.TrimEndingDirectorySeparator(workerDirectory))
@@ -216,14 +220,17 @@ internal static class CarWorkerExecution
             }
 
             var timedOut = false;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(spec.TimeoutSeconds));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stopToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(spec.TimeoutSeconds));
             var deadline = Task.Delay(Timeout.InfiniteTimeSpan, timeout.Token)
                 .ContinueWith(_ => { }, TaskScheduler.Default);
             var completed = await Task.WhenAny(finished.Task, deadline);
             if (!ReferenceEquals(completed, finished.Task))
             {
                 timedOut = true;
-                append("system", $"[runner] run exceeded {spec.TimeoutSeconds}s timeout");
+                append("system", stopToken.IsCancellationRequested
+                    ? "[runner] caller deadline expired; stopping CLI"
+                    : $"[runner] run exceeded {spec.TimeoutSeconds}s timeout");
                 driver.Stop(runId, RunStopReason.Watchdog);
                 await Task.WhenAny(finished.Task, Task.Delay(StopGrace));
             }

@@ -1545,7 +1545,10 @@ public sealed class RemoteTaskRunner
                         classified.Decision.RawFacts,
                         evidenceId: slot.RunId ?? slot.AttemptId,
                         stopDirectiveRecorded: operatorStopRequested?.Invoke() == true,
-                        daemonShutdownRecorded: daemonShutdown.IsCancellationRequested);
+                        daemonShutdownRecorded: daemonShutdown.IsCancellationRequested,
+                        credentialGeneration: processResult.ExitCode == 0
+                            ? SameGenerationForCompletedWork(invocation.FileName, slot.ProcessStartedAtUtc)
+                            : null);
                     if (providerAccess.Kind == ProviderAccessEvidenceKind.AuthenticationFailure)
                     {
                         var provider = invocation.CliType;
@@ -2796,14 +2799,35 @@ public sealed class RemoteTaskRunner
         ExecutionRawFacts facts,
         string? evidenceId = null,
         bool stopDirectiveRecorded = false,
-        bool daemonShutdownRecorded = false)
+        bool daemonShutdownRecorded = false,
+        string? credentialGeneration = null)
         => providerAuth.RecordProcessResult(
             cliBinary,
             result,
             evidenceId,
             operatorStopped: facts.OperatorCancelled || stopDirectiveRecorded,
             signal: facts.Signal,
-            hostShutdown: facts.HostShutdown || daemonShutdownRecorded);
+            hostShutdown: facts.HostShutdown || daemonShutdownRecorded,
+            credentialGeneration: credentialGeneration);
+
+    private static string? SameGenerationForCompletedWork(string cliBinary, DateTime? processStartedAtUtc)
+    {
+        if (processStartedAtUtc is null) return null;
+        var current = ProviderAuthProbe.Shared.Current(cliBinary);
+        if (current.CredentialGeneration is null) return null;
+        var effective = ProviderCredentialMonitor.Inspect(cliBinary);
+        return SameGenerationForCompletedWork(current, effective, processStartedAtUtc);
+    }
+
+    internal static string? SameGenerationForCompletedWork(
+        ProviderAuthStatus current, ProviderCredentialFreshness effective, DateTime? processStartedAtUtc)
+        => processStartedAtUtc is not null
+            && effective.CredentialGeneration == current.CredentialGeneration
+            && current.CredentialGeneration is not null
+            && effective.EffectiveSource == current.EffectiveSource
+            && effective.ModifiedAt is { } modified
+            && modified.UtcDateTime <= processStartedAtUtc.Value
+                ? current.CredentialGeneration : null;
 
     internal static ProcessResult ProcessResultFrom(DetachedJobResult result)
         => new(result.ExitCode, result.StdOut, result.StdErr, result.Signal);
