@@ -772,10 +772,11 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         await source.IngestArtifactAsync(claim.Run!.RunId, new ArtifactIngestRequest(
             "art-recovery-cold", "logs/cli-output.log", "text/plain", Convert.ToBase64String(bytes),
             Convert.ToHexStringLower(SHA256.HashData(bytes)), "recovery-ingest", claim.Lease!.Fence), "runner-full", default);
-        await source.UpdateTaskAsync(project.ProjectId, claim.Task!.TaskId,
-            new UpdateTaskRequest(null, null, "7-archive", claim.Task.Version), "test", default);
         await source.ReleaseLeaseAsync(claim.Run.RunId,
             new LeaseReleaseRequest("runner-full", "runner-full:1", claim.Lease.LeaseId, claim.Lease.Fence, "completed"), "test", default);
+        var completedTask = await source.GetTaskAsync(project.ProjectId, claim.Task!.TaskId, default);
+        await source.UpdateTaskAsync(project.ProjectId, claim.Task!.TaskId,
+            new UpdateTaskRequest(null, null, "7-archive", completedTask!.Version), "test", default);
         clock.Advance(TimeSpan.FromDays(31));
         Assert.Equal(1, (await source.ApplyRetentionRunAsync(new RunRetentionRequest(), "test", default)).AppliedActions);
         await source.CreateTaskAsync(project.ProjectId, new CreateTaskRequest("Open task", State: "1-backlog"), "test", default);
