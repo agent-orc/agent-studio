@@ -57,6 +57,7 @@ export interface ProviderAuthProvisioningRequest {
   runnerId: string;
   environmentVariable: 'CLAUDE_CODE_OAUTH_TOKEN' | 'ANTHROPIC_API_KEY';
   secret: string;
+  idempotencyKey?: string;
 }
 
 export interface ProviderAuthProvisioningResponse {
@@ -68,6 +69,7 @@ export interface ProviderAuthProvisioningResponse {
   requestedAt: string;
   restartedServices: readonly string[];
   processEnvironmentVerified: boolean;
+  operationId?: string | null;
 }
 
 export interface CodexSignInTarget {

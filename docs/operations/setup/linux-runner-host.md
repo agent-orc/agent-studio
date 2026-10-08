@@ -508,6 +508,37 @@ has no usable SSH target for the host-owned flow.
   file and restart its units. Other hosts and the operator's normal Claude login
   remain independent.
 
+Managed provider renewal now records a metadata-only Task Server operation for
+the selected host credential generation. The existing Sign in Claude and Sign in
+Codex dialogs reserve that operation before SSH starts; duplicate requests use
+one idempotency key and an unresolved operation blocks a new login for the same
+binding. Closing a browser session cancels its SSH process and reports recovery
+required when installation might have started. An installed receipt stays open
+until fresh Coding and Review advertisements agree on the new generation and
+effective source and each carries a successful real request. Status alone does
+not complete renewal. A host or Task Server connection loss leaves the operation
+available by ID for inspection. A recovery-required receipt must be resolved by
+proving either the old generation on both units with a real request or the new
+generation through the same two-unit check before another login starts.
+
+Claude environment renewal writes an opaque generation marker beside the token
+in `provider-auth.env`; no token-derived hash is used as a generation. The host
+keeps a root-only rollback copy while verification is pending. If `runner.env`
+still has a provider value, identify each daemon's effective source first, then
+remove the duplicate through the owned host configuration flow after both units
+and a real request prove the shared file. Do not infer token expiry from a
+native file or a guessed lifetime. The host-owned API-key path uses the same
+protected file and generation check when renewing an existing registry binding.
+
+Codex and native Claude login renew the CLI's own host store. A rename of
+`auth.json` or `.credentials.json` can detach existing clean-context hard links.
+Keep affected workers drained, then run `agent-host --rebind-provider-auth codex
+--drained` or the `claude` equivalent as the runner user. The command refuses
+while that provider's CLI processes are active and checks every marker-owned
+clean home against the current local store. It does not transfer credentials
+between hosts. If a safe drain cannot be proved, leave the operation in
+recovery-required state and keep admission parked.
+
 If an operator temporarily uses the interactive Claude fallback for diagnosis,
 the host's `~/.claude/.credentials.json` must stay a plain file the runner user
 can read and write in place. The supported headless path does not depend on that

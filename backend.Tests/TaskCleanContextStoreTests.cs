@@ -92,6 +92,63 @@ public sealed class TaskCleanContextStoreTests : IDisposable
     }
 
     [Fact]
+    public void Atomic_native_refresh_detaches_hard_links_until_drained_rebind_converges_all_consumers()
+    {
+        var userHome = NewUserHome();
+        var canonical = Path.Combine(userHome, ".codex", "auth.json");
+        Write(canonical, "old-auth");
+        var homes = new List<string>();
+        for (var index = 0; index < 62; index++)
+        {
+            using var lease = TaskCleanContextStore.Acquire("codex", $"task-{index}", userHome, StoreRoot);
+            homes.Add(lease.HomePath);
+        }
+        var replacement = canonical + ".next";
+        Write(replacement, "new-auth");
+        File.Move(replacement, canonical, overwrite: true);
+        Assert.Contains(homes, home => File.ReadAllText(Path.Combine(home, "auth.json")) != "new-auth");
+
+        Assert.Throws<InvalidOperationException>(() => TaskCleanContextStore.RebindProviderCredential(
+            "codex", userHome, StoreRoot, () => false));
+        var result = TaskCleanContextStore.RebindProviderCredential(
+            "codex", userHome, StoreRoot, () => true);
+        Assert.Equal(62, result);
+        Assert.All(homes, home => Assert.Equal("new-auth", File.ReadAllText(Path.Combine(home, "auth.json"))));
+    }
+
+    [Fact]
+    public void Rename_during_rebind_requires_retry_before_reporting_convergence()
+    {
+        var userHome = NewUserHome();
+        var canonical = Path.Combine(userHome, ".codex", "auth.json");
+        Write(canonical, "first-generation");
+        var homes = new List<string>();
+        for (var index = 0; index < 4; index++)
+        {
+            using var lease = TaskCleanContextStore.Acquire("codex", $"race-{index}", userHome, StoreRoot);
+            homes.Add(lease.HomePath);
+        }
+
+        var checks = 0;
+        Assert.Throws<InvalidOperationException>(() => TaskCleanContextStore.RebindProviderCredential(
+            "codex", userHome, StoreRoot, () =>
+            {
+                if (++checks == 3)
+                {
+                    var replacement = canonical + ".next";
+                    Write(replacement, "second-generation");
+                    File.Move(replacement, canonical, overwrite: true);
+                }
+                return true;
+            }));
+
+        Assert.Equal(4, TaskCleanContextStore.RebindProviderCredential(
+            "codex", userHome, StoreRoot, () => true));
+        Assert.All(homes, home => Assert.Equal("second-generation",
+            File.ReadAllText(Path.Combine(home, "auth.json"))));
+    }
+
+    [Fact]
     public void Cleanup_DeletesOnlyExpiredHomesAndStaleIncompleteDirectories()
     {
         var userHome = NewUserHome();

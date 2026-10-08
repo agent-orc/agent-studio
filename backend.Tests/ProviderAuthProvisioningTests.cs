@@ -1,4 +1,5 @@
 using AgentStudio.Management;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -127,6 +128,28 @@ public sealed class ProviderAuthProvisioningTests
         Assert.DoesNotContain("device-auth", startInfo.ArgumentList);
         Assert.Equal("bash", startInfo.ArgumentList[^2]);
         Assert.Equal("-s", startInfo.ArgumentList[^1]);
+    }
+
+    [Fact]
+    public async Task Durable_codex_login_waits_for_real_proof_and_restart_status_reads_receipt()
+    {
+        var transport = new FakeCodexDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R3");
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "operation-one"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, true,
+            ["agent-runner.service", "agent-runner-review.service"]));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+
+        journal.RealProof = true;
+        var restarted = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        Assert.Equal("complete", journal.Step);
     }
 
     [Fact]
@@ -265,6 +288,41 @@ public sealed class ProviderAuthProvisioningTests
         {
             Events.Add(evt);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeRenewalJournal(string method) : IProviderRenewalJournal
+    {
+        private readonly DateTime _now = new(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
+        private ProviderRenewalReceiptDto? _receipt;
+        public string? Step => _receipt?.Step;
+        public bool RealProof { get; set; }
+
+        public Task<ProviderRenewalReceiptDto> BeginAsync(string hostId, string requestedMethod,
+            string actorId, string? key, CancellationToken ct)
+        {
+            Assert.Equal(method, requestedMethod);
+            _receipt = new("renewal_fixture", "installation", hostId, "credential", "generation-a",
+                method, key ?? "operation-one", actorId, _now.AddMinutes(15), "requested", null,
+                null, [], false, [], _now);
+            return Task.FromResult(_receipt);
+        }
+
+        public Task<ProviderRenewalReceiptDto> AdvanceAsync(string operationId, string step,
+            CancellationToken ct)
+        {
+            _receipt = _receipt! with { Step = step };
+            return Task.FromResult(_receipt);
+        }
+
+        public Task<ProviderRenewalReceiptDto?> GetAsync(string operationId, CancellationToken ct)
+            => Task.FromResult(_receipt);
+
+        public Task<ProviderRenewalReceiptDto> TryVerifyAsync(ProviderRenewalReceiptDto receipt,
+            CancellationToken ct)
+        {
+            if (RealProof) _receipt = receipt with { Step = "complete", RealRequestSucceeded = true };
+            return Task.FromResult(_receipt!);
         }
     }
 }

@@ -49,7 +49,7 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board**', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
@@ -1041,7 +1041,7 @@ test.describe('Execution Hosts settings section', () => {
       advertisedAt: new Date(now + (ready ? 30_000 : 0)).toISOString(),
       freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
       firstFailureAt: null, lastFailureAt: null, cooldownUntil: null, canaryClaimId: null,
-      consecutiveFailures: 0, version: null, identity: 'codex', affectedClaims: [], recoveryHistory: [],
+      consecutiveFailures: 2, version: null, identity: 'codex', affectedClaims: [], recoveryHistory: [],
     });
     const snapshot = () => [{
       runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
@@ -1106,7 +1106,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
     await expect(dialog.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner' });
+    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });
@@ -1188,7 +1189,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('claude-sign-in-url')).toHaveAttribute('href', 'https://claude.ai/setup-token/mock');
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner' });
+    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'claude-device-sign-in-dark--mocked.png') });

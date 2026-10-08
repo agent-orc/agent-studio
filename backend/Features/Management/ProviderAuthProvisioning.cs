@@ -8,7 +8,8 @@ public sealed record ProviderAuthProvisioningRequest(
     string SshTarget,
     string RunnerId,
     string EnvironmentVariable,
-    string Secret);
+    string Secret,
+    string? IdempotencyKey = null);
 
 public sealed record ProviderAuthProvisioningResponse(
     string Provider,
@@ -18,7 +19,8 @@ public sealed record ProviderAuthProvisioningResponse(
     string Detail,
     DateTime RequestedAt,
     IReadOnlyList<string> RestartedServices,
-    bool ProcessEnvironmentVerified);
+    bool ProcessEnvironmentVerified,
+    string? OperationId = null);
 
 public interface IProviderAuthProvisioner
 {
@@ -221,6 +223,8 @@ environment_variable="$1"
 expected_environment_variable='__ENVIRONMENT_VARIABLE__'
 provider_auth_file='/etc/agent-runner/provider-auth.env'
 payload_base64='__PAYLOAD_BASE64__'
+generation="renewal_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+rollback_file="/etc/agent-runner/.provider-auth.rollback.${generation}"
 
 if [[ "$environment_variable" != "$expected_environment_variable" ]]; then
   echo '[provider-auth] Environment variable binding changed in transit.' >&2
@@ -252,12 +256,14 @@ fi
 
 install -d -m 0750 -o root -g agent /etc/agent-runner
 if [[ -f "$provider_auth_file" ]]; then
-  awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" { print }' \
+  install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file"
+  awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
     "$provider_auth_file" >"$env_tmp"
 fi
 printf '%s=' "$environment_variable" >>"$env_tmp"
 cat "$token_tmp" >>"$env_tmp"
 printf '\n' >>"$env_tmp"
+printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp"
 provider_auth_install_tmp="$(mktemp /etc/agent-runner/.provider-auth.env.XXXXXX)"
 install -m 0640 -o root -g agent "$env_tmp" "$provider_auth_install_tmp"
 mv -fT -- "$provider_auth_install_tmp" "$provider_auth_file"
@@ -306,9 +312,17 @@ for unit in "${configured[@]}"; do
     printf '[provider-auth] Unit %s did not expose a running MainPID.\n' "$unit" >&2
     exit 36
   }
-  if ! tr '\0' '\n' <"/proc/${main_pid}/environ" | grep -q "^${environment_variable}="; then
-    printf '[provider-auth] Unit %s did not receive %s through EnvironmentFile.\n' \
-      "$unit" "$environment_variable" >&2
+  if ! (set -a; source "$provider_auth_file"; set +a
+        candidate="${!environment_variable}"
+        matched=0
+        marker=0
+        while IFS= read -r -d '' entry; do
+          [[ "$entry" == "$environment_variable=$candidate" ]] && matched=1
+          [[ "$entry" == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] && marker=1
+        done <"/proc/${main_pid}/environ"
+        [[ "$matched" == 1 && "$marker" == 1 ]]); then
+    printf '[provider-auth] Unit %s did not receive the selected provider generation.\n' \
+      "$unit" >&2
     exit 37
   fi
   verified=$((verified + 1))
