@@ -100,6 +100,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 },
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         File.WriteAllText(Path.Combine(epicFolder, "status.md"), "Result: decomposed.\n");
+        Directory.CreateDirectory(Path.Combine(epicFolder, "results"));
+        File.WriteAllText(Path.Combine(epicFolder, "results", "deliverables.md"),
+            "The planned child cards are the deliverable.\n");
         BriefVersionStore.Record(epicFolder, "Plan the child cards.");
         CompletionContentEvidence.StampLocalRun(epicFolder);
         File.WriteAllText(Path.Combine(epicFolder, "aspect-requirement-fit.json"),
@@ -117,6 +120,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var accepted = deps.Scanner.FindJob("planned-epic", _watchPath);
         Assert.NotNull(accepted);
         Assert.Equal(TaskStates.Completed, accepted!.State);
+        Assert.NotNull(accepted.CompletionClaim);
+        Assert.Equal("pass", accepted.CompletionClaim.ContentStatus);
+        Assert.False(CompletionContentPolicy.NeedsHistoricalReview(accepted.CompletionClaim, accepted.Mode));
     }
 
     [Fact]
@@ -232,6 +238,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.Success, accepted.Status);
         var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
         Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.NotNull(completed.CompletionClaim);
+        Assert.Equal("pass", completed.CompletionClaim.ContentStatus);
+        Assert.Equal("requirement-fit", completed.CompletionClaim.ContentAspect);
+        Assert.False(CompletionContentPolicy.NeedsHistoricalReview(completed.CompletionClaim, completed.Mode));
         Assert.Equal(developBeforeAcceptance, Git(_repo, "rev-parse", "develop").Out.Trim());
         var mergeStepAfterAcceptance = deps.Pipeline.Read(completed.FolderPath)!.Steps.Single(
             step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
@@ -832,13 +842,11 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     }
 
     /// <summary>
-    /// The same refusal must not stop an automated path: the runner, the
-    /// orchestrator, and the deferred integration worker reach the same move
-    /// without a human cause and have already decided integration. They record
-    /// the claim they can prove and are never gated on it.
+    /// Automated moves use the same completion contract and cannot land
+    /// without a claim, even when the legacy delivery guard is disabled.
     /// </summary>
     [Fact]
-    public async Task AutomatedMoveToCompleted_WithUnintegratedDelivery_IsNotRefused()
+    public async Task AutomatedMoveToCompleted_WithUnintegratedDelivery_IsRefusedWithoutClaim()
     {
         var deliverySha = PublishDelivery("automated.txt", "runner path\n");
         var deps = Build(deliverySha, backgroundIntegration: true, initialState: TaskStates.AutoReview);
@@ -849,7 +857,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             _watchPath,
             cause: TimelineActors.Orchestrator);
 
-        Assert.NotEqual(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        var stillInReview = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, stillInReview.State);
+        Assert.Null(stillInReview.CompletionClaim);
     }
 
     /// <summary>
@@ -2524,7 +2535,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             IdempotencyKey = report.IdempotencyKey,
             ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
             Report = report,
-            ReceivedAtUtc = DateTime.UtcNow,
+            ReceivedAtUtc = VerificationFixtureAtUtc,
         };
         RemoteReviewSettlementJournal.Write(folder, entry);
         var settled = authority.SettleReview(new SettleReviewAttemptRequest(

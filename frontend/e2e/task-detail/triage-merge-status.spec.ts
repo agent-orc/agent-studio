@@ -180,7 +180,8 @@ async function saveEvidence(page: Page, fileName: string): Promise<void> {
 }
 
 async function openJob(page: Page): Promise<void> {
-  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('studio-triage-panel')).toBeVisible({ timeout: 10_000 });
 }
 

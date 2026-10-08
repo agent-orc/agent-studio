@@ -88,6 +88,7 @@ public static class CompletionContentEvidence
             catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException)
             {
                 // Malformed evidence is treated as absent, never as a pass.
+                SilentCatch.Note(ex, "CompletionContentEvidence: malformed local content review evidence");
             }
         }
         return new(task.Mode, current, null, null, required, null, [], []);

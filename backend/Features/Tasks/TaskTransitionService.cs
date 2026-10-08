@@ -312,14 +312,13 @@ public sealed class TaskTransitionService
                 reason,
                 cause ?? (operatorOverride ? "operator:unspecified" : null),
                 completionIntegrationStatus);
-            // A suppressIntegrationTrigger caller cannot bypass this contract.
-            if (!completionContract.Accepted
-                && (_guardedDelivery || !suppressIntegrationTrigger
-                    && TimelineActors.IsHuman(cause)))
+            // Every completion needs a delivery claim, including automated
+            // transitions when the legacy guarded-delivery setting is off.
+            if (!completionContract.Accepted || completionContract.Claim is null)
             {
                 return new MoveJobOutcome(
                     MoveJobStatus.IntegrationFailed,
-                    completionContract.Message,
+                    completionContract.Message ?? "Completion has no delivery claim.",
                     info.FolderPath);
             }
         }
