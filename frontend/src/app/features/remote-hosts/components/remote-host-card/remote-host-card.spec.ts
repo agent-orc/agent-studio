@@ -6,8 +6,8 @@ import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
 import { RemoteHostCardComponent } from './remote-host-card';
 import type { RemoteHost } from '../../models/remote-host.model';
-import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
+import { AuthSessionState } from '../../../../services/auth.service';
 
 const HOST: RemoteHost = {
   id: 'hetzner',
@@ -61,6 +61,7 @@ function mount(host: RemoteHost, expanded = true, expandSections = true) {
     imports: [RemoteHostCardComponent],
     providers: [provideZonelessChangeDetection()],
   });
+  TestBed.inject(AuthSessionState).status.set({ profile: 'local', authenticated: true, bootstrapRequired: false });
   const fixture = TestBed.createComponent(RemoteHostCardComponent);
   fixture.componentRef.setInput('host', host);
   fixture.componentRef.setInput('roles', [host]);
@@ -91,7 +92,7 @@ describe('RemoteHostCardComponent', () => {
   it('opens to compact one-line section summaries before revealing internals', () => {
     const fixture = mount(HOST, true, false);
     const el: HTMLElement = fixture.nativeElement;
-    expect(el.querySelectorAll('[data-testid^="remote-host-detail-toggle-"]').length).toBe(7);
+    expect(el.querySelectorAll('[data-testid^="remote-host-detail-toggle-"]').length).toBe(8);
     expect(el.querySelector('[data-testid="remote-host-detail-toggle-capabilities"]')?.textContent)
       .toContain('2 capabilities ok');
     expect(el.querySelector('.meter')).toBeNull();
@@ -152,7 +153,7 @@ describe('RemoteHostCardComponent', () => {
       .toContain('Task inflowopen');
   });
 
-  it('shows per-provider auth state, probe detail, expiry warning, and latest transition', () => {
+  it('shows provider state and history without warning from an unverified expiry hint', () => {
     const fixture = mount({
       ...HOST,
       capabilityHealth: [{
@@ -181,13 +182,12 @@ describe('RemoteHostCardComponent', () => {
     expect(fixture.debugElement
       .query(By.css('[data-testid="remote-host-provider-auth-claude"]'))
       .injector.get(AppTooltipDirective).appTooltip()).toContain('Not logged in');
-    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-provider-auth-expiry-claude"]')?.textContent)
-      .toContain('Expires in 10 days');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-provider-auth-expiry-claude"]')).toBeNull();
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-provider-auth-history-claude"]')?.textContent)
       .toContain('ready → unavailable');
   });
 
-  it('offers Codex sign-in for an expiring host badge and keeps the SSH target host-owned', () => {
+  it('does not offer Codex sign-in for an expiry hint without invalid-login evidence', () => {
     const fixture = mount({
       ...HOST,
       capabilityHealth: [{
@@ -202,12 +202,28 @@ describe('RemoteHostCardComponent', () => {
       '[data-testid="remote-host-codex-sign-in"]',
     ) as HTMLButtonElement;
 
-    expect(signIn).toBeTruthy();
-    signIn.click();
-    expect(TestBed.inject(CodexSignInDialogService).request()).toMatchObject({
-      hostId: 'hetzner',
-      sshTarget: 'agent@runner.hetzner',
-    });
+    expect(signIn).toBeNull();
+  });
+
+  it('shows credential health to a viewer without a renewal control', () => {
+    const fixture = mount(HOST);
+    fixture.componentRef.setInput('credentials', [{
+      installationId: 'installation', hostId: HOST.id, credentialId: 'claude',
+      generation: 'generation-a', supersedes: null, provider: 'claude',
+      kind: 'claude_native_login', sourceLabel: 'native-cli-store', effectiveSource: 'active',
+      scopes: ['workspace'], owner: 'provider account administrator', lastVerifiedAt: null,
+      expiryKnowledge: 'unknown', expiresAt: null, rotationDueAt: null,
+      outcome: 'credential_invalid', nextProbeAt: null, evidenceQuality: 'current',
+      evidenceRefs: [], runbookId: 'RB-CLAUDE-ROTATION', reminder: null,
+      renewalAction: 'claude-sign-in',
+    }]);
+    TestBed.inject(AuthSessionState).status.set({ profile: 'networked', authenticated: true,
+      bootstrapRequired: false, user: { id: 'viewer', username: 'viewer', displayName: 'Viewer',
+        role: 'viewer', projects: [], disabled: false, mustChangePassword: false } });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-credential"]')?.textContent)
+      .toContain('Login renewal required');
+    expect(fixture.nativeElement.querySelector('[data-testid="credential-renew"]')).toBeNull();
   });
 
   it('offers Claude sign-in for an unavailable host badge and keeps the SSH target host-owned', () => {

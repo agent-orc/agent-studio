@@ -305,6 +305,50 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('workspace-settings-card-remote-hosts')).toContainText('Execution Hosts');
   });
 
+  test('credential metadata separates incident and renewal, with readable themes and narrow layout', async ({ page, devBackend: _devBackend }) => {
+    const now = new Date('2026-10-08T12:00:00Z').toISOString();
+    const base = {
+      installationId: 'installation', hostId: 'agent-runner-01', generation: 'generation-a',
+      supersedes: null, sourceLabel: 'native-cli-store', effectiveSource: 'active',
+      scopes: ['workspace'], owner: 'Provider account administrator', lastVerifiedAt: now,
+      expiryKnowledge: 'unknown', expiresAt: null, rotationDueAt: null,
+      evidenceQuality: 'current', evidenceRefs: ['evidence:probe-1'], runbookId: null,
+      reminder: null,
+    };
+    await page.route('**/api/v1/management/credential-views', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify([
+        { ...base, credentialId: 'codex', provider: 'codex', kind: 'codex_chatgpt_login',
+          outcome: 'provider_incident', nextProbeAt: now, renewalAction: null },
+        { ...base, credentialId: 'claude', provider: 'claude', kind: 'claude_native_login',
+          outcome: 'credential_invalid', nextProbeAt: null, renewalAction: 'claude-sign-in',
+          expiryKnowledge: 'issuer', expiresAt: '2026-10-15T12:00:00Z',
+          reminder: { id: 'credential:installation:agent-runner-01:claude:generation-a',
+            thresholdDays: 7, dueAt: '2026-10-15T12:00:00Z', reason: 'expiry' } },
+      ]),
+    }));
+    await stubGroupedHostApis(page);
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('status-bar-settings').click();
+    await page.getByTestId('workspace-settings-rail-remote-hosts').click();
+    const host = page.getByTestId('remote-host-card').filter({ has: page.getByText('agent-runner-01', { exact: true }) }).first();
+    await expandHost(host);
+    const rows = host.getByTestId('remote-host-credential');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toContainText('Provider incident · retry scheduled');
+    await expect(rows.nth(0).getByTestId('credential-renew')).toHaveCount(0);
+    await expect(rows.nth(1)).toContainText('Login renewal required');
+    await expect(rows.nth(1).getByTestId('credential-renew')).toHaveCount(1);
+    await expect(rows.nth(1).getByTestId('credential-reminder')).toContainText('7 day threshold');
+    await expect(rows.nth(0)).toContainText('Expiry unknown');
+    await setTheme(page, 'light');
+    await host.getByTestId('remote-host-credentials').screenshot({ path: join(SHOT_DIR, 'credentials-light--mocked.png') });
+    await setTheme(page, 'dark');
+    await host.getByTestId('remote-host-credentials').screenshot({ path: join(SHOT_DIR, 'credentials-dark--mocked.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(rows.nth(1)).toBeVisible();
+    await rows.nth(1).screenshot({ path: join(SHOT_DIR, 'credentials-narrow-dark--mocked.png') });
+  });
+
   test('pinned installation checkpoints show observed facts and honest recovery limits in both themes', async ({ page }) => {
     const json = (body: unknown) => (route: Route) => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify(body),

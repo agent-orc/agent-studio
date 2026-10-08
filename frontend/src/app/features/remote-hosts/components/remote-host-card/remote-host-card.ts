@@ -47,7 +47,9 @@ import {
 } from '../../models/provider-auth.model';
 import { CodexSignInDialogService } from '../../services/codex-sign-in-dialog.service';
 import { ClaudeSignInDialogService } from '../../services/claude-sign-in-dialog.service';
-
+import { AuthSessionState } from '../../../../services/auth.service';
+import type { CredentialView } from '../../models/credential-view.model';
+import { HostCredentialsComponent } from '../host-credentials/host-credentials';
 /** One meter row (RAM / CPU / Disk) resolved for the template. */
 interface Meter {
   key: string;
@@ -56,7 +58,6 @@ interface Meter {
   pct: number;
   tone: MeterTone;
 }
-
 /**
  * One execution location in the Remote-Hosts table (AGT-1921 / AGT-2629): one
  * compact primary row followed by an optional detail row. The parent owns and
@@ -81,6 +82,7 @@ interface Meter {
     RuntimeCapacityEditorComponent,
     RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
+    HostCredentialsComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',
@@ -95,7 +97,11 @@ interface Meter {
 export class RemoteHostCardComponent {
   private readonly codexSignIn = inject(CodexSignInDialogService);
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
+  private readonly auth = inject(AuthSessionState);
   readonly host = input.required<RemoteHost>();
+  readonly credentials = input<readonly CredentialView[]>([]);
+  readonly canRenew = computed(() => this.auth.status()?.profile === 'local'
+    || ['owner', 'operator'].includes(this.auth.status()?.user?.role ?? ''));
   readonly roles = input<readonly RemoteHost[]>([]);
   readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
   /** Board-local process runs or remote leased runs attributed to this host. */
@@ -124,7 +130,6 @@ export class RemoteHostCardComponent {
   readonly expandedChange = output<boolean>();
   readonly expandedSections = signal<readonly DetailSection[]>([]);
   readonly relativeHeartbeat = relativeHeartbeat;
-
   readonly liveLoading = computed(() => this.host().liveDataState === 'loading');
   readonly liveError = computed(() => this.host().liveDataState === 'error');
   readonly tone = computed(() => this.liveLoading() ? 'idle' : hostStatusTone(this.host().status));
@@ -160,7 +165,6 @@ export class RemoteHostCardComponent {
       case 'unknown': return 'not reported';
     }
   });
-
   readonly meters = computed<Meter[]>(() => {
     const h = this.host();
     const s = h.stats;
@@ -192,7 +196,6 @@ export class RemoteHostCardComponent {
       } as Meter] : []),
     ];
   });
-
   readonly taskInflowLabel = computed(() => {
     const host = this.host();
     if (this.liveLoading()) return 'loading…';
@@ -304,7 +307,12 @@ export class RemoteHostCardComponent {
   }
 
   signInLabel(badge: ProviderAuthBadge): string | null {
-    if (!['codex', 'claude'].includes(badge.provider) || !['unavailable', 'expiring'].includes(badge.state)) return null;
+    if (!['codex', 'claude'].includes(badge.provider)) return null;
+    const metadata = this.credentials().find(item => item.provider === badge.provider
+      && (item.hostId === (this.host().capacityHostId || this.host().id) || item.hostId === this.host().clientId));
+    if (metadata) return null;
+    if (!metadata && (badge.state !== 'unavailable' || badge.signal !== 'signed-out'
+      || badge.consecutiveFailures < 2)) return null;
     return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
   }
 

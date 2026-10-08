@@ -9,6 +9,36 @@ namespace TaskServer.Tests;
 public sealed class CredentialRegistryTests
 {
     [Fact]
+    public async Task Reminder_projection_advances_daily_and_clears_after_generation_renewal()
+    {
+        using var temp = new TempDirectory();
+        var now = new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero);
+        var clock = new ManualTimeProvider(now);
+        var store = new TaskServerStore(Options.Create(new TaskServerOptions { DataDirectory = temp.Path }), clock);
+        await store.InitializeAsync();
+        var initial = Fixture("claude_native_login") with {
+            ExpiresAt = now.AddDays(15).UtcDateTime, ExpiryKnowledge = "issuer"
+        };
+        await store.UpsertCredentialRegistryAsync(new(initial, "instance-a", null, now.UtcDateTime), "test", default);
+        Assert.Null(Assert.Single(await store.ListCredentialViewsAsync(default)).Reminder);
+        clock.Advance(TimeSpan.FromDays(1));
+        var first = Assert.Single(await store.ListCredentialViewsAsync(default)).Reminder!;
+        Assert.Equal(14, first.ThresholdDays);
+        clock.Advance(TimeSpan.FromDays(7));
+        var updated = Assert.Single(await store.ListCredentialViewsAsync(default)).Reminder!;
+        Assert.Equal(first.Id, updated.Id);
+        Assert.Equal(7, updated.ThresholdDays);
+        var renewed = initial with {
+            Generation = "generation-b", Supersedes = initial.Generation,
+            ExpiresAt = clock.GetUtcNow().AddDays(90).UtcDateTime,
+            LastOutcome = "healthy", LastRealSuccessAt = clock.GetUtcNow().UtcDateTime
+        };
+        await store.UpsertCredentialRegistryAsync(new(renewed, "instance-a", initial.Generation,
+            clock.GetUtcNow().UtcDateTime), "test", default);
+        Assert.Null(Assert.Single(await store.ListCredentialViewsAsync(default)).Reminder);
+    }
+
+    [Fact]
     public async Task Deploy_key_registration_metadata_round_trips_without_secret_material()
     {
         using var temp = new TempDirectory();

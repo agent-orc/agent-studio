@@ -647,7 +647,9 @@ that transition creates a sign-in-required operator notification and Ready-card
 wait reason. A later successful probe writes
 `runner-provider-auth-probe-recovered`, clears the matching capability circuit,
 and advertises **OK** without a service restart. When credential metadata exposes
-an issuer-backed credential expiry, Studio gives a quiet warning during the final 14 days.
+an issuer-backed credential expiry, Execution Hosts projects one reminder per
+credential generation at 14, 7 and 1 days. A refreshable native access-token
+date never creates a login reminder.
 Native Codex and Claude access-token expiry is only a refresh hint, not a login
 deadline. When the daemon has `CLAUDE_CODE_OAUTH_TOKEN`, its native Claude file
 is shadowed and its date does not apply to the active environment credential.

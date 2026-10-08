@@ -24,7 +24,6 @@ export class ProviderAuthStatusService implements OnDestroy {
   readonly links = signal<readonly RemoteRunnerLinkHealth[]>([]);
   private timer: ReturnType<typeof setInterval> | null = null;
   private previous = new Map<string, ProviderAuthBadge>();
-  private expiryWarnings = new Set<string>();
 
   readonly loaded = signal(false);
   readonly statuses = computed(() => this.snapshots()
@@ -73,23 +72,13 @@ export class ProviderAuthStatusService implements OnDestroy {
         if (prior?.state === 'ok'
           && current.state === 'unavailable'
           && current.consecutiveFailures >= 2
-          && (!current.signal || current.signal === 'signed-out')) {
+          && current.signal === 'signed-out') {
           this.notifications.warning(
             `${current.providerLabel} authentication changed from OK to unavailable on ${current.hostName}. Ready cards assigned to this host are waiting. ${current.detail}`,
             `${current.providerLabel} sign-in required`,
           );
         }
       }
-    }
-    for (const current of next.values()) {
-      if (!current.expiresSoon || !current.expiresAt || !current.expiryLabel) continue;
-      const warningKey = `${current.id}:${current.expiresAt}`;
-      if (this.expiryWarnings.has(warningKey)) continue;
-      this.expiryWarnings.add(warningKey);
-      this.notifications.warning(
-        `${current.providerLabel} authentication on ${current.hostName} ${current.expiryLabel.toLowerCase()}. Renew it before Ready cards are held.`,
-        `${current.providerLabel} authentication expires soon`,
-      );
     }
     this.previous = next;
     this.loaded.set(true);

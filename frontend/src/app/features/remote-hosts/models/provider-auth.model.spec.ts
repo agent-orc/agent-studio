@@ -48,7 +48,7 @@ describe('provider auth projection', () => {
   it('warns fourteen days before a known credential expiry', () => {
     const expiresAt = new Date(NOW + 13 * 24 * 60 * 60_000).toISOString();
     const badge = providerAuthBadgesForSnapshot(
-      snapshot('ready', 'healthy', true, undefined, expiresAt),
+      snapshot('ready', 'healthy', true, undefined, expiresAt, 'credentials-expiring'),
       NOW,
     )[0];
 

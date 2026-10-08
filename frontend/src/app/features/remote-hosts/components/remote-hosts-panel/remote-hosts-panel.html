@@ -197,6 +197,7 @@
         </thead>
         @for (group of sortedHostGroups(); track group.id) {
           <tbody appRemoteHostCard [host]="group.machine" [roles]="group.roles"
+            [credentials]="credentialViews.views()"
             [roleActiveSlots]="roleSlots(group)" [now]="now()"
             [boardActiveSlots]="groupSlots(group)" [projectSlots]="projectSlots(group.machine)"
             [allChatUsage]="interactiveUsage()"

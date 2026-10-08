@@ -93,13 +93,25 @@ probe clears the matching provider-auth circuit and re-advertises recovery
 without a runner restart. Ready cards show sign-in blocking only for the
 confirmed unavailable state.
 
-If the runner advertises a credential expiry, Studio warns once when it enters
-the final 14 days. An absent expiry is reported as unknown and is never guessed
-from the secret.
+Execution Hosts reads the Task Server credential metadata projection. A known
+issuer or operator expiry, or a recorded rotation due date, raises one current
+reminder per host credential generation at the 14, 7 and 1 day thresholds. The
+same item advances in urgency for Coding and Review, and a successful renewal
+replaces the generation so the earlier item clears. An access-token expiry in a
+refreshable native login is only a refresh hint. Missing expiry remains
+**Expiry unknown**; a future-dated verification beyond two minutes is shown as
+clock skew and cannot trigger a reminder.
+
+The credential section separates a confirmed invalid login from provider
+incidents, quota and network failures, and pending diagnosis. Incidents show
+the next retry time without a renewal action. Only a confirmed invalid Claude
+or Codex login offers the host-specific guided sign-in action. Viewers can read
+health; the server requires an operator or owner session to start sign-in.
 
 ## 2. Renew Codex through Studio
 
-1. On an **Unavailable** or **Expiring** Codex badge, choose **Sign in Codex**.
+1. After confirmed invalid login, choose **Renew Codex on this host** in the
+   credential row or **Sign in Codex** on an explicit signed-out badge.
    The same action is available on a Codex Ready-card wait chip.
 2. Open the displayed verification link in a browser and enter the large
    one-time code.
@@ -121,8 +133,9 @@ fallback.
 
 **Host-owned sign-in (preferred).**
 
-1. On an **Unavailable** or **Expiring** Claude badge, choose **Sign in
-   Claude**. The same action is available on a Claude Ready-card wait chip.
+1. After confirmed invalid login, choose **Renew Claude on this host** in the
+   credential row or **Sign in Claude** on an explicit signed-out badge. The
+   same action is available on a Claude Ready-card wait chip.
 2. Open the displayed verification link in a browser and complete the sign-in
    flow.
 3. Leave the dialog open while it polls the session handle. The resulting

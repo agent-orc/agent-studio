@@ -265,6 +265,7 @@
         "src/app/features/remote-hosts/components/git-token-capability/git-token-capability.scss",
         "src/app/features/remote-hosts/components/host-release-identity/host-release-identity.scss",
         "src/app/features/remote-hosts/components/host-workload-summary/host-workload-summary.scss",
+        "src/app/features/remote-hosts/components/host-credentials/host-credentials.scss",
         "src/app/features/remote-hosts/components/host-telemetry-history/host-telemetry-history.scss",
         "src/app/features/remote-hosts/components/runtime-capacity-editor/runtime-capacity-editor.scss",
         "src/app/features/task-detail/components/protocol-pane/runner-replay-metadata/runner-replay-metadata.scss",

@@ -206,8 +206,9 @@ two consecutive explicit sign-out results can create the blocking
 `OK -> Unavailable` transition and operator notification. Generic non-zero and
 tool exits retain last-good, while quota output becomes provider-scoped
 `Limited`. Ready cards show a provider sign-in wait reason only for confirmed
-sign-out. If credential metadata exposes an expiry, Studio warns during the
-final 14 days.
+sign-out. Only issuer or operator credential expiry provenance enters the
+Execution Hosts 14, 7 and 1 day reminder projection. Native access-token
+expiry remains a refresh hint and creates no login warning.
 
 ### 2.8 Execution context (read-only observability)
 

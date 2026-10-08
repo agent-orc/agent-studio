@@ -362,6 +362,17 @@ not authority to register or revoke a key. The server advertises
 older records omit the nullable fields. Repository key operations still require
 an authorized administration session and a generation-matched host observation.
 
+`GET /api/v1/management/credential-views` returns a presentation projection
+under the management service scope. It omits the local locator, account reference
+and fingerprints. Each row includes the effective source adapter and state,
+owner, scope, last verification, expiry knowledge, rotation due date, outcome,
+next probe and safe evidence references. A current reminder has one ID per
+installation, host, credential and generation. Its 14, 7 or 1 day threshold
+advances from the server clock; a new generation removes the old projection.
+Confirmed provider incidents expose retry status without a renewal action.
+The Studio edge permits viewer reads and requires an operator or owner session
+for the existing guided sign-in writes.
+
 Management routes, all under `/api/v1/management/retention`:
 
 | Route | Purpose | Scope |

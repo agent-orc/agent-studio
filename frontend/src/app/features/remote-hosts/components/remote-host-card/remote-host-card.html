@@ -46,7 +46,6 @@
       [stableRelease]="stableRelease()"
       (action)="action.emit($event)"></tr>
 }
-
 @if (expanded()) {
   <tr class="host__detail-row" data-testid="remote-host-detail-row">
     <td colspan="8">
@@ -109,6 +108,9 @@
           }
         </section>
 
+        <app-host-credentials class="detail" data-testid="remote-host-detail-section-credentials"
+          [host]="h" [credentials]="credentials()" />
+
         <section class="detail" data-testid="remote-host-detail-section-capabilities">
           <app-remote-host-detail-summary label="Capabilities" [summary]="capabilitySummary()"
             testId="remote-host-detail-toggle-capabilities" [expanded]="isSectionExpanded('capabilities')"
@@ -125,7 +127,7 @@
                   <strong>{{ auth.providerLabel }}</strong>
                   <span>{{ auth.state }}</span>
                 </span>
-                @if (signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
+                @if (canRenew() && signInLabel(auth); as label) { <button type="button" class="provider-auth__sign-in"
                   [attr.data-testid]="'remote-host-' + auth.provider + '-sign-in'" (click)="openSignIn(auth)">{{ label }}</button> }
                 @if (auth.expiresSoon && auth.expiryLabel) {
                   <span class="provider-auth__expiry"

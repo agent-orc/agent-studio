@@ -323,8 +323,8 @@ function badgeFromCapability(
   const expiresAt = capability?.expiresAt ?? null;
   const limitedUntil = capability?.limitedUntil ?? null;
   const expiryMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
-  const expired = Number.isFinite(expiryMs) && expiryMs <= nowMs;
-  const expiresSoon = Number.isFinite(expiryMs)
+  const expired = capability?.signal === 'credentials-expiring' && Number.isFinite(expiryMs) && expiryMs <= nowMs;
+  const expiresSoon = capability?.signal === 'credentials-expiring' && Number.isFinite(expiryMs)
     && expiryMs > nowMs
     && expiryMs - nowMs <= PROVIDER_AUTH_EXPIRY_WARNING_MS;
   let state: ProviderAuthDisplayState;
@@ -333,7 +333,7 @@ function badgeFromCapability(
   else if (capability.advertisedStatus !== 'ready'
     || capability.healthState !== 'healthy') state = 'unavailable';
   else if (capability.signal === 'transient-auth-error') state = 'retrying';
-  else if (capability.signal === 'credentials-expiring' || expiresSoon || expired) state = 'expiring';
+  else if (capability.signal === 'credentials-expiring') state = 'expiring';
   else state = 'ok';
 
   const detail = capability
@@ -360,7 +360,8 @@ function badgeFromCapability(
     reachable: runnerReachable && !!capability?.isFresh,
     expiresAt,
     expiresSoon,
-    expiryLabel: Number.isFinite(expiryMs) ? expiryDistance(expiryMs - nowMs) : null,
+    expiryLabel: capability?.signal === 'credentials-expiring' && Number.isFinite(expiryMs)
+      ? expiryDistance(expiryMs - nowMs) : null,
     limitedUntil,
     history: capability?.recoveryHistory ?? [],
   };

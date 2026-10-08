@@ -138,6 +138,11 @@ public sealed partial class TaskServerStore
         return result;
     }
 
+    public async Task<IReadOnlyList<CredentialViewDto>> ListCredentialViewsAsync(CancellationToken ct)
+        => (await ListCredentialRegistryAsync(ct))
+            .Select(record => CredentialViewPolicy.Project(record, UtcNow))
+            .ToArray();
+
     private void ValidateCredentialMetadata(CredentialRegistryObservationRequest request)
     {
         var record = request.Record ?? throw new ArgumentException("Credential metadata is required.");

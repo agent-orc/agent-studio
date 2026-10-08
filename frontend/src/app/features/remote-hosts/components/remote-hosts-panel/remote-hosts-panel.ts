@@ -31,6 +31,7 @@ import { NotificationComponent } from '../../../../components/notification/notif
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
 import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
+import { CredentialViewsService } from '../../services/credential-views.service';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -63,6 +64,7 @@ import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deploy
 })
 export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   private readonly service = inject(RemoteHostsService);
+  readonly credentialViews = inject(CredentialViewsService);
   private readonly tasks = inject(TaskService);
   private readonly reviewQueue = inject(ReviewQueueService);
   private readonly tableState = new RemoteHostTableState();
@@ -135,6 +137,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.tableState.hydrate();
     this.service.ensureLoaded();
+    this.credentialViews.refresh();
     this.service.refreshInteractiveUsage();
     this.reviewQueue.refresh();
     this.tickHandle = setInterval(() => this.now.set(Date.now()), 30_000);
@@ -146,7 +149,7 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     if (this.usageHandle) clearInterval(this.usageHandle);
   }
 
-  reload(): void { this.service.reload(); }
+  reload(): void { this.service.reload(); this.credentialViews.refresh(); }
   reconnect(id: string): void { this.service.reconnect(id); }
   linkFailureMessage(host: RemoteHost): string { return host.runnerLink?.lastError ?? 'The runner heartbeat is late and recovery is active.'; }
 
@@ -196,17 +199,14 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   closePurgeRetired(): void { this.purgeRetiredOpen.set(false); }
   openSetup(host: RemoteHost): void { this.setupHost.set(host); }
   closeSetup(): void { this.setupHost.set(null); }
-
   onSetupTaskCreated(task: VisibleCliTaskCreated): void {
     this.setupHost.set(null);
     this.openTask.emit(task);
   }
-
   completeWizard(host: ProvisionedHostDraft): void {
     this.service.addProvisionedHost(host.name, host.address);
     this.wizardOpen.set(false);
   }
-
   onCapacityChange(change: RuntimeCapacityChange): void {
     this.service.setCapacity(
       change.id,
@@ -215,7 +215,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
       change.rampStrategy,
     );
   }
-
   onProjectPolicyChange(change: HostProjectPolicyChange): void {
     this.service.setProjectPolicy(
       change.id,
@@ -224,7 +223,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
       change.expectedVersion,
     );
   }
-
   onAction(evt: { kind: HostActionKind; id: string }): void {
     const host = this.hosts().find(item => item.id === evt.id);
     if (!host) return;

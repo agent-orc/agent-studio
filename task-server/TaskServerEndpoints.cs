@@ -866,6 +866,8 @@ public static class TaskServerEndpoints
             => await InvokeAsync(() => store.ListRunnerCapabilitySnapshotsAsync(ct)));
         management.MapGet("/credentials", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListCredentialRegistryAsync(ct)));
+        management.MapGet("/credential-views", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListCredentialViewsAsync(ct)));
         management.MapPut("/credentials", async (
             HttpContext context,
             CredentialRegistryObservationRequest request,

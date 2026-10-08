@@ -35,15 +35,13 @@ describe('ProviderAuthStatusService', () => {
     expect(notifications.notifications()[0].message).toContain('runner-berlin');
   });
 
-  it('warns once when a known expiry enters the final fourteen days', () => {
+  it('does not duplicate registry reminders from capability expiry hints', () => {
     const expiresAt = new Date(Date.now() + 10 * 24 * 60 * 60_000).toISOString();
 
     service.ingest([snapshot('ready', expiresAt)]);
     service.ingest([snapshot('ready', expiresAt)]);
 
-    expect(notifications.notifications()).toHaveLength(1);
-    expect(notifications.notifications()[0].title).toBe('Claude authentication expires soon');
-    expect(notifications.notifications()[0].message).toContain('expires in 10 days');
+    expect(notifications.notifications()).toHaveLength(0);
   });
 
   it('does not raise a sign-in alarm for retrying or limited states', () => {
