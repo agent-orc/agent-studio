@@ -248,6 +248,19 @@ public sealed class TaskTransitionService
         }
 
         var fromState = info.State;
+        CompletionContentFacts? contentEvidence = null;
+        CompletionContentDecision? contentDecision = null;
+        if (targetState == TaskStates.Completed && fromState != TaskStates.Completed)
+        {
+            contentEvidence = CompletionContentEvidence.Read(info, _attemptAuthority);
+            contentDecision = CompletionContentPolicy.Decide(contentEvidence with
+            {
+                OperatorOverride = operatorOverride,
+                OverrideReason = reason,
+            });
+            if (!contentDecision.Accepted)
+                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, contentDecision.Message, info.FolderPath);
+        }
         if ((targetState == TaskStates.HumanReview && fromState == TaskStates.AutoReview
              || targetState == TaskStates.Completed && fromState == TaskStates.HumanReview)
             && BatchGateReleaseFailure(info) is { } batchFailure)
@@ -270,6 +283,7 @@ public sealed class TaskTransitionService
 
         if (fromState == TaskStates.Escalated
             && targetState == TaskStates.Completed
+            && !operatorOverride
             && !CanCompleteEscalatedJob(info, settings))
         {
             return new MoveJobOutcome(
@@ -286,8 +300,7 @@ public sealed class TaskTransitionService
         CompletionContractDecision? completionContract = null;
         TaskIntegrationStatus? completionIntegrationStatus = null;
         if (targetState == TaskStates.Completed
-            && fromState != TaskStates.Completed
-            && (_guardedDelivery || !suppressProductExecution))
+            && fromState != TaskStates.Completed)
         {
             completionIntegrationStatus = _integrationStatus?.BuildLookup([info])
                 .GetValueOrDefault(info.TaskKey);
@@ -297,23 +310,45 @@ public sealed class TaskTransitionService
                 integrationRequired,
                 operatorOverride,
                 reason,
-                cause,
+                cause ?? (operatorOverride ? "operator:unspecified" : null),
                 completionIntegrationStatus);
-            // A suppressIntegrationTrigger caller cannot bypass this contract.
-            if (!completionContract.Accepted
-                && (_guardedDelivery || !suppressIntegrationTrigger
-                    && TimelineActors.IsHuman(cause)))
+            // Every completion needs a delivery claim, including automated
+            // transitions when the legacy guarded-delivery setting is off.
+            if (!completionContract.Accepted || completionContract.Claim is null)
             {
                 return new MoveJobOutcome(
                     MoveJobStatus.IntegrationFailed,
-                    completionContract.Message,
+                    completionContract.Message ?? "Completion has no delivery claim.",
                     info.FolderPath);
             }
         }
 
-        var boundCompletionClaim = completionContract?.Claim is null
-            ? null : BindCompletionClaim(info, completionContract.Claim);
+        var contentClaim = completionContract?.Claim;
+        if (contentClaim is not null && contentEvidence is not null)
+        {
+            contentClaim = contentClaim with
+            {
+                Basis = contentDecision?.Overridden == true
+                    ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
+                Evidence = contentDecision?.Overridden == true
+                    ? contentDecision.Message : contentClaim.Evidence,
+                Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
+                CurrentBriefVersion = contentEvidence.CurrentBriefVersion,
+                DeliveryBriefVersion = contentEvidence.DeliveryBriefVersion,
+                ReviewBriefVersion = contentEvidence.ReviewBriefVersion,
+                ContentAspect = contentEvidence.RequiredAspect,
+                ContentStatus = contentEvidence.ContentStatus,
+                ContentSummary = contentEvidence.ContentSummary,
+                ContentEvidenceChecked = contentEvidence.EvidenceChecked,
+                ContentMissing = contentEvidence.Missing,
+                RanAspects = contentEvidence.RanAspects,
+                SkippedAspects = contentEvidence.SkippedAspects,
+            };
+        }
+        var boundCompletionClaim = contentClaim is null
+            ? null : BindCompletionClaim(info, contentClaim);
         if (_guardedDelivery && targetState == TaskStates.Completed && integrationRequired
+            && contentDecision?.Overridden != true
             && (boundCompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
                 || string.IsNullOrWhiteSpace(boundCompletionClaim.ResultSha)
                 || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)
@@ -627,6 +662,22 @@ public sealed class TaskTransitionService
                     watchPath,
                     boundCompletionClaim,
                     completionIntegrationStatus);
+            if (contentDecision?.Overridden == true && contentEvidence is not null)
+            {
+                var moved = _scanner.FindJob(jobId, watchPath);
+                if (moved is not null)
+                    _timeline?.Append(moved.FolderPath, TimelineEventKinds.CompletionContentOverridden,
+                        cause ?? "operator:unspecified", contentDecision.Message,
+                        details: new Dictionary<string, string>
+                        {
+                            ["reason"] = reason?.Trim() ?? "",
+                            ["currentBriefVersion"] = contentEvidence.CurrentBriefVersion,
+                            ["deliveryBriefVersion"] = contentEvidence.DeliveryBriefVersion ?? "unknown",
+                            ["reviewBriefVersion"] = contentEvidence.ReviewBriefVersion ?? "unknown",
+                            ["contentAspect"] = contentEvidence.RequiredAspect,
+                            ["contentStatus"] = contentEvidence.ContentStatus ?? "missing",
+                        });
+            }
 
             // ASS-1724: the ONE commit-provenance recording hook. Anchor the
             // task/<id> tip + integration head at this lane crossing so the board

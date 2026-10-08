@@ -126,6 +126,16 @@ export interface TaskCompletionClaim {
   reason?: string | null;
   /** Who moved the card into the delivered lane. */
   actor?: string | null;
+  currentBriefVersion?: string | null;
+  deliveryBriefVersion?: string | null;
+  reviewBriefVersion?: string | null;
+  contentAspect?: string | null;
+  contentStatus?: string | null;
+  contentSummary?: string | null;
+  contentEvidenceChecked?: string | null;
+  contentMissing?: string | null;
+  ranAspects?: string[];
+  skippedAspects?: string[];
   /** Delivery commit that proved containment; present only for `integrated-delivery`. */
   commitSha?: string | null;
   resultSha?: string | null;
@@ -176,6 +186,19 @@ export interface TaskDeliveryClaimAnswer {
   class: string;
   findings: string[];
   completionClaim: TaskCompletionClaim | null;
+  contentReview?: {
+    mode: string | null;
+    currentBriefVersion: string;
+    deliveryBriefVersion: string | null;
+    reviewBriefVersion: string | null;
+    requiredAspect: string;
+    contentStatus: string | null;
+    contentSummary: string | null;
+    evidenceChecked: string | null;
+    missing: string | null;
+    ranAspects: string[];
+    skippedAspects: string[];
+  } | null;
   commits: TaskDeliveryCommitAnswer[];
   detail: string | null;
 }

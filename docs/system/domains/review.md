@@ -141,6 +141,21 @@ configuration or condition, with its reason. Passing summaries cover executed
 aspects only, so a command-only report cannot claim that all applicable content
 checks passed.
 
+Completion reads the settled review journal for the current RunAttempt, rather
+than treating an overall `Pass` or a build/lint grade as content review. The
+remote plan binds coding `requirement-fit` to the authored brief version and
+concept `concept-fit` to the reviewed brief hash. A delivery contract without
+an accepted claim refuses completion, so each accepted card carries this
+content receipt. The Human Review delivery panel shows delivery and current
+brief versions, the content verdict and its citations, and ran/skipped aspects.
+A concept block or concern marks its
+brief/Dossier comparison as a contradiction or gap. Local requirement-fit
+artifacts carry a brief-context sidecar; older unbound artifacts remain visible
+but cannot establish a current-brief pass. Local pickup stamps
+`.metadata/local-run-brief-version` before the CLI starts; the aspect runner
+copies that run version into `content-review-context.json` beside the verdict,
+so editing the brief during a run cannot silently relabel its delivery.
+
 `RemoteReviewPlanBuilder` resolves verification, gate, and semantic aspect
 commands on the server. New plans set `ReviewPlanDto.LibraryVersion = 1`. When
 the exact Result-SHA is known, both review stores seal each command and

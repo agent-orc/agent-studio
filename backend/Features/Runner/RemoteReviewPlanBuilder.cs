@@ -187,7 +187,7 @@ public sealed class RemoteReviewPlanBuilder
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
-            BriefSha256 = isConcept ? BriefHash(task.FolderPath) : null,
+            BriefSha256 = isConcept ? BriefHash(task.FolderPath) : BriefVersionStore.ReadOrCreate(task.FolderPath),
             SkippedAspects = skipped,
             TaskMode = isConcept ? TaskModes.Concept : null,
         };

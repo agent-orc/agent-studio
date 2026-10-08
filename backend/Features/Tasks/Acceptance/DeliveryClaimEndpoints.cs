@@ -54,13 +54,17 @@ public static class DeliveryClaimEndpoints
             string? watchPath,
             TaskScannerService scanner,
             DeliveryClaimSweep sweep,
+            AttemptAuthorityService authority,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var task = scanner.FindJob(jobId, watchPath);
             return task is null
                 ? Results.NotFound(new { error = "Task not found." })
-                : Results.Ok(sweep.Describe(task));
+                : Results.Ok(sweep.Describe(task) with
+                {
+                    ContentReview = CompletionContentEvidence.Read(task, authority),
+                });
         });
     }
 

@@ -1280,6 +1280,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), "Implement 41.\n");
         File.WriteAllText(Path.Combine(folder, "status.md"), "- Result: Awaiting acceptance.\n");
+        CompletionContentFixture.RecordPassedReview(folder);
         ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
         {
             TaskKey = "AGT-2838",

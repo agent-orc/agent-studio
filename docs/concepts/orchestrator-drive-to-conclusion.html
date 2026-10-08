@@ -389,7 +389,7 @@
           <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>
           <td>No CLI crashed. An operator moved a running remote card from Progress to Backlog, edited its brief, and returned it to Ready. The old fenced run kept working and later delivered into Auto Review.</td>
           <td>The lane move did not revoke the live attempt, and completion did not compare the claimed brief version with the current brief.</td>
-          <td>The operator move now requires an explicit revoke or steer intent. Revocation consumes a fence and stops the worker at renewal. A result against an older brief is retained as an operator decision, outside Auto Review.</td>
+          <td>The operator move now requires an explicit revoke or steer intent. Revocation consumes a fence and stops the worker at renewal. A result against an older brief is retained as an operator decision, outside Auto Review. AGT-3026 also refuses completion when the delivery or content verdict belongs to an older brief, or when content review is missing; a written override is visible on the card and timeline. Terminal at discovery: incorrectly completed.</td>
         </tr>
         <tr>
           <td>2026-09-28</td>

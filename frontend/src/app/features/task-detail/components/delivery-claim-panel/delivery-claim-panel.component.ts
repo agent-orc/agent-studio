@@ -220,6 +220,19 @@ export class DeliveryClaimPanelComponent {
     () => this.answer()?.completionClaim ?? this.job().completionClaim ?? null,
   );
 
+  readonly contentReview = computed(() => this.answer()?.contentReview ?? null);
+  readonly contentPassed = computed(() => {
+    const review = this.contentReview();
+    return review?.contentStatus === 'pass'
+      && !!review.deliveryBriefVersion
+      && review.deliveryBriefVersion === review.currentBriefVersion
+      && review.reviewBriefVersion === review.currentBriefVersion;
+  });
+
+  briefLabel(version: string | null | undefined): string {
+    return version ? version.slice(0, 12) : 'unknown';
+  }
+
   readonly claimLabel = computed(() => {
     switch (this.claim()?.basis) {
       case 'integrated-delivery': return 'Completed on a contained delivery';

@@ -92,6 +92,18 @@ public sealed record TaskCompletionClaim
     /// <summary>Who moved the card into the delivered lane.</summary>
     public string? Actor { get; init; }
 
+    /// <summary>Brief and content review that were checked at the completion boundary.</summary>
+    public string? CurrentBriefVersion { get; init; }
+    public string? DeliveryBriefVersion { get; init; }
+    public string? ReviewBriefVersion { get; init; }
+    public string? ContentAspect { get; init; }
+    public string? ContentStatus { get; init; }
+    public string? ContentSummary { get; init; }
+    public string? ContentEvidenceChecked { get; init; }
+    public string? ContentMissing { get; init; }
+    public IReadOnlyList<string> RanAspects { get; init; } = [];
+    public IReadOnlyList<string> SkippedAspects { get; init; } = [];
+
     /// <summary>Delivery commit that proved containment. Null unless <see cref="Basis"/> is integrated.</summary>
     public string? CommitSha { get; init; }
     /// <summary>Immutable result and review epoch confirmed by this decision.</summary>

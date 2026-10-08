@@ -9,6 +9,16 @@ public static class BriefVersionStore
 {
     private const string RelativePath = ".metadata/brief-version";
 
+    /// <summary>Read the current version without creating metadata during a GET or audit.</summary>
+    public static string ReadCurrent(string folder)
+    {
+        var path = Path.Combine(folder, RelativePath);
+        if (File.Exists(path)) return File.ReadAllText(path).Trim();
+        var briefPath = Path.Combine(folder, "prompt.md");
+        return AgentStudio.Runner.RunDispositionPolicy.BriefVersion(
+            File.Exists(briefPath) ? File.ReadAllText(briefPath) : string.Empty);
+    }
+
     public static string ReadOrCreate(string folder)
     {
         var path = Path.Combine(folder, RelativePath);

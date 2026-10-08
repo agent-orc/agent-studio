@@ -353,6 +353,7 @@ public sealed class ConceptPipelineTests : IDisposable
         Directory.CreateDirectory(TaskPaths.ResultsDir(source.FolderPath));
         File.WriteAllText(Path.Combine(TaskPaths.ResultsDir(source.FolderPath), "deliverables.md"),
             "# Approved concept\n\nThe sight review approved this no-code deliverable.\n");
+        CompletionContentFixture.RecordPassedReview(source.FolderPath, "concept-fit");
         var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         pipelineLog.Begin(
             source.FolderPath,

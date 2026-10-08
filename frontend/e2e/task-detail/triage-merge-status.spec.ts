@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 
 /**
  * Human Review acceptance reads "Accept" in every integration state.
@@ -179,12 +180,49 @@ async function saveEvidence(page: Page, fileName: string): Promise<void> {
 }
 
 async function openJob(page: Page): Promise<void> {
-  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+  await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`,
+    { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('studio-triage-panel')).toBeVisible({ timeout: 10_000 });
 }
 
 test.describe('Human Review acceptance primary is landed-state aware', () => {
   test.use({ serviceWorkers: 'block' });
+  test('shows brief and concept-fit grounds before acceptance in both themes', async ({ page }) => {
+    await installBaseRoutes(page);
+    await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only', hasDeliverable: false });
+    await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503, body: '{}' }));
+    await page.route(new RegExp(`/api/tasks/${JOB_ID}/delivery-claim(\\?|$)`), (route) => json(route, {
+      taskKey: JOB_ID, jobId: JOB_ID, lane: '5-human-review', deliveryRef: null,
+      integrationBranch: 'develop', releaseBranch: 'main', containmentStatus: 'not-applicable',
+      integrated: false, released: null, integratedSha: null, mergeCommit: null,
+      mergeSubject: null, mergedAtUtc: null, hasIntegrationRecord: false,
+      class: 'deliverable-without-code', findings: [], completionClaim: null, commits: [], detail: null,
+      contentReview: {
+        mode: 'concept', currentBriefVersion: 'bbbbbbbbbbbbbbbb',
+        deliveryBriefVersion: 'aaaaaaaaaaaaaaaa', reviewBriefVersion: 'aaaaaaaaaaaaaaaa',
+        requiredAspect: 'concept-fit', contentStatus: 'block',
+        contentSummary: 'The Dossier contradicts the selected direction.',
+        evidenceChecked: 'Brief: keep the current workflow.',
+        missing: 'Dossier: replace the workflow.',
+        ranAspects: ['build-tests', 'lint', 'concept-fit'],
+        skippedAspects: ['documentation-impact'],
+      },
+    }));
+    await openJob(page);
+    const grounds = page.getByTestId('completion-content-review');
+    await expect(grounds).toContainText('Delivery brief aaaaaaaaaaaa');
+    await expect(grounds).toContainText('Current brief bbbbbbbbbbbb');
+    await expect(grounds).toContainText('Contradiction or gap');
+    await expect(grounds).toContainText('Skipped: documentation-impact');
+    for (const theme of ['dark', 'light'] as const) {
+      await setTheme(page, theme);
+      await dismissDevErrorDialog(page);
+      if (RESULTS_DIR) {
+        fs.mkdirSync(RESULTS_DIR, { recursive: true });
+        await grounds.screenshot({ path: path.join(RESULTS_DIR, `completion-content-${theme}.png`) });
+      }
+    }
+  });
   test('not landed: waits for integration and shows no status pill', async ({ page }) => {
     await installBaseRoutes(page);
     await installJobRoutes(page, { detailMerge: null, landedState: 'on-branch-only' });
