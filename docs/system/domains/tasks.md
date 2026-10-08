@@ -1018,7 +1018,9 @@ allowed to claim when it enters the delivered lane. Every move into
 `6-completed` runs `CompletionContractPolicy` (pure, matrix-tested) and records
 the accepted ground in `task.json.completionClaim`:
 `integrated-delivery`, `deliverable-without-code`, or `operator-override` with
-its verbatim reason. Operator-initiated moves are refused with a typed reason
+its verbatim reason. A rejected contract or one without a claim refuses every
+completion path, including automated moves when the legacy delivery guard is
+disabled. Operator-initiated moves are refused with a typed reason
 (`IntegrationFailed`, HTTP 409). `operatorOverride` without a written reason
 is refused at the endpoint boundary with HTTP 400.
 
