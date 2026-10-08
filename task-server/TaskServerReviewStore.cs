@@ -857,20 +857,23 @@ public sealed partial class TaskServerStore
                 throw new TaskServerConflictException(
                     "review-step-digest-mismatch",
                     "Review command evidence does not match the leased library step digest.");
-            string? conceptCoverageFailure = null;
-            if (subject.Plan.BriefSha256 is { } reviewedBriefHash)
+            var classified = ClassifyReviewReport(subject, request, attempt);
+            var settledReport = request;
+            if (ConceptRemoteReviewPolicy.AppliesTo(subject.Plan))
             {
                 var currentBriefHash = await CurrentBriefHashAsync(
                     connection, transaction, subject.TaskId, ct);
-                var checkedReport = ConceptRemoteReviewPolicy.Enforce(
-                    subject.Plan, reviewedBriefHash, currentBriefHash,
-                    request with { FailureClassification = null });
-                if (checkedReport.FailureClassification == "ConceptReviewIncomplete")
-                    conceptCoverageFailure = checkedReport.Summary;
+                settledReport = ConceptRemoteReviewPolicy.Enforce(
+                    subject.Plan, subject.Plan.BriefSha256, currentBriefHash,
+                    request with
+                    {
+                        Outcome = classified.Outcome,
+                        FailureClassification = classified.Classification,
+                    });
+                classified = (settledReport.Outcome, settledReport.FailureClassification);
             }
-            var classified = ClassifyReviewReport(subject, request, attempt);
-            if (conceptCoverageFailure is not null)
-                classified = ("Inconclusive", "ConceptReviewIncomplete");
+            var storedJson = ReferenceEquals(settledReport, request)
+                ? payloadJson : JsonSerializer.Serialize(settledReport, ReviewJson);
             var received = UtcNow;
             await RecordUnprovenFlakeFailuresAsync(
                 connection, transaction, request, attemptId, subject.TaskId, received, ct);
@@ -888,9 +891,9 @@ public sealed partial class TaskServerStore
                    SET state = $state, version = version + 1, updated_at = $now
                  WHERE id = $task;
                 """, ct, transaction,
-                ("$report", reportId), ("$json", payloadJson), ("$hash", payloadHash),
+                ("$report", reportId), ("$json", storedJson), ("$hash", payloadHash),
                 ("$key", request.IdempotencyKey), ("$outcome", classified.Outcome),
-                ("$classification", classified.Classification), ("$summary", conceptCoverageFailure ?? request.Summary),
+                ("$classification", classified.Classification), ("$summary", settledReport.Summary),
                 ("$now", Iso(received)), ("$attempt", attemptId), ("$state", taskState),
                 ("$task", attempt.TaskId));
             if (retry)
@@ -923,7 +926,7 @@ public sealed partial class TaskServerStore
                 }), ct);
             result = new ReviewReportDto(
                 reportId, attemptId, attempt.SubjectId, classified.Outcome,
-                classified.Classification, conceptCoverageFailure ?? request.Summary,
+                classified.Classification, settledReport.Summary,
                 payloadHash, received, retry, taskState);
         }, ct);
         return result!;

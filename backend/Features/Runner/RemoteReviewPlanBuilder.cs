@@ -189,6 +189,7 @@ public sealed class RemoteReviewPlanBuilder
                 .ToArray(),
             BriefSha256 = isConcept ? BriefHash(task.FolderPath) : null,
             SkippedAspects = skipped,
+            TaskMode = isConcept ? TaskModes.Concept : null,
         };
         if (isConcept) return plan;
         return ApplyScopedReview(

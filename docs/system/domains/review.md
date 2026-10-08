@@ -120,7 +120,10 @@ aspects. Its default route is the bounded support aspect route from
 `PipelineStepModelDefaults`; build and lint keep their existing plans.
 
 The concept ReviewSubject stores the SHA-256 of the complete `prompt.md` in
-both its requirements identity and frozen review plan. Report settlement
+both its requirements identity and frozen review plan. Its frozen plan also
+records `taskMode: concept`, independently of the brief hash. The standalone
+Task Server uses that marker, with legacy concept-plan evidence as a fallback,
+to apply concept coverage even when the hash is absent. Report settlement
 compares that hash with the card's current brief. A missing concept verdict,
 missing brief, or changed brief settles as `Inconclusive` with a named reason,
 never `Pass`. A fresh attempt must judge the current brief. Concept verdicts

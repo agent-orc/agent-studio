@@ -7,6 +7,13 @@ namespace AgentStudio.TaskServer.Contracts;
 /// </summary>
 public static class ConceptRemoteReviewPolicy
 {
+    public static bool AppliesTo(ReviewPlanDto plan)
+        => string.Equals(plan.TaskMode, "concept", StringComparison.OrdinalIgnoreCase)
+           || plan.BriefSha256 is not null
+           || plan.Commands.Any(command => string.Equals(command.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase))
+           || plan.RequiredAspects.Contains("concept-fit", StringComparer.OrdinalIgnoreCase)
+           || plan.SkippedAspects?.Any(item => string.Equals(item.Aspect, "concept-fit", StringComparison.OrdinalIgnoreCase)) == true;
+
     public static ReviewReportRequest Enforce(
         ReviewPlanDto plan,
         string? subjectBriefSha256,

@@ -1884,11 +1884,11 @@ public sealed partial class RemoteReviewAuthorityTests
         await store.InitializeAsync();
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
-                "aspect-concept-fit", "concept-fit", "codex", [],
+                "aspect-code-quality", "code-quality", "codex", [],
                 ExecutionKind: ReviewCommandKinds.AgentAspect,
-                Prompt: "Compare the Dossier with prompt.md.",
+                Prompt: "Review the delivered implementation.",
                 CliType: "codex", Model: "gpt-5.4-mini")],
-            ["concept-fit"], IntegrationRef: "refs/heads/develop");
+            ["code-quality"], IntegrationRef: "refs/heads/develop");
         await SeedReviewSubjectAsync(store, plan: plan);
         await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
         var claim = await store.ClaimReviewAsync(
@@ -1902,10 +1902,10 @@ public sealed partial class RemoteReviewAuthorityTests
                 ChangedPaths = ["docs/concept/workbench.json"],
             },
             Verdicts = [new ReviewVerdictDto(
-                "concept-fit", "block", "RemoteAspectVerdict",
-                "Dossier contradicts the brief.",
-                EvidenceChecked: "docs/concept/workbench.json and prompt.md",
-                Missing: "one card per independently reviewable slice")],
+                "code-quality", "block", "RemoteAspectVerdict",
+                "Implementation contradicts the required behavior.",
+                EvidenceChecked: "docs/concept/workbench.json",
+                Missing: "the required behavior")],
         };
 
         var report = await store.ReportReviewAsync(
@@ -1913,6 +1913,31 @@ public sealed partial class RemoteReviewAuthorityTests
 
         Assert.Equal("ProductFailure", report.Outcome);
         Assert.Equal("ReviewFinding", report.FailureClassification);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Concept_plan_without_brief_hash_cannot_settle_as_pass(bool hasModeMarker)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var aspect = hasModeMarker ? "build-tests" : "concept-fit";
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-subject", aspect, "git", ["rev-parse", "HEAD"])],
+            [aspect], TaskMode: hasModeMarker ? "concept" : null);
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, PassingReport(claim), "review-a", default);
+
+        Assert.Equal("Inconclusive", report.Outcome);
+        Assert.Equal("ConceptReviewIncomplete", report.FailureClassification);
+        Assert.Contains("brief version is unavailable", report.Summary);
     }
 
     [Fact]

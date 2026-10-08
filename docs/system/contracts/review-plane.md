@@ -31,6 +31,10 @@ For a concept delivery, `ReviewPlanDto.briefSha256` records the SHA-256 of the
 complete `prompt.md`; the frozen `aspect-concept-fit` prompt receives its bounded
 64,000-character brief excerpt. The
 monolith ReviewSubject also carries this value as `taskRequirementsHash`.
+`ReviewPlanDto.taskMode` records `concept` independently of the brief hash, so
+the standalone Task Server still applies concept coverage when that hash is
+missing. Older plans with a brief hash or `concept-fit` aspect are also treated
+as concept plans.
 The review report echoes `briefSha256`. At settlement, the server compares the
 subject hash with the card's current brief and requires a `concept-fit`
 verdict. A changed or missing brief, omitted aspect, or missing verdict is
@@ -45,7 +49,9 @@ when the plan hash differs from the current `prompt.md`. Both review stores use
 each applicable aspect omitted by configuration or run condition and its
 reason. The task-folder grade renders these rows separately from verdicts.
 `Pass` summaries say only that executed aspects passed. The new fields are
-optional on the wire so older non-concept attempts remain readable.
+optional on the wire so older non-concept attempts remain readable. The
+standalone store keeps the submitted report hash for idempotent replay and
+stores the policy-normalized concept report for orchestration.
 
 ## Two-phase report hand-off (AGT-2762)
 

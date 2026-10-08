@@ -111,7 +111,8 @@ public sealed record ReviewPlanDto(
     ScopedReviewPlanDto? ScopedReview = null,
     string? BriefSha256 = null,
     IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
-    bool BuildTestDeferredToBatch = false);
+    bool BuildTestDeferredToBatch = false,
+    string? TaskMode = null);
 
 public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 

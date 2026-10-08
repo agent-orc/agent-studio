@@ -27,6 +27,7 @@ public sealed class RemoteConceptReviewTests : IDisposable
         Assert.Contains(brief, aspect.Prompt);
         Assert.Contains("contradict", aspect.Prompt, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("concept-fit", plan.RequiredAspects);
+        Assert.Equal(TaskModes.Concept, plan.TaskMode);
 
         // The delivered Dossier says to combine every slice into one card, in
         // direct conflict with the current brief. Build and lint can pass, but
