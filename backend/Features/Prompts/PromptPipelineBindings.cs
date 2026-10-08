@@ -14,6 +14,7 @@ public static class PromptPipelineBindings
             ["aspect-code-quality"] = "review-aspect-code-quality.md",
             ["aspect-documentation-impact"] = "review-aspect-documentation-impact.md",
             ["aspect-tests-and-evidence"] = "review-aspect-tests-and-evidence.md",
+            [PipelineCatalogue.RemoteConceptFitStepId] = "review-aspect-concept-fit.md",
             [PipelineCatalogue.PostAbortReviewStepId] = "post-abort-review.md",
             [PipelineCatalogue.CodeReviewGradeStepId] = "code-review-grade.md",
             [PipelineCatalogue.TaskSpawnerStepId] = "task-spawner-relevance.md",
