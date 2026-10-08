@@ -1479,6 +1479,9 @@ last five timeline events at 2 KiB total. The whole JSON body is capped at
 link, and the timeline exposes a sequence cursor for older events. No model
 summarizes these fields. The route reads runtime and lease facts from memory,
 and its ETag combines per-task core and runtime versions without Git state.
+The explicit core DTO also carries the indexed `watchPath` and `folderPath`.
+Cold public URLs use them to give the rich task view its action and file
+identity after the core paints, without reading the legacy detail handler.
 API field writes and lane moves publish the changed core after the durable
 write. Dependency-affecting writes also rebuild the core reference graph from
 resident task facts and republish dependent blocker fields and core versions
@@ -1491,6 +1494,63 @@ This contract is the D1 and D3 recommendation in
 Its legacy-handler 486 ms p50 and 2,183 ms p95 are the measured comparison
 baseline. The proposed core p95 of at most 30 ms is an acceptance target,
 not an observed saving or a frontend saving.
+
+## Task detail resources (AGT-2955)
+
+`GET /api/tasks/{jobId}/details/{resource}?project=PROJ-002&generation=N`
+serves the enrichment a selected task needs after its core painted. The five
+resources are `git`, `usage`, `review`, `documents` and `history`. They are
+additive: the legacy `GET /api/tasks/{jobId}` full-detail route is unchanged,
+and no resource calls its handler. Each resource returns an explicit record
+(`TaskGitResource`, `TaskUsageResource`, `TaskReviewResource`,
+`TaskDocumentResource`, `TaskHistoryResource`), so the full `TaskDetail` shape
+cannot reappear behind a new path.
+
+- **Identity and authorization.** Resolution matches the core route: `project`
+  is required (`400`), an unknown project or unindexed task is `404`, and a
+  scoped principal without access to the project gets `403`. While the index
+  re-hydrates and cannot place the task yet, the read answers `202` with
+  `state=warming, reason=task-index-warming`, as the core route does, so a
+  client retries instead of treating the task as gone. The task comes
+  from `TaskIndexCache.GetCore`, so no request scans the filesystem or calls
+  `FindJob`.
+- **Generation binding.** `generation` is the `coreVersion` the client painted.
+  A different current version returns `409` with
+  `state=stale, reason=core-generation-changed`, and the client re-reads core.
+  `coreVersion` is a SHA-derived 64-bit value and travels as a decimal string
+  on both the core route and the envelope. Clients echo it verbatim: as a
+  JavaScript number it rounds beyond 2^53 and every read would answer `409`.
+- **Envelope.** Every `200` carries `id`, `taskKey`, `projectId`, `attemptId`,
+  `coreVersion`, `resource`, `version` (SHA-256 of the serialized data),
+  `computedAt`, `state`, `data` and `reason`. The data is serialized once with
+  the host's HTTP JSON options and embedded verbatim, so `version` hashes
+  exactly the `data` bytes on the wire.
+- **Conditional reads.** The strong `ETag` combines resource, state, reason,
+  data version, core version and attempt. `Cache-Control` is
+  `private, no-cache`, and a matching `If-None-Match` returns `304`.
+- **Per-resource sources and states.**
+  - `git`: merge, integration, publish and test-run signals come from the
+    cache-only `TaskListGitProjectionCache.ReadCacheOnly`, and commits come
+    from the indexed task facts. No Git process runs on the request. The state
+    is `ready`, `stale` (`git-snapshot-refreshing`) or `unavailable`
+    (`git-snapshot-pending`). Clients show the reason and keep core usable.
+  - `usage`: the token summary, last session usage and context usage. Always
+    `ready`.
+  - `review`: the cached review projection. With `evidence=true` it also
+    returns the latest review evidence per id. The state is `ready`, `stale`
+    or `warming` (`review-projection-pending`).
+  - `documents`: `name=prompt|status` returns the full markdown (status adds
+    its summary state). A read failure answers `unavailable` with
+    `document-read-failed` or `document-access-denied`.
+  - `history`: prompt history, title history and the task log. Always `ready`.
+
+The existing specialized routes stay the continuation path wherever their
+authorization and version contract already suffices. The core links the full
+prompt through `/files/prompt.md` and older events through `/timeline`, and
+neither is duplicated under `/details`. The client loading order (two
+documents after core paint, usage after the rich view, Git with its pane,
+history and review evidence on expansion) is documented in the
+[frontend domain](frontend.md) and the task-detail feature README.
 
 ## Conditional board reads (AGT-2703)
 

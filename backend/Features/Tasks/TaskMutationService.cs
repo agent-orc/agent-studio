@@ -449,19 +449,33 @@ public class TaskMutationService
     /// <summary>
     /// Replaces one remote attempt's token rows while preserving receipts from
     /// earlier attempts. The attempt-scoped participant id makes completion
-    /// replay idempotent and keeps continuation costs visible. New receipts
-    /// carry a provider session or log-turn identity in the participant field;
-    /// the identity and usage fingerprint distinguish equal-sized turns while
-    /// recognizing an earlier attempt's repeated frame. Only a cumulative
-    /// scope is compared to an untagged legacy row. An unchanged receipt is
-    /// not rewritten.
+    /// replay idempotent and keeps continuation costs visible.
     /// </summary>
     public bool SetRemoteTokenSummaryOnFolder(
         string folderPath,
         string runAttemptId,
         TaskTokenSummary attemptSummary)
     {
-        if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(runAttemptId)) return false;
+        if (string.IsNullOrWhiteSpace(runAttemptId)) return false;
+        return SetTokenReceiptEntriesOnFolder(
+            folderPath,
+            $"{TokenUsageHost.RemoteRunnerParticipantPrefix}{runAttemptId}",
+            attemptSummary.Entries ?? []);
+    }
+
+    /// <summary>
+    /// Replace every receipt row owned by <paramref name="participantId"/> in
+    /// <c>task.json.tokenSummary</c> with <paramref name="entries"/> and
+    /// rebuild the totals. One participant id per attempt keeps completion
+    /// replay idempotent while other attempts, review rows, and coding rows
+    /// stay untouched (AGT-2986).
+    /// </summary>
+    public bool SetTokenReceiptEntriesOnFolder(
+        string folderPath,
+        string participantId,
+        IReadOnlyList<TaskTokenCall> entries)
+    {
+        if (!Directory.Exists(folderPath) || string.IsNullOrWhiteSpace(participantId)) return false;
         try
         {
             TaskTokenSummary? persisted = null;
@@ -475,10 +489,12 @@ public class TaskMutationService
                 }
             }
 
-            var participant = $"agent:remote-runner:{runAttemptId}";
+            var isRemoteAttempt = participantId.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                StringComparison.Ordinal);
             var retained = (persisted?.Entries ?? [])
-                .Where(entry => !string.Equals(entry.ParticipantId, participant, StringComparison.Ordinal)
-                    && !(entry.ParticipantId?.StartsWith(participant + ":usage:", StringComparison.Ordinal) ?? false))
+                .Where(entry => !string.Equals(entry.ParticipantId, participantId, StringComparison.Ordinal)
+                    && !(isRemoteAttempt &&
+                        (entry.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)))
                 .ToList();
             var recorded = retained
                 .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is not null)
@@ -486,23 +502,20 @@ public class TaskMutationService
                 .ToHashSet();
             var legacy = retained
                 .Where(entry => TokenLedgerDuplicates.UsageIdentity(entry) is null
-                    && (entry.ParticipantId?.StartsWith("agent:remote-runner:", StringComparison.Ordinal) ?? false))
+                    && (entry.ParticipantId?.StartsWith(TokenUsageHost.RemoteRunnerParticipantPrefix,
+                        StringComparison.Ordinal) ?? false))
                 .Select(entry => TokenLedgerDuplicates.CallFingerprint(entry, includeParticipant: false))
                 .ToHashSet();
             var attemptEntries = new List<TaskTokenCall>();
-            foreach (var source in attemptSummary.Entries ?? [])
+            foreach (var source in entries)
             {
                 var entry = source with
                 {
-                    ParticipantId = source.ParticipantId?.StartsWith(participant + ":usage:", StringComparison.Ordinal) == true
-                        ? source.ParticipantId
-                        : participant,
+                    ParticipantId = isRemoteAttempt &&
+                        (source.ParticipantId?.StartsWith(participantId + ":usage:", StringComparison.Ordinal) ?? false)
+                        ? source.ParticipantId : participantId,
                 };
-                var identity = TokenLedgerDuplicates.UsageIdentity(entry);
-                // The scope identifies one provider session across completion
-                // attempts. A turn ordinal identifies one frame in the log.
-                // Calls without either identity stay separate, even when their
-                // timestamp and token counts happen to match.
+                var identity = isRemoteAttempt ? TokenLedgerDuplicates.UsageIdentity(entry) : null;
                 if (identity is not null
                     && (!recorded.Add(TokenLedgerDuplicates.CallIdentityFingerprint(entry))
                         || (identity.StartsWith("scope:", StringComparison.Ordinal)
@@ -510,34 +523,33 @@ public class TaskMutationService
                     continue;
                 attemptEntries.Add(entry);
             }
-            var entries = retained
-                .Concat(attemptEntries)
-                .OrderBy(entry => entry.Ts)
-                .ToList();
-            if (entries.Count == 0) return false;
-            if (persisted is not null && persisted.Entries.SequenceEqual(entries)) return true;
+            var merged = retained.Concat(attemptEntries).OrderBy(entry => entry.Ts).ToList();
+            if (merged.Count == 0) return false;
+            if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
 
+            var lastAgentEntry = merged
+                .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
+                                && !string.IsNullOrWhiteSpace(entry.Model))
+                .OrderBy(entry => entry.Ts)
+                .LastOrDefault();
             var summary = new TaskTokenSummary
             {
-                Calls = entries.Count,
-                InputTokens = entries.Sum(entry => entry.InputTokens),
-                OutputTokens = entries.Sum(entry => entry.OutputTokens),
-                CacheReadTokens = entries.Sum(entry => entry.CacheReadTokens),
-                CacheCreationTokens = entries.Sum(entry => entry.CacheCreationTokens),
-                TotalTokens = entries.Sum(entry => entry.InputTokens + entry.OutputTokens
+                Calls = merged.Count,
+                InputTokens = merged.Sum(entry => entry.InputTokens),
+                OutputTokens = merged.Sum(entry => entry.OutputTokens),
+                CacheReadTokens = merged.Sum(entry => entry.CacheReadTokens),
+                CacheCreationTokens = merged.Sum(entry => entry.CacheCreationTokens),
+                TotalTokens = merged.Sum(entry => entry.InputTokens + entry.OutputTokens
                     + entry.CacheReadTokens + entry.CacheCreationTokens),
-                EstimatedApiCostUsd = entries.Sum(entry => entry.EstimatedApiCostUsd),
-                AllModelsPriced = entries.All(entry => entry.ModelPriced),
-                LastModel = entries
-                    .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
-                                    && !string.IsNullOrWhiteSpace(entry.Model))
-                    .OrderBy(entry => entry.Ts)
-                    .LastOrDefault() is { } lastAgentEntry
-                        ? lastAgentEntry.DisplayModel ?? lastAgentEntry.Model
-                        : null,
-                LastUpdate = entries.Max(entry => entry.Ts),
-                Entries = entries,
-                HasModelMismatch = entries.Any(entry => entry.ModelMismatch),
+                EstimatedApiCostUsd = merged.Sum(entry => entry.EstimatedApiCostUsd),
+                AllModelsPriced = merged.All(entry => entry.ModelPriced),
+                LastModelId = lastAgentEntry?.Model,
+                LastModel = lastAgentEntry is null
+                    ? null
+                    : TokenModelDisplay.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
+                LastUpdate = merged.Max(entry => entry.Ts),
+                Entries = merged,
+                HasModelMismatch = merged.Any(entry => entry.ModelMismatch),
             };
             TaskJsonFile.UpdateFieldOrThrow(folderPath, "tokenSummary", summary);
             return Updated(folderPath);

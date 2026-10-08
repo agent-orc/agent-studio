@@ -122,18 +122,10 @@ public sealed class AgentMessageBusBridge
     /// Mirror an orchestrator chat-log line. Mapping:
     /// <c>Decision -&gt; decision/Info</c>, <c>Reissue -&gt; decision/Warn</c>,
     /// <c>HeuristicFallback -&gt; decision/Warn</c>, <c>GiveUp -&gt; decision/High</c>.
-    /// When <paramref name="decidedBy"/> is supplied the message payload names
-    /// the deciding model (<c>decidedByModel</c>), its level and which
-    /// resolution path chose it, so two supervisors are distinguishable in the
-    /// feed. Without it the payload states <c>decidedBy = "rule"</c>: no model
-    /// call stood behind the line.
+    /// The payload identifies the deciding model when one was called.
     /// </summary>
-    public Task EmitOrchestratorChatAsync(
-        TaskInfo info,
-        OrchestratorMessageKind kind,
-        string text,
-        CancellationToken ct = default,
-        StepModelUsage? decidedBy = null)
+    public Task EmitOrchestratorChatAsync(TaskInfo info, OrchestratorMessageKind kind, string text,
+        CancellationToken ct = default, StepModelUsage? decidedBy = null)
     {
         if (info == null) return Task.CompletedTask;
         var severity = kind switch
@@ -176,16 +168,12 @@ public sealed class AgentMessageBusBridge
         return EmitAsync(msg, ct);
     }
 
-    /// <summary>
-    /// Decision-message payload: the deciding model when one was called,
-    /// otherwise an explicit rule marker. Public for the wire-shape tests.
-    /// </summary>
+    /// <summary>Decision model when present; otherwise an explicit rule marker.</summary>
     public static OrchestratorDecisionPayload DecisionPayload(StepModelUsage? decidedBy)
         => decidedBy is null || string.IsNullOrWhiteSpace(decidedBy.Model)
             ? new OrchestratorDecisionPayload("rule", null, null, null)
             : new OrchestratorDecisionPayload(
-                "model",
-                decidedBy.Model,
+                "model", decidedBy.Model,
                 string.IsNullOrWhiteSpace(decidedBy.ThinkingLevel) ? null : decidedBy.ThinkingLevel,
                 string.IsNullOrWhiteSpace(decidedBy.ModelSource) ? null : decidedBy.ModelSource);
 
@@ -721,11 +709,14 @@ public sealed class AgentMessageBusBridge
     /// Token-usage attribution for one orchestrator turn or supporting-agent
     /// call. The aggregate rollup view stays in <c>orchestrator.jsonl</c> /
     /// the token summary service; the bus carries one event per recorded
-    /// usage so the timeline shows which turn was expensive.
+    /// usage so the timeline shows which turn was expensive. Completes with
+    /// <c>true</c> once the row is in the ledger and <c>false</c> when it was
+    /// not written (append failure or no workspace), so a caller whose only
+    /// usage record is this row can observe the loss (AGT-2986).
     /// </summary>
-    public Task EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default)
+    public Task<bool> EmitTokenUsageAsync(string? project, string? jobId, string participantId, string? topic, OrchestratorTokenUsage usage, DateTime? createdAt = null, CancellationToken ct = default)
     {
-        if (usage == null) return Task.CompletedTask;
+        if (usage == null) return Task.FromResult(false);
         var input  = (long)usage.InputTokens;
         var output = (long)usage.OutputTokens;
         var cacheRead   = (long)usage.CacheReadTokens;
@@ -739,7 +730,14 @@ public sealed class AgentMessageBusBridge
             Model: usage.Model,
             Dollars: null,
             ThinkingLevel: usage.ThinkingLevel,
-            InputIncludesCached: usage.InputIncludesCached);
+            InputIncludesCached: usage.InputIncludesCached,
+            UsageNormalization: usage.UsageNormalization,
+            PinnedModel: usage.PinnedModel,
+            ModelMismatch: usage.ModelMismatch,
+            CliType: usage.CliType,
+            // Producers on another host (remote chat turns) set Host; every
+            // other caller runs in-process on the workstation (AGT-2986).
+            Host: string.IsNullOrWhiteSpace(usage.Host) ? TokenUsageHost.Local : usage.Host);
 
         var msg = NewMessage(
             participantId: participantId,
@@ -753,7 +751,7 @@ public sealed class AgentMessageBusBridge
             createdAt: createdAt,
             tokens: tokens,
             tags: new[] { "token-usage" });
-        return EmitAsync(msg, ct);
+        return TryEmitAsync(msg, ct);
     }
 
     /// <summary>
@@ -772,6 +770,7 @@ public sealed class AgentMessageBusBridge
         AgentMessageLatency? latency = null,
         string? correlationId = null,
         string? thinkingLevel = null,
+        string? cliType = null,
         CancellationToken ct = default)
     {
         if (usage == null) return Task.CompletedTask;
@@ -780,7 +779,14 @@ public sealed class AgentMessageBusBridge
         // level is the caller's knowledge (the resolved execution / step
         // config). Recording it here makes model+level the call's identity in
         // the ledger instead of a later guess (AGT-2811).
-        var tokens = usage.ToBusTokens() with { ThinkingLevel = thinkingLevel };
+        // The rich path is the workstation runner's own emit, so the host is
+        // local; remote runs reach the ledger through task receipts (AGT-2986).
+        var tokens = usage.ToBusTokens() with
+        {
+            ThinkingLevel = thinkingLevel,
+            CliType = string.IsNullOrWhiteSpace(cliType) ? null : cliType.Trim().ToLowerInvariant(),
+            Host = TokenUsageHost.Local,
+        };
         var pct = usage.ContextWindow?.TotalSize is { } total and > 0
             ? $" ctx={usage.ContextUsed * 100 / total}%"
             : string.Empty;
@@ -858,16 +864,30 @@ public sealed class AgentMessageBusBridge
     /// Append failures are caught and logged - they never propagate. The bus
     /// is observability; a write failure must not break the producer.
     /// </remarks>
-    public async Task EmitAsync(AgentMessage message, CancellationToken ct = default)
+    public Task EmitAsync(AgentMessage message, CancellationToken ct = default) => TryEmitAsync(message, ct);
+
+    /// <summary>
+    /// <see cref="EmitAsync"/> that reports whether the message was appended.
+    /// Failures are still logged here and never thrown.
+    /// </summary>
+    private async Task<bool> TryEmitAsync(AgentMessage message, CancellationToken ct)
     {
         var ws = Workspace();
         if (string.IsNullOrWhiteSpace(ws))
         {
             _logger.LogDebug("Bus emit skipped: TaskRepository not configured ({Kind} {Topic})", message.Kind, message.Topic);
-            return;
+            return false;
         }
-        try { await _store.AppendAsync(ws!, message, ct).ConfigureAwait(false); }
-        catch (Exception ex) { _logger.LogWarning(ex, "Bus append failed: kind={Kind} topic={Topic} job={Job}", message.Kind, message.Topic, message.JobId); }
+        try
+        {
+            await _store.AppendAsync(ws!, message, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bus append failed: kind={Kind} topic={Topic} job={Job}", message.Kind, message.Topic, message.JobId);
+            return false;
+        }
     }
 
     private AgentMessage NewMessage(
@@ -1197,11 +1217,7 @@ public sealed class AgentMessageBusBridge
     }
 }
 
-/// <summary>
-/// Payload of an orchestrator <c>decision</c> bus message (AGT-3015).
-/// <see cref="DecidedBy"/> is <c>model</c> or <c>rule</c>;
-/// <see cref="DecidedByModel"/> names the model that made the call.
-/// </summary>
+/// <summary>Attribution of an orchestrator decision to a model or rule.</summary>
 public sealed record OrchestratorDecisionPayload(
     string DecidedBy,
     string? DecidedByModel,

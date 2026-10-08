@@ -54,4 +54,22 @@ describe('sessionSecurityInterceptor', () => {
     expect(auth.status()?.profile).toBe('local');
     expect(auth.studioAllowed()).toBe(true);
   });
+
+  it('keeps first-owner bootstrap open after a rejected installer code', () => {
+    const { http, requests, auth } = configure();
+    auth.status.set({
+      profile: 'networked', bootstrapRequired: true,
+      bootstrapCodeRequired: true, authenticated: false,
+    });
+
+    http.post('/api/v1/studio/auth/bootstrap', { bootstrapCode: 'wrong' })
+      .subscribe({ error: () => undefined });
+    requests.expectOne('/api/v1/studio/auth/bootstrap').flush(
+      { error: 'owner-bootstrap-code-invalid' },
+      { status: 401, statusText: 'Unauthorized' },
+    );
+
+    expect(auth.status()?.bootstrapRequired).toBe(true);
+    expect(auth.status()?.bootstrapCodeRequired).toBe(true);
+  });
 });

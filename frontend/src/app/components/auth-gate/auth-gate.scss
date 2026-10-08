@@ -65,3 +65,14 @@ button {
 
 button:disabled { opacity: 0.6; cursor: wait; }
 .auth-gate__error { color: var(--studio-error); }
+
+output {
+  display: block;
+  padding: var(--studio-spacing-3);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: var(--studio-card-compact-radius);
+  background: var(--studio-bg-surface);
+  color: var(--studio-fg-strong);
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}

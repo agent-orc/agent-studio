@@ -184,6 +184,23 @@ blocked unless both original runs finish, the local timeline contains the
 restart bridge, neither timeline contains `run_lost_across_restart`, and the
 UpdateService run settles as successful.
 
+### Usage cockpit remote-fleet check
+
+The token cockpit must show the remote fleet's usage, not only the
+workstation's. After the update, with at least one remote run completed in the
+last 7 days, request
+`GET /api/workspace/tokens/timeline?windowHours=168` and check:
+
+- the projects that ran on remote runners have cells and non-zero totals;
+- `models[].host` lists the remote runner ids (for example `agent-runner-01`)
+  next to `local`, and `projects[].hosts` sums to each project total;
+- `freshness.sources` contains both `historical-token-bus` and
+  `task-token-receipts`, and `freshness.status` is `complete`.
+
+An empty cockpit while recent remote cards carry `tokenSummary` receipts
+blocks promotion. The ledger contract is in the
+[token domain](../system/domains/tokens.md#one-usage-ledger-agt-2986).
+
 ## Rollback
 
 The last successful update records the former target in the `previous`
