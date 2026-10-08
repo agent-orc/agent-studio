@@ -451,6 +451,30 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Reenrol_to_file_restores_old_credential_after_partial_placement_failure()
+    {
+        using var temp = new TempDirectory("recovery-reenrol-partial-place");
+        var (target, _, drill) = await RestoredWithLostStudioAsync(temp.Path);
+        var credentialPath = Path.Combine(temp.Path, "studio.credential");
+        await File.WriteAllTextAsync(credentialPath, drill.OldStudioCredential!);
+        var failing = new RecoveryWorkflow(target, Options(Path.Combine(temp.Path, "target")), new OriginRefProbe(Http), drill.Clock)
+        {
+            PlaceCredentialFile = (_, destination, backup) =>
+            {
+                File.Move(destination, backup);
+                throw new IOException("simulated partial replacement failure");
+            },
+        };
+
+        await Assert.ThrowsAsync<IOException>(
+            () => failing.ReenrolClientToFileAsync("studio:recovery", credentialPath, "drill", default));
+
+        Assert.Equal(drill.OldStudioCredential, await File.ReadAllTextAsync(credentialPath));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
+    }
+
+    [Fact]
     public async Task Resume_stays_in_maintenance_when_the_resume_receipt_cannot_be_recorded()
     {
         if (OperatingSystem.IsWindows()) return;

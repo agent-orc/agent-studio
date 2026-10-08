@@ -560,6 +560,9 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
     /// <summary>Test seam: runs inside the rotation transaction after the credential file is in place.</summary>
     internal Func<CancellationToken, Task>? AfterCredentialPlaced { get; init; }
 
+    /// <summary>Test seam for a placement that fails after changing the destination.</summary>
+    internal Action<string, string, string>? PlaceCredentialFile { get; init; }
+
     /// <summary>
     /// Re-enrols a client and delivers the new credential to <paramref name="credentialPath"/>. The credential
     /// is written and flushed to an owner-only staging file created with that mode, then placed at the requested
@@ -591,7 +594,12 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                     stream.Flush(flushToDisk: true);
                 }
                 hadPrior = File.Exists(target);
-                if (hadPrior) File.Replace(staging, target, backup);
+                if (PlaceCredentialFile is not null) PlaceCredentialFile(staging, target, backup);
+                else if (hadPrior)
+                {
+                    File.Copy(target, backup);
+                    File.Move(staging, target, overwrite: true);
+                }
                 else File.Move(staging, target);
                 placed = true;
                 if (AfterCredentialPlaced is not null) await AfterCredentialPlaced(token);
@@ -603,10 +611,21 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             // credential is still the valid one: put its file back.
             try
             {
-                if (placed && hadPrior) File.Move(backup, target, overwrite: true);
-                else if (placed) File.Delete(target);
-                else File.Delete(backup);
-                File.Delete(staging);
+                try
+                {
+                    if (hadPrior && File.Exists(backup))
+                    {
+                        // Placement can fail after moving the old target. Trust the files on disk,
+                        // not the flag set only after placement returns.
+                        if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(backup)))
+                            File.Move(backup, target, overwrite: true);
+                        else File.Delete(backup);
+                    }
+                    else if (hadPrior && (placed || !File.Exists(target)))
+                        throw new IOException($"The prior credential backup '{backup}' is missing.");
+                    else if (!hadPrior && File.Exists(target)) File.Delete(target);
+                }
+                finally { File.Delete(staging); }
             }
             catch (Exception cleanup)
             {
