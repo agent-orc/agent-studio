@@ -2684,9 +2684,16 @@ public class ProjectRunner
                            : info with { State = TaskStates.Progress });
                 promptPath = Path.Combine(info.FolderPath, "prompt.md");
                 jobFolder = info.FolderPath;
+                CompletionContentEvidence.StampLocalRun(jobFolder);
                 plan = RebindPlanJobPaths(plan, promptPath, jobFolder);
                 movedToProgressThisCall = true;
                 admissionInfo = info;
+            }
+            else if (intent == RunIntent.UserContinue)
+            {
+                // A continuation in Progress is a new delivery generation even
+                // though the folder did not change lanes.
+                CompletionContentEvidence.StampLocalRun(info.FolderPath);
             }
 
             info = ApplyAutoModelMigration(info);

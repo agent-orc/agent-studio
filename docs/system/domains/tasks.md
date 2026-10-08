@@ -1019,9 +1019,27 @@ allowed to claim when it enters the delivered lane. Every move into
 the accepted ground in `task.json.completionClaim`:
 `integrated-delivery`, `deliverable-without-code`, or `operator-override` with
 its verbatim reason. Operator-initiated moves are refused with a typed reason
-(`IntegrationFailed`, HTTP 409); automated paths record the claim they can
-prove and are never blocked by it. `operatorOverride` without a written reason
+(`IntegrationFailed`, HTTP 409). `operatorOverride` without a written reason
 is refused at the endpoint boundary with HTTP 400.
+
+Every path into `6-completed`, including API moves, the UI, and automatic
+acceptance, also runs `CompletionContentPolicy`. The source RunAttempt's brief
+version must equal the card's current authored brief version. The settled
+review for that run must contain a passed `requirement-fit` verdict for coding
+or `concept-fit` for concept cards, bound to that same brief. Build and lint
+alone cannot establish content fit. A stale delivery, missing content verdict,
+failed content verdict, or verdict for an older brief refuses completion with
+the particular gap. A written `operatorOverride` records the reason, actor,
+current/delivery/review brief versions, and content finding in the completion
+claim and a `completion_content_overridden` timeline entry. The Human Review
+delivery panel displays these grounds, the content citations, and ran/skipped
+aspects before acceptance.
+
+`GET /api/projects/{id}/completed-lane/content-review-gaps` is a read-only
+inventory of completed and archived cards whose accepted claim lacks a passed
+content verdict for the brief recorded at completion. Historical claims
+without brief or content fields appear as unknown and remain in place for
+operator re-check; the report does not reopen or rewrite them.
 
 Containment is the only proof of integration. The verdict comes from
 `TaskIntegrationStatusService`'s Git-derived membership; a stored integration

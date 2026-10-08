@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using Contract = AgentStudio.TaskServer.Contracts;
 
 using Xunit;
 
@@ -99,6 +100,15 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 },
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         File.WriteAllText(Path.Combine(epicFolder, "status.md"), "Result: decomposed.\n");
+        BriefVersionStore.Record(epicFolder, "Plan the child cards.");
+        CompletionContentEvidence.StampLocalRun(epicFolder);
+        File.WriteAllText(Path.Combine(epicFolder, "aspect-requirement-fit.json"),
+            "{\"status\":\"pass\",\"summary\":\"Child cards cover the plan.\"}");
+        File.WriteAllText(Path.Combine(epicFolder, CompletionContentEvidence.LocalContextFile),
+            JsonSerializer.Serialize(new
+            {
+                briefVersion = CompletionContentEvidence.ReadLocalRunVersion(epicFolder),
+            }));
         deps.Scanner.InvalidateCache();
 
         var outcome = await deps.Transitions.MoveAsync("planned-epic", TaskStates.Completed, _watchPath);
@@ -407,9 +417,9 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var outcome = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath);
 
-        Assert.Equal(MoveJobStatus.Failure, outcome.Status);
-        Assert.Contains(staleSubject.RunAttemptId, outcome.Message);
-        Assert.Contains(currentRun!.AttemptId, outcome.Message);
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Contains("delivery brief version is missing", outcome.Message);
+        Assert.NotEqual(staleSubject.RunAttemptId, currentRun!.AttemptId);
         var reviewed = deps.Scanner.FindJob(Slug, _watchPath);
         Assert.NotNull(reviewed);
         Assert.Equal(TaskStates.HumanReview, reviewed!.State);
@@ -728,7 +738,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     public async Task OperatorOverride_CompletesWithoutStartingIntegration_AndRecordsAuditReason()
     {
         var deliverySha = PublishDelivery("override.txt", "operator accepted\n");
-        var deps = Build(deliverySha, backgroundIntegration: true);
+        var deps = Build(deliverySha, backgroundIntegration: true, seedContent: false);
 
         var result = await deps.Transitions.MoveAsync(
             Slug,
@@ -753,6 +763,14 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var status = File.ReadAllText(Path.Combine(completed.FolderPath, "status.md"));
         Assert.Contains("- Outcome: `OperatorOverride`", status);
         Assert.Contains("Concept outcome has no branch to merge.", status);
+        Assert.Equal(CompletionClaimBases.OperatorOverride, completed.CompletionClaim?.Basis);
+        Assert.Equal("Concept outcome has no branch to merge.", completed.CompletionClaim?.Reason);
+        Assert.NotNull(completed.CompletionClaim?.CurrentBriefVersion);
+        Assert.Contains(deps.Timeline.ReadAll(completed.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.CompletionContentOverridden
+            && entry.Details?.GetValueOrDefault("reason") == "Concept outcome has no branch to merge."
+            && entry.Details?.ContainsKey("currentBriefVersion") == true
+            && entry.Details?.ContainsKey("deliveryBriefVersion") == true);
     }
 
     /// <summary>
@@ -788,6 +806,31 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.False(deps.AcceptedQueue!.Reader.TryRead(out _));
     }
 
+    [Fact]
+    public async Task ConceptWithoutContentVerdict_CannotComplete()
+    {
+        var deliverySha = PublishDelivery("concept-review.txt", "dossier\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, mode: TaskModes.Concept, seedContent: false);
+        var outcome = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"));
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Contains("no content verdict", outcome.Message);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
+    [Fact]
+    public async Task DeliveryForOlderBrief_CannotComplete()
+    {
+        var deliverySha = PublishDelivery("older-brief.txt", "old result\n");
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1", seedContent: false);
+        BriefVersionStore.Record(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath, "brief v2");
+        var outcome = await deps.Transitions.MoveAsync(Slug, TaskStates.Completed, _watchPath,
+            cause: TimelineActors.Human("operator"));
+        Assert.Equal(MoveJobStatus.IntegrationFailed, outcome.Status);
+        Assert.Contains("delivered against brief", outcome.Message);
+        Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)!.State);
+    }
+
     /// <summary>
     /// The same refusal must not stop an automated path: the runner, the
     /// orchestrator, and the deferred integration worker reach the same move
@@ -819,7 +862,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     public async Task OperatorOverrideWithoutWrittenReason_IsRefusedAtTheHttpBoundary()
     {
         var deliverySha = PublishDelivery("override-boundary.txt", "abandoned\n");
-        var deps = Build(deliverySha, backgroundIntegration: true);
+        var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1", seedContent: false);
+        BriefVersionStore.Record(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath, "brief v2");
 
         using var factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
@@ -842,11 +886,31 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                     services.RemoveAll<IHostedService>();
                     services.RemoveAll<ProjectSettingsService>();
                     services.AddSingleton(deps.Settings);
+                    services.RemoveAll<AttemptAuthorityService>();
+                    services.AddSingleton(deps.Authority);
                 });
             });
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
         var route = $"/api/tasks/{Slug}/move?watchPath={Uri.EscapeDataString(_watchPath)}";
+
+        // Both HTTP move verbs must reach the shared content gate.
+        foreach (var (verb, url) in new[]
+        {
+            (HttpMethod.Post, route),
+            (HttpMethod.Put, $"/api/tasks/{Slug}/state?watchPath={Uri.EscapeDataString(_watchPath)}"),
+        })
+        {
+            using var request = new HttpRequestMessage(verb, url)
+            {
+                Content = JsonContent.Create(new { targetState = TaskStates.Completed }),
+            };
+            using var refusedContent = await client.SendAsync(request).WaitAsync(AsyncTestDeadline);
+            Assert.Equal(HttpStatusCode.Conflict, refusedContent.StatusCode);
+            var body = await refusedContent.Content.ReadAsStringAsync();
+            Assert.Contains("no content verdict", body);
+            Assert.Contains("delivered against brief", body);
+        }
 
         foreach (var unusable in new object[]
         {
@@ -884,6 +948,17 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.NotNull(claim);
         Assert.Equal(CompletionClaimBases.OperatorOverride, claim!.Basis);
         Assert.Equal("Delivery failed review and was abandoned; closing the card.", claim.Reason);
+
+        using var report = await client.GetAsync(
+            "/api/projects/Fixture/completed-lane/content-review-gaps").WaitAsync(AsyncTestDeadline);
+        Assert.Equal(HttpStatusCode.OK, report.StatusCode);
+        using var inventory = JsonDocument.Parse(await report.Content.ReadAsStringAsync());
+        Assert.Equal(1, inventory.RootElement.GetProperty("count").GetInt32());
+        Assert.Equal(TaskKey, inventory.RootElement.GetProperty("rows")[0]
+            .GetProperty("taskKey").GetString());
+        Assert.Equal(TaskStates.Completed,
+            factory.Services.GetRequiredService<TaskScannerService>()
+                .FindJob(Slug, _watchPath)!.State);
     }
 
     [Fact]
@@ -2239,7 +2314,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         IntegrationPushQueue? pushQueue = null,
         bool configureIntegrationBranch = true,
         string? recordedIntegrationBranch = null,
-        string initialState = TaskStates.HumanReview)
+        string initialState = TaskStates.HumanReview,
+        string mode = TaskModes.Coding,
+        string? briefVersion = null,
+        bool seedContent = true)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -2276,6 +2354,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var authority = new AttemptAuthorityService(
             config,
             NullLogger<AttemptAuthorityService>.Instance);
+        var deliveryBriefVersion = briefVersion ?? RunDispositionPolicy.BriefVersion("Fixture brief");
         var sourceRun = authority.AcquireRun(
             TaskKey,
             "PROJ-FIXTURE",
@@ -2283,7 +2362,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             "agent-runner-01",
             "host-fixture",
             60,
-            "claim-fixture").RunAttempt!;
+            "claim-fixture",
+            briefVersion: deliveryBriefVersion).RunAttempt!;
         var settled = authority.SettleRun(new SettleRunAttemptRequest
         {
             Write = new AttemptWriteReference(
@@ -2325,6 +2405,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
         var jobFolder = Path.Combine(_watchPath, initialState, Slug);
         Directory.CreateDirectory(jobFolder);
+        BriefVersionStore.Record(jobFolder, "Fixture brief");
         var job = new
         {
             id = Slug,
@@ -2334,7 +2415,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             order = 1,
             agent = "codex",
             cliType = "codex",
-            mode = TaskModes.Coding,
+            mode,
             projectName = Project,
             integrationBranch = recordedIntegrationBranch,
             codeActivityDetected = true,
@@ -2366,6 +2447,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 CompletedAtUtc = DateTimeOffset.UtcNow,
             });
         }
+        if (seedContent)
+            SeedPassedContentReview(authority, sourceRun, jobFolder, deliverySha, deliveryBriefVersion);
         pipeline.Begin(jobFolder, PipelineCatalogue.Standard, Project, Slug);
         Assert.NotNull(scanner.FindJob(Slug, _watchPath));
 
@@ -2409,6 +2492,47 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         attribution = "automatic",
         confidence = 1,
     };
+
+    private void SeedPassedContentReview(
+        AttemptAuthorityService authority, RunAttemptDto sourceRun,
+        string folder, string deliverySha, string briefVersion)
+    {
+        var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            TaskKey, "PROJ-FIXTURE", deliverySha, sourceRun.AttemptId,
+            briefVersion, AttemptAuthorityService.Hash("fixture-review-policy"), [],
+            "content-fixture", RepositoryUrl: _origin, ResultRef: DeliveryRef));
+        Assert.True(created.Accepted, created.Message);
+        var claimed = authority.ClaimReview(created.AttemptId, "fixture-reviewer", "fixture-host",
+            60, "claim-content-fixture");
+        Assert.True(claimed.Accepted, claimed.Message);
+        var review = claimed.ReviewAttempt!;
+        var report = new Contract.ReviewReportRequest(
+            "fixture-reviewer", "fixture-instance", review.Lease!.LeaseId,
+            review.LastFence, "settle-content-fixture", "Pass", null, "Content fits the brief.",
+            new Contract.ReviewWorkspaceProofDto("PROJ-FIXTURE", deliverySha, deliverySha,
+                "fixture-tree", false, false, "fixture-workspace", "fixture-namespace"),
+            new Contract.ReviewEnvironmentDto("fixture-host", "fixture-reviewer", "fixture-instance",
+                "fixture-os", "fixture-arch", "fixture-runtime",
+                new Dictionary<string, string>(), new Dictionary<string, string>()),
+            [], [], [new Contract.ReviewVerdictDto("requirement-fit", "pass", "Product",
+                "The fixture delivery answers its brief.")],
+            AuthorityEpoch: review.AuthorityEpoch, BriefSha256: briefVersion);
+        var entry = new RemoteReviewSettlementEntry
+        {
+            AttemptId = review.AttemptId,
+            TaskKey = TaskKey,
+            IdempotencyKey = report.IdempotencyKey,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Report = report,
+            ReceivedAtUtc = DateTime.UtcNow,
+        };
+        RemoteReviewSettlementJournal.Write(folder, entry);
+        var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(review.AttemptId, review.LastFence,
+                review.AuthorityEpoch, report.IdempotencyKey),
+            deliverySha, ReviewTerminalOutcome.Pass));
+        Assert.True(settled.Accepted, settled.Message);
+    }
 
     private static IntegrationAgentRoundService AgentRounds(Deps deps)
         => new(

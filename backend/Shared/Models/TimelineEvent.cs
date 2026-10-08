@@ -218,6 +218,8 @@ public static class TimelineEventKinds
     /// event details and status.md retain the one-shot override reason.
     /// </summary>
     public const string IntegrationOverridden = "integration_overridden";
+    /// <summary>Written exception to the current-brief content acceptance gate.</summary>
+    public const string CompletionContentOverridden = "completion_content_overridden";
     /// <summary>
     /// AGT-2793: <c>BranchReclaimTriggerService</c> deleted one or more of this
     /// task's remote git refs (task/runner/delivery) after a lifecycle

@@ -453,6 +453,13 @@ public sealed class AspectRunnerService
                 var jsonName = $"aspect-{def.Id}.json";
                 await File.WriteAllTextAsync(Path.Combine(inputs.JobFolderPath, jsonName), jsonBody, ct);
                 _fileGenerationIndex?.Upsert(inputs.JobFolderPath, genMeta with { File = jsonName });
+                if (def.Id == "requirement-fit")
+                {
+                    var briefVersion = AgentStudio.Tasks.CompletionContentEvidence.ReadLocalRunVersion(inputs.JobFolderPath);
+                    await File.WriteAllTextAsync(
+                        Path.Combine(inputs.JobFolderPath, AgentStudio.Tasks.CompletionContentEvidence.LocalContextFile),
+                        JsonSerializer.Serialize(new { briefVersion, reviewedAt = endedAt }), ct);
+                }
             }
             catch (Exception ex)
             {

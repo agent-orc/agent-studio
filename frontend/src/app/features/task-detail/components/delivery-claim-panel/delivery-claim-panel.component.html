@@ -47,6 +47,29 @@
 
     @if (overrideReason(); as reason) {
       <p class="claim__reason" data-testid="delivery-claim-override-reason">{{ reason }}</p>
+      <p class="claim__reason" data-testid="delivery-claim-override-audit">
+        By {{ claim()?.actor || 'operator:unspecified' }} · Delivery brief {{ briefLabel(claim()?.deliveryBriefVersion) }} · Current brief {{ briefLabel(claim()?.currentBriefVersion) }} · Reviewed brief {{ briefLabel(claim()?.reviewBriefVersion) }}
+      </p>
+    }
+
+    @if (contentReview(); as review) {
+      <div class="claim__review" data-testid="completion-content-review"
+           [attr.data-state]="contentPassed() ? 'pass' : 'gap'">
+        <strong>Acceptance grounds</strong>
+        <span>Delivery brief {{ briefLabel(review.deliveryBriefVersion) }} · Current brief {{ briefLabel(review.currentBriefVersion) }}</span>
+        <span>{{ review.requiredAspect }}: {{ review.contentStatus ?? 'no verdict' }} · Reviewed brief {{ briefLabel(review.reviewBriefVersion) }}</span>
+        @if (review.contentSummary) { <span>{{ review.contentSummary }}</span> }
+        @if (review.mode === 'concept') {
+          <div class="claim__comparison" data-testid="concept-fit-comparison">
+            <span><strong>Brief direction checked</strong>{{ review.evidenceChecked || 'No direction cited' }}</span>
+            <span><strong>Dossier statement or gap</strong>{{ review.missing || review.contentSummary || 'No statement cited' }}</span>
+          </div>
+          @if (review.contentStatus === 'block' || review.contentStatus === 'concerns') {
+            <span class="claim__contradiction">Contradiction or gap flagged by concept fit</span>
+          }
+        }
+        <span>Ran: {{ review.ranAspects.join(', ') || 'none' }} · Skipped: {{ review.skippedAspects.join(', ') || 'none' }}</span>
+      </div>
     }
   </section>
   <app-integration-dead-end

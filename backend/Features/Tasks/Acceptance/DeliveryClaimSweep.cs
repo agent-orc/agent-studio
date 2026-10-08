@@ -52,7 +52,10 @@ public sealed record TaskDeliveryClaimAnswer(
     IReadOnlyList<string> Findings,
     TaskCompletionClaim? CompletionClaim,
     IReadOnlyList<TaskDeliveryCommitAnswer> Commits,
-    string? Detail);
+    string? Detail)
+{
+    public CompletionContentFacts? ContentReview { get; init; }
+}
 
 /// <summary>Result of one sweep over a project's delivered and archived cards.</summary>
 public sealed record DeliveryClaimSweepReport(

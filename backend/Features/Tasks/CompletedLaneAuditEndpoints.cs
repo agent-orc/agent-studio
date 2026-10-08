@@ -59,5 +59,36 @@ public static class CompletedLaneAuditEndpoints
         app.MapGet("/api/projects/{projectId}/completed-lane/integration-pending",
             (string projectId, CompletedLaneAuditService audit) =>
                 Results.Ok(audit.ListIntegrationPending(projectId)));
+
+        // Read-only legacy inventory. Historical claims without a recorded
+        // brief/content receipt stay visible for operator re-check; this route
+        // never moves or rewrites a card.
+        app.MapGet("/api/projects/{projectId}/completed-lane/content-review-gaps",
+            (string projectId, TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            var project = projectId == "*" ? null : projects.FindByIdOrDisplayName(projectId);
+            if (projectId != "*" && project is null)
+                return Results.NotFound(new { error = $"Project '{projectId}' was not found." });
+            var rows = scanner.ScanAllAutomationJobsWithArchive()
+                .Where(card => card.State is TaskStates.Completed or TaskStates.Archive)
+                .Where(card => project is null || string.Equals(card.WatchPath, project.StorageLocation,
+                    StringComparison.OrdinalIgnoreCase))
+                .Where(card => CompletionContentPolicy.NeedsHistoricalReview(card.CompletionClaim, card.Mode))
+                .Select(card => new { TaskKey = card.Key ?? card.Id, card.Title, card.State,
+                    card.CompletionClaim?.RecordedAtUtc,
+                    card.CompletionClaim?.CurrentBriefVersion,
+                    card.CompletionClaim?.DeliveryBriefVersion,
+                    card.CompletionClaim?.ReviewBriefVersion,
+                    card.CompletionClaim?.ContentAspect,
+                    card.CompletionClaim?.ContentStatus,
+                    card.CompletionClaim?.ContentSummary,
+                    card.CompletionClaim?.RanAspects,
+                    card.CompletionClaim?.SkippedAspects,
+                    card.CompletionClaim?.Basis })
+                .OrderBy(row => row.TaskKey)
+                .ToArray();
+            return Results.Ok(new { project = projectId, scannedAtUtc = DateTime.UtcNow,
+                count = rows.Length, rows });
+        });
     }
 }

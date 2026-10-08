@@ -35,6 +35,20 @@ function answer(overrides: Partial<TaskDeliveryClaimAnswer> = {}): TaskDeliveryC
   };
 }
 
+const conceptReview: NonNullable<TaskDeliveryClaimAnswer['contentReview']> = {
+  mode: 'concept',
+  currentBriefVersion: 'bbbbbbbbbbbbbbbb',
+  deliveryBriefVersion: 'aaaaaaaaaaaaaaaa',
+  reviewBriefVersion: 'aaaaaaaaaaaaaaaa',
+  requiredAspect: 'concept-fit',
+  contentStatus: 'block',
+  contentSummary: 'The Dossier contradicts the selected direction.',
+  evidenceChecked: 'Brief: keep the current workflow.',
+  missing: 'Dossier: replace the workflow.',
+  ranAspects: ['build-tests', 'lint', 'concept-fit'],
+  skippedAspects: ['documentation-impact'],
+};
+
 function job(overrides: Partial<TaskInfo> = {}): TaskInfo {
   return {
     id: 'task',
@@ -76,6 +90,20 @@ async function mount(info: TaskInfo, getDeliveryClaim = vi.fn(() => of(answer())
 }
 
 describe('DeliveryClaimPanelComponent', () => {
+  it('shows current brief, concept citations, contradictions, and skipped aspects in Human Review', async () => {
+    const fixture = await mount(
+      job({ state: TaskState.HumanReview }),
+      vi.fn(() => of(answer({ contentReview: conceptReview }))));
+    const host = fixture.nativeElement as HTMLElement;
+    const grounds = host.querySelector('[data-testid="completion-content-review"]');
+    expect(grounds?.getAttribute('data-state')).toBe('gap');
+    expect(grounds?.textContent).toContain('Delivery brief aaaaaaaaaaaa');
+    expect(grounds?.textContent).toContain('Current brief bbbbbbbbbbbb');
+    expect(grounds?.textContent).toContain('Skipped: documentation-impact');
+    expect(host.querySelector('[data-testid="concept-fit-comparison"]')?.textContent)
+      .toContain('Dossier: replace the workflow.');
+    expect(grounds?.textContent).toContain('Contradiction or gap');
+  });
   /**
    * AGT-2706: contained in develop and in main, integrated by an operator
    * card-scoped merge. The card now says so where the operator looks, and
@@ -140,6 +168,10 @@ describe('DeliveryClaimPanelComponent', () => {
           basis: 'operator-override',
           evidence: 'Completed by operator override.',
           reason: 'Delivery failed review and was abandoned; closing the card.',
+          actor: 'human:operator',
+          deliveryBriefVersion: 'aaaaaaaaaaaaaaaa',
+          currentBriefVersion: 'bbbbbbbbbbbbbbbb',
+          reviewBriefVersion: 'aaaaaaaaaaaaaaaa',
           recordedAt: '2026-09-14T10:00:00Z',
         },
       }))),
@@ -154,6 +186,8 @@ describe('DeliveryClaimPanelComponent', () => {
       .toBe('unreleased');
     expect(host.querySelector('[data-testid="delivery-claim-override-reason"]')?.textContent)
       .toContain('Delivery failed review and was abandoned');
+    expect(host.querySelector('[data-testid="delivery-claim-override-audit"]')?.textContent)
+      .toContain('By human:operator · Delivery brief aaaaaaaaaaaa · Current brief bbbbbbbbbbbb');
     expect(host.querySelector('[data-testid="delivery-claim-panel"]')?.getAttribute('data-integration'))
       .toBe('not-integrated');
   });

@@ -84,7 +84,8 @@ internal static class TaskEndpointHelpers
         MoveJobStatus.IntegrationFailed => Results.Conflict(new
         {
             error = outcome.Message,
-            code = "integration-dead-end",
+            code = outcome.Message?.StartsWith("Completion refused:", StringComparison.Ordinal) == true
+                ? "completion-content-gap" : "integration-dead-end",
         }),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new
