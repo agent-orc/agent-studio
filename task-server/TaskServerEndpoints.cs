@@ -855,6 +855,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)));
+        management.MapGet("/runner-infrastructure-failures", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListRunnerInfrastructureFailuresAsync(ct)));
         management.MapGet("/provider-refusals", async (
             int? days,
             TaskServerStore store,

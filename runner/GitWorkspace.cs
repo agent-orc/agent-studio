@@ -229,23 +229,28 @@ public sealed class GitWorkspace
             // applies before anything is removed.
             if (Directory.Exists(RepoPath))
             {
-                if (await TryResumePushProtectionAsync(ct))
+                if (!File.Exists(Path.Combine(RepoPath, ".git")))
+                    await QuarantineBrokenWorktreeAsync(ct);
+                else
                 {
-                    _log($"push-protection-recovery-ready path={RepoPath} cause={_pushProtectionRecovery!.Summary}");
-                    return _workBranch;
+                    if (await TryResumePushProtectionAsync(ct))
+                    {
+                        _log($"push-protection-recovery-ready path={RepoPath} cause={_pushProtectionRecovery!.Summary}");
+                        return _workBranch;
+                    }
+                    var retained = HasFencedGeneration
+                        ? await SecureAndRemoveAsync(
+                            "Unknown",
+                            sourceRunAttemptId: null,
+                            quarantine: true,
+                            ct)
+                        : await SecureAndRemoveAsync(
+                            "Unknown",
+                            sourceRunAttemptId: null,
+                            quarantine: false,
+                            ct);
+                    _pickupReconciliation = retained.Reconciliation;
                 }
-                var retained = HasFencedGeneration
-                    ? await SecureAndRemoveAsync(
-                        "Unknown",
-                        sourceRunAttemptId: null,
-                        quarantine: true,
-                        ct)
-                    : await SecureAndRemoveAsync(
-                        "Unknown",
-                        sourceRunAttemptId: null,
-                        quarantine: false,
-                        ct);
-                _pickupReconciliation = retained.Reconciliation;
             }
             await TryGit(["worktree", "prune"], SharedRepoPath, ct);
 
@@ -496,8 +501,13 @@ public sealed class GitWorkspace
 
             if (Directory.Exists(RepoPath))
             {
-                await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
-                await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
+                if (!File.Exists(Path.Combine(RepoPath, ".git")))
+                    await QuarantineBrokenWorktreeAsync(ct);
+                else
+                {
+                    await WorktreeProcessReaper.ReapAsync(RepoPath, _log, ct);
+                    await Git(["worktree", "remove", "--force", RepoPath], SharedRepoPath, ct);
+                }
             }
             await TryGit(["worktree", "prune"], SharedRepoPath, ct);
 
@@ -567,6 +577,36 @@ public sealed class GitWorkspace
         {
             GitMetadataGate.Release();
         }
+    }
+
+    private async Task QuarantineBrokenWorktreeAsync(CancellationToken ct)
+    {
+        // A worktree without .git cannot be salvaged with git status. Keep every
+        // byte for an operator and release the shared repository registration.
+        var root = Path.Combine(_options.StateDir, "quarantine", _safeTaskKey);
+        Directory.CreateDirectory(root);
+        var destination = Path.Combine(root, DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N"));
+        var refs = await ProcessRunner.RunAsync("git",
+            ["ls-remote", "--heads", "origin", $"refs/heads/agent-studio/salvage/{SafeSegment(_options.RunnerId)}/{_safeTaskKey}/*"],
+            workingDirectory: SharedRepoPath, ct: ct);
+        var availableRefs = refs.Success
+            ? string.Join(",", refs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Split('\t').Last()))
+            : $"unavailable ({refs.StdErr.Trim()})";
+        if (availableRefs.Length > 1000) availableRefs = availableRefs[..1000];
+        try
+        {
+            Directory.Move(RepoPath, destination);
+            await TryGit(["worktree", "prune"], SharedRepoPath, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var detail = $"worktree={RepoPath}; quarantine={destination}; salvageRefs={availableRefs}; error={OneLine(ex.Message)}";
+            _log($"worktree-metadata-quarantine-failed task={_safeTaskKey} {detail}");
+            throw new InvalidOperationException(detail, ex);
+        }
+        _log($"worktree-metadata-missing quarantined task={_safeTaskKey} path={destination} " +
+             $"salvageRefs={availableRefs}; shared worktree registration pruned");
     }
 
     public Task<WorktreeTeardownResult> TeardownAsync(string outcome, CancellationToken ct)
