@@ -28,6 +28,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     request.flush({ pickupMode: 'manual', executionLocation: 'agent-runner-01' });
 
     expect(fixture.componentInstance.selectedHostId()).toBe('agent-runner-01');
+    flushRunnerInfrastructureFailures(http);
     http.verify();
   });
 
@@ -52,6 +53,7 @@ describe('ExecutionAssignmentCardComponent', () => {
     request.flush({ pickupMode: 'auto', executionLocation: 'local' });
 
     expect(fixture.componentInstance.selectedHostId()).toBe('local');
+    flushRunnerInfrastructureFailures(http);
     http.verify();
   });
 
@@ -77,6 +79,7 @@ describe('ExecutionAssignmentCardComponent', () => {
 
     expect(fixture.componentInstance.pickupMode()).toBe('paused');
     expect(fixture.componentInstance.selectedHostId()).toBe('agent-runner-01');
+    flushRunnerInfrastructureFailures(http);
     http.verify();
   });
 
@@ -124,6 +127,7 @@ describe('ExecutionAssignmentCardComponent', () => {
         ['noop', 'passed'],
       ]);
       expect(fixture.componentInstance.probePassed()).toBe(true);
+      flushRunnerInfrastructureFailures(http);
       http.verify();
     } finally {
       vi.useRealTimers();
@@ -174,9 +178,14 @@ describe('ExecutionAssignmentCardComponent', () => {
     const refusal = fixture.nativeElement.querySelector('[data-testid="project-provider-refusal"]');
     expect(refusal?.textContent).toContain('gpt-6-astra');
     expect(refusal?.textContent).toContain('unsupported_parameter access_programs.cyber');
+    flushRunnerInfrastructureFailures(http);
     http.verify();
   });
 });
+
+function flushRunnerInfrastructureFailures(http: HttpTestingController): void {
+  for (const request of http.match('/api/v1/management/runner-infrastructure-failures')) request.flush([]);
+}
 
 function flushHostRegistryFailure(http: HttpTestingController): void {
   http.expectOne('/api/clients').flush(

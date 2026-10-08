@@ -14,6 +14,23 @@ public sealed class DurableHandoffRecoveryTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Prelaunch_infrastructure_release_is_not_replayed_after_restart()
+    {
+        var authority = new RunOutboxAuthority("run-prelaunch", "TASK-11", "runner-a", "old-host:43", "lease-c", 11);
+        var outbox = DurableRunOutbox.Open(Path.Combine(_root, "outbox"), authority);
+        outbox.Enqueue("status", "{}");
+        outbox.RecordHandoffState("abandoned-prelaunch");
+        var handler = new RecordingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        using var client = new TaskServerClient(http, "runner-a", usesDurableTaskServer: true);
+
+        await new DurableHandoffRecovery(Options(), client, _ => { }).RecoverAllAsync(default);
+
+        Assert.Equal(0, handler.RenewalCalls);
+        Assert.Equal("abandoned-prelaunch", outbox.Snapshot.FinalHandoffState);
+    }
+
+    [Fact]
     public async Task Restart_replays_handoff_and_completion_without_starting_a_coding_process()
     {
         var authority = new RunOutboxAuthority(
