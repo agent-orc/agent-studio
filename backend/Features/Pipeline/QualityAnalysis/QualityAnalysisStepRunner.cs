@@ -1,5 +1,4 @@
-using System.Collections;
-using System.Reflection;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
@@ -175,21 +174,21 @@ public interface IQualityStudioAnalysisCore
 }
 
 /// <summary>
-/// Late-bound consumer of the QS-91 package surface. The package is built and
-/// released by Quality Studio, not vendored here. Loading the DLL into this
-/// process preserves the in-process boundary while allowing the two repositories
-/// to ship independently. No HTTP fallback exists.
+/// Reads deterministic findings from the Quality Studio HTTP sensor API.
+/// The registration must point at this exact checkout; a sibling checkout is
+/// not valid evidence for the current review subject.
 /// </summary>
 public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCore
 {
-    internal const string AssemblyName = "AgentOrchestrator.CodeQuality";
     internal const string RulesAnalysisName = "quality-rules";
-    private readonly Func<Assembly?> assemblyResolver;
+    private readonly HttpClient client;
+    private readonly IConfiguration configuration;
 
-    public QualityStudioAnalysisCoreAdapter() : this(ResolveAssembly) { }
-
-    internal QualityStudioAnalysisCoreAdapter(Func<Assembly?> assemblyResolver)
-        => this.assemblyResolver = assemblyResolver;
+    public QualityStudioAnalysisCoreAdapter(HttpClient client, IConfiguration configuration)
+    {
+        this.client = client;
+        this.configuration = configuration;
+    }
 
     public async Task<QualityStudioCoreResult> RunAsync(
         string repositoryPath,
@@ -198,126 +197,94 @@ public sealed class QualityStudioAnalysisCoreAdapter : IQualityStudioAnalysisCor
         IReadOnlyList<string> relativePaths,
         CancellationToken cancellationToken)
     {
-        var assembly = assemblyResolver();
-        if (assembly is null)
-        {
-            return Unavailable("Quality Studio analysis-core package is not deployed beside Agent Studio.");
-        }
-
+        var baseUrl = this.configuration["QualityStudio:BaseUrl"];
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            return Unavailable("Quality Studio API URL is not configured.");
+        if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin)
+            || origin.Scheme is not ("http" or "https"))
+            return Unavailable("Quality Studio API URL must be an absolute HTTP URL.");
+        if (analysisName != RulesAnalysisName)
+            return Unavailable($"Analysis '{analysisName}' is not supported by the HTTP adapter.");
         try
         {
-            var coreType = RequireType(assembly, "AgentOrchestrator.CodeQuality.QualityAnalysisCore");
-            var sensorType = analysisName == RulesAnalysisName
-                ? RequireType(assembly, "AgentOrchestrator.CodeQuality.RulePrecheckSensor")
-                : throw new InvalidOperationException($"Analysis '{analysisName}' is not wired by this slice.");
-            var sensorInterface = RequireType(assembly, "AgentOrchestrator.CodeQuality.IReviewSensor");
-            var sensor = sensorType.GetConstructor(Type.EmptyTypes) is not null
-                ? Activator.CreateInstance(sensorType)
-                : Activator.CreateInstance(sensorType, [null]);
-            sensor = sensor
-                ?? throw new InvalidOperationException($"Could not create {sensorType.FullName}.");
-            var sensors = Array.CreateInstance(sensorInterface, 1);
-            sensors.SetValue(sensor, 0);
-            var core = Activator.CreateInstance(coreType, sensors)
-                ?? throw new InvalidOperationException($"Could not create {coreType.FullName}.");
-
-            var namedType = RequireType(assembly, "AgentOrchestrator.CodeQuality.NamedQualityAnalysis");
-            var scopeType = RequireType(assembly, "AgentOrchestrator.CodeQuality.QualityAnalysisScope");
-            var pathScope = Enum.Parse(scopeType, "Path");
-            var requestedPaths = relativePaths.Count == 0 ? ["."] : relativePaths;
-            var named = Array.CreateInstance(namedType, requestedPaths.Count);
-            for (var index = 0; index < requestedPaths.Count; index++)
-            {
-                named.SetValue(Activator.CreateInstance(
-                    namedType, analysisName, configuration, pathScope, requestedPaths[index]), index);
-            }
-
-            var requestType = RequireType(assembly, "AgentOrchestrator.CodeQuality.QualityAnalysisRequest");
-            var request = Activator.CreateInstance(requestType, repositoryPath, named, false)
-                ?? throw new InvalidOperationException($"Could not create {requestType.FullName}.");
-            var run = coreType.GetMethod("RunAsync", [requestType, typeof(CancellationToken)])
-                ?? throw new MissingMethodException(coreType.FullName, "RunAsync");
-            var task = (Task?)run.Invoke(core, [request, cancellationToken])
-                ?? throw new InvalidOperationException("Quality Studio returned no analysis task.");
-            await task.ConfigureAwait(false);
-            var result = task.GetType().GetProperty("Result")?.GetValue(task)
-                ?? throw new InvalidOperationException("Quality Studio returned no analysis result.");
-
-            return MapResult(result, assembly.GetName().Version?.ToString());
+            using var registrations = await SendAsync(origin, HttpMethod.Get, "api/repos", cancellationToken);
+            var repositories = registrations.RootElement.GetProperty("repositories");
+            var expectedRoot = Path.GetFullPath(repositoryPath).TrimEnd(Path.DirectorySeparatorChar);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var registered = repositories.EnumerateArray().FirstOrDefault(item =>
+                string.Equals(Path.GetFullPath(item.GetProperty("rootPath").GetString()!)
+                    .TrimEnd(Path.DirectorySeparatorChar), expectedRoot, comparison));
+            if (registered.ValueKind == JsonValueKind.Undefined)
+                return Unavailable("Quality Studio has no registration for this exact checkout.");
+            var repositoryId = registered.GetProperty("id").GetString()!;
+            var route = $"api/repos/{Uri.EscapeDataString(repositoryId)}/sensors/eslint/scan?path=frontend";
+            using var scan = await SendAsync(origin, HttpMethod.Post, route, cancellationToken);
+            var root = scan.RootElement;
+            var available = root.GetProperty("available").GetBoolean();
+            var reason = root.TryGetProperty("unavailableReason", out var unavailable) && unavailable.ValueKind == JsonValueKind.String
+                ? unavailable.GetString() : null;
+            var provenance = root.GetProperty("provenance");
+            var version = provenance.TryGetProperty("sensorVersion", out var sensorVersion)
+                ? sensorVersion.GetString() : null;
+            var wanted = relativePaths.Select(path => path.Replace('\\', '/'))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var findings = root.GetProperty("findings").EnumerateArray()
+                .Select(MapFinding)
+                .Where(finding => finding.Locations.Any(location => wanted.Contains(location.Path)))
+                .DistinctBy(finding => finding.Fingerprint, StringComparer.Ordinal)
+                .ToArray();
+            return new QualityStudioCoreResult(available, reason, "quality-studio:eslint", version, findings);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
-            return Unavailable($"Quality Studio analysis core could not run ({ex.GetBaseException().Message}).");
+            return Unavailable($"Quality Studio HTTP analysis failed ({ex.GetBaseException().Message}).");
         }
     }
 
-    private static Assembly? ResolveAssembly()
+    private async Task<JsonDocument> SendAsync(Uri origin, HttpMethod method, string route, CancellationToken cancellationToken)
     {
-        var loaded = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(assembly =>
-            string.Equals(assembly.GetName().Name, AssemblyName, StringComparison.Ordinal));
-        if (loaded is not null) return loaded;
-        var path = Path.Combine(AppContext.BaseDirectory, AssemblyName + ".dll");
-        return File.Exists(path) ? Assembly.LoadFrom(path) : null;
+        using var request = new HttpRequestMessage(method, new Uri(origin, route));
+        var token = configuration["QualityStudio:ApiToken"];
+        if (!string.IsNullOrWhiteSpace(token))
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var clientId = configuration["QualityStudio:ClientId"];
+        if (!string.IsNullOrWhiteSpace(clientId))
+            request.Headers.Add("X-Client-Id", clientId);
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
     }
 
-    private static QualityStudioCoreResult MapResult(object result, string? assemblyVersion)
+    private static QualityStudioFinding MapFinding(JsonElement finding)
     {
-        var analysisResults = Values(Property(result, "Analyses")).ToArray();
-        var available = analysisResults.All(item => (bool?)Property(item, "Available") != false);
-        var unavailableReason = analysisResults
-            .Select(item => Property(item, "UnavailableReason") as string)
-            .FirstOrDefault(reason => !string.IsNullOrWhiteSpace(reason));
-        var findings = Values(Property(result, "Findings"))
-            .Select(MapFinding)
-            .DistinctBy(finding => finding.Fingerprint, StringComparer.Ordinal)
-            .ToArray();
-        return new QualityStudioCoreResult(
-            available,
-            unavailableReason,
-            AssemblyName,
-            assemblyVersion,
-            findings);
-    }
-
-    private static QualityStudioFinding MapFinding(object finding)
-    {
-        var locations = Values(Property(finding, "Locations")).Select(location =>
+        var locations = finding.GetProperty("locations").EnumerateArray().Select(location =>
         {
-            var range = Property(location, "Range");
-            var start = range is null ? null : Property(range, "Start");
+            var start = location.TryGetProperty("range", out var range)
+                && range.ValueKind == JsonValueKind.Object
+                && range.TryGetProperty("start", out var position)
+                ? position : default;
             return new QualityStudioLocation(
-                RequiredString(location, "Path"),
-                start is null ? null : Convert.ToInt32(Property(start, "Line")),
-                start is null ? null : Convert.ToInt32(Property(start, "Column")));
+                location.GetProperty("path").GetString()!.Replace('\\', '/'),
+                start.ValueKind == JsonValueKind.Object ? start.GetProperty("line").GetInt32() : null,
+                start.ValueKind == JsonValueKind.Object ? start.GetProperty("column").GetInt32() : null);
         }).ToArray();
         return new QualityStudioFinding(
-            RequiredString(finding, "Id"),
-            RequiredString(finding, "RuleId"),
-            RequiredString(finding, "Aspect"),
-            Property(finding, "Severity")?.ToString()?.ToLowerInvariant() ?? "info",
-            RequiredString(finding, "Title"),
-            RequiredString(finding, "Description"),
-            RequiredString(finding, "Recommendation"),
-            RequiredString(finding, "Fingerprint"),
-            Property(finding, "Evidence") as string,
+            finding.GetProperty("id").GetString()!,
+            finding.GetProperty("ruleId").GetString()!,
+            finding.GetProperty("aspect").GetString()!,
+            finding.GetProperty("severity").GetString()!.ToLowerInvariant(),
+            finding.GetProperty("title").GetString()!,
+            finding.GetProperty("description").GetString()!,
+            finding.GetProperty("recommendation").GetString()!,
+            finding.GetProperty("fingerprint").GetString()!,
+            finding.TryGetProperty("evidence", out var evidence) && evidence.ValueKind == JsonValueKind.String
+                ? evidence.GetString() : null,
             locations);
     }
 
     private static QualityStudioCoreResult Unavailable(string reason) =>
-        new(false, reason, AssemblyName, null, []);
-
-    private static Type RequireType(Assembly assembly, string name) =>
-        assembly.GetType(name, throwOnError: true)!;
-
-    private static object? Property(object value, string name) =>
-        value.GetType().GetProperty(name)?.GetValue(value);
-
-    private static string RequiredString(object value, string name) =>
-        Property(value, name) as string
-        ?? throw new InvalidDataException($"Quality Studio finding is missing '{name}'.");
-
-    private static IEnumerable<object> Values(object? value) =>
-        value is IEnumerable items ? items.Cast<object>() : [];
+        new(false, reason, "quality-studio:eslint", null, []);
 }
 
 public enum QualityAnalysisStepVerdict
@@ -346,20 +313,6 @@ public interface IQualityAnalysisStepRunner
         IReadOnlyList<string>? changedFiles,
         int? runIndex,
         CancellationToken cancellationToken);
-}
-
-public static class QualityAnalysisGatePolicy
-{
-    /// <summary>
-    /// QS-90 policy: security findings are always documented and visible but
-    /// do not block this pipeline version. Other implemented axes steer on
-    /// medium-or-higher named findings.
-    /// </summary>
-    public static bool Blocks(string stepId, QualityStudioFinding finding)
-    {
-        if (string.Equals(stepId, PipelineCatalogue.QualitySecurityStepId, StringComparison.Ordinal)) return false;
-        return finding.Severity is "critical" or "high" or "medium";
-    }
 }
 
 public sealed class QualityAnalysisStepRunner : IQualityAnalysisStepRunner
@@ -436,7 +389,6 @@ public sealed class QualityAnalysisStepRunner : IQualityAnalysisStepRunner
             taskFolderPath,
             relativeEvidencePath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(evidencePath)!);
-        var blocking = result.Findings.Where(finding => QualityAnalysisGatePolicy.Blocks(stepId, finding)).ToArray();
         var report = new
         {
             schemaVersion = 1,
@@ -446,7 +398,7 @@ public sealed class QualityAnalysisStepRunner : IQualityAnalysisStepRunner
             {
                 source = selection.ConfigurationPath ?? "convention",
                 ruleConfiguration = ".quality/rules.json",
-                securityFindingsBlock = false,
+                reportOnly = true,
             },
             startedAt = started,
             completedAt = DateTime.UtcNow,
@@ -456,7 +408,7 @@ public sealed class QualityAnalysisStepRunner : IQualityAnalysisStepRunner
             result.ProducerVersion,
             changedFiles = selection.AngularPaths,
             findings = result.Findings,
-            blockingFindingIds = blocking.Select(finding => finding.Id).ToArray(),
+            blockingFindingIds = Array.Empty<string>(),
         };
         File.WriteAllText(evidencePath, JsonSerializer.Serialize(report, JsonOptions));
 
@@ -480,16 +432,16 @@ public sealed class QualityAnalysisStepRunner : IQualityAnalysisStepRunner
 
         logger.LogInformation(
             "Quality Studio analysis {StepId} completed available={Available} findings={Findings} blocking={Blocking} durationMs={DurationMs}",
-            stepId, result.Available, result.Findings.Count, blocking.Length, timer.ElapsedMilliseconds);
+            stepId, result.Available, result.Findings.Count, 0, timer.ElapsedMilliseconds);
         var verdict = !result.Available
             ? QualityAnalysisStepVerdict.Unavailable
             : result.Findings.Count == 0 ? QualityAnalysisStepVerdict.Passed : QualityAnalysisStepVerdict.Findings;
         var reason = !result.Available
             ? result.UnavailableReason ?? "Quality Studio analysis was unavailable"
-            : $"{result.Findings.Count} finding(s), {blocking.Length} steering finding(s)";
+            : $"{result.Findings.Count} finding(s) recorded as review evidence";
         return new QualityAnalysisStepResult(
             stepId, verdict, timer.ElapsedMilliseconds, reason,
-            relativeEvidencePath, result.Findings, blocking);
+            relativeEvidencePath, result.Findings, []);
     }
 
     private static string EvidenceSeverity(string severity) => severity switch

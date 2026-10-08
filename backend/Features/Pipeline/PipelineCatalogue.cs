@@ -254,7 +254,7 @@ public static class PipelineCatalogue
 
     /// <summary>
     /// Stable Quality Studio analysis catalogue. The Angular rule pass is the
-    /// first executable slice; the remaining named axes reserve their package
+    /// first executable slice; the remaining named axes reserve their sensor
     /// boundary without embedding Quality Studio rule content in Agent Studio.
     /// Card-class defaults are resolved from repository changes and the
     /// repository-owned quality policy, never from per-card or environment
