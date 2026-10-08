@@ -1700,6 +1700,16 @@ The UI renders the projection directly under the pipeline health block.
 
 ## Follow-ups: admission, queueing, preservation
 
+The queued follow-up explicitly carries `runIntent: steer`. A remote card may
+therefore move to Ready while its claim remains live. Board and detail
+execution projections continue to show that live lease outside Progress.
+Manual operator moves with a live remote claim instead require an explicit
+`runIntent` value: `revoke` fences and stops the old attempt; `steer` is admitted
+only when a queued follow-up exists. An edited authored brief changes the
+claim's brief version. A later result against that older version is parked for
+the three operator choices described in the
+[fencing contract](../../concepts/platform-architecture/fencing-leases-and-authority.md).
+
 A user follow-up (`POST /api/tasks/{id}/continue` in mode `continue`, `steer`,
 `extend`, or `newTask`) and a manual `POST /api/tasks/{id}/start` are admitted
 against the card **before** any process is spawned. The rule exists because

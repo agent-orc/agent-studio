@@ -34,6 +34,8 @@ public sealed record RunLeaseAcquireRequest(
     public string? ClientId { get; init; }
     /// <summary>Daemon generation that originally received this lease.</summary>
     public string? LeaseInstanceId { get; init; }
+    /// <summary>SHA-256 version of the authored brief captured when this attempt was claimed.</summary>
+    public string? BriefVersion { get; init; }
 }
 
 /// <summary>Heartbeat: extends the lease only when lease id + fencing token + runner still match the current holder.</summary>
@@ -199,7 +201,8 @@ public sealed record RunSpecDto(
     string? PermissionMode = null,
     string? ContextMode = null,
     string? ModeFraming = null,
-    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null);
+    AgentStudio.TaskServer.Contracts.FollowUpDeliveryDto? FollowUp = null,
+    string? BriefVersion = null);
 
 /// <summary>Result of one daemon pickup poll.</summary>
 public sealed record RunnerClaimResponse(

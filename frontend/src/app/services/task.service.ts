@@ -846,10 +846,10 @@ export class TaskService {
       : request;
   }
 
-  updateState(jobId: string, state: string, watchPath?: string) {
+  updateState(jobId: string, state: string, watchPath?: string, runIntent: 'revoke' | 'steer' = 'revoke') {
     return this.http.put(
       `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/state`,
-      { targetState: state },
+      { targetState: state, runIntent },
       this.withWatchPath(watchPath),
     );
   }
@@ -861,13 +861,15 @@ export class TaskService {
     targetIndex?: number,
     reason?: string,
     operatorOverride = false,
+    runIntent: 'revoke' | 'steer' = 'revoke',
   ) {
     const body: {
       targetState: string;
       targetIndex?: number;
       reason?: string;
       operatorOverride?: boolean;
-    } = { targetState };
+      runIntent: 'revoke' | 'steer';
+    } = { targetState, runIntent };
     if (typeof targetIndex === 'number') body.targetIndex = targetIndex;
     if (reason?.trim()) body.reason = reason.trim();
     if (operatorOverride) body.operatorOverride = true;
@@ -878,11 +880,19 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath, targetState));
   }
 
+  decideOlderBriefDelivery(jobId: string, decision: 'accept' | 'starting-point' | 'discard', watchPath?: string) {
+    return this.http.post(
+      `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/older-brief-delivery/decision`,
+      { decision },
+      this.withWatchPath(watchPath),
+    ).pipe(this.afterMutation(jobId, watchPath));
+  }
+
   /** Queue independent task moves and return the server-side job handle. */
   startBatchMove(items: readonly BatchMoveItemInput[]) {
     return this.http.post<BatchMoveJobResponse>(
       `${this.baseUrl}/tasks/batch-move`,
-      { items },
+      { items: items.map((item) => ({ ...item, runIntent: item.runIntent ?? 'revoke' })) },
     );
   }
 

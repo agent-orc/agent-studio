@@ -73,7 +73,9 @@ public sealed record StudioRunnerStatusResponse(
     IReadOnlyList<StudioProjectRunnerStatus> Projects,
     DateTime ObservedAt);
 
-public sealed record MoveTaskRequest(string TargetState, int? TargetIndex = null, string? Reason = null);
+public sealed record MoveTaskRequest(string TargetState, int? TargetIndex = null, string? Reason = null,
+    string? RunIntent = null);
+public sealed record OlderBriefDeliveryDecisionRequest(string Decision);
 public sealed record StartTaskRequest(string? Model = null, string? CliType = null, string? ThinkingLevel = null);
 
 public sealed record ContinueTaskRequest(

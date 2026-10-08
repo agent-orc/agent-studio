@@ -2146,6 +2146,8 @@ public class TaskMutationService
 
         var filePath = Path.Combine(info.FolderPath, fileName);
         WriteAllTextWithRetry(filePath, content);
+        if (string.Equals(fileName, "prompt.md", StringComparison.OrdinalIgnoreCase))
+            BriefVersionStore.Record(info.FolderPath, content);
         // prompt.md does not affect kanban-card fields, but UpdateJobFile is
         // user-initiated (edit prompt) and the next read should see the
         // change for any consumer that pulls TaskDetail with the prompt body.

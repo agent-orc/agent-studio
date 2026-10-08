@@ -85,6 +85,8 @@ public record ContinueJobQueuedInfo
 public record PendingIntent
 {
     public int Version { get; init; } = 1;
+    /// <summary>The queued follow-up explicitly keeps an already running attempt alive.</summary>
+    public string RunIntent { get; init; } = "steer";
     /// <summary>One of <see cref="ContinueModes"/>.</summary>
     public string Mode { get; init; } = ContinueModes.Continue;
     public string Prompt { get; init; } = "";

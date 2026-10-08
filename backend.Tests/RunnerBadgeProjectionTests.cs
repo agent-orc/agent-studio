@@ -85,6 +85,23 @@ public sealed class RunnerBadgeProjectionTests
     }
 
     [Fact]
+    public void Expired_remote_lease_is_not_projected_as_live()
+    {
+        var now = Now;
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => now);
+        leases.TryAcquire(new RunLeaseAcquireRequest(
+            "PT-EXPIRED", "agent-runner-01", "agent-runner-01", "linux-host", 4321, "remote",
+            RequestedTtlSeconds: 30));
+        now = now.AddSeconds(31);
+
+        var peek = leases.Peek("PT-EXPIRED");
+
+        Assert.Equal("Free", peek.Outcome);
+        Assert.Null(peek.Lease);
+        Assert.Null(TaskRunnerService.ProjectRunnerBadge(peek.Lease, localRunnerId: "stable@windows-host"));
+    }
+
+    [Fact]
     public void ExecutionProjection_LocalProcess_IsCanonicalLocalRunning()
     {
         var task = ProgressTask();
@@ -113,6 +130,20 @@ public sealed class RunnerBadgeProjectionTests
         Assert.Equal("agent-runner-02", result.RunnerId);
         Assert.Equal("agent-runner-01", result.ConfiguredRunnerId);
         Assert.Contains("fenced run lease", result.TrustReason);
+    }
+
+    [Fact]
+    public void ExecutionProjection_SteeredReadyCard_StillShowsLiveRemoteRun()
+    {
+        var lease = Lease("agent-runner-02", "runner two", "linux-02")
+            with { LastHeartbeatAt = Now.AddSeconds(-5) };
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { State = TaskStates.Ready }, null, null,
+            new RunLeaseInspection("active", lease), "agent-runner-02", LocalIdentity(),
+            Now.AddSeconds(-4), Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Contains("outside Progress", result.TrustReason);
     }
 
     [Fact]

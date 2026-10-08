@@ -147,7 +147,8 @@ public sealed class TaskTransitionService
         string? transitionCause = null,
         string? transitionDetail = null,
         DecisionReopenPermit? decisionReopenPermit = null,
-        bool archiveOverride = false)
+        bool archiveOverride = false,
+        bool acceptOlderBriefDelivery = false)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -167,7 +168,7 @@ public sealed class TaskTransitionService
             return new MoveJobOutcome(MoveJobStatus.Failure,
                 "Archive override requires a human actor and a written reason.");
 
-        var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause);
+        var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause, acceptOlderBriefDelivery);
         if (settledRunRecovery.Error is not null)
         {
             return new MoveJobOutcome(
@@ -747,11 +748,16 @@ public sealed class TaskTransitionService
     private SettledRunRecoveryPreparation PrepareSettledRunRecovery(
         TaskInfo info,
         string targetState,
-        string? trigger)
+        string? trigger,
+        bool acceptOlderBriefDelivery)
     {
+        var acceptingOlderBrief = acceptOlderBriefDelivery
+            && string.Equals(info.State, TaskStates.Escalated, StringComparison.Ordinal)
+            && string.Equals(targetState, TaskStates.AutoReview, StringComparison.Ordinal);
         if (_attemptAuthority is null
-            || !string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
-            || !string.Equals(targetState, TaskStates.Ready, StringComparison.Ordinal))
+            || !acceptingOlderBrief
+               && (!string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
+                   || !string.Equals(targetState, TaskStates.Ready, StringComparison.Ordinal)))
         {
             return SettledRunRecoveryPreparation.None;
         }

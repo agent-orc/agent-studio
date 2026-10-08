@@ -91,15 +91,16 @@ public sealed class RetentionManagementApiTests
             new RetentionArchiveTaskRequest(1));
         Assert.Equal(HttpStatusCode.Conflict, leasedArchive.StatusCode);
         Assert.Equal("task-lease-active", (await leasedArchive.Content.ReadFromJsonAsync<ApiError>())!.Code);
-        var terminal = await store.UpdateTaskAsync(
-            seed.ProjectId,
-            seed.Task.TaskId,
-            new UpdateTaskRequest(null, null, "7-archive", seed.Task.Version),
-            "api-test",
-            default);
         await store.ReleaseLeaseAsync(
             seed.RunId,
             new LeaseReleaseRequest("runner-api", seed.InstanceId, seed.LeaseId, seed.Fence, "completed"),
+            "api-test",
+            default);
+        var released = await store.GetTaskAsync(seed.ProjectId, seed.Task.TaskId, default);
+        var terminal = await store.UpdateTaskAsync(
+            seed.ProjectId,
+            seed.Task.TaskId,
+            new UpdateTaskRequest(null, null, "7-archive", released!.Version),
             "api-test",
             default);
 

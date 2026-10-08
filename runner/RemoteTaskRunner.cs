@@ -1046,10 +1046,24 @@ public sealed class RemoteTaskRunner
                 try
                 {
                     teardownAttempted = true;
-                    await workspace.TeardownToQuarantineAsync(
+                    var quarantined = await workspace.TeardownToQuarantineAsync(
                         outcome.Kind.ToString(),
                         slot.RunId ?? lease.AttemptId ?? lease.LeaseId,
                         CancellationToken.None);
+                    if (heartbeat.LeaseLossReason?.Contains("revoked", StringComparison.OrdinalIgnoreCase) == true
+                        && quarantined.Branch is { } quarantineBranch
+                        && quarantined.CommitSha is { } quarantineSha)
+                    {
+                        try
+                        {
+                            await _client.ReportRevokedReferenceAsync(
+                                lease, quarantineBranch, quarantineSha, CancellationToken.None);
+                        }
+                        catch (Exception reportError)
+                        {
+                            _log($"revoked-run-reference-report-failed task={taskKey} attempt={lease.AttemptId} error={reportError.Message}");
+                        }
+                    }
                     _log(
                         $"lease-loss worktree quarantined task={taskKey} " +
                         $"attempt={slot.RunId ?? lease.AttemptId ?? lease.LeaseId} " +
