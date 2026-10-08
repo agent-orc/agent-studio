@@ -5,6 +5,29 @@ A lone `ProviderUnauthorized` run is a diagnosis signal. Check the effective
 source, a bounded real request, provider network and quota evidence, and a fresh
 applicable official incident before starting renewal.
 
+The Task Server now has a version 1 credential runbook journal at
+`/api/v1/management/credential-runbooks`. It selects the three incident
+runbooks from typed facts only when the current registry generation, kind,
+classification, and `evidence:` correlation match a registry observation no
+older than ten minutes. The management principal starts an operation; a runner
+principal bound to the target host and current source instance claims and
+completes allowlisted steps through its runner route. A claimed step remains
+`reconcile-required` after a lost response. The host must inspect the prior
+side effect and submit the same receipt; it must not issue a replacement token
+or key merely because the response was lost. Browser consent and repository
+administrator authorization are explicit management acknowledgements. The
+journal contains references and generations, never credential values.
+The first Codex real check may record `unauthorized`; only a later `healthy`
+recovery canary qualifies as recovery. Repository proof records exact-origin
+fetch and, when required, push separately before switching identity.
+
+The host step adapters and automatic admission handoff depend on the fleet
+admission and durable host renewal slices (AGT-2973 and AGT-2974). Until those
+contracts land, the journal is an audit and replay boundary. Continue using
+the existing host sign-in and repository renewal procedures below for actual
+side effects. A journal receipt alone does not reopen claims or prove a real
+provider request.
+
 The authoritative store for environment-backed provider credentials is
 `/etc/agent-runner/provider-auth.env`, owned by `root:agent` with mode `640`.
 Codex browser authentication is stored separately in the runner user's native

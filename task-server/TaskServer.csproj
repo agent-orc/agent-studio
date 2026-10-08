@@ -46,6 +46,8 @@
          the ArchitectureBoundaryTests project-reference allowlist. -->
     <EmbeddedResource Include="..\backend\Policies\model-routing-policy.v1.json"
                       Link="Policies\model-routing-policy.v1.json" />
+    <EmbeddedResource Include="..\docs\credentials-and-logins\runbooks.json"
+                      Link="Runbooks\runbooks.json" />
   </ItemGroup>
 
   <ItemGroup>

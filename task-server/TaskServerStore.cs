@@ -45,7 +45,7 @@ public sealed partial class TaskServerStore
     // 29 combines the I05 identity and ordered continuation schemas after
     // merging the independently delivered branches. Migrations are idempotent;
     // this version guards downgrades from binaries without both contracts.
-    public const int CurrentSchemaVersion = 29;
+    public const int CurrentSchemaVersion = 30;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4262,6 +4262,7 @@ public sealed partial class TaskServerStore
                AND json_array_length(consumers_json) = 1;
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
+        await ApplyCredentialRunbookMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 

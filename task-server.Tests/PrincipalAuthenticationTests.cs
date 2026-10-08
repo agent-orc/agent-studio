@@ -100,6 +100,8 @@ public sealed class PrincipalAuthenticationTests
             (studio, HttpMethod.Post, "/api/v1/steering/projects/project-a/tasks/task-a/actions", TaskServerScopes.OrchestrationWrite),
             (studio, HttpMethod.Post, "/api/v1/runs/run-a/events", TaskServerScopes.EventsWrite),
             (readOnlyRunner, HttpMethod.Get, "/api/v1/management/status", TaskServerScopes.Management),
+            (readOnlyRunner, HttpMethod.Post, "/api/v1/management/credential-runbooks", TaskServerScopes.Management),
+            (studio, HttpMethod.Post, "/api/v1/runners/runner-a/credential-runbooks/op-a/claim", TaskServerScopes.RunsWrite),
         };
 
         foreach (var (client, method, path, scope) in checks)

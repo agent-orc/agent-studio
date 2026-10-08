@@ -253,6 +253,7 @@ app.MapStudioWorkspaceEndpoints();
 // Studio route-ownership P2 "operations and insight" bundle
 // (docs/studio-route-ownership/index.html).
 app.MapStudioOperationsEndpoints();
+app.MapCredentialRunbookEndpoints();
 app.MapStudioP2Endpoints();
 // Studio route-ownership P3 "administration and long tail" bundle
 // (docs/studio-route-ownership/index.html). No new migration - every route
