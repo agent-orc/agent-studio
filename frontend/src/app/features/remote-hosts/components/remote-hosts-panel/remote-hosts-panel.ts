@@ -29,6 +29,7 @@ import {
 import { stableReleaseLabel } from '../../models/host-release-drift';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
+import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
 import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 
 /**
@@ -53,6 +54,7 @@ import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deploy
     NotificationComponent,
     PurgeRetiredHostsDialogComponent,
     BetterCandidateLinesComponent,
+    RunnerInfrastructureFailuresComponent,
     DeploymentCheckpointsComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
