@@ -66,7 +66,7 @@ public sealed class AutoPushStrategyTests : IDisposable
         var sha = CommitLocalChange("slow push change");
         WriteJob(TaskStates.HumanReview, "slow-task", sha);
         var queue = new CompletedPushQueue();
-        var deps = BuildDeps(queue);
+        var deps = BuildDeps(queue, withIntegrationStatus: true);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var outcome = await deps.Transitions.MoveAsync(
@@ -93,7 +93,7 @@ public sealed class AutoPushStrategyTests : IDisposable
         var sha = CommitLocalChange("worker-pushed change");
         WriteJob(TaskStates.HumanReview, "worker-task", sha);
         var queue = new CompletedPushQueue();
-        var deps = BuildDeps(queue);
+        var deps = BuildDeps(queue, withIntegrationStatus: true);
 
         var outcome = await deps.Transitions.MoveAsync(
             "worker-task",
@@ -205,7 +205,7 @@ public sealed class AutoPushStrategyTests : IDisposable
     {
         var sha = CommitLocalChange("reviewed change");
         WriteJob(TaskStates.HumanReview, "reviewed-task", sha);
-        var deps = BuildDeps();
+        var deps = BuildDeps(withIntegrationStatus: true);
 
         var outcome = await deps.Transitions.MoveAsync(
             "reviewed-task",
@@ -223,7 +223,7 @@ public sealed class AutoPushStrategyTests : IDisposable
         var remoteBefore = RunGitCapture(_remoteRoot, "rev-parse", "refs/heads/main");
         var sha = CommitLocalChange("manual push later");
         WriteJob(TaskStates.HumanReview, "manual-task", sha);
-        var deps = BuildDeps();
+        var deps = BuildDeps(withIntegrationStatus: true);
         deps.Settings.SetAutoPushStrategy(ProjectName, AutoPushStrategies.Never);
 
         var outcome = await deps.Transitions.MoveAsync(
@@ -419,7 +419,7 @@ public sealed class AutoPushStrategyTests : IDisposable
         var localSha = CommitLocalChange("local reviewed change");
         var remoteSha = CommitFromSecondClone("remote operator change");
         WriteJob(TaskStates.HumanReview, "diverged-task", localSha);
-        var deps = BuildDeps();
+        var deps = BuildDeps(withIntegrationStatus: true);
 
         var outcome = await deps.Transitions.MoveAsync(
             "diverged-task",
@@ -518,6 +518,8 @@ public sealed class AutoPushStrategyTests : IDisposable
               }
             }
             """);
+        if (state == TaskStates.HumanReview)
+            CompletionContentFixture.RecordPassedReview(dir);
     }
 
     /// <summary>Commits off the seed instead of the current tip, so the result is a sibling of - not a descendant of - whatever was committed before it.</summary>

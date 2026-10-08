@@ -1253,6 +1253,8 @@ internal sealed class TaskLanePipelineFixture : IDisposable
         File.WriteAllText(
             Path.Combine(folder, "prompt.md"),
             "# Business transition contract\n");
+        if (state is TaskStates.HumanReview or TaskStates.Escalated)
+            CompletionContentFixture.RecordPassedReview(folder);
         Scanner.InvalidateCache();
     }
 
