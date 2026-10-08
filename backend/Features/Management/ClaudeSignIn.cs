@@ -687,11 +687,15 @@ umask 077
 mkdir -p "$HOME/.claude"
 exec 9>"$HOME/.claude/.agent-studio-renewal.lock"
 flock -n 9 || { echo 'claude-login-status=binding-busy'; exit 73; }
+current_generation=absent
+previous_store_digest=absent
+if [[ -f "$HOME/.claude/.credentials.json" ]]; then
+  current_generation="native-cli-store:$(date -r "$HOME/.claude/.credentials.json" +%s%3N)"
+  previous_store_digest=$(sha256sum "$HOME/.claude/.credentials.json" | cut -d ' ' -f1) || {
+    echo 'claude-login-status=recovery-required'; exit 74;
+  }
+fi
 if [[ -n "$expected_generation" ]]; then
-  current_generation=absent
-  if [[ -f "$HOME/.claude/.credentials.json" ]]; then
-    current_generation="native-cli-store:$(date -r "$HOME/.claude/.credentials.json" +%s%3N)"
-  fi
   [[ "$current_generation" == "$expected_generation" ]] || {
     echo 'claude-login-status=stale-generation'; exit 46;
   }
@@ -724,14 +728,40 @@ timeout --signal=TERM --kill-after=5s 900s claude /login 2>&1 \
   | grep -Eo 'https://(claude.ai|console.anthropic.com)/[^[:space:]<>]+'
 login_exit=${PIPESTATUS[0]}
 [[ "$login_exit" == 0 ]] || exit "$login_exit"
+if ! claude auth status --text >/dev/null 2>&1; then
+  echo 'claude-login-status=unverified'
+  exit 42
+fi
+if [[ ! -f "$HOME/.claude/.credentials.json" ]]; then
+  echo 'claude-login-status=unchanged-generation'
+  exit 42
+fi
+new_store_digest=$(sha256sum "$HOME/.claude/.credentials.json" | cut -d ' ' -f1) || {
+  echo 'claude-login-status=recovery-required'; exit 74;
+}
+if ! [[ "$previous_store_digest" != "$new_store_digest" ]]; then
+  echo 'claude-login-status=unchanged-generation'
+  exit 42
+fi
+published_generation="native-cli-store:$(date -r "$HOME/.claude/.credentials.json" +%s%3N)"
+if [[ "$published_generation" == "$current_generation" ]]; then
+  previous_ms=${current_generation#native-cli-store:}
+  next_second=$((previous_ms / 1000 + 1))
+  now_second=$(date +%s)
+  if (( now_second > next_second )); then next_second=$now_second; fi
+  touch -m -d "@$next_second" "$HOME/.claude/.credentials.json" || {
+    echo 'claude-login-status=recovery-required'; exit 74;
+  }
+  published_generation="native-cli-store:$(date -r "$HOME/.claude/.credentials.json" +%s%3N)"
+fi
+if ! [[ "$published_generation" != "$expected_generation" ]]; then
+  echo 'claude-login-status=unchanged-generation'
+  exit 42
+fi
 if ! command -v agent-host >/dev/null 2>&1 \
     || ! agent-host --rebind-provider-auth claude --drained >/dev/null; then
   echo 'claude-login-status=rebind-required'
   exit 43
-fi
-if ! claude auth status --text >/dev/null 2>&1; then
-  echo 'claude-login-status=unverified'
-  exit 42
 fi
 for unit in agent-host.service agent-runner.service agent-runner-review.service; do
   sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue

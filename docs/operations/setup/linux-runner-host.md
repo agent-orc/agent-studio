@@ -537,6 +537,10 @@ changed units; an incomplete restore requires explicit recovery.
 
 Codex and native Claude login renew the CLI's own host store. A rename of
 `auth.json` or `.credentials.json` can detach existing clean-context hard links.
+Native Claude renewal requires a changed local store after successful CLI login
+and status verification. The host advances its opaque timestamp generation if
+the CLI rewrites the file within the old timestamp millisecond; an unchanged
+store remains unresolved and cannot complete the Task Server receipt.
 Keep affected workers drained, then run `agent-host --rebind-provider-auth codex
 --drained` or the `claude` equivalent as the runner user. The command refuses
 while that provider's CLI processes are active and checks every marker-owned

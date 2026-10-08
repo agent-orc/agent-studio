@@ -82,6 +82,25 @@ public sealed class ProviderAuthProvisioningTests
     }
 
     [Fact]
+    public void Claude_native_renewal_requires_changed_store_and_publishes_a_distinct_generation()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+
+        Assert.Contains("previous_store_digest=", script);
+        Assert.Contains("new_store_digest=", script);
+        Assert.Contains("[[ \"$previous_store_digest\" != \"$new_store_digest\" ]]", script);
+        Assert.Contains("published_generation=", script);
+        Assert.Contains("[[ \"$published_generation\" != \"$expected_generation\" ]]", script);
+        Assert.Contains("claude-login-status=unchanged-generation", script);
+        Assert.Contains("touch -m -d \"@$next_second\"", script);
+        Assert.True(script.IndexOf("claude auth status --text", StringComparison.Ordinal) <
+                    script.IndexOf("new_store_digest=", StringComparison.Ordinal));
+        Assert.True(script.IndexOf("new_store_digest=", StringComparison.Ordinal) <
+                    script.IndexOf("agent-host --rebind-provider-auth claude", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task CodexDeviceAuth_FakeSshTranscriptReturnsInstructionsAndAuditsOneTerminalOutcome()
     {
         var transport = new FakeCodexDeviceAuthTransport();
