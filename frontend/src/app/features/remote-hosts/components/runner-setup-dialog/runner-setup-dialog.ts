@@ -120,6 +120,7 @@ export class RunnerSetupDialogComponent implements OnInit, OnDestroy {
       runnerId: host.id,
       environmentVariable: this.providerAuthEnvironmentVariable(),
       secret,
+      ...(this.currentProviderAuth() ? { idempotencyKey: `signin-${crypto.randomUUID()}` } : {}),
     }).subscribe({
       next: response => {
         this.providerAuthSecret.set('');
@@ -133,8 +134,22 @@ export class RunnerSetupDialogComponent implements OnInit, OnDestroy {
           baseline,
         ).subscribe({
           next: status => {
-            this.providerAuthPhase.set(status.state === 'ok' ? 'ok' : 'unavailable');
-            this.providerAuthDetail.set(status.detail);
+            if (status.state !== 'ok' || !response.operationId) {
+              this.providerAuthPhase.set(status.state === 'ok' ? 'ok' : 'unavailable');
+              this.providerAuthDetail.set(status.detail);
+              return;
+            }
+            this.providerAuthDetail.set('Waiting for real requests from both runner units.');
+            this.verificationSubscription = this.providerAuth.waitForRenewalCompletion(response.operationId).subscribe({
+              next: step => {
+                this.providerAuthPhase.set(step === 'complete' ? 'ok' : 'unavailable');
+                this.providerAuthDetail.set(step === 'complete'
+                  ? 'Both runner units verified the new provider generation with a real request.'
+                  : 'The host renewal needs recovery before another credential can be issued.');
+              },
+              error: () => this.providerAuthDetail.set(
+                'The new generation is installed. Waiting for both runner units to complete a real request.'),
+            });
           },
           error: () => {
             this.providerAuthPhase.set('waiting');

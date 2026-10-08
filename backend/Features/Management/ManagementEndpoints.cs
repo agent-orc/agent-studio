@@ -1,5 +1,6 @@
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.Host;
 
 namespace AgentStudio.Management;
 
@@ -143,17 +144,43 @@ public static class ManagementEndpoints
             HttpContext context,
             ProviderAuthProvisioningRequest request,
             IProviderAuthProvisioner provisioner,
+            IProviderRenewalJournal renewal,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
-            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            if (!TryAuthorize(context, configuration, out var denied, out var actor, out _)) return denied!;
             var validation = ProviderAuthProvisioningPolicy.Validate(request);
             if (validation is not null)
                 return Results.Json(new { error = "invalid-provider-auth-request", message = validation }, statusCode: 400);
             try
             {
-                return Results.Ok(await provisioner.ProvisionAsync(request, ct));
+                AgentStudio.TaskServer.Contracts.ProviderRenewalReceiptDto? operation = null;
+                if (TaskServerPlaneProxy.IsConfigured(configuration)
+                    && !string.IsNullOrWhiteSpace(request.IdempotencyKey))
+                {
+                    operation = await renewal.BeginAsync(request.RunnerId, "R8", actor!,
+                        request.IdempotencyKey, ct);
+                    await renewal.AdvanceAsync(operation.OperationId, "preflight", ct);
+                    await renewal.AdvanceAsync(operation.OperationId, "awaiting-human", ct);
+                    await renewal.AdvanceAsync(operation.OperationId, "staged", ct);
+                }
+                try
+                {
+                    var response = await provisioner.ProvisionAsync(request, ct);
+                    if (operation is not null)
+                    {
+                        await renewal.AdvanceAsync(operation.OperationId, "installed", ct);
+                        response = response with { OperationId = operation.OperationId };
+                    }
+                    return Results.Ok(response);
+                }
+                catch
+                {
+                    if (operation is not null)
+                        await renewal.AdvanceAsync(operation.OperationId, "recovery-required", CancellationToken.None);
+                    throw;
+                }
             }
             catch (ArgumentException ex)
             {
@@ -167,6 +194,21 @@ public static class ManagementEndpoints
                     new { error = "provider-auth-provisioning-failed", message = ex.Message },
                     statusCode: 502);
             }
+            catch (Exception)
+            {
+                return Results.Json(new { error = "provider-auth-renewal-unavailable",
+                    message = "The durable provider renewal could not complete; inspect the operation receipt before retrying." },
+                    statusCode: 503);
+            }
+        });
+        group.MapGet("/remote-hosts/provider-auth-renewals/{operationId}", async (
+            HttpContext context, string operationId, IProviderRenewalJournal renewal,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var receipt = await renewal.GetAsync(operationId, ct);
+            return receipt is null ? Results.NotFound() : Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
         });
         group.MapPost("/remote-hosts/{id}/codex-sign-in", async (
             HttpContext context,
@@ -187,21 +229,31 @@ public static class ManagementEndpoints
                 return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
             }
         });
-        group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", (
+        group.MapGet("/remote-hosts/{id}/codex-sign-in/{handle}", async (
             HttpContext context,
             string id,
             string handle,
             CodexSignInCoordinator coordinator,
-            IConfiguration configuration) =>
+            IConfiguration configuration,
+            CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var status = coordinator.Get(id, handle);
+            var status = await coordinator.GetAsync(id, handle, ct);
             return status is null
                 ? Results.Json(
                     new { error = "codex-sign-in-session-not-found", message = "The Codex sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
+        });
+        group.MapPost("/remote-hosts/{id}/codex-sign-in/{handle}/cancel", async (
+            HttpContext context, string id, string handle, CodexSignInCoordinator coordinator,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var status = await coordinator.CancelAsync(id, handle, ct);
+            return status is null ? Results.NotFound() : Results.Ok(status);
         });
         group.MapPost("/remote-hosts/{id}/claude-sign-in", async (
             HttpContext context,
@@ -222,21 +274,31 @@ public static class ManagementEndpoints
                 return Results.Json(new { error = ex.Code, message = ex.Message }, statusCode: ex.StatusCode);
             }
         });
-        group.MapGet("/remote-hosts/{id}/claude-sign-in/{handle}", (
+        group.MapGet("/remote-hosts/{id}/claude-sign-in/{handle}", async (
             HttpContext context,
             string id,
             string handle,
             ClaudeSignInCoordinator coordinator,
-            IConfiguration configuration) =>
+            IConfiguration configuration,
+            CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var status = coordinator.Get(id, handle);
+            var status = await coordinator.GetAsync(id, handle, ct);
             return status is null
                 ? Results.Json(
                     new { error = "claude-sign-in-session-not-found", message = "The Claude sign-in session was not found for this host." },
                     statusCode: 404)
                 : Results.Ok(status);
+        });
+        group.MapPost("/remote-hosts/{id}/claude-sign-in/{handle}/cancel", async (
+            HttpContext context, string id, string handle, ClaudeSignInCoordinator coordinator,
+            IConfiguration configuration, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
+            var status = await coordinator.CancelAsync(id, handle, ct);
+            return status is null ? Results.NotFound() : Results.Ok(status);
         });
         group.MapPost("/commands", (HttpContext context, ManagementCommandRequest request, ManagementService service, IConfiguration configuration) =>
         {

@@ -5,7 +5,8 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.Management;
 
-public sealed record ClaudeSignInRequest(string SshTarget);
+public sealed record ClaudeSignInRequest(string SshTarget, string? IdempotencyKey = null,
+    string Mode = "environment");
 
 public sealed record ClaudeSignInStartResponse(
     string Handle,
@@ -46,6 +47,15 @@ public interface IClaudeDeviceAuthTransport
         string sshTarget,
         Action<string> onOutput,
         CancellationToken cancellationToken);
+
+    ClaudeDeviceAuthTransportSession StartNative(
+        string sshTarget, Action<string> onOutput, CancellationToken cancellationToken)
+        => Start(sshTarget, onOutput, cancellationToken);
+
+    ClaudeDeviceAuthTransportSession StartFenced(string sshTarget, string operationId,
+        string expectedGeneration, bool native, Action<string> onOutput, CancellationToken cancellationToken)
+        => native ? StartNative(sshTarget, onOutput, cancellationToken)
+            : Start(sshTarget, onOutput, cancellationToken);
 }
 
 /// <summary>
@@ -59,7 +69,8 @@ public interface IClaudeDeviceAuthTransport
 /// </summary>
 public sealed partial class ClaudeSignInCoordinator(
     IClaudeDeviceAuthTransport transport,
-    IProviderSignInAudit audit)
+    IProviderSignInAudit audit,
+    IProviderRenewalJournal? journal = null)
 {
     internal static readonly TimeSpan SessionTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan InstructionTimeout = TimeSpan.FromSeconds(20);
@@ -79,8 +90,36 @@ public sealed partial class ClaudeSignInCoordinator(
 
         var normalizedHost = hostId.Trim();
         var now = DateTime.UtcNow;
+        string handle;
+        AgentStudio.TaskServer.Contracts.ProviderRenewalReceiptDto? reservation = null;
+        try
+        {
+            reservation = journal is null ? null : await journal.BeginAsync(normalizedHost,
+                request.Mode == "native" ? "R2" : "R1", actor,
+                request.IdempotencyKey, cancellationToken);
+            handle = reservation?.OperationId ?? "claude_" + Guid.NewGuid().ToString("N");
+        }
+        catch (Exception) when (journal is not null)
+        {
+            throw new ClaudeSignInException(409, "claude-renewal-unavailable",
+                "The durable host renewal could not be reserved. Check the credential binding or resume its current operation.");
+        }
+        if (reservation is not null && reservation.Step != "requested")
+        {
+            if (_sessions.TryGetValue(handle, out var existing))
+            {
+                await existing.InstructionsReady.Task.WaitAsync(InstructionTimeout, cancellationToken);
+                lock (existing.Gate)
+                {
+                    if (existing.State == "pending" && existing.VerificationUrl is not null)
+                        return new(existing.Handle, existing.State, existing.VerificationUrl, existing.ExpiresAt);
+                }
+            }
+            throw new ClaudeSignInException(409, "claude-renewal-resume-required",
+                "The durable renewal already started. Read its status before beginning another login.");
+        }
         var state = new SessionState(
-            "claude_" + Guid.NewGuid().ToString("N"),
+            handle,
             normalizedHost,
             actor,
             now,
@@ -98,13 +137,22 @@ public sealed partial class ClaudeSignInCoordinator(
         state.Timeout = new CancellationTokenSource(SessionTimeout);
         try
         {
-            state.Transport = transport.Start(
-                request.SshTarget.Trim(),
-                line => CaptureInstructions(state, line),
-                state.Timeout.Token);
+            if (journal is not null)
+                await journal.AdvanceAsync(state.Handle, "preflight", cancellationToken);
+            state.Transport = reservation is not null
+                ? transport.StartFenced(request.SshTarget.Trim(), reservation.OperationId,
+                    reservation.ExpectedGeneration, request.Mode == "native",
+                    line => CaptureInstructions(state, line), state.Timeout.Token)
+                : request.Mode == "native"
+                    ? transport.StartNative(request.SshTarget.Trim(),
+                        line => CaptureInstructions(state, line), state.Timeout.Token)
+                    : transport.Start(request.SshTarget.Trim(),
+                        line => CaptureInstructions(state, line), state.Timeout.Token);
             _ = ObserveCompletionAsync(state);
 
             await state.InstructionsReady.Task.WaitAsync(InstructionTimeout, cancellationToken);
+            if (journal is not null)
+                await journal.AdvanceAsync(state.Handle, "awaiting-human", cancellationToken);
             lock (state.Gate)
             {
                 if (state.State != "pending" || state.VerificationUrl is null)
@@ -167,6 +215,41 @@ public sealed partial class ClaudeSignInCoordinator(
         }
     }
 
+    public async Task<ClaudeSignInStatusResponse?> GetAsync(
+        string hostId, string handle, CancellationToken ct)
+    {
+        if (journal is null) return Get(hostId, handle);
+        var receipt = await journal.GetAsync(handle, ct);
+        if (receipt is null || receipt.HostId != hostId || receipt.Method is not ("R1" or "R2")) return null;
+        if (receipt.Step == "installed") receipt = await journal.TryVerifyAsync(receipt, ct);
+        if (receipt.Step == "complete")
+        {
+            if (_sessions.TryGetValue(handle, out var state))
+                await CompleteAsync(state, "completed", "Claude renewal passed both runner real-request checks.", "completed");
+            return new(handle, "completed", "Claude renewal passed both runner real-request checks.",
+                receipt.UpdatedAt, receipt.Deadline, receipt.UpdatedAt);
+        }
+        if (receipt.Step is "cancelled" or "failed" or "recovery-required")
+            return new(handle, "failed", receipt.Step == "recovery-required"
+                ? "Host renewal needs recovery before another login can start."
+                : "Host renewal ended before verification.", receipt.UpdatedAt,
+                receipt.Deadline, receipt.UpdatedAt);
+        return Get(hostId, handle) ?? new(handle, "pending",
+            "Host renewal is awaiting a generation-matched real request from both runner units.",
+            receipt.UpdatedAt, receipt.Deadline, null);
+    }
+
+    public async Task<ClaudeSignInStatusResponse?> CancelAsync(
+        string hostId, string handle, CancellationToken ct)
+    {
+        if (!_sessions.TryGetValue(handle, out var state) || state.HostId != hostId)
+            return await GetAsync(hostId, handle, ct);
+        state.Transport?.Cancel();
+        if (journal is not null) await TryMarkRecoveryAsync(handle);
+        await CompleteAsync(state, "failed", "Claude sign-in was cancelled; host recovery may be required.", "cancelled");
+        return await GetAsync(hostId, handle, ct);
+    }
+
     internal static string? Validate(string hostId, ClaudeSignInRequest request)
     {
         if (string.IsNullOrWhiteSpace(hostId) || !RunnerIdPattern().IsMatch(hostId.Trim()))
@@ -175,6 +258,8 @@ public sealed partial class ClaudeSignInCoordinator(
             || string.IsNullOrWhiteSpace(request.SshTarget)
             || !SshTargetPattern().IsMatch(request.SshTarget.Trim()))
             return "SSH target must be a configured alias or user@host without shell characters.";
+        if (request.Mode is not ("environment" or "native"))
+            return "Claude sign-in mode must be environment or native.";
         return null;
     }
 
@@ -203,6 +288,14 @@ public sealed partial class ClaudeSignInCoordinator(
             var result = await state.Transport!.Completion.ConfigureAwait(false);
             if (result.ExitCode == 0 && result.LoginStatusVerified)
             {
+                if (journal is not null)
+                {
+                    await journal.AdvanceAsync(state.Handle, "staged", CancellationToken.None);
+                    await journal.AdvanceAsync(state.Handle, "installed", CancellationToken.None);
+                    lock (state.Gate)
+                        state.Detail = "Claude installed the host credential. Waiting for real requests from both runner units.";
+                    return;
+                }
                 var detail = result.RestartedServices.Count > 0
                     ? "Claude sign-in completed. Runner services restarted and a fresh provider probe is expected."
                     : "Claude sign-in completed. Waiting for the runner's next provider probe.";
@@ -210,6 +303,8 @@ public sealed partial class ClaudeSignInCoordinator(
             }
             else
             {
+                if (journal is not null)
+                    await journal.AdvanceAsync(state.Handle, "recovery-required", CancellationToken.None);
                 await CompleteAsync(
                     state,
                     "failed",
@@ -219,16 +314,29 @@ public sealed partial class ClaudeSignInCoordinator(
         }
         catch (OperationCanceledException) when (state.Timeout?.IsCancellationRequested == true)
         {
+            if (journal is not null)
+                await TryMarkRecoveryAsync(state.Handle);
             await CompleteAsync(state, "failed", "Claude sign-in timed out after 15 minutes.", "timeout").ConfigureAwait(false);
         }
         catch (Exception)
         {
+            if (journal is not null)
+                await TryMarkRecoveryAsync(state.Handle);
             await CompleteAsync(state, "failed", "The remote Claude sign-in process failed.", "failed").ConfigureAwait(false);
         }
         finally
         {
             state.Timeout?.Dispose();
             state.Timeout = null;
+        }
+    }
+
+    private async Task TryMarkRecoveryAsync(string handle)
+    {
+        try { await journal!.AdvanceAsync(handle, "recovery-required", CancellationToken.None); }
+        catch (Exception exception)
+        {
+            SilentCatch.Note(exception, "Claude renewal recovery receipt unavailable; binding remains fenced");
         }
     }
 
@@ -326,11 +434,34 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
         string sshTarget,
         Action<string> onOutput,
         CancellationToken cancellationToken)
+        => StartScript(sshTarget, onOutput, cancellationToken, FencedScript(RemoteScript, "", ""));
+
+    public ClaudeDeviceAuthTransportSession StartNative(
+        string sshTarget, Action<string> onOutput, CancellationToken cancellationToken)
+        => StartScript(sshTarget, onOutput, cancellationToken, FencedScript(NativeScript, "", ""));
+
+    public ClaudeDeviceAuthTransportSession StartFenced(string sshTarget, string operationId,
+        string expectedGeneration, bool native, Action<string> onOutput, CancellationToken cancellationToken)
+        => StartScript(sshTarget, onOutput, cancellationToken,
+            FencedScript(native ? NativeScript : RemoteScript, operationId, expectedGeneration));
+
+    private static string FencedScript(string script, string operationId, string expectedGeneration)
+    {
+        static bool Safe(string value) => value.Length <= 128 &&
+            value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-' or '.' or ':');
+        if (!Safe(operationId) || !Safe(expectedGeneration))
+            throw new ArgumentException("Renewal fence identifiers are invalid.");
+        return script.Replace("__OPERATION_ID__", operationId, StringComparison.Ordinal)
+            .Replace("__EXPECTED_GENERATION__", expectedGeneration, StringComparison.Ordinal);
+    }
+
+    private static ClaudeDeviceAuthTransportSession StartScript(
+        string sshTarget, Action<string> onOutput, CancellationToken cancellationToken, string script)
     {
         var process = new Process { StartInfo = BuildStartInfo(sshTarget) };
         if (!process.Start()) throw new InvalidOperationException("SSH could not be started.");
 
-        var completion = RunAsync(process, onOutput, cancellationToken);
+        var completion = RunAsync(process, onOutput, cancellationToken, script);
         return new ClaudeDeviceAuthTransportSession(completion, () => TryKill(process));
     }
 
@@ -362,13 +493,14 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
     private static async Task<ClaudeDeviceAuthTransportResult> RunAsync(
         Process process,
         Action<string> onOutput,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string script)
     {
         var safeMarkers = new ConcurrentBag<string>();
         using var registration = cancellationToken.Register(() => TryKill(process));
         try
         {
-            await process.StandardInput.WriteAsync(RemoteScript.AsMemory(), cancellationToken);
+            await process.StandardInput.WriteAsync(script.AsMemory(), cancellationToken);
             await process.StandardInput.FlushAsync(cancellationToken);
             process.StandardInput.Close();
 
@@ -433,6 +565,35 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
     // to install it into the shared provider-auth EnvironmentFile on the host.
     private const string RemoteScript = """
 set -uo pipefail
+operation_id='__OPERATION_ID__'
+expected_generation='__EXPECTED_GENERATION__'
+
+umask 077
+mkdir -p "$HOME/.claude"
+exec 9>"$HOME/.claude/.agent-studio-renewal.lock"
+flock -n 9 || { echo 'claude-login-status=binding-busy'; exit 73; }
+if [[ -n "$expected_generation" ]]; then
+  current_generation=absent
+  if sudo -n test -f /etc/agent-runner/provider-auth.env; then
+    current_generation=$(sudo -n awk -F= '$1 == "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print $2 }' /etc/agent-runner/provider-auth.env)
+    [[ -n "$current_generation" ]] || current_generation=unknown
+  fi
+  [[ "$current_generation" == "$expected_generation" ]] || {
+    echo 'claude-login-status=stale-generation'; exit 46;
+  }
+fi
+if pgrep -u "$(id -u)" -x claude >/dev/null 2>&1; then
+  echo 'claude-login-status=workers-busy'
+  exit 73
+fi
+if [[ -n "$operation_id" ]]; then
+  receipt_dir="$HOME/.local/state/agent-studio/provider-renewal"
+  mkdir -p "$receipt_dir"
+  chmod 0700 "$receipt_dir"
+  receipt_file="$receipt_dir/$operation_id"
+  [[ ! -e "$receipt_file" ]] || { echo 'claude-login-status=recovery-required'; exit 74; }
+  printf 'started\n' >"$receipt_file"
+fi
 
 if ! command -v claude >/dev/null 2>&1; then
   echo 'claude-login-status=binary-missing'
@@ -440,11 +601,12 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 out_tmp=$(mktemp)
-trap 'rm -f "$out_tmp"' EXIT
+env_tmp=$(mktemp)
+trap 'rm -f "$out_tmp" "$env_tmp"' EXIT
 
 timeout --signal=TERM --kill-after=5s 900s claude setup-token 2>&1 \
   | tee "$out_tmp" \
-  | sed -E 's/sk-ant-[A-Za-z0-9_-]{10,}/[redacted]/g'
+  | grep -Eo 'https://(claude.ai|console.anthropic.com)/[^[:space:]<>]+'
 login_exit=${PIPESTATUS[0]}
 if [[ "$login_exit" -ne 0 ]]; then
   echo 'claude-login-status=login-failed'
@@ -461,18 +623,25 @@ sudo -n getent group agent >/dev/null 2>&1 || sudo -n groupadd --system agent
 sudo -n install -d -m 0750 -o root -g agent /etc/agent-runner
 
 provider_auth_file=/etc/agent-runner/provider-auth.env
-env_tmp=$(mktemp)
+generation="renewal_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+rollback_file="/etc/agent-runner/.provider-auth.rollback.${operation_id:-$generation}"
 if sudo -n test -f "$provider_auth_file"; then
-  sudo -n awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" { print }' \
+  sudo -n install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file"
+  sudo -n awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
     "$provider_auth_file" >"$env_tmp"
 fi
 printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$token" >>"$env_tmp"
+printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp"
 install_tmp=$(sudo -n mktemp /etc/agent-runner/.provider-auth.env.XXXXXX)
 sudo -n install -m 0640 -o root -g agent "$env_tmp" "$install_tmp"
 sudo -n mv -fT -- "$install_tmp" "$provider_auth_file"
-rm -f "$env_tmp"
 
 if ! sudo -n bash -c 'set -a; source /etc/agent-runner/provider-auth.env; set +a; claude auth status --text' >/dev/null 2>&1; then
+  if sudo -n test -f "$rollback_file"; then
+    sudo -n mv -fT -- "$rollback_file" "$provider_auth_file"
+  else
+    sudo -n rm -f -- "$provider_auth_file"
+  fi
   unset token
   echo 'claude-login-status=unverified'
   exit 43
@@ -489,9 +658,86 @@ if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
   units+=(agent-runner-review.service)
 fi
 for unit in "${units[@]}"; do
-  if sudo -n systemctl restart "$unit"; then
-    printf 'claude-probe-unit=%s\n' "$unit"
+  if [[ "$unit" == agent-runner-review.service ]]; then
+    sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
+  else
+    sudo -n systemctl restart "$unit" || exit 44
   fi
+  pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || exit 44
+  if ! sudo -n bash -c 'set -a; source /etc/agent-runner/provider-auth.env; set +a; while IFS= read -r -d "" entry; do [[ "$entry" == "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" ]] && exit 0; done <"/proc/$1/environ"; exit 1' bash "$pid"; then
+    exit 44
+  fi
+  printf 'claude-probe-unit=%s\n' "$unit"
+done
+echo 'claude-login-status=verified'
+""";
+
+    // Native login keeps the CLI's refreshable store on this host. Existing
+    // environment mode must be removed by the owned host configuration flow
+    // before starting; this adapter never guesses which value to discard.
+    private const string NativeScript = """
+set -uo pipefail
+operation_id='__OPERATION_ID__'
+expected_generation='__EXPECTED_GENERATION__'
+umask 077
+mkdir -p "$HOME/.claude"
+exec 9>"$HOME/.claude/.agent-studio-renewal.lock"
+flock -n 9 || { echo 'claude-login-status=binding-busy'; exit 73; }
+if [[ -n "$expected_generation" ]]; then
+  current_generation=absent
+  if [[ -f "$HOME/.claude/.credentials.json" ]]; then
+    current_generation="native-cli-store:$(date -r "$HOME/.claude/.credentials.json" +%s%3N)"
+  fi
+  [[ "$current_generation" == "$expected_generation" ]] || {
+    echo 'claude-login-status=stale-generation'; exit 46;
+  }
+fi
+if pgrep -u "$(id -u)" -x claude >/dev/null 2>&1; then
+  echo 'claude-login-status=workers-busy'
+  exit 73
+fi
+if [[ -n "$operation_id" ]]; then
+  receipt_dir="$HOME/.local/state/agent-studio/provider-renewal"
+  mkdir -p "$receipt_dir"
+  chmod 0700 "$receipt_dir"
+  receipt_file="$receipt_dir/$operation_id"
+  [[ ! -e "$receipt_file" ]] || { echo 'claude-login-status=recovery-required'; exit 74; }
+  printf 'started\n' >"$receipt_file"
+fi
+for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+  sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+  pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+  if sudo -n bash -c 'while IFS= read -r -d "" entry; do case "$entry" in CLAUDE_CODE_OAUTH_TOKEN=*|ANTHROPIC_API_KEY=*) exit 0;; esac; done <"/proc/$1/environ"; exit 1' bash "$pid"; then
+    echo 'claude-login-status=environment-mode-active'
+    exit 45
+  fi
+done
+out_tmp=$(mktemp)
+trap 'rm -f "$out_tmp"' EXIT
+timeout --signal=TERM --kill-after=5s 900s claude /login 2>&1 \
+  | tee "$out_tmp" \
+  | grep -Eo 'https://(claude.ai|console.anthropic.com)/[^[:space:]<>]+'
+login_exit=${PIPESTATUS[0]}
+[[ "$login_exit" == 0 ]] || exit "$login_exit"
+if ! command -v agent-host >/dev/null 2>&1 \
+    || ! agent-host --rebind-provider-auth claude --drained >/dev/null; then
+  echo 'claude-login-status=rebind-required'
+  exit 43
+fi
+if ! claude auth status --text >/dev/null 2>&1; then
+  echo 'claude-login-status=unverified'
+  exit 42
+fi
+for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+  sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+  if [[ "$unit" == agent-runner-review.service ]]; then
+    sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
+  else
+    sudo -n systemctl restart "$unit" || exit 44
+  fi
+  printf 'claude-probe-unit=%s\n' "$unit"
 done
 echo 'claude-login-status=verified'
 """;
