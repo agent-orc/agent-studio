@@ -8,6 +8,35 @@ namespace AgentRunner;
 
 internal static class RunnerCapabilityProbe
 {
+    public static async Task RefreshDueCanariesAsync(
+        RunnerOptions options, TaskServerClient client, Action<string> log, CancellationToken ct)
+        => await RefreshPermittedProvidersAsync(
+            CodingCliBinaries(options).Select(item => item.Binary),
+            client.ReserveProviderCanaryAsync, ProviderAuthProbe.Shared, log, ct);
+
+    internal static async Task RefreshPermittedProvidersAsync(
+        IEnumerable<string> binaries,
+        Func<string, CancellationToken, Task<ProviderCanaryPermitDto>> reserve,
+        ProviderAuthProbe probe,
+        Action<string> log,
+        CancellationToken ct)
+    {
+        foreach (var binary in binaries.Distinct(StringComparer.Ordinal))
+        {
+            var provider = Provider(binary);
+            ProviderCanaryPermitDto permit;
+            try { permit = await reserve(provider, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                log($"provider canary permit unavailable provider={provider}: {exception.Message}");
+                continue;
+            }
+            if (!permit.Allowed || permit.Reason is not ("canary" or "no-hold")) continue;
+            var status = await probe.RefreshAsync(binary, ct);
+            log($"provider auth probe completed provider={provider} outcome={status.Outcome}");
+        }
+    }
     public static IReadOnlyList<AdvertisedCapabilityDto> Advertise(
         RunnerOptions options,
         bool gitPushReady,
@@ -424,7 +453,29 @@ internal static class RunnerCapabilityProbe
                 nativeFileShadowed: auth.NativeFileShadowed,
                 evidenceRefs: auth.EvidenceId is { } reference &&
                     reference.StartsWith("evidence:", StringComparison.Ordinal)
-                        ? [reference] : []));
+                        ? [reference] : [],
+                healthOutcome: auth.Outcome switch
+                {
+                    ProviderProbeOutcome.Healthy => "healthy",
+                    ProviderProbeOutcome.CredentialInvalid => "credential_invalid",
+                    ProviderProbeOutcome.ProviderIncident => "provider_incident",
+                    ProviderProbeOutcome.QuotaExhausted => "quota_exhausted",
+                    ProviderProbeOutcome.NetworkFailure => "network_failure",
+                    _ => "indeterminate",
+                },
+                serviceAvailability: auth.Outcome switch
+                {
+                    ProviderProbeOutcome.Healthy => "available",
+                    ProviderProbeOutcome.ProviderIncident or ProviderProbeOutcome.NetworkFailure => "unavailable",
+                    ProviderProbeOutcome.QuotaExhausted => "limited",
+                    _ => "unknown",
+                },
+                credentialHealth: auth.Outcome switch
+                {
+                    ProviderProbeOutcome.Healthy => "valid",
+                    ProviderProbeOutcome.CredentialInvalid => "invalid",
+                    _ => "unknown",
+                }));
         }
     }
 
@@ -459,7 +510,10 @@ internal static class RunnerCapabilityProbe
         DateTimeOffset? accessTokenExpiresAt = null,
         string? effectiveSource = null,
         bool? nativeFileShadowed = null,
-        IReadOnlyList<string>? evidenceRefs = null)
+        IReadOnlyList<string>? evidenceRefs = null,
+        string? healthOutcome = null,
+        string? serviceAvailability = null,
+        string? credentialHealth = null)
         => new(
             key,
             category,
@@ -481,7 +535,10 @@ internal static class RunnerCapabilityProbe
             accessTokenExpiresAt?.UtcDateTime,
             effectiveSource,
             nativeFileShadowed,
-            evidenceRefs);
+            evidenceRefs,
+            healthOutcome,
+            serviceAvailability,
+            credentialHealth);
 
     private static string Platform()
         => $"{(OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "other")}:{RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}";
@@ -763,10 +820,16 @@ public sealed class ProviderAuthProbe
     private ProviderAuthLauncher? _realLauncher;
     private ProviderStatusIncidentAdapter? _incidentAdapter;
     private Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? _comparisonAdapter;
+    private Func<string, CancellationToken, Task<ProviderCanaryPermitDto>>? _canaryPermit;
     private string _hostId = "";
     public static readonly TimeSpan HealthyRealCheckCeiling = TimeSpan.FromMinutes(30);
     public static readonly TimeSpan LastGoodWindow = TimeSpan.FromMinutes(10);
     public const int DailyRealRequestBudget = 48;
+
+    public void UseCanaryPermit(Func<string, CancellationToken, Task<ProviderCanaryPermitDto>> permit)
+    {
+        lock (_sync) _canaryPermit = permit;
+    }
 
     public void UseRealRequest(ProviderAuthLauncher launcher, ProviderStatusIncidentAdapter incidentAdapter)
     {
@@ -962,21 +1025,36 @@ public sealed class ProviderAuthProbe
         ProviderAuthLauncher? launcher;
         ProviderStatusIncidentAdapter? incidents;
         Func<ProviderComparisonQuery, CancellationToken, Task<ProviderComparisonSnapshot>>? comparisons;
+        Func<string, CancellationToken, Task<ProviderCanaryPermitDto>>? canaryPermit;
         string hostId;
         lock (_sync)
         {
             launcher = _realLauncher;
             incidents = _incidentAdapter;
             comparisons = _comparisonAdapter;
+            canaryPermit = _canaryPermit;
             hostId = _hostId;
         }
         if (launcher is null || status.Status == Limited
-            || (!statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
             || status.Outcome == ProviderProbeOutcome.CredentialInvalid) return status;
-        var now = _clock();
-        if (!statusUnauthorized && status.LastRealSuccessAt is { } last
-            && now - last < HealthyRealCheckCeiling) return status;
         var provider = RunnerCapabilityProbe.Provider(cliBinary);
+        var forceCanary = false;
+        if (canaryPermit is not null)
+        {
+            try
+            {
+                var permit = await canaryPermit(provider, ct);
+                if (!permit.Allowed) return status;
+                forceCanary = permit.Reason == "canary";
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { return status; }
+        }
+        if (!forceCanary && !statusUnauthorized && (status.Status != Ready || status.ProbeDegraded))
+            return status;
+        var now = _clock();
+        if (!forceCanary && !statusUnauthorized && status.LastRealSuccessAt is { } last
+            && now - last < HealthyRealCheckCeiling) return status;
         lock (_sync)
         {
             var budget = _realBudgets.GetValueOrDefault(provider);

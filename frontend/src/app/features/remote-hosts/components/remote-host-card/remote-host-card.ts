@@ -42,6 +42,7 @@ import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   claudeSignInTarget,
   providerAuthBadgesForHost,
+  providerSignInLabel,
   signInTarget,
   type ProviderAuthBadge,
 } from '../../models/provider-auth.model';
@@ -304,8 +305,7 @@ export class RemoteHostCardComponent {
   }
 
   signInLabel(badge: ProviderAuthBadge): string | null {
-    if (!['codex', 'claude'].includes(badge.provider) || !['unavailable', 'expiring'].includes(badge.state)) return null;
-    return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
+    return providerSignInLabel(badge);
   }
 
   openSignIn(badge: ProviderAuthBadge): void {

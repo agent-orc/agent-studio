@@ -33,6 +33,7 @@ public sealed class TaskServerClient : IDisposable
     private bool _useV1;
     private bool _supportsCapabilityAdvertisement;
     private bool _supportsCredentialObservationV2;
+    private bool _supportsCredentialHealthV2;
     private bool _supportsHostOrchestrator;
     private readonly bool _usesServiceCredential;
     private readonly SemaphoreSlim _hostProtocolGate = new(1, 1);
@@ -148,6 +149,7 @@ public sealed class TaskServerClient : IDisposable
             _useV1 = false;
             _supportsCapabilityAdvertisement = false;
             _supportsCredentialObservationV2 = false;
+            _supportsCredentialHealthV2 = false;
             _supportsHostOrchestrator = false;
             return;
         }
@@ -160,6 +162,8 @@ public sealed class TaskServerClient : IDisposable
             throw new TaskServerException(426, compatibility?.Reason ?? "Task Server protocol is not compatible.");
         var serverCapabilities = compatibility.Server.Capabilities ?? [];
         _supportsCredentialObservationV2 = serverCapabilities.Contains("credential-observation-v2", StringComparer.Ordinal);
+        _supportsCredentialHealthV2 = _supportsCredentialObservationV2
+            && serverCapabilities.Contains("credential-health-v2", StringComparer.Ordinal);
         _supportsCapabilityAdvertisement =
             serverCapabilities.Contains("capability-advertisement", StringComparer.Ordinal)
             || serverCapabilities.Contains("coding-plane", StringComparer.Ordinal);
@@ -1186,7 +1190,10 @@ public sealed class TaskServerClient : IDisposable
             DateTime.UtcNow,
             180,
             generation,
-            _supportsCredentialObservationV2 ? capabilities : capabilities.Select(item => item with
+            _supportsCredentialObservationV2 ?
+                (_supportsCredentialHealthV2 ? capabilities : capabilities.Select(item => item with
+                { HealthOutcome = null, ServiceAvailability = null, CredentialHealth = null }).ToArray())
+                : capabilities.Select(item => item with
             {
                 CredentialGeneration = null,
                 CredentialObservedAt = null,
@@ -1196,10 +1203,13 @@ public sealed class TaskServerClient : IDisposable
                 EffectiveSource = null,
                 NativeFileShadowed = null,
                 EvidenceRefs = null,
+                HealthOutcome = null,
+                ServiceAvailability = null,
+                CredentialHealth = null,
             }).ToArray(),
             telemetry,
             RunnerReleaseIdentity.CurrentIdentity,
-            _supportsCredentialObservationV2 ? 1 : null);
+            _supportsCredentialHealthV2 ? 2 : _supportsCredentialObservationV2 ? 1 : null);
         var snapshot = await SendJsonAsync<Contract.CapabilityAdvertisementRequest, Contract.RunnerCapabilitySnapshotDto>(
             HttpMethod.Put,
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/capabilities",
@@ -1259,6 +1269,16 @@ public sealed class TaskServerClient : IDisposable
             $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/cli-update/result",
             new Contract.HostCliUpdateResultRequest(state, detail),
             ct);
+    }
+
+    public async Task<Contract.ProviderCanaryPermitDto> ReserveProviderCanaryAsync(string provider, CancellationToken ct)
+    {
+        if (!_supportsCredentialHealthV2) return new(true, null, "no-hold");
+        var options = _options ?? throw new InvalidOperationException("Runner options are unavailable.");
+        var permit = await PostJsonAsync<object, Contract.ProviderCanaryPermitDto>(
+            $"/api/v1/runners/{Uri.EscapeDataString(options.RunnerId)}/provider-canary/{Uri.EscapeDataString(provider)}?instanceId={Uri.EscapeDataString(RunnerInstanceId)}",
+            new { }, ct);
+        return permit ?? new(false, null, "permit-unavailable");
     }
 
     public async Task ReportCapabilityFailureAsync(

@@ -1567,10 +1567,7 @@ public sealed class RemoteTaskRunner
                     {
                         var provider = invocation.CliType;
                         var claimId = outbox?.Authority.RunId;
-                        var diagnostic = result.StdErr
-                            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                            .LastOrDefault()
-                            ?? $"{provider} exited {result.ExitCode} with an authentication failure";
+                        var diagnostic = "Unauthorized provider response; diagnosis pending.";
                         // Diagnosis only: the run's own classification and fenced
                         // completion below must survive a server that rejects or
                         // does not mount the capability route.
@@ -1579,7 +1576,7 @@ public sealed class RemoteTaskRunner
                             _log,
                             CapabilityProtocol.ProviderAuthentication(provider),
                             "ProviderUnauthorized",
-                            diagnostic.Length <= 500 ? diagnostic : diagnostic[..500],
+                            diagnostic,
                             $"provider-auth:{claimId ?? slot.Lease.LeaseId}:{slot.Lease.FencingToken}",
                             "run",
                             claimId,

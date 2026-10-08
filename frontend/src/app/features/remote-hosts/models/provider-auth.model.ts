@@ -19,6 +19,9 @@ export interface ProviderAuthBadge {
   aliases: readonly string[];
   state: ProviderAuthDisplayState;
   signal: RemoteHostCapabilityHealth['signal'];
+  healthOutcome?: RemoteHostCapabilityHealth['healthOutcome'];
+  credentialHealth?: RemoteHostCapabilityHealth['credentialHealth'];
+  serviceAvailability?: RemoteHostCapabilityHealth['serviceAvailability'];
   detail: string;
   advertisedAt: string | null;
   lastSeenAt: string | null;
@@ -29,6 +32,15 @@ export interface ProviderAuthBadge {
   expiryLabel: string | null;
   limitedUntil: string | null;
   history: readonly CapabilityRecoveryEvent[];
+}
+
+export function providerSignInLabel(badge: ProviderAuthBadge): string | null {
+  if (!['codex', 'claude'].includes(badge.provider)) return null;
+  if (badge.state === 'unavailable'
+    && badge.healthOutcome !== 'credential_invalid'
+    && !(badge.healthOutcome == null && badge.signal === 'signed-out' && badge.consecutiveFailures >= 2)) return null;
+  if (badge.state !== 'unavailable' && badge.state !== 'expiring') return null;
+  return badge.provider === 'codex' ? 'Sign in Codex' : 'Sign in Claude';
 }
 
 export interface ProviderAuthWaitReason {
@@ -165,7 +177,10 @@ export function providerAuthWaitReason(
     && (!configuredRunner
       || status.aliases.some(alias => alias.toLowerCase() === configuredRunner.toLowerCase())));
   if (candidates.some(status =>
-    status.reachable && ['ok', 'retrying', 'expiring'].includes(status.state))) return null;
+    status.reachable && ['ok', 'retrying', 'expiring'].includes(status.state)
+    && status.healthOutcome !== 'provider_incident'
+    && status.healthOutcome !== 'indeterminate'
+    && status.healthOutcome !== 'network_failure')) return null;
 
   const providerLabel = label(provider);
   const hostNames = [...new Set(candidates.map(status => status.hostName).filter(Boolean))];
@@ -173,10 +188,13 @@ export function providerAuthWaitReason(
     ? hostNames.join(', ')
     : configuredRunner ?? 'an execution host';
   const limited = candidates.find(status => status.state === 'limited');
+  const incident = candidates.find(status => status.reachable && status.healthOutcome === 'provider_incident');
+  const diagnosing = candidates.find(status => status.reachable && status.healthOutcome === 'indeterminate');
+  const network = candidates.find(status => status.reachable && status.healthOutcome === 'network_failure');
   const unavailable = candidates.filter(status => status.reachable
     && status.state === 'unavailable'
-    && status.signal === 'signed-out'
-    && status.consecutiveFailures >= 2);
+    && (status.healthOutcome === 'credential_invalid'
+      || (!status.healthOutcome && status.signal === 'signed-out' && status.consecutiveFailures >= 2)));
   const matchingLinks = links.filter(link => !configuredRunner
     || link.runnerId.toLowerCase() === configuredRunner.toLowerCase()
   );
@@ -199,6 +217,12 @@ export function providerAuthWaitReason(
       ? linkWaitLabel(blockingLink)
       : providerTextAllowed && limited
       ? `${providerLabel} rate-limited on ${target}${limited.limitedUntil ? ` until ${limited.limitedUntil}` : ''}`
+      : providerTextAllowed && incident
+        ? `${providerLabel} provider incident on ${target}; retrying`
+      : providerTextAllowed && diagnosing
+        ? `Diagnosing ${providerLabel} access on ${target}`
+      : providerTextAllowed && network
+        ? `${providerLabel} provider connection unavailable on ${target}`
       : providerTextAllowed && unavailable.length > 0
         ? `Waiting for ${providerLabel} sign-in on ${target}`
         : `${target} unreachable since ${lastSeenAt ?? 'no heartbeat was recorded'} (no runner heartbeat; Task Server link or runner service down)`,
@@ -206,6 +230,12 @@ export function providerAuthWaitReason(
       ? `${blockingLink.lastError ?? 'No fresh runner heartbeat is available.'}\nThe Task Server owns recovery for this link.`
       : providerTextAllowed && limited
       ? `${limited.detail}\nThe task stays Ready and retries automatically after the provider limit.`
+      : providerTextAllowed && incident
+        ? `${incident.detail}\nThe task stays Ready while the provider cohort retries. No sign-in is needed.`
+      : providerTextAllowed && diagnosing
+        ? `${diagnosing.detail}\nThe task stays Ready while diagnosis continues.`
+      : providerTextAllowed && network
+        ? `${network.detail}\nThe task stays Ready while connectivity recovers.`
       : providerTextAllowed && unavailable.length > 0
         ? `${detail}\nTwo consecutive provider probes reported an explicit logout. The task stays Ready until sign-in is restored.`
         : `${detail}\nNo fresh runner heartbeat is available. Check the Task Server link and runner services.`,
@@ -329,7 +359,12 @@ function badgeFromCapability(
     && expiryMs - nowMs <= PROVIDER_AUTH_EXPIRY_WARNING_MS;
   let state: ProviderAuthDisplayState;
   if (!capability || !capability.isFresh || !runnerReachable) state = 'unknown';
-  else if (capability.signal === 'rate-limited' || capability.advertisedStatus === 'limited') state = 'limited';
+  else if (capability.healthOutcome === 'quota_exhausted'
+    || capability.signal === 'rate-limited' || capability.advertisedStatus === 'limited') state = 'limited';
+  else if (capability.healthOutcome === 'provider_incident'
+    || capability.healthOutcome === 'indeterminate'
+    || capability.healthOutcome === 'network_failure') state = 'retrying';
+  else if (capability.healthOutcome === 'credential_invalid') state = 'unavailable';
   else if (capability.advertisedStatus !== 'ready'
     || capability.healthState !== 'healthy') state = 'unavailable';
   else if (capability.signal === 'transient-auth-error') state = 'retrying';
@@ -353,6 +388,9 @@ function badgeFromCapability(
     aliases: aliases.filter(Boolean),
     state,
     signal: capability?.signal ?? null,
+    healthOutcome: capability?.healthOutcome ?? null,
+    credentialHealth: capability?.credentialHealth ?? null,
+    serviceAvailability: capability?.serviceAvailability ?? null,
     detail,
     advertisedAt: capability?.advertisedAt ?? null,
     lastSeenAt: runnerLastSeenAt,

@@ -1,4 +1,5 @@
 using AgentRunner;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentRunner.Tests;
@@ -282,6 +283,71 @@ public sealed class ProviderProbeEvidenceTests
         await probe.RefreshAsync("codex", CancellationToken.None);
         await probe.RefreshAsync("codex", CancellationToken.None);
         Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task Fleet_permit_blocks_real_request_and_canary_forces_fresh_success()
+    {
+        var now = At;
+        var calls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(1, calls);
+        probe.UseCanaryPermit((_, _) => Task.FromResult(new ProviderCanaryPermitDto(false, null, "cohort-held")));
+        now = now.AddMinutes(1);
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(1, calls);
+        probe.UseCanaryPermit((_, _) => Task.FromResult(new ProviderCanaryPermitDto(true, null, "canary")));
+        now = now.AddMinutes(1);
+        var recovered = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(2, calls);
+        Assert.Equal(now, recovered.LastRealSuccessAt);
+    }
+
+    [Fact]
+    public async Task No_hold_permit_runs_the_initial_real_probe_in_the_daemon_refresh_loop()
+    {
+        var now = At;
+        var realCalls = 0;
+        var probe = new ProviderAuthProbe(
+            (_, _, _) => Task.FromResult(new ProcessResult(0, "Logged in", "")),
+            executableExists: _ => true,
+            clock: () => now,
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "native store",
+                EffectiveSource: "native-cli-store", CredentialGeneration: "g1"));
+        probe.UseRealRequest((_, _, _) =>
+        {
+            Interlocked.Increment(ref realCalls);
+            return Task.FromResult(new ProcessResult(0, "OK", ""));
+        }, new ProviderStatusIncidentAdapter((_, _) => Task.FromResult("{\"incidents\":[]}"), () => now));
+        Task<ProviderCanaryPermitDto> Permit(string _, CancellationToken __)
+            => Task.FromResult(new ProviderCanaryPermitDto(true, null, "no-hold"));
+        probe.UseCanaryPermit(Permit);
+
+        await RunnerCapabilityProbe.RefreshPermittedProvidersAsync(
+            ["codex"], Permit, probe, _ => { }, CancellationToken.None);
+
+        Assert.Equal(1, realCalls);
+        Assert.Equal(At, probe.Current("codex").LastRealSuccessAt);
+        now = At.AddMinutes(29);
+        await RunnerCapabilityProbe.RefreshPermittedProvidersAsync(
+            ["codex"], Permit, probe, _ => { }, CancellationToken.None);
+        Assert.Equal(1, realCalls);
+        now = At.AddMinutes(30);
+        await RunnerCapabilityProbe.RefreshPermittedProvidersAsync(
+            ["codex"], Permit, probe, _ => { }, CancellationToken.None);
+        Assert.Equal(2, realCalls);
+        Assert.Equal(now, probe.Current("codex").LastRealSuccessAt);
     }
 
     [Fact]

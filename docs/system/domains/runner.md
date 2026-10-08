@@ -898,6 +898,29 @@ rollout decision.
   older per-capability credential observation time, so a delayed positive report
   cannot replace newer data. A restarted instance is not ordered against its
   predecessor's clock or generation.
+- Fleet credential health adds a separate `credential-health-v2` compatibility
+  capability. The runner then sends `credentialHealthVersion: 2` with
+  `healthOutcome`, `credentialHealth` and `serviceAvailability`. The existing
+  `provider-auth:<cli>` keys and schema 1 fallback remain unchanged. A ready
+  local login does not admit a claim when its real request reports a confirmed
+  incident, invalid binding, network failure or indeterminate evidence. Quota
+  reset and connectivity backoff remain with their existing policy owners.
+  The Task Server persists service-wide incident circuits and host credential
+  binding circuits with evidence time, retry deadline and one canary owner.
+  Official incident or independent known-good evidence is required before the
+  provider incident outcome; one unauthorized response opens only an
+  indeterminate hold. Incident canaries retry after roughly 60, 120 and 300
+  seconds with stable jitter. An indeterminate hold creates one diagnosis item
+  after 15 minutes; a confirmed incident creates no renewal item. A confirmed
+  invalid credential creates one generation-keyed renewal item linked to its
+  discovered runbook. Coding and Review request the same Task Server permit
+  before a real probe. An allowed `no-hold` permit runs initial and healthy
+  checks within the host's budget and 30-minute ceiling; an allowed `canary`
+  permit runs recovery even when cached health would defer a normal check.
+  Only a newer real success from that permit's
+  owner, effective source and known credential generation clears the hold.
+  Active attempts keep their
+  fences and settle normally; no product card is used as a provider canary.
 - The monolith V1 Review compatibility mount accepts the Review service's
   `PUT /api/v1/runners/{runner-id}/capabilities` startup and refresh requests
   with the same advertisement and snapshot contracts as the standalone Task

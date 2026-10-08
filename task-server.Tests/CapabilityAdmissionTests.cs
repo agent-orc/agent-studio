@@ -11,6 +11,268 @@ public sealed class CapabilityAdmissionTests
         new(2026, 7, 25, 10, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task Confirmed_incident_signal_blocks_a_ready_provider_capability()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 1);
+        await RegisterAndAdvertiseAsync(store, clock, "codex", "instance", "host-a",
+            CapabilityProtocol.CodingExecutor, CapabilityProtocol.ProviderAuthentication("codex"));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "codex", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, 2,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+             new AdvertisedCapabilityDto(CapabilityProtocol.ProviderAuthentication("codex"),
+                 "provider-auth", "ready", Signal: "provider_incident",
+                 CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                 EffectiveSource: "native-cli-store", HealthOutcome: "provider_incident",
+                 ServiceAvailability: "unavailable", CredentialHealth: "unknown")], CredentialHealthVersion: 2), "codex", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("codex", "instance",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor,
+                CapabilityProtocol.ProviderAuthentication("codex")]), "codex", default);
+        Assert.NotEqual("claimed", claim.Status);
+    }
+
+    [Fact]
+    public async Task Review_claim_stops_on_confirmed_provider_incident()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var key = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "review", "instance", "host-a",
+            CapabilityProtocol.ReviewExecutor, key);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "review", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, 2,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.ReviewExecutor, "executor"),
+             new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                 CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                 EffectiveSource: "native-cli-store", HealthOutcome: "provider_incident",
+                 CredentialHealth: "unknown", ServiceAvailability: "unavailable")],
+            CredentialHealthVersion: 2), "review", default);
+        var claim = await store.ClaimReviewAsync(new ReviewClaimRequest("review", "instance",
+            RequiredCapabilities: [CapabilityProtocol.ReviewExecutor, key]), "review", default);
+        Assert.Equal(ReviewClaimEmptyReasons.CapabilityAdmission, claim.Reason);
+        Assert.Empty(await store.ListProviderHealthItemsAsync(default));
+    }
+
+    [Fact]
+    public async Task Incident_uses_one_durable_canary_and_requires_new_real_success()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 2);
+        var key = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "runner-a", "instance-a", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        await RegisterAndAdvertiseAsync(store, clock, "runner-b", "instance-b", "host-b",
+            CapabilityProtocol.CodingExecutor, key);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth("runner-a", "instance-a", 2, "provider_incident");
+        Assert.Empty(await store.ListProviderHealthItemsAsync(default));
+        var otherClaim = await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-b", default);
+        Assert.NotEqual("claimed", otherClaim.Status);
+        Assert.False((await store.ReserveProviderCanaryAsync("runner-a", "instance-a", "codex", default)).Allowed);
+
+        clock.Advance(TimeSpan.FromSeconds(70));
+        var restarted = Store(temp.Path, clock);
+        await restarted.InitializeAsync();
+        var permits = await Task.WhenAll(
+            store.ReserveProviderCanaryAsync("runner-a", "instance-a", "codex", default),
+            restarted.ReserveProviderCanaryAsync("runner-b", "instance-b", "codex", default));
+        Assert.Single(permits, item => item.Allowed);
+        var owner = permits[0].Allowed ? "runner-a" : "runner-b";
+        var ownerInstance = permits[0].Allowed ? "instance-a" : "instance-b";
+        Assert.Equal("canary", (await store.ReserveProviderCanaryAsync(
+            owner, ownerInstance, "codex", default)).Reason);
+        var other = permits[0].Allowed ? "runner-b" : "runner-a";
+        var otherInstance = permits[0].Allowed ? "instance-b" : "instance-a";
+
+        // Cached healthy evidence from another host and an old success from
+        // the owner cannot release the service-wide incident hold.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(other, otherInstance, other == "runner-a" ? 3 : 2,
+            "healthy", Start.UtcDateTime);
+        await AdvertiseHealth(owner, ownerInstance, owner == "runner-a" ? 3 : 2,
+            "healthy", Start.UtcDateTime);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-b", default)).Status);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var olderRealSuccess = clock.GetUtcNow().UtcDateTime;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(other, otherInstance, other == "runner-a" ? 4 : 3,
+            "provider_incident");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(owner, ownerInstance, owner == "runner-a" ? 4 : 3,
+            "healthy", olderRealSuccess);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-b", default)).Status);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await AdvertiseHealth(owner, ownerInstance, owner == "runner-a" ? 5 : 4,
+            "healthy", clock.GetUtcNow().UtcDateTime);
+        if (owner == "runner-a")
+        {
+            Assert.NotEqual("claimed", (await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b",
+                RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-b", default)).Status);
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await AdvertiseHealth("runner-b", "instance-b", 4, "healthy", clock.GetUtcNow().UtcDateTime);
+        }
+        Assert.Equal("claimed", (await store.ClaimAsync(new ClaimRequest("runner-b", "instance-b",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "runner-b", default)).Status);
+
+        async Task AdvertiseHealth(string runner, string instance, long generation,
+            string outcome, DateTime? successAt = null)
+            => await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                runner, instance, 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+                 new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                     CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                     LastRealSuccessAt: successAt, EffectiveSource: "native-cli-store",
+                     HealthOutcome: outcome,
+                     ServiceAvailability: outcome == "healthy" ? "available" : "unavailable",
+                     CredentialHealth: outcome == "healthy" ? "valid" : "unknown")],
+                CredentialHealthVersion: 2), runner, default);
+    }
+
+    [Fact]
+    public async Task Invalid_shared_binding_creates_one_runbook_item_and_other_provider_can_claim()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 2);
+        var claude = CapabilityProtocol.ProviderAuthentication("claude");
+        var codex = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "coding", "coding-instance", "host-a",
+            CapabilityProtocol.CodingExecutor, claude);
+        await RegisterAndAdvertiseAsync(store, clock, "review", "review-instance", "host-a",
+            CapabilityProtocol.ReviewExecutor, claude);
+        await RegisterAndAdvertiseAsync(store, clock, "other", "other-instance", "host-a",
+            CapabilityProtocol.CodingExecutor, codex);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        foreach (var (runner, instance) in new[] { ("coding", "coding-instance"), ("review", "review-instance") })
+            await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                runner, instance, 2, clock.GetUtcNow().UtcDateTime, 180, 2,
+                [new AdvertisedCapabilityDto(claude, "provider-auth", "ready",
+                    CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                    EffectiveSource: "environment-file", HealthOutcome: "credential_invalid",
+                    ServiceAvailability: "unknown", CredentialHealth: "invalid")], CredentialHealthVersion: 2), runner, default);
+        var renewal = Assert.Single(await store.ListProviderHealthItemsAsync(default));
+        Assert.Equal("renewal", renewal.Kind);
+        Assert.Equal("docs/operations/setup/cli-relogin-runbook.md", renewal.RunbookId);
+        Assert.Equal("generation-a", renewal.CredentialGeneration);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(new ClaimRequest("coding", "coding-instance",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, claude]), "coding", default)).Status);
+        Assert.Equal("claimed", (await store.ClaimAsync(new ClaimRequest("other", "other-instance",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, codex]), "other", default)).Status);
+    }
+
+    [Fact]
+    public async Task Indeterminate_requires_fifteen_minutes_before_one_diagnosis_item()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var key = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "coding", "instance", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        async Task Advertise(long generation)
+            => await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                "coding", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                    CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                    EffectiveSource: "native-cli-store", HealthOutcome: "indeterminate",
+                    ServiceAvailability: "unknown", CredentialHealth: "unknown")], CredentialHealthVersion: 2), "coding", default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Advertise(2);
+        clock.Advance(TimeSpan.FromMinutes(14));
+        await Advertise(3);
+        Assert.Empty(await store.ListProviderHealthItemsAsync(default));
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await Advertise(4);
+        await Advertise(5);
+        Assert.Equal("diagnosis", Assert.Single(await store.ListProviderHealthItemsAsync(default)).Kind);
+    }
+
+    [Fact]
+    public async Task Incident_failed_canaries_back_off_at_sixty_one_twenty_and_three_hundred_seconds()
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var key = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "coding", "instance", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        async Task Incident(long generation)
+            => await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+                "coding", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [new AdvertisedCapabilityDto(key, "provider-auth", "ready",
+                    CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                    EffectiveSource: "native-cli-store", HealthOutcome: "provider_incident",
+                    ServiceAvailability: "unavailable", CredentialHealth: "unknown")], CredentialHealthVersion: 2), "coding", default);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Incident(2);
+        var first = await store.ReserveProviderCanaryAsync("coding", "instance", "codex", default);
+        Assert.InRange((first.NextRetryAt!.Value - clock.GetUtcNow().UtcDateTime).TotalSeconds, 55, 65);
+        clock.Advance(TimeSpan.FromSeconds(70));
+        Assert.True((await store.ReserveProviderCanaryAsync("coding", "instance", "codex", default)).Allowed);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Incident(3);
+        var second = await store.ReserveProviderCanaryAsync("coding", "instance", "codex", default);
+        Assert.InRange((second.NextRetryAt!.Value - clock.GetUtcNow().UtcDateTime).TotalSeconds, 115, 125);
+        clock.Advance(TimeSpan.FromSeconds(130));
+        Assert.True((await store.ReserveProviderCanaryAsync("coding", "instance", "codex", default)).Allowed);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Incident(4);
+        var third = await store.ReserveProviderCanaryAsync("coding", "instance", "codex", default);
+        Assert.InRange((third.NextRetryAt!.Value - clock.GetUtcNow().UtcDateTime).TotalSeconds, 295, 305);
+        Assert.Empty(await store.ListProviderHealthItemsAsync(default));
+    }
+
+    [Theory]
+    [InlineData("quota_exhausted", "limited")]
+    [InlineData("network_failure", "ready")]
+    public async Task Quota_and_network_keep_their_policy_owners_without_login_items(
+        string outcome, string status)
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(Start);
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        await SeedTasksAsync(store, 1);
+        var key = CapabilityProtocol.ProviderAuthentication("codex");
+        await RegisterAndAdvertiseAsync(store, clock, "coding", "instance", "host-a",
+            CapabilityProtocol.CodingExecutor, key);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await store.AdvertiseCapabilitiesAsync(new CapabilityAdvertisementRequest(
+            "coding", "instance", 2, clock.GetUtcNow().UtcDateTime, 180, 2,
+            [new AdvertisedCapabilityDto(CapabilityProtocol.CodingExecutor, "executor"),
+             new AdvertisedCapabilityDto(key, "provider-auth", status,
+                 CredentialGeneration: "generation-a", CredentialObservedAt: clock.GetUtcNow().UtcDateTime,
+                 EffectiveSource: "native-cli-store", HealthOutcome: outcome,
+                 ServiceAvailability: outcome == "quota_exhausted" ? "limited" : "unavailable",
+                 CredentialHealth: "unknown")],
+            CredentialHealthVersion: 2), "coding", default);
+        Assert.Empty(await store.ListProviderHealthItemsAsync(default));
+        Assert.Equal("no-hold", (await store.ReserveProviderCanaryAsync(
+            "coding", "instance", "codex", default)).Reason);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(new ClaimRequest("coding", "instance",
+            RequiredCapabilities: [CapabilityProtocol.CodingExecutor, key]), "coding", default)).Status);
+    }
+
+    [Fact]
     public void Rich_capability_fields_survive_json_deserialization_with_legacy_constructor_available()
     {
         var observed = Start.UtcDateTime;

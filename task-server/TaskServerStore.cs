@@ -45,9 +45,10 @@ public sealed partial class TaskServerStore
     // 29 combines the I05 identity and ordered continuation schemas after
     // merging the independently delivered branches.
     // 30 adds brief-bound attempts, operator revocation, and older-brief offers.
-    // Migrations are idempotent; this version guards downgrades from binaries
-    // without all three contracts.
-    public const int CurrentSchemaVersion = 30;
+    // 31 combines those contracts with persisted provider health circuits and
+    // typed observations. Migrations are idempotent; the version guards
+    // downgrades from binaries without all contracts.
+    public const int CurrentSchemaVersion = 31;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -258,7 +259,7 @@ public sealed partial class TaskServerStore
                 version,
                 _serverId,
                 ["studio", "runner", "review-runner", TaskServerProtocol.EngineClientKind, "management"],
-                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2", "credential-registry-github-v1"],
+                ["coding-plane", "review-plane", "orchestration-plane", "host-orchestrator", "management-plane", "credential-observation-v2", "credential-health-v2", "credential-registry-github-v1"],
                 [TaskServerHubProtocol.StudioRange()]),
             _startedAt,
             _outboxBacklog,
@@ -3671,6 +3672,9 @@ public sealed partial class TaskServerStore
                 effective_source TEXT,
                 native_file_shadowed INTEGER,
                 evidence_refs_json TEXT,
+                health_outcome TEXT,
+                service_availability TEXT,
+                credential_health TEXT,
                 advertised_instance_id TEXT,
                 evidence_id TEXT,
                 evidence_excerpt TEXT,
@@ -3686,6 +3690,33 @@ public sealed partial class TaskServerStore
                 recovery_history_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(runner_id, capability_key)
+            );
+            CREATE TABLE IF NOT EXISTS provider_health_circuits(
+                cohort_key TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                credential_generation TEXT,
+                opened_at TEXT NOT NULL,
+                last_evidence_at TEXT NOT NULL,
+                evidence_id TEXT,
+                evidence_signature TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT,
+                canary_runner_id TEXT,
+                canary_instance_id TEXT,
+                canary_generation TEXT,
+                canary_source TEXT,
+                canary_started_at TEXT,
+                canary_until TEXT
+            );
+            CREATE TABLE IF NOT EXISTS provider_health_items(
+                cohort_key TEXT NOT NULL,
+                credential_generation TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                runbook_id TEXT,
+                opened_at TEXT NOT NULL,
+                closed_at TEXT,
+                PRIMARY KEY(cohort_key, credential_generation, kind)
             );
             CREATE TABLE IF NOT EXISTS credential_registry(
                 installation_id TEXT NOT NULL,
@@ -4242,6 +4273,12 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "runner_capabilities", "effective_source", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "native_file_shadowed", "INTEGER", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_refs_json", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "health_outcome", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "service_availability", "TEXT", ct);
+        await EnsureColumnAsync(connection, "runner_capabilities", "credential_health", "TEXT", ct);
+        await EnsureColumnAsync(connection, "provider_health_circuits", "canary_generation", "TEXT", ct);
+        await EnsureColumnAsync(connection, "provider_health_circuits", "canary_source", "TEXT", ct);
+        await EnsureColumnAsync(connection, "provider_health_circuits", "evidence_signature", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "advertised_instance_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_id", "TEXT", ct);
         await EnsureColumnAsync(connection, "runner_capabilities", "evidence_excerpt", "TEXT", ct);

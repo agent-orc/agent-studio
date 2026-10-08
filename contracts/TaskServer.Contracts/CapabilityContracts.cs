@@ -72,7 +72,10 @@ public sealed record AdvertisedCapabilityDto(
     DateTime? AccessTokenExpiresAt = null,
     string? EffectiveSource = null,
     bool? NativeFileShadowed = null,
-    IReadOnlyList<string>? EvidenceRefs = null)
+    IReadOnlyList<string>? EvidenceRefs = null,
+    string? HealthOutcome = null,
+    string? ServiceAvailability = null,
+    string? CredentialHealth = null)
 {
     // Keep the previous in-process constructor available during rolling
     // upgrades. Rich fields are negotiated on the HTTP wire separately.
@@ -84,7 +87,7 @@ public sealed record AdvertisedCapabilityDto(
         IReadOnlyList<string>? supportedModels)
         : this(key, category, status, version, identity, detail, signal, expiresAt,
             limitedUntil, credentialModifiedAt, evidenceId, evidenceExcerpt, supportedModels,
-            null, null, null, null, null, null, null, null) { }
+            null, null, null, null, null, null, null, null, null, null, null) { }
 }
 
 public sealed record CapabilityAdvertisementRequest(
@@ -107,6 +110,10 @@ public sealed record CapabilityAdvertisementRequest(
         : this(runnerId, instanceId, schemaVersion, advertisedAt, freshForSeconds,
             generation, capabilities, telemetry, release, null) { }
 }
+
+public sealed record ProviderCanaryPermitDto(bool Allowed, DateTime? NextRetryAt, string Reason);
+public sealed record ProviderHealthItemDto(string CohortKey, string CredentialGeneration,
+    string Kind, string? RunbookId, DateTime OpenedAt, DateTime? ClosedAt);
 
 public sealed record HostTelemetrySnapshotDto(
     DateTime ObservedAt,
@@ -260,7 +267,10 @@ public sealed record CapabilityHealthDto(
     DateTime? AccessTokenExpiresAt = null,
     string? EffectiveSource = null,
     bool? NativeFileShadowed = null,
-    IReadOnlyList<string>? EvidenceRefs = null)
+    IReadOnlyList<string>? EvidenceRefs = null,
+    string? HealthOutcome = null,
+    string? ServiceAvailability = null,
+    string? CredentialHealth = null)
 {
     [JsonConstructor]
     public CapabilityHealthDto(
@@ -276,7 +286,7 @@ public sealed record CapabilityHealthDto(
             isFresh, firstFailureAt, lastFailureAt, cooldownUntil, canaryClaimId,
             consecutiveFailures, version, identity, detail, affectedClaims, recoveryHistory,
             signal, expiresAt, limitedUntil, credentialModifiedAt, evidenceId,
-            evidenceExcerpt, supportedModels, null, null, null, null, null, null, null, null) { }
+            evidenceExcerpt, supportedModels, null, null, null, null, null, null, null, null, null, null, null) { }
 }
 
 /// <summary>One CLI installation observed by a runner capability probe.</summary>

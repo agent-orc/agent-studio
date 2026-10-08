@@ -78,6 +78,32 @@ describe('provider auth projection', () => {
     expect(signedOut.state).toBe('unavailable');
   });
 
+  it('shows a negotiated incident as a retry without offering sign-in', () => {
+    const task = {
+      state: '2-ready', cliType: 'codex',
+      executionLocation: { configuredRunnerId: 'agent-runner-01' },
+    } as TaskInfo;
+    const incident = snapshot('unavailable', 'draining', true,
+      'Applicable provider incident; retry scheduled', null, 'signed-out', null, 'codex');
+    incident.capabilities[1] = {
+      ...incident.capabilities[1], signal: 'provider_incident', healthOutcome: 'provider_incident',
+      credentialHealth: 'unknown', serviceAvailability: 'unavailable',
+    };
+    const badge = providerAuthBadgesForSnapshot(incident, NOW);
+    const wait = providerAuthWaitReason(task, badge, [UP_LINK]);
+    expect(badge[0].state).toBe('retrying');
+    expect(wait?.label).toContain('provider incident');
+    expect(wait?.signInTarget).toBeNull();
+    expect(wait?.claudeSignInTarget).toBeNull();
+
+    incident.capabilities[1] = {
+      ...incident.capabilities[1], signal: 'credential_invalid', healthOutcome: 'credential_invalid',
+      credentialHealth: 'invalid', serviceAvailability: 'unknown', consecutiveFailures: 0,
+    };
+    const invalid = providerAuthWaitReason(task, providerAuthBadgesForSnapshot(incident, NOW), [UP_LINK]);
+    expect(invalid?.signInTarget?.runnerId).toBe('agent-runner-01');
+  });
+
   it('holds a Ready card on its configured host until usable auth is advertised', () => {
     const task = {
       state: '2-ready',

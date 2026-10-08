@@ -888,6 +888,8 @@ public sealed partial class TaskServerStoreTests
     [Theory]
     [InlineData(27, "project_repositories")]
     [InlineData(28, "continuation_intents")]
+    [InlineData(30, "provider_health_circuits")]
+    [InlineData(30, "older_brief_deliveries")]
     public async Task Merged_schema_upgrades_stores_from_either_delivery_branch(
         int previousVersion, string missingTable)
     {
@@ -904,12 +906,13 @@ public sealed partial class TaskServerStoreTests
 
         var upgraded = Store(temp.Path);
         await upgraded.InitializeAsync();
+        Assert.True(TaskServerStore.CurrentSchemaVersion > 30);
         Assert.Equal(TaskServerStore.CurrentSchemaVersion, upgraded.Status().SchemaVersion);
         await using var verification = new SqliteConnection($"Data Source={first.DatabasePath};Pooling=False");
         await verification.OpenAsync();
         await using var query = verification.CreateCommand();
-        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents');";
-        Assert.Equal(2L, (long)(await query.ExecuteScalarAsync())!);
+        query.CommandText = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('project_repositories', 'continuation_intents', 'provider_health_circuits', 'older_brief_deliveries');";
+        Assert.Equal(4L, (long)(await query.ExecuteScalarAsync())!);
     }
 
     [Fact]

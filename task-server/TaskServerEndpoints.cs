@@ -18,6 +18,9 @@ public static class TaskServerEndpoints
         api.MapGet("/failure-fingerprints", async (
             string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)));
+        api.MapGet("/management/provider-health-items", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListProviderHealthItemsAsync(ct)))
+            .RequireTaskServerScope(TaskServerScopes.Management);
         api.MapGet("/management/failure-fingerprints", async (
             string? fingerprint, DateTime? sinceUtc, TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ReadFailureFingerprintsAsync(fingerprint, sinceUtc, ct)))
@@ -294,6 +297,16 @@ public static class TaskServerEndpoints
             if (!string.Equals(runnerId, request.RunnerId, StringComparison.Ordinal))
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and capability runner ids differ."));
             return await InvokeAsync(() => store.AdvertiseCapabilitiesAsync(request, Actor(context), ct));
+        });
+        runners.MapPost("/{runnerId}/provider-canary/{provider}", async (
+            HttpContext context, string runnerId, string provider, string instanceId,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is not { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
+                || !string.Equals(boundRunner, runnerId, StringComparison.Ordinal))
+                return Results.Forbid();
+            return await InvokeAsync(() => store.ReserveProviderCanaryAsync(runnerId, instanceId, provider, ct));
         });
         runners.MapGet("/{runnerId}/provider-comparison", async (
             HttpContext context, string runnerId, string provider, string? generation,
