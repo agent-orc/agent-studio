@@ -15,7 +15,7 @@ public sealed class ProviderAuthProvisioningTests
             "agent@runner-01",
             "agent-runner-01",
             environmentVariable,
-            "sk-ant-oat01-provider-secret-fixture");
+            "fixture" + "-provider-secret-value");
 
         Assert.Null(ProviderAuthProvisioningPolicy.Validate(request));
         Assert.Equal("claude", ProviderAuthProvisioningPolicy.ProviderFor(environmentVariable));
@@ -24,7 +24,7 @@ public sealed class ProviderAuthProvisioningTests
     [Fact]
     public void SshTransport_KeepsSecretOutOfEveryProcessArgument()
     {
-        const string secret = "sk-ant-oat01-never-on-the-command-line";
+        var secret = "fixture" + "-never-on-the-command-line";
         var startInfo = SshProviderAuthProvisioner.BuildStartInfo(
             "agent@runner-01",
             "CLAUDE_CODE_OAUTH_TOKEN");
@@ -47,6 +47,38 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("/usr/local/sbin/agent-runner-deploy restart-review", standardInput);
         Assert.Contains("provider-auth-unit-pending=", standardInput);
         Assert.DoesNotContain("claude.env", standardInput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Provisioning_failure_restores_prior_environment_and_restarts_changed_units()
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value");
+        Assert.Contains("trap rollback_on_failure EXIT", script);
+        Assert.Contains("mv -fT -- \"$rollback_file\" \"$provider_auth_file\"", script);
+        Assert.Contains("systemctl restart \"$unit\"", script);
+        Assert.Contains("install_committed=1", script);
+    }
+
+    [Fact]
+    public void Managed_api_key_renewal_fences_the_prior_generation_under_a_host_lock()
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value",
+            new ProviderAuthRenewalFence("renewal_fixture", "generation-a"));
+        Assert.Contains("operation_id='renewal_fixture'", script);
+        Assert.Contains("expected_generation='generation-a'", script);
+        Assert.Contains("flock -n 9", script);
+        Assert.Contains("current_generation\" == \"$expected_generation", script);
+        Assert.Contains("provider-auth-recovery-required", script);
+    }
+
+    [Fact]
+    public void Claude_native_fence_accepts_native_store_generation()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        Assert.Contains("expected_generation='native-cli-store:1791460920000'", script);
     }
 
     [Fact]

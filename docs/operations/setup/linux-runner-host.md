@@ -523,12 +523,17 @@ generation through the same two-unit check before another login starts.
 
 Claude environment renewal writes an opaque generation marker beside the token
 in `provider-auth.env`; no token-derived hash is used as a generation. The host
-keeps a root-only rollback copy while verification is pending. If `runner.env`
+keeps a protected `root:agent 0640` rollback copy while verification is pending. If `runner.env`
 still has a provider value, identify each daemon's effective source first, then
 remove the duplicate through the owned host configuration flow after both units
 and a real request prove the shared file. Do not infer token expiry from a
 native file or a guessed lifetime. The host-owned API-key path uses the same
 protected file and generation check when renewing an existing registry binding.
+An API-key install receipt stays pending until both runner units report that
+generation and effective source after real provider requests. The setup wizard
+shows success only after that receipt completes. If installation or unit
+verification fails, the host restores the protected prior file and restarts
+changed units; an incomplete restore requires explicit recovery.
 
 Codex and native Claude login renew the CLI's own host store. A rename of
 `auth.json` or `.credentials.json` can detach existing clean-context hard links.

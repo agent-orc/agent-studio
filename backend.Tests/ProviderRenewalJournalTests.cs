@@ -4,16 +4,21 @@ using AgentStudio.Management;
 using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
-namespace OrchestratorApi.Tests;
+namespace AgentStudio.Tests;
+
+// clock-independent: fixed observation dates are compared only with the receipt deadline.
 
 public sealed class ProviderRenewalJournalTests
 {
-    [Fact]
-    public async Task Completion_requires_distinct_coding_and_review_advertisements_with_real_requests()
+    [Theory]
+    [InlineData("R3", "codex", "native-cli-store")]
+    [InlineData("R8", "claude", "environment-file")]
+    public async Task Completion_requires_distinct_coding_and_review_advertisements_with_real_requests(
+        string method, string provider, string source)
     {
         var observedAt = new DateTime(2026, 10, 8, 12, 2, 0, DateTimeKind.Utc);
         var receipt = new ProviderRenewalReceiptDto("renewal_fixture", "installation", "host",
-            "credential", "generation-a", "R3", "signin-fixture", "operator",
+            "credential", "generation-a", method, "signin-fixture", "operator",
             observedAt.AddMinutes(13), "installed", null, null, [], false, [], observedAt);
         var posted = new List<AdvanceProviderRenewalRequest>();
         var reviewHasRealRequest = false;
@@ -23,17 +28,17 @@ public sealed class ProviderRenewalJournalTests
             {
                 var capabilities = new[]
                 {
-                    Snapshot("coding", CapabilityProtocol.CodingExecutor, observedAt),
+                    Snapshot("coding", CapabilityProtocol.CodingExecutor, observedAt, provider, source),
                     Snapshot("review", CapabilityProtocol.ReviewExecutor,
-                        reviewHasRealRequest ? observedAt : null),
+                        reviewHasRealRequest ? observedAt : null, provider, source),
                 };
                 return JsonResponse(capabilities);
             }
             var step = request.Content!.ReadFromJsonAsync<AdvanceProviderRenewalRequest>().GetAwaiter().GetResult()!;
             posted.Add(step);
             return JsonResponse(receipt with { Step = step.Step,
-                ObservedGeneration = step.ObservedGeneration ?? "native-cli-store:1791460920000",
-                EffectiveSource = step.EffectiveSource ?? "native-cli-store",
+                ObservedGeneration = step.ObservedGeneration ?? "generation-b",
+                EffectiveSource = step.EffectiveSource ?? source,
                 RealRequestSucceeded = true });
         });
         var journal = new ProviderRenewalTaskServerJournal(new FixedClientFactory(handler));
@@ -49,7 +54,8 @@ public sealed class ProviderRenewalJournalTests
         Assert.True(posted[0].RealRequestSucceeded);
     }
 
-    private static object Snapshot(string role, string roleKey, DateTime? observedAt) => new
+    private static object Snapshot(string role, string roleKey, DateTime? observedAt,
+        string provider, string source) => new
     {
         runnerId = $"runner-{role}", hostId = "host", status = "active",
         capabilities = new object[]
@@ -57,9 +63,9 @@ public sealed class ProviderRenewalJournalTests
             new { key = roleKey },
             new
             {
-                key = CapabilityProtocol.ProviderAuthentication("codex"),
-                isFresh = true, credentialGeneration = "native-cli-store:1791460920000",
-                lastRealSuccessAt = observedAt, effectiveSource = "native-cli-store",
+                key = CapabilityProtocol.ProviderAuthentication(provider),
+                isFresh = true, credentialGeneration = "generation-b",
+                lastRealSuccessAt = observedAt, effectiveSource = source,
                 healthOutcome = "healthy",
             },
         },

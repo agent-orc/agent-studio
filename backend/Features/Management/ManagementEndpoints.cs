@@ -167,7 +167,9 @@ public static class ManagementEndpoints
                 }
                 try
                 {
-                    var response = await provisioner.ProvisionAsync(request, ct);
+                    var response = await provisioner.ProvisionAsync(request,
+                        operation is null ? null : new ProviderAuthRenewalFence(
+                            operation.OperationId, operation.ExpectedGeneration), ct);
                     if (operation is not null)
                     {
                         await renewal.AdvanceAsync(operation.OperationId, "installed", ct);

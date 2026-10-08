@@ -445,6 +445,9 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
         => StartScript(sshTarget, onOutput, cancellationToken,
             FencedScript(native ? NativeScript : RemoteScript, operationId, expectedGeneration));
 
+    internal static string BuildFencedScriptForTest(string operationId, string expectedGeneration, bool native)
+        => FencedScript(native ? NativeScript : RemoteScript, operationId, expectedGeneration);
+
     private static string FencedScript(string script, string operationId, string expectedGeneration)
     {
         static bool Safe(string value) => value.Length <= 128 &&
