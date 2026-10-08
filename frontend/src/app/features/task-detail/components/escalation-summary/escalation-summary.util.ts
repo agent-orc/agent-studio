@@ -314,13 +314,19 @@ export function latestParkedAttempt(
   const started = latestRun?.startedAt
     ?? [...timeline].reverse().find(event => event.kind === 'agent_run_started')?.ts;
   if (!started) return null;
+  const startedAt = Date.parse(started);
+  if (!Number.isFinite(startedAt)) return null;
   const finished = latestRun?.endedAt
     ?? [...timeline].reverse().find(event =>
-      event.kind === 'agent_run_finished' && Date.parse(event.ts) >= Date.parse(started))?.ts;
+      event.kind === 'agent_run_finished' && Date.parse(event.ts) >= startedAt)?.ts;
   if (!finished) return null;
+  const finishedAt = Date.parse(finished);
+  if (!Number.isFinite(finishedAt) || finishedAt < startedAt) return null;
   const parked = info.parkedBlocker;
-  if (!parked || Date.parse(parked.parkedAt) < Date.parse(started)) return null;
-  const endedAt = new Date(finished).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  if (!parked) return null;
+  const parkedAt = Date.parse(parked.parkedAt);
+  if (!Number.isFinite(parkedAt) || parkedAt < startedAt) return null;
+  const endedAt = new Date(finishedAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
   const reason = parked.reason?.trim() || parked.conditionDescription?.trim() || 'Reason not recorded';
   return `Latest attempt ended ${endedAt}: ${reason}`;
 }

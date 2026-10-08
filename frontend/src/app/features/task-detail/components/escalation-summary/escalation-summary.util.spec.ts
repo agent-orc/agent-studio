@@ -50,6 +50,29 @@ describe('latestParkedAttempt', () => {
       parkedBlocker: { parkedAt: '2026-10-06T04:20:00Z', reason: 'Old decision.' },
     } as Partial<TaskInfo>), timeline)).toBeNull();
   });
+
+  it('ignores an invalid run end timestamp instead of throwing while rendering', () => {
+    const task = info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+    } as Partial<TaskInfo>);
+    expect(latestParkedAttempt(task, [], [{
+      startedAt: '2026-10-06T04:21:54Z', endedAt: 'invalid',
+    } as import('../../../run-timeline').RunRecord])).toBeNull();
+    expect(latestParkedAttempt(task, [timeline[0], { ...timeline[1], ts: 'invalid' }])).toBeNull();
+  });
+
+  it('ignores invalid start and park timestamps', () => {
+    const task = info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: 'invalid', reason: 'Push protection rejected the branch.' },
+    } as Partial<TaskInfo>);
+    expect(latestParkedAttempt(task, timeline)).toBeNull();
+    expect(latestParkedAttempt(info({
+      state: '5e-escalated',
+      parkedBlocker: { parkedAt: '2026-10-06T04:22:54Z', reason: 'Push protection rejected the branch.' },
+    } as Partial<TaskInfo>), [{ ...timeline[0], ts: 'invalid' }, timeline[1]])).toBeNull();
+  });
 });
 
 function evidence(over: Partial<ReviewEvidenceEntry> = {}): ReviewEvidenceEntry {
