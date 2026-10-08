@@ -168,7 +168,7 @@
         {{ pb.label }}
       </span>
     }
-    <app-task-card-quota-wait [wait]="currentQuotaWait()" />
+    <app-task-card-quota-wait [wait]="currentQuotaWait()" /><app-task-card-cause-wait [task]="job()" />
     @if (executionBadge(); as badge) {
       @if (badge.tone !== 'running') {
         <span class="task-card__execution-pill" [class]="'task-card__execution-pill--' + badge.tone">
@@ -266,7 +266,7 @@
         [jobId]="job().id" [project]="job().projectName"
         [watchPath]="job().watchPath"
         testId="task-card-model-migration" />
-      <app-execution-location-badge [execution]="displayedExecutionLocation()" />
+      <app-run-disposition-badges [execution]="displayedExecutionLocation()" [state]="job().state" [olderBriefPending]="job().olderBriefDelivery?.status === 'pending'" />
       @if (integrationStatus(); as integ) {
         <app-integration-status-badge
           [integration]="integ"

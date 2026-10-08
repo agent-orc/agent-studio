@@ -42,7 +42,6 @@ public sealed class ProviderAuthProbeTests
     [Theory]
     [InlineData(0, "Not logged in. Run `claude auth login` to sign in.")]
     [InlineData(1, "Error: login required")]
-    [InlineData(1, "HTTP 401 Unauthorized")]
     [InlineData(1, "OAuth token expired")]
     public async Task Two_explicit_dead_session_answers_are_unavailable_whatever_the_exit_code(
         int exitCode,
@@ -59,6 +58,18 @@ public sealed class ProviderAuthProbeTests
         Assert.Equal(ProviderAuthProbe.SignalSignedOut, status.Signal);
         Assert.Contains("no usable session", status.Detail, StringComparison.Ordinal);
         Assert.Contains("claude auth status --text", status.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Bare_401_status_never_becomes_a_login_instruction()
+    {
+        var probe = Probe(Answers(1, "", "HTTP 401 Unauthorized: Incorrect API key provided: sk-svcacct-REDACTED"));
+        await probe.RefreshAsync("codex", CancellationToken.None);
+        var status = await probe.RefreshAsync("codex", CancellationToken.None);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, status.Outcome);
+        Assert.True(status.ProbeDegraded);
+        Assert.NotEqual(ProviderAuthProbe.SignalSignedOut, status.Signal);
+        Assert.DoesNotContain("sk-svcacct", status.Detail, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -227,8 +238,9 @@ public sealed class ProviderAuthProbeTests
         await probe.RefreshAsync("claude", CancellationToken.None);
         var status = await probe.RefreshAsync("claude", CancellationToken.None);
 
-        Assert.Equal(ProviderAuthProbe.Unavailable, status.Status);
-        Assert.Contains("[redacted]", status.Detail, StringComparison.Ordinal);
+        Assert.Equal(ProviderAuthProbe.Ready, status.Status);
+        Assert.Equal(ProviderProbeOutcome.Indeterminate, status.Outcome);
+        Assert.Contains("requiring corroboration", status.Detail, StringComparison.Ordinal);
         Assert.DoesNotContain("sk-ant-api03", status.Detail, StringComparison.Ordinal);
     }
 

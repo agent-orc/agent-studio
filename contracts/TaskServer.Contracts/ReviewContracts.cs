@@ -109,7 +109,12 @@ public sealed record ReviewPlanDto(
     string? CarriedOverFrom = null,
     IReadOnlyList<ReviewVerdictDto>? CarriedVerdicts = null,
     ScopedReviewPlanDto? ScopedReview = null,
-    bool BuildTestDeferredToBatch = false);
+    string? BriefSha256 = null,
+    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null,
+    bool BuildTestDeferredToBatch = false,
+    string? TaskMode = null);
+
+public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 
 public sealed record CreateReviewSubjectRequest(
     string TaskId,
@@ -601,7 +606,9 @@ public sealed record ReviewReportRequest(
     IReadOnlyList<ReviewCommandEvidenceDto> Commands,
     IReadOnlyList<ReviewArtifactEvidenceDto> Artifacts,
     IReadOnlyList<ReviewVerdictDto> Verdicts,
-    long AuthorityEpoch = 0);
+    long AuthorityEpoch = 0,
+    string? BriefSha256 = null,
+    IReadOnlyList<ReviewSkippedAspectDto>? SkippedAspects = null);
 
 /// <summary>
 /// State of the task-folder evidence write (grade markdown, aspect files,

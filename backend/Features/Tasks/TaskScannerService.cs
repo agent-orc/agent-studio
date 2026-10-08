@@ -710,6 +710,10 @@ public class TaskScannerService : ITaskScanner
                 Title = raw.TryGetProperty("title", out var title) ? title.GetString() ?? "" : "",
                 AcceptanceScope = ReadAcceptanceScope(raw),
                 State = resolvedState,
+                RemoteClaimFailure = raw.TryGetProperty("remoteClaimFailure", out var runnerFailure)
+                    && runnerFailure.ValueKind == JsonValueKind.Object
+                    ? JsonSerializer.Deserialize<RemoteClaimFailureState>(runnerFailure.GetRawText(), TaskJsonFile.ReadOpts)
+                    : null,
                 ArchiveState = ReadArchiveState(jobDir),
                 Order = raw.TryGetProperty("order", out var ord) && ord.TryGetInt32(out var orderVal) ? orderVal : 999,
                 Agent = raw.TryGetProperty("agent", out var agent) ? agent.GetString() ?? "" : "",
@@ -743,6 +747,7 @@ public class TaskScannerService : ITaskScanner
                 // the platform default.
                 ContextMode = raw.TryGetProperty("contextMode", out var cxm) ? cxm.GetString() : null,
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
+                CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
                 QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
                 Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
@@ -766,6 +771,7 @@ public class TaskScannerService : ITaskScanner
                 CodeActivityDetected = DetectCodeActivity(raw, jobDir, scanSessionLog: !isArchive),
                 SessionChain = ReadSessionChain(raw),
                 PendingIntent = ReadPendingIntent(jobDir),
+                OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
                 OutcomeIssue = isArchive ? null : ResolveOutcomeIssue(jobDir, resolvedState),
                 Fixture = raw.TryGetProperty("fixture", out var fix)
                     && fix.ValueKind is JsonValueKind.True,
@@ -2271,8 +2277,10 @@ public class TaskScannerService : ITaskScanner
         => cached with
         {
             QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
+            CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
             QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
+            OlderBriefDelivery = OlderBriefDeliveryStore.Read(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
             SteerPendingSince = ReadSteerPendingSince(jobDir, cached.State),
             ParkedBlocker = ReadParkedBlocker(jobDir, cached.State),

@@ -35,6 +35,7 @@ export interface BatchMoveItemInput {
   jobId: string;
   watchPath: string;
   targetState: string;
+  runIntent?: 'revoke' | 'steer';
 }
 
 /** Final outcome for one batch item, available as soon as that item finishes. */
@@ -517,10 +518,29 @@ export interface BetterCandidateNote {
 export interface TaskInfo {
   id: string;
   taskKey: string;
+  olderBriefDelivery?: {
+    attemptId: string;
+    briefVersion: string;
+    currentBriefVersion: string;
+    resultSha?: string | null;
+    resultRef?: string | null;
+    salvageBranch?: string | null;
+    salvageCommitSha?: string | null;
+    offeredAtUtc: string;
+    status: 'pending' | 'accept' | 'starting-point' | 'discard';
+    decidedAtUtc?: string | null;
+  } | null;
   key?: string | null;
   displayKey?: string | null;
   title: string;
   state: string;
+  remoteClaimFailure?: {
+    attempts: number;
+    fingerprint?: string | null;
+    reason: string;
+    cause?: string | null;
+    host?: string | null;
+  } | null;
   archiveState?: string | null;
   /** Explicit content approval used only by dependsOn edges with releaseGate=true. */
   released?: boolean;
@@ -565,6 +585,18 @@ export interface TaskInfo {
     thresholdMinutes: number;
     reason: string;
     scope?: 'quota' | 'provider' | string;
+  } | null;
+  /**
+   * AGT-W57: the card waits on a cause card opened by the fleet-wide cause
+   * breaker. It stays in its lane and shows "Waiting for <key>" instead of
+   * being escalated or retried.
+   */
+  causeWait?: {
+    causeKey: string;
+    fingerprint: string;
+    failureClass: string;
+    since: string;
+    reason: string;
   } | null;
   /**
    * Card kind. `epic` cards are containers for sub-tasks; `task` (the default
@@ -1093,20 +1125,20 @@ export interface PendingIntent {
 
 /**
  * Discriminated response for `POST /api/tasks/{id}/continue` and `/start`.
- * `started` means the run is live; `queued` means the project was busy
- * with another job, the user's intent has been saved on the target task,
- * and the target task is now at the top of `2-ready`. The frontend treats
+ * `started` means the run is live; `queued` means the user's intent has
+ * been saved on the target task and it is now in `2-ready`. The frontend treats
  * `queued` as success-with-info (no modal); the chat carries the
- * orchestrator's `[queued]` line.
+ * orchestrator's `[queued]` line. `saved` means the intent persisted but
+ * the move to Ready failed, so the operator must move the card.
  */
 export interface ContinueTaskResponse {
-  status: 'started' | 'queued';
+  status: 'started' | 'queued' | 'saved';
   execution?: CliExecution | null;
   queued?: ContinueTaskQueuedInfo | null;
 }
 
 export interface ContinueTaskQueuedInfo {
-  reason: 'project-busy';
+  reason: string;
   activeJobId?: string | null;
   activeJobTitle?: string | null;
   position: number;

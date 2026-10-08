@@ -25,6 +25,8 @@ public record TaskInfo
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
     public string State { get; init; } = "draft";
+    /// <summary>Consecutive runner infrastructure failure shown in Execution Hosts.</summary>
+    public AgentStudio.Runner.RemoteClaimFailureState? RemoteClaimFailure { get; init; }
     /// <summary>Cold-storage marker when this task has an archive manifest.</summary>
     public string? ArchiveState { get; init; }
     /// <summary>
@@ -86,6 +88,11 @@ public record TaskInfo
     /// not turn an intentional wait into an apparent hang.
     /// </summary>
     public QuotaWaitStatus? QuotaWait { get; init; }
+    /// <summary>
+    /// AGT-W57: the card waits on a cause card opened by the fleet-wide cause
+    /// breaker. Read from the durable <c>cause-wait.json</c> marker.
+    /// </summary>
+    public CauseWaitStatus? CauseWait { get; init; }
     /// <summary>
     /// Card kind: <c>task</c> (default, a runnable unit of work) or <c>epic</c>
     /// (a container grouping sub-tasks under one overarching goal). An epic is
@@ -219,6 +226,8 @@ public record TaskInfo
     /// <see cref="PendingIntent"/>.
     /// </summary>
     public PendingIntent? PendingIntent { get; init; }
+    /// <summary>A remote result held for a decision because the card brief changed after claim.</summary>
+    public AgentStudio.Tasks.OlderBriefDeliveryOffer? OlderBriefDelivery { get; init; }
 
     /// <summary>
     /// Snapshot of the auto-mode "stuck loop" counter for this job, populated

@@ -12,6 +12,26 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
         Path.GetTempPath(), "remote-review-evidence-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Grade_names_brief_version_and_skipped_content_aspect()
+    {
+        Directory.CreateDirectory(_root);
+        var request = Request(new string('a', 40), []) with
+        {
+            BriefSha256 = new string('b', 64),
+            SkippedAspects = [new ReviewSkippedAspectDto(
+                "concept-fit", "Disabled by project pipeline-step setting.")],
+        };
+
+        var file = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "concept-review", "concept-subject", request,
+            new string('c', 64), new DateTime(2026, 10, 6, 7, 0, 0, DateTimeKind.Utc), default);
+
+        var grade = await File.ReadAllTextAsync(Path.Combine(_root, file));
+        Assert.Contains($"briefSha256: \"{new string('b', 64)}\"", grade);
+        Assert.Contains("| concept-fit | Disabled by project pipeline-step setting. |", grade);
+    }
+
+    [Fact]
     public async Task Preparation_failure_card_names_exact_command_and_persists_complete_streams()
     {
         Directory.CreateDirectory(_root);

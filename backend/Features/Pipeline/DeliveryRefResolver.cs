@@ -31,6 +31,14 @@ public sealed record DeliveryRefResolution(
 /// </summary>
 public static class DeliveryRefResolver
 {
+    /// <summary>Immutable commit SHAs attributed to this card's delivery.</summary>
+    public static IReadOnlyList<string> AttributedCommitShas(string jobFolderPath)
+        => ReadCard(jobFolderPath).Commits
+            .Select(commit => commit.Sha)
+            .Where(ValidFullSha)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     public static DeliveryRefResolution Resolve(string jobId, string jobFolderPath)
     {
         var subject = ReviewSubjectStore.Read(jobFolderPath);

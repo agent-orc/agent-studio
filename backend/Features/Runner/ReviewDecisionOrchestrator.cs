@@ -2426,19 +2426,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             return;
         }
 
-        var qualityAnalysis = await RunQualityAngularRulesPostStepAsync(
+        await RunQualityAngularRulesPostStepAsync(
             entry, current, pipelineRecord?.Attempt, ct);
-        var qualityGate = qualityAnalysis is null
-            ? null
-            : BuildQualityAnalysisGateDecision(
-                qualityAnalysis,
-                CountPriorReissues(workspace, entry.Name, current.Id),
-                ConfiguredMaxReissues(entry.Name));
-        if (qualityGate is not null)
-        {
-            await HandleCompletionGateAsync(workspace, entry, pending, current, qualityGate, ct);
-            return;
-        }
 
         // Per-project pipeline config: drop aspects the project disabled and
         // route each remaining aspect's CLI call to its configured model
@@ -4187,8 +4176,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var status = result.Verdict switch
             {
                 AgentStudio.Pipeline.QualityAnalysisStepVerdict.Passed => PipelineStepStatus.Passed,
-                AgentStudio.Pipeline.QualityAnalysisStepVerdict.Findings
-                    when result.BlockingFindings.Count > 0 => PipelineStepStatus.Failed,
                 AgentStudio.Pipeline.QualityAnalysisStepVerdict.Findings => PipelineStepStatus.Passed,
                 AgentStudio.Pipeline.QualityAnalysisStepVerdict.NotApplicable => PipelineStepStatus.NotApplicable,
                 _ => PipelineStepStatus.Skipped,
@@ -4208,30 +4195,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             });
         }
         return result;
-    }
-
-    internal static CompletionGate.Decision? BuildQualityAnalysisGateDecision(
-        AgentStudio.Pipeline.QualityAnalysisStepResult result,
-        int priorReissues,
-        int maxReissues)
-    {
-        if (result.BlockingFindings.Count == 0) return null;
-
-        return new CompletionGate.Decision
-        {
-            Action = priorReissues >= maxReissues
-                ? CompletionGate.CompletionGateAction.Escalate
-                : CompletionGate.CompletionGateAction.Reissue,
-            Findings = result.BlockingFindings.Select(finding =>
-            {
-                var location = finding.Locations.FirstOrDefault();
-                var reference = location is null
-                    ? finding.RuleId
-                    : $"{finding.RuleId} {location.Path}:{location.StartLine ?? 1}";
-                return $"{reference}: {finding.Title}";
-            }).ToList(),
-            Reason = "Quality Studio named-rule findings require a steered retry.",
-        };
     }
 
     /// <summary>

@@ -815,9 +815,10 @@ public sealed class TaskServerClient : IDisposable
             RunSpec: claim.MechanicalFreshRoute is { } mechanicalRoute
                 ? new RunSpecDto(mechanicalRoute.CliType, mechanicalRoute.Model, mechanicalRoute.ThinkingLevel,
                     ContextMode: CodingAgentRunner.Model.CliContextModes.Clean,
-                    FollowUp: claim.FollowUp)
+                    FollowUp: claim.FollowUp,
+                    BriefVersion: claim.Run.BriefVersion)
                 : selectedIntent is null && providerFallback is null && claim.FollowUp is null
-                    ? null
+                    ? new RunSpecDto(BriefVersion: claim.Run.BriefVersion)
                     : new RunSpecDto(
                         selectedIntent is not null && (selectedFields is null || selectedFields.CliType
                             || selectedFields.Model || selectedFields.ThinkingLevel)
@@ -829,7 +830,8 @@ public sealed class TaskServerClient : IDisposable
                         ContextMode: providerFallback is null
                             ? null
                             : CodingAgentRunner.Model.CliContextModes.Clean,
-                        FollowUp: claim.FollowUp),
+                        FollowUp: claim.FollowUp,
+                        BriefVersion: claim.Run.BriefVersion),
             ContinuationBaseRef: claim.ContinuationBaseRef,
             ContinuationBaseSha: claim.ContinuationBaseSha,
             PreviousSession: claim.PreviousSession,
@@ -1487,7 +1489,8 @@ public sealed class TaskServerClient : IDisposable
                     : new Contract.LeaseReleaseSalvage(
                         req.SalvageBranch,
                         req.SalvageCommitSha,
-                        req.Detail)),
+                        req.Detail),
+                req.Detail),
             ct);
         _v1Leases.TryRemove(req.TaskKey, out _);
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
@@ -1754,6 +1757,21 @@ public sealed class TaskServerClient : IDisposable
         return new RemoteRunCompletionResponse(req.TaskKey, typedOutcome, targetState);
     }
 
+    public async Task ReportRevokedReferenceAsync(
+        RunLeaseInfoDto lease, string branch, string commitSha, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(lease.AttemptId)) return;
+        var instanceId = _useV1 ? V1Authority(lease.TaskKey).InstanceId : RunnerInstanceId;
+        if (string.IsNullOrWhiteSpace(instanceId)) return;
+        var url = _useV1
+            ? $"/api/v1/runs/{Uri.EscapeDataString(lease.AttemptId)}/revoked-reference"
+            : $"/api/runner/lease/{Uri.EscapeDataString(lease.AttemptId)}/revoked-reference";
+        await PostJsonWithoutResponseAsync(url,
+            new Contract.RevokedRunReferenceRequest(
+                lease.RunnerId, instanceId, lease.LeaseId, lease.FencingToken,
+                branch, commitSha), ct);
+    }
+
     public async Task<ResultHandoffAck> AcknowledgeResultHandoffAsync(
         RunOutboxAuthority authority,
         RunOutboxItem item,
@@ -1908,6 +1926,29 @@ public sealed class TaskServerClient : IDisposable
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadAsStringAsync(ct);
+    }
+
+    public async Task<ProviderComparisonSnapshot> ReadProviderComparisonAsync(
+        ProviderComparisonQuery query, CancellationToken ct)
+    {
+        if (_options is null) return new(null, null);
+        var url = $"/api/v1/runners/{Uri.EscapeDataString(_options.RunnerId)}/provider-comparison"
+            + $"?provider={Uri.EscapeDataString(query.Provider)}"
+            + $"&generation={Uri.EscapeDataString(query.Generation ?? "")}"
+            + $"&requestShape={Uri.EscapeDataString(query.RequestShape)}"
+            + $"&effectiveSource={Uri.EscapeDataString(query.EffectiveSource)}"
+            + $"&failureSignature={Uri.EscapeDataString(query.FailureSignature)}";
+        using var response = await _http.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode) return new(null, null);
+        var metadata = await response.Content.ReadFromJsonAsync<Contract.ProviderProbeComparisonResponseDto>(Json, ct);
+        var evidence = metadata?.Comparison;
+        return new(metadata?.CredentialIdentity,
+            evidence is null ? null : new ProviderComparisonEvidence(
+                evidence.Provider, evidence.Service, evidence.RequestShape,
+                evidence.FailureSignature, evidence.LastIndependentSuccessAt,
+                evidence.ObservedAt, evidence.IndependentCredential,
+                evidence.ComparableEndpoint, evidence.HostId,
+                evidence.CredentialIdentity, evidence.ExecutedOnComparisonHost));
     }
 
     private async Task<TResp?> PostJsonAsync<TReq, TResp>(string url, TReq body, CancellationToken ct)

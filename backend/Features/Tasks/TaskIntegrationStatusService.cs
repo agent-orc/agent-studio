@@ -196,7 +196,18 @@ public sealed class TaskIntegrationStatusService
                 .Select(key => reaches.TryGetValue(key!, out var reach)
                     ? $"{key!.Root}:{key.Branch}:{reach.PublishedHead ?? "missing"}"
                     : $"{key!.Root}:{key.Branch}:unavailable"));
-            result[job.TaskKey] = classified with { TargetRefFingerprint = fingerprint };
+            result[job.TaskKey] = classified with
+            {
+                TargetRefFingerprint = fingerprint,
+                Verification = IntegrationStatuses.IsMerged(classified.Status)
+                    ? ResolveVerification(
+                        job,
+                        CurrentIntegrationSha(classified, card, reaches),
+                        classified.IntegrationBranch,
+                        classified.Sha ?? CurrentReviewSubject(job)?.ResultSha,
+                        BranchHistory(classified, card, reaches))
+                    : null,
+            };
         }
 
         return result;
@@ -257,10 +268,18 @@ public sealed class TaskIntegrationStatusService
         if (IntegrationStatuses.IsMerged(status?.Status)
             && lastMerge?.Status != PipelineStepStatus.Pending)
         {
+            return ResolveMergedRecovery(job, status!.Verification, lastMerge);
+        }
+
+        // AGT-3002 lets cards with a historical verification row reach this
+        // decision so a merged one is checked for exact-tree evidence. For a
+        // delivery that is not merged the row stays what it always was:
+        // bookkeeping, never a request to replay a merge or move the card.
+        if (TaskIntegrationRecordDetector.LatestVerification(job) is not null)
+        {
             return new AcceptedIntegrationRecoveryDecision(
-                AcceptedIntegrationRecoveryAction.Finalize,
-                "Git proves that the attributed delivery is merged into the integration branch; "
-                + "no merge replay is required (a missing push is the push backstop's work).",
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "A historical verification row records this card; it is not a merge-replay request.",
                 lastMerge);
         }
 
@@ -298,6 +317,122 @@ public sealed class TaskIntegrationStatusService
                 ? "The Passed step contradicts current Git truth and must be revalidated."
                 : "The accepted integration has no terminal recovery decision.",
             lastMerge);
+    }
+
+    /// <summary>
+    /// AGT-3002 - a merged card finalizes only when its verification permits
+    /// completion. A contained delivery without gate evidence goes back
+    /// through the merge runner, which applies the lane's rule: evidence for
+    /// the exact tree, or one gate run on the current tip. Once that gate has
+    /// failed on the tree, the card returns to Human Review instead of
+    /// running it again. Archived cards are history and are left alone,
+    /// whatever their evidence says: no recovery action may reopen them.
+    /// </summary>
+    internal static AcceptedIntegrationRecoveryDecision ResolveMergedRecovery(
+        TaskInfo job,
+        TaskIntegrationVerification? verification,
+        PipelineStepExecution? lastMerge)
+    {
+        // Finalize never moves an archived card (it only settles Human Review
+        // and clears the pending tag), so a verified archived card keeps that
+        // bookkeeping. Every other action is guarded before it is chosen.
+        var permitsCompletion = IntegrationVerificationStates.PermitsCompletion(verification);
+        if (job.State == TaskStates.Archive && !permitsCompletion)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Ignore,
+                "An archived card is not re-verified or reopened.",
+                lastMerge);
+        }
+
+        if (permitsCompletion)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.Finalize,
+                "Git proves that the attributed delivery is merged into the integration branch; "
+                + "no merge replay is required (a missing push is the push backstop's work).",
+                lastMerge);
+        }
+
+        if (verification?.GateFailed == true)
+        {
+            return new AcceptedIntegrationRecoveryDecision(
+                AcceptedIntegrationRecoveryAction.ReturnToReview,
+                "The delivery is contained but integrated-unverified: a gate already failed on its tree. "
+                + (verification.Reason ?? string.Empty),
+                lastMerge);
+        }
+
+        return new AcceptedIntegrationRecoveryDecision(
+            AcceptedIntegrationRecoveryAction.Retry,
+            "The delivery is contained but integrated-unverified; the merge runner verifies the exact tree once.",
+            lastMerge);
+    }
+
+    /// <summary>
+    /// AGT-3002 - the card's gate evidence for its merged delivery: the lane's
+    /// own verification record, else what the last merge step implies. Local
+    /// file reads only; never throws.
+    /// </summary>
+    private static string? CurrentIntegrationSha(
+        TaskIntegrationStatus classified,
+        CardIntegrationWork card,
+        ConcurrentDictionary<RepoBranchKey, RepoIntegration> reaches)
+    {
+        var key = card.PrimaryKey ?? card.Groups.Select(group => group.Key).FirstOrDefault(group => group is not null);
+        if (key is null || !reaches.TryGetValue(key, out var reach)) return null;
+        return classified.Status == IntegrationStatuses.MergedLocally
+            ? reach.LocalHead
+            : reach.PublishedHead;
+    }
+
+    /// <summary>
+    /// The cached ancestor set of the published ref <see cref="CurrentIntegrationSha"/>
+    /// reads, so a verified tree the branch still carries is recognised
+    /// without a Git spawn per card. A local-only merge has no cached set for
+    /// the local ref alone, so it matches its exact tip only.
+    /// </summary>
+    private static Func<string, bool>? BranchHistory(
+        TaskIntegrationStatus classified,
+        CardIntegrationWork card,
+        ConcurrentDictionary<RepoBranchKey, RepoIntegration> reaches)
+    {
+        if (classified.Status != IntegrationStatuses.Integrated) return null;
+        var key = card.PrimaryKey ?? card.Groups.Select(group => group.Key).FirstOrDefault(group => group is not null);
+        if (key is null || !reaches.TryGetValue(key, out var reach) || !reach.IntegrationReachSucceeded) return null;
+        var ancestors = reach.PublishedAncestors;
+        return sha => AncestorSetContains(ancestors, sha);
+    }
+
+    private TaskIntegrationVerification? ResolveVerification(
+        TaskInfo job,
+        string? currentIntegrationSha,
+        string currentIntegrationBranch,
+        string? currentDeliverySha,
+        Func<string, bool>? branchHistory)
+    {
+        try
+        {
+            return IntegrationVerificationProjection.Resolve(
+                IntegrationVerificationStore.Read(job.FolderPath),
+                ReadLatestMergeStep(job),
+                job.IntegrationRecords,
+                currentIntegrationSha,
+                currentIntegrationBranch,
+                currentDeliverySha,
+                branchHistory);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "TaskIntegrationStatusService: integration verification is best-effort");
+            return new TaskIntegrationVerification
+            {
+                State = IntegrationVerificationStates.Unverified,
+                Sha = currentIntegrationSha,
+                Evidence = IntegrationVerificationEvidence.None,
+                Reason = "The integration verification evidence could not be read for the current tree.",
+            };
+        }
     }
 
     /// <summary>
@@ -1188,6 +1323,8 @@ public sealed class TaskIntegrationStatusService
                     out publishedAncestors);
             }
 
+            var localHead = _git.GetRefShaFresh(root, GitService.IntegrationLaneRef(integrationBranch))
+                ?? _git.GetRefShaFresh(root, integrationBranch);
             var publishedHead = _git.GetRefShaFresh(
                 root, hasPublishedBranch ? "origin/" + integrationBranch : integrationBranch);
             return new RepoIntegration(
@@ -1198,6 +1335,7 @@ public sealed class TaskIntegrationStatusService
                 publishedAncestors,
                 hasPublishedBranch,
                 publishedHead,
+                localHead,
                 succeeded && publishedSucceeded && publishedHead is not null);
         });
     }
@@ -1237,6 +1375,7 @@ public sealed class TaskIntegrationStatusService
         HashSet<string> PublishedAncestors,
         bool HasPublishedBranch,
         string? PublishedHead,
+        string? LocalHead,
         bool IntegrationReachSucceeded);
 
     private sealed record RepoBranchKey(string Root, string Branch);

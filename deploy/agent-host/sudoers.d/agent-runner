@@ -22,6 +22,8 @@ Cmnd_Alias AGENT_RUNNER_DEPLOY = \
     /usr/local/sbin/agent-runner-deploy verify-completions, \
     /usr/local/sbin/agent-runner-deploy update-clis 0.154.0 2.1.269
 
+Cmnd_Alias AGENT_RUNNER_RESULTS = /usr/local/sbin/agent-runner-deploy chown-results
+
 # Defense in depth: sudoers enumerates every role and accepted value. The
 # root-owned helper independently enforces the same role, variable, and 1..6
 # policy before touching a role EnvironmentFile.
@@ -48,4 +50,4 @@ Cmnd_Alias AGENT_RELEASE_GATE_WINDOW = \
     /usr/bin/systemctl ^set-property --runtime agent-runner[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$, \
     /usr/bin/systemctl ^set-property --runtime agent-runner-review[.]service CPUQuota\=([1-9][0-9]{0\,5}%)?$
 
-agent ALL=(root) NOPASSWD: AGENT_RUNNER_SERVICE_CONTROL, AGENT_RUNNER_DEPLOY, AGENT_RUNNER_CONFIG, AGENT_RELEASE_GATE_WINDOW
+agent ALL=(root) NOPASSWD: AGENT_RUNNER_SERVICE_CONTROL, AGENT_RUNNER_DEPLOY, AGENT_RUNNER_CONFIG, AGENT_RELEASE_GATE_WINDOW, AGENT_RUNNER_RESULTS

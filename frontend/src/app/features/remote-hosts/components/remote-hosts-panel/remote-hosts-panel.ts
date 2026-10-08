@@ -29,6 +29,8 @@ import {
 import { stableReleaseLabel } from '../../models/host-release-drift';
 import { NotificationComponent } from '../../../../components/notification/notification.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
+import { RunnerInfrastructureFailuresComponent } from '../runner-infrastructure-failures/runner-infrastructure-failures';
+import { DeploymentCheckpointsComponent } from '../deployment-checkpoints/deployment-checkpoints';
 
 /**
  * Execution Hosts settings page (AGT-1921).
@@ -52,6 +54,8 @@ import { BetterCandidateLinesComponent } from '../../../../components/better-can
     NotificationComponent,
     PurgeRetiredHostsDialogComponent,
     BetterCandidateLinesComponent,
+    RunnerInfrastructureFailuresComponent,
+    DeploymentCheckpointsComponent,
   ],
   templateUrl: './remote-hosts-panel.html',
   styleUrl: './remote-hosts-panel.scss',
@@ -89,12 +93,10 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
   });
   readonly workspaces = input<readonly VisibleCliTaskWorkspace[]>([]);
   readonly openTask = output<VisibleCliTaskCreated>();
-
   /** Ticking clock so relative heartbeat labels stay fresh without per-card timers. */
   readonly now = signal<number>(Date.now());
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private usageHandle: ReturnType<typeof setInterval> | null = null;
-
   /** Header tallies reconcile to visible physical machines and role sub-rows. */
   readonly hostGroups = computed(() => groupPhysicalHosts(this.hosts(), this.showRetired()));
   readonly retiredCount = computed(() => this.hosts().filter(host => host.status === 'retired').length);
@@ -113,7 +115,6 @@ export class RemoteHostsPanelComponent implements OnInit, OnDestroy {
     this.tableState.sort(this.hostGroups(), host => this.boardSlots(host)));
   readonly linkFailures = computed(() => this.hosts().filter(host =>
     !!host.runnerLink?.notificationRaisedAt && host.runnerLink.state !== 'up'));
-
   /** Release reference and drift tally for the header (AGT-2826). */
   readonly stableRelease = this.service.stableRelease;
   readonly stableReleaseLabel = computed(() => stableReleaseLabel(this.stableRelease()));

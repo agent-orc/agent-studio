@@ -80,22 +80,26 @@ void Log(string message) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss
 // identity instead of a task id - so the OAuth refresh still writes through
 // but no project transcript or history ever lands in it.
 var authProbeContexts = new Dictionary<string, TaskCleanContextLease>(StringComparer.OrdinalIgnoreCase);
+using var client = new TaskServerClient(options);
 
 TaskCleanContextLease? AuthProbeContext(string provider)
 {
     if (provider is not ("claude" or "codex")) return null;
-    if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
-    try
+    lock (authProbeContexts)
     {
-        var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
-        authProbeContexts[provider] = lease;
-        return lease;
-    }
-    catch (Exception ex)
-    {
-        Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
-            + "probe will run without isolation from agent sessions.");
-        return null;
+        if (authProbeContexts.TryGetValue(provider, out var existing)) return existing;
+        try
+        {
+            var lease = TaskCleanContextStore.Acquire(provider, ProviderAuthProbe.CleanContextIdentity);
+            authProbeContexts[provider] = lease;
+            return lease;
+        }
+        catch (Exception ex)
+        {
+            Log($"provider-auth-probe clean-context isolation unavailable for '{provider}': {ex.Message}; "
+                + "probe will run without isolation from agent sessions.");
+            return null;
+        }
     }
 }
 
@@ -112,6 +116,61 @@ ProviderAuthProbe.Shared.UseLauncher(
             ct: ct);
     },
     Log);
+
+// A real request uses the same configured CLI selection and CAR execution
+// route as coding work, read-only and in the probe's protected clean context
+// with no repository prompt.
+using var providerStatusHttp = new HttpClient();
+ProviderAuthProbe.Shared.UseRealRequest(
+    async (fileName, statusArguments, ct) =>
+    {
+        var provider = RunnerCapabilityProbe.Provider(fileName);
+        var context = AuthProbeContext(provider);
+        if (context is null)
+            return new ProcessResult(1, "", "probe isolation unavailable");
+        var selection = CliSelection.Resolve(options, new RunSpecDto(CliType: provider));
+        if (!string.Equals(selection.FileName, fileName, StringComparison.Ordinal))
+            return new ProcessResult(1, "", "configured CLI mismatch");
+        var root = Path.Combine(context.HomePath, ".provider-real-probe");
+        return await ProviderRealRequestHostFlight.RunAsync(
+            Path.Combine(context.HomePath, ".provider-real-probe.lock"),
+            async deadline =>
+            {
+                // An empty scratch repository: codex exec refuses a working
+                // directory outside Git, and no application checkout is exposed.
+                var workspace = Path.Combine(root, "workspace");
+                var worker = Path.Combine(root, "worker");
+                Directory.CreateDirectory(workspace);
+                Directory.CreateDirectory(worker);
+                if (!Directory.Exists(Path.Combine(workspace, ".git")))
+                {
+                    var init = await ProcessRunner.RunAsync("git", ["init", "-q"],
+                        workingDirectory: workspace, ct: deadline);
+                    if (init.ExitCode != 0)
+                        return (new ProcessResult(1, "", "probe workspace unavailable"), false, false);
+                }
+                // The probe deadline stops the CLI, so the host-local lock is
+                // released when it exits instead of when CAR's own timeout fires.
+                return await CarWorkerExecution.RunAsync(
+                    new DetachedJobSpec(
+                        fileName, [], workspace,
+                        "Reply with OK. Do not use tools or access files.",
+                        worker,
+                        (int)ProviderAuthProbe.DefaultTimeout.TotalSeconds - 5,
+                        selection.CliType, selection.Model, selection.ThinkingLevel,
+                        CodingAgentRunner.Model.CliPermissionModes.ReadOnly,
+                        CodingAgentRunner.Model.CliContextModes.Clean,
+                        RunId: ProviderAuthProbe.CleanContextIdentity,
+                        CleanContextKey: ProviderAuthProbe.CleanContextIdentity),
+                    worker,
+                    (_, _) => { },
+                    stopToken: deadline);
+            },
+            ct);
+    },
+    ProviderStatusIncidentAdapter.Official(providerStatusHttp),
+    client.ReadProviderComparisonAsync,
+    options.Hostname);
 
 if (help)
 {
@@ -163,7 +222,6 @@ if (options.RestartGuardOnly || options.DrainOnly)
         : await ReviewDrainCommand.RunDrainAsync(options, Log, shutdown.Token);
 }
 
-using var client = new TaskServerClient(options);
 
 // Readiness probe (--health-check): confirm the Task Server is reachable over the
 // tunnel and exit, without touching a task. This is the check the reverse-tunnel

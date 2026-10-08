@@ -36,15 +36,18 @@ public sealed partial class TaskServerStore
     // 24 adds versioned project placement and admission receipts.
     // 25 adds the host-owned, metadata-only credential registry and typed
     // provider capability observation fields.
-    // 26 adds ordered continuation rounds with immutable acceptance and fenced
-    // consumption receipts.
+    // 26 persists the per-card runner infrastructure failure fingerprint budget.
+    // 26 also adds ordered continuation rounds with immutable acceptance and
+    // fenced consumption receipts. Both migrations are idempotent.
     // 27 adds authenticated per-consumer rotation delivery.
     // 28 records the I05 installation identity, owner recovery, service
     // enrolments, canonical project registrations, and repository probes.
     // 29 combines the I05 identity and ordered continuation schemas after
-    // merging the independently delivered branches. Migrations are idempotent;
-    // this version guards downgrades from binaries without both contracts.
-    public const int CurrentSchemaVersion = 29;
+    // merging the independently delivered branches.
+    // 30 adds brief-bound attempts, operator revocation, and older-brief offers.
+    // Migrations are idempotent; this version guards downgrades from binaries
+    // without all three contracts.
+    public const int CurrentSchemaVersion = 30;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -413,7 +416,7 @@ public sealed partial class TaskServerStore
         var runs = new List<RunDto>();
         await using (var runCommand = Command(connection, """
             SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at,
-                   result_sha, repository_id
+                   result_sha, repository_id, brief_version
               FROM runs WHERE task_id = $task ORDER BY created_at, id;
             """, ("$task", task.TaskId)))
         await using (var runReader = await runCommand.ExecuteReaderAsync(ct))
@@ -430,7 +433,8 @@ public sealed partial class TaskServerStore
                     runReader.IsDBNull(6) ? null : Parse(runReader.GetString(6)),
                     runReader.IsDBNull(7) ? null : Parse(runReader.GetString(7)),
                     runReader.IsDBNull(8) ? null : runReader.GetString(8),
-                    runReader.IsDBNull(9) ? null : runReader.GetString(9)));
+                    runReader.IsDBNull(9) ? null : runReader.GetString(9),
+                    BriefVersion: runReader.IsDBNull(10) ? null : runReader.GetString(10)));
             }
         }
 
@@ -518,6 +522,25 @@ public sealed partial class TaskServerStore
         return result;
     }
 
+    public async Task<IReadOnlyList<RunnerInfrastructureFailureDto>> ListRunnerInfrastructureFailuresAsync(CancellationToken ct)
+    {
+        await using var connection = await OpenReadyAsync(ct);
+        await using var command = Command(connection, """
+            SELECT t.task_key, f.attempts, f.fingerprint, f.host, f.last_error
+              FROM runner_infrastructure_failures f
+              JOIN tasks t ON t.id = f.task_id
+             WHERE t.state = '5e-escalated'
+             ORDER BY f.updated_at DESC;
+            """);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var result = new List<RunnerInfrastructureFailureDto>();
+        while (await reader.ReadAsync(ct))
+            result.Add(new RunnerInfrastructureFailureDto(
+                reader.GetString(0), reader.GetInt32(1), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4)));
+        return result;
+    }
+
     public async Task<IReadOnlyList<ExecutionAttemptTimelineDto>> ListAttemptsAsync(
         string projectId,
         string taskIdentity,
@@ -536,7 +559,7 @@ public sealed partial class TaskServerStore
 
         var runs = new List<RunDto>();
         await using (var runCommand = Command(connection, """
-            SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at
+            SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at, brief_version
               FROM runs WHERE task_id = $task ORDER BY created_at, id;
             """, ("$task", taskId)))
         await using (var reader = await runCommand.ExecuteReaderAsync(ct))
@@ -573,6 +596,14 @@ public sealed partial class TaskServerStore
             if (existing is null) return;
             if (existing.Version != request.ExpectedVersion)
                 throw new TaskServerConflictException("resource-version-mismatch", $"Expected task version {request.ExpectedVersion}, current version is {existing.Version}.");
+            if (request.State is { } requestedState
+                && requestedState != existing.State
+                && await ScalarAsync(connection, """
+                    SELECT 1 FROM leases WHERE task_id = $task
+                     AND status IN ('active', 'process-unknown') LIMIT 1;
+                    """, ct, transaction, ("$task", existing.TaskId)) is not null)
+                throw new TaskServerConflictException("run-intent-required",
+                    "Use the move or continue route with explicit run intent for a live attempt.");
             var now = UtcNow;
             updated = existing with
             {
@@ -600,6 +631,10 @@ public sealed partial class TaskServerStore
                     """, ct, transaction,
                     ("$task", updated.TaskId),
                     ("$delta", JsonSerializer.Serialize(request.MechanicalDelta)));
+            if (existing.State == "5e-escalated" && updated.State == "2-ready")
+                await ExecuteAsync(connection,
+                    "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", updated.TaskId));
             if (updated.State is "6-completed" or "7-archive")
             {
                 await SupersedePendingFollowUpAsync(
@@ -1530,6 +1565,7 @@ public sealed partial class TaskServerStore
 
             var runId = $"run_{Guid.NewGuid():N}";
             var leaseId = $"lse_{Guid.NewGuid():N}";
+            var briefVersion = FollowUpPromptDigest.Compute(task.Body ?? string.Empty);
             var now = UtcNow;
             var expires = now.AddSeconds(NormalizeTtl(request.RequestedTtlSeconds));
             // An ordered continuation round takes precedence. A follow-up row
@@ -1539,25 +1575,40 @@ public sealed partial class TaskServerStore
                 : await ReadPendingFollowUpAsync(connection, transaction, task.TaskId, ct);
             if (followUp is not null)
                 followUp = followUp with { ClaimId = runId };
+            string? startingRef = null;
+            string? startingSha = null;
+            await using (var startingCommand = Command(connection,
+                "SELECT result_ref, result_sha FROM task_starting_points WHERE task_id = $task;",
+                transaction, ("$task", task.TaskId)))
+            await using (var startingReader = await startingCommand.ExecuteReaderAsync(ct))
+            {
+                if (await startingReader.ReadAsync(ct))
+                {
+                    startingRef = startingReader.GetString(0);
+                    startingSha = startingReader.GetString(1);
+                }
+            }
             await ExecuteAsync(connection, """
                 INSERT INTO runs(
                     id, task_id, status, runner_id, fence, created_at, started_at,
-                    required_capabilities_json, canary_capabilities_json)
+                    required_capabilities_json, canary_capabilities_json, brief_version)
                 VALUES (
                     $run, $task, 'running', $runner, $fence, $now, $now,
-                    $requiredCapabilities, $canaryCapabilities);
+                    $requiredCapabilities, $canaryCapabilities, $briefVersion);
                 INSERT INTO leases(task_id, lease_id, run_id, runner_id, instance_id, fence, acquired_at, expires_at, status)
                 VALUES ($task, $lease, $run, $runner, $instance, $fence, $now, $expires, 'active');
                 UPDATE pending_follow_ups
                    SET state = 'stashed', run_id = $run
                  WHERE task_id = $task AND state = 'queued' AND $legacyFollowUp = 1;
                 UPDATE tasks SET state = '3-progress', version = version + 1, updated_at = $now WHERE id = $task;
+                DELETE FROM task_starting_points WHERE task_id = $task;
                 """, ct, transaction,
                 ("$run", runId), ("$task", task.TaskId), ("$runner", request.RunnerId), ("$instance", request.InstanceId),
                 ("$fence", fence), ("$lease", leaseId), ("$now", Iso(now)), ("$expires", Iso(expires)),
                 ("$requiredCapabilities", JsonSerializer.Serialize(capabilityAdmission.Required)),
                 ("$canaryCapabilities", JsonSerializer.Serialize(capabilityAdmission.Canaries)),
-                ("$legacyFollowUp", continuationIntent is null ? 1 : 0));
+                ("$legacyFollowUp", continuationIntent is null ? 1 : 0),
+                ("$briefVersion", briefVersion));
             if (mechanicalDelta is not null)
                 await ClaimMechanicalDeltaAsync(connection, transaction, task.TaskId, runId, ct);
             if (continuationIntent is not null)
@@ -1589,7 +1640,8 @@ public sealed partial class TaskServerStore
                     placementReason,
                 }), ct);
 
-            var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null);
+            var run = new RunDto(runId, task.TaskId, "running", request.RunnerId, fence, now, now, null,
+                BriefVersion: briefVersion);
             var lease = new LeaseDto(leaseId, runId, task.TaskId, request.RunnerId, request.InstanceId, fence, now, expires, "active");
             response = new ClaimResponse(
                 "claimed",
@@ -1601,8 +1653,8 @@ public sealed partial class TaskServerStore
                 CanaryCapabilities: capabilityAdmission.Canaries,
                 RuntimeCapacity: runtimeCapacity,
                 ModelFallback: providerContinuation?.Fallback,
-                ContinuationBaseRef: mechanicalBase.Ref ?? providerContinuation?.BaseRef,
-                ContinuationBaseSha: mechanicalBase.Sha ?? providerContinuation?.BaseSha,
+                ContinuationBaseRef: startingRef ?? mechanicalBase.Ref ?? providerContinuation?.BaseRef,
+                ContinuationBaseSha: startingSha ?? mechanicalBase.Sha ?? providerContinuation?.BaseSha,
                 PreviousSession: previousSession,
                 MechanicalDelta: mechanicalDelta,
                 MechanicalFreshRoute: mechanicalFreshRoute,
@@ -1725,10 +1777,55 @@ public sealed partial class TaskServerStore
             }
             if (!string.Equals(lease.Status, "active", StringComparison.Ordinal))
                 throw new TaskServerConflictException("lease-not-active", $"Lease status is '{lease.Status}'.");
+            // A typed prelaunch release spends the budget only while the card is
+            // still held by this attempt. A card an operator already moved out of
+            // progress keeps its counter and gets no escalation evidence.
+            var taskInProgress = string.Equals(Convert.ToString(await ScalarAsync(connection,
+                "SELECT state FROM tasks WHERE id = $task;", ct, transaction,
+                ("$task", lease.TaskId)), CultureInfo.InvariantCulture), "3-progress", StringComparison.Ordinal);
+            var typedInfrastructureFailure = request.Outcome is
+                "runner-environment-preparation-failed" or "runner-salvage-failed" or "runner-results-handling-failed";
+            var infrastructureFailure = typedInfrastructureFailure && taskInProgress;
+            var diagnostic = (request.Detail ?? request.Outcome).Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (diagnostic.Length > 1000) diagnostic = diagnostic[..1000];
+            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                $"{request.Outcome}:{diagnostic}".ToLowerInvariant())))[..16].ToLowerInvariant();
+            var host = Convert.ToString(await ScalarAsync(connection,
+                "SELECT host_id FROM runners WHERE id = $runner;", ct, transaction,
+                ("$runner", request.RunnerId)), CultureInfo.InvariantCulture)
+                ?? request.RunnerId;
+            var attempts = 0;
+            if (infrastructureFailure)
+            {
+                await ExecuteAsync(connection, """
+                    INSERT INTO runner_infrastructure_failures(task_id, fingerprint, cause, attempts, last_error, host, updated_at)
+                    VALUES ($task, $fingerprint, $cause, 1, $error, $host, $now)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        attempts = CASE WHEN fingerprint = excluded.fingerprint THEN attempts + 1 ELSE 1 END,
+                        fingerprint = excluded.fingerprint,
+                        cause = excluded.cause,
+                        last_error = excluded.last_error,
+                        host = excluded.host,
+                        updated_at = excluded.updated_at;
+                    """, ct, transaction,
+                    ("$task", lease.TaskId), ("$fingerprint", fingerprint),
+                    ("$cause", request.Outcome), ("$error", diagnostic),
+                    ("$host", host), ("$now", Iso(UtcNow)));
+                attempts = Convert.ToInt32(await ScalarAsync(connection,
+                    "SELECT attempts FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", lease.TaskId)) ?? 0, CultureInfo.InvariantCulture);
+            }
+            else if (!typedInfrastructureFailure)
+                await ExecuteAsync(connection,
+                    "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
+                    ct, transaction, ("$task", lease.TaskId));
+            var targetState = infrastructureFailure
+                && attempts >= Math.Clamp(_options.RunnerInfrastructureFailureBudget, 1, 20)
+                ? "5e-escalated" : "2-ready";
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'released' WHERE run_id = $run;
                 UPDATE runs SET status = $outcome, finished_at = $now WHERE id = $run;
-                UPDATE tasks SET state = '2-ready', version = version + 1, updated_at = $now
+                UPDATE tasks SET state = $state, version = version + 1, updated_at = $now
                  WHERE id = $task AND state = '3-progress';
                 UPDATE pending_follow_ups
                    SET state = 'queued', run_id = NULL
@@ -1736,7 +1833,11 @@ public sealed partial class TaskServerStore
                 UPDATE work_permits SET status = 'released'
                  WHERE run_id = $run AND status = 'accepted';
                 """, ct, transaction, ("$run", runId), ("$outcome", request.Outcome),
-                ("$now", Iso(UtcNow)), ("$task", lease.TaskId));
+                ("$now", Iso(UtcNow)), ("$task", lease.TaskId), ("$state", targetState));
+            // Lost-worker releases follow this same path: requeue the claimed
+            // continuation as before. The durable plane does not open new
+            // continuation rounds (AGT-2870). See
+            // Lost_worker_release_after_prelaunch_failures_keeps_release_semantics_and_breaks_the_chain.
             await RequeueClaimedContinuationAsync(connection, transaction, runId, ct);
             released = lease with { Status = "released" };
             // AGT-2870: a release that follows a lost worker names the salvage
@@ -1751,7 +1852,31 @@ public sealed partial class TaskServerStore
                     salvageRef = request.Salvage?.Branch,
                     salvageCommitSha = request.Salvage?.CommitSha,
                     salvageDetail = request.Salvage?.Detail,
+                    infrastructureFailure = infrastructureFailure ? new
+                    {
+                        category = "runner-environment-broken",
+                        fingerprint,
+                        attempts,
+                        host,
+                        lastError = diagnostic,
+                        recoveryHint = "Repair the runner environment or results ownership, then move the card to Ready.",
+                    } : null,
                 }), ct);
+            if (targetState == "5e-escalated")
+            {
+                await AuditAsync(connection, transaction, actorId, "runner-environment-broken", "task", lease.TaskId,
+                    JsonSerializer.Serialize(new { fingerprint, attempts, host, lastError = diagnostic }), ct);
+                await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                    request.Fence, "runner.environment.broken",
+                    new {
+                        category = "runner-environment-broken",
+                        fingerprint,
+                        attempts,
+                        host,
+                        lastError = diagnostic,
+                        recoveryHint = "Repair the runner environment or results ownership, then move the card to Ready.",
+                    }, ct);
+            }
         }, ct);
         return new LeaseResponse("released", released);
     }
@@ -2090,6 +2215,19 @@ public sealed partial class TaskServerStore
                 """, ct, transaction, ("$task", lease.TaskId)) ?? 0L);
             if (waitingRound > 0)
                 nextState = StudioTaskLanes.Ready;
+            var claimedBriefVersion = Convert.ToString(await ScalarAsync(connection,
+                "SELECT brief_version FROM runs WHERE id = $run;", ct, transaction, ("$run", runId)));
+            var currentBody = Convert.ToString(await ScalarAsync(connection,
+                "SELECT body FROM tasks WHERE id = $task;", ct, transaction, ("$task", lease.TaskId)))
+                ?? string.Empty;
+            var currentBriefVersion = FollowUpPromptDigest.Compute(currentBody);
+            var olderBrief = !string.IsNullOrWhiteSpace(claimedBriefVersion)
+                && !string.Equals(claimedBriefVersion, currentBriefVersion, StringComparison.OrdinalIgnoreCase);
+            if (olderBrief)
+            {
+                nextState = "5e-escalated";
+                effectiveSummary = "Delivered against an older brief; choose accept, use as a starting point, or discard.";
+            }
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'completed' WHERE run_id = $run;
                 UPDATE runs
@@ -2103,6 +2241,7 @@ public sealed partial class TaskServerStore
                        source_bundle_sha256 = $bundleSha
                  WHERE id = $run;
                 UPDATE tasks SET state = $nextState, version = version + 1, updated_at = $now WHERE id = $task;
+                DELETE FROM runner_infrastructure_failures WHERE task_id = $task;
                 UPDATE work_permits SET status = 'completed'
                  WHERE run_id = $run AND status = 'accepted';
                 INSERT INTO run_completions(
@@ -2131,6 +2270,30 @@ public sealed partial class TaskServerStore
                 ("$repositoryUrl", resultHandoff?.Envelope.RepositoryUrl),
                 ("$resultRef", resultHandoff?.Envelope.ImmutableRemoteRef),
                 ("$bundleSha", resultHandoff?.Envelope.SourceBundleDigest));
+            if (olderBrief)
+                await ExecuteAsync(connection, """
+                    INSERT INTO older_brief_deliveries(
+                        task_id, run_id, brief_version, current_brief_version,
+                        result_sha, result_ref, salvage_branch, salvage_commit_sha,
+                        status, offered_at)
+                    VALUES ($task, $run, $brief, $current, $sha, $ref, $salvage, $salvageSha,
+                            'pending', $now)
+                    ON CONFLICT(task_id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        brief_version = excluded.brief_version,
+                        current_brief_version = excluded.current_brief_version,
+                        result_sha = excluded.result_sha,
+                        result_ref = excluded.result_ref,
+                        salvage_branch = excluded.salvage_branch,
+                        salvage_commit_sha = excluded.salvage_commit_sha,
+                        status = 'pending', offered_at = excluded.offered_at, decided_at = NULL;
+                    """, ct, transaction,
+                    ("$task", lease.TaskId), ("$run", runId),
+                    ("$brief", claimedBriefVersion), ("$current", currentBriefVersion),
+                    ("$sha", resultHandoff?.Envelope.ResultSha),
+                    ("$ref", resultHandoff?.Envelope.ImmutableRemoteRef),
+                    ("$salvage", request.SalvageBranch),
+                    ("$salvageSha", request.SalvageCommitSha), ("$now", Iso(now)));
             if (request.SessionContinuation is { } completedSession)
                 await AppendLifecycleEventAsync(
                     connection, transaction, runId, lease.TaskId, request.Fence,
@@ -2212,7 +2375,8 @@ public sealed partial class TaskServerStore
                 lease.AcquiredAt,
                 now,
                 resultHandoff?.Envelope.ResultSha,
-                resultHandoff?.Envelope.RepositoryId);
+                resultHandoff?.Envelope.RepositoryId,
+                BriefVersion: claimedBriefVersion);
         }, ct);
         return completed!;
     }
@@ -3402,6 +3566,15 @@ public sealed partial class TaskServerStore
                 observed_at TEXT NOT NULL,
                 PRIMARY KEY(project_id, runner_id)
             );
+            CREATE TABLE IF NOT EXISTS runner_infrastructure_failures(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                fingerprint TEXT NOT NULL,
+                cause TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                last_error TEXT NOT NULL,
+                host TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS orchestrator_contexts(
                 context_key TEXT PRIMARY KEY,
                 kind TEXT NOT NULL CHECK(kind IN ('project', 'task', 'workbench')),
@@ -3776,6 +3949,32 @@ public sealed partial class TaskServerStore
                 salvage_branch TEXT,
                 salvage_commit_sha TEXT
             );
+            CREATE TABLE IF NOT EXISTS older_brief_deliveries(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                run_id TEXT NOT NULL REFERENCES runs(id),
+                brief_version TEXT NOT NULL,
+                current_brief_version TEXT NOT NULL,
+                result_sha TEXT,
+                result_ref TEXT,
+                salvage_branch TEXT,
+                salvage_commit_sha TEXT,
+                status TEXT NOT NULL,
+                offered_at TEXT NOT NULL,
+                decided_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS task_starting_points(
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+                source_run_id TEXT NOT NULL REFERENCES runs(id),
+                result_ref TEXT NOT NULL,
+                result_sha TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS revoked_run_references(
+                run_id TEXT PRIMARY KEY REFERENCES runs(id),
+                task_id TEXT NOT NULL REFERENCES tasks(id),
+                branch TEXT NOT NULL,
+                commit_sha TEXT NOT NULL,
+                reported_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS runner_outbox_status(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
                 instance_id TEXT NOT NULL,
@@ -4023,6 +4222,7 @@ public sealed partial class TaskServerStore
         await EnsureColumnAsync(connection, "archive_runs", "bytes_by_rule_json", "TEXT NOT NULL DEFAULT '{}'", ct);
         await EnsureColumnAsync(connection, "runs", "required_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
         await EnsureColumnAsync(connection, "runs", "canary_capabilities_json", "TEXT NOT NULL DEFAULT '[]'", ct);
+        await EnsureColumnAsync(connection, "runs", "brief_version", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_minimum", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "host_orchestrator_maximum", "TEXT", ct);
         await EnsureColumnAsync(connection, "runners", "role_max_parallelism", "INTEGER", ct);
@@ -4563,7 +4763,8 @@ public sealed partial class TaskServerStore
             SELECT r.id, r.task_id, r.status, r.runner_id, r.fence,
                    r.created_at, r.started_at, r.finished_at,
                    c.envelope_digest, c.sequence, c.idempotency_key,
-                   c.needs_input_message, c.salvage_branch, c.salvage_commit_sha
+                   c.needs_input_message, c.salvage_branch, c.salvage_commit_sha,
+                   r.brief_version
               FROM run_completions c
               JOIN runs r ON r.id = c.run_id
              WHERE c.run_id = $run;
@@ -4578,7 +4779,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(4) ? null : reader.GetInt64(4),
             Parse(reader.GetString(5)),
             reader.IsDBNull(6) ? null : Parse(reader.GetString(6)),
-            reader.IsDBNull(7) ? null : Parse(reader.GetString(7)));
+            reader.IsDBNull(7) ? null : Parse(reader.GetString(7)),
+            BriefVersion: reader.IsDBNull(14) ? null : reader.GetString(14));
         return new StoredRunCompletion(
             run,
             reader.IsDBNull(8) ? null : reader.GetString(8),
@@ -4801,7 +5003,8 @@ public sealed partial class TaskServerStore
             reader.IsDBNull(4) ? null : reader.GetInt64(4),
             Parse(reader.GetString(5)),
             reader.IsDBNull(6) ? null : Parse(reader.GetString(6)),
-            reader.IsDBNull(7) ? null : Parse(reader.GetString(7)));
+            reader.IsDBNull(7) ? null : Parse(reader.GetString(7)),
+            BriefVersion: reader.IsDBNull(8) ? null : reader.GetString(8));
 
     private static async Task<LeaseDto?> ReadLeaseAsync(SqliteConnection connection, SqliteTransaction transaction, string runId, CancellationToken ct)
     {
@@ -4823,7 +5026,7 @@ public sealed partial class TaskServerStore
         CancellationToken ct)
     {
         await using var command = Command(connection, """
-            SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at
+            SELECT id, task_id, status, runner_id, fence, created_at, started_at, finished_at, brief_version
               FROM runs WHERE id = $run;
             """, transaction, ("$run", runId));
         await using var reader = await command.ExecuteReaderAsync(ct);

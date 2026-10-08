@@ -293,6 +293,50 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Concept_dossier_that_contradicts_brief_is_blocked_by_remote_aspect()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/concept-mismatch",
+            "docs/concept/workbench.json",
+            "{\"implementationTasks\":[{\"title\":\"Combine every slice into one card\"}]}");
+        var capturedPrompt = Path.Combine(_root, "concept-review-prompt.txt");
+        var fakeCodex = Path.Combine(_root, "fake-concept-review.sh");
+        await File.WriteAllTextAsync(fakeCodex, $$$"""
+            #!/bin/sh
+            cat > '{{{capturedPrompt}}}'
+            if grep -q 'one card per independently reviewable slice' '{{{capturedPrompt}}}' &&
+               grep -q 'Combine every slice into one card' '{{{capturedPrompt}}}'; then
+              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"The Dossier contradicts the brief.\n[[ASPECT_VERDICT: status=block; summary=Implementation cards contradict the brief.; evidence_checked=docs/concept/workbench.json and prompt.md; missing=one card per independently reviewable slice]]"}}'
+            else
+              printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"[[ASPECT_VERDICT: status=pass; summary=No contradiction found.]]"}}'
+            fi
+            """);
+        File.SetUnixFileMode(fakeCodex,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var command = new ReviewCommandDto(
+            "aspect-concept-fit", "concept-fit", "codex", [],
+            TimeoutSeconds: 30,
+            ExecutionKind: ReviewCommandKinds.AgentAspect,
+            Prompt: "Current prompt.md: Use one card per independently reviewable slice. Check the delivered Dossier for contradictions.",
+            CliType: CliSelection.CodexCli,
+            Model: "gpt-5.4-mini",
+            ThinkingLevel: "high");
+        var (workspace, _) = Workspace(
+            "attempt-concept-fit", subjectSha, [command], 24108,
+            resultRef: "refs/heads/task/concept-mismatch",
+            integrationRef: "refs/heads/main",
+            codexCliBin: fakeCodex);
+
+        await workspace.PrepareAsync(null!, default);
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("block", Assert.Single(evidence.Verdicts).Status);
+        Assert.Contains("Combine every slice into one card", await File.ReadAllTextAsync(capturedPrompt));
+    }
+
+    [Fact]
     public async Task Malformed_marker_in_an_aspect_reply_still_judges_the_aspect()
     {
         if (OperatingSystem.IsWindows()) return;

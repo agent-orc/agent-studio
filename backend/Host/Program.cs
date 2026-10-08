@@ -554,6 +554,10 @@ builder.Services.AddSingleton<AutoReviewQueueStagnationWatchdog>();
 builder.Services.AddSingleton<AdaptiveReviewParallelismAdvisor>();
 builder.Services.AddSingleton<CodingYieldAdvisor>();
 builder.Services.AddSingleton<ReviewInfrastructureRetryScheduler>();
+builder.Services.AddSingleton<ICauseWaitRelease, SchedulerCauseWaitRelease>();
+builder.Services.AddSingleton<ICauseWaitMarkerStore, FileCauseWaitMarkerStore>();
+builder.Services.AddSingleton<CauseBreakerService>();
+builder.Services.AddSingleton<CauseBreakerHostedService>();
 // AGT-2826: the release this process runs is the reference every execution host
 // is compared against, so it is resolved once and shared by /api/system/version
 // and the host-release drift watchdog.
@@ -569,6 +573,7 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AdaptiveReviewParallelismAdvisor>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<CodingYieldAdvisor>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ReviewInfrastructureRetryScheduler>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<CauseBreakerHostedService>());
 }
 builder.Services.AddSingleton(sp => new RunLeaseService(
     sp.GetRequiredService<ILogger<RunLeaseService>>(),
@@ -735,8 +740,9 @@ builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,
     AgentStudio.Pipeline.RemoteRequiredLintScssRunner>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
-    AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>();
+builder.Services.AddHttpClient<AgentStudio.Pipeline.IQualityStudioAnalysisCore,
+    AgentStudio.Pipeline.QualityStudioAnalysisCoreAdapter>(client =>
+        client.Timeout = TimeSpan.FromMinutes(5));
 builder.Services.AddSingleton<AgentStudio.Pipeline.IQualityAnalysisStepRunner,
     AgentStudio.Pipeline.QualityAnalysisStepRunner>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.IRemoteGateTransport, AgentStudio.Pipeline.RemoteGateTransport>();

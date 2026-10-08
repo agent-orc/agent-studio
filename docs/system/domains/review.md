@@ -1,7 +1,15 @@
 # Review Domain Map
 
-Version: 2026-10-05
+Version: 2026-10-08
 Status: System-of-record map for Remote Review material, semantic verdicts, and grading.
+
+## Quality Studio shadow evidence
+
+The local post-core Quality Studio Angular rule pass records canonical sensor
+findings in the task's review evidence log. Each entry carries the Quality
+Studio `ruleId`, source location, and analysis artifact. The pipeline step is
+report-only while the Quality Studio verdict contract is compared in shadow;
+its findings do not override the existing review verdict or trigger a reissue.
 
 ## Lifetime review budget
 
@@ -106,6 +114,32 @@ one idempotent replacement attempt. A scheduled ReviewInfra retry is canonical
 authority and is never treated as missing.
 
 ## Versioned review-library steps
+
+Concept cards on the remote plane receive one semantic `concept-fit` aspect in
+addition to the existing build and lint commands. It uses the shared aspect
+runner, verdict sentinel, citation policy, and review grade. Its frozen prompt
+compares the delivered Dossier in the Result-SHA diff with the current
+`prompt.md` (bounded to 64,000 characters in the rendered prompt): required
+sections, operator directions, recommendations for open
+decisions, and implementation-card source data. A contradiction is a blocking
+finding. The project pipeline-step setting `aspect-concept-fit` resolves its
+enabled state, prompt override, CLI, model, and thinking level like other
+aspects. Its default route is the bounded support aspect route from
+`PipelineStepModelDefaults`; build and lint keep their existing plans.
+
+The concept ReviewSubject stores the SHA-256 of the complete `prompt.md` in
+both its requirements identity and frozen review plan. Its frozen plan also
+records `taskMode: concept`, independently of the brief hash. The standalone
+Task Server uses that marker, with legacy concept-plan evidence as a fallback,
+to apply concept coverage even when the hash is absent. Report settlement
+compares that hash with the card's current brief. A missing concept verdict,
+missing brief, or changed brief settles as `Inconclusive` with a named reason,
+never `Pass`. A fresh attempt must judge the current brief. Concept verdicts
+are always rerun; scoped carry-over does not apply to `concept-fit`.
+The remote grade prints the brief hash and every applicable aspect skipped by
+configuration or condition, with its reason. Passing summaries cover executed
+aspects only, so a command-only report cannot claim that all applicable content
+checks passed.
 
 `RemoteReviewPlanBuilder` resolves verification, gate, and semantic aspect
 commands on the server. New plans set `ReviewPlanDto.LibraryVersion = 1`. When
@@ -327,12 +361,51 @@ the budget of three, the delay, and the failure reason at schedule time; the
 card stays in `4-auto-review` with no successor to claim until the delay
 elapses. `ReviewInfrastructureRetryScheduler`, a background service, polls
 `AttemptAuthorityService.DueReviewInfrastructureRetries` and mints the
-successor once it is due, reusing the failed attempt's exact ReviewSubject
-(same Result-SHA, same commands) unless the failure was `PreparationFailed`, in
-which case it rebuilds the plan the same way the endpoint's inline retry used
-to (AGT-2831 stale checkouts get a fresh preparation profile). This closes the
+successor once it is due. The successor keeps the failed attempt's immutable
+ReviewSubject identity (same Result-SHA, requirements, policy and evidence) but
+always carries a plan built fresh from the current project settings
+(`ReviewInfrastructureRetryScheduler.CreateFreshSuccessor`, AGT-W57): a frozen
+plan kept calling a withdrawn review model for 59 attempts, so a corrected
+setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
+
+Before that per-card retry runs, the fleet-wide cause breaker
+(`backend/Features/Runner/CauseBreaker/`, AGT-W57) counts the failure by its
+cause fingerprint: failure class (`ReviewInfra/<classification>`), normalised
+failure text (card keys, SHAs, times, durations, GUIDs, ports and temp paths
+removed) and toolchain context (`agent:<cli>:<model>` for an aspect call,
+`tool:<executable>` otherwise; the step id is not part of it). At three attempts
+or two distinct cards within 24 hours, all three adjustable per project via
+`PUT /api/projects/{project}/cause-breaker`, it raises one cause card through
+`FailureInterventionService.RaiseCause` (ledger
+`.orchestrator/failure-interventions.json`, fleet store
+`.metadata/cause-breakers.json`). Every affected card stays in `4-auto-review`
+with a `cause-wait.json` marker, renders "Waiting for <key>", gets no scheduled
+retry, and is skipped by the review claim. A pending review whose plan calls
+an open breaker's model route (any project), or whose project already saw an
+open tool-level cause, is held before it is claimed. The breaker closes when
+the cause card reaches `6-completed` (`CauseBreakerHostedService`) or a review
+of the exact successor attempt released by
+`POST /api/cause-breakers/{fingerprint}/probe` passes (probe green); a passing
+older review on the same waiting card does not close it. A card whose existing review is still
+pending resumes that attempt; a terminal review gets one freshly planned successor.
+If successor creation fails, the card keeps its visible wait
+and the hosted sweep retries the release; the breaker closes only after every
+waiting card is released. The same holds when its `cause-wait.json` cannot be
+deleted: the card stays in the fleet store flagged as released, so the claim
+admits its successor, no second successor is planned, and the sweep retries the
+delete. Once a breaker has a close reason it holds no new pending reviews. Each
+sweep also reconciles the fleet store and the markers: a held card whose marker
+write failed gets it rewritten, and a waiting marker no open breaker accounts
+for is adopted by the open breaker with the same fingerprint or released like a
+closed one. An unreadable store fails the call instead of being replaced by an
+empty one; a corrupt store is kept as `cause-breakers.json.corrupt-<time>` and
+the sweep releases the cards it parked. A red probe, including a product finding or an exhausted
+aspect retry, returns the card to its visible wait and clears the probe
+reservation. A later explicit probe creates a new attempt from current settings.
+With the breaker disabled for a project, the opt-in
+`post-failure-intervention` step keeps its previous first-failure behaviour.
 
 Once `AttemptAuthorityService.ReviewInfrastructureRetryBudget` (three) linked
 retries have all failed, no further retry is scheduled and the card is parked

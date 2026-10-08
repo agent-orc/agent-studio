@@ -73,8 +73,9 @@ import {
 } from './services/task-detail-formatters';
 import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task-detail-keyboard.util';
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
-
 import { TooltipDirective } from 'coding-agent-chat/shared';
+import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
+
 @Component({
   selector: 'app-task-detail, app-job-detail',
   standalone: true,
@@ -96,6 +97,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
     PaneToggleBarComponent,
     ArchivedTaskNoticeComponent,
     TooltipDirective,
+    OlderBriefOfferComponent,
     TaskResourceStatusComponent,
   ],
   providers: [
@@ -863,11 +865,11 @@ export class TaskDetailComponent implements OnDestroy {
             this.sessionEventsPoll.refresh();
           } else if (resp.status === 'queued') {
             this.queuedFollowUp.set(true);
+          } else if (resp.status === 'saved') {
+            this.chatError.set(`Continuation saved (${resp.queued?.reason ?? 'reason unavailable'}). Move this task to Ready to run it.`);
           }
-          // status === 'queued': the project was busy. The backend already
-          // saved the user's intent + posted a [queued] orchestrator line
-          // into the chat. The optimistic user-message echo above and the
-          // queued status band keep the conversation readable until pickup.
+          // Queued follow-ups remain visible until pickup; saved follow-ups
+          // show the Ready move needed to run them.
         },
         error: (err) => {
           this.continuing.set(false);
@@ -1056,7 +1058,7 @@ export class TaskDetailComponent implements OnDestroy {
     else if (thinkingChanged) thinkingPut();
   }
 
-  private showError(err: unknown): string {
+  protected showError(err: unknown): string {
     const detail = err as { status?: number; statusText?: string; message?: string; error?: unknown };
     const bodyError =
       typeof detail.error === 'object' && detail.error !== null && 'error' in detail.error

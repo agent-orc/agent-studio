@@ -21,7 +21,7 @@
  * isolation from the Angular host, mirroring `pipeline-groups.util` /
  * `steering-detail.model`.
  */
-import type { TaskInfo } from '../../../../models/task.model';
+import { TaskState, type TaskInfo } from '../../../../models/task.model';
 import type { ReviewEvidenceEntry, ReviewEvidenceSeverity } from '../../../../models/task.model';
 import type {
   ReviewProjectionView,
@@ -44,6 +44,7 @@ import {
 import type { SteeringInfo } from '../../../../components/steering-detail';
 import { buildMergeSignal, type MergeSignalView } from '../../../board';
 import type { TaskTimelineEvent } from '../../../task-timeline';
+import type { RunRecord } from '../../../run-timeline';
 
 /** One open gate point, rendered as a checklist row. */
 export interface EscalationGateItem {
@@ -298,6 +299,36 @@ export interface EscalationSummaryView {
   reissues: EscalationReissue[];
   /** Structured, bounded banner copy. Never derived from Markdown bodies. */
   essence: EscalationEssence;
+  /** Current parked attempt, when a run began after the preceding park. */
+  latestAttempt: string | null;
+}
+
+export function latestParkedAttempt(
+  info: TaskInfo,
+  timeline: readonly TaskTimelineEvent[],
+  runs: readonly RunRecord[] = [],
+): string | null {
+  if (info.state !== TaskState.Escalated && info.state !== TaskState.HumanReview) return null;
+  const latestRun = runs.at(-1);
+  if (latestRun && !latestRun.endedAt) return null;
+  const started = latestRun?.startedAt
+    ?? [...timeline].reverse().find(event => event.kind === 'agent_run_started')?.ts;
+  if (!started) return null;
+  const startedAt = Date.parse(started);
+  if (!Number.isFinite(startedAt)) return null;
+  const finished = latestRun?.endedAt
+    ?? [...timeline].reverse().find(event =>
+      event.kind === 'agent_run_finished' && Date.parse(event.ts) >= startedAt)?.ts;
+  if (!finished) return null;
+  const finishedAt = Date.parse(finished);
+  if (!Number.isFinite(finishedAt) || finishedAt < startedAt) return null;
+  const parked = info.parkedBlocker;
+  if (!parked) return null;
+  const parkedAt = Date.parse(parked.parkedAt);
+  if (!Number.isFinite(parkedAt) || parkedAt < startedAt) return null;
+  const endedAt = new Date(finishedAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const reason = parked.reason?.trim() || parked.conditionDescription?.trim() || 'Reason not recorded';
+  return `Latest attempt ended ${endedAt}: ${reason}`;
 }
 
 /** Inputs the host feeds in from the existing polled / fetched signals. */
@@ -315,6 +346,8 @@ export interface EscalationSummaryInputs {
   statusMarkdown: string | null;
   /** Full chronological task ledger used for reissue provenance and budget. */
   timeline: readonly TaskTimelineEvent[];
+  /** Chronological CLI invocations, including remote runner attempts. */
+  runs?: readonly RunRecord[];
 }
 
 /** Project the latest council sidecar's typed finding decisions. */
@@ -680,6 +713,7 @@ export function buildEscalationSummaryView(inputs: EscalationSummaryInputs): Esc
       reviewProjection?.blockingAspects ?? [],
     ),
     reissues: deriveReissues(inputs.timeline),
+    latestAttempt: latestParkedAttempt(inputs.info, inputs.timeline, inputs.runs),
     essence: buildEscalationEssence({
       reviewProjection,
       codeReviews: inputs.codeReviews,

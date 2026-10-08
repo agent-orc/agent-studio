@@ -17,6 +17,8 @@ public sealed record RemoteReviewSettlementEntry
     public required string TaskKey { get; init; }
     public required string IdempotencyKey { get; init; }
     public required string ReportSha256 { get; init; }
+    /// <summary>Hash of the runner payload before server-side brief and coverage normalization.</summary>
+    public string? SubmittedReportSha256 { get; init; }
     public required Contract.ReviewReportRequest Report { get; init; }
     public RemoteDeliverySettlementRecord? Delivery { get; init; }
     public string? DeliverySha256 { get; init; }
@@ -83,6 +85,8 @@ public static class RemoteReviewSettlementJournal
             if (entry is null || entry.Version != 1 || entry.AttemptId != attemptId
                 || string.IsNullOrWhiteSpace(entry.TaskKey) || string.IsNullOrWhiteSpace(entry.IdempotencyKey)
                 || entry.Report is null || entry.Report.IdempotencyKey != entry.IdempotencyKey
+                || entry.SubmittedReportSha256 is { } submitted
+                   && (submitted.Length != 64 || !submitted.All(Uri.IsHexDigit))
                 || entry.Delivery is { } delivery
                    && (delivery.ReviewAttemptId != attemptId || delivery.TaskKey != entry.TaskKey
                        || !V1ReviewPlaneEndpoints.TryOutcome(entry.Report.Outcome, out var settledOutcome)

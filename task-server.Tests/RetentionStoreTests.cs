@@ -541,10 +541,11 @@ public sealed class RetentionStoreTests
     /// </summary>
     private static async Task<TaskDto> MakeTerminalAndReleaseAsync(TaskServerStore store, ClaimedTaskSeed seed, string runnerId)
     {
-        var terminal = await store.UpdateTaskAsync(
-            seed.Project.ProjectId, seed.Task.TaskId, new UpdateTaskRequest(null, null, "7-archive", seed.Task.Version), "test", default);
         await store.ReleaseLeaseAsync(
             seed.RunId, new LeaseReleaseRequest(runnerId, seed.InstanceId, seed.LeaseId, seed.Fence, "completed"), "test", default);
+        var released = await store.GetTaskAsync(seed.Project.ProjectId, seed.Task.TaskId, default);
+        var terminal = await store.UpdateTaskAsync(
+            seed.Project.ProjectId, seed.Task.TaskId, new UpdateTaskRequest(null, null, "7-archive", released!.Version), "test", default);
         return terminal!;
     }
 

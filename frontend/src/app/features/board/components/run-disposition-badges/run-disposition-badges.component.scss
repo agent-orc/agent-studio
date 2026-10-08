@@ -1,0 +1,13 @@
+:host { display: contents; }
+.run-disposition-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border-strong);
+  border-radius: 5px;
+  color: var(--studio-fg-strong);
+  background: var(--studio-bg-elevated);
+  font-size: 10px;
+  font-weight: 600;
+}

@@ -815,7 +815,8 @@ public class TaskRunnerService : BackgroundService
     /// saved as a draft on the target job, the job is promoted to the top of
     /// <c>2-ready</c>, the chat receives an orchestrator <c>[queued]</c>
     /// meta line, and the response is shaped as <c>status: "queued"</c>
-    /// (the endpoint returns 202). Other rejection reasons surface as
+    /// (the endpoint returns 202) after promotion; a failed promotion returns
+    /// <c>saved</c>. Other rejection reasons surface as
     /// <see cref="TaskOperationException"/>.
     /// </summary>
     private ContinueJobResponse ShapeOutcome(
@@ -848,6 +849,8 @@ public class TaskRunnerService : BackgroundService
                 watchPath: watchPath,
                 author: author,
                 triggerMetadata: triggerMetadata);
+            if (savedIntent is null)
+                throw new TaskOperationException("Could not save the follow-up intent.", 500);
 
             var fromState = info.State;
             // A user follow-up queued behind the busy project: the lane change is
@@ -856,6 +859,19 @@ public class TaskRunnerService : BackgroundService
                 jobId, watchPath,
                 transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
                 transitionDetail: "follow-up-queued-project-busy");
+
+            if (position == 0)
+                return new ContinueJobResponse
+                {
+                    Status = "saved",
+                    Queued = new ContinueJobQueuedInfo
+                    {
+                        Reason = FollowUpQueueReasons.ProjectBusy,
+                        ActiveJobId = rej.BusyJobId,
+                        ActiveJobTitle = rej.BusyJobTitle,
+                        PromotedFromState = fromState
+                    }
+                };
 
             try
             {
@@ -924,7 +940,8 @@ public class TaskRunnerService : BackgroundService
     /// Queues a follow-up the admission refused to start locally: persist the
     /// prompt as <c>pending-intent.json</c>, promote the card to the top of
     /// <c>2-ready</c> so the next local pickup or remote claim consumes it, and
-    /// shape the <c>202 {"status":"queued"}</c> answer.
+    /// shape a <c>202</c> answer: <c>queued</c> after promotion, or
+    /// <c>saved</c> if the persisted intent cannot be promoted.
     ///
     /// <para>
     /// A manual start carries no prompt. Nothing is persisted then - saving an
@@ -946,13 +963,15 @@ public class TaskRunnerService : BackgroundService
         var hasPrompt = !string.IsNullOrWhiteSpace(prompt);
         if (hasPrompt)
         {
-            _mutations.SavePendingIntent(
+            var savedIntent = _mutations.SavePendingIntent(
                 jobId, mode, prompt,
                 reason: reason,
                 activeJobId: null,
                 watchPath: watchPath,
                 author: author,
                 triggerMetadata: triggerMetadata);
+            if (savedIntent is null)
+                throw new TaskOperationException("Could not save the follow-up intent.", 500);
         }
 
         var fromState = info.State;
@@ -960,6 +979,17 @@ public class TaskRunnerService : BackgroundService
             jobId, watchPath,
             transitionCause: LaneChangeCauses.ForOperatorMove(fromState, TaskStates.Ready),
             transitionDetail: $"follow-up-queued-{reason}");
+
+        if (position == 0)
+        {
+            if (!hasPrompt)
+                throw new TaskOperationException("Could not move the task to Ready.", 409);
+            return new ContinueJobResponse
+            {
+                Status = "saved",
+                Queued = new ContinueJobQueuedInfo { Reason = reason, PromotedFromState = fromState }
+            };
+        }
 
         var refreshed = _scanner.FindJob(jobId, watchPath) ?? info;
         _logger.LogInformation(
@@ -1202,7 +1232,8 @@ public class TaskRunnerService : BackgroundService
                 : null,
         };
 
-        if (job.State == AgentStudio.Shared.TaskStates.Progress && lease is not null)
+        if (lease is not null
+            && (job.State == AgentStudio.Shared.TaskStates.Progress || inspection.State == "active"))
         {
             var remote = localIdentity is null
                 || !string.Equals(lease.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase);
@@ -1246,7 +1277,9 @@ public class TaskRunnerService : BackgroundService
                         => "The heartbeat of this run stopped before its fenced lease ran out; no authority is driving it.",
                     AgentStudio.Shared.RemoteRunLiveness.Disconnected
                         => "The last fenced run lease owner is retained, but its heartbeat is stale or the lease expired.",
-                    _ => "The task server currently holds a fenced run lease for this runner and has a recent heartbeat.",
+                    _ => job.State == AgentStudio.Shared.TaskStates.Progress
+                        ? "The task server currently holds a fenced run lease for this runner and has a recent heartbeat."
+                        : "A remote run remains live while this card is outside Progress for an explicit steer.",
                 },
             };
         }

@@ -295,6 +295,23 @@ public static class TaskServerEndpoints
                 return Results.BadRequest(new ApiError("runner-id-mismatch", "Route and capability runner ids differ."));
             return await InvokeAsync(() => store.AdvertiseCapabilitiesAsync(request, Actor(context), ct));
         });
+        runners.MapGet("/{runnerId}/provider-comparison", async (
+            HttpContext context, string runnerId, string provider, string? generation,
+            string requestShape, string effectiveSource, string failureSignature,
+            TaskServerStore store, CancellationToken ct) =>
+        {
+            var principal = context.TaskServerPrincipal();
+            if (principal is not { Kind: TaskServerPrincipalKinds.Runner, RunnerId: { } boundRunner }
+                || !string.Equals(boundRunner, runnerId, StringComparison.Ordinal))
+                return Results.Forbid();
+            if (requestShape != "minimal-text-v1")
+                return Results.Ok(new ProviderProbeComparisonResponseDto(null, null));
+            var snapshots = await store.ListRunnerCapabilitySnapshotsAsync(ct);
+            var credentials = await store.ListCredentialRegistryAsync(ct);
+            return Results.Ok(ProviderProbeComparisonPolicy.Find(
+                runnerId, provider, generation, effectiveSource, failureSignature, snapshots, credentials,
+                DateTimeOffset.UtcNow));
+        });
         runners.MapPost("/{runnerId}/capability-failures", async (
             HttpContext context,
             string runnerId,
@@ -444,6 +461,16 @@ public static class TaskServerEndpoints
                     statusCode: StatusCodes.Status426UpgradeRequired);
             return await InvokeAsync(() => store.CompleteRunAsync(runId, request, Actor(context), ct));
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
+        runs.MapPost("/{runId}/revoked-reference", async (
+            HttpContext context, string runId, RevokedRunReferenceRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(async () =>
+            {
+                await store.RecordRevokedRunReferenceAsync(runId, request, Actor(context), ct);
+                return new { status = "recorded" };
+            }))
+            .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep)
+            .RequireTaskServerScope(TaskServerScopes.EventsWrite);
         runs.MapPut("/{runId}/result-handoff", async (
             HttpContext context,
             string runId,
@@ -855,6 +882,8 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)));
+        management.MapGet("/runner-infrastructure-failures", async (TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.ListRunnerInfrastructureFailuresAsync(ct)));
         management.MapGet("/provider-refusals", async (
             int? days,
             TaskServerStore store,

@@ -463,6 +463,40 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// AGT-W57: the cause breaker parameters. They are configuration so an
+    /// operator can coarsen or loosen the breaker per project without a deploy.
+    /// </summary>
+    public ProjectSettings SetCauseBreaker(
+        string projectName,
+        bool enabled,
+        int attemptThreshold,
+        int cardThreshold,
+        int windowHours)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            var thresholds = AgentStudio.Runner.CauseBreakerPolicy.Clamp(attemptThreshold, cardThreshold, windowHours);
+            var updated = current with
+            {
+                CauseBreakerEnabled = enabled,
+                CauseBreakerAttemptThreshold = thresholds.Attempts,
+                CauseBreakerCardThreshold = thresholds.Cards,
+                CauseBreakerWindowHours = (int)thresholds.Window.TotalHours,
+            };
+            _cache[key] = updated;
+            Persist();
+            _logger.LogInformation(
+                "cause-breaker-settings project={Project} enabled={Enabled} attempts={Attempts} cards={Cards} windowHours={WindowHours}",
+                key, enabled, updated.CauseBreakerAttemptThreshold, updated.CauseBreakerCardThreshold,
+                updated.CauseBreakerWindowHours);
+            return updated;
+        }
+    }
+
+    /// <summary>
     /// ADR-0052: sets the integration branch parallel task worktrees branch off
     /// and merge back into. Blank reverts to repository <c>origin/HEAD</c>.
     /// </summary>

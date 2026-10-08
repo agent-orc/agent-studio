@@ -335,9 +335,9 @@ See [auto-tag apply recovery](areas-and-tags.md#auto-tag-apply-recovery).
 - `backend/Features/Pipeline/PipelineCatalogue.cs`: standard, report-only,
   concept, and UI pipeline definitions, step ids, default ordering, step run
   modes, and display names.
-- `backend/Features/Pipeline/QualityAnalysis/`: the Quality Studio in-process
-  package adapter, repository-owned activation policy, canonical finding
-  projection, and the first executable Angular named-rule pass.
+- `backend/Features/Pipeline/QualityAnalysis/`: the Quality Studio HTTP
+  sensor adapter, repository-owned activation policy, canonical finding
+  projection, and the first executable Angular deterministic-rule pass.
 
 ## Step cost measurement and the cost of deciding (AGT-3015)
 
@@ -461,22 +461,49 @@ deduplicated intervention, not one affected origin or one escalation.
 Quality Studio analysis is a standard pipeline category (`StepKind.Analysis`),
 not an optional generic tool invocation. The standard catalogue names seven
 separate post-core steps: Angular rules, C# rules, model review, visual quality,
-security, redundancy, and consistency. The Angular rule pass is the first
-executable slice; the other axes remain explicit catalogue slots until their QS
-package sensors land.
+security, redundancy, and consistency. The Angular ESLint sensor pass is the
+first executable slice; the other axes remain explicit catalogue slots until
+their Quality Studio integrations land.
 
-The runtime consumes the `AgentOrchestrator.CodeQuality` analysis core as an
-in-process DLL. It calls `QualityAnalysisCore` and receives canonical Quality
-Studio findings; there is no HTTP fallback. Package publication and rule content
-remain owned by Quality Studio. Agent Studio references QS rule ids such as
-`QS-NG-002` and `QS-NG-003` and does not copy their statements or check logic.
+The runtime calls Quality Studio's HTTP API. Set `QualityStudio:BaseUrl` on the
+Agent Studio host (environment key `QualityStudio__BaseUrl`); hosted QS also
+needs `QualityStudio:ApiToken` and `QualityStudio:ClientId`. The adapter reads
+`GET /api/repos`, requires a registration whose root is the exact checkout
+being reviewed, then calls
+`POST /api/repos/{id}/sensors/eslint/scan?path=<workspace>` for each
+Angular workspace containing changed files. A file without a discoverable
+`angular.json` is scanned at its own path. The adapter keeps findings only for
+requested files, deduplicates them by fingerprint, and treats any unavailable
+scan as an unavailable analysis step. A missing API or
+missing matching registration records an unavailable analysis step. It never borrows
+findings from a sibling checkout. Rule content and sensor configuration stay
+owned by Quality Studio.
+
+Agent Studio's test gates write ignored coverage under `coverage/`. The .NET
+test commands in `.agent-studio/project.yml` use
+`--collect "Code Coverage;Format=Cobertura"` with suite-specific results
+directories; the frontend `test:ci` command writes
+`coverage/frontend/lcov.info` through Vitest. Register the Quality Studio
+coverage sensor with
+`reportPaths = coverage/dotnet/**/*.cobertura.xml;coverage/frontend/lcov.info`.
+The sensor ingests these reports after test execution; it does not run a second
+test suite. `scripts/register-quality-studio-coverage.mjs` updates an existing
+QS registration through its API while preserving the other sensors. Run it from
+the registered checkout, for example:
+
+```sh
+node scripts/register-quality-studio-coverage.mjs http://127.0.0.1:5127 agent-studio-dev
+```
+
+For a hosted QS API, set `QUALITY_STUDIO_API_TOKEN` and
+`QUALITY_STUDIO_CLIENT_ID` for this command.
 
 Default activation is conventional and derives from the changed paths of the
 completed card:
 
 | Card class | Default analysis steps |
 |---|---|
-| Frontend-touching Angular | Angular named-rule pass and visual quality |
+| Frontend-touching Angular | Angular ESLint pass and visual quality |
 | Backend .NET | C# named-rule pass and security |
 | Mixed | Union of the frontend and backend defaults |
 
@@ -488,10 +515,9 @@ QS rule enablement and severity remain in QS-owned `.quality/rules.json`.
 
 Each completed pass writes `results/quality-analysis/<step-id>.json`, appends
 findings with their `ruleId` to `results/review-evidence.jsonl`, and records the
-artifact on `pipeline-execution.json`. Medium-or-higher findings from implemented
-quality axes feed the existing bounded steered-retry loop. In accordance with
-QS-90, unfixed security findings are documented and visible but do not block or
-steer the pipeline in this policy version.
+artifact on `pipeline-execution.json`. Findings are report-only in this phase:
+they do not reissue or block a delivery. The evidence supports the shadow
+comparison before Quality Studio's verdict contract can decide a review.
 - `backend/Features/Pipeline/ConceptWorkbenchContract.cs`,
   `ConceptWorkbenchPublisher.cs`, and `ConceptPromotionService.cs`: the
   document-first concept contract. One isolated concept run may author exactly
@@ -1671,8 +1697,13 @@ operator changes cause the step to fail before its writer runs.
   `concept`. The template includes the canonical append-only Implementation
   section and log markers. Its implementation convention requires one
   `implementationTasks` entry per independently reviewable slice, never one
-  open-ended all-recommendations entry. The concept pipeline deliberately does not run
-  build, test, code aspects, or integration.
+  open-ended all-recommendations entry. The local concept pipeline does not run
+  build, test, code aspects, or integration. A concept delivery entering Remote
+  Review retains its project build and lint commands and adds the read-only
+  `aspect-concept-fit` content check. Its project pipeline-step setting controls
+  model, thinking level, CLI, and prompt. The frozen ReviewSubject records the
+  `prompt.md` SHA-256; a missing content verdict or a changed brief cannot
+  settle as `Pass`. The grade lists skipped applicable aspects with reasons.
   A complete Dossier moves to `5-human-review` with a durable
   `concept-sight-review` marker. The agent delivers with `DONE` even when
   recommendations await sight review, decision acceptance, or operator approval;

@@ -93,7 +93,7 @@ function classify(lane) {
 
 async function moveTo(watchPath, slug, targetState) {
   const reqPath = `/api/tasks/${encodeURIComponent(slug)}/move?watchPath=${encodeURIComponent(watchPath)}`;
-  const res = await request('POST', reqPath, { targetState });
+  const res = await request('POST', reqPath, { targetState, runIntent: 'revoke' });
   return { slug, status: res.status, body: res.body.slice(0, 200) };
 }
 

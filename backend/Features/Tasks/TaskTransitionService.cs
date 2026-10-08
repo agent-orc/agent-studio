@@ -147,7 +147,8 @@ public sealed class TaskTransitionService
         string? transitionCause = null,
         string? transitionDetail = null,
         DecisionReopenPermit? decisionReopenPermit = null,
-        bool archiveOverride = false)
+        bool archiveOverride = false,
+        bool acceptOlderBriefDelivery = false)
     {
         var info = _scanner.FindJob(jobId, watchPath);
         if (info == null) return new MoveJobOutcome(MoveJobStatus.NotFound);
@@ -167,7 +168,7 @@ public sealed class TaskTransitionService
             return new MoveJobOutcome(MoveJobStatus.Failure,
                 "Archive override requires a human actor and a written reason.");
 
-        var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause);
+        var settledRunRecovery = PrepareSettledRunRecovery(info, targetState, cause, acceptOlderBriefDelivery);
         if (settledRunRecovery.Error is not null)
         {
             return new MoveJobOutcome(
@@ -263,7 +264,7 @@ public sealed class TaskTransitionService
             && fromState == TaskStates.HumanReview
             && targetState == TaskStates.Completed)
         {
-            var integrationAdmission = ValidateIntegratedAcceptance(info, settings);
+            var integrationAdmission = ValidateIntegratedAcceptance(info, settings, operatorOverride);
             if (integrationAdmission is not null) return integrationAdmission;
         }
 
@@ -747,11 +748,16 @@ public sealed class TaskTransitionService
     private SettledRunRecoveryPreparation PrepareSettledRunRecovery(
         TaskInfo info,
         string targetState,
-        string? trigger)
+        string? trigger,
+        bool acceptOlderBriefDelivery)
     {
+        var acceptingOlderBrief = acceptOlderBriefDelivery
+            && string.Equals(info.State, TaskStates.Escalated, StringComparison.Ordinal)
+            && string.Equals(targetState, TaskStates.AutoReview, StringComparison.Ordinal);
         if (_attemptAuthority is null
-            || !string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
-            || !string.Equals(targetState, TaskStates.Ready, StringComparison.Ordinal))
+            || !acceptingOlderBrief
+               && (!string.Equals(info.State, TaskStates.Progress, StringComparison.Ordinal)
+                   || !string.Equals(targetState, TaskStates.Ready, StringComparison.Ordinal)))
         {
             return SettledRunRecoveryPreparation.None;
         }
@@ -1463,7 +1469,8 @@ public sealed class TaskTransitionService
 
     private MoveJobOutcome? ValidateIntegratedAcceptance(
         TaskInfo reviewed,
-        ProjectSettings settings)
+        ProjectSettings settings,
+        bool operatorOverride = false)
     {
         var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
         if (reviewSubject is not null
@@ -1479,7 +1486,20 @@ public sealed class TaskTransitionService
                 subjectError ?? "The review subject does not belong to the current run attempt.");
         }
 
-        if (IsAlreadyIntegrated(reviewed)) return null;
+        if (IsAlreadyIntegrated(reviewed, out var verification))
+        {
+            // AGT-3002: a contained delivery whose tree never passed a gate is
+            // not accepted on containment alone. The operator may still take
+            // that responsibility explicitly with an override.
+            if (operatorOverride || IntegrationVerificationStates.PermitsCompletion(verification))
+                return null;
+            return new MoveJobOutcome(
+                MoveJobStatus.IntegrationFailed,
+                "Acceptance refused: the delivery is on the integration branch but integrated-unverified - no gate passed on "
+                + $"the merged tree{(string.IsNullOrWhiteSpace(verification?.Sha) ? string.Empty : $" {verification!.Sha}")}. "
+                + $"{verification?.Reason} Repair the branch and deliver again, or accept with an operator override.",
+                reviewed.FolderPath);
+        }
 
         var integrationBranch = ResolveIntegrationBranch(reviewed, settings);
         var status = _integrationStatus?.BuildLookup([reviewed])
@@ -1699,10 +1719,12 @@ public sealed class TaskTransitionService
         TryClearAcceptanceIntegrationStatus(accepted);
     }
 
-    private bool IsAlreadyIntegrated(TaskInfo job)
+    private bool IsAlreadyIntegrated(TaskInfo job, out TaskIntegrationVerification? verification)
     {
+        verification = null;
         if (_integrationStatus == null) return false;
         var lookup = _integrationStatus.BuildLookup([job]);
+        if (lookup.TryGetValue(job.TaskKey, out var found)) verification = found.Verification;
         // AGT-2849: the merge is the acceptance boundary; publishing it is the
         // push step's job and is recovered by the integration push backstop. A
         // delivery that is merged but not pushed yet must therefore not be sent

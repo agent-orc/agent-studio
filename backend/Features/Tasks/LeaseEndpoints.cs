@@ -26,11 +26,48 @@ namespace AgentStudio.Tasks;
 /// </summary>
 public static class LeaseEndpoints
 {
-    private static readonly SemaphoreSlim ClaimGate = new(1, 1);
+    internal static readonly SemaphoreSlim ClaimGate = new(1, 1);
+    private static readonly AgentStudio.Shared.RemoteRequeueLogLimiter DeferredLeaseLogs = new();
 
     public static void MapLeaseEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/runner/lease");
+
+        group.MapPost("/{attemptId}/revoked-reference", (
+            string attemptId, AgentStudio.TaskServer.Contracts.RevokedRunReferenceRequest req,
+            HttpContext context, AttemptAuthorityService authority, ITaskScanner scanner,
+            TimelineLog timeline) =>
+        {
+            if (!RunnerMatches(context, req.RunnerId)) return Results.Unauthorized();
+            var run = authority.GetRun(attemptId);
+            if (run is null) return Results.NotFound();
+            if (run.State != AttemptLifecycleState.Superseded
+                || run.TerminalOutcome != "operator-revoked"
+                || run.Lease?.ExecutorId != req.RunnerId
+                || run.Lease?.LeaseInstanceId != req.InstanceId
+                || run.Lease?.LeaseId != req.LeaseId
+                || run.Lease?.Fence != req.Fence)
+                return Results.Conflict(new { error = "Run is not an operator-revoked attempt held by this runner." });
+            if (string.IsNullOrWhiteSpace(req.Branch)
+                || string.IsNullOrWhiteSpace(req.CommitSha)
+                || !req.Branch.StartsWith("agent-studio/quarantine/", StringComparison.Ordinal)
+                || req.CommitSha.Length is not (40 or 64)
+                || !req.CommitSha.All(Uri.IsHexDigit)
+                || !req.Branch.EndsWith("/" + req.CommitSha, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "A generation-scoped quarantine ref and commit SHA are required." });
+            var task = FindTask(scanner, run.TaskKey);
+            if (task is null) return Results.NotFound();
+            timeline.Append(task.FolderPath, TimelineEventKinds.RunAttemptRevoked,
+                TimelineActors.System,
+                $"Revoked run {attemptId} retained its work at {req.Branch} ({req.CommitSha}).",
+                attemptId,
+                details: new Dictionary<string, string>
+                {
+                    ["quarantineRef"] = req.Branch,
+                    ["commitSha"] = req.CommitSha,
+                });
+            return Results.Ok(new { status = "recorded" });
+        }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.PostStep);
 
         group.MapPost("/acquire", async (
             RunLeaseAcquireRequest req,
@@ -183,9 +220,11 @@ public static class LeaseEndpoints
             RemoteRunStopRequestStore stops,
             TaskScannerService scanner,
             TaskMutationService mutations,
+            TaskTransitionService transitions,
             RunTimeoutContinuationService continuations,
             HumanReviewEscalation humanReviewEscalation,
             OrchestratorLog orchestratorLog,
+            IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -197,12 +236,17 @@ public static class LeaseEndpoints
 
             // The claim gate is held across the whole release so a lost worker's
             // continuation is prepared before any runner can claim the card it
-            // returns to Ready.
+            // returns to Ready. A typed prelaunch infrastructure release never
+            // takes the lost-worker path: no agent process held the authority.
+            var route = RemoteLeaseReleasePolicy.Classify(req.Outcome);
             await ClaimGate.WaitAsync(ct);
             try
             {
-                await ApplyLostWorkerContinuationAsync(
-                    req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
+                if (route == RemoteLeaseReleaseRoute.LostWorker)
+                    await ApplyLostWorkerContinuationAsync(
+                        req, scanner, continuations, humanReviewEscalation, orchestratorLog, loggerFactory, ct);
+                var releaseWrite = leases.CurrentWriteReference(
+                    req.TaskKey, $"infrastructure-release:{req.AttemptId}:{req.LeaseId}");
                 var released = leases.Release(req);
                 if (string.Equals(released.Outcome, "Released", StringComparison.OrdinalIgnoreCase))
                 {
@@ -210,6 +254,41 @@ public static class LeaseEndpoints
                     var task = FindTask(scanner, req.TaskKey);
                     if (task is not null)
                         mutations.RollbackStashedPendingIntent(task.FolderPath);
+                    var budget = new RemoteClaimFailureBudget(
+                        loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
+                        configuration.GetValue("Runner:RemoteClaimFailureBudget", RemoteClaimFailureBudget.MaxAttempts));
+                    // A lost worker had started an agent process, so it ends the
+                    // chain of consecutive prelaunch failures, as on the Task Server.
+                    if (task is not null && route == RemoteLeaseReleaseRoute.LostWorker)
+                        budget.Reset(task);
+                    if (task is { State: TaskStates.Progress }
+                        && route == RemoteLeaseReleaseRoute.PrelaunchInfrastructure)
+                    {
+                        var decision = budget.Record(task, req.Detail, req.Outcome, released.Lease?.Hostname);
+                        var failure = budget.GetState(task)!;
+                        var reason = $"runner-environment-broken: fingerprint={failure.Fingerprint}; " +
+                                     $"attempt={decision.Attempt}/{decision.MaximumAttempts}; " +
+                                     $"host={failure.Host ?? "unknown"}; error={failure.Reason}. " +
+                                     "Recovery: repair the runner environment or results ownership, then move this card to Ready.";
+                        if (decision.Escalate)
+                        {
+                            await humanReviewEscalation.EscalateAsync(
+                                task.Id, task.WatchPath, task.ProjectName,
+                                HumanReviewEscalationCategories.RunnerEnvironmentBroken,
+                                reason, ct, releaseWrite);
+                            loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerRelease").LogError(
+                                "runner-environment-broken task={TaskKey} fingerprint={Fingerprint} host={Host} attempts={Attempts}",
+                                req.TaskKey, failure.Fingerprint, failure.Host, decision.Attempt);
+                        }
+                        else
+                            await transitions.MoveAsync(
+                                task.Id, TaskStates.Ready, task.WatchPath, ct,
+                                cause: "remote-runner-infrastructure-retry",
+                                authorityWrite: releaseWrite,
+                                suppressProductExecution: true,
+                                transitionCause: LaneChangeCauses.LeaseRecovery,
+                                transitionDetail: $"{failure.Fingerprint}:{decision.Attempt}");
+                    }
                 }
                 return Results.Ok(released);
             }
@@ -331,7 +410,8 @@ public static class LeaseEndpoints
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerClaim");
             var remoteClaimFailures = new RemoteClaimFailureBudget(
-                loggerFactory.CreateLogger<RemoteClaimFailureBudget>());
+                loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
+                configuration.GetValue("Runner:RemoteClaimFailureBudget", RemoteClaimFailureBudget.MaxAttempts));
             var remoteDeliveryFailures = new RemoteDeliveryFailureStore(
                 loggerFactory.CreateLogger<RemoteDeliveryFailureStore>());
             var reprobeCapabilities = new HashSet<string>(StringComparer.Ordinal);
@@ -616,8 +696,13 @@ public static class LeaseEndpoints
                 // enough to requeue: wait through the authority grace and require
                 // this assigned runner poll to answer that the task is absent
                 // from its active process set.
-                foreach (var interrupted in scanner.ScanAllJobs()
-                             .Where(t => !t.Fixture && t.State == TaskStates.Progress))
+                var progressTasks = scanner.ScanAllJobs()
+                    .Where(t => !t.Fixture && t.State == TaskStates.Progress)
+                    .ToList();
+                DeferredLeaseLogs.RetainProgressTasks(progressTasks
+                    .Select(t => t.Key ?? t.TaskKey ?? t.Id)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase));
+                foreach (var interrupted in progressTasks)
                 {
                     var project = settings.Get(interrupted.ProjectName);
                     if (!ProjectExecutionPolicy.AllowsAutomaticPickup(project)
@@ -636,7 +721,7 @@ public static class LeaseEndpoints
                             RunnerReportsTaskActive: activeTaskKeys?.Contains(interruptedKey) == true));
                     if (requeueDecision.Action != RemoteRunRequeueAction.Requeue)
                     {
-                        logger.LogInformation(
+                        if (DeferredLeaseLogs.ShouldLog(interruptedKey, inspection.Lease?.LeaseId)) logger.LogInformation(
                             "remote-runner-requeue-deferred task={TaskKey} runner={Runner} reason={Reason} detail={Detail}",
                             interruptedKey, req.RunnerName, requeueDecision.ReasonCode, requeueDecision.Detail);
                         continue;
@@ -649,11 +734,11 @@ public static class LeaseEndpoints
                     // the card becomes claimable again.
                     mutations.RollbackStashedPendingIntent(interrupted.FolderPath);
                     var preparationFailure = remoteClaimFailures.GetState(interrupted);
-                    if (preparationFailure?.Attempts >= RemoteClaimFailureBudget.MaxAttempts)
+                    if (preparationFailure?.Attempts >= remoteClaimFailures.MaximumAttempts)
                     {
                         var reason =
                             $"Remote claim repository/environment preparation failed " +
-                            $"({preparationFailure.Attempts}/{RemoteClaimFailureBudget.MaxAttempts}): " +
+                            $"({preparationFailure.Attempts}/{remoteClaimFailures.MaximumAttempts}): " +
                             preparationFailure.Reason;
                         var escalated = await humanReviewEscalation.EscalateAsync(
                             interrupted.Id,
@@ -672,15 +757,19 @@ public static class LeaseEndpoints
                             interruptedKey,
                             escalated.Status,
                             reason);
+                        if (escalated.Status == MoveJobStatus.Success)
+                            DeferredLeaseLogs.ForgetTask(interruptedKey);
                         continue;
                     }
-                    await transitions.MoveAsync(
+                    var requeued = await transitions.MoveAsync(
                         interrupted.Id, TaskStates.Ready, interrupted.WatchPath, ct,
                         cause: $"remote-runner-lease-recovery:{req.RunnerName.Trim()}",
                         authorityWrite: recoveryWrite,
                         suppressProductExecution: true,
                         transitionCause: LaneChangeCauses.LeaseRecovery,
                         transitionDetail: requeueDecision.ReasonCode);
+                    if (requeued.Status == MoveJobStatus.Success)
+                        DeferredLeaseLogs.ForgetTask(interruptedKey);
                     if (recoveryWrite is not null)
                         recoveredSources[interruptedKey] = recoveryWrite.AttemptId;
                 }
@@ -1091,6 +1180,8 @@ public static class LeaseEndpoints
                 var claimKey = string.IsNullOrWhiteSpace(req.IdempotencyKey)
                     ? $"claim:{taskKey}:{req.RunnerId.Trim()}:{Guid.NewGuid():N}"
                     : req.IdempotencyKey.Trim();
+                var briefVersion = BriefVersionStore.ReadOrCreate(candidate.FolderPath);
+                runSpec = runSpec with { BriefVersion = briefVersion };
                 var acquire = leases.TryAcquire(new RunLeaseAcquireRequest(
                     taskKey, req.RunnerId.Trim(), req.RunnerName.Trim(), req.Hostname,
                     req.Pid, req.BackendName, req.RequestedTtlSeconds,
@@ -1100,6 +1191,7 @@ public static class LeaseEndpoints
                 {
                     ClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
                     LeaseInstanceId = req.CapabilityInstanceId,
+                    BriefVersion = briefVersion,
                 });
                 if (!acquire.Granted || acquire.Lease is null)
                     return Results.Ok(WithCapacity(new RunnerClaimResponse(
@@ -1384,6 +1476,7 @@ public static class LeaseEndpoints
             RemoteRunStopRequestStore stops,
             ProviderRejectionContinuationService providerRejectionContinuations,
             ModelRoutingPolicyRegistry modelRouting,
+            IConfiguration configuration,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -1392,7 +1485,8 @@ public static class LeaseEndpoints
             try
             {
             var remoteClaimFailures = new RemoteClaimFailureBudget(
-                loggerFactory.CreateLogger<RemoteClaimFailureBudget>());
+                loggerFactory.CreateLogger<RemoteClaimFailureBudget>(),
+                configuration.GetValue("Runner:RemoteClaimFailureBudget", RemoteClaimFailureBudget.MaxAttempts));
             var remoteDeliveryFailures = new RemoteDeliveryFailureStore(
                 loggerFactory.CreateLogger<RemoteDeliveryFailureStore>());
             var reportedOutcome = req.Outcome ?? string.Empty;
@@ -1612,6 +1706,50 @@ public static class LeaseEndpoints
                     req.TaskKey,
                     attemptId,
                     tokenReceipt.Warning);
+            }
+            var currentBriefVersion = BriefVersionStore.ReadOrCreate(task.FolderPath);
+            if (RunDispositionPolicy.DecideCompletion(
+                    settledRun?.BriefVersion, currentBriefVersion)
+                == RemoteCompletionDisposition.OfferOlderBrief)
+            {
+                // The result is a terminal attempt fact, but it is not this
+                // card's delivery. Keep its immutable ref for an explicit
+                // decision and park the card outside automated review.
+                var offerMove = await transitions.MoveAsync(
+                    task.Id, TaskStates.Escalated, task.WatchPath, ct,
+                    cause: "remote-older-brief-offer",
+                    reason: "Delivered against an older brief; choose accept, use as a starting point, or discard.",
+                    authorityWrite: new AttemptWriteReference(
+                        attemptId, req.FencingToken, epoch, $"older-brief-offer:{completionKey}"),
+                    suppressProductExecution: true,
+                    transitionDetail: "older-brief-offer");
+                if (offerMove.Status != MoveJobStatus.Success)
+                    return Results.Conflict(new RemoteRunCompletionResponse(
+                        req.TaskKey, reportedOutcome, task.State,
+                        $"Older-brief offer lane move refused: {offerMove.Status} {offerMove.Message}",
+                        RunAttemptId: attemptId));
+                var offerFolder = offerMove.NewFolderPath ?? scanner.FindJob(task.Id, task.WatchPath)?.FolderPath ?? task.FolderPath;
+                var offer = new OlderBriefDeliveryOffer(
+                    attemptId, settledRun?.BriefVersion ?? "unknown", currentBriefVersion,
+                    req.ResultSha, req.ImmutableResultRef, req.SalvageBranch, req.SalvageCommitSha,
+                    DateTime.UtcNow);
+                OlderBriefDeliveryStore.Write(offerFolder, offer);
+                timeline.Append(offerFolder, TimelineEventKinds.OlderBriefDeliveryOffered,
+                    TimelineActors.System,
+                    $"Run {attemptId} delivered against an older brief. Its result is retained for an operator decision.",
+                    attemptId,
+                    payloadRef: "results/older-brief-delivery.json",
+                    details: new Dictionary<string, string>
+                    {
+                        ["attemptId"] = attemptId,
+                        ["briefVersion"] = offer.BriefVersion,
+                        ["currentBriefVersion"] = currentBriefVersion,
+                    });
+                scanner.InvalidateCache();
+                return Results.Ok(new RemoteRunCompletionResponse(
+                    req.TaskKey, reportedOutcome, TaskStates.Escalated,
+                    "Delivered against an older brief; operator decision required.",
+                    RunAttemptId: attemptId));
             }
             RemoteDeliveryFailureDecision? deliveryFailure = null;
             if (envelopeDecision.ShouldFailDelivery)
@@ -1970,7 +2108,9 @@ public static class LeaseEndpoints
             RemoteClaimFailureDecision? claimFailure = null;
             if (outcome == "environmentfailure")
             {
-                claimFailure = remoteClaimFailures.Record(task, reportedReason);
+                claimFailure = remoteClaimFailures.Record(task, reportedReason,
+                    "runner-environment-preparation-failed",
+                    leases.Inspect(req.TaskKey).Lease?.Hostname);
                 details["attempt"] = claimFailure.Attempt.ToString();
                 details["maximumAttempts"] = claimFailure.MaximumAttempts.ToString();
             }
@@ -2083,9 +2223,11 @@ public static class LeaseEndpoints
 
             if (claimFailure is not null)
             {
-                var reason =
-                    $"Remote claim repository/environment preparation failed " +
-                    $"({claimFailure.Attempt}/{claimFailure.MaximumAttempts}): {claimFailure.Reason}";
+                var failureState = remoteClaimFailures.GetState(task)!;
+                var reason = $"runner-environment-broken: fingerprint={failureState.Fingerprint}; " +
+                    $"attempt={claimFailure.Attempt}/{claimFailure.MaximumAttempts}; " +
+                    $"host={failureState.Host ?? "unknown"}; error={claimFailure.Reason}. " +
+                    "Recovery: repair the runner environment, then move this card to Ready.";
                 if (!claimFailure.Escalate)
                 {
                     var retryMove = await transitions.MoveAsync(
@@ -2126,7 +2268,7 @@ public static class LeaseEndpoints
                     task.Id,
                     task.WatchPath,
                     task.ProjectName,
-                    HumanReviewEscalationCategories.RemoteClaimEnvironment,
+                    HumanReviewEscalationCategories.RunnerEnvironmentBroken,
                     reason,
                     ct,
                     laneWrite);
@@ -2146,9 +2288,11 @@ public static class LeaseEndpoints
                     runId: attemptId,
                     details: new Dictionary<string, string>
                     {
-                        ["category"] = HumanReviewEscalationCategories.RemoteClaimEnvironment,
+                        ["category"] = HumanReviewEscalationCategories.RunnerEnvironmentBroken,
                         ["attempt"] = claimFailure.Attempt.ToString(),
                         ["maximumAttempts"] = claimFailure.MaximumAttempts.ToString(),
+                        ["fingerprint"] = failureState.Fingerprint ?? "unknown",
+                        ["host"] = failureState.Host ?? "unknown",
                         ["reason"] = claimFailure.Reason,
                     });
                 loggerFactory.CreateLogger("AgentStudio.Tasks.RemoteRunnerCompletion").LogError(

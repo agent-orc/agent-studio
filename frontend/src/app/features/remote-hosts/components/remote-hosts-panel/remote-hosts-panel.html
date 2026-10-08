@@ -22,6 +22,7 @@
       </button>
     </div>
   </header>
+  <app-deployment-checkpoints [hosts]="hosts()" [stableRelease]="stableRelease()" [now]="now()" />
   <div class="rh__summary" data-testid="remote-hosts-summary">
     <span class="rh__count"><strong>{{ total() }}</strong> {{ total() === 1 ? 'machine' : 'machines' }}</span>
     <span class="rh__sep" aria-hidden="true">·</span>
@@ -48,6 +49,7 @@
       </button>
     }
   </div>
+  <app-runner-infrastructure-failures />
   @if (readyCandidateTasks().length > 0) {
     <section class="rh__candidates" data-testid="execution-host-candidates">
       <h3 class="rh__candidates-title">Ready routes with benchmark candidates</h3>
@@ -60,7 +62,6 @@
       }
     </section>
   }
-
   @for (host of linkFailures(); track host.id) {
     <app-notification kind="warning" layout="banner" [closable]="false"
                       [title]="host.name + ' link is down'" testid="remote-host-link-notification">
@@ -104,7 +105,6 @@
       }
     </section>
   }
-
   @if (providerRefusals().length) {
     <section class="rh__refusals" data-testid="provider-refusal-summary">
       <div>
@@ -123,7 +123,6 @@
       </div>
     </section>
   }
-
   @if (error(); as err) {
     <div class="rh__error" data-testid="remote-hosts-error">{{ err }}</div>
   }

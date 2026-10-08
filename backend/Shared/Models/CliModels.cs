@@ -50,10 +50,11 @@ public record ContinueJobRequest
 /// auto-pickup loop will run it on the next tick. The frontend treats
 /// queued as success-with-info (no modal); the chat carries the
 /// orchestrator's <c>[queued]</c> meta line for user-facing feedback.
+/// <c>saved</c> means the intent persisted but promotion to Ready failed.
 /// </summary>
 public record ContinueJobResponse
 {
-    /// <summary><c>started</c> | <c>queued</c></summary>
+    /// <summary><c>started</c> | <c>queued</c> | <c>saved</c></summary>
     public string Status { get; init; } = "started";
     public CliExecution? Execution { get; init; }
     public ContinueJobQueuedInfo? Queued { get; init; }
@@ -84,6 +85,8 @@ public record ContinueJobQueuedInfo
 public record PendingIntent
 {
     public int Version { get; init; } = 1;
+    /// <summary>The queued follow-up explicitly keeps an already running attempt alive.</summary>
+    public string RunIntent { get; init; } = "steer";
     /// <summary>One of <see cref="ContinueModes"/>.</summary>
     public string Mode { get; init; } = ContinueModes.Continue;
     public string Prompt { get; init; } = "";

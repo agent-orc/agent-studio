@@ -56,6 +56,18 @@ public static class PipelineCatalogue
     public const string ConceptReviewStepId = "post-concept-review";
     public const string ConceptSightReviewGateStepId = "post-concept-sight-review";
     public const string ConceptPromotionStepId = "post-concept-promotion";
+    public const string RemoteConceptFitStepId = "aspect-concept-fit";
+
+    /// <summary>Remote Review content check for concept deliveries; the local concept pipeline stays unchanged.</summary>
+    public static readonly PipelineStep RemoteConceptFitStep = new()
+    {
+        Id = RemoteConceptFitStepId,
+        DisplayName = "Concept fit (Remote Review)",
+        Kind = StepKind.Aspect,
+        RunMode = StepRunMode.Parallel,
+        PromptTemplate = "review-aspect-concept-fit.md",
+        DefaultEnabled = true,
+    };
 
     /// <summary>
     /// The four aspect step ids ship as parallel post-steps. Kept in
@@ -254,7 +266,7 @@ public static class PipelineCatalogue
 
     /// <summary>
     /// Stable Quality Studio analysis catalogue. The Angular rule pass is the
-    /// first executable slice; the remaining named axes reserve their package
+    /// first executable slice; the remaining named axes reserve their sensor
     /// boundary without embedding Quality Studio rule content in Agent Studio.
     /// Card-class defaults are resolved from repository changes and the
     /// repository-owned quality policy, never from per-card or environment
