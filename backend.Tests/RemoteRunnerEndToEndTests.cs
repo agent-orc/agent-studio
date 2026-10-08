@@ -1441,7 +1441,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
         var escalated = Path.Combine(_watchPath, TaskStates.Escalated, TaskKey);
         var status = File.ReadAllText(Path.Combine(escalated, "status.md"));
-        Assert.Contains("remote-claim-environment", status);
+        Assert.Contains("runner-environment-broken", status);
         Assert.Contains("3/3", status);
         Assert.Contains("clone failed: 403 agent-orc/website", status);
 
@@ -1449,6 +1449,284 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             RunnerId, ProjectName, "hetzner-test", 4242, "remote-runner"),
             CancellationToken.None);
         Assert.Equal(RClaimStatus.Empty, noFourthClaim.Status);
+    }
+
+    [Fact]
+    public async Task Infrastructure_release_retries_immediately_then_escalates_without_grace()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+                    RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []))
+                : await client.ClaimAsync(new RClaim(
+                    RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:broken-worktree:{attempt}",
+                Outcome: "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+            var lane = attempt == 3 ? TaskStates.Escalated : TaskStates.Ready;
+            Assert.True(Directory.Exists(Path.Combine(_watchPath, lane, TaskKey)));
+        }
+
+        var status = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md"));
+        Assert.Contains("runner-environment-broken", status);
+        Assert.Contains("fingerprint=", status);
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(3, failure.Attempts);
+        Assert.Equal("host", failure.Host);
+        Assert.Equal(16, failure.Fingerprint.Length);
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, next.Status);
+    }
+
+    /// <summary>
+    /// AGT-2932 review finding: Execution Hosts lists a card escalated under a
+    /// configured failure budget below the default of three.
+    /// </summary>
+    [Fact]
+    public async Task Configured_budget_below_three_escalates_and_stays_visible_on_execution_hosts()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900, remoteClaimFailureBudget: 1);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+            "release:broken-worktree:1",
+            Outcome: "runner-environment-preparation-failed",
+            Detail: "fatal: not a git repository"), CancellationToken.None);
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(1, failure.Attempts);
+    }
+
+    [Fact]
+    public async Task Escalated_infrastructure_failure_remains_visible_after_budget_increases()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Broken worktree", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900, remoteClaimFailureBudget: 2);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var claimRequest = new RClaim(
+                RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []);
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, claimRequest)
+                : await client.ClaimAsync(claimRequest, CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:broken-worktree:{attempt}",
+                Outcome: "runner-environment-preparation-failed",
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+        }
+
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+        factory.Services.GetRequiredService<IConfiguration>()["Runner:RemoteClaimFailureBudget"] = "3";
+
+        using var management = factory.CreateClient();
+        management.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var visible = await management.GetFromJsonAsync<Contract.RunnerInfrastructureFailureDto[]>(
+            "/api/v1/management/runner-infrastructure-failures", ApiJson);
+        var failure = Assert.Single(visible!);
+        Assert.Equal(2, failure.Attempts);
+        Assert.Equal("host", failure.Host);
+    }
+
+    /// <summary>
+    /// AGT-2932 review finding: a typed prelaunch release must not enter the
+    /// AGT-2870 lost-worker continuation even when it names a salvage ref (the
+    /// runner lists the salvage it found in a failed salvage). The lost-worker
+    /// release with the same salvage is the control proving the probe can see a
+    /// continuation.
+    /// </summary>
+    [Theory]
+    [InlineData("runner-salvage-failed", false)]
+    [InlineData("worker-lost", true)]
+    public async Task Typed_prelaunch_release_bypasses_the_lost_worker_continuation(
+        string outcome, bool expectContinuation)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Salvage failed before launch", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+            $"release:{outcome}",
+            Outcome: outcome,
+            SalvageBranch: $"agent-studio/salvage/{RunnerId}/{TaskKey}/fence-1",
+            SalvageCommitSha: "5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a",
+            Detail: "fatal: not a git repository"), CancellationToken.None);
+
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+        Assert.True(Directory.Exists(ready));
+        var traces = string.Join('\n', Directory
+            .EnumerateFiles(ready, "*", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        Assert.Equal(expectContinuation, traces.Contains(AgentStudio.Runner.LostWorkerContinuationPolicy.ContinuationReason));
+        var budget = AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready);
+        if (expectContinuation)
+            Assert.Null(budget);
+        else
+        {
+            Assert.Equal(1, budget!.Attempts);
+            Assert.Equal("runner-salvage-failed", budget.Cause);
+        }
+    }
+
+    /// <summary>
+    /// AGT-2932 review round 10: a lost worker had started an agent process, so
+    /// its release keeps the AGT-2870 continuation and ends the chain of
+    /// consecutive prelaunch failures on this plane, as it does on the Task
+    /// Server. The next prelaunch failure starts again at attempt one.
+    /// </summary>
+    [Fact]
+    public async Task Lost_worker_release_keeps_its_continuation_and_resets_the_prelaunch_failure_chain()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Lost after two broken worktrees", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+        var claimRequest = new RClaim(RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []);
+        var ready = Path.Combine(_watchPath, TaskStates.Ready, TaskKey);
+
+        async Task ReleaseAsync(int attempt, string outcome, bool salvage)
+        {
+            var claim = attempt == 1
+                ? await ClaimWithSuccessfulPreflightAsync(client, claimRequest)
+                : await client.ClaimAsync(claimRequest, CancellationToken.None);
+            Assert.Equal(RClaimStatus.Claimed, claim.Status);
+            await client.ReleaseLeaseAsync(new RRelease(
+                claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+                claim.Lease.AttemptId, claim.Lease.AuthorityEpoch,
+                $"release:{outcome}:{attempt}",
+                Outcome: outcome,
+                SalvageBranch: salvage ? $"agent-studio/salvage/{RunnerId}/{TaskKey}/fence-{attempt}" : null,
+                SalvageCommitSha: salvage ? "5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a5a1a" : null,
+                Detail: "fatal: not a git repository"), CancellationToken.None);
+            Assert.True(Directory.Exists(ready));
+        }
+
+        await ReleaseAsync(1, "runner-environment-preparation-failed", salvage: false);
+        await ReleaseAsync(2, "runner-environment-preparation-failed", salvage: false);
+        Assert.Equal(2, AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready)!.Attempts);
+
+        await ReleaseAsync(3, "worker-lost", salvage: true);
+        var traces = string.Join('\n', Directory
+            .EnumerateFiles(ready, "*", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        Assert.Contains(AgentStudio.Runner.LostWorkerContinuationPolicy.ContinuationReason, traces);
+        Assert.Null(AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready));
+
+        await ReleaseAsync(4, "runner-environment-preparation-failed", salvage: false);
+        Assert.Equal(1, AgentStudio.Runner.RemoteClaimFailureBudget.Read(ready)!.Attempts);
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey)));
+    }
+
+    /// <summary>
+    /// AGT-2932 review finding: a delayed release from an older attempt is
+    /// rejected by the fence, and must leave the stop request recorded for the
+    /// newer attempt of the same card deliverable on that attempt's heartbeat.
+    /// </summary>
+    [Fact]
+    public async Task Stale_lease_release_keeps_the_stop_request_of_the_newer_attempt()
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Stop survives a stale release", "Prompt.");
+        using var factory = BuildFactory(remoteRequeueGraceSeconds: 900);
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/agent-orc/agent-studio.git");
+
+        var first = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []));
+        Assert.Equal(RClaimStatus.Claimed, first.Status);
+        var firstRelease = new RRelease(
+            first.TaskKey!, first.Lease!.LeaseId, first.Lease.FencingToken, RunnerId,
+            first.Lease.AttemptId, first.Lease.AuthorityEpoch,
+            "release:first",
+            Outcome: "runner-environment-preparation-failed",
+            Detail: "fatal: not a git repository");
+        Assert.Equal("Released", (await client.ReleaseLeaseAsync(firstRelease, CancellationToken.None)).Outcome);
+
+        var second = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", ActiveTaskKeys: []), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, second.Status);
+        Assert.NotEqual(first.Lease.AttemptId, second.Lease!.AttemptId);
+        var taskKey = second.TaskKey!;
+        var stops = factory.Services.GetRequiredService<AgentStudio.Runner.RemoteRunStopRequestStore>();
+        var stop = stops.Record(
+            taskKey, AgentStudio.Runner.RemoteRunStopReasons.User, second.Lease.AttemptId,
+            "operator", second.Lease.FencingToken);
+
+        // Posted directly: the runner client forgets a released lease locally,
+        // so only a delayed or replayed request reaches the endpoint this way.
+        using var staleResponse = await http.PostAsJsonAsync(
+            "/api/runner/lease/release",
+            firstRelease with { IdempotencyKey = "release:first-delayed" });
+        Assert.Equal(HttpStatusCode.OK, staleResponse.StatusCode);
+        var stale = await staleResponse.Content.ReadFromJsonAsync<RunLeaseResponse>();
+
+        Assert.NotEqual("Released", stale!.Outcome);
+        Assert.Equal(stop.CommandId, stops.Peek(taskKey)?.CommandId);
+        var renew = await client.RenewLeaseAsync(new RHeartbeat(
+            taskKey,
+            second.Lease.LeaseId,
+            second.Lease.FencingToken,
+            RunnerId,
+            AttemptId: second.Lease.AttemptId,
+            AuthorityEpoch: second.Lease.AuthorityEpoch,
+            IdempotencyKey: $"renew:{second.Lease.AttemptId}"), CancellationToken.None);
+        Assert.True(renew.Granted, renew.Message);
+        Assert.Equal(stop.CommandId, renew.StopRequest?.CommandId);
     }
 
     [Fact]
@@ -3279,6 +3557,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         string? primaryProjectName = null,
         string? primaryWatchPath = null,
         Func<DateTime>? authorityNow = null,
+        int? remoteClaimFailureBudget = null,
         Func<IServiceProvider, ICauseWaitRelease>? causeWaitReleaseFactory = null,
         ICauseWaitMarkerStore? causeWaitMarkers = null) =>
         new WebApplicationFactory<Program>()
@@ -3299,6 +3578,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                         ["Runner:ReviewInfrastructureRetry:Enabled"] = authorityNow is null ? null : "false",
                         ["Runner:RemoteRequeue:GraceSeconds"] =
                             remoteRequeueGraceSeconds?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ["Runner:RemoteClaimFailureBudget"] =
+                            remoteClaimFailureBudget?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     };
                     if (!string.IsNullOrWhiteSpace(additionalProjectName)
                         && !string.IsNullOrWhiteSpace(additionalWatchPath))

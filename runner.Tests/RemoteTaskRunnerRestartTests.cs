@@ -61,6 +61,45 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
     [Fact]
     [Trait("Category", "MachineBound")]
     [Trait("Category", "ReviewFlaky")]
+    public async Task Permission_failure_after_worker_start_does_not_release_as_results_preparation()
+    {
+        var origin = Path.Combine(_root, "origin.git");
+        await CreateOriginAsync(origin, Path.Combine(_root, "seed"));
+        var work = Path.Combine(_root, "runner-work");
+        var stateRoot = Path.Combine(_root, "state");
+        var options = Options(work, stateRoot, origin);
+        var lease = Lease();
+        var workspace = new GitWorkspace(options, lease.TaskKey, _ => { });
+        await workspace.PrepareAsync(CancellationToken.None);
+        var results = Path.Combine(work, "tasks", GitWorkspace.SafeSegment(lease.TaskKey), "results");
+        Directory.CreateDirectory(results);
+
+        var store = new RunnerStateStore(stateRoot);
+        var slot = store.Create(lease.TaskKey, lease, workspace.RepoPath);
+        var process = DurableAgentProcess.Start(
+            options, slot.WorkerDirectory, workspace.RepoPath, "", results);
+        slot = store.Save(slot with
+        {
+            ProcessId = process.ProcessId,
+            ProcessStartedAtUtc = process.ProcessStartedAtUtc,
+            Phase = "running",
+        });
+
+        var server = new RunnerApiHandler(lease, unauthorizedOnCompletion: true);
+        using var http = new HttpClient(server) { BaseAddress = new Uri("http://task-server") };
+        using var client = new TaskServerClient(http, options.RunnerId);
+        var runner = new RemoteTaskRunner(options, client, _ => { }, store);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            runner.ReattachAsync(slot, CancellationToken.None));
+
+        Assert.Contains("/api/runner/completion", server.Paths);
+        Assert.DoesNotContain("runner-results-handling-failed", server.ReleaseBodies.ToString());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    [Trait("Category", "ReviewFlaky")]
     public async Task Restarted_runner_completes_with_the_base_sha_recorded_before_the_restart()
     {
         // Only the process that prepared the worktree observes its start commit.
@@ -314,7 +353,8 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
 
     private sealed class RunnerApiHandler(
         RunLeaseInfoDto lease,
-        string releaseOutcome = "Released") : HttpMessageHandler
+        string releaseOutcome = "Released",
+        bool unauthorizedOnCompletion = false) : HttpMessageHandler
     {
         private readonly object _gate = new();
         public List<string> Paths { get; } = [];
@@ -337,6 +377,9 @@ public sealed class RemoteTaskRunnerRestartTests : IDisposable
                 if (path == "/api/runner/completion") CompletionBodies.Append(body);
                 if (path == "/api/runner/lease/release") ReleaseBodies.Append(body);
             }
+
+            if (unauthorizedOnCompletion && path == "/api/runner/completion")
+                throw new UnauthorizedAccessException("state journal denied after worker start");
 
             var json = path switch
             {

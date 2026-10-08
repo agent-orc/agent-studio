@@ -66,6 +66,8 @@ internal static class RemoteReviewReportEvidence
         text.AppendLine($"expectedResultSha: {Yaml(request.Workspace.ExpectedResultSha)}");
         text.AppendLine($"actualHead: {Yaml(request.Workspace.ActualHead)}");
         text.AppendLine($"reportSha256: {Yaml(reportSha256)}");
+        if (!string.IsNullOrWhiteSpace(request.BriefSha256))
+            text.AppendLine($"briefSha256: {Yaml(request.BriefSha256)}");
         if (request.Environment.Worker is { } workerProvenance)
         {
             text.AppendLine($"workerReleaseId: {Yaml(workerProvenance.WorkerReleaseId)}");
@@ -94,6 +96,25 @@ internal static class RemoteReviewReportEvidence
             text.AppendLine($"**Detail:** {request.Summary.Trim()}");
             text.AppendLine();
         }
+
+        if (!string.IsNullOrWhiteSpace(request.BriefSha256))
+        {
+            text.AppendLine($"**Brief version (`prompt.md` SHA-256):** `{request.BriefSha256}`");
+            text.AppendLine();
+        }
+
+        text.AppendLine("## Skipped applicable aspects");
+        text.AppendLine();
+        if (request.SkippedAspects is not { Count: > 0 })
+            text.AppendLine("_None._");
+        else
+        {
+            text.AppendLine("| Aspect | Reason |");
+            text.AppendLine("| --- | --- |");
+            foreach (var skipped in request.SkippedAspects)
+                text.AppendLine($"| {Cell(skipped.Aspect)} | {Cell(skipped.Reason)} |");
+        }
+        text.AppendLine();
 
         text.AppendLine("## Aspect verdicts");
         text.AppendLine();

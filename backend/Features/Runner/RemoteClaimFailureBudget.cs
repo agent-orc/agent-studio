@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace AgentStudio.Runner;
 
@@ -18,25 +20,36 @@ public sealed class RemoteClaimFailureBudget
     internal const string FieldName = "remoteClaimFailure";
 
     private readonly ILogger<RemoteClaimFailureBudget> _logger;
+    public int MaximumAttempts { get; }
 
-    public RemoteClaimFailureBudget(ILogger<RemoteClaimFailureBudget> logger)
+    public RemoteClaimFailureBudget(ILogger<RemoteClaimFailureBudget> logger, int maximumAttempts = MaxAttempts)
     {
         _logger = logger;
+        MaximumAttempts = Math.Clamp(maximumAttempts, 1, 20);
     }
 
-    public RemoteClaimFailureDecision Record(TaskInfo task, string? reason)
+    public RemoteClaimFailureDecision Record(TaskInfo task, string? reason, string? cause = null, string? host = null)
     {
         var previous = Read(task.FolderPath);
-        var attempts = Math.Max(0, previous?.Attempts ?? 0) + 1;
+        var normalized = NormalizeReason(reason);
+        var fingerprint = Fingerprint(cause ?? "environment-preparation", normalized);
+        var attempts = string.Equals(previous?.Fingerprint, fingerprint, StringComparison.Ordinal)
+            ? Math.Max(0, previous!.Attempts) + 1
+            : 1;
+        var exhausted = attempts >= MaximumAttempts;
         var state = new RemoteClaimFailureState(
             attempts,
-            NormalizeReason(reason),
-            DateTime.UtcNow);
+            normalized,
+            DateTime.UtcNow,
+            fingerprint,
+            cause ?? "environment-preparation",
+            host,
+            exhausted);
         TaskJsonFile.UpdateFieldOrThrow(task.FolderPath, FieldName, state);
         return new RemoteClaimFailureDecision(
             attempts,
-            MaxAttempts,
-            attempts >= MaxAttempts,
+            MaximumAttempts,
+            exhausted,
             state.Reason);
     }
 
@@ -46,7 +59,9 @@ public sealed class RemoteClaimFailureBudget
     /// </summary>
     public void PrepareForClaim(TaskInfo task)
     {
-        if ((Read(task.FolderPath)?.Attempts ?? 0) < MaxAttempts) return;
+        var state = Read(task.FolderPath);
+        if (state is null || state.BudgetExhausted == false
+            || (state.BudgetExhausted is null && state.Attempts < MaximumAttempts)) return;
         Reset(task);
     }
 
@@ -55,6 +70,12 @@ public sealed class RemoteClaimFailureBudget
 
     public RemoteClaimFailureState? GetState(TaskInfo task)
         => Read(task.FolderPath);
+
+    public static string Fingerprint(string cause, string reason)
+    {
+        var value = $"{cause.Trim().ToLowerInvariant()}:{NormalizeReason(reason).ToLowerInvariant()}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16].ToLowerInvariant();
+    }
 
     internal static RemoteClaimFailureState? Read(string folderPath)
     {
@@ -82,7 +103,11 @@ public sealed class RemoteClaimFailureBudget
 public sealed record RemoteClaimFailureState(
     [property: JsonPropertyName("attempts")] int Attempts,
     [property: JsonPropertyName("reason")] string Reason,
-    [property: JsonPropertyName("lastFailureAtUtc")] DateTime LastFailureAtUtc);
+    [property: JsonPropertyName("lastFailureAtUtc")] DateTime LastFailureAtUtc,
+    [property: JsonPropertyName("fingerprint")] string? Fingerprint = null,
+    [property: JsonPropertyName("cause")] string? Cause = null,
+    [property: JsonPropertyName("host")] string? Host = null,
+    [property: JsonPropertyName("budgetExhausted")] bool? BudgetExhausted = null);
 
 public sealed record RemoteClaimFailureDecision(
     int Attempt,

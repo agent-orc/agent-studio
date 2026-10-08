@@ -7,6 +7,9 @@ Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
 
+Prelaunch infrastructure faults use the per-card fingerprint budget described
+in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).
+
 ## Entry Points
 
 - Start with [docs/common-problems/](../common-problems) for recurring

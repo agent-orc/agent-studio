@@ -4,6 +4,72 @@ This runbook is the operator path for adding, connecting, draining, retiring,
 reviving, and permanently removing a remote agent host. The detailed Linux
 installation reference remains [linux-runner-host.md](setup/linux-runner-host.md).
 
+## Prelaunch infrastructure failures
+
+The Task Server counts consecutive infrastructure failures per card and failure
+fingerprint. Environment preparation, salvage, and results handling report a
+typed lease release. A release with one of these codes settles immediately;
+the 120 second silence grace applies to a lease that lost authority mid-run.
+Such a release never takes the lost-worker continuation path, even when it
+names a salvage ref, because no agent process held the authority.
+The default budget is three identical consecutive failures. The durable Task
+Server accepts `TaskServer:RunnerInfrastructureFailureBudget` from 1 to 20. On
+the legacy runner API, set `Runner:RemoteClaimFailureBudget` to the same value.
+At the default budget, the first two return the card to Ready. The third parks
+it in Escalated with
+`runner-environment-broken`, the fingerprint, last error, host, and a recovery
+hint. A different fingerprint starts a new count; an operator move from
+Escalated to Ready resets the spent budget. A lost-worker release (an agent
+process had started) ends the chain on both planes: the legacy API still runs
+the lost-worker continuation, the durable Task Server returns the card to Ready
+and records the salvage ref as before. A typed release that arrives after the
+card has left progress spends no budget and records no escalation. Execution
+Hosts lists parked cards and their fingerprints. The activity record is emitted
+once on escalation.
+
+The typed release travels on the existing lease-release request: the durable
+Task Server's `POST /api/v1/runs/{runId}/lease/release` (`LeaseReleaseRequest`)
+and the legacy `POST /api/runner/lease/release` (`RunLeaseReleaseRequest`).
+`Outcome` selects the route. These three exact values count against the budget:
+
+| `Outcome` | Sent when |
+| --- | --- |
+| `runner-environment-preparation-failed` | Repository or worktree preparation failed after its retries, including a failed cleanup salvage during preparation. |
+| `runner-salvage-failed` | The prelaunch worktree salvage failed before an agent process started. |
+| `runner-results-handling-failed` | Preparing or repairing the task results directory failed before launch. |
+
+Any other `Outcome` keeps its previous meaning; on the durable Task Server it
+also clears the card's recorded infrastructure failure. `Detail` is an optional single-line diagnostic: the
+runner sends the error message plus `worktree=<path>` and `host=<runner host>`
+where known. The server replaces line breaks with spaces, trims it, and keeps
+the first 1000 characters. That text is the stored `lastError`, and the failure
+fingerprint is the first 16 hex characters of the SHA-256 of
+`<outcome>:<detail>` in lower case. Without `Detail`, the server uses `Outcome`
+(durable Task Server) or a fixed "failed without a diagnostic" text (legacy
+API) instead. Two failures count as identical only when both values match.
+
+Execution Hosts reads `GET /api/v1/management/runner-infrastructure-failures`.
+The response is a JSON array of parked infrastructure failures. Each entry has
+`taskKey` (card key), `attempts` (consecutive identical failures),
+`fingerprint` (failure identity), `host` (runner name), and `lastError` (latest
+failure detail). The endpoint includes every card in `5e-escalated` with a
+recorded runner infrastructure failure, even if the configured budget changes
+after escalation. A card leaves the list when it leaves Escalated. The legacy
+management API requires the usual management authorization and returns
+`Cache-Control: no-store`; the Task Server management route uses the same
+response fields.
+
+On preparation, a worktree directory without its `.git` metadata is moved to
+`$RUNNER_STATE_DIR/quarantine/<task>/` and pruned from the shared repository's
+worktree registration. The runner lists the task's origin salvage refs in its
+log, then creates a fresh worktree. The quarantined files remain available for
+inspection. On result-file permission errors, the runner calls the allowlisted
+`printf '%s\n' '<task>' | sudo -n /usr/local/sbin/agent-runner-deploy chown-results` helper once
+and retries the operation. The helper only accepts a task key under the Coding
+results root, rejects symbolic links, and restores ownership to the runner
+user. If it cannot repair ownership, the error names the path and owner so an
+operator can repair it before moving the card to Ready.
+
 ## Add a host
 
 Open **Workspace Settings > Execution Hosts > Add execution host**. The wizard introduced in

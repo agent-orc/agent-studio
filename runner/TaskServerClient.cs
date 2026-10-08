@@ -1489,7 +1489,8 @@ public sealed class TaskServerClient : IDisposable
                     : new Contract.LeaseReleaseSalvage(
                         req.SalvageBranch,
                         req.SalvageCommitSha,
-                        req.Detail)),
+                        req.Detail),
+                req.Detail),
             ct);
         _v1Leases.TryRemove(req.TaskKey, out _);
         _v1TaskBodies.TryRemove(req.TaskKey, out _);
