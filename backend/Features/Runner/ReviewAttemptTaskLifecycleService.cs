@@ -88,7 +88,8 @@ public sealed class ReviewAttemptTaskLifecycleService
         string hostId,
         string instanceId,
         int? requestedTtlSeconds,
-        IReadOnlySet<string>? capabilities = null)
+        IReadOnlySet<string>? capabilities = null,
+        IReadOnlySet<string>? heldTaskKeys = null)
     {
         lock (_gate)
         {
@@ -99,7 +100,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                 hostId,
                 instanceId,
                 requestedTtlSeconds,
-                capabilities);
+                capabilities,
+                heldTaskKeys);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }
@@ -121,6 +123,11 @@ public sealed class ReviewAttemptTaskLifecycleService
         lock (_gate)
         {
             var current = _scanner.FindJob(task.Id, task.WatchPath);
+            if (current is null || !string.Equals(current.State, TaskStates.AutoReview,
+                    StringComparison.OrdinalIgnoreCase))
+                current = _scanner.ScanJobFolder(task.FolderPath,
+                    new WatchPathEntry { Name = task.ProjectName, Path = task.WatchPath },
+                    task.State);
             if (current is null
                 || !string.Equals(current.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {

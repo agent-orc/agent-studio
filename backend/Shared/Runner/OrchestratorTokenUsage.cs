@@ -28,6 +28,14 @@ public record OrchestratorTokenUsage
     /// it (AGT-2811). Null keeps legacy rows readable as "level unknown".
     /// </summary>
     public string? ThinkingLevel { get; init; }
+    /// <summary>CLI that made the call, when the writer knows it (AGT-2986).</summary>
+    public string? CliType { get; init; }
+    /// <summary>
+    /// Host that executed the call: a remote runner id or <c>local</c>.
+    /// Null keeps legacy rows readable; readers derive a host from the
+    /// participant id (see <c>TokenUsageHost.Resolve</c>).
+    /// </summary>
+    public string? Host { get; init; }
     /// <summary>The model pinned for the run when it differs from observed usage.</summary>
     public string? PinnedModel { get; init; }
     /// <summary>True when provider usage identified a model other than the pin.</summary>

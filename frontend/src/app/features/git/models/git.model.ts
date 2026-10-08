@@ -675,6 +675,29 @@ export interface TaskIntegrationStatus {
   released?: boolean | null;
   /** Release branch `released` was computed against (usually "main"). */
   releaseBranch?: string;
+  /**
+   * AGT-3002 - whether a gate passed on the tree that carries this delivery.
+   * Present only on a merged status; `null` on a legacy card without any
+   * integration record, which reads as "unknown", never as unverified.
+   */
+  verification?: TaskIntegrationVerification | null;
+}
+
+/** Mirrors backend `IntegrationVerificationStates`. */
+export type IntegrationVerificationState = 'integrated-verified' | 'integrated-unverified';
+
+/** AGT-3002 - the gate evidence behind a merged card. Mirrors backend `TaskIntegrationVerification`. */
+export interface TaskIntegrationVerification {
+  state: IntegrationVerificationState;
+  /** Exact integration-branch SHA the verdict is about, when known. */
+  sha?: string | null;
+  /** gate-receipt | integration-record | gate-run | merge-gate | gate-not-applicable | none. */
+  evidence?: string | null;
+  /** Verdict of the gate behind the evidence, when one ran. */
+  gateVerdict?: string | null;
+  /** A gate reached a product verdict on the tree and it failed. */
+  gateFailed?: boolean;
+  reason?: string | null;
 }
 
 export interface TaskRepositoryIntegrationStatus {

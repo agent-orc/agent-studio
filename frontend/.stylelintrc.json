@@ -287,6 +287,7 @@
         "src/app/features/task-detail/components/decision-blocked-notice/decision-blocked-notice.component.scss",
         "src/app/features/board/components/task-card-decision-chips/task-card-decision-chips.component.scss",
         "src/app/features/task-detail/components/escalation-summary/_escalation-summary-actions.scss",
+        "src/app/features/remote-hosts/components/deployment-checkpoints/deployment-checkpoints.scss",
         "src/app/features/task-detail/components/prompt-pane/pipeline-run-history/pipeline-run-history.component.scss",
         "src/app/features/task-detail/components/prompt-pane/overview-failure/overview-failure.component.scss",
         "src/app/features/task-detail/components/prompt-pane/overview-pane/overview-runs/overview-runs.component.scss",

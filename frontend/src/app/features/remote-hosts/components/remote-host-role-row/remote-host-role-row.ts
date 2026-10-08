@@ -8,6 +8,7 @@ import {
   type RemoteHost,
 } from '../../models/remote-host.model';
 import { releaseDriftTooltip, type StableReleaseIdentity } from '../../models/host-release-drift';
+import { hostReadiness } from '../../models/host-readiness';
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 
 /** One runner process role nested below its advertised physical machine. */
@@ -42,6 +43,7 @@ export class RemoteHostRoleRowComponent {
     : hostStatusLabel(this.host().status));
   readonly roleLabel = computed(() => runnerServiceRoleLabel(this.host().serviceRole));
   readonly slotTotal = computed(() => roleSlotTotal(this.host()));
+  readonly readiness = computed(() => hostReadiness(this.host(), this.now()));
   readonly linkLabel = computed(() => runnerLinkLabel(this.host(), this.now()));
   readonly linkTooltip = computed(() => runnerLinkTooltip(this.host()));
   readonly releaseTooltip = computed(() =>

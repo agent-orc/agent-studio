@@ -136,7 +136,8 @@ public class TokenSummaryService
                 u.CacheCreationTokens, entry.Ts);
             bucket.Cost += cost.Total;
             if (!cost.ModelKnown) bucket.AnyUnpriced = true;
-            var canonicalModel = ModelMetadataRegistry.NormalizeId(u.Model);
+            // Stored as the observed id; the label is resolved for rendering.
+            var canonicalModel = TokenModelDisplay.StoredId(u.Model);
             var displayModel = TokenModelDisplay.Label(u.Model);
             if (entry.Ts > (bucket.LastUpdate ?? DateTime.MinValue))
             {
@@ -148,12 +149,14 @@ public class TokenSummaryService
                 {
                     bucket.LastAnyUpdate = entry.Ts;
                     bucket.LastAnyModel = displayModel;
+                    bucket.LastAnyModelId = canonicalModel;
                 }
                 if (TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
                     && entry.Ts > (bucket.LastAgentUpdate ?? DateTime.MinValue))
                 {
                     bucket.LastAgentUpdate = entry.Ts;
                     bucket.LastAgentModel = displayModel;
+                    bucket.LastAgentModelId = canonicalModel;
                 }
             }
             bucket.Entries.Add(new TaskTokenCall
@@ -164,6 +167,8 @@ public class TokenSummaryService
                 DisplayModel = displayModel,
                 ThinkingLevel = string.IsNullOrWhiteSpace(u.ThinkingLevel) ? null : u.ThinkingLevel.Trim(),
                 ParticipantId = entry.ParticipantId,
+                CliType = string.IsNullOrWhiteSpace(u.CliType) ? null : u.CliType.Trim(),
+                Host = string.IsNullOrWhiteSpace(u.Host) ? null : u.Host.Trim(),
                 InputTokens = u.InputTokens,
                 OutputTokens = u.OutputTokens,
                 CacheReadTokens = u.CacheReadTokens,
@@ -172,7 +177,7 @@ public class TokenSummaryService
                 UsageNormalization = u.UsageNormalization,
                 PinnedModel = string.IsNullOrWhiteSpace(u.PinnedModel)
                     ? null
-                    : ModelMetadataRegistry.NormalizeId(u.PinnedModel),
+                    : TokenModelDisplay.StoredId(u.PinnedModel),
                 ModelMismatch = u.ModelMismatch,
                 EstimatedApiCostUsd = cost.Total,
                 ModelPriced = cost.ModelKnown,
@@ -194,6 +199,7 @@ public class TokenSummaryService
                 EstimatedApiCostUsd = b.Cost,
                 AllModelsPriced = !b.AnyUnpriced,
                 LastModel = b.LastAgentModel ?? b.LastAnyModel,
+                LastModelId = b.LastAgentModel is not null ? b.LastAgentModelId : b.LastAnyModelId,
                 LastUpdate = b.LastUpdate,
                 Entries = b.Entries.OrderBy(e => e.Ts).ToList(),
                 HasModelMismatch = b.Entries.Any(entry => entry.ModelMismatch),
@@ -206,7 +212,7 @@ public class TokenSummaryService
     {
         var fallbackLabel = TokenModelDisplay.Label(modelId);
         if (string.IsNullOrWhiteSpace(fallbackLabel)) return summary;
-        var fallbackId = ModelMetadataRegistry.NormalizeId(modelId);
+        var fallbackId = TokenModelDisplay.StoredId(modelId);
 
         var entries = summary.Entries
             .Select(e => ShouldApplyRunModelFallback(e)
@@ -220,6 +226,7 @@ public class TokenSummaryService
         return summary with
         {
             LastModel = string.IsNullOrWhiteSpace(summary.LastModel) && hasAgentFallbackRow ? fallbackLabel : summary.LastModel,
+            LastModelId = string.IsNullOrWhiteSpace(summary.LastModel) && hasAgentFallbackRow ? fallbackId : summary.LastModelId,
             Entries = entries,
             EstimatedApiCostUsd = entries.Sum(e => e.EstimatedApiCostUsd),
             AllModelsPriced = entries.Count > 0 && entries.All(e => e.ModelPriced),
@@ -252,6 +259,8 @@ public class TokenSummaryService
         public bool AnyUnpriced;
         public string? LastAnyModel;
         public string? LastAgentModel;
+        public string? LastAnyModelId;
+        public string? LastAgentModelId;
         public DateTime? LastUpdate;
         public DateTime? LastAnyUpdate;
         public DateTime? LastAgentUpdate;
@@ -447,8 +456,11 @@ public class TokenSummaryService
             if (firstAt == null || ts < firstAt) firstAt = ts;
             if (lastAt == null || ts > lastAt) lastAt = ts;
 
-            var canonicalModel = ModelMetadataRegistry.NormalizeId(u.Model);
+            // Rows key on the stored id so two model generations never share
+            // one row. Pricing keeps the registry id it always used.
+            var canonicalModel = TokenModelDisplay.StoredId(u.Model);
             var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
+            var pricingModel = ModelMetadataRegistry.NormalizeId(u.Model);
             if (!perModel.TryGetValue(key, out var bucket))
             {
                 bucket = new ModelBucket(
@@ -462,7 +474,7 @@ public class TokenSummaryService
             bucket.CacheRead += u.CacheReadTokens;
             bucket.CacheCreate += u.CacheCreationTokens;
             var entryCost = TokenPricing.Estimate(
-                key, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
+                string.IsNullOrWhiteSpace(pricingModel) ? key : pricingModel, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
                 u.CacheCreationTokens, entry.Ts);
             bucket.Cost += entryCost.Total;
             if (!entryCost.ModelKnown) bucket.AnyUnpriced = true;

@@ -2780,6 +2780,31 @@
           <td>A 401 by itself could not distinguish a bad host credential from a provider incident. The prior probe path did not perform a real request after a degraded local status 401, and no independent-host comparison reached live classification.</td>
           <td>The historical card terminal is unknown. AGT-2972 now classifies a fresh applicable official incident or registry-backed independent-host comparison as <code>provider_incident</code>; absent corroboration remains <code>indeterminate</code>. Neither a pending status answer nor a pending real request can supersede run evidence recorded after it started for the same source and generation. Fleet admission and recovery remain the later I3 slice.</td>
         </tr>
+        <tr id="case-agt-2917-fleet-wide-cause-breaker">
+          <td>2026-10-01</td>
+          <td><code>AGT-2917</code><br><span class="small">repeated review causes ran 59 and 411 attempts</span></td>
+          <td>
+            Window 2026-08-13 to 2026-09-12 (AGT-W57 &sect;5 E1): a withdrawn review model produced 59
+            <code>ReviewInfra / ToolUnavailable</code> attempts over 38 hours, and one card (<code>CAC-18</code>) produced
+            411 identical <code>ReviewInfra / PreparationFailed</code> attempts (npm ci exit 127) over six days.
+          </td>
+          <td>
+            Each attempt was judged per card, so no component saw the repetition across cards, and the retry plan was
+            frozen per attempt, so a corrected review model setting never reached the retries.
+          </td>
+          <td>
+            <span class="pill ok">fixed in dev</span> A fleet-wide cause breaker counts a fingerprint of failure class,
+            normalised failure text and toolchain context. At three attempts or two distinct cards (per-project settings)
+            it opens one cause card through the failure-intervention ledger. Affected cards stay in Auto Review, show
+            "Waiting for &lt;key&gt;", and are skipped by the review claim; a pending review whose plan calls the broken model
+            route is held before it runs. Every review retry is planned from current project settings. The breaker closes
+            when the cause card reaches <span class="lane">6-completed</span> or the exact attempt released as a probe passes, and releases each
+            waiting card by admitting its pending review or planning a fresh successor to a terminal review. A failed successor creation or marker delete keeps the card waiting until a later
+            sweep finishes its release, so closure does not discard its wait; the sweep also rewrites a missing marker
+            and releases a marker that no open breaker accounts for. Replay of both incidents: at most three attempts and one cause card.
+            New terminal: waiting on the cause card, not escalated.
+          </td>
+        </tr>
         <tr id="case-agt-2993-compose-scenario-disk-low">
           <td>2026-09-28</td>
           <td><code>AGT-2993</code><br><span class="small">compose scenario residue filled the runner disk</span></td>
@@ -2920,6 +2945,20 @@
       <li><strong>Exhaustion:</strong> when the third attempt still infra-crashes, transition to GaveUpToHuman and escalate to
           <span class="lane">5-human-review</span>. No fourth attempt.</li>
     </ul>
+
+    <h3>Fleet-wide cause breaker (AGT-W57)</h3>
+    <p>Review infrastructure failures are counted per cause fingerprint across every project, not per card.
+       Below the threshold the bounded per-card retry above applies. At three attempts or two distinct cards
+       (<code>causeBreakerAttemptThreshold</code>, <code>causeBreakerCardThreshold</code>, <code>causeBreakerWindowHours</code>,
+       set per project through <code>PUT /api/projects/{project}/cause-breaker</code>) the breaker opens one cause card and
+       parks every affected card behind it instead of retrying or escalating. Each observation logs the fingerprint parts and
+       the threshold numbers (<code>cause-breaker-observed</code>), so a fingerprint that is too coarse or a threshold that is
+       too low is visible in the log. <code>GET /api/cause-breakers</code> lists the breakers, and
+       <code>POST /api/cause-breakers/{fingerprint}/probe</code> releases one waiting card as a probe.
+       A terminal red probe restores the card's wait and frees the probe reservation for another explicit attempt.
+       If creating a successor fails after a cause is resolved, its wait marker remains and the hosted sweep retries
+       the release before closing the breaker.
+       <span class="filelist"><code>backend/Features/Runner/CauseBreaker/</code></span></p>
 
     <h3>Session-resume preference</h3>
     <p>Remote integration-recovery rounds use a separate, single-use continuation rule. A task ledger preserves session and usage evidence; the next claim carries only a compact rebase delta. Task, provider, clean-context, repository, worktree and delivery-lineage mismatches select a typed fresh run. The resumed worker is bounded at 1,211,213 observed tokens and 300 seconds. A semantic conflict or invalid session returns to Ready for a policy-qualified fresh claim without resetting the ordinary infrastructure retry budget.</p>

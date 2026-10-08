@@ -7,6 +7,7 @@ using AgentStudio.Registry;
 using AgentStudio.Tasks;
 using AgentStudio.AdHoc;
 using AgentStudio.Prompts;
+using AgentStudio.Tokens;
 
 namespace AgentStudio.Runner;
 
@@ -484,8 +485,10 @@ public class OrchestratorChatService
     private readonly StartupExecutionAdmission? _executionAdmission;
     private readonly QuotaAdmissionService? _quotaAdmission;
     private readonly QuotaAdmissionRecorder? _quotaAdmissionRecorder;
+    private readonly AgentMessageBusBridge? _bus;
     private readonly AdHocUsageRecorder? _chatUsage;
     private readonly LocalChatUsageTracker? _localChatUsage;
+    private readonly string? _taskRepositoryRoot;
 
     /// <summary>
     /// Serializes local session resumes. Remote turns use independent host
@@ -514,6 +517,7 @@ public class OrchestratorChatService
         QuotaAdmissionService? quotaAdmission = null,
         QuotaAdmissionRecorder? quotaAdmissionRecorder = null,
         OrchestratorWorkbenchPromptContextComposer? workbenchPromptContext = null,
+        AgentMessageBusBridge? bus = null,
         AdHocUsageRecorder? chatUsage = null,
         LocalChatUsageTracker? localChatUsage = null)
     {
@@ -522,6 +526,8 @@ public class OrchestratorChatService
         _bootstrap = bootstrap;
         _scanner = scanner;
         _logger = logger;
+        _taskRepositoryRoot = config["TaskRepository"];
+        _bus = bus;
         _chatUsage = chatUsage;
         _localChatUsage = localChatUsage;
         _identityStore = identityStore;
@@ -636,7 +642,7 @@ public class OrchestratorChatService
                 localStarted = true;
             }
             DateTime? fallbackQueuedAt = null;
-            OrchestratorDecisionResult result;
+            OrchestratorDecisionResult? result = null;
             RemoteChatWorkResult? remoteResult = null;
             string? executionNote = null;
             try
@@ -776,6 +782,10 @@ public class OrchestratorChatService
                     FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
+                if (result is not null)
+                    await RecordChatUsageAsync(projectName, result,
+                        remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
+                        remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
                 localOutcome = failure;
                 return failure;
@@ -812,6 +822,9 @@ public class OrchestratorChatService
                     FinishedAt = DateTime.UtcNow,
                     ContextReceipt = contextReceipt
                 };
+                await RecordChatUsageAsync(projectName, result,
+                    remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
+                    remoteResult?.ThinkingLevel ?? thinkingLevel, failure.FinishedAt ?? DateTime.UtcNow, failure.Id).ConfigureAwait(false);
                 await AppendTurnAsync(projectName, watchPath, context, failure, ct).ConfigureAwait(false);
                 localOutcome = failure;
                 return failure;
@@ -839,6 +852,9 @@ public class OrchestratorChatService
                 FinishedAt = remoteResult?.FinishedAt ?? DateTime.UtcNow,
                 ContextReceipt = contextReceipt
             };
+            await RecordChatUsageAsync(projectName, result,
+                remoteResult is null ? TokenUsageHost.Local : remoteRoute?.RunnerId ?? TokenUsageHost.UnrecordedRemote,
+                remoteResult?.ThinkingLevel ?? thinkingLevel, reply.FinishedAt ?? DateTime.UtcNow, reply.Id).ConfigureAwait(false);
             await AppendTurnAsync(projectName, watchPath, context, reply, ct).ConfigureAwait(false);
             localOutcome = reply;
             return reply;
@@ -851,6 +867,90 @@ public class OrchestratorChatService
             if (holdsSessionGate)
                 SessionGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Writes the turn's usage into the project token ledger (AGT-2986). The
+    /// chat store keeps the transcript; the ledger is what the workspace
+    /// timeline and project surfaces aggregate. Remote turns carry the runner
+    /// id as host; local and fallback turns carry <c>local</c>.
+    /// The write is awaited before the assistant turn is persisted. If the bus
+    /// is unavailable, a durable fallback receipt is written first.
+    /// The merged ledger reads that receipt, including after a restart.
+    /// </summary>
+    private async Task RecordChatUsageAsync(
+        string projectName,
+        OrchestratorDecisionResult result,
+        string host,
+        string? thinkingLevel,
+        DateTime finishedAt,
+        string turnId)
+    {
+        var entry = BuildChatUsage(result, host, thinkingLevel);
+        if (entry is null) return;
+        var recorded = false;
+        Exception? error = null;
+        if (_bus is not null)
+        {
+            try
+            {
+                recorded = await _bus.EmitTokenUsageAsync(
+                    projectName,
+                    jobId: null,
+                    AgentMessageBusBridge.ParticipantOrchestratorFor(projectName),
+                    OrchestratorChatUsageTopic,
+                    entry,
+                    createdAt: finishedAt,
+                    ct: CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+        }
+        if (!recorded)
+        {
+            _logger.LogWarning(error,
+                "[orchestrator-chat] bus usage append failed for project {Project} (host={Host}, model={Model}); writing durable fallback receipt",
+                projectName, entry.Host, entry.Model);
+            if (string.IsNullOrWhiteSpace(_taskRepositoryRoot))
+                throw new IOException($"Orchestrator chat usage could not be recovered for project {projectName}: TaskRepository is not configured.", error);
+            try
+            {
+                await ChatUsageFallbackReceipts.WriteAsync(
+                    _taskRepositoryRoot, projectName, turnId, finishedAt, entry).ConfigureAwait(false);
+            }
+            catch (Exception fallbackError)
+            {
+                _logger.LogError(fallbackError,
+                    "[orchestrator-chat] durable usage fallback failed for project {Project} (host={Host}, model={Model})",
+                    projectName, entry.Host, entry.Model);
+                throw new IOException(
+                    $"Orchestrator chat usage could not be recovered for project {projectName}.", fallbackError);
+            }
+        }
+    }
+
+    /// <summary>Bus topic of orchestrator chat usage rows.</summary>
+    public const string OrchestratorChatUsageTopic = "orchestrator-chat";
+
+    internal static OrchestratorTokenUsage? BuildChatUsage(
+        OrchestratorDecisionResult result,
+        string host,
+        string? thinkingLevel)
+    {
+        var usage = result.TokenUsage;
+        if (usage is null) return null;
+        if ((long)usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheCreationTokens <= 0)
+            return null;
+        var model = string.IsNullOrWhiteSpace(usage.Model) ? result.Model : usage.Model;
+        return usage with
+        {
+            Model = TokenModelDisplay.StoredId(model),
+            CliType = string.IsNullOrWhiteSpace(result.CliType) ? CliTypes.Codex : result.CliType.Trim().ToLowerInvariant(),
+            Host = string.IsNullOrWhiteSpace(host) ? TokenUsageHost.Local : host.Trim(),
+            ThinkingLevel = string.IsNullOrWhiteSpace(usage.ThinkingLevel) ? thinkingLevel : usage.ThinkingLevel,
+        };
     }
 
     private async Task AppendTurnAsync(

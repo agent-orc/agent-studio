@@ -38,6 +38,16 @@
   color: var(--studio-success, var(--studio-accent-3));
 }
 
+/*
+ * Orange (AGT-3002): the delivery is on the branch, but no gate passed on
+ * that tree. Shares the "partial" tone: present, but not proven.
+ */
+.integration-badge[data-kind='unverified'] {
+  background: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 16%, var(--studio-bg-elevated));
+  border-color: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 48%, var(--studio-border));
+  color: var(--studio-warning-strong, #e8590c);
+}
+
 /* Orange — some attributed commits are in develop, some are not. */
 .integration-badge[data-kind='partial'] {
   background: color-mix(in srgb, var(--studio-warning-strong, #e8590c) 16%, var(--studio-bg-elevated));

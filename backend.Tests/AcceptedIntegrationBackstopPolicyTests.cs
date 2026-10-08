@@ -179,10 +179,11 @@ public sealed class AcceptedIntegrationBackstopPolicyTests
     [InlineData(TaskStates.Archive, null, null, true)]
     [InlineData(TaskStates.HumanReview, LifecyclePhases.Integrating, null, true)]
     [InlineData(TaskStates.HumanReview, null, null, false)]
-    [InlineData(TaskStates.Completed, null, "genuinely-missing", false)]
-    [InlineData(TaskStates.Completed, null, "content-on-fence", false)]
-    [InlineData(TaskStates.Completed, null, "integrated-historical", false)]
-    public void RecoveryCandidate_NeverTreatsHistoricalBookkeepingAsMergeAuthority(
+    [InlineData(TaskStates.Completed, null, "genuinely-missing", true)]
+    [InlineData(TaskStates.Completed, null, "content-on-fence", true)]
+    [InlineData(TaskStates.Completed, null, "integrated-historical", true)]
+    [InlineData(TaskStates.Completed, null, "integrated-verified", true)]
+    public void RecoveryCandidate_DoesNotTreatHistoricalBookkeepingAsExactTreeGateEvidence(
         string state,
         string? phase,
         string? verificationClass,

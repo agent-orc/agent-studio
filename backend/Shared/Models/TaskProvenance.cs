@@ -300,6 +300,62 @@ public record TaskIntegrationStatus
 
     /// <summary>Release branch the <see cref="Released"/> rollup was computed against.</summary>
     public string ReleaseBranch { get; init; } = "main";
+
+    /// <summary>
+    /// AGT-3002 - whether a gate passed on the tree that carries this
+    /// delivery. Containment alone says the delivery is on the branch; this
+    /// says whether anything verified the branch with it. Set only when
+    /// <see cref="Status"/> is merged (<see cref="IntegrationStatuses.IsMerged"/>);
+    /// merged cards without matching evidence project as unverified.
+    /// </summary>
+    public TaskIntegrationVerification? Verification { get; init; }
+}
+
+/// <summary>
+/// AGT-3002 - the gate evidence behind a merged card. The state is one of
+/// <see cref="IntegrationVerificationStates"/>.
+/// </summary>
+public sealed record TaskIntegrationVerification
+{
+    public string State { get; init; } = IntegrationVerificationStates.Unverified;
+
+    /// <summary>Exact integration-branch SHA the verdict is about, when known.</summary>
+    public string? Sha { get; init; }
+
+    /// <summary>What proved (or failed to prove) the tree: a receipt, a record, a gate run.</summary>
+    public string? Evidence { get; init; }
+
+    /// <summary>Verdict of the gate that ran on that tree, when one ran.</summary>
+    public string? GateVerdict { get; init; }
+
+    /// <summary>
+    /// A gate reached a product verdict on that tree and it failed, so the
+    /// lane's single verification run is spent.
+    /// </summary>
+    public bool GateFailed { get; init; }
+
+    /// <summary>Why the card is verified or unverified. Tooltip and audit only.</summary>
+    public string? Reason { get; init; }
+}
+
+/// <summary>
+/// AGT-3002 - the two answers to "did a gate pass on the tree this card claims
+/// as integrated". The verified value is the same string as
+/// <see cref="IntegrationRecordClasses.IntegratedVerified"/>, so an integration
+/// record and the live projection name the fact identically.
+/// </summary>
+public static class IntegrationVerificationStates
+{
+    public const string Verified = IntegrationRecordClasses.IntegratedVerified;
+    public const string Unverified = "integrated-unverified";
+
+    /// <summary>
+    /// True only when exact-tree verification permits completion. Missing
+    /// evidence is unknown and cannot complete a merged card.
+    /// </summary>
+    public static bool PermitsCompletion(TaskIntegrationVerification? verification)
+        => string.Equals(verification?.State, Verified, StringComparison.Ordinal)
+           && verification.Sha?.Length == 40;
 }
 
 /// <summary>Integration and release membership for one attributed repository.</summary>

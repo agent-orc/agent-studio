@@ -63,7 +63,9 @@ frontmatter parsing (`FrontmatterParser`). The cure is always the same shape:
    `ITokenAggregator`.
 2. **Explicit source precedence**: the Agent Message Bus remains the immutable
    history source. Durable `task.json.tokenSummary` receipts supply current
-   remote-runner calls. The canonical reader merges both with multiset
+   remote-runner calls. Atomic chat fallback receipts retain usage when a
+   completed chat transcript cannot append to the bus. The canonical reader
+   merges these sources with multiset
    deduplication instead of assuming either source is complete by itself.
 3. **A drift rule** that flags any new ad-hoc roll-up so the problem cannot
    silently return.
@@ -241,6 +243,18 @@ For an operator or an LLM instance working in this area, the rules of the road:
 Append new findings about the token-aggregation area here, newest on top. Keep
 each entry short: date, what was learned, and a pointer to the code/commit/task.
 
+- **2026-10-07 (AGT-2986).** A chat reply can be persisted before its bus usage
+  append fails. That path now writes a turn-keyed fallback receipt atomically;
+  the canonical reader includes it after restart and deduplicates it if the bus
+  row is also present. Failure of both writes is reported to the caller.
+- **2026-09-28 (AGT-2986).** The workspace timeline (and the status-bar
+  usage panels that read it) still read the bus alone, so a week of remote
+  runner work showed zero cells while cards carried receipts. The timeline now
+  reads the same merged ledger as the project surfaces. Remote review attempts
+  write receipt rows and orchestrator chat turns write project bus rows, so
+  every execution path lands in one ledger with host, CLI, level, and cached
+  input. Model ids are stored as ids; `claude-opus-5-5` is a routing alias of
+  `claude-opus-5`, not the same model, and no longer borrows its label.
 - **2026-08-12 (AGT-2624).** Receipt discovery was working, but remote
   completion never wrote `task.json.tokenSummary`; recent TE/CAC cards therefore
   had no current source to discover. `RemoteTokenReceiptService` now folds the

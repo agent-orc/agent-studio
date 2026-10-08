@@ -743,6 +743,7 @@ public class TaskScannerService : ITaskScanner
                 // the platform default.
                 ContextMode = raw.TryGetProperty("contextMode", out var cxm) ? cxm.GetString() : null,
                 QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
+                CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
                 QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
                 Kind = TaskKinds.Normalize(raw.TryGetProperty("kind", out var kd) ? kd.GetString() : null),
                 EpicId = raw.TryGetProperty("epicId", out var ep) && !string.IsNullOrWhiteSpace(ep.GetString()) ? ep.GetString() : null,
@@ -1771,7 +1772,7 @@ public class TaskScannerService : ITaskScanner
     /// pane to render the blog-style timeline of task extensions written by
     /// Extend mode.
     /// </summary>
-    private static List<TaskPromptHistoryEntry> ReadPromptHistory(string jobFolder)
+    internal static List<TaskPromptHistoryEntry> ReadPromptHistory(string jobFolder)
     {
         var result = new List<TaskPromptHistoryEntry>();
         if (!Directory.Exists(jobFolder)) return result;
@@ -1806,7 +1807,7 @@ public class TaskScannerService : ITaskScanner
     /// absent. A backend restart therefore preserves the honest distinction
     /// without requiring another core run.
     /// </summary>
-    private TaskSummaryState ResolveSummaryState(string jobKey, string? statusMarkdown)
+    internal TaskSummaryState ResolveSummaryState(string jobKey, string? statusMarkdown)
     {
         var live = _summaryService.GetState(jobKey);
         if (live != null) return live;
@@ -1894,7 +1895,7 @@ public class TaskScannerService : ITaskScanner
         return [];
     }
 
-    private ContextUsageSnapshot? ReadContextUsage(string jobDir)
+    internal ContextUsageSnapshot? ReadContextUsage(string jobDir)
     {
         var jobJsonPath = Path.Combine(jobDir, "task.json");
         if (!File.Exists(jobJsonPath)) return null;
@@ -2165,7 +2166,7 @@ public class TaskScannerService : ITaskScanner
         return (fullPath, contentType);
     }
 
-    private static List<TaskLogEntry> BuildLog(string dir)
+    internal static List<TaskLogEntry> BuildLog(string dir)
     {
         var entries = new List<TaskLogEntry>();
 
@@ -2271,6 +2272,7 @@ public class TaskScannerService : ITaskScanner
         => cached with
         {
             QuotaWait = QuotaWaitMarker.ToStatus(QuotaWaitMarker.TryRead(jobDir, _logger)),
+            CauseWait = CauseWaitMarker.ToStatus(CauseWaitMarker.TryRead(jobDir, _logger)),
             QuotaFallback = AgentStudio.Cli.QuotaFallbackMarker.ToStatus(AgentStudio.Cli.QuotaFallbackMarker.TryRead(jobDir, _logger)),
             PendingIntent = ReadPendingIntent(jobDir),
             PostProcessingChecks = ReadPostProcessingChecks(jobDir, cached.State),
