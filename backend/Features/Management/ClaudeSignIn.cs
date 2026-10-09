@@ -721,8 +721,87 @@ for unit in agent-host.service agent-runner.service agent-runner-review.service;
     exit 45
   fi
 done
-out_tmp=$(mktemp)
-trap 'rm -f "$out_tmp"' EXIT
+credential_store="$HOME/.claude/.credentials.json"
+rollback_store=$(mktemp "$HOME/.claude/.agent-studio-rollback.XXXXXXXX") || {
+  echo 'claude-login-status=recovery-required'; exit 74;
+}
+had_prior_store=0
+if [[ -f "$credential_store" ]]; then
+  if ! cp -p -- "$credential_store" "$rollback_store" || ! chmod 0600 "$rollback_store"; then
+    rm -f "$rollback_store"
+    echo 'claude-login-status=recovery-required'; exit 74
+  fi
+  had_prior_store=1
+fi
+out_tmp=$(mktemp) || { rm -f "$rollback_store"; exit 74; }
+rollback_native_on_failure() {
+  result=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  rm -f "$out_tmp"
+  if (( result == 0 )); then
+    rm -f "$rollback_store"
+    exit 0
+  fi
+  # A browser timeout or cancellation before replacement needs no rebind.
+  if (( had_prior_store )) && [[ -f "$credential_store" ]] \
+      && [[ "$(sha256sum "$credential_store" | cut -d ' ' -f1)" == "$previous_store_digest" ]] \
+      && [[ "native-cli-store:$(date -r "$credential_store" +%s%3N)" == "$current_generation" ]]; then
+    rm -f "$rollback_store"
+    exit "$result"
+  fi
+  if (( ! had_prior_store )) && [[ ! -e "$credential_store" ]]; then
+    rm -f "$rollback_store"
+    exit "$result"
+  fi
+  rollback_ok=1
+  if (( had_prior_store )); then
+    restore_tmp=$(mktemp "$HOME/.claude/.agent-studio-restore.XXXXXXXX") || rollback_ok=0
+    if (( rollback_ok )) && ! cp -p -- "$rollback_store" "$restore_tmp"; then rollback_ok=0; fi
+    if (( rollback_ok )) && ! mv -f -- "$restore_tmp" "$credential_store"; then rollback_ok=0; fi
+    [[ -z "${restore_tmp:-}" ]] || rm -f "$restore_tmp"
+  elif ! rm -f -- "$credential_store"; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )) && (( had_prior_store )) && {
+      [[ "$(sha256sum "$credential_store" | cut -d ' ' -f1)" != "$previous_store_digest" ]] \
+      || [[ "native-cli-store:$(date -r "$credential_store" +%s%3N)" != "$current_generation" ]]; }; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )) && (( ! had_prior_store )) && [[ -e "$credential_store" ]]; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )) && { ! command -v agent-host >/dev/null 2>&1 \
+      || ! agent-host --rebind-provider-auth claude --drained >/dev/null; }; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )); then
+    for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+      sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+      if [[ "$unit" == agent-runner-review.service ]]; then
+        sudo -n /usr/local/sbin/agent-runner-deploy restart-review || rollback_ok=0
+      else
+        sudo -n systemctl restart "$unit" || rollback_ok=0
+      fi
+    done
+  fi
+  if (( ! rollback_ok )); then
+    # A partial rebind or restart is unsafe even when the file was restored.
+    for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+      sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+      sudo -n systemctl stop "$unit" || true
+    done
+    echo 'claude-login-status=recovery-required'
+  else
+    echo 'claude-login-status=rollback-restored'
+    rm -f "$rollback_store"
+  fi
+  exit "$result"
+}
+trap rollback_native_on_failure EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 timeout --signal=TERM --kill-after=5s 900s claude /login 2>&1 \
   | tee "$out_tmp" \
   | grep -Eo 'https://(claude.ai|console.anthropic.com)/[^[:space:]<>]+'

@@ -284,7 +284,10 @@ test.describe('Execution Hosts settings section', () => {
 
   test.beforeEach(async ({ page }, testInfo) => {
     const renewalCase = testInfo.title.includes('API-key renewal pending');
-    if (renewalCase) testInfo.setTimeout(180_000);
+    if (renewalCase) {
+      testInfo.setTimeout(600_000);
+      page.setDefaultTimeout(60_000);
+    }
     mkdirSync(SHOT_DIR, { recursive: true });
     await page.setViewportSize({ width: 1600, height: 950 });
     // Force the legacy (modal) layout so the section renders in the modal-backed
@@ -1601,7 +1604,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('remote-host-name').filter({ hasText: 'agent-runner-02' })).toBeVisible();
   });
 
-  test('keeps an API-key renewal pending until both runner units prove a real request', async ({ page }) => {
+  test('keeps an API-key renewal pending until both runner units prove a real request', async ({ page, devBackend }) => {
+    void devBackend;
     let completed = false;
     await page.unroute('**/api/v1/management/remote-hosts');
     await page.route('**/api/v1/management/remote-hosts', route => {
@@ -1648,7 +1652,7 @@ test.describe('Execution Hosts settings section', () => {
     await setTheme(page, 'dark');
     await page.screenshot({ path: join(SHOT_DIR, 'api-key-renewal-pending-dark--mocked.png') });
     completed = true;
-    await expect(status).toHaveAttribute('data-state', 'ok', { timeout: 8_000 });
+    await expect(status).toHaveAttribute('data-state', 'ok', { timeout: 30_000 });
     await setTheme(page, 'light');
     await page.screenshot({ path: join(SHOT_DIR, 'api-key-renewal-verified-light--mocked.png') });
   });

@@ -97,7 +97,30 @@ public sealed class ProviderAuthProvisioningTests
         Assert.True(script.IndexOf("claude auth status --text", StringComparison.Ordinal) <
                     script.IndexOf("new_store_digest=", StringComparison.Ordinal));
         Assert.True(script.IndexOf("new_store_digest=", StringComparison.Ordinal) <
-                    script.IndexOf("agent-host --rebind-provider-auth claude", StringComparison.Ordinal));
+                    script.LastIndexOf("agent-host --rebind-provider-auth claude", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_native_renewal_restores_prior_store_and_drains_units_if_recovery_fails()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+
+        Assert.Contains("cp -p -- \"$credential_store\" \"$rollback_store\"", script);
+        Assert.Contains("chmod 0600 \"$rollback_store\"", script);
+        Assert.Contains("trap rollback_native_on_failure EXIT", script);
+        Assert.Contains("mv -f -- \"$restore_tmp\" \"$credential_store\"", script);
+        Assert.Contains("== \"$current_generation\"", script);
+        Assert.Contains("!= \"$previous_store_digest\"", script);
+        Assert.Contains("agent-host --rebind-provider-auth claude --drained", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("claude-login-status=recovery-required", script);
+        Assert.True(script.IndexOf("cp -p -- \"$credential_store\"", StringComparison.Ordinal) <
+                    script.IndexOf("claude /login", StringComparison.Ordinal));
+        var restore = script.IndexOf("mv -f -- \"$restore_tmp\" \"$credential_store\"", StringComparison.Ordinal);
+        Assert.True(restore < script.IndexOf("agent-host --rebind-provider-auth claude --drained", restore, StringComparison.Ordinal));
+        Assert.True(script.IndexOf("trap rollback_native_on_failure EXIT", StringComparison.Ordinal) <
+                    script.IndexOf("claude /login", StringComparison.Ordinal));
     }
 
     [Fact]

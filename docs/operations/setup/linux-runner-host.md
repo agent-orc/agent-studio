@@ -541,6 +541,13 @@ Native Claude renewal requires a changed local store after successful CLI login
 and status verification. The host advances its opaque timestamp generation if
 the CLI rewrites the file within the old timestamp millisecond; an unchanged
 store remains unresolved and cannot complete the Task Server receipt.
+Before browser login, the host saves a mode-preserving local copy of the prior
+native Claude store. If login, rebinding or a unit restart fails after the store
+changes, the host atomically restores that copy, rebinds drained consumers and
+restarts the units against the old generation. If any restoration step fails,
+it stops the affected units, retains the protected copy for operator recovery
+and leaves recovery required. A timeout or cancelled
+browser flow before store replacement leaves the prior generation in place.
 Keep affected workers drained, then run `agent-host --rebind-provider-auth codex
 --drained` or the `claude` equivalent as the runner user. The command refuses
 while that provider's CLI processes are active and checks every marker-owned
