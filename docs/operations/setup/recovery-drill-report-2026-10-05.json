@@ -1,0 +1,63 @@
+{
+  "schema": "agent-studio.recovery-drill-cli/v1",
+  "backupId": "20261005072633249-full-set-309b1d24e41d4fb586d2d7df52105cfc",
+  "setSha256": "dd057bf048376c07e889b31e4e87d1b958ed8fa71d7eca217662449294abb882",
+  "lossAt": "2026-10-05T07:26:39.548Z",
+  "captureAndCopySeconds": 2.283016455,
+  "measuredRecoveryPointSeconds": 6.006,
+  "measuredRecoveryTimeSecondsToCompletedCanary": 11.437469454,
+  "restoreSeconds": 2.724,
+  "identityComparisons": [
+    {
+      "subject": "server id",
+      "matches": true
+    },
+    {
+      "subject": "schema version",
+      "matches": true
+    },
+    {
+      "subject": "task count",
+      "matches": true
+    },
+    {
+      "subject": "task identity digest",
+      "matches": true
+    },
+    {
+      "subject": "workspaces",
+      "matches": true
+    },
+    {
+      "subject": "projects",
+      "matches": true
+    }
+  ],
+  "verifyFindings": [],
+  "gateBlockersBeforeFencing": [
+    "old-writer-open"
+  ],
+  "resumed": true,
+  "sourceTasksAtLoss": [
+    "DRL-1",
+    "DRL-2",
+    "DRL-3",
+    "DRL-4"
+  ],
+  "restoredTasks": [
+    "DRL-1",
+    "DRL-2",
+    "DRL-3"
+  ],
+  "lostAfterCapture": [
+    "DRL-4"
+  ],
+  "canary": {
+    "runId": "run_b24f1e54f3c04a499efd5840b4cef98a",
+    "status": "success",
+    "finishedAt": "2026-10-05T07:26:50.9288091Z",
+    "resultSha": "4665330179ed6d3af4d09c9188a93f730fb9389a",
+    "resultRef": "refs/heads/agent-studio/results/run_b24f1e54f3c04a499efd5840b4cef98a/fence-1/4665330179ed6d3af4d09c9188a93f730fb9389a"
+  },
+  "note": "Rehearsal measurement on one disposable host. A backup timer interval is not an achieved recovery point."
+}
