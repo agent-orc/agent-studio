@@ -560,6 +560,16 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         var reason = $"The last integration failure is {ClassText(failureClass)} ({signature}), not a verdict on the change. "
                      + $"Requeued to {TaskStates.AutoReview} as retry {retryNumber}/{maximum}.";
 
+        // Open the durable resume point before exposing the card in Auto Review.
+        // A failed lane move leaves a harmless pending record in Human Review;
+        // the next rail pass can repeat this idempotent reset.
+        if (!RemoteDeliverySettlementStore.RequeueInfrastructure(job.FolderPath))
+        {
+            _logger.LogWarning("acceptance-rail-infrastructure-settlement-reset-failed project={Project} job={JobId}",
+                job.ProjectName, job.Id);
+            return false;
+        }
+
         var outcome = await _transitions.MoveAsync(
             job.Id,
             TaskStates.AutoReview,
@@ -582,8 +592,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
         }
 
         var moved = _scanner.FindJob(job.Id, job.WatchPath);
-        if (moved is not null)
-            AppendAction(moved, AcceptanceRailReceipts.InfrastructureRequeueAction, reason, retryNumber);
+        if (moved is null) return false;
+        AppendAction(moved, AcceptanceRailReceipts.InfrastructureRequeueAction, reason, retryNumber);
         return true;
     }
 

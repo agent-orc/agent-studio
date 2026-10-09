@@ -81,6 +81,9 @@ public sealed record RemoteDeliverySettlementRecord
     /// <summary>Operator-facing integration continuation detail, when one exists.</summary>
     public string? IntegrationDetail { get; init; }
 
+    /// <summary>A recovery requeue must bypass the coordinator's completed-result cache.</summary>
+    public bool DiscardCompletedReplay { get; init; }
+
     public DateTimeOffset RecordedAtUtc { get; init; }
 }
 
@@ -195,6 +198,26 @@ public static class RemoteDeliverySettlementStore
                 : RemoteDeliverySettlementStage.IntegrationSettled,
             IntegrationOutcome = integrationOutcome,
             IntegrationDetail = integrationDetail,
+            DiscardCompletedReplay = false,
+            RecordedAtUtc = DateTimeOffset.UtcNow,
+        });
+        return true;
+    }
+
+    /// <summary>Reopens the same passed review after an infrastructure integration fault.</summary>
+    public static bool RequeueInfrastructure(string taskFolder)
+    {
+        var current = Read(taskFolder);
+        if (current is null || !current.ShouldIntegrate
+            || current.Stage is not (RemoteDeliverySettlementStage.LaneSettled
+                or RemoteDeliverySettlementStage.IntegrationPending))
+            return false;
+        Write(taskFolder, current with
+        {
+            Stage = RemoteDeliverySettlementStage.IntegrationPending,
+            IntegrationOutcome = null,
+            IntegrationDetail = null,
+            DiscardCompletedReplay = true,
             RecordedAtUtc = DateTimeOffset.UtcNow,
         });
         return true;

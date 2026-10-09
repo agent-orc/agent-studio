@@ -564,9 +564,19 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     [Fact]
     public async Task InfrastructureCard_IsRequeuedToAutoReviewWithoutARebaseSteer()
     {
-        var stack = Build();
+        var stack = Build(guardedDeliveryChain: false);
         var deliverySha = CreateUnintegratedDelivery("infrastructure");
-        SeedTask(stack, "infrastructure", deliverySha, infrastructureFailure: true);
+        var folder = SeedTask(stack, "infrastructure", deliverySha, infrastructureFailure: true);
+        RemoteDeliverySettlementStore.Write(folder, new RemoteDeliverySettlementRecord
+        {
+            TaskKey = "AGT-infrastructure",
+            ReviewAttemptId = "review-infrastructure",
+            Outcome = "Pass",
+            ShouldIntegrate = true,
+            Stage = RemoteDeliverySettlementStage.LaneSettled,
+            IntegrationOutcome = "Error",
+            IntegrationDetail = "git operation timed out after 30 seconds",
+        });
 
         var snapshot = await stack.Rail.RunOnceAsync();
 
@@ -574,6 +584,11 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var requeued = stack.Scanner.FindJob("infrastructure", _watchPath)!;
         Assert.Equal(TaskStates.AutoReview, requeued.State);
         Assert.Null(requeued.PendingIntent);
+        var settlement = RemoteDeliverySettlementStore.Read(requeued.FolderPath)!;
+        Assert.Equal(RemoteDeliverySettlementStage.IntegrationPending, settlement.Stage);
+        Assert.Null(settlement.IntegrationOutcome);
+        Assert.Null(settlement.IntegrationDetail);
+        Assert.True(settlement.DiscardCompletedReplay);
         var prompt = File.ReadAllText(Path.Combine(requeued.FolderPath, "prompt.md"));
         Assert.DoesNotContain("## STEER", prompt, StringComparison.Ordinal);
         Assert.Contains(
@@ -797,7 +812,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         bool bounceEnabled = true,
         bool projectBounceEnabled = true,
         TaskChangeNotifier? notifier = null,
-        bool guardedDeliveryChain = true)
+        bool guardedDeliveryChain = false)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>

@@ -69,6 +69,27 @@ public sealed class GitStaleLockGuardTests : IDisposable
 
     // ---- Guard against a real repository -----------------------------------
 
+    [Theory]
+    [InlineData(GitLockOwnership.None, true)]
+    [InlineData(GitLockOwnership.Owned, false)]
+    public void Boot_sweep_clears_only_unowned_integration_index_lock(
+        GitLockOwnership ownership, bool expectedCleared)
+    {
+        var repo = SeedRepo("boot-integration-" + ownership);
+        var slot = Path.Combine(_root, "slot-" + ownership);
+        Assert.Equal(0, Git(repo, "worktree", "add", "--detach", slot, "HEAD").Code);
+        var scope = GitStaleLockGuard.ResolveScope(slot)!;
+        var lockPath = Path.Combine(scope.GitDirectory, "index.lock");
+        PlantLock(lockPath, TimeSpan.FromMinutes(2));
+        var logger = new CapturingLogger<GitStaleLockGuard>();
+        var guard = new GitStaleLockGuard(logger: logger, probe: new FixedProbe(ownership), time: _time);
+
+        Assert.Equal(expectedCleared, guard.ClearStaleIntegrationIndexLock(slot));
+        Assert.Equal(!expectedCleared, File.Exists(lockPath));
+        if (expectedCleared)
+            Assert.Contains(logger.Messages, message => message.Contains("git-stale-integration-index-lock-cleared"));
+    }
+
     [Fact]
     public void Stale_index_lock_is_cleared_logged_and_the_write_succeeds()
     {

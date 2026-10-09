@@ -85,6 +85,33 @@ public sealed class GitStaleLockGuard
 
     public TimeSpan Threshold => _threshold;
 
+    /// <summary>Boot cleanup for an owned integration slot after a timed-out git process.</summary>
+    public bool ClearStaleIntegrationIndexLock(string worktreePath)
+    {
+        try
+        {
+            var scope = ResolveScope(worktreePath);
+            if (scope is null || !File.Exists(Path.Combine(worktreePath, ".git"))) return false;
+            var path = Path.Combine(scope.GitDirectory, "index.lock");
+            if (!File.Exists(path)) return false;
+            var observed = LockIdentity.Read(path);
+            var age = _time.GetUtcNow().UtcDateTime - observed.LastWriteTimeUtc;
+            if (observed.Length != 0 || age <= GitNetworkProcessRunner.DefaultTimeout
+                || _probe.Probe(scope) != GitLockOwnership.None
+                || LockIdentity.Read(path) != observed)
+                return false;
+            File.Delete(path);
+            _logger.LogWarning("git-stale-integration-index-lock-cleared worktree={Worktree} lock={Lock} age={Age}",
+                worktreePath, path, GitStaleLockPolicy.FormatAge(age));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "git-stale-integration-index-lock-sweep-failed worktree={Worktree}", worktreePath);
+            return false;
+        }
+    }
+
     /// <summary>Synchronous form for the lock-holding commit paths.</summary>
     public GitLockGuardResult EnsureWritable(string? repositoryPath, GitLockSurface surface = GitLockSurface.All)
     {

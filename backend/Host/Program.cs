@@ -714,6 +714,7 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IEvidenceFlushAlarm>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 // AGT-3000: clears git locks left by dead git processes before a server-owned write.
 builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
+builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>();
 builder.Services.AddHostedService(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Tasks.TaskLiveStatusProjection>();
@@ -1259,6 +1260,15 @@ app.Services.GetRequiredService<ClientIdentityStore>().EnsureLoaded();
 
 // Ensure state folders exist and migrate legacy flat jobs
 app.Services.GetRequiredService<TaskStateMachine>().EnsureStateFoldersAndMigrate();
+// Clear abandoned integration-slot index locks before boot recovery invokes git.
+if (!publicDemoExecutionProfile) try
+{
+    app.Services.GetRequiredService<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>().RunOnce();
+}
+catch (Exception ex)
+{
+    crashRecorder.Record("IntegrationWorktreeStartupLockSweep", ex);
+}
 
 // Backfill jobs that carry agent:"human" + cliType:null + model:null with owner
 // client defaults. Idempotent; no-op once all jobs are already migrated.

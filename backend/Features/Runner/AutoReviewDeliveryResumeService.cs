@@ -196,7 +196,8 @@ public sealed class AutoReviewDeliveryResumeService
             var request = BuildIntegrationRequest(task, settlement!);
             var result = await _integration.EnqueueAsync(
                     request,
-                    discardCompletedReplay: decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry)
+                    discardCompletedReplay: settlement!.DiscardCompletedReplay
+                                            || decision.Reason == AutoReviewResumePolicy.Reasons.OperatorReentry)
                 .ConfigureAwait(false);
             if (!IsCurrent(review!))
                 return new AutoReviewResumeOutcome(AutoReviewResumeAction.None, "superseded-review-generation", Resumed: false);
