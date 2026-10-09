@@ -129,6 +129,23 @@ public class TokenSummaryTests
     }
 
     [Fact]
+    public void Summarize_Gpt61SolLedgerRow_IsInPinnedCatalog()
+    {
+        var entry = Entry(ModelIds.Gpt61Sol, 1_000_000, 100_000, cacheRead: 500_000) with
+        {
+            Ts = new DateTime(2026, 10, 4, 0, 0, 0, DateTimeKind.Utc),
+        };
+
+        var summary = TokenSummaryService.Summarize("Agent Studio", [entry]);
+
+        Assert.Equal(0, summary.UnknownModelCount);
+        var model = Assert.Single(summary.ByModel);
+        Assert.True(model.ModelInCatalog);
+        Assert.True(model.ModelPriced);
+        Assert.True(model.EstimatedApiCostUsd > 0m);
+    }
+
+    [Fact]
     public void Summarize_UnknownModel_FlagsNotAllPriced()
     {
         var entries = new[]

@@ -4,13 +4,13 @@
   "explicitPinModels": {
     "codex": [
       "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
-      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5-codex",
+      "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna", "gpt-5-codex",
       "gpt-4.1", "gpt-4o"
     ],
     "claude": [
       "claude-opus-5-5", "claude-opus-5", "claude-fable-5-1",
       "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
-      "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
+      "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
       "claude-haiku-4-5"
     ]
   },
@@ -102,6 +102,18 @@
     }
   },
   "providerRejectionFallbacks": [
+    {
+      "cliType": "codex",
+      "fromModel": "gpt-6.1-sol",
+      "toModel": "gpt-6-sol",
+      "reason": "The declared Codex Sol sibling for provider request refusals."
+    },
+    {
+      "cliType": "claude",
+      "fromModel": "claude-sonnet-5-5",
+      "toModel": "claude-sonnet-5",
+      "reason": "The declared Anthropic Sonnet sibling for provider request refusals."
+    },
     {
       "cliType": "claude",
       "fromModel": "claude-opus-5-5",

@@ -88,6 +88,23 @@ public sealed class TokenSummaryBusParityTests : IDisposable
     }
 
     [Fact]
+    public async Task Summarize_Gpt61SolLedgerRow_UsesPinnedCatalogPrice()
+    {
+        var (log, bridge, store) = BuildStack();
+        var entry = MakeEntry(ModelIds.Gpt61Sol, 100_000, 10_000,
+            new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc), cacheRead: 50_000);
+        await WriteAllAsync(log, bridge, store, [entry]);
+
+        var summary = BusBackedTokenSummaryReader.SummarizeFromStore(store, _workspace, ProjectName);
+
+        Assert.Equal(0, summary.UnknownModelCount);
+        var model = Assert.Single(summary.ByModel);
+        Assert.True(model.ModelInCatalog);
+        Assert.True(model.ModelPriced);
+        Assert.True(model.EstimatedApiCostUsd > 0m);
+    }
+
+    [Fact]
     public async Task Summarize_UnknownModelFallback_PicksSameKey()
     {
         // Bus messages with no model -> legacy maps to "(unknown)"; the

@@ -3,6 +3,13 @@
   "wikiPath": "docs/system/domains/model-routing-policy.md",
   "migrations": [
     {
+      "from": "gpt-6-sol",
+      "to": "gpt-6.1-sol",
+      "family": "gpt",
+      "safeAuto": false,
+      "reason": "Proposal only (TokenEconomy 0.3.7): the target has a different ladder; max and ultra pins run at xhigh after acceptance. No qualifying identical-case no-regression evidence supports automatic migration."
+    },
+    {
       "from": "claude-opus-5",
       "to": "claude-opus-5-5",
       "family": "claude-opus",

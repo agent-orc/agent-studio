@@ -48,6 +48,21 @@ public class ClaudeModelDiscoveryTests
     }
 
     [Fact]
+    public void Sonnet55_IsUnavailableUntilClaudeCode21284DiscoversIt()
+    {
+        var parsed = ClaudeModelDiscovery.ParsePickerSnapshot("Select Model\n> Claude Sonnet 5.5 (selected)");
+        var old = ClaudeModelDiscovery.Reconcile(parsed, "2.1.281");
+        Assert.False(Assert.Single(old, m => m.Id == ModelIds.ClaudeSonnet55).Available);
+
+        var current = ClaudeModelDiscovery.Reconcile(parsed, "2.1.284");
+        var sonnet = Assert.Single(current, m => m.Id == ModelIds.ClaudeSonnet55);
+        Assert.True(sonnet.Available);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max"], sonnet.ThinkingLevels);
+        Assert.Equal("medium", sonnet.DefaultThinkingLevel);
+        Assert.Equal(1_000_000, ModelMetadataRegistry.ContextWindowFor(sonnet.Id));
+    }
+
+    [Fact]
     public void ParsePickerSnapshot_MapsKnownClaudeLabelsThroughRegistry()
     {
         var models = ClaudeModelDiscovery.ParsePickerSnapshot("""
