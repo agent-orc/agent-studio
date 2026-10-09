@@ -477,6 +477,9 @@ public sealed class SshCodexDeviceAuthTransport : ICodexDeviceAuthTransport
             .Replace("__EXPECTED_GENERATION__", expectedGeneration, StringComparison.Ordinal);
     }
 
+    internal static string BuildFencedScriptForTest(string operationId, string expectedGeneration)
+        => FencedScript(operationId, expectedGeneration);
+
     internal static ProcessStartInfo BuildStartInfo(string sshTarget)
     {
         var startInfo = new ProcessStartInfo
@@ -604,8 +607,89 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 41
 fi
 
-out_tmp=$(mktemp)
-trap 'rm -f "$out_tmp"' EXIT
+credential_store="$HOME/.codex/auth.json"
+rollback_store=$(mktemp "$HOME/.codex/.agent-studio-rollback.XXXXXXXX") || {
+  echo 'codex-login-status=recovery-required'; exit 74;
+}
+had_prior_store=0
+previous_store_digest=absent
+previous_store_generation=absent
+if [[ -f "$credential_store" ]]; then
+  previous_store_digest=$(sha256sum "$credential_store" | cut -d ' ' -f1) || exit 74
+  previous_store_generation="native-cli-store:$(date -r "$credential_store" +%s%3N)"
+  if ! cp -p -- "$credential_store" "$rollback_store" || ! chmod 0600 "$rollback_store"; then
+    rm -f "$rollback_store"
+    echo 'codex-login-status=recovery-required'; exit 74
+  fi
+  had_prior_store=1
+fi
+out_tmp=$(mktemp) || { rm -f "$rollback_store"; exit 74; }
+rollback_codex_on_failure() {
+  result=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  rm -f "$out_tmp"
+  if (( result == 0 )); then
+    rm -f "$rollback_store"
+    exit 0
+  fi
+  if (( had_prior_store )) && [[ -f "$credential_store" ]] \
+      && [[ "$(sha256sum "$credential_store" | cut -d ' ' -f1)" == "$previous_store_digest" ]] \
+      && [[ "native-cli-store:$(date -r "$credential_store" +%s%3N)" == "$previous_store_generation" ]]; then
+    rm -f "$rollback_store"
+    exit "$result"
+  fi
+  if (( ! had_prior_store )) && [[ ! -e "$credential_store" ]]; then
+    rm -f "$rollback_store"
+    exit "$result"
+  fi
+  rollback_ok=1
+  if (( had_prior_store )); then
+    restore_tmp=$(mktemp "$HOME/.codex/.agent-studio-restore.XXXXXXXX") || rollback_ok=0
+    if (( rollback_ok )) && ! cp -p -- "$rollback_store" "$restore_tmp"; then rollback_ok=0; fi
+    if (( rollback_ok )) && ! mv -f -- "$restore_tmp" "$credential_store"; then rollback_ok=0; fi
+    [[ -z "${restore_tmp:-}" ]] || rm -f "$restore_tmp"
+  elif ! rm -f -- "$credential_store"; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )) && (( had_prior_store )) && {
+      [[ "$(sha256sum "$credential_store" | cut -d ' ' -f1)" != "$previous_store_digest" ]] \
+      || [[ "native-cli-store:$(date -r "$credential_store" +%s%3N)" != "$previous_store_generation" ]]; }; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )) && { ! command -v agent-host >/dev/null 2>&1 \
+      || ! agent-host --rebind-provider-auth codex --drained >/dev/null 2>&1; }; then
+    rollback_ok=0
+  fi
+  if (( rollback_ok )); then
+    for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+      sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+      if [[ "$unit" == agent-runner-review.service ]]; then
+        sudo -n /usr/local/sbin/agent-runner-deploy restart-review || rollback_ok=0
+      else
+        sudo -n systemctl restart "$unit" || rollback_ok=0
+      fi
+      pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0
+    done
+  fi
+  if (( ! rollback_ok )); then
+    for unit in agent-host.service agent-runner.service agent-runner-review.service; do
+      sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
+      sudo -n systemctl stop "$unit" || true
+    done
+    [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+    echo 'codex-login-status=recovery-required'
+  else
+    rm -f "$rollback_store"
+    echo 'codex-login-status=rollback-restored'
+  fi
+  exit "$result"
+}
+trap rollback_codex_on_failure EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 timeout --signal=TERM --kill-after=5s 900s codex login --device-auth 2>&1 \
   | tee "$out_tmp" \
   | grep -Eo 'https://(auth.openai.com|login.openai.com)/[^[:space:]<>]+|[A-Z0-9]{4,8}-[A-Z0-9]{4,8}'
@@ -614,9 +698,31 @@ if [[ "$login_exit" -ne 0 ]]; then
   echo 'codex-login-status=login-failed'
   exit "$login_exit"
 fi
+if [[ ! -f "$credential_store" ]]; then
+  echo 'codex-login-status=unchanged-generation'
+  exit 42
+fi
+new_store_digest=$(sha256sum "$credential_store" | cut -d ' ' -f1) || exit 74
+if [[ "$new_store_digest" == "$previous_store_digest" ]]; then
+  echo 'codex-login-status=unchanged-generation'
+  exit 42
+fi
+published_generation="native-cli-store:$(date -r "$credential_store" +%s%3N)"
+if [[ "$published_generation" == "$previous_store_generation" ]]; then
+  previous_ms=${previous_store_generation#native-cli-store:}
+  next_second=$((previous_ms / 1000 + 1))
+  now_second=$(date +%s)
+  if (( now_second > next_second )); then next_second=$now_second; fi
+  touch -m -d "@$next_second" "$credential_store" || exit 74
+  published_generation="native-cli-store:$(date -r "$credential_store" +%s%3N)"
+fi
+if [[ "$published_generation" == "$expected_generation" ]]; then
+  echo 'codex-login-status=unchanged-generation'
+  exit 42
+fi
 
 if ! command -v agent-host >/dev/null 2>&1 \
-    || ! agent-host --rebind-provider-auth codex --drained >/dev/null; then
+    || ! agent-host --rebind-provider-auth codex --drained >/dev/null 2>&1; then
   echo 'codex-login-status=rebind-required'
   exit 43
 fi
@@ -635,15 +741,13 @@ if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
 fi
 for unit in "${units[@]}"; do
   if [[ "$unit" == agent-runner-review.service ]]; then
-    restarted=0
-    sudo -n /usr/local/sbin/agent-runner-deploy restart-review && restarted=1
+    sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
   else
-    restarted=0
-    sudo -n systemctl restart "$unit" && restarted=1
+    sudo -n systemctl restart "$unit" || exit 44
   fi
-  if [[ "$restarted" == 1 ]]; then
-    printf 'codex-probe-unit=%s\n' "$unit"
-  fi
+  pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || exit 44
+  printf 'codex-probe-unit=%s\n' "$unit"
 done
 echo 'codex-login-status=verified'
 """;

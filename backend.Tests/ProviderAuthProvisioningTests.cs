@@ -114,13 +114,47 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("!= \"$previous_store_digest\"", script);
         Assert.Contains("agent-host --rebind-provider-auth claude --drained", script);
         Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
         Assert.Contains("claude-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
         Assert.True(script.IndexOf("cp -p -- \"$credential_store\"", StringComparison.Ordinal) <
                     script.IndexOf("claude /login", StringComparison.Ordinal));
         var restore = script.IndexOf("mv -f -- \"$restore_tmp\" \"$credential_store\"", StringComparison.Ordinal);
         Assert.True(restore < script.IndexOf("agent-host --rebind-provider-auth claude --drained", restore, StringComparison.Ordinal));
         Assert.True(script.IndexOf("trap rollback_native_on_failure EXIT", StringComparison.Ordinal) <
                     script.IndexOf("claude /login", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_environment_renewal_restores_prior_file_or_drains_units_after_restart_failure()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "generation-a", native: false);
+        Assert.Contains("trap rollback_environment_on_failure EXIT", script);
+        Assert.Contains("install -m 0640 -o root -g agent \"$rollback_file\" \"$restore_tmp\"", script);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("claude-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
+        Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
+    }
+
+    [Fact]
+    public void Codex_renewal_restores_prior_store_or_drains_units_after_partial_rebind()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        Assert.Contains("trap rollback_codex_on_failure EXIT", script);
+        Assert.Contains("cp -p -- \"$credential_store\" \"$rollback_store\"", script);
+        Assert.Contains("agent-host --rebind-provider-auth codex --drained", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
+        Assert.Contains("codex-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
+        Assert.Contains("new_store_digest=", script);
+        Assert.Contains("published_generation=", script);
+        Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
     }
 
     [Fact]

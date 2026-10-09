@@ -605,7 +605,77 @@ fi
 
 out_tmp=$(mktemp)
 env_tmp=$(mktemp)
-trap 'rm -f "$out_tmp" "$env_tmp"' EXIT
+provider_auth_file=/etc/agent-runner/provider-auth.env
+rollback_file=
+install_committed=0
+had_prior_file=0
+units=()
+if sudo -n systemctl cat agent-host.service >/dev/null 2>&1; then
+  units+=(agent-host.service)
+elif sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
+  units+=(agent-runner.service)
+fi
+if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
+  units+=(agent-runner-review.service)
+fi
+rollback_environment_on_failure() {
+  result=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  rm -f "$out_tmp" "$env_tmp"
+  if (( result == 0 )); then
+    [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
+    exit 0
+  fi
+  if (( ! install_committed )); then
+    [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
+    exit "$result"
+  fi
+  rollback_ok=1
+  if (( had_prior_file )); then
+    restore_tmp=$(sudo -n mktemp /etc/agent-runner/.provider-auth.restore.XXXXXX) || rollback_ok=0
+    if (( rollback_ok )) && ! sudo -n install -m 0640 -o root -g agent "$rollback_file" "$restore_tmp"; then rollback_ok=0; fi
+    if (( rollback_ok )) && ! sudo -n mv -fT -- "$restore_tmp" "$provider_auth_file"; then rollback_ok=0; fi
+    [[ -z "${restore_tmp:-}" ]] || sudo -n rm -f -- "$restore_tmp"
+  else
+    sudo -n rm -f -- "$provider_auth_file" || rollback_ok=0
+  fi
+  if (( rollback_ok )); then
+    for unit in "${units[@]}"; do
+      if [[ "$unit" == agent-runner-review.service ]]; then
+        sudo -n /usr/local/sbin/agent-runner-deploy restart-review || rollback_ok=0
+      else
+        sudo -n systemctl restart "$unit" || rollback_ok=0
+      fi
+      pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0
+      if (( rollback_ok )) && ! sudo -n bash -c '
+        set -a; source /etc/agent-runner/provider-auth.env; set +a
+        oauth=${CLAUDE_CODE_OAUTH_TOKEN:-}; api=${ANTHROPIC_API_KEY:-}
+        [[ -n "$oauth" || -n "$api" ]] || exit 1
+        seen_oauth=0; seen_api=0
+        while IFS= read -r -d "" entry; do
+          [[ -z "$oauth" || "$entry" != "CLAUDE_CODE_OAUTH_TOKEN=$oauth" ]] || seen_oauth=1
+          [[ -z "$api" || "$entry" != "ANTHROPIC_API_KEY=$api" ]] || seen_api=1
+        done <"/proc/$1/environ"
+        [[ ( -z "$oauth" || "$seen_oauth" == 1 ) && ( -z "$api" || "$seen_api" == 1 ) ]]
+      ' bash "$pid"; then rollback_ok=0; fi
+    done
+  fi
+  if (( ! rollback_ok )); then
+    for unit in "${units[@]}"; do sudo -n systemctl stop "$unit" || true; done
+    [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+    echo 'claude-login-status=recovery-required'
+  else
+    echo 'claude-login-status=rollback-restored'
+    [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
+  fi
+  exit "$result"
+}
+trap rollback_environment_on_failure EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 timeout --signal=TERM --kill-after=5s 900s claude setup-token 2>&1 \
   | tee "$out_tmp" \
@@ -623,43 +693,30 @@ if [[ -z "$token" ]]; then
 fi
 
 sudo -n getent group agent >/dev/null 2>&1 || sudo -n groupadd --system agent
-sudo -n install -d -m 0750 -o root -g agent /etc/agent-runner
+sudo -n install -d -m 0750 -o root -g agent /etc/agent-runner || exit 74
 
-provider_auth_file=/etc/agent-runner/provider-auth.env
 generation="renewal_$(tr -d '-' </proc/sys/kernel/random/uuid)"
 rollback_file="/etc/agent-runner/.provider-auth.rollback.${operation_id:-$generation}"
 if sudo -n test -f "$provider_auth_file"; then
-  sudo -n install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file"
+  sudo -n install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file" || exit 74
+  had_prior_file=1
   sudo -n awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
-    "$provider_auth_file" >"$env_tmp"
+    "$provider_auth_file" >"$env_tmp" || exit 74
 fi
-printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$token" >>"$env_tmp"
-printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp"
-install_tmp=$(sudo -n mktemp /etc/agent-runner/.provider-auth.env.XXXXXX)
-sudo -n install -m 0640 -o root -g agent "$env_tmp" "$install_tmp"
-sudo -n mv -fT -- "$install_tmp" "$provider_auth_file"
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$token" >>"$env_tmp" || exit 74
+printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp" || exit 74
+install_tmp=$(sudo -n mktemp /etc/agent-runner/.provider-auth.env.XXXXXX) || exit 74
+sudo -n install -m 0640 -o root -g agent "$env_tmp" "$install_tmp" || exit 74
+install_committed=1
+sudo -n mv -fT -- "$install_tmp" "$provider_auth_file" || exit 74
 
 if ! sudo -n bash -c 'set -a; source /etc/agent-runner/provider-auth.env; set +a; claude auth status --text' >/dev/null 2>&1; then
-  if sudo -n test -f "$rollback_file"; then
-    sudo -n mv -fT -- "$rollback_file" "$provider_auth_file"
-  else
-    sudo -n rm -f -- "$provider_auth_file"
-  fi
   unset token
   echo 'claude-login-status=unverified'
   exit 43
 fi
 unset token
 
-units=()
-if sudo -n systemctl cat agent-host.service >/dev/null 2>&1; then
-  units+=(agent-host.service)
-elif sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
-  units+=(agent-runner.service)
-fi
-if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
-  units+=(agent-runner-review.service)
-fi
 for unit in "${units[@]}"; do
   if [[ "$unit" == agent-runner-review.service ]]; then
     sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
@@ -772,7 +829,7 @@ rollback_native_on_failure() {
     rollback_ok=0
   fi
   if (( rollback_ok )) && { ! command -v agent-host >/dev/null 2>&1 \
-      || ! agent-host --rebind-provider-auth claude --drained >/dev/null; }; then
+      || ! agent-host --rebind-provider-auth claude --drained >/dev/null 2>&1; }; then
     rollback_ok=0
   fi
   if (( rollback_ok )); then
@@ -783,6 +840,8 @@ rollback_native_on_failure() {
       else
         sudo -n systemctl restart "$unit" || rollback_ok=0
       fi
+      pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+      [[ "$pid" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0
     done
   fi
   if (( ! rollback_ok )); then
@@ -791,6 +850,7 @@ rollback_native_on_failure() {
       sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
       sudo -n systemctl stop "$unit" || true
     done
+    [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
     echo 'claude-login-status=recovery-required'
   else
     echo 'claude-login-status=rollback-restored'
@@ -838,7 +898,7 @@ if ! [[ "$published_generation" != "$expected_generation" ]]; then
   exit 42
 fi
 if ! command -v agent-host >/dev/null 2>&1 \
-    || ! agent-host --rebind-provider-auth claude --drained >/dev/null; then
+    || ! agent-host --rebind-provider-auth claude --drained >/dev/null 2>&1; then
   echo 'claude-login-status=rebind-required'
   exit 43
 fi
@@ -849,6 +909,8 @@ for unit in agent-host.service agent-runner.service agent-runner-review.service;
   else
     sudo -n systemctl restart "$unit" || exit 44
   fi
+  pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || exit 44
   printf 'claude-probe-unit=%s\n' "$unit"
 done
 echo 'claude-login-status=verified'
