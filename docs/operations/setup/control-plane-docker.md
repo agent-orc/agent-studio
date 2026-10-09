@@ -207,7 +207,9 @@ It calls the authenticated management backup API, so the serving Task Server
 creates the consistent SQLite snapshot and audit record under its write gate.
 The sidecar checks the returned SHA-256 before and after copying the completed
 file to the off-host mount. It runs every `BACKUP_INTERVAL_SECONDS` (default
-300, matching the plan's five-minute maximum recovery point). Inspect its log:
+300). That is the capture interval, not an achieved recovery point; report
+recovery objectives only from a measured drill (see
+[installation-recovery.md](./installation-recovery.md#drill-and-measured-objectives)). Inspect its log:
 
 The Task Server's private `principal-rotation-delivery.key` is a host secret in
 the persistent store volume. The management SQLite snapshot and full backup
@@ -231,6 +233,11 @@ container: drain, resolve every attempt, enter `Maintenance`, then
 [task-server.md, "Backup and restore rehearsal"](./task-server.md) for the
 full request/response contract; only the transport (compose `exec` instead of
 a bare `curl` on the host) differs.
+
+The snapshot loop does not by itself form a full recovery set. Capture, copy,
+and rehearse the installation recovery set as described in
+[installation-recovery.md](./installation-recovery.md). Run the `recovery`
+commands inside the `task-server` image against the stopped store.
 
 ## Cold archive target
 

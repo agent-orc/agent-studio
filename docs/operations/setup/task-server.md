@@ -1231,6 +1231,11 @@ of the live store. It verifies schema compatibility and integrity after
 replacement, automatically rolls back to that safety copy on failure, and
 remains in `Maintenance` until an operator explicitly resumes normal service.
 
+A database backup alone is not an installation recovery set. For the full
+recovery set (manifest, off-host copy receipt, restore to an empty target,
+host fencing, and the resume gate), use `task-server recovery` as described in
+[installation-recovery.md](./installation-recovery.md).
+
 ## Legacy single-writer migration
 
 Legacy absolute paths and `watchPath` are migration inputs only. They never
