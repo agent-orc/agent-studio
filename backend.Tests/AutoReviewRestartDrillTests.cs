@@ -1008,6 +1008,40 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Single(restarted.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
     }
 
+    [Fact]
+    public async Task Infrastructure_requeue_reintegrates_passed_review_without_operator_action_or_cached_failure()
+    {
+        var calls = 0;
+        var stack = Build(_ => Task.FromResult(++calls == 1
+            ? MergeIntoIntegrationResult.Failed(
+                AcceptedIntegrationFailureCodes.IntegrationError, "host timeout")
+            : MergeIntoIntegrationResult.Of(
+                MergeIntoIntegrationOutcome.Merged, mergedSha: new string('a', 40))));
+        var card = SeedPassedDelivery(stack, "infrastructure-requeue");
+        RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
+
+        Assert.Equal(1, (await stack.Resume.RunOnceAsync("initial")).Integrated);
+        var parked = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, parked.State);
+        Assert.Equal("Error", RemoteDeliverySettlementStore.Read(parked.FolderPath)!.IntegrationOutcome);
+
+        Assert.True(RemoteDeliverySettlementStore.RequeueInfrastructure(parked.FolderPath));
+        var move = await stack.Transitions.MoveAsync(
+            card.Id, TaskStates.AutoReview, _watchPath, cause: TimelineActors.System);
+        Assert.Equal(MoveJobStatus.Success, move.Status);
+
+        var retry = await stack.Resume.RunOnceAsync("infrastructure-requeue");
+
+        Assert.Equal(1, retry.Integrated);
+        Assert.Equal(2, calls);
+        var completed = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.HumanReview, completed.State);
+        var settlement = RemoteDeliverySettlementStore.Read(completed.FolderPath)!;
+        Assert.Equal(nameof(MergeIntoIntegrationOutcome.Merged), settlement.IntegrationOutcome);
+        Assert.False(settlement.DiscardCompletedReplay);
+        Assert.Single(stack.Authority.GetTaskProjection(card.TaskKey).ReviewAttempts);
+    }
+
     private static RemoteDeliverySettlementRecord Settlement(SeededCard card, bool shouldIntegrate) => new()
     {
         TaskKey = card.TaskKey,
@@ -1113,7 +1147,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     /// is the restart: the durable workspace, the authority file and the git
     /// repository are shared; nothing else is.
     /// </summary>
-    private Stack Build()
+    private Stack Build(Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>>? integrate = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -1167,7 +1201,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             projectSettings: settings,
             integrationWorktrees: new IntegrationWorktreeProvider(git));
         var coordinator = new RemoteDeliveryIntegrationCoordinator(
-            request => runner.RunAsync(
+            integrate ?? (request => runner.RunAsync(
                 request.Project,
                 request.JobId,
                 request.JobFolderPath,
@@ -1175,7 +1209,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                 request.IntegrationBranch,
                 CancellationToken.None,
                 request.IntegrationStrategy,
-                request.PipelineType),
+                request.PipelineType)),
             NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
             recordFailure: (request, failureCode, summary, detail) =>
             {

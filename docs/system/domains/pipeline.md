@@ -1838,7 +1838,15 @@ broken. An operator had to requeue every one by hand.
   is exhausted does the card escalate to Human Review, carrying the class and
   signature in the escalation reason. `AcceptanceRailReceipts` counts a card's
   own `requeued-infrastructure` timeline receipts so the rail and the card
-  projection agree on the retry number.
+  projection agree on the retry number. Before the lane move, the rail resets
+  the same review's delivery settlement to `IntegrationPending`, clears its old
+  integration outcome, and marks the completed coordinator replay for discard.
+  If the lane move is refused while the card remains in Human Review, the rail
+  restores the original settlement and its integration error before returning.
+  The Auto Review resume pass then starts a fresh integration without repeating
+  the passed review. At startup, existing integration worktree slots have their
+  zero-byte `index.lock` cleared when older than the git timeout and no live git
+  process owns the repository; each clearance is logged.
 - **Integration recovery round.** `RemoteIntegrationContinuationPolicy.Decide`
   (`backend/Features/Pipeline/IntegrationAgentRoundService.cs`) opens at most one
   automatic steer round per fenced delivery chain when the merge-first

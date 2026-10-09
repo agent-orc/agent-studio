@@ -2935,6 +2935,28 @@
             an earlier failed gate remains failed evidence rather than being relabelled by a retry.
           </td>
         </tr>
+        <tr id="case-infrastructure-requeue-settlement-limbo">
+          <td>2026-10-07</td>
+          <td><code>AGT-2948</code><br><span class="small">infrastructure-requeue-settlement-limbo</span></td>
+          <td>
+            Infrastructure integration failures returned review-passed cards to
+            <span class="lane">4-auto-review</span>, but the settlement remained
+            <code>LaneSettled</code> with the old error. Six cards waited up to four hours;
+            AGT-2948 exhausted three requeues.
+          </td>
+          <td>
+            The acceptance rail did not reopen the durable integration resume point, and a
+            re-drive inside 15 minutes could receive the coordinator's cached failure.
+            An abandoned integration worktree <code>index.lock</code> also caused repeated
+            git timeouts.
+          </td>
+          <td>
+            AGT-2948 reached Human Review escalation despite a passed review. Infrastructure
+            requeues now reset the settlement before the lane move and discard a completed
+            replay; a refused lane move restores the failed settlement. Startup clears old,
+            unowned, zero-byte integration index locks.
+          </td>
+        </tr>
       </tbody>
     </table>
 

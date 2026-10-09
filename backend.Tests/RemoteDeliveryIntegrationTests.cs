@@ -284,6 +284,26 @@ public sealed class RemoteDeliveryIntegrationCoordinatorTests
     }
 
     [Fact]
+    public async Task EnqueueAsync_InfrastructureRetryBypassesCompletedFailureWithinRetention()
+    {
+        var calls = 0;
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            _ => Task.FromResult(++calls == 1
+                ? MergeIntoIntegrationResult.Failed("integration-error", "host timeout")
+                : MergeIntoIntegrationResult.Of(MergeIntoIntegrationOutcome.Merged,
+                    mergedSha: new string('a', 40))),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance);
+        var request = Request("infrastructure-retry", 1);
+
+        var first = await coordinator.EnqueueAsync(request);
+        var retry = await coordinator.EnqueueAsync(request, discardCompletedReplay: true);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, first.Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, retry.Outcome);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task Queued_delivery_from_superseded_review_never_starts_integration()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

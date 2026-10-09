@@ -564,9 +564,19 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     [Fact]
     public async Task InfrastructureCard_IsRequeuedToAutoReviewWithoutARebaseSteer()
     {
-        var stack = Build();
+        var stack = Build(guardedDeliveryChain: false);
         var deliverySha = CreateUnintegratedDelivery("infrastructure");
-        SeedTask(stack, "infrastructure", deliverySha, infrastructureFailure: true);
+        var folder = SeedTask(stack, "infrastructure", deliverySha, infrastructureFailure: true);
+        RemoteDeliverySettlementStore.Write(folder, new RemoteDeliverySettlementRecord
+        {
+            TaskKey = "AGT-infrastructure",
+            ReviewAttemptId = "review-infrastructure",
+            Outcome = "Pass",
+            ShouldIntegrate = true,
+            Stage = RemoteDeliverySettlementStage.LaneSettled,
+            IntegrationOutcome = "Error",
+            IntegrationDetail = "git operation timed out after 30 seconds",
+        });
 
         var snapshot = await stack.Rail.RunOnceAsync();
 
@@ -574,6 +584,11 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         var requeued = stack.Scanner.FindJob("infrastructure", _watchPath)!;
         Assert.Equal(TaskStates.AutoReview, requeued.State);
         Assert.Null(requeued.PendingIntent);
+        var settlement = RemoteDeliverySettlementStore.Read(requeued.FolderPath)!;
+        Assert.Equal(RemoteDeliverySettlementStage.IntegrationPending, settlement.Stage);
+        Assert.Null(settlement.IntegrationOutcome);
+        Assert.Null(settlement.IntegrationDetail);
+        Assert.True(settlement.DiscardCompletedReplay);
         var prompt = File.ReadAllText(Path.Combine(requeued.FolderPath, "prompt.md"));
         Assert.DoesNotContain("## STEER", prompt, StringComparison.Ordinal);
         Assert.Contains(
@@ -592,6 +607,48 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         Assert.Equal(
             LaneChangeCauses.ReviewInfrastructure,
             laneChange.Details.GetValueOrDefault(LaneChangeCauses.DetailKey));
+    }
+
+    [Fact]
+    public async Task InfrastructureRequeue_WhenLaneMoveIsRefused_RetainsFailedSettlement()
+    {
+        var stack = Build(guardedDeliveryChain: false);
+        var id = "infrastructure-refused";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), infrastructureFailure: true);
+        var failedSettlement = new RemoteDeliverySettlementRecord
+        {
+            TaskKey = "AGT-" + id,
+            ReviewAttemptId = "review-" + id,
+            Outcome = "Pass",
+            ShouldIntegrate = true,
+            Stage = RemoteDeliverySettlementStage.LaneSettled,
+            IntegrationOutcome = "Error",
+            IntegrationDetail = "git operation timed out after 30 seconds",
+        };
+        RemoteDeliverySettlementStore.Write(folder, failedSettlement);
+
+        var obstructingPath = Path.Combine(_watchPath, TaskStates.AutoReview, id);
+        File.WriteAllText(obstructingPath, "blocks lane move");
+
+        var refused = await stack.Rail.RunOnceAsync();
+
+        Assert.Equal(1, refused.Failed);
+        Assert.Equal(0, refused.Requeued);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(id, _watchPath)!.State);
+        Assert.Equal(failedSettlement, RemoteDeliverySettlementStore.Read(folder));
+        Assert.DoesNotContain(stack.Timeline.ReadAll(folder),
+            entry => entry.Kind == TimelineEventKinds.AcceptanceRailActed
+                     && entry.Details?.GetValueOrDefault("action") == "requeued-infrastructure");
+
+        File.Delete(obstructingPath);
+        var restarted = Build(guardedDeliveryChain: false);
+        var retry = await restarted.Rail.RunOnceAsync();
+
+        Assert.Equal(1, retry.Requeued);
+        var requeued = restarted.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, requeued.State);
+        Assert.Equal(RemoteDeliverySettlementStage.IntegrationPending,
+            RemoteDeliverySettlementStore.Read(requeued.FolderPath)!.Stage);
     }
 
     [Fact]
@@ -797,7 +854,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         bool bounceEnabled = true,
         bool projectBounceEnabled = true,
         TaskChangeNotifier? notifier = null,
-        bool guardedDeliveryChain = true)
+        bool guardedDeliveryChain = false)
     {
         var logs = new List<string>();
         var values = new Dictionary<string, string?>
