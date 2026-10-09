@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using AgentStudio.Pipeline;
 using Microsoft.Extensions.Configuration;
@@ -9,6 +10,30 @@ namespace AgentStudio.Tests;
 public sealed class RemoteBuildTestGateRunnerTests
 {
     private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Theory]
+    [InlineData(120, 198L * 1024 * 1024, 198)]
+    [InlineData(600, 198L * 1024 * 1024, 600)]
+    [InlineData(120, 2L * 1024 * 1024 * 1024, 2048)]
+    [InlineData(120, 8L * 1024 * 1024 * 1024, 3600)]
+    [InlineData(7200, 198L * 1024 * 1024, 7200)]
+    [InlineData(7200, 8L * 1024 * 1024 * 1024, 7200)]
+    public void Bundle_transfer_budget_scales_with_bytes_and_has_a_ceiling(
+        int configuredSeconds, long bytes, int expectedSeconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds),
+            RemoteGateTransport.TransferBudget(TimeSpan.FromSeconds(configuredSeconds), bytes));
+    }
+
+    [Fact]
+    public void Transfer_failure_evidence_names_step_size_and_elapsed_time()
+    {
+        var evidence = RemoteGateTransport.TransferFailure(198_000_000,
+            TimeSpan.FromSeconds(201.5), TimeSpan.FromSeconds(240), "deadline");
+        Assert.Contains("source.bundle transfer", evidence);
+        Assert.Contains("198000000 bytes", evidence);
+        Assert.Contains("201.5s", evidence);
+    }
 
     [Theory]
     [InlineData(null)]
@@ -86,7 +111,7 @@ public sealed class RemoteBuildTestGateRunnerTests
 
     [Theory]
     [InlineData("network", BuildTestGateFailureKind.Environment)]
-    [InlineData("timeout", BuildTestGateFailureKind.Timeout)]
+    [InlineData("timeout", BuildTestGateFailureKind.Environment)]
     [InlineData("cancel", BuildTestGateFailureKind.Cancellation)]
     public async Task Transport_failure_is_typed_and_never_replaced_by_a_local_verdict(
         string failure, BuildTestGateFailureKind expected)
@@ -239,5 +264,67 @@ public sealed class RemoteBuildTestGateRunnerTests
             Timeout = timeout;
             return Exception is null ? Task.FromResult(Result) : Task.FromException<BuildTestGateResult>(Exception);
         }
+    }
+}
+
+public sealed class RemoteGateBundleTests
+{
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Incremental_bundle_requires_cache_tip_and_restores_exact_subject()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "remote-gate-bundle-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var source = Path.Combine(root, "source");
+            var cache = Path.Combine(root, "cache.git");
+            var restored = Path.Combine(root, "restored.git");
+            var empty = Path.Combine(root, "empty.git");
+            var initial = Path.Combine(root, "initial.bundle");
+            var incremental = Path.Combine(root, "incremental.bundle");
+            Git(root, "init", source);
+            Git(source, "config", "user.email", "gate@example.invalid");
+            Git(source, "config", "user.name", "Gate Test");
+            File.WriteAllText(Path.Combine(source, "base.txt"), new string('a', 8192));
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "base");
+            var baseSha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(source, "branch", "gate-subject");
+            Git(source, "bundle", "create", initial, "refs/heads/gate-subject");
+            Git(root, "clone", "--bare", initial, cache);
+
+            File.WriteAllText(Path.Combine(source, "change.txt"), "gated merge candidate");
+            Git(source, "add", ".");
+            Git(source, "commit", "-qm", "candidate");
+            var expectedSha = Git(source, "rev-parse", "HEAD").Trim();
+            Git(source, "branch", "-f", "gate-subject", expectedSha);
+            var args = RemoteGateTransport.BundleArguments(source, incremental, [baseSha]);
+            Git(root, args.ToArray());
+            Git(root, "init", "--bare", empty);
+            Assert.Throws<InvalidOperationException>(() => Git(empty, "bundle", "verify", incremental));
+            Git(cache, "bundle", "verify", incremental);
+            Git(root, "clone", "--bare", cache, restored);
+            Git(restored, "fetch", incremental, "refs/heads/gate-subject:refs/heads/gate-subject");
+            Assert.Equal(expectedSha, Git(restored, "rev-parse", "refs/heads/gate-subject").Trim());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        process.Start();
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0) throw new InvalidOperationException(error);
+        return output;
     }
 }

@@ -58,6 +58,7 @@ public sealed partial class MergeIntoDevelopRunner
     /// <c>PostSteps:post-build-test-gate:TimeoutSeconds</c>.
     /// </summary>
     internal const string GateTimeoutConfigKey = "PostSteps:build-test-gate:TimeoutSeconds";
+    internal const string GateInfrastructureTimeoutConfigKey = "PostSteps:build-test-gate:InfrastructureTimeoutSeconds";
     private readonly SemaphoreSlim _mergeGate = new(1, 1);
     private readonly SemaphoreSlim _pushGate = new(1, 1);
 
@@ -981,6 +982,7 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = integrationBranch,
                     TimeoutBudgetSource = preDevelopTimeoutSource,
+                    InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                     CoveredRequirements = reuse.Reused ? reuse.CoveredRequirements : [],
                 },
                 changedPaths,
@@ -1148,6 +1150,9 @@ public sealed partial class MergeIntoDevelopRunner
         return (TimeSpan.FromSeconds(resolvedSeconds), source);
     }
 
+    private TimeSpan ResolveGateInfrastructureTimeout() => TimeSpan.FromSeconds(Math.Max(1,
+        _configuration?.GetValue<int?>(GateInfrastructureTimeoutConfigKey) ?? 120));
+
     private int? ProjectGateTimeoutOverrideSecondsFor(string project)
     {
         if (_projectSettings == null) return null;
@@ -1243,6 +1248,7 @@ public sealed partial class MergeIntoDevelopRunner
                     JobFolderPath = jobFolderPath,
                     SubjectRef = workBranch,
                     TimeoutBudgetSource = preMainTimeoutSource,
+                    InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
                 },
                 settings.BuildProfile,
                 preMainTimeout,
@@ -1252,7 +1258,9 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 return (
                     MergeIntoIntegrationResult.Failed(
-                        AcceptedIntegrationFailureCodes.BuildGateFailed,
+                        gate.FailureKind == BuildTestGateFailureKind.Environment
+                            ? AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+                            : AcceptedIntegrationFailureCodes.BuildGateFailed,
                         $"Pre-main full suite blocked the develop-to-main fast-forward: {gate.Reason}"),
                     gate);
             }
@@ -1404,6 +1412,7 @@ public sealed partial class MergeIntoDevelopRunner
                 JobFolderPath = jobFolderPath,
                 SubjectRef = taskBranch,
                 TimeoutBudgetSource = preMainTimeoutSource,
+                InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
             },
             settings.BuildProfile,
             preMainTimeout,
@@ -1414,7 +1423,9 @@ public sealed partial class MergeIntoDevelopRunner
         {
             return (
                 MergeIntoIntegrationResult.Failed(
-                    AcceptedIntegrationFailureCodes.BuildGateFailed,
+                    gate.FailureKind == BuildTestGateFailureKind.Environment
+                        ? AcceptedIntegrationFailureCodes.GateEnvironmentFailure
+                        : AcceptedIntegrationFailureCodes.BuildGateFailed,
                     $"Pre-main full suite blocked the merge: {gate.Reason}"),
                 gate);
         }

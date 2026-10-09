@@ -90,9 +90,10 @@ public sealed record BuildTestGateRequest(
     public IReadOnlyList<string> CoveredRequirements { get; init; } = [];
 
     /// <summary>
-    /// Budget for the true infrastructure operations that MUST be quick regardless
-    /// of how long a verify run takes: materializing the exact-subject worktree
-    /// (fetch + <c>worktree add</c>), reading HEAD, and tearing the worktree down.
+    /// Budget for infrastructure operations separate from the verify run:
+    /// materializing the exact-subject worktree (fetch + <c>worktree add</c>),
+    /// reading HEAD, and tearing the worktree down. Remote transport may raise
+    /// this budget for a large source payload.
     /// </summary>
     public TimeSpan InfrastructureTimeout { get; init; } = TimeSpan.FromMinutes(2);
 

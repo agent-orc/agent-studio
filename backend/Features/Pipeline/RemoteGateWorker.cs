@@ -68,8 +68,31 @@ public static class RemoteGateWorker
             // The clone is private to this GUID invocation. Its only advertised
             // branch was created from the requested exact commit, never a live
             // integration ref. BuildTestGateRunner independently proves HEAD.
-            await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", bundle, repository],
-                directory, request.InfrastructureTimeout, lifetime.Token);
+            if (invocation.CachePath is { } cache && Directory.Exists(cache))
+            {
+                await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", cache, repository],
+                    directory, request.InfrastructureTimeout, lifetime.Token);
+                await RemoteGateProcess.RunAsync("git", ["-C", repository, "fetch", "--no-tags", bundle,
+                    "refs/heads/gate-subject:refs/heads/gate-subject"],
+                    directory, request.InfrastructureTimeout, lifetime.Token);
+                await RemoteGateProcess.RunAsync("git", ["-C", repository, "symbolic-ref", "HEAD", "refs/heads/gate-subject"],
+                    directory, request.InfrastructureTimeout, lifetime.Token);
+                try
+                {
+                    await RemoteGateProcess.RunAsync("git", ["-C", cache, "fetch", "--no-tags", repository,
+                        "refs/heads/gate-subject:refs/heads/gate-cache/" + request.ExpectedSha],
+                        directory, request.InfrastructureTimeout, lifetime.Token);
+                }
+                catch (Exception exception) when (!lifetime.IsCancellationRequested)
+                {
+                    logger.LogWarning(exception, "remote_gate_cache_update_failed run_id={RunId}", invocation.RunId);
+                }
+            }
+            else
+            {
+                await RemoteGateProcess.RunAsync("git", ["clone", "--bare", "--quiet", bundle, repository],
+                    directory, request.InfrastructureTimeout, lifetime.Token);
+            }
             var runner = new BuildTestGateRunner(logging.CreateLogger<BuildTestGateRunner>());
             result = await runner.RunAsync(request, invocation.ChangedFiles, invocation.Profile,
                 invocation.Mode, TimeSpan.FromSeconds(invocation.TimeoutSeconds), lifetime.Token);
@@ -126,6 +149,9 @@ public static class RemoteGateWorker
             || invocation.OverallTimeoutSeconds < invocation.TimeoutSeconds
             || invocation.OverallTimeoutSeconds > 86400
             || invocation.Request.InfrastructureTimeout <= TimeSpan.Zero
+            || (invocation.CachePath is { } cachePath
+                && (!Regex.IsMatch(cachePath, "^/[a-zA-Z0-9_./-]+/cache/[0-9a-f]{64}$")
+                    || cachePath.Split('/').Any(part => part is "." or "..")))
             || invocation.Mode == PostStepMode.Off)
             throw new InvalidDataException("Remote gate invocation identity, subject, or budget is invalid.");
     }

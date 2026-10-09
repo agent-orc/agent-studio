@@ -13,7 +13,10 @@ public sealed record RemoteGateInvocation(
     BuildProfile? Profile,
     PostStepMode Mode,
     int TimeoutSeconds,
-    int OverallTimeoutSeconds);
+    int OverallTimeoutSeconds)
+{
+    public string? CachePath { get; init; }
+}
 
 public sealed record RemoteGateResponse(
     int Version,
@@ -89,8 +92,7 @@ public sealed class RemoteBuildTestGateRunner(
                     "remote_gate_transport_failed gate={GateId} expected_sha={ExpectedSha} attempt={Attempt}",
                     request.GateId, request.ExpectedSha, attempt);
                 if (attempt < MaxTransportAttempts) continue;
-                var kind = exception is TimeoutException ? BuildTestGateFailureKind.Timeout : BuildTestGateFailureKind.Environment;
-                return Failure(request, kind, "Remote gate transport failure after bounded retries: " + exception.Message)
+                return Failure(request, BuildTestGateFailureKind.Environment, "Remote gate transport failure after bounded retries: " + exception.Message)
                     with { DurationMs = started.ElapsedMilliseconds };
             }
             catch (Exception exception)

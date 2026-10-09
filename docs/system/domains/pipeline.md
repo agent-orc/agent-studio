@@ -265,7 +265,19 @@ Transport creates a private bare repository and bundle from the requested
 commit, computes SHA-256, and transfers that bundle and immutable request into
 a generated GUID directory. It changes no source-checkout or public ref. The
 worker verifies the bundle digest, creates its private repository, and invokes
-the existing `BuildTestGateRunner`. Exact-SHA worktrees, machine locking,
+the existing `BuildTestGateRunner`. A per-project bare source cache on the gate host
+advertises verified tips. The bundle excludes advertised ancestor tips, while
+the worker fetches it into a private clone of that cache and still verifies the
+exact requested SHA. Cache refs are immutable by SHA. Merge gates use the same
+`PostSteps:build-test-gate:InfrastructureTimeoutSeconds` setting as review
+gates. Local bundle preparation uses the source pack size as a conservative
+budget estimate; bundle upload uses the actual bundle size. Each gets the
+larger of the configured budget and one second per MiB. The payload-based
+allowance is capped at one hour; an explicit configured budget can exceed it.
+Structured transport logs and gate reasons include bundle
+bytes and transfer duration. Exhausted transport retries are environment
+failures, so the gate-environment integration ladder replays the same reviewed
+delivery without a new review. Exact-SHA worktrees, machine locking,
 preparation, deterministic command selection, full promotion coverage,
 flaky-test handling, cache identities and structured evidence remain owned by
 that runner. The response must match the invocation, bundle, gate id and exact

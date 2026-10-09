@@ -679,7 +679,8 @@ public sealed class GateEnvironmentRetryServiceTests : IDisposable
     }
 
     private bool IsAncestor(string sha, string branch)
-        => RunGit(_repo, "merge-base", "--is-ancestor", sha, branch) == 0;
+        => RunGit(_repo, "merge-base", "--is-ancestor", sha,
+            GitService.IntegrationLaneRef(branch)) == 0;
 
     private static object Commit(string sha) => new
     {
