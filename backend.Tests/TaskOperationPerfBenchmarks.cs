@@ -15,6 +15,7 @@ namespace AgentStudio.Tests;
 /// Enable with RUN_TASK_OPERATION_PERF=1. It is skipped by default because the
 /// 20k-file fixture is intentionally heavy for normal unit-test runs.
 /// </summary>
+[Trait("Category", "MachineBound")]
 public sealed class TaskOperationPerfBenchmarks : IDisposable
 {
     private const int JobCount = 20_000;

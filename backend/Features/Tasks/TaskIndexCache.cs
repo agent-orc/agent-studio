@@ -211,12 +211,17 @@ public sealed class TaskIndexCache
     private void QueueCoreHydration()
     {
         if (Interlocked.Exchange(ref _coreHydrationQueued, 1) != 0) return;
-        _ = Task.Run(() =>
+        // A queued refresh is background ownership. Do not inherit a core
+        // request's Git or scan trace through Task.Run's execution context.
+        using (ExecutionContext.SuppressFlow())
         {
-            try { GetSnapshot(); }
-            catch (Exception ex) { _logger.LogWarning(ex, "task-core-hydration-failed"); }
-            finally { Interlocked.Exchange(ref _coreHydrationQueued, 0); }
-        });
+            _ = Task.Run(() =>
+            {
+                try { GetSnapshot(); }
+                catch (Exception ex) { _logger.LogWarning(ex, "task-core-hydration-failed"); }
+                finally { Interlocked.Exchange(ref _coreHydrationQueued, 0); }
+            });
+        }
     }
 
     private static string CoreKey(string watchPath, string identity) =>

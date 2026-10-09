@@ -23,6 +23,7 @@ internal sealed class TaskSwitchTrace
     private readonly AsyncLocal<SpanHandle?> _activeSpan = new();
     private readonly TaskSwitchTrace? _previous;
     private int _spanCount;
+    private int _workspaceScans;
 
     private TaskSwitchTrace(string requestId, string switchId)
     {
@@ -67,6 +68,12 @@ internal sealed class TaskSwitchTrace
         if (slot >= 0) lock (trace!._gate) trace._fileReads[slot]++;
     }
 
+    public static void WorkspaceScan() => Ambient.Value?.RecordWorkspaceScan();
+
+    private void RecordWorkspaceScan() => Interlocked.Increment(ref _workspaceScans);
+
+    public int WorkspaceScans => Volatile.Read(ref _workspaceScans);
+
     private void Record(string name, double elapsedMs)
     {
         var slot = Array.IndexOf(StageNames, name);
@@ -93,7 +100,8 @@ internal sealed class TaskSwitchTrace
         {
             requestId = RequestId, switchId = SwitchId, outcome, status,
             wallMs = Math.Round(Stopwatch.GetElapsedTime(_started).TotalMilliseconds, 3),
-            bytes, gitSpawns = git?.Spawns ?? 0, gitMs = git?.GitMs ?? 0, gitTimeouts,
+            bytes, gitSpawns = git?.Spawns, gitMs = git?.GitMs, gitTimeouts,
+            workspaceScans = WorkspaceScans,
             stages
         });
     }
