@@ -736,6 +736,47 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Equal("existing", await File.ReadAllTextAsync(Path.Combine(targetDirectory, "keep.txt")));
     }
 
+    [Fact]
+    public async Task Copy_refuses_destination_inside_source_set_without_changing_backup()
+    {
+        using var temp = new TempDirectory("recovery-copy-contained");
+        var drill = await CaptureAsync(temp.Path);
+        var workflow = Workflow(drill.Source, drill.SourceDirectory, drill.Clock);
+        var setRoot = drill.Source.FullBackupSetPath(drill.BackupId);
+        var before = Directory.EnumerateFileSystemEntries(setRoot, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(setRoot, path)).Order(StringComparer.Ordinal).ToArray();
+
+        foreach (var destinationRoot in new[] { setRoot, Path.Combine(setRoot, "sub") })
+        {
+            var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+                workflow.CopyAsync(drill.BackupId, destinationRoot, default));
+            Assert.Contains(setRoot, error.Message);
+            Assert.Contains(Path.Combine(destinationRoot, drill.BackupId), error.Message);
+        }
+
+        Assert.False(Directory.Exists(Path.Combine(setRoot, drill.BackupId)));
+        var after = Directory.EnumerateFileSystemEntries(setRoot, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(setRoot, path)).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(before, after);
+        Assert.True((await drill.Source.VerifyFullBackupAsync(drill.BackupId, default)).Verified);
+    }
+
+    [Fact]
+    public async Task Copy_refuses_symlink_into_source_set()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var temp = new TempDirectory("recovery-copy-link");
+        var drill = await CaptureAsync(temp.Path);
+        var setRoot = drill.Source.FullBackupSetPath(drill.BackupId);
+        var link = Path.Combine(temp.Path, "set-link");
+        Directory.CreateSymbolicLink(link, setRoot);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            Workflow(drill.Source, drill.SourceDirectory, drill.Clock).CopyAsync(drill.BackupId, link, default));
+        Assert.False(Directory.Exists(Path.Combine(setRoot, drill.BackupId)));
+        Assert.True((await drill.Source.VerifyFullBackupAsync(drill.BackupId, default)).Verified);
+    }
+
     private sealed record Drill(
         TaskServerStore Source,
         string SourceDirectory,

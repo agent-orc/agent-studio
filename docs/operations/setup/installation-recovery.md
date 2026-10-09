@@ -105,7 +105,9 @@ only writer. Pass the same store settings as the service (`STORE_PATH`,
    The destination must be empty. The copy is re-inventoried before
    `copy-receipt.json` is written. A destination inside the authority's own
    data or backup directory is flagged in the receipt. A named volume on the
-   same disk is not off-host recovery.
+   same disk is not off-host recovery. A destination equal to or inside the
+   source set, including a path through a symbolic link, is rejected before
+   any files are written so the source set stays verifiable.
 3. **Verify.** `task-server recovery verify --from <copy>/<id> [--secret-bundle <path>]`.
    This needs no store. It checks the manifest schema, the completion marker,
    every inventory hash, the manifest digest and copy receipt binding, the cold payloads, schema compatibility, the sampled

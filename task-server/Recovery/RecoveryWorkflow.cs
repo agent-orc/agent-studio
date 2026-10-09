@@ -243,6 +243,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         if (!File.Exists(manifestPath))
             throw new InvalidDataException($"Full backup '{backupId}' has no recovery manifest; capture it with `task-server recovery capture`.");
         var destination = Path.GetFullPath(Path.Combine(destinationRoot, backupId));
+        RejectCopyIntoSource(setRoot, destination);
         if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any())
             throw new IOException($"Copy destination '{destination}' is not empty.");
 
@@ -783,12 +784,38 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
 
     private static void CopyTree(string source, string target)
     {
+        RejectCopyIntoSource(source, target);
+        var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).ToList();
         Directory.CreateDirectory(target);
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        foreach (var file in files)
         {
             var destination = Path.Combine(target, Path.GetRelativePath(source, file));
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, overwrite: false);
         }
+    }
+
+    private static void RejectCopyIntoSource(string source, string target)
+    {
+        var resolvedSource = ResolveExistingLinks(source);
+        var resolvedTarget = ResolveExistingLinks(target);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.Equals(resolvedSource, resolvedTarget, comparison) ||
+            resolvedTarget.StartsWith(resolvedSource + Path.DirectorySeparatorChar, comparison))
+            throw new ArgumentException($"Copy destination '{target}' is equal to or inside source set '{source}'.");
+    }
+
+    private static string ResolveExistingLinks(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full)!;
+        var current = root;
+        foreach (var part in full[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            if (Directory.Exists(current) && new DirectoryInfo(current).ResolveLinkTarget(true) is { } link)
+                current = Path.GetFullPath(link.FullName);
+        }
+        return Path.TrimEndingDirectorySeparator(current);
     }
 }
