@@ -42,6 +42,8 @@ class FakeProviderAuth {
 
   startClaudeSignIn = vi.fn(() => of(STARTED));
   claudeSignInStatus = vi.fn(() => this.status.asObservable());
+  cancelClaudeSignIn = vi.fn(() => of({ ...STARTED, state: 'failed' as const, detail: 'Cancelled',
+    requestedAt: '', completedAt: '' }));
   waitForFreshProbe = vi.fn(() => this.probeResult);
 }
 
@@ -82,6 +84,13 @@ describe('ClaudeSignInDialogComponent', () => {
     expect(dialog.querySelector<HTMLAnchorElement>('[data-testid="claude-sign-in-url"]')?.href)
       .toBe('https://claude.ai/setup-token/abc123');
     expect(dialog.textContent).toContain('Studio does not receive the resulting token');
+  });
+
+  it('cancels the host session when the pending dialog closes', async () => {
+    store.request.set(TARGET);
+    await fixture.whenStable();
+    fixture.componentInstance.close();
+    expect(providerAuth.cancelClaudeSignIn).toHaveBeenCalledWith('host-01', STARTED.handle);
   });
 
   it('renders the failed state reported by the remote process', async () => {
