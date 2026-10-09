@@ -49,7 +49,7 @@ async function stubBackgroundApis(page: Page) {
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/tasks', json([]));
-  await page.route('**/api/v1/studio/board', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
+  await page.route('**/api/v1/studio/board**', json({ preparation: [], ready: [], progress: [], review: [], completed: [], archive: [] }));
   await page.route('**/api/v1/studio/auth/status', json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/crash-recovery/pending', json({ pending: [] }));
   await page.route('**/api/watch-paths', json([{ name: 'agent-taskboard', path: 'C:/projects/agent-taskboard', rootPath: 'C:/projects' }]));
@@ -282,7 +282,12 @@ async function stubGroupedHostApis(page: Page) {
 test.describe('Execution Hosts settings section', () => {
   test.use({ serviceWorkers: 'block' });
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page }, testInfo) => {
+    const renewalCase = testInfo.title.includes('API-key renewal pending');
+    if (renewalCase) {
+      testInfo.setTimeout(600_000);
+      page.setDefaultTimeout(60_000);
+    }
     mkdirSync(SHOT_DIR, { recursive: true });
     await page.setViewportSize({ width: 1600, height: 950 });
     // Force the legacy (modal) layout so the section renders in the modal-backed
@@ -290,8 +295,11 @@ test.describe('Execution Hosts settings section', () => {
     await page.addInitScript(() => { try { localStorage.setItem('atp.flag.vsCodeLayout', '0'); } catch { /* ignore */ } });
     await stubBackgroundApis(page);
     await stubOnlineJobsHub(page);
-    await page.goto('/');
-    await page.waitForLoadState('domcontentloaded');
+    if (renewalCase) await page.goto('/', { waitUntil: 'commit', timeout: 60_000 });
+    else {
+      await page.goto('/');
+      await page.waitForLoadState('domcontentloaded');
+    }
     await page.waitForTimeout(400);
     await dismissDevErrorDialog(page);
   });
@@ -1041,7 +1049,7 @@ test.describe('Execution Hosts settings section', () => {
       advertisedAt: new Date(now + (ready ? 30_000 : 0)).toISOString(),
       freshUntil: new Date(now + 180_000).toISOString(), isFresh: true,
       firstFailureAt: null, lastFailureAt: null, cooldownUntil: null, canaryClaimId: null,
-      consecutiveFailures: 0, version: null, identity: 'codex', affectedClaims: [], recoveryHistory: [],
+      consecutiveFailures: 2, version: null, identity: 'codex', affectedClaims: [], recoveryHistory: [],
     });
     const snapshot = () => [{
       runnerId: 'agent-runner-01', name: 'agent-runner-01', hostId: 'agent-runner-01',
@@ -1106,7 +1114,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog.getByTestId('codex-sign-in-url')).toHaveAttribute('href', 'https://auth.openai.com/codex/device');
     await expect(dialog.getByTestId('codex-sign-in-code')).toContainText('MOCK-CODE');
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner' });
+    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'codex-device-sign-in-dark--mocked.png') });
@@ -1188,7 +1197,8 @@ test.describe('Execution Hosts settings section', () => {
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('claude-sign-in-url')).toHaveAttribute('href', 'https://claude.ai/setup-token/mock');
     await expect.poll(() => requestedBody).not.toBeNull();
-    expect(requestedBody).toEqual({ sshTarget: 'agent-runner' });
+    expect(requestedBody).toEqual({ sshTarget: 'agent-runner',
+      idempotencyKey: expect.stringMatching(/^signin-[0-9a-f-]{36}$/) });
 
     await setTheme(page, 'dark');
     await dialog.screenshot({ path: join(evidenceDir, 'claude-device-sign-in-dark--mocked.png') });
@@ -1576,7 +1586,7 @@ test.describe('Execution Hosts settings section', () => {
     await expect(page.getByTestId('add-host-wizard')).toContainText('write-enabled repository deploy key');
     await page.getByTestId('add-host-deploy-key-check').check();
     await page.getByTestId('add-host-next').click();
-    await page.getByTestId('add-host-provider-auth-secret').fill('sk-ant-oat01-playwright-provider-secret');
+    await page.getByTestId('add-host-provider-auth-secret').fill('fixture-playwright-provider-secret');
     await page.getByTestId('add-host-provider-auth-provision').click();
     await expect(page.getByTestId('add-host-provider-auth-status')).toHaveAttribute('data-state', 'ok');
     await page.getByTestId('add-host-codex-check').check();
@@ -1592,6 +1602,59 @@ test.describe('Execution Hosts settings section', () => {
 
     await expect(page.getByTestId('add-host-wizard')).toBeHidden();
     await expect(page.getByTestId('remote-host-name').filter({ hasText: 'agent-runner-02' })).toBeVisible();
+  });
+
+  test('keeps an API-key renewal pending until both runner units prove a real request', async ({ page, devBackend }) => {
+    void devBackend;
+    let completed = false;
+    await page.unroute('**/api/v1/management/remote-hosts');
+    await page.route('**/api/v1/management/remote-hosts', route => {
+      const now = new Date();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{
+        runnerId: 'agent-runner-02', name: 'agent-runner-02', hostId: 'agent-runner-02',
+        instanceId: 'coding', runnerVersion: '1.2.0', protocolVersion: 3, status: 'active',
+        registeredAt: now.toISOString(), lastSeenAt: now.toISOString(),
+        hostAdmission: { hostId: 'agent-runner-02', admissionState: 'open',
+          automaticDrainReason: null, automaticDrainAt: null,
+          operatorDrainReason: null, operatorDrainAt: null },
+        capabilities: [{ key: 'provider-auth:claude', category: 'provider-auth',
+          advertisedStatus: 'ready', healthState: 'healthy', advertisedAt: now.toISOString(),
+          freshUntil: new Date(now.getTime() + 120_000).toISOString(), isFresh: true,
+          consecutiveFailures: 0, affectedClaims: [], recoveryHistory: [] }],
+      }]) });
+    });
+    await page.route('**/api/v1/management/remote-hosts/provider-auth', route => {
+      const request = route.request().postDataJSON() as { idempotencyKey?: string };
+      expect(request.idempotencyKey).toMatch(/^renewal-/);
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        operationId: 'renewal-fixture', processEnvironmentVerified: true,
+        detail: 'Installed; awaiting real requests from both units.',
+      }) });
+    });
+    await page.route('**/api/v1/management/remote-hosts/provider-auth-renewals/renewal-fixture', route =>
+      route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ step: completed ? 'complete' : 'installed' }) }));
+    await page.goto('/#/workspace/settings/remote-hosts', { waitUntil: 'commit' });
+    await expect(page.getByTestId('remote-hosts-panel')).toBeVisible({ timeout: 60_000 });
+    await dismissDevErrorDialog(page);
+    await page.getByTestId('remote-hosts-add').click();
+    await page.getByTestId('add-host-connect-check').check();
+    await page.getByTestId('add-host-next').click();
+    await page.getByTestId('add-host-provision-check').check();
+    await page.getByTestId('add-host-next').click();
+    await page.getByTestId('add-host-deploy-key-check').check();
+    await page.getByTestId('add-host-next').click();
+    await page.getByTestId('add-host-provider-auth-kind').selectOption('ANTHROPIC_API_KEY');
+    await page.getByTestId('add-host-provider-auth-secret').fill('fixture-api-key-renewal-value');
+    await page.getByTestId('add-host-provider-auth-provision').click();
+    const status = page.getByTestId('add-host-provider-auth-status');
+    await expect(status).toHaveAttribute('data-state', 'waiting');
+    await setTheme(page, 'dark');
+    await page.screenshot({ path: join(SHOT_DIR, 'api-key-renewal-pending-dark--mocked.png') });
+    completed = true;
+    await expect(status).toHaveAttribute('data-state', 'ok', { timeout: 30_000 });
+    await setTheme(page, 'light');
+    await page.screenshot({ path: join(SHOT_DIR, 'api-key-renewal-verified-light--mocked.png') });
   });
 
   test('renders on the light theme too (R5)', async ({ page }) => {

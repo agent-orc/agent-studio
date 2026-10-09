@@ -60,7 +60,8 @@ public static class ProviderCredentialMonitor
                 null, null,
                 "Daemon environment credential is active; native file metadata is shadowed.",
                 EffectiveSource: "environment-file",
-                NativeFileShadowed: path is not null && File.Exists(path));
+                NativeFileShadowed: path is not null && File.Exists(path),
+                CredentialGeneration: SafeEnvironmentGeneration(Variable("AGENT_STUDIO_CLAUDE_AUTH_GENERATION")));
         if (path is null)
             return new ProviderCredentialFreshness(null, null, "No credential metadata format is known for this provider.");
         if (provider == "codex" && !string.IsNullOrWhiteSpace(Variable("OPENAI_API_KEY")))
@@ -97,6 +98,12 @@ public static class ProviderCredentialMonitor
                 EffectiveSource: "native-cli-store");
         }
     }
+
+    private static string? SafeEnvironmentGeneration(string? value)
+        => value is { Length: > 0 and <= 80 } &&
+           value.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
+            ? value
+            : null;
 
     private static DateTimeOffset? FindExpiry(JsonElement element, int depth)
     {

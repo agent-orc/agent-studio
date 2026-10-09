@@ -48,7 +48,7 @@ public sealed partial class TaskServerStore
     // 31 combines those contracts with persisted provider health circuits and
     // typed observations. Migrations are idempotent; the version guards
     // downgrades from binaries without all contracts.
-    public const int CurrentSchemaVersion = 31;
+    public const int CurrentSchemaVersion = 32;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3738,6 +3738,18 @@ public sealed partial class TaskServerStore
                 retired_at TEXT NOT NULL,
                 PRIMARY KEY(installation_id, host_id, credential_id, source_instance_id)
             );
+            CREATE TABLE IF NOT EXISTS provider_renewal_operations(
+                operation_id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                step TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                UNIQUE(installation_id, host_id, credential_id, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS ix_provider_renewal_binding
+                ON provider_renewal_operations(installation_id, host_id, credential_id, step);
             CREATE TABLE IF NOT EXISTS capability_failure_deliveries(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
                 idempotency_key TEXT NOT NULL,

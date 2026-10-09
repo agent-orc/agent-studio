@@ -90,6 +90,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Remote infrastructure scenario result contract | [contracts/remote-run-result.md](../system/contracts/remote-run-result.md) |
 | Deployment regression scenario (one seeded fixture, three targets, the gate every deployment card and release proves itself against; AGT-2739) | [operations/testing/deployment-scenario.md](../operations/testing/deployment-scenario.md) |
 | Deployment story: operator and administrator journeys from one box to many runner hosts, current availability, option C reconciliation and recovery gates (AGT-2906) | [decision dossier](../operations/deployment-story/index.html) |
+| Credentials and logins: host inventory, incident classification, guided renewal, rotation and typed recovery runbooks (AGT-2968) | [decision Dossier](../credentials-and-logins/index.html) |
 | Restart continuity release drill for one local and one Remote in-flight run (AGT-2780) | [operations/testing/restart-continuity-drill.md](../operations/testing/restart-continuity-drill.md) |
 | Tunnel-loss and fenced recovery drill for coding and review: bounded authority, exact re-adoption, quarantine, replay once (AGT-2937, AGT-W65 D9) | [operations/testing/tunnel-loss-drill.md](../operations/testing/tunnel-loss-drill.md) |
 | Tunnel-loss drill evidence: correlated synthetic outage report, raw decisions, and step receipts (AGT-2937) | [operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md](../operations/testing/tunnel-loss-drill-evidence/tunnel-drill-report.md) |
