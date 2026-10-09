@@ -168,6 +168,32 @@ Never infer per-switch Git counts from `git-index-run` sample averages.
 
 ## Workstation gate
 
+### Workstation verdict pending
+
+After Stable contains cards 1-6, run the existing gate on the designated
+workstation against the ready Stable server. Provide production-shaped task
+folders for the .NET helper and real Stable keys for active, review, archived
+and long-document tasks. From the repository root:
+
+```sh
+export TASK_SWITCH_PROFILE=<designated-workstation-id>
+export TASK_SWITCH_PROFILE_KIND=designated-workstation
+export TASK_SWITCH_SOURCE=<promoted-revision>
+export TASK_CORE_BENCH_FIXTURE=<production-shaped-task-folders>
+export TASK_SWITCH_ACTIVE_KEY=<active-key>
+export TASK_SWITCH_REVIEW_KEY=<review-key>
+export TASK_SWITCH_ARCHIVED_KEY=<archived-key>
+export TASK_SWITCH_LONG_KEY=<long-document-key>
+export JOB_RESULTS_DIR=<retained-results-directory>
+npm --prefix frontend run e2e:task-switch-budget
+```
+
+The command runs `frontend/e2e/perf/task-switch-budget.spec.ts` against Stable,
+the labeled isolated cohorts against a fixture-managed dev backend, and the
+evaluator. It writes the verdict to
+`$JOB_RESULTS_DIR/task-switch-budget-summary.json` alongside raw captures.
+The performance gate fails closed until that workstation verdict exists.
+
 ### Card 6 gate wiring (7 October 2026)
 
 The existing machine-bound `task-switch-workstation-budget` suite in
