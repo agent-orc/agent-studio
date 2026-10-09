@@ -1113,6 +1113,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
     [Theory]
     [InlineData(AcceptedIntegrationFailureCodes.WorktreeUnavailable, "No integration worktree could be prepared for this project.")]
     [InlineData(AcceptedIntegrationFailureCodes.BranchSyncFailed, "Integration branch 'develop' diverged from origin.")]
+    [InlineData(AcceptedIntegrationFailureCodes.BranchSyncFailed, "Integration branch 'develop' could not be fetched from origin: error: cannot lock ref 'refs/remotes/origin/develop': is at 2222 but expected 1111")]
     [InlineData(AcceptedIntegrationFailureCodes.LineageBlocked, "main is not an ancestor of develop.")]
     [InlineData(AcceptedIntegrationFailureCodes.StaleAttempt, "Review subject RunAttempt 'old' is stale; current RunAttempt is 'new'.")]
     public void BuildLookup_RecordedTypedError_ExposesCodeAndDetail(string code, string reason)
@@ -1145,6 +1146,11 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(code, status.Failure?.Code);
         Assert.Equal(reason, status.Failure?.Reason);
         Assert.Equal(reason, status.Detail);
+        if (reason.Contains("cannot lock ref", StringComparison.Ordinal))
+        {
+            Assert.Equal(AgentStudio.TaskServer.Contracts.RunFailureClass.Infrastructure, status.Failure?.FailureClass);
+            Assert.Equal(AgentStudio.TaskServer.Contracts.RunFailureSignatures.GitRefLockRace, status.Failure?.FailureSignature);
+        }
     }
 
     [Fact]

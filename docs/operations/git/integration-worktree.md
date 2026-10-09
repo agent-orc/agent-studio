@@ -164,6 +164,12 @@ branch when git allows it, otherwise advance the ref.
   is older than 10 minutes and held by no git process, so a merge that died
   mid-write cannot block the slot for days. See
   [stale-git-lock](../common-problems/stale-git-lock/README.md) (AGT-3000).
+- **Concurrent remote refs.** Integration fetch and push calls sharing one Git
+  common directory are serialized across its linked worktree slots. A fetch
+  that reports `cannot lock ref ... is at ... but expected ...` retries twice
+  with short backoff. If both retries fail, the settlement and card report
+  `git-ref-lock-race` as an infrastructure failure, distinct from a network
+  timeout.
 - **When preparation fails** (read-only parent, no writable temp, a repository
   without a commit), the merge step fails visibly with the reason. Integration
   never falls back to the developer checkout.

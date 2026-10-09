@@ -37,6 +37,7 @@ public static class RunFailureSignatures
     public const string CommandTimeout = "command-timeout";
     public const string CommandStalled = "command-stalled";
     public const string GitNetworkTimeout = "git-network-timeout";
+    public const string GitRefLockRace = "git-ref-lock-race";
     public const string UnparsedTestOutput = "unparsed-test-output";
     public const string MsBuildNodeUnavailable = "msbuild-node-unavailable";
     public const string PrivateTempUnmounted = "private-temp-unmounted";
@@ -401,6 +402,15 @@ public static class RunFailureClassifier
                 "The gate run was cut off by its budget before it could finish.",
                 text,
                 BudgetSignals);
+        }
+        if (text.Contains("cannot lock ref", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("is at", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("but expected", StringComparison.OrdinalIgnoreCase))
+        {
+            return new RunFailureVerdict(
+                RunFailureClass.Infrastructure,
+                RunFailureSignatures.GitRefLockRace,
+                "A concurrent git ref update prevented the integration fetch.");
         }
         if (Contains(text, GitNetworkSignals))
         {
