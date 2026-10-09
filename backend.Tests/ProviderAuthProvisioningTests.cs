@@ -236,6 +236,25 @@ public sealed class ProviderAuthProvisioningTests
     }
 
     [Fact]
+    public void Claude_native_normal_restart_checks_live_generation_before_verification()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        var normal = script[script.LastIndexOf("for unit in agent-host.service agent-runner.service agent-runner-review.service; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("done <\"/proc/$1/environ\"", normal);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", normal);
+        Assert.Contains("sha256sum \"$unit_store\"", normal);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
+        Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
+        Assert.Contains("if (( result == 0 )); then\n    rm -f \"$rollback_store\"", script);
+        Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal));
+        Assert.True(normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-login-status=verified", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Claude_environment_renewal_restores_prior_file_or_drains_units_after_restart_failure()
     {
         var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
@@ -269,6 +288,25 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("new_store_digest=", script);
         Assert.Contains("published_generation=", script);
         Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
+    }
+
+    [Fact]
+    public void Codex_normal_restart_checks_live_generation_before_verification()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("done <\"/proc/$1/environ\"", normal);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", normal);
+        Assert.Contains("sha256sum \"$unit_store\"", normal);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
+        Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
+        Assert.Contains("if (( result == 0 )); then\n    rm -f \"$rollback_store\"", script);
+        Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal));
+        Assert.True(normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-login-status=verified", StringComparison.Ordinal));
     }
 
     [Fact]

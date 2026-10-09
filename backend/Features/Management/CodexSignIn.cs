@@ -764,6 +764,24 @@ for unit in "${units[@]}"; do
   fi
   pid=$(sudo -n systemctl show --property=MainPID --value "$unit")
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || exit 44
+  if ! sudo -n bash -c '
+    unit_home=; unit_config=; environment_auth=0
+    while IFS= read -r -d "" entry; do
+      case "$entry" in
+        HOME=*) unit_home=${entry#HOME=} ;;
+        CODEX_HOME=*) unit_config=${entry#CODEX_HOME=} ;;
+        OPENAI_API_KEY=*) environment_auth=1 ;;
+      esac
+    done <"/proc/$1/environ"
+    [[ -n "$unit_home" && "$environment_auth" == 0 ]] || exit 1
+    unit_store="${unit_config:-$unit_home/.codex}/auth.json"
+    [[ -f "$unit_store" ]] || exit 1
+    [[ "$(stat -Lc %d:%i "$unit_store")" == "$(stat -Lc %d:%i "$2")" ]] || exit 1
+    [[ "$(sha256sum "$unit_store" | cut -d " " -f1)" == "$3" ]] || exit 1
+    [[ "native-cli-store:$(date -r "$unit_store" +%s%3N)" == "$4" ]]
+  ' bash "$pid" "$credential_store" "$new_store_digest" "$published_generation"; then
+    exit 44
+  fi
   printf 'codex-probe-unit=%s\n' "$unit"
 done
 echo 'codex-login-status=verified'
