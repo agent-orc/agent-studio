@@ -610,6 +610,48 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task InfrastructureRequeue_WhenLaneMoveIsRefused_RetainsFailedSettlement()
+    {
+        var stack = Build(guardedDeliveryChain: false);
+        var id = "infrastructure-refused";
+        var folder = SeedTask(stack, id, CreateUnintegratedDelivery(id), infrastructureFailure: true);
+        var failedSettlement = new RemoteDeliverySettlementRecord
+        {
+            TaskKey = "AGT-" + id,
+            ReviewAttemptId = "review-" + id,
+            Outcome = "Pass",
+            ShouldIntegrate = true,
+            Stage = RemoteDeliverySettlementStage.LaneSettled,
+            IntegrationOutcome = "Error",
+            IntegrationDetail = "git operation timed out after 30 seconds",
+        };
+        RemoteDeliverySettlementStore.Write(folder, failedSettlement);
+
+        var obstructingPath = Path.Combine(_watchPath, TaskStates.AutoReview, id);
+        File.WriteAllText(obstructingPath, "blocks lane move");
+
+        var refused = await stack.Rail.RunOnceAsync();
+
+        Assert.Equal(1, refused.Failed);
+        Assert.Equal(0, refused.Requeued);
+        Assert.Equal(TaskStates.HumanReview, stack.Scanner.FindJob(id, _watchPath)!.State);
+        Assert.Equal(failedSettlement, RemoteDeliverySettlementStore.Read(folder));
+        Assert.DoesNotContain(stack.Timeline.ReadAll(folder),
+            entry => entry.Kind == TimelineEventKinds.AcceptanceRailActed
+                     && entry.Details?.GetValueOrDefault("action") == "requeued-infrastructure");
+
+        File.Delete(obstructingPath);
+        var restarted = Build(guardedDeliveryChain: false);
+        var retry = await restarted.Rail.RunOnceAsync();
+
+        Assert.Equal(1, retry.Requeued);
+        var requeued = restarted.Scanner.FindJob(id, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, requeued.State);
+        Assert.Equal(RemoteDeliverySettlementStage.IntegrationPending,
+            RemoteDeliverySettlementStore.Read(requeued.FolderPath)!.Stage);
+    }
+
+    [Fact]
     public async Task InfrastructureAtRetryLimit_IsEscalatedWithClassAndSignature()
     {
         var stack = Build(maxInfrastructureRequeues: 1);

@@ -1841,6 +1841,8 @@ broken. An operator had to requeue every one by hand.
   projection agree on the retry number. Before the lane move, the rail resets
   the same review's delivery settlement to `IntegrationPending`, clears its old
   integration outcome, and marks the completed coordinator replay for discard.
+  If the lane move is refused while the card remains in Human Review, the rail
+  restores the original settlement and its integration error before returning.
   The Auto Review resume pass then starts a fresh integration without repeating
   the passed review. At startup, existing integration worktree slots have their
   zero-byte `index.lock` cleared when older than the git timeout and no live git

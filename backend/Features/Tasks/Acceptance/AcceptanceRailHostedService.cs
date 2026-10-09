@@ -561,8 +561,8 @@ public sealed class AcceptanceRailHostedService : BackgroundService
                      + $"Requeued to {TaskStates.AutoReview} as retry {retryNumber}/{maximum}.";
 
         // Open the durable resume point before exposing the card in Auto Review.
-        // A failed lane move leaves a harmless pending record in Human Review;
-        // the next rail pass can repeat this idempotent reset.
+        // Keep the failed verdict so a refused move can restore it.
+        var previousSettlement = RemoteDeliverySettlementStore.Read(job.FolderPath);
         if (!RemoteDeliverySettlementStore.RequeueInfrastructure(job.FolderPath))
         {
             _logger.LogWarning("acceptance-rail-infrastructure-settlement-reset-failed project={Project} job={JobId}",
@@ -570,25 +570,60 @@ public sealed class AcceptanceRailHostedService : BackgroundService
             return false;
         }
 
-        var outcome = await _transitions.MoveAsync(
-            job.Id,
-            TaskStates.AutoReview,
-            job.WatchPath,
-            ct,
-            cause: TimelineActors.System,
-            reason: reason,
-            expectedSourceState: job.State,
-            transitionCause: LaneChangeCauses.ReviewInfrastructure,
-            transitionDetail: TaskIntegrationRecoveryService.AcceptanceRailSource);
-        if (outcome.Status != MoveJobStatus.Success)
+        var movedToAutoReview = false;
+        try
         {
-            _logger.LogWarning(
-                "acceptance-rail-infrastructure-requeue-refused project={Project} job={JobId} status={Status} message={Message}",
-                job.ProjectName,
+            var outcome = await _transitions.MoveAsync(
                 job.Id,
-                outcome.Status,
-                outcome.Message);
-            return false;
+                TaskStates.AutoReview,
+                job.WatchPath,
+                ct,
+                cause: TimelineActors.System,
+                reason: reason,
+                expectedSourceState: job.State,
+                transitionCause: LaneChangeCauses.ReviewInfrastructure,
+                transitionDetail: TaskIntegrationRecoveryService.AcceptanceRailSource);
+            movedToAutoReview = outcome.Status == MoveJobStatus.Success;
+            if (!movedToAutoReview)
+            {
+                _logger.LogWarning(
+                    "acceptance-rail-infrastructure-requeue-refused project={Project} job={JobId} status={Status} message={Message}",
+                    job.ProjectName,
+                    job.Id,
+                    outcome.Status,
+                    outcome.Message);
+                return false;
+            }
+        }
+        finally
+        {
+            if (!movedToAutoReview && previousSettlement is not null)
+            {
+                // A failed MoveAsync can still have moved the folder before a
+                // later write failed. Leave that card pending for the resume
+                // sweep; restore the error only while it is in Human Review.
+                try
+                {
+                    var current = _scanner.FindJob(job.Id, job.WatchPath);
+                    if (current?.State == TaskStates.HumanReview
+                        && Directory.Exists(current.FolderPath))
+                    {
+                        RemoteDeliverySettlementStore.Write(current.FolderPath, previousSettlement);
+                    }
+                    else if (current?.State != TaskStates.AutoReview)
+                    {
+                        _logger.LogCritical(
+                            "acceptance-rail-infrastructure-settlement-rollback-unavailable project={Project} job={JobId} state={State}",
+                            job.ProjectName, job.Id, current?.State ?? "missing");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogCritical(ex,
+                        "acceptance-rail-infrastructure-settlement-rollback-failed project={Project} job={JobId}",
+                        job.ProjectName, job.Id);
+                }
+            }
         }
 
         var moved = _scanner.FindJob(job.Id, job.WatchPath);

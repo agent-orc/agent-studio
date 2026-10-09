@@ -2953,7 +2953,8 @@
           <td>
             AGT-2948 reached Human Review escalation despite a passed review. Infrastructure
             requeues now reset the settlement before the lane move and discard a completed
-            replay; startup clears old, unowned, zero-byte integration index locks.
+            replay; a refused lane move restores the failed settlement. Startup clears old,
+            unowned, zero-byte integration index locks.
           </td>
         </tr>
       </tbody>
