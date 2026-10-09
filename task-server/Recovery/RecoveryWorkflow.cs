@@ -253,25 +253,35 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         if (destination.StartsWith(dataRoot, StringComparison.Ordinal) || destination.StartsWith(backupRoot, StringComparison.Ordinal))
             warnings.Add("Destination is inside the authority's own data or backup directory; this is not an off-host copy.");
 
-        CopyTree(setRoot, Path.Combine(destination, SetDirectory));
-        File.Copy(manifestPath, Path.Combine(destination, ManifestFile));
-        var custodyPath = Path.ChangeExtension(manifestPath, null) + "." + CustodyFile;
-        if (File.Exists(custodyPath)) File.Copy(custodyPath, Path.Combine(destination, CustodyFile));
+        try
+        {
+            CopyTree(setRoot, Path.Combine(destination, SetDirectory));
+            File.Copy(manifestPath, Path.Combine(destination, ManifestFile));
+            var custodyPath = Path.ChangeExtension(manifestPath, null) + "." + CustodyFile;
+            if (File.Exists(custodyPath)) File.Copy(custodyPath, Path.Combine(destination, CustodyFile));
 
-        var verified = await VerifyCopyAsync(destination, secretBundleOverride: null, probeGit: false, ct,
-            requireCopyReceipt: false);
-        var blocking = verified.Report.Findings.Where(item => item.Severity == RecoveryFindingSeverity.BlocksRestore).ToList();
-        if (blocking.Count > 0)
-            throw new InvalidDataException("Copied set failed verification: " + string.Join("; ", blocking.Select(item => item.Code)));
+            var verified = await VerifyCopyAsync(destination, secretBundleOverride: null, probeGit: false, ct,
+                requireCopyReceipt: false);
+            var blocking = verified.Report.Findings.Where(item => item.Severity == RecoveryFindingSeverity.BlocksRestore).ToList();
+            if (blocking.Count > 0)
+                throw new InvalidDataException("Copied set failed verification: " + string.Join("; ", blocking.Select(item => item.Code)));
 
-        var manifest = verified.Manifest!;
-        var receipt = new RecoveryCopyReceipt(
-            "agent-studio.recovery-copy-receipt/v1", backupId, manifest.ManifestId, manifest.DataSet.SetSha256,
-            verified.ManifestSha256!, UtcNow, destination,
-            manifest.DataSet.FileCount, manifest.DataSet.TotalBytes, warnings);
-        await File.WriteAllTextAsync(Path.Combine(destination, CopyReceiptFile),
-            JsonSerializer.Serialize(receipt, RecoveryJson.Options) + Environment.NewLine, ct);
-        return receipt;
+            var manifest = verified.Manifest!;
+            var receipt = new RecoveryCopyReceipt(
+                "agent-studio.recovery-copy-receipt/v1", backupId, manifest.ManifestId, manifest.DataSet.SetSha256,
+                verified.ManifestSha256!, UtcNow, destination,
+                manifest.DataSet.FileCount, manifest.DataSet.TotalBytes, warnings);
+            await File.WriteAllTextAsync(Path.Combine(destination, CopyReceiptFile),
+                JsonSerializer.Serialize(receipt, RecoveryJson.Options) + Environment.NewLine, ct);
+            return receipt;
+        }
+        catch
+        {
+            // The destination was empty before this attempt. Never leave an incomplete set that
+            // could be mistaken for an off-host copy; the authoritative source is untouched.
+            if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
+            throw;
+        }
     }
 
     /// <summary>Verifies a copied recovery set without opening any authority store.</summary>
@@ -484,8 +494,20 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         // The copy is read twice: once to verify, once to place it. Bind the placed set to the manifest before
         // the store opens, so a copy that changed in between never reaches the target.
         var placedSet = Path.Combine(options.ResolveFullBackupDirectory(), manifest.DataSet.BackupId);
-        CopyTree(Path.Combine(copyRoot, SetDirectory), placedSet);
-        var placedSha = SetHash(await InventoryAsync(placedSet, ct));
+        RejectCopyIntoSource(Path.Combine(copyRoot, SetDirectory), placedSet);
+        string placedSha;
+        try
+        {
+            CopyTree(Path.Combine(copyRoot, SetDirectory), placedSet);
+            placedSha = SetHash(await InventoryAsync(placedSet, ct));
+        }
+        catch
+        {
+            // The authority has not been opened yet. Remove only the incomplete placed set;
+            // the verified off-host copy remains available for another empty-target attempt.
+            if (Directory.Exists(placedSet)) Directory.Delete(placedSet, recursive: true);
+            throw;
+        }
         if (!string.Equals(placedSha, manifest.DataSet.SetSha256, StringComparison.OrdinalIgnoreCase))
         {
             Directory.Delete(placedSet, recursive: true);
@@ -564,10 +586,17 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
     /// <summary>Test seam for a placement that fails after changing the destination.</summary>
     internal Action<string, string, string>? PlaceCredentialFile { get; init; }
 
+    /// <summary>Test seam for failures at the credential file I/O boundaries.</summary>
+    internal Action<string>? CredentialFileStep { get; init; }
+
+    /// <summary>Test seam for a copy interrupted after it has created destination files.</summary>
+    internal Action<string>? AfterCopiedFile { get; init; }
+
     /// <summary>
     /// Re-enrols a client and delivers the new credential to <paramref name="credentialPath"/>. The credential
-    /// is written and flushed to an owner-only staging file created with that mode, then placed at the requested
-    /// path, all before the rotation commits. A prior file at that path is kept as a backup until the commit;
+    /// copies a prior file to an owner-only backup first, then writes and flushes the new credential to an
+    /// owner-only staging file before placing it at the requested path, all before the rotation commits.
+    /// The prior file is kept as a backup until the commit;
     /// if placement or the commit fails, the rotation rolls back and the prior file is put back, so the old
     /// credential stays both valid and delivered.
     /// </summary>
@@ -580,31 +609,57 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         var prefix = Path.Combine(Path.GetDirectoryName(target)!, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}");
         var staging = prefix + ".tmp";
         var backup = prefix + ".previous";
-        var placed = false;
         var hadPrior = false;
         var backupReady = false;
+        var stagingCreated = false;
+        var stagingWritten = false;
+        var placementAttempted = false;
+        var targetReplaced = false;
+        var targetCreated = false;
+        byte[]? stagedCredential = null;
         IssuedPrincipalCredential issued;
         try
         {
             issued = await store.ReissueRecoveredClientCredentialAsync(principalId, actorId, async (credential, token) =>
             {
+                var credentialBytes = Encoding.UTF8.GetBytes(credential);
+                stagedCredential = credentialBytes;
+                // Preserve the old delivery first. Each later step either leaves it untouched or has
+                // this complete backup available for rollback before the transaction can commit.
+                hadPrior = File.Exists(target);
+                if (hadPrior)
+                {
+                    CredentialFileStep?.Invoke("before-backup-copy");
+                    var backupOptions = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
+                    if (!OperatingSystem.IsWindows()) backupOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                    await using (var source = File.OpenRead(target))
+                    await using (var copy = new FileStream(backup, backupOptions))
+                    {
+                        CredentialFileStep?.Invoke("during-backup-copy");
+                        await source.CopyToAsync(copy, token);
+                        copy.Flush(flushToDisk: true);
+                    }
+                    backupReady = true;
+                }
                 var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
                 if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
                 await using (var stream = new FileStream(staging, options))
                 {
-                    await stream.WriteAsync(Encoding.UTF8.GetBytes(credential), token);
+                    stagingCreated = true;
+                    CredentialFileStep?.Invoke("before-staging-write");
+                    await stream.WriteAsync(credentialBytes, token);
+                    CredentialFileStep?.Invoke("after-staging-write");
                     stream.Flush(flushToDisk: true);
+                    stagingWritten = true;
                 }
-                hadPrior = File.Exists(target);
-                if (hadPrior)
-                {
-                    File.Copy(target, backup);
-                    backupReady = true;
-                }
+                CredentialFileStep?.Invoke("before-placement");
+                placementAttempted = true;
                 if (PlaceCredentialFile is not null) PlaceCredentialFile(staging, target, backup);
                 else if (hadPrior) File.Move(staging, target, overwrite: true);
                 else File.Move(staging, target);
-                placed = true;
+                if (hadPrior) targetReplaced = true;
+                else targetCreated = true;
+                CredentialFileStep?.Invoke("after-placement");
                 if (AfterCredentialPlaced is not null) await AfterCredentialPlaced(token);
             }, ct);
         }
@@ -618,18 +673,23 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
                 {
                     if (hadPrior && backupReady && File.Exists(backup))
                     {
-                        // Placement can fail after moving the old target. Trust the files on disk,
-                        // not the flag set only after placement returns.
-                        if (!File.Exists(target) || !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(backup)))
+                        // Placement can fail after moving the old target but before returning.
+                        // A missing target always needs the old file restored. If placement was
+                        // attempted, a changed target may hold the new, rolled-back credential.
+                        if (!File.Exists(target) || (placementAttempted &&
+                            !File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(backup))))
                             File.Move(backup, target, overwrite: true);
                         else File.Delete(backup);
                     }
-                    else if (hadPrior && (placed || !File.Exists(target)))
+                    else if (hadPrior && backupReady && (placementAttempted || targetReplaced))
                         throw new IOException($"The prior credential backup '{backup}' is missing.");
                     else if (hadPrior) File.Delete(backup); // A failed copy may have left a partial backup.
-                    else if (!hadPrior && File.Exists(target)) File.Delete(target);
+                    else if (targetCreated || (stagingWritten && placementAttempted &&
+                             stagedCredential is not null && File.Exists(target) &&
+                             File.ReadAllBytes(target).SequenceEqual(stagedCredential)))
+                        File.Delete(target); // Only a target placed by this run is removed.
                 }
-                finally { File.Delete(staging); }
+                finally { if (stagingCreated || File.Exists(staging)) File.Delete(staging); }
             }
             catch (Exception cleanup)
             {
@@ -782,7 +842,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
         => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             string.Concat(files.Select(file => $"{file.Path}:{file.Size}:{file.Sha}\n")))));
 
-    private static void CopyTree(string source, string target)
+    private void CopyTree(string source, string target)
     {
         RejectCopyIntoSource(source, target);
         var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).ToList();
@@ -792,6 +852,7 @@ public sealed class RecoveryWorkflow(TaskServerStore store, TaskServerOptions op
             var destination = Path.Combine(target, Path.GetRelativePath(source, file));
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(file, destination, overwrite: false);
+            AfterCopiedFile?.Invoke(destination);
         }
     }
 

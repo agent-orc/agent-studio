@@ -474,6 +474,55 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
     }
 
+    [Theory]
+    [InlineData(true, "before-backup-copy")]
+    [InlineData(true, "during-backup-copy")]
+    [InlineData(true, "before-staging-write")]
+    [InlineData(true, "after-staging-write")]
+    [InlineData(true, "before-placement")]
+    [InlineData(true, "partial-placement")]
+    [InlineData(true, "after-placement")]
+    [InlineData(false, "before-staging-write")]
+    [InlineData(false, "after-staging-write")]
+    [InlineData(false, "before-placement")]
+    [InlineData(false, "partial-placement")]
+    [InlineData(false, "after-placement")]
+    public async Task Reenrol_file_failure_at_each_io_step_preserves_the_valid_credential(
+        bool priorFile, string failedStep)
+    {
+        using var temp = new TempDirectory("recovery-reenrol-io-steps");
+        var (target, _, drill) = await RestoredWithLostStudioAsync(temp.Path);
+        var credentialPath = Path.Combine(temp.Path, "studio.credential");
+        if (priorFile) await File.WriteAllTextAsync(credentialPath, drill.OldStudioCredential!);
+        var failing = new RecoveryWorkflow(target, Options(Path.Combine(temp.Path, "target")), new OriginRefProbe(Http), drill.Clock)
+        {
+            CredentialFileStep = step =>
+            {
+                if (step == "during-backup-copy" && !OperatingSystem.IsWindows())
+                {
+                    var backup = Assert.Single(Directory.EnumerateFiles(temp.Path, ".studio.credential.*.previous"));
+                    Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(backup));
+                }
+                if (step == failedStep) throw new IOException($"simulated {step} failure");
+            },
+            PlaceCredentialFile = failedStep == "partial-placement"
+                ? (staging, destination, _) =>
+                {
+                    File.Move(staging, destination, overwrite: true);
+                    throw new IOException("simulated partial placement failure");
+                }
+                : null,
+        };
+
+        await Assert.ThrowsAsync<IOException>(
+            () => failing.ReenrolClientToFileAsync("studio:recovery", credentialPath, "drill", default));
+
+        Assert.Equal(priorFile, File.Exists(credentialPath));
+        if (priorFile) Assert.Equal(drill.OldStudioCredential, await File.ReadAllTextAsync(credentialPath));
+        Assert.NotNull(await target.AuthenticatePrincipalAsync(drill.OldStudioCredential!, default));
+        Assert.Empty(Directory.EnumerateFiles(temp.Path, ".studio.credential.*"));
+    }
+
     [Fact]
     public async Task Resume_stays_in_maintenance_when_the_resume_receipt_cannot_be_recorded()
     {
@@ -758,6 +807,42 @@ public sealed class RecoveryDrillTests(ITestOutputHelper output)
         var after = Directory.EnumerateFileSystemEntries(setRoot, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(setRoot, path)).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(before, after);
+        Assert.True((await drill.Source.VerifyFullBackupAsync(drill.BackupId, default)).Verified);
+    }
+
+    [Fact]
+    public async Task Interrupted_copy_removes_incomplete_destination_and_preserves_source_set()
+    {
+        using var temp = new TempDirectory("recovery-copy-interrupted");
+        var drill = await CaptureAsync(temp.Path);
+        var destinationRoot = Path.Combine(temp.Path, "interrupted-offhost");
+        var failing = new RecoveryWorkflow(drill.Source, Options(drill.SourceDirectory), new OriginRefProbe(Http), drill.Clock)
+        {
+            AfterCopiedFile = _ => throw new IOException("simulated interrupted copy"),
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => failing.CopyAsync(drill.BackupId, destinationRoot, default));
+
+        Assert.False(Directory.Exists(Path.Combine(destinationRoot, drill.BackupId)));
+        Assert.True((await drill.Source.VerifyFullBackupAsync(drill.BackupId, default)).Verified);
+    }
+
+    [Fact]
+    public async Task Interrupted_restore_copy_leaves_target_empty_for_retry()
+    {
+        using var temp = new TempDirectory("recovery-restore-copy-interrupted");
+        var drill = await CaptureAsync(temp.Path);
+        var targetDirectory = Path.Combine(temp.Path, "target");
+        var target = Store(targetDirectory, drill.Clock);
+        var failing = new RecoveryWorkflow(target, Options(targetDirectory), new OriginRefProbe(Http), drill.Clock)
+        {
+            AfterCopiedFile = _ => throw new IOException("simulated interrupted restore copy"),
+        };
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            failing.RestoreToEmptyAsync(drill.CopyRoot, null, null, "drill", default));
+
+        Assert.False(Directory.Exists(targetDirectory) && Directory.EnumerateFiles(targetDirectory, "*", SearchOption.AllDirectories).Any());
         Assert.True((await drill.Source.VerifyFullBackupAsync(drill.BackupId, default)).Verified);
     }
 
