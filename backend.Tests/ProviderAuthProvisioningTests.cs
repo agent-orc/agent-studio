@@ -55,9 +55,20 @@ public sealed class ProviderAuthProvisioningTests
         var script = SshProviderAuthProvisioner.BuildStandardInput(
             "ANTHROPIC_API_KEY", "fixture-provider-key-value");
         Assert.Contains("trap rollback_on_failure EXIT", script);
-        Assert.Contains("mv -fT -- \"$rollback_file\" \"$provider_auth_file\"", script);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", script);
         Assert.Contains("systemctl restart \"$unit\"", script);
         Assert.Contains("install_committed=1", script);
+        var trapStart = script.IndexOf("rollback_on_failure() {", StringComparison.Ordinal);
+        var trapEnd = script.IndexOf("trap rollback_on_failure EXIT", trapStart, StringComparison.Ordinal);
+        var trap = script[trapStart..trapEnd];
+        Assert.Contains("systemctl stop \"$unit\"", trap);
+        Assert.Contains("/proc/$1/environ", trap);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", trap);
+        Assert.Contains("if ((result == 0)); then\n    rm -f -- \"$rollback_file\"", trap);
+        Assert.Contains("for dropin in \"${created_dropins[@]}\"", trap);
+        Assert.True(trap.IndexOf("/proc/$1/environ", StringComparison.Ordinal)
+            < trap.IndexOf("provider-auth-rollback-restored", StringComparison.Ordinal));
+        Assert.Contains("install -m 0600 -o root -g root \"$provider_auth_file\" \"$rollback_file\"", script);
     }
 
     [Fact]

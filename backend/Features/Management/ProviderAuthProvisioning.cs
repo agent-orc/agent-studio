@@ -239,6 +239,9 @@ rollback_file="/etc/agent-runner/.provider-auth.rollback.${generation}"
 installed=0
 install_committed=0
 changed_units=()
+units=()
+created_dropins=()
+had_prior_file=0
 
 if [[ "$environment_variable" != "$expected_environment_variable" ]]; then
   echo '[provider-auth] Environment variable binding changed in transit.' >&2
@@ -257,29 +260,74 @@ dropin_tmp="$(mktemp)"
 provider_auth_install_tmp=''
 rollback_on_failure() {
   result=$?
+  trap - EXIT
   set +e
   rm -f -- "$token_tmp" "$env_tmp" "$dropin_tmp"
   [[ -z "$provider_auth_install_tmp" ]] || rm -f -- "$provider_auth_install_tmp"
+  if ((result == 0)); then
+    rm -f -- "$rollback_file" || {
+      [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+      echo 'provider-auth-recovery-required=rollback-copy-cleanup-failed' >&2
+      exit 39
+    }
+    exit 0
+  fi
   if ((result != 0 && installed == 0)); then
     rm -f -- "$rollback_file"
   fi
   if ((result != 0 && installed == 1 && install_committed == 0)); then
     restored=1
-    if [[ -f "$rollback_file" ]]; then
-      mv -fT -- "$rollback_file" "$provider_auth_file" || restored=0
+    if ((had_prior_file)); then
+      restore_tmp=$(mktemp /etc/agent-runner/.provider-auth.restore.XXXXXX) || restored=0
+      if ((restored)) && ! install -m 0640 -o root -g agent "$rollback_file" "$restore_tmp"; then restored=0; fi
+      if ((restored)) && ! mv -fT -- "$restore_tmp" "$provider_auth_file"; then restored=0; fi
+      [[ -z "${restore_tmp:-}" ]] || rm -f -- "$restore_tmp"
     else
       rm -f -- "$provider_auth_file" || restored=0
+      for dropin in "${created_dropins[@]}"; do rm -f -- "$dropin" || restored=0; done
+      systemctl daemon-reload || restored=0
     fi
-    if ((restored == 0)); then
-      echo 'provider-auth-recovery-required=restore-failed' >&2
-    else
+    if ((restored)); then
       for unit in "${changed_units[@]}"; do
         if [[ "$unit" == agent-runner-review.service ]]; then
-          /usr/local/sbin/agent-runner-deploy restart-review || echo 'provider-auth-recovery-required=review-restart-failed' >&2
+          /usr/local/sbin/agent-runner-deploy restart-review || restored=0
         else
-          systemctl restart "$unit" || echo 'provider-auth-recovery-required=restart-failed' >&2
+          systemctl restart "$unit" || restored=0
         fi
+        pid=$(systemctl show --property=MainPID --value "$unit")
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || restored=0
+        if ((restored)) && ! bash -c '
+          if [[ -f "$2" ]]; then
+            set -a; source "$2"; set +a
+          fi
+          oauth=${CLAUDE_CODE_OAUTH_TOKEN:-}; api=${ANTHROPIC_API_KEY:-}
+          generation=${AGENT_STUDIO_CLAUDE_AUTH_GENERATION:-}
+          seen_oauth=0; seen_api=0; seen_generation=0
+          while IFS= read -r -d "" entry; do
+            [[ -z "$oauth" || "$entry" != "CLAUDE_CODE_OAUTH_TOKEN=$oauth" ]] || seen_oauth=1
+            [[ -z "$api" || "$entry" != "ANTHROPIC_API_KEY=$api" ]] || seen_api=1
+            [[ -z "$generation" || "$entry" != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION=$generation" ]] || seen_generation=1
+            if [[ -z "$oauth" && "$entry" == CLAUDE_CODE_OAUTH_TOKEN=* ]] ||
+               [[ -z "$api" && "$entry" == ANTHROPIC_API_KEY=* ]] ||
+               [[ -z "$generation" && "$entry" == AGENT_STUDIO_CLAUDE_AUTH_GENERATION=* ]]; then exit 1; fi
+          done <"/proc/$1/environ"
+          [[ ( -z "$oauth" || "$seen_oauth" == 1 ) &&
+             ( -z "$api" || "$seen_api" == 1 ) &&
+             ( -z "$generation" || "$seen_generation" == 1 ) ]]
+        ' bash "$pid" "$provider_auth_file"; then restored=0; fi
       done
+    fi
+    if ((restored)); then
+      if rm -f -- "$rollback_file"; then
+        echo 'provider-auth-rollback-restored'
+      else
+        [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+        echo 'provider-auth-recovery-required=rollback-copy-cleanup-failed' >&2
+      fi
+    else
+      for unit in "${units[@]}"; do systemctl stop "$unit" || true; done
+      [[ -z "${receipt_file:-}" ]] || printf 'recovery-required\n' >"$receipt_file"
+      echo 'provider-auth-recovery-required=rollback-failed' >&2
     fi
   fi
   exit "$result"
@@ -314,7 +362,8 @@ if [[ -n "$operation_id" ]]; then
   printf 'started\n' >"$receipt_file"
 fi
 if [[ -f "$provider_auth_file" ]]; then
-  install -m 0640 -o root -g agent "$provider_auth_file" "$rollback_file"
+  had_prior_file=1
+  install -m 0600 -o root -g root "$provider_auth_file" "$rollback_file"
   awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
     "$provider_auth_file" >"$env_tmp"
 fi
@@ -329,7 +378,6 @@ provider_auth_install_tmp=''
 installed=1
 
 printf '[Service]\nEnvironmentFile=%s\n' "$provider_auth_file" >"$dropin_tmp"
-units=()
 if systemctl cat agent-host.service >/dev/null 2>&1; then
   units+=(agent-host.service)
 elif systemctl cat agent-runner.service >/dev/null 2>&1; then
@@ -342,6 +390,7 @@ configured=()
 for unit in "${units[@]}"; do
   dropin_dir="/etc/systemd/system/${unit}.d"
   install -d -m 0755 "$dropin_dir"
+  [[ -e "$dropin_dir/90-provider-auth.conf" ]] || created_dropins+=("$dropin_dir/90-provider-auth.conf")
   install -m 0644 "$dropin_tmp" "$dropin_dir/90-provider-auth.conf"
   configured+=("$unit")
 done
