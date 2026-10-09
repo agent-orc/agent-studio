@@ -895,6 +895,16 @@ public static class TaskServerEndpoints
             TaskServerStore store,
             CancellationToken ct)
             => await InvokeAsync(() => store.UpsertCredentialRegistryAsync(request, Actor(context), ct)));
+        management.MapPost("/provider-renewals", async (
+            HttpContext context, BeginProviderRenewalRequest request, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.BeginProviderRenewalAsync(request, Actor(context), ct)));
+        management.MapGet("/provider-renewals/{operationId}", async (
+            string operationId, TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.GetProviderRenewalAsync(operationId, ct)));
+        management.MapPost("/provider-renewals/{operationId}/steps", async (
+            HttpContext context, string operationId, AdvanceProviderRenewalRequest request,
+            TaskServerStore store, CancellationToken ct)
+            => await InvokeAsync(() => store.AdvanceProviderRenewalAsync(operationId, request, Actor(context), ct)));
         management.MapGet("/runner-infrastructure-failures", async (TaskServerStore store, CancellationToken ct)
             => await InvokeAsync(() => store.ListRunnerInfrastructureFailuresAsync(ct)));
         management.MapGet("/provider-refusals", async (

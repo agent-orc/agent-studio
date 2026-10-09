@@ -49,6 +49,10 @@ export class ClaudeSignInDialogComponent implements OnDestroy {
   }
 
   close(): void {
+    const session = this.session();
+    const target = this.request();
+    if (session && target && this.phase() === 'pending')
+      this.providerAuth.cancelClaudeSignIn(target.hostId, session.handle).subscribe();
     this.polling?.unsubscribe();
     this.polling = null;
     this.dialog.close();

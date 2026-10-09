@@ -298,6 +298,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LinkSupervisor>())
 builder.Services.AddSingleton<ICodexDeviceAuthTransport, SshCodexDeviceAuthTransport>();
 builder.Services.AddSingleton<IClaudeDeviceAuthTransport, SshClaudeDeviceAuthTransport>();
 builder.Services.AddSingleton<IProviderSignInAudit, ProviderSignInOperatorFeed>();
+builder.Services.AddSingleton<IProviderRenewalJournal, ProviderRenewalTaskServerJournal>();
 builder.Services.AddSingleton<CodexSignInCoordinator>();
 builder.Services.AddSingleton<ClaudeSignInCoordinator>();
 builder.Services.AddSingleton<MigrationStateStore>();

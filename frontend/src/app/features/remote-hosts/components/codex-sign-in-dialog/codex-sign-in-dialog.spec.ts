@@ -43,6 +43,8 @@ class FakeProviderAuth {
 
   startCodexSignIn = vi.fn(() => of(STARTED));
   codexSignInStatus = vi.fn(() => this.status.asObservable());
+  cancelCodexSignIn = vi.fn(() => of({ ...STARTED, state: 'failed' as const, detail: 'Cancelled',
+    requestedAt: '', completedAt: '' }));
   waitForFreshProbe = vi.fn(() => this.probeResult);
 }
 
@@ -84,6 +86,13 @@ describe('CodexSignInDialogComponent', () => {
       .toBe('https://auth.openai.com/codex/device');
     expect(dialog.querySelector('[data-testid="codex-sign-in-code"]')?.textContent).toContain('ABCD-EFGH');
     expect(dialog.textContent).toContain('Studio does not receive the resulting token');
+  });
+
+  it('cancels the host session when the pending dialog closes', async () => {
+    store.request.set(TARGET);
+    await fixture.whenStable();
+    fixture.componentInstance.close();
+    expect(providerAuth.cancelCodexSignIn).toHaveBeenCalledWith('host-01', STARTED.handle);
   });
 
   it('renders the failed state reported by the remote process', async () => {
