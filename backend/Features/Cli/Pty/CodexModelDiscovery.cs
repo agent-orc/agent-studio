@@ -177,7 +177,7 @@ public sealed class CodexModelDiscovery
             if (string.IsNullOrWhiteSpace(label)) label = id;
 
             var priority = GetInt(item, "priority") ?? int.MaxValue;
-            // Only a model onboarded for live-discovered ladders (gpt-6-astra)
+            // Only a model onboarded for live-discovered ladders
             // takes its ladder/default from this CLI response; every other
             // model - the gpt-5.6 family included - keeps the static table's
             // answer byte-for-byte (AGT-2707 review: the CLI's own
@@ -349,8 +349,8 @@ public sealed class CodexModelDiscovery
     /// Codex default preference (AGT-2903, policy 2026-10-04): gpt-6-sol when
     /// the installed CLI offers it, else gpt-5.6-sol. Null when neither is
     /// listed so the caller keeps the static gpt-5.5 baseline. The CLI's own
-    /// flagged default does not override this order: a newer flagged model
-    /// (gpt-6.1-sol on codex-cli 0.159) is not onboarded in TokenEconomy yet.
+    /// flagged default does not override this order: gpt-6.1-sol is selectable
+    /// when discovered, but has not been selected as the product default.
     /// </summary>
     private static readonly string[] DefaultPreference = [ModelIds.Gpt6Sol, ModelIds.Gpt56Sol];
 

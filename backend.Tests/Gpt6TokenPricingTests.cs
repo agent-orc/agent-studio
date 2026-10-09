@@ -15,6 +15,7 @@ public sealed class Gpt6TokenPricingTests
     // model, input, cached, output per MTok (operator facts, 2026-09-25)
     [InlineData("gpt-6-sol", 2.0, 0.20, 10.0)]
     [InlineData("gpt-6-luna", 0.10, 0.01, 0.50)]
+    [InlineData("gpt-6.1-sol", 2.0, 0.10, 10.0)]
     public void Gpt6_prices_resolve_from_TokenEconomy(string model, double input, double cached, double output)
     {
         var estimate = TokenPricing.Estimate(model, 1_000_000, 1_000_000, 1_000_000, 0, AfterRelease);
@@ -24,6 +25,16 @@ public sealed class Gpt6TokenPricingTests
         Assert.Equal((decimal)cached, estimate.PriceBasis.CacheReadPerMillion);
         Assert.Equal((decimal)output, estimate.PriceBasis.OutputPerMillion);
         Assert.Equal((decimal)(input + cached + output), estimate.Total);
+    }
+
+    [Fact]
+    public void Gpt61Sol_UsesThePublishedCacheWritePrice()
+    {
+        var estimate = TokenPricing.Estimate(ModelIds.Gpt61Sol, 0, 0, 0, 1_000_000, AfterRelease);
+
+        Assert.True(estimate.ModelKnown);
+        Assert.Equal(2.50m, estimate.PriceBasis!.CacheWritePerMillion);
+        Assert.Equal(2.50m, estimate.Total);
     }
 
     [Fact]

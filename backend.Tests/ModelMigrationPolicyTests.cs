@@ -85,6 +85,7 @@ public sealed class ModelMigrationPolicyTests
     [Theory]
     [InlineData(ModelIds.Gpt56Sol)]
     [InlineData(ModelIds.Gpt56Luna)]
+    [InlineData(ModelIds.Gpt6Sol)]
     public void Gpt6Migrations_AreProposalOnly_AndNeverAutoApply(string model)
     {
         var entry = Catalog.FindMigration(model);

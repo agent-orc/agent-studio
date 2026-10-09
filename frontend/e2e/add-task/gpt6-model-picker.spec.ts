@@ -9,6 +9,8 @@ import { setTheme } from '../helpers/theme';
  * no live codex-cli.
  */
 const codexModels = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', multiplier: null, vendor: 'openai', isDefault: false, available: true,
+    thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultThinkingLevel: 'xhigh' },
   { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false, available: true,
     thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
   { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, available: true,
@@ -20,6 +22,7 @@ const codexModels = [
 ];
 
 const prices: Record<string, [number, number, number]> = {
+  'gpt-6.1-sol': [2, 0.1, 10],
   'gpt-6-sol': [2, 0.2, 10],
   'gpt-6-luna': [0.1, 0.01, 0.5],
   'gpt-5.6-sol': [4, 0.4, 20],
@@ -153,10 +156,10 @@ test.describe('GPT-6 model picker', () => {
     await expect(pills.getByTestId('create-agent-picker-model-gpt-6-sol')).toBeVisible();
     const order = await pills.locator('[data-testid^="create-agent-picker-model-gpt"]').evaluateAll(
       (nodes) => nodes.map((node) => node.getAttribute('data-testid')!.replace('create-agent-picker-model-', '')));
-    expect(order.slice(0, 2).sort()).toEqual(['gpt-6-luna', 'gpt-6-sol']);
+    expect(order[0]).toBe('gpt-6.1-sol');
+    expect(order.slice(1, 3).sort()).toEqual(['gpt-6-luna', 'gpt-6-sol']);
     await expect(page.getByTestId('create-agent-picker-older-heading')).toBeVisible();
-    await expect(page.getByTestId('create-agent-picker-price-gpt-6-sol')).toHaveText('$2 / $10');
-    await expect(page.getByTestId('create-agent-picker-price-gpt-6-luna')).toHaveText('$0.1 / $0.5');
+    await expect(page.getByTestId('create-agent-picker-price-gpt-6.1-sol')).toHaveText('$2 / $10');
 
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(page, theme);
@@ -173,7 +176,7 @@ test.describe('GPT-6 model picker', () => {
       state: '2-ready', order: 1, agent: 'codex', cliType: 'codex',
       createdAt: '2026-09-25T00:00:00Z', lastActivity: '2026-09-25T00:00:00Z',
       watchPath, projectName, folderPath: `${watchPath}/2-ready/${id}`,
-      model: 'gpt-5.6-sol', modelExplicit: true, thinkingLevel: 'ultra',
+      model: 'gpt-6-sol', modelExplicit: true, thinkingLevel: 'ultra',
       sessionName: null, useOwnSession: null, lastUsage: null,
       execution: null, commit: null, commits: [], ownerClientId: 'local-default',
       tags: [], pendingIntent: null, autoLoop: null, summaryState: null,
@@ -184,20 +187,22 @@ test.describe('GPT-6 model picker', () => {
     await page.route('**/api/cli/model-migrations*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         version: 'fixture', wikiPath: '', migrations: [{
-          from: 'gpt-5.6-sol', to: 'gpt-6-sol', family: 'gpt-sol', safeAuto: false,
+          from: 'gpt-6-sol', to: 'gpt-6.1-sol', family: 'gpt', safeAuto: false,
           reason: 'Proposal only.',
         }],
       }) }));
     await page.route('**/api/projects/*/model-migrations/apply', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        from: 'gpt-5.6-sol', to: 'gpt-6-sol', updatedTaskIds: [], failedTaskIds: [id],
+        from: 'gpt-6-sol', to: 'gpt-6.1-sol', updatedTaskIds: [], failedTaskIds: [id],
       }) }));
 
     await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.getByTestId('task-card-model-migration-dot').click();
+    await expect(page.getByTestId('task-card-model-migration-target-level'))
+      .toHaveText('Level ultra is not offered by gpt-6.1-sol; runs at xhigh.');
     await page.getByTestId('task-card-model-migration-apply-project').click();
-    await expect(page.getByText(`0 cards updated to gpt-6-sol; 1 failed (${id}).`)).toBeVisible();
-    await expect(page.getByText('Model updated to gpt-6-sol on 0 cards.')).toHaveCount(0);
+    await expect(page.getByText(`0 cards updated to gpt-6.1-sol; 1 failed (${id}).`)).toBeVisible();
+    await expect(page.getByText('Model updated to gpt-6.1-sol on 0 cards.')).toHaveCount(0);
 
     const path = join(process.env.JOB_RESULTS_DIR ?? '../results', 'gpt6-project-migration-failed--mocked.png');
     await page.screenshot({ path });

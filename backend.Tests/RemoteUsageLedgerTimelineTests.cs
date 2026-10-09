@@ -162,6 +162,8 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
     [InlineData("claude-opus-4.8", "claude-opus-4-8", "Claude Opus 4.8")]
     // Historical receipts stored the label (AGT-2740); it still resolves.
     [InlineData("Claude Sonnet 5", "claude-sonnet-5", "Claude Sonnet 5")]
+    [InlineData("Claude Sonnet 5.5", "claude-sonnet-5-5", "Claude Sonnet 5.5")]
+    [InlineData("GPT-6.1 Sol", "gpt-6.1-sol", "GPT-6.1 Sol")]
     public void ModelIdentity_StoresIdsAndResolvesLabelsOnlyForTheSameModel(
         string recorded, string storedId, string label)
     {

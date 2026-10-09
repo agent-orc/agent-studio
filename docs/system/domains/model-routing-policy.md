@@ -78,8 +78,8 @@ refresh, TE policy `2026-09-25`):
   clears Sol/xhigh.
 - `gpt-6-astra` is still untiered: two `access_programs.cyber` HTTP 400s in
   about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
-  (listed by live discovery, released 2026-09-29) is not in TokenEconomy
-  `0.3.6` and has no registry entry yet.
+  is priced and selectable with TokenEconomy `0.3.7` when the installed CLI
+  offers it. It is not a default route.
 
 **Codex default.** `ModelMetadataRegistry.DefaultForCli(codex)` prefers
 `gpt-6-sol` when live discovery offers it, then `gpt-5.6-sol`, then the static
@@ -104,15 +104,23 @@ current input/output list price from the TokenEconomy cost API
 GPT-6 runs comes from the same dated TokenEconomy price snapshots. Cached
 input is priced once at the cache-read rate (AGT-2882).
 
-GPT-6 Sol and GPT-6 Luna require codex-cli `0.155.0`. Claude Opus 5.5 uses
+GPT-6 Sol and GPT-6 Luna require codex-cli `0.155.0`. GPT-6.1 Sol's registry
+version marker is codex-cli `0.155.0`, the version in the TokenEconomy 0.3.7
+probe. That probe received HTTP 400, so the marker does not guarantee execution;
+only live CLI discovery can offer the model. Claude Opus 5.5 uses
 Studio's `high` default effort, while [Anthropic's API default is `medium`](https://platform.claude.com/docs/en/models/opus-5-5/overview).
-Its CLI floor is claude-code `2.1.281`. Claude Sonnet 5.5 is `unsupported` in
-TokenEconomy `0.3.6` until claude-code `2.1.284`.
+Its CLI floor is claude-code `2.1.281`. TokenEconomy `0.3.7` records Claude
+Sonnet 5.5 as `unsupported` because the probed CLI did not offer it. Studio
+offers it only when installed claude-code `2.1.284` or later lists it.
+The [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+lists a 1,050,000 token context window. Production CLI discovery reported
+`minimal, low, medium, high, xhigh` with default `xhigh`; Studio uses that
+discovered ladder even though the API model page lists a different API ladder.
 The [Sol model page](https://developers.openai.com/api/docs/models/gpt-6-sol)
 and [Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna)
 each list a 1,050,000 token context window.
 The picker disables a missing model with a version reason when an older CLI is
-installed. Pricing and aliases come from TokenEconomy `0.3.6`, using
+installed. Pricing and aliases come from TokenEconomy `0.3.7`, using
 [Anthropic's pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 and [OpenAI's pricing](https://developers.openai.com/api/docs/pricing).
 
@@ -360,6 +368,17 @@ Available/Deprecated flags when discovery has not run yet:
 | `gpt-mini` compatibility id | gpt-5.6-luna | gpt-5.6-luna |
 | `gpt-flagship` | detected gpt-6-sol, else gpt-5.6-sol, else gpt-5.5 | alias of the existing Codex detection layer (`ModelMetadataRegistry.DefaultForCli`) |
 
+The explicit-pin registry includes these newly onboarded models. Neither changes
+a default route or family resolver:
+
+| Model | Picker availability | Thinking ladder | Context window |
+|---|---|---|---:|
+| `gpt-6.1-sol` | Codex live discovery | CLI reported `minimal, low, medium, high, xhigh`; default `xhigh` | 1,050,000 |
+| `claude-sonnet-5-5` | Claude live discovery at `2.1.284` or later | `low, medium, high, xhigh, max`; default `medium` | 1,000,000 |
+
+Both start unavailable in the registry and use TokenEconomy `0.3.7` prices at
+ledger read time.
+
 Every former hardcoded `ModelIds.ClaudeHaiku45` / `ModelIds.Gpt54Mini` runtime
 default (`OrchestratorRunner.DefaultModel`, `SummaryGenerationService`,
 `TitleGenerationService`, `PromptEnhancementService`, `WikiSearchService`,
@@ -389,11 +408,15 @@ without operator confirmation. Today it holds exactly the superseded Opus and
 Sonnet generations pointing at `claude-opus-5` / `claude-sonnet-5`; it holds no
 Haiku entry. Retired GPT-5.4 Mini is not a migration target or route.
 It also proposes `claude-opus-5` to `claude-opus-5-5`, `gpt-5.6-sol` to
-`gpt-6-sol`, and `gpt-5.6-luna` to `gpt-6-luna`. These three entries have
-`safeAuto: false`, mirroring the TokenEconomy `0.3.6` verdicts (ladder-compatible,
-lower dated price, no qualifying no-regression evidence): operators can review
+`gpt-6-sol`, `gpt-5.6-luna` to `gpt-6-luna`, and `gpt-6-sol` to
+`gpt-6.1-sol`. These entries have
+`safeAuto: false`, mirroring the TokenEconomy `0.3.6` and `0.3.7` verdicts.
+The GPT-6.1 Sol target has a shorter ladder and a lower cached input price;
+no qualifying no-regression evidence supports automatic migration. Operators can review
 and apply them, while run admission never applies them. A card pinned to the
-source model shows the proposal on its model badge. The operator accepts it per
+source model shows the proposal on its model badge. The GPT-6.1 Sol proposal
+shows that `max` and `ultra` pins would run at `xhigh` after acceptance. Until
+acceptance, the card retains its GPT-6 Sol pin and level. The operator accepts it per
 card (`PUT /api/tasks/{id}/model`) or for every explicitly pinned card of a
 project in backlog, preparation, orchestrator-prep, or ready
 (`POST /api/projects/{project}/model-migrations/apply` with `{ "from": ... }`).

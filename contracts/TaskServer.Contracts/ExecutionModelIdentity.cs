@@ -10,6 +10,8 @@ public static class ExecutionModelIdentity
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["claude-opus-5-5"] = ["claude-opus-5.5"],
+            ["claude-sonnet-5-5"] = ["claude-sonnet-5.5"],
+            ["gpt-6.1-sol"] = ["GPT-6.1 Sol"],
             ["claude-fable-5-1"] = ["claude-fable-5.1"],
             ["claude-opus-4-8"] = ["claude-opus-4.8"],
             ["claude-opus-4-7"] = ["claude-opus-4.7"],

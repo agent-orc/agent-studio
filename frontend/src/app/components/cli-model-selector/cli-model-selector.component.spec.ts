@@ -34,6 +34,8 @@ describe('CliModelSelectorComponent', () => {
     prices: signal(new Map([
       ['gpt-6-sol', { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2, cacheWritePerMillion: 2,
         currency: 'USD', validFrom: '2026-09-22', source: null, note: null, unconfirmed: false }],
+      ['gpt-6.1-sol', { inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.1, cacheWritePerMillion: 2.5,
+        currency: 'USD', validFrom: '2026-09-29', source: null, note: null, unconfirmed: false }],
     ])),
     ensure: vi.fn(),
   };
@@ -385,6 +387,7 @@ describe('CliModelSelectorComponent', () => {
   });
   describe('GPT-6 ladder (AGT-2903)', () => {
     const gptModels: CliModelInfo[] = [
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultThinkingLevel: 'xhigh' },
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
       { id: 'gpt-6-luna', label: 'GPT-6 Luna', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'medium' },
       { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
@@ -404,10 +407,10 @@ describe('CliModelSelectorComponent', () => {
 
       const ids = [...document.querySelectorAll('[data-testid^="cli-model-selector-picker-model-gpt"]')]
         .map((el) => (el as HTMLElement).dataset['testid']!.replace('cli-model-selector-picker-model-', ''));
-      expect(ids.slice(0, 2)).toEqual(['gpt-6-luna', 'gpt-6-sol']);
-      expect(ids[2]).toBe('gpt-5.6-sol');
-      const price = document.querySelector('[data-testid="cli-model-selector-picker-price-gpt-6-sol"]');
-      expect(price?.textContent?.trim()).toBe('$2 / $10');
+      expect(ids[0]).toBe('gpt-6.1-sol');
+      expect(ids.slice(1, 3)).toEqual(['gpt-6-luna', 'gpt-6-sol']);
+      expect(ids[3]).toBe('gpt-5.6-sol');
+      expect(document.querySelector('[data-testid="cli-model-selector-picker-price-gpt-6.1-sol"]')?.textContent?.trim()).toBe('$2 / $10');
       expect(priceStore.ensure).toHaveBeenCalled();
     });
 
