@@ -2215,12 +2215,17 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
             "backend build exit 1", true, false));
         var queue = new IntegrationPushQueue();
         var jobFolder = BeginRun(log, repo, jobId: "60");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [MergeIntoDevelopRunner.GateInfrastructureTimeoutConfigKey] = "600",
+        }).Build();
         var runner = new MergeIntoDevelopRunner(
             git, log, NullLogger<MergeIntoDevelopRunner>.Instance,
             pushQueue: queue,
             projectSettings: settings,
             preDevelopBuildGate: new PreDevelopBuildGate(gateRunner),
-            preDevelopTimeout: TimeSpan.FromSeconds(30));
+            preDevelopTimeout: TimeSpan.FromSeconds(30),
+            configuration: configuration);
 
         var outcome = await runner.RunAsync(
             "Fixture", "60", jobFolder, repo, "develop", CancellationToken.None);
@@ -2230,6 +2235,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(TestExecutionLevels.BuildOnly, gateRunner.Request!.RequiredTestLevel);
         Assert.True(gateRunner.Request.RequireExactSubject);
         Assert.NotEqual(developBefore, gateRunner.Request.ExpectedSha);
+        Assert.Equal(TimeSpan.FromMinutes(10), gateRunner.Request.InfrastructureTimeout);
 
         // Red gate: develop is back on its exact pre-merge tip, nothing pushed.
         Assert.Equal(MergeIntoIntegrationOutcome.GateFailed, outcome.Outcome);
@@ -2248,8 +2254,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DevelopTarget_GateEnvironmentFailure_RollsBackButIsNeverAGateFailed()
     {
-        // A torn preparation cache before test discovery rolls back the unverified merge the same
-        // as any other red gate, but it must never be classified GateFailed -
+        // A timed-out source bundle transfer rolls back the unverified merge the same
+        // as any other failed gate, but it must never be classified GateFailed -
         // that outcome is what makes the card ConflictSkipped and spends a
         // rebase-recovery steer round, neither of which fixes a gate
         // environment problem.
@@ -2263,19 +2269,9 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
-        var output = @"C:\Program Files\dotnet\sdk\10.0.301\NuGet.targets(198,5): error : " +
-                     @"Could not find file 'C:\Temp\agentstudio-preparation-cache\.runs\run-1\nuget\" +
-                     @"example.package\1.0.0\example.package.1.0.0.nupkg'.";
-        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
-            BuildTestGateVerdict.Fail, 1, 20, output,
-            "dotnet build exit 1", true, false)
-        {
-            FailureKind = BuildTestGateRunner.ClassifyFailure(new BuildTestGateProcessEvidence
-            {
-                ExitCode = 1,
-                StandardError = output,
-            }),
-        });
+        var output = "source.bundle transfer failed after 180.0s (198000000 bytes, budget 180s): scp exceeded its remote gate transport budget.";
+        var gateRunner = new RemoteBuildTestGateRunner(
+            new TimedOutGateTransport(output), NullLogger<RemoteBuildTestGateRunner>.Instance);
         var queue = new IntegrationPushQueue();
         var jobFolder = BeginRun(log, repo, jobId: "62");
         var runner = new MergeIntoDevelopRunner(
@@ -2300,6 +2296,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("gate-environment-failure", step.Verdict);
         Assert.Equal(AcceptedIntegrationFailureCodes.GateEnvironmentFailure, step.FailureCode);
         Assert.Contains("GateEnvironment:", step.Reason);
+        Assert.Contains("198000000 bytes", step.Reason);
     }
 
     [Theory]
@@ -3284,6 +3281,14 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var git = new GitService(gitLogger ?? NullLogger<GitService>.Instance, scanner, config);
         var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return (git, log);
+    }
+
+    private sealed class TimedOutGateTransport(string message) : IRemoteGateTransport
+    {
+        public Task<BuildTestGateResult> RunAsync(BuildTestGateRequest request,
+            IReadOnlyList<string>? changedFiles, BuildProfile? profile,
+            PostStepMode mode, TimeSpan timeout, CancellationToken ct)
+            => Task.FromException<BuildTestGateResult>(new TimeoutException(message));
     }
 
     private sealed class CapturingBuildTestGateRunner : IBuildTestGateRunner
