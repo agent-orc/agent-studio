@@ -161,6 +161,7 @@ public static class ModelIds
     public const string ClaudeOpus46 = "claude-opus-4-6";
     public const string ClaudeOpus45 = "claude-opus-4-5";
     public const string ClaudeSonnet5 = "claude-sonnet-5";
+    public const string ClaudeSonnet55 = "claude-sonnet-5-5";
     public const string ClaudeSonnet46 = "claude-sonnet-4-6";
     public const string ClaudeSonnet45 = "claude-sonnet-4-5";
     public const string ClaudeHaiku45 = "claude-haiku-4-5";
@@ -200,6 +201,7 @@ public static class ModelIds
     /// <summary>Codex product default when live discovery offers it, ahead of
     /// <see cref="Gpt56Sol"/> and the <see cref="Gpt55"/> baseline (AGT-2903).</summary>
     public const string Gpt6Sol = "gpt-6-sol";
+    public const string Gpt61Sol = "gpt-6.1-sol";
     public const string Gpt6Luna = "gpt-6-luna";
     public const string Gpt5Codex = "gpt-5-codex";
     public const string Gpt41 = "gpt-4.1";
@@ -337,6 +339,10 @@ public static class ModelMetadataRegistry
             aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeFable51),
             thinkingLevels: ["low", "medium", "high", "xhigh", "max"], defaultThinkingLevel: "high"),
         Claude(ModelIds.ClaudeSonnet5, "Claude Sonnet 5", context: 200_000),
+        Claude(ModelIds.ClaudeSonnet55, "Claude Sonnet 5.5", context: 1_000_000,
+            aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeSonnet55),
+            thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+            defaultThinkingLevel: "medium", minimumCliVersion: "2.1.284") with { Available = false },
         Claude(ModelIds.ClaudeOpus48, "Claude Opus 4.8", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus48)),
         Claude(ModelIds.ClaudeOpus47, "Claude Opus 4.7", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus47)),
         Claude(ModelIds.ClaudeOpus46, "Claude Opus 4.6", context: 200_000, aliases: ExecutionModelIdentity.AliasesFor(ModelIds.ClaudeOpus46)),
@@ -362,6 +368,12 @@ public static class ModelMetadataRegistry
             ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
         new(ModelIds.Gpt6Sol, "GPT-6 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
+        // TokenEconomy 0.3.7 recorded a 0.155.0 probe that was rejected by the
+        // provider. This version is only an advisory marker; live discovery
+        // remains the availability gate for GPT-6.1 Sol.
+        new(ModelIds.Gpt61Sol, "GPT-6.1 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
+            ContextWindow: 1_050_000, ThinkingLevels: ["minimal", "low", "medium", "high", "xhigh"],
+            DefaultThinkingLevel: "xhigh", MinimumCliVersion: "0.155.0"),
         new(ModelIds.Gpt6Luna, "GPT-6 Luna", "openai", IsDefault: false, Deprecated: false, Available: false,
             ContextWindow: 1_050_000, MinimumCliVersion: "0.155.0"),
         // gpt-5.6-terra / gpt-5.6-luna are the lower cost tiers of the gpt-5.6
@@ -454,7 +466,7 @@ public static class ModelMetadataRegistry
     /// only when that decision is made.
     /// </summary>
     private static readonly HashSet<string> LiveDiscoveredLadderModelIds =
-        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt6Luna };
+        new(StringComparer.OrdinalIgnoreCase) { ModelIds.Gpt6Astra, ModelIds.Gpt6Sol, ModelIds.Gpt61Sol, ModelIds.Gpt6Luna };
 
     /// <summary>Whether <paramref name="model"/> is onboarded to take its reasoning
     /// ladder/default from live CLI discovery rather than the static table.</summary>
@@ -549,29 +561,23 @@ public static class ModelMetadataRegistry
 
     /// <summary>
     /// Product default reasoning level for a CLI+model when the user/owner did
-    /// not pick one. For codex the operator directive (AGT-2025) is the biggest
-    /// reasoning value the installed CLI advertises for the model: the top of
-    /// the CLI-derived thinking-level ladder (gpt-5.6 -> ultra, gpt-5.5 ->
-    /// xhigh, gpt-5-codex -> high). Other CLIs keep the ladder's native default.
+    /// not pick one. Onboarded Codex models use the live CLI default. Curated
+    /// metadata is the fallback when discovery has not reported a default.
     /// </summary>
     public static string? DefaultThinkingLevelForCli(string? cliType, string? model)
     {
-        // Curated registry metadata wins first: a model this Studio already
-        // ships an explicit ladder for (the gpt-5.6 family) keeps its
-        // curated default byte-for-byte regardless of what an installed CLI
-        // reports for its OWN default_reasoning_level, which is a UX default
-        // for the bare CLI, not necessarily this product's routing choice.
+        // The explicit allowlist keeps already-shipped static ladders from
+        // changing. GPT-6.1 Sol has a registry fallback so migration proposals
+        // can explain max/ultra pins before live discovery has run.
+        var detected = DetectedLadder(cliType, model)?.Default;
+        if (!string.IsNullOrWhiteSpace(detected)) return detected;
+
         var metadata = Find(model);
         if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
             && IsCompatibleWithCli(cliType, metadata.Id))
         {
             return metadata.DefaultThinkingLevel;
         }
-
-        // Only a model with NO curated default (gpt-6-astra today) falls
-        // through to what the installed CLI itself reported (AGT-2707).
-        var detected = DetectedLadder(cliType, model)?.Default;
-        if (!string.IsNullOrWhiteSpace(detected)) return detected;
 
         if (CliTypes.IsValid(cliType) && CliTypes.Normalize(cliType) == CliTypes.Codex)
         {
@@ -609,7 +615,7 @@ public static class ModelMetadataRegistry
         var canonical = trimmed is null ? null : NormalizeId(trimmed);
         // Preserve historic alias storage for existing models. New generation
         // spellings must become the exact ids accepted by their CLIs.
-        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.Gpt6Sol or ModelIds.Gpt6Luna
+        var normalized = canonical is ModelIds.ClaudeOpus55 or ModelIds.ClaudeSonnet55 or ModelIds.Gpt6Sol or ModelIds.Gpt61Sol or ModelIds.Gpt6Luna
             ? canonical
             : trimmed;
         if (string.IsNullOrWhiteSpace(cliType)) return normalized;
@@ -696,21 +702,21 @@ public static class ModelMetadataRegistry
 
     /// <summary>
     /// The reasoning ladder for a CLI + model, most authoritative source
-    /// first: curated registry metadata (keeps the gpt-5.6 family's ladder
-    /// byte-for-byte regardless of what the installed CLI reports), then the
-    /// ladder the installed CLI reported for a model with no curated ladder
-    /// (gpt-6-astra today), then the static <c>CliThinkingLevels</c> table.
+    /// first: live discovery for explicitly onboarded Codex models, curated
+    /// registry metadata, then the static <c>CliThinkingLevels</c> table.
     /// </summary>
     public static IReadOnlyList<string> ThinkingLevelsFor(string? cliType, string? model)
     {
+        var detected = DetectedLadder(cliType, model)?.Levels;
+        if (detected is { Count: > 0 }) return detected;
+
         var metadata = Find(model);
         if (metadata?.ThinkingLevels is { Length: > 0 } && IsCompatibleWithCli(cliType, metadata.Id))
         {
             return metadata.ThinkingLevels;
         }
 
-        var detected = DetectedLadder(cliType, model)?.Levels;
-        return detected is { Count: > 0 } ? detected : CliThinkingLevels.For(cliType, model);
+        return CliThinkingLevels.For(cliType, model);
     }
 
     /// <summary>
@@ -821,17 +827,17 @@ public static class ModelMetadataRegistry
 
         // Unknown or below-ladder request: land on the model's own default
         // rather than the product top-of-ladder, so a stale or mistyped level
-        // never silently escalates reasoning cost. Same source order as
-        // DefaultThinkingLevelForCli, minus its codex top-of-ladder rule.
+        // never silently escalates reasoning cost. The live CLI wins for
+        // explicitly onboarded Codex models.
+        var detected = DetectedLadder(cliType, model)?.Default;
+        if (!string.IsNullOrWhiteSpace(detected)) return detected;
+
         var metadata = Find(model);
         if (!string.IsNullOrWhiteSpace(metadata?.DefaultThinkingLevel)
             && IsCompatibleWithCli(cliType, metadata.Id))
         {
             return metadata.DefaultThinkingLevel;
         }
-
-        var detected = DetectedLadder(cliType, model)?.Default;
-        if (!string.IsNullOrWhiteSpace(detected)) return detected;
 
         return CliThinkingLevels.DefaultFor(cliType, model) ?? levels[0];
     }

@@ -100,6 +100,10 @@ public sealed class ModelRoutingPolicyGuardTests
             registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Sol)!.ToModel);
         Assert.Equal(ModelIds.Gpt56Luna,
             registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt6Luna)!.ToModel);
+        Assert.Equal(ModelIds.Gpt6Sol,
+            registry.ProviderRejectionFallback(CliTypes.Codex, ModelIds.Gpt61Sol)!.ToModel);
+        Assert.Equal(ModelIds.ClaudeSonnet5,
+            registry.ProviderRejectionFallback(CliTypes.Claude, ModelIds.ClaudeSonnet55)!.ToModel);
     }
 
     [Fact]

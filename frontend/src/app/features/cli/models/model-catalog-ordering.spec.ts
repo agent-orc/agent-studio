@@ -16,6 +16,17 @@ function model(id: string, overrides: Partial<CliModelInfo> = {}): CliModelInfo 
 }
 
 describe('orderModelCatalog', () => {
+  it('places GPT-6.1 Sol first without deprecating GPT-6 Sol', () => {
+    const ordered = orderModelCatalog([
+      model('gpt-6-sol'),
+      model('gpt-5.6-sol'),
+      model('gpt-6.1-sol'),
+    ]);
+
+    expect(ordered.map((item) => item.id)).toEqual(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol']);
+    expect(ordered[1]).toMatchObject({ deprecated: false, available: true, olderGeneration: true });
+  });
+
   it('sorts leading family generations first and older generations newest-first', () => {
     const ordered = orderModelCatalog([
       model('claude-opus-4-7'),
