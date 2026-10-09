@@ -619,6 +619,10 @@ public class GitService
     private readonly ProjectRegistry _registry;
     private readonly CommitCandidateGate _commitGate;
     private readonly ProjectSettingsService? _projectSettings;
+    internal Func<ProcessStartInfo, TimeSpan, CancellationToken, GitProcessResult> IntegrationFetchForTesting { get; set; }
+        = (start, timeout, ct) => GitNetworkProcessRunner.Run(start, stdin: null, timeout, ct);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     public GitService(
         ILogger<GitService> logger,
@@ -3503,6 +3507,7 @@ public class GitService
         if (!HasRemote(repoRoot, "origin"))
             return Task.FromResult(new GitPushResult(true, sha, "no-remote", null));
 
+        using var remoteGate = EnterIntegrationRemoteGate(repoRoot, ct);
         var (_, fetchErr, fetchCode) = RunGitArgs(repoRoot, ct, "fetch", "origin", branch);
         if (fetchCode != 0 && ct.IsCancellationRequested)
             return Task.FromResult(new GitPushResult(false, sha, "cancelled", fetchErr.Trim()));
@@ -8131,17 +8136,18 @@ public class GitService
     /// killed the develop and delivery branch fetches on the flat 30-second
     /// <see cref="GitNetworkProcessRunner.DefaultTimeout"/>
     /// ("git operation timed out after 30 seconds") and the pipeline treated
-    /// the resulting error as a plain integration failure. A fetch that only
-    /// timed out - not one that failed for a real git reason - gets exactly
-    /// one retry at a longer, separately configured budget, mirroring
-    /// <c>WorkspaceArtifactPushWorker</c>'s push catch-up.
+    /// the resulting error as a plain integration failure. A timed-out fetch
+    /// gets one retry at a longer, separately configured budget. A concurrent
+    /// ref update gets two short retries under the shared repository gate.
     /// </summary>
     private (string Out, string Err, int Code) FetchWithCatchUpBudget(
         string cwd,
         CancellationToken cancellationToken,
         params string[] args)
     {
+        using var remoteGate = EnterIntegrationRemoteGate(cwd, cancellationToken);
         var timeout = GitNetworkProcessRunner.DefaultTimeout;
+        var refLockRetries = 0;
         while (true)
         {
             var psi = new ProcessStartInfo
@@ -8156,10 +8162,21 @@ public class GitService
             foreach (var arg in args) psi.ArgumentList.Add(arg);
             var command = CommandLabel(psi);
             var sw = Stopwatch.StartNew();
-            var result = GitNetworkProcessRunner.Run(psi, stdin: null, timeout, cancellationToken);
+            var result = IntegrationFetchForTesting(psi, timeout, cancellationToken);
             sw.Stop();
             GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
                 timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+            if (result.ExitCode != 0 && IsConcurrentRefUpdate(result.StandardError)
+                && refLockRetries < 2 && !cancellationToken.IsCancellationRequested)
+            {
+                refLockRetries++;
+                _logger.LogWarning(
+                    "git-fetch-ref-lock-retry cwd={Cwd} attempt={Attempt}/2 error={Error}",
+                    cwd, refLockRetries, result.StandardError.Trim());
+                if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(100 * refLockRetries)))
+                    return (result.StandardOutput, result.StandardError, result.ExitCode);
+                continue;
+            }
             if (result.FailureKind != GitProcessFailureKind.TimedOut || timeout == IntegrationFetchCatchUpTimeout)
                 return (result.StandardOutput, result.StandardError, result.ExitCode);
             _logger.LogWarning(
@@ -8169,6 +8186,28 @@ public class GitService
                 timeout.TotalSeconds);
             timeout = IntegrationFetchCatchUpTimeout;
         }
+    }
+
+    internal static bool IsConcurrentRefUpdate(string? error)
+        => error?.Contains("cannot lock ref", StringComparison.OrdinalIgnoreCase) == true
+           && error.Contains("is at", StringComparison.OrdinalIgnoreCase)
+           && error.Contains("but expected", StringComparison.OrdinalIgnoreCase);
+
+    private static IDisposable EnterIntegrationRemoteGate(string cwd, CancellationToken ct)
+    {
+        // Linked worktrees have different git dirs but one common ref store.
+        var (commonDir, _, code) = RunGitArgs(cwd, "rev-parse", "--git-common-dir");
+        var key = code == 0
+            ? Path.GetFullPath(commonDir.Trim(), cwd)
+            : Path.GetFullPath(cwd);
+        var gate = IntegrationRemoteGates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        gate.Wait(ct);
+        return new IntegrationRemoteGate(gate);
+    }
+
+    private sealed class IntegrationRemoteGate(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
     }
 
     private TimeSpan IntegrationFetchCatchUpTimeout => TimeSpan.FromSeconds(Math.Clamp(

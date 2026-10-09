@@ -5,6 +5,22 @@ namespace AgentStudio.Tests;
 
 public sealed class AcceptedIntegrationFailurePolicyTests
 {
+    [Fact]
+    public void ExhaustedBranchSyncRefRace_RemainsVisibleAsRefLockInfrastructureFailure()
+    {
+        var failure = AcceptedIntegrationFailurePolicy.Classify(
+            PipelineStepStatus.Failed,
+            "error",
+            "Integration branch 'develop' could not be fetched from origin: error: cannot lock ref 'refs/remotes/origin/develop': is at 2222 but expected 1111",
+            null,
+            AcceptedIntegrationFailureCodes.BranchSyncFailed);
+
+        Assert.NotNull(failure);
+        Assert.Equal(AcceptedIntegrationFailureCodes.BranchSyncFailed, failure.Code);
+        Assert.Equal(RunFailureClass.Infrastructure, failure.FailureClass);
+        Assert.Equal(RunFailureSignatures.GitRefLockRace, failure.FailureSignature);
+    }
+
     public static TheoryData<string, string, string, bool> FailureMatrix => new()
     {
         {
