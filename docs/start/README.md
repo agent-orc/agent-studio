@@ -195,6 +195,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Setup | [operations/setup/README.md](../operations/setup/README.md) |
 | Retention and archive dossier (policy defaults, archive stages, Task Server management contract, full backup sets) | [operations/retention-und-archiv/index.html](../operations/retention-und-archiv/index.html) |
 | Task Server legacy migration, signed cutover evidence, retention, archive, restore, and full backup operator commands | [legacy migration](../operations/setup/task-server.md#legacy-single-writer-migration) · [retention and archive](../operations/setup/task-server.md#retention-against-the-sqlite-store) |
+| Installation recovery set: versioned manifest, off-host copy, empty-target restore, host fencing, resume gate, and measured drill (I07) | [operations/setup/installation-recovery.md](../operations/setup/installation-recovery.md) |
 | Standalone remote runner / agent host daemon (Linux) | [operations/setup/linux-runner-host.md](../operations/setup/linux-runner-host.md) |
 | Workstation runner-host profile (Windows roots, tools, preview evidence, same Task Server authority) | [operations/setup/workstation-runner-host.md](../operations/setup/workstation-runner-host.md) |
 | Guided multi-machine setup (Control Plane, join token, Agent Hosts) | [operations/setup/multi-machine.md](../operations/setup/multi-machine.md) |
