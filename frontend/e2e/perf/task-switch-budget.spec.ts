@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 
 /** Machine-bound acceptance capture. Stable is read-only; faults need isolated fixtures. */
 const enabled = process.env.TASK_SWITCH_BUDGET === '1';
+test.use({ trace: 'off', video: 'off' });
 const diagnostic = process.env.TASK_SWITCH_DIAGNOSTIC === '1';
 const count = Number(process.env.TASK_SWITCH_COUNT ?? 100);
 const warmups = Number(process.env.TASK_SWITCH_WARMUPS ?? 5);
@@ -315,7 +316,8 @@ test('task switch budget on the designated workstation', async ({ page, baseURL 
         else population.warmupSamples.push(sample);
         if (i === 0) {
           const screenshot = `task-switch-${theme}-${plan.name}.png`;
-          await page.screenshot({ path: resolve(output, '..', screenshot) });
+          await page.screenshot({ path: resolve(output, '..', screenshot), timeout: 10_000,
+            animations: 'disabled' });
           capture.screenshots.push(screenshot);
         }
         current = null;

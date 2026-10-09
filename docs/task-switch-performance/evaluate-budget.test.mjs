@@ -11,9 +11,13 @@ function capture() {
     pageErrors: [], maxConcurrentCoreRequests: 1, cohorts: Object.fromEntries(requiredCohorts.map(name => [name,
       { warmups: 5, warmupSamples: Array.from({ length: 5 }, () => ({ outcome: 'ok' })),
         fixture: 'isolated dev-backend task repository', mutationCount: 105, faultHits: 105,
-        cached: name.endsWith('/cached-core'), samples: Array.from({ length: 100 }, () => ({
+        cached: name.endsWith('/cached-core'), samples: Array.from({ length: 100 }, (_, index) => ({
         outcome: 'ok', switchId: 'b'.repeat(32), paintMs: 40, inputAtEpochMs: 1_780_000_000_000,
         coreFacts: true, groupedReads: 0, coreRequests: [request()],
+        sampleClass: ['active', 'review', 'archived'][index % 3],
+        expectedLane: ['2-ready', '5-human-review', '7-archive'][index % 3],
+        input: index % 3 === 2 ? 'click' : 'keydown',
+        classVerified: true,
       })) }])) };
 }
 
@@ -60,6 +64,14 @@ test('a missing required theme or failure cohort is not a passing gate', () => {
   const subject = capture();
   delete subject.cohorts['dark/hung-refresh'];
   assert.match(evaluateBudget(subject).failures.join(' '), /missing cohort dark\/hung-refresh/);
+});
+
+test('isolated cohorts require verified active, review and archived switches', () => {
+  const subject = capture();
+  subject.cohorts['light/hung-refresh'].samples.forEach(sample => {
+    if (sample.sampleClass === 'archived') sample.classVerified = false;
+  });
+  assert.match(evaluateBudget(subject).failures.join(' '), /missing verified archived task switch/);
 });
 
 test('a core response from another switch cannot satisfy the selected sample', () => {

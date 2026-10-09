@@ -63,6 +63,16 @@ export function evaluateBudget(capture) {
       && population.fixture !== 'isolated dev-backend task repository')
       reasons.push('fault cohort lacks isolated fixture provenance');
     if (samples.length < 100) reasons.push('fewer than 100 measured switches');
+    if (/\/(dirty-unrelated|own-task-mutation|git-unavailable|hung-refresh)$/.test(name)) {
+      for (const [taskClass, lane, input] of [
+        ['active', '2-ready', 'keydown'], ['review', '5-human-review', 'keydown'],
+        ['archived', '7-archive', 'click'],
+      ]) {
+        if (!samples.some(sample => sample.sampleClass === taskClass
+          && sample.expectedLane === lane && sample.input === input && sample.classVerified === true))
+          reasons.push(`missing verified ${taskClass} task switch`);
+      }
+    }
     const budget = population.cached ? 50 : 100;
     for (const [index, sample] of samples.entries()) {
       const label = `${name} sample ${index + 1}`;

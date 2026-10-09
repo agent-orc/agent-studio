@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures/dev-backend';
+import type { Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -8,6 +9,12 @@ const count = Number(process.env.TASK_SWITCH_COUNT ?? 100);
 const warmups = Number(process.env.TASK_SWITCH_WARMUPS ?? 5);
 const output = resolve(process.env.JOB_RESULTS_DIR ?? 'test-results', diagnostic
   ? 'task-switch-isolated-diagnostic.json' : 'task-switch-isolated.json');
+test.use({ trace: 'off', video: 'off' });
+
+async function showBoard(page: Page): Promise<void> {
+  await page.getByTestId('studio-tab-board:__all__').dispatchEvent('click', {}, { timeout: 10_000 });
+  await expect(page.getByTestId('studio-board')).toBeVisible({ timeout: 30_000 });
+}
 
 test.describe('task switch isolated budget cohorts', () => {
   test.describe.configure({ timeout: 90 * 60_000 });
@@ -32,7 +39,12 @@ test.describe('task switch isolated budget cohorts', () => {
       .find(project => samePath(project.storageLocation, watchPath))?.id;
     if (!projectId) throw Error('No isolated project matches the backend watch path');
     const prefix = `e2e-switch-budget-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    const ids = [`${prefix}-a`, `${prefix}-b`, `${prefix}-unrelated`];
+    const taskClasses = [
+      { name: 'active', state: '2-ready', ids: [`${prefix}-active-a`, `${prefix}-active-b`] },
+      { name: 'review', state: '5-human-review', ids: [`${prefix}-review-a`, `${prefix}-review-b`] },
+      { name: 'archived', state: '7-archive', ids: [`${prefix}-archived-a`, `${prefix}-archived-b`] },
+    ] as const;
+    const unrelatedId = `${prefix}-unrelated`;
     const report: any = {
       profile: { name: process.env.TASK_SWITCH_PROFILE ?? 'unspecified',
         kind: process.env.TASK_SWITCH_PROFILE_KIND === 'designated-workstation'
@@ -126,28 +138,32 @@ test.describe('task switch isolated budget cohorts', () => {
     await page.addInitScript(() => performance.setResourceTimingBufferSize(4096));
     const tasksCreated: string[] = [];
     try {
-      for (const id of ids) {
-        await api('/api/tasks', { method: 'POST', body: JSON.stringify({
-          id, title: id, watchPath, targetState: '5-human-review', fixture: false,
-          agent: 'codex', cliType: 'codex', promptMarkdown: `# ${id}\n\nIsolated switch budget fixture.`,
-          requiresIntegration: false,
-        }) });
+      for (const { id, state } of [
+        ...taskClasses.flatMap(taskClass => taskClass.ids.map(id => ({ id, state: taskClass.state }))),
+        { id: unrelatedId, state: '0-backlog' },
+      ]) {
+        try {
+          await api('/api/tasks', { method: 'POST', body: JSON.stringify({
+            id, title: id, watchPath, targetState: state, fixture: false,
+            agent: 'codex', cliType: 'codex', promptMarkdown: `# ${id}\n\nIsolated switch budget fixture.`,
+            requiresIntegration: false,
+          }) });
+        } catch (error) {
+          throw Error(`Fixture task creation failed in ${state}: ${error}`);
+        }
         tasksCreated.push(id);
       }
-      for (const id of ids.slice(0, 2))
+      for (const id of taskClasses.flatMap(taskClass => taskClass.ids))
         await expect.poll(async () => (await fetch(
           `${devBackend.baseUrl}/api/tasks/${encodeURIComponent(id)}/core?project=${encodeURIComponent(projectId)}`,
           { headers: { 'x-client-id': 'local-default' } })).status,
         { timeout: 30_000, intervals: [250, 500, 1000] }).toBe(200);
       await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await expect(page.getByTestId('task-card').filter({ hasText: ids[0] }).first()).toBeVisible({ timeout: 30_000 });
-      await page.getByTestId('task-card').filter({ hasText: ids[0] }).first().click();
-      await page.getByTestId('studio-task-pager-position').waitFor();
+      await showBoard(page);
       const scenarios = ['dirty-unrelated', 'own-task-mutation', 'git-unavailable', 'hung-refresh'] as const;
       for (const theme of ['light', 'dark']) for (const scenario of scenarios) {
         if (process.env.TASK_SWITCH_ONLY && scenario !== process.env.TASK_SWITCH_ONLY) continue;
-        await page.goto(`/?job=${encodeURIComponent(ids[0])}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-        await page.getByTestId('studio-task-pager-position').waitFor({ timeout: 30_000 });
+        await showBoard(page);
         await page.evaluate(value => {
           document.documentElement.dataset['studioTheme'] = value;
           localStorage.setItem('atp.studio.theme', value);
@@ -169,14 +185,28 @@ test.describe('task switch isolated budget cohorts', () => {
         if (scenario === 'git-unavailable' || scenario === 'hung-refresh')
           await page.route(/\/api\/tasks\/[^/]+\/details\/git(?:\?|$)/, gitRoute);
         for (let index = -warmups; index < count; index++) {
-          const target = ids[((index + warmups) % 2) === 0 ? 1 : 0];
+          const taskClass = taskClasses[(index + warmups) % taskClasses.length];
+          const source = taskClass.ids[Math.floor((index + warmups) / taskClasses.length) % 2];
+          const target = taskClass.ids.find(id => id !== source)!;
           const sample: any = { switchId: crypto.randomUUID().replaceAll('-', ''), target, projectId,
-            input: 'keydown', sampleClass: 'review', startedAtUtc: new Date().toISOString(),
+            input: taskClass.name === 'archived' ? 'click' : 'keydown',
+            sampleClass: taskClass.name, expectedLane: taskClass.state,
+            startedAtUtc: new Date().toISOString(),
             outcome: 'error', groupedReads: 0, coreRequests: [], resourceGenerations: {} };
           samples.set(sample.switchId, sample);
           try {
+            await showBoard(page);
+            if (taskClass.name === 'archived') {
+              await expect(page.getByTestId('archive-filter-input')).toBeVisible();
+              await page.getByTestId('archive-filter-input').fill(target);
+              await expect(page.getByTestId('archive-row').filter({ hasText: target })).toBeVisible({ timeout: 30_000 });
+            } else {
+              await page.getByTestId('task-card').filter({ hasText: source }).first().click();
+              await expect(page.getByTestId('task-core')).toHaveAttribute('data-core-id', source, { timeout: 30_000 });
+              await expect(page.getByTestId('studio-task-pager-position')).toContainText('/ 2');
+            }
             if (scenario === 'dirty-unrelated' || scenario === 'own-task-mutation') {
-              const id = scenario === 'dirty-unrelated' ? ids[2] : target;
+              const id = scenario === 'dirty-unrelated' ? unrelatedId : target;
               await api(`/api/tasks/${encodeURIComponent(id)}/title?watchPath=${encodeURIComponent(watchPath)}`,
                 { method: 'PUT', body: JSON.stringify({ title: `${id} revision ${index + warmups}` }) });
               population.mutationCount++;
@@ -186,20 +216,29 @@ test.describe('task switch isolated budget cohorts', () => {
                   .catch(() => undefined);
               }, { target, project: projectId });
             }
-            const previous = await page.evaluate(() => location.hash);
-            const position = (await page.getByTestId('studio-task-pager-position').innerText()).trim();
-            const key = position.startsWith('1 ') ? 'j' : 'k';
+            const previous = await page.evaluate(() => new URL(location.href).searchParams.get('job'));
             const before = await page.evaluate(() => performance.getEntriesByName('task-core-ready').length);
-            await page.evaluate(() => window.addEventListener('keydown', event => {
+            await page.evaluate(input => window.addEventListener(input, event => {
               performance.mark('task-switch-budget-input');
               (window as any).__taskSwitchBudgetInputEpoch = performance.timeOrigin + event.timeStamp;
-            }, { capture: true, once: true }));
+            }, { capture: true, once: true }), sample.input);
             current = sample;
-            await page.keyboard.press(key);
-            await page.waitForFunction(({ before, previous }) => location.hash !== previous
-              && performance.getEntriesByName('task-core-ready').length > before,
-            { before, previous }, { polling: 'raf', timeout: 10_000 });
+            if (taskClass.name === 'archived') {
+              await page.getByTestId('archive-row').filter({ hasText: target }).click();
+            } else {
+              const position = (await page.getByTestId('studio-task-pager-position').innerText()).trim();
+              await page.keyboard.press(position.startsWith('1 ') ? 'j' : 'k');
+            }
+            await page.waitForFunction(({ before, previous, target }) => {
+              const selected = new URL(location.href).searchParams.get('job');
+              return selected !== previous && selected === target
+                && performance.getEntriesByName('task-core-ready').length > before;
+            }, { before, previous, target }, { polling: 'raf', timeout: 10_000 });
             await expect(page.getByTestId('studio-task')).toContainText(target);
+            await expect(page.getByTestId('task-core-state')).toContainText(
+              taskClass.name === 'active' ? 'Ready'
+                : taskClass.name === 'review' ? 'Human review' : 'Archive');
+            sample.classVerified = true;
             const paint = await page.evaluate(async () => {
               await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
               return { ms: performance.now() - performance.getEntriesByName('task-switch-budget-input').at(-1)!.startTime,
@@ -228,9 +267,10 @@ test.describe('task switch isolated budget cohorts', () => {
           }
           if (index >= 0) population.samples.push(sample);
           else population.warmupSamples.push(sample);
-          if (index === 0) {
-            const filename = `task-switch-isolated-${theme}-${scenario}.png`;
-            await page.screenshot({ path: resolve(output, '..', filename) });
+          if (index >= 0 && index < taskClasses.length && sample.outcome === 'ok') {
+            const filename = `task-switch-isolated-${theme}-${scenario}-${taskClass.name}.png`;
+            await page.screenshot({ path: resolve(output, '..', filename), timeout: 10_000,
+              animations: 'disabled' });
             report.screenshots.push(filename);
           }
         }
@@ -250,5 +290,8 @@ test.describe('task switch isolated budget cohorts', () => {
       await mkdir(resolve(output, '..'), { recursive: true });
       await writeFile(output, JSON.stringify(report, null, 2) + '\n');
     }
+    if (diagnostic && Object.values(report.cohorts).some((population: any) =>
+      population.samples.some((sample: any) => sample.outcome !== 'ok')))
+      throw Error(`Isolated diagnostic contains failed switches; inspect ${output}`);
   });
 });

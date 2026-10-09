@@ -225,6 +225,12 @@ page-local routes. These are labeled fixture faults; they do not prove a real
 Git worker was disconnected or hung. The runner combines both raw captures
 only if their declared workstation and backend revision match. Neither suite
 was run for 100-switch populations in this Linux task run.
+Each isolated fault cohort now rotates verified ready-lane active, human-review
+and archived fixture tasks. Active and review switches use the pager and observe
+the `job` route key; archived switches use the Archive row click because the
+grouped board intentionally omits archived pager peers. Fixture setup returns
+to the existing Board tab between samples; cold-client loads remain a separate
+normal cohort.
 One isolated Linux diagnostic of the unrelated mutation cohort completed one
 switch in each theme against the fixture-managed worktree backend. Both
 samples had zero grouped reads, zero core Git spawns and zero core workspace
