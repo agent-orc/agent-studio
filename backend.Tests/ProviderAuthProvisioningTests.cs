@@ -115,6 +115,10 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("agent-host --rebind-provider-auth claude --drained", script);
         Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
         Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", script);
+        Assert.Contains("sha256sum \"$unit_store\"", script);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", script);
         Assert.Contains("claude-login-status=recovery-required", script);
         Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
         Assert.True(script.IndexOf("cp -p -- \"$credential_store\"", StringComparison.Ordinal) <
@@ -150,6 +154,10 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("agent-host --rebind-provider-auth codex --drained", script);
         Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
         Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", script);
+        Assert.Contains("sha256sum \"$unit_store\"", script);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", script);
         Assert.Contains("codex-login-status=recovery-required", script);
         Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
         Assert.Contains("new_store_digest=", script);
