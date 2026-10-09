@@ -508,6 +508,79 @@ has no usable SSH target for the host-owned flow.
   file and restart its units. Other hosts and the operator's normal Claude login
   remain independent.
 
+Managed provider renewal now records a metadata-only Task Server operation for
+the selected host credential generation. The existing Sign in Claude and Sign in
+Codex dialogs reserve that operation before SSH starts; duplicate requests use
+one idempotency key and an unresolved operation blocks a new login for the same
+binding. Closing a browser session cancels its SSH process and reports recovery
+required when installation might have started. An installed receipt stays open
+until fresh Coding and Review advertisements agree on the new generation and
+effective source and each carries a successful real request. Status alone does
+not complete renewal. A host or Task Server connection loss leaves the operation
+available by ID for inspection. A recovery-required receipt must be resolved by
+proving either the old generation on both units with a real request or the new
+generation through the same two-unit check before another login starts. An
+expired installed receipt can still complete after later new-generation proof;
+its deadline blocks a second issuance, not recovery. For an initial API-key
+install without a central operation, the host writes a root-only local receipt.
+If a unit remains pending, the install fails and restores the previous state
+instead of leaving an untracked rollback copy. A process loss between
+staging and installation leaves a host receipt with the protected copy path;
+a later status check stops affected units and marks local recovery required.
+Inspect root-only host receipts under `/etc/agent-runner/provider-renewal/`
+when a connection fails before the operation identifier reaches Studio. A failed restore stops affected
+units and records the local operation identifier for host recovery.
+
+| Renewal state | Host receipt and copy | Required action |
+| --- | --- | --- |
+| Intent, consent or staged | Central redacted receipt; host receipt before any file replacement | Fence the expected generation; issue login once. |
+| Installed with every unit checked | Host receipt verified; rollback copy removed | Await distinct Coding and Review real requests before central completion. |
+| Fenced install with pending unit or no unit yet | Host receipt names pending units and root-only 0600 copy | Retry finalization under the binding lock; discover later units and check their process environments. |
+| Unfenced initial install with a pending unit | Local host receipt records the attempt | Roll back and check the prior state; do not leave a pending copy without central operation. |
+| Installed operation expired | Central receipt becomes recovery-required; host receipt and copy remain | Accept later new-generation proof or restore and prove the old generation; do not issue a second login. |
+| Interrupted after host intent | Host receipt retains the rollback path and reports recovery-required | Stop affected units and inspect or restore the local generation before admission resumes. |
+| Rollback fails | Host receipt is recovery-required; copy retained | Stop affected units; never report rollback-restored without checking the restored process generation. |
+
+Claude environment renewal writes an opaque generation marker beside the token
+in `provider-auth.env`; no token-derived hash is used as a generation. The host
+keeps a protected `root:root 0600` rollback copy while verification is pending.
+For API-key provisioning, a pending Review restart writes a host-only
+`installed-awaiting-runner` receipt with the copy path and pending units. The
+next status poll retries the guarded restart and checks both live unit process
+environments before deleting the copy. A failed check restores and verifies the
+prior generation; if that cannot be proved, it stops affected units and marks
+the host receipt `recovery-required`. If `runner.env`
+still has a provider value, identify each daemon's effective source first, then
+remove the duplicate through the owned host configuration flow after both units
+and a real request prove the shared file. Do not infer token expiry from a
+native file or a guessed lifetime. The host-owned API-key path uses the same
+protected file and generation check when renewing an existing registry binding.
+An API-key install receipt stays pending until both runner units report that
+generation and effective source after real provider requests. The setup wizard
+shows success only after that receipt completes. If installation or unit
+verification fails, the host restores the protected prior file and restarts
+changed units; an incomplete restore requires explicit recovery.
+
+Codex and native Claude login renew the CLI's own host store. A rename of
+`auth.json` or `.credentials.json` can detach existing clean-context hard links.
+Native Claude renewal requires a changed local store after successful CLI login
+and status verification. The host advances its opaque timestamp generation if
+the CLI rewrites the file within the old timestamp millisecond; an unchanged
+store remains unresolved and cannot complete the Task Server receipt.
+Before browser login, the host saves a mode-preserving local copy of the prior
+native Claude store. If login, rebinding or a unit restart fails after the store
+changes, the host atomically restores that copy, rebinds drained consumers and
+restarts the units against the old generation. If any restoration step fails,
+it stops the affected units, retains the protected copy for operator recovery
+and leaves recovery required. A timeout or cancelled
+browser flow before store replacement leaves the prior generation in place.
+Keep affected workers drained, then run `agent-host --rebind-provider-auth codex
+--drained` or the `claude` equivalent as the runner user. The command refuses
+while that provider's CLI processes are active and checks every marker-owned
+clean home against the current local store. It does not transfer credentials
+between hosts. If a safe drain cannot be proved, leave the operation in
+recovery-required state and keep admission parked.
+
 If an operator temporarily uses the interactive Claude fallback for diagnosis,
 the host's `~/.claude/.credentials.json` must stay a plain file the runner user
 can read and write in place. The supported headless path does not depend on that
