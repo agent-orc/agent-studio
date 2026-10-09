@@ -53,8 +53,8 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.True(astra.Available);
         Assert.Equal(["low", "medium", "high", "xhigh", "max", "ultra"], astra.ThinkingLevels);
         Assert.Equal("medium", astra.DefaultThinkingLevel);
-        // gpt-6-astra is the only model onboarded for a live-discovered
-        // ladder; every other model - gpt-5.6-sol included - ignores the same
+        // The gpt-5.6 family remains outside the live-discovered ladder
+        // allowlist, so gpt-5.6-sol ignores the same
         // fixture's supported_reasoning_levels/default_reasoning_level and
         // keeps the static top-of-ladder rule byte-for-byte (2026-09-07
         // review: a CLI-stated default must not silently override an
@@ -139,6 +139,47 @@ public class CodexModelDiscoveryTests : IDisposable
         Assert.Equal(["low", "medium", "high"], sol.ThinkingLevels);
         Assert.Equal("medium", sol.DefaultThinkingLevel);
         Assert.False(Assert.Single(current.Models, m => m.Id == ModelIds.Gpt6Luna).Available);
+    }
+
+    [Fact]
+    public void Gpt61Sol_UsesRecordedProbeVersionAsFloor_ButRequiresLiveDiscovery()
+    {
+        const string output = """
+        {"models":[{"slug":"gpt-6.1-sol","display_name":"GPT-6.1-Sol","visibility":"list","priority":1,
+          "supported_reasoning_levels":[{"effort":"minimal"},{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}],
+          "default_reasoning_level":"xhigh"}]}
+        """;
+        var parsed = CodexModelDiscovery.ParseDebugModelsJson(output);
+        var old = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.154.0");
+        Assert.False(Assert.Single(old.Models, m => m.Id == ModelIds.Gpt61Sol).Available);
+
+        var absent = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = [] }, "0.159.0");
+        Assert.False(Assert.Single(absent.Models, m => m.Id == ModelIds.Gpt61Sol).Available);
+
+        var current = CodexModelDiscovery.WithKnownButUnavailableModels(new CliModelCatalog { Models = parsed }, "0.159.0");
+        var sol = Assert.Single(current.Models, m => m.Id == ModelIds.Gpt61Sol);
+        Assert.True(sol.Available);
+        Assert.Equal(["minimal", "low", "medium", "high", "xhigh"], sol.ThinkingLevels);
+        Assert.Equal("xhigh", sol.DefaultThinkingLevel);
+        Assert.Equal(1_050_000, ModelMetadataRegistry.ContextWindowFor(sol.Id));
+        Assert.Equal(ModelIds.Gpt55, ModelMetadataRegistry.DefaultForCli(CliTypes.Codex));
+    }
+
+    [Fact]
+    public void Gpt61Sol_UsesCliDefault_WhenItsFutureLadderChanges()
+    {
+        ModelMetadataRegistry.SetDetectedCodexLadders([
+            new CliModelInfo
+            {
+                Id = ModelIds.Gpt61Sol,
+                ThinkingLevels = ["low", "medium", "high"],
+                DefaultThinkingLevel = "medium"
+            }
+        ]);
+
+        Assert.Equal(["low", "medium", "high"], ModelMetadataRegistry.ThinkingLevelsFor(CliTypes.Codex, ModelIds.Gpt61Sol));
+        Assert.Equal("medium", ModelMetadataRegistry.DefaultThinkingLevelForCli(CliTypes.Codex, ModelIds.Gpt61Sol));
+        Assert.Equal("medium", ModelMetadataRegistry.NormalizeThinkingLevel(CliTypes.Codex, ModelIds.Gpt61Sol, "unknown"));
     }
 
     [Fact]
@@ -375,8 +416,8 @@ public class CodexModelDiscoveryTests : IDisposable
     [Fact]
     public void PickDetectedDefault_PrefersGpt6Sol_WhenDiscoveryOffersIt()
     {
-        // codex-cli 0.159 flags gpt-6.1-sol, which TokenEconomy 0.3.6 does not
-        // onboard yet; the product default stays on gpt-6-sol.
+        // The newer model is available for explicit pins; the product default
+        // remains gpt-6-sol until a separate routing decision changes it.
         var cat = Catalog(
             Model("gpt-6.1-sol", isDefault: true),
             Model("gpt-5.6-sol", isDefault: false),

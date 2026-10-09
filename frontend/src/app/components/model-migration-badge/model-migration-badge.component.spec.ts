@@ -19,7 +19,13 @@ describe('ModelMigrationBadgeComponent', () => {
     from: 'gpt-5.6-luna', to: 'gpt-6-luna', family: 'gpt-luna', safeAuto: false,
     reason: 'Proposal only (TokenEconomy 0.3.6).',
   };
+  const sol61Migration: ModelMigrationEntry = {
+    from: 'gpt-6-sol', to: 'gpt-6.1-sol', family: 'gpt', safeAuto: false,
+    reason: 'Proposal only (TokenEconomy 0.3.7).',
+  };
   const codexModels: CliModelInfo[] = [
+    { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', multiplier: null, vendor: 'openai', isDefault: false,
+      thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'], defaultThinkingLevel: 'xhigh' },
     { id: 'gpt-6-sol', label: 'GPT-6 Sol', multiplier: null, vendor: 'openai', isDefault: true, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
     { id: 'gpt-6-luna', label: 'GPT-6 Luna', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max'], defaultThinkingLevel: 'medium' },
     { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', multiplier: null, vendor: 'openai', isDefault: false, thinkingLevels: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], defaultThinkingLevel: 'medium' },
@@ -37,7 +43,7 @@ describe('ModelMigrationBadgeComponent', () => {
       providers: [
         provideZonelessChangeDetection(),
         { provide: ModelMigrationCatalogStore, useValue: {
-          proposalFor: (model: string | null) => [solMigration, lunaMigration].find((m) => m.from === model) ?? null,
+          proposalFor: (model: string | null) => [solMigration, lunaMigration, sol61Migration].find((m) => m.from === model) ?? null,
         } },
         { provide: CliCatalogStore, useValue: { modelsFor: () => codexModels } },
         { provide: TaskService, useValue: tasks },
@@ -65,6 +71,19 @@ describe('ModelMigrationBadgeComponent', () => {
     expect(component.targetLevel()).toEqual({ level: 'ultra', mappedFrom: null });
     expect(tasks.setJobModel).not.toHaveBeenCalled();
     expect(tasks.applyProjectModelMigration).not.toHaveBeenCalled();
+  });
+
+  it('shows an xhigh proposal for a gpt-6-sol ultra pin and preserves the pin until acceptance', async () => {
+    const { fixture, component, tasks } = await create({
+      model: 'gpt-6-sol', explicit: true, jobId: 'job-61', project: 'Studio',
+      cliType: 'codex', thinkingLevel: 'ultra', testId: 'card-migration',
+    });
+    const root = fixture.nativeElement as HTMLElement;
+
+    expect(query(root, 'card-migration-dot')).toBeTruthy();
+    expect(query(root, 'card-migration-level-mapped')).toBeNull();
+    expect(component.targetLevel()).toEqual({ level: 'xhigh', mappedFrom: 'ultra' });
+    expect(tasks.setJobModel).not.toHaveBeenCalled();
   });
 
   it('shows the mapped level on the badge and in the proposal when discovery does not offer the pin', async () => {
