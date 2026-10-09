@@ -43,6 +43,26 @@ public sealed class TaskCoreCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task BackgroundHydration_DoesNotInheritCoreRequestTrace()
+    {
+        using var scanned = new ManualResetEventSlim();
+        var cache = Cache(() =>
+        {
+            TaskSwitchTrace.WorkspaceScan();
+            scanned.Set();
+            return [];
+        });
+        var trace = TaskSwitchTrace.Begin(null, null);
+        try
+        {
+            Assert.True(cache.GetCore("unknown", _root).Warming);
+            Assert.True(await Task.Run(() => scanned.Wait(TimeSpan.FromSeconds(5))));
+            Assert.Equal(0, trace.WorkspaceScans);
+        }
+        finally { trace.Restore(); }
+    }
+
+    [Fact]
     public async Task SafetyTtl_DoesNotStartARequestThreadScan()
     {
         var task = MakeTask("AGT-3", "2-ready");

@@ -505,6 +505,7 @@ public class TaskScannerService : ITaskScanner
     /// </summary>
     public List<TaskInfo> ScanAllJobsRaw()
     {
+        TaskSwitchTrace.WorkspaceScan();
         var sw = Stopwatch.StartNew();
 
         // Phase 1 — cheap directory enumeration. The flat layout is

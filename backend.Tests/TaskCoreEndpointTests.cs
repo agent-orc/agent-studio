@@ -54,10 +54,26 @@ public sealed class TaskCoreEndpointTests : IDisposable
         Assert.True(Encoding.UTF8.GetByteCount(timeline.GetRawText()) <= 2048);
         Assert.NotNull(response.Headers.ETag);
 
+        using (var traced = new HttpRequestMessage(HttpMethod.Get, url))
+        {
+            traced.Headers.Add("X-Task-Switch-Trace", "1");
+            traced.Headers.Add("X-Task-Switch-Id", Guid.NewGuid().ToString("N"));
+            traced.Headers.Add("X-Task-Request-Id", Guid.NewGuid().ToString("N"));
+            using var measured = await client.SendAsync(traced);
+            measured.EnsureSuccessStatusCode();
+            Assert.Equal("0", measured.Headers.GetValues("X-Task-Core-Git-Spawns").Single());
+            Assert.Equal("0", measured.Headers.GetValues("X-Task-Core-Workspace-Scans").Single());
+            var timings = string.Join(",", measured.Headers.GetValues("Server-Timing"));
+            foreach (var stage in new[] { "task-core", "core-index", "core-runtime", "core-serialize" })
+                Assert.Contains(stage + ";dur=", timings, StringComparison.Ordinal);
+        }
+
         using var conditional = new HttpRequestMessage(HttpMethod.Get, url);
         conditional.Headers.IfNoneMatch.Add(response.Headers.ETag!);
         using var notModified = await client.SendAsync(conditional);
         Assert.Equal(HttpStatusCode.NotModified, notModified.StatusCode);
+        Assert.Contains("core-serialize;dur=0.000", string.Join(",", notModified.Headers.GetValues("Server-Timing")),
+            StringComparison.Ordinal);
 
         using (var changed = await client.PutAsJsonAsync(
             $"/api/tasks/AGT-core/title?project={project.Id}", new { title = "New title" }))
@@ -266,6 +282,34 @@ public sealed class TaskCoreEndpointTests : IDisposable
     }
 
     [Fact]
+    public async Task InjectedRequestGitEvent_IsVisibleToTheCoreBudgetCounter()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        await using var factory = Factory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddSingleton<ITaskCoreRuntime>(new GitEventRuntime())));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"/api/tasks/AGT-core/core?project={project.Id}");
+        request.Headers.Add("X-Task-Switch-Trace", "1");
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("1", response.Headers.GetValues("X-Task-Core-Git-Spawns").Single());
+    }
+
+    private sealed class GitEventRuntime : ITaskCoreRuntime
+    {
+        public TaskCoreRuntimeSnapshot Read(TaskCoreRecord core)
+        {
+            GitProcessTelemetry.Record("injected-core-request", 1, 0);
+            return new();
+        }
+    }
+
+    [Fact]
     [Trait("Category", "MachineBound")]
     public async Task WarmCore_HandlerP95_OnProductionShapedSnapshot()
     {
@@ -300,6 +344,7 @@ public sealed class TaskCoreEndpointTests : IDisposable
 
         var timings = new List<double>();
         var roundTrips = new List<double>();
+        var tracedRoundTrips = new List<double>();
         var maxBytes = 0;
         for (var i = 0; i < 100; i++)
         {
@@ -309,27 +354,53 @@ public sealed class TaskCoreEndpointTests : IDisposable
             var bytes = await response.Content.ReadAsByteArrayAsync();
             sw.Stop();
             response.EnsureSuccessStatusCode();
-            var timing = Assert.Single(response.Headers.GetValues("Server-Timing"),
+            var timing = Assert.Single(response.Headers.GetValues("Server-Timing")
+                .SelectMany(value => value.Split(','))
+                .Select(value => value.Trim()),
                 value => value.StartsWith("task-core;dur=", StringComparison.Ordinal));
             timings.Add(double.Parse(timing.Split("dur=", 2)[1], System.Globalization.CultureInfo.InvariantCulture));
             roundTrips.Add(sw.Elapsed.TotalMilliseconds);
             maxBytes = Math.Max(maxBytes, bytes.Length);
+            using var tracedRequest = new HttpRequestMessage(HttpMethod.Get, url);
+            tracedRequest.Headers.Add("X-Task-Switch-Trace", "1");
+            tracedRequest.Headers.Add("X-Task-Switch-Id", Guid.NewGuid().ToString("N"));
+            tracedRequest.Headers.Add("X-Task-Request-Id", Guid.NewGuid().ToString("N"));
+            var tracedStopwatch = Stopwatch.StartNew();
+            using var tracedResponse = await client.SendAsync(tracedRequest);
+            await tracedResponse.Content.LoadIntoBufferAsync();
+            tracedStopwatch.Stop();
+            tracedResponse.EnsureSuccessStatusCode();
+            tracedRoundTrips.Add(tracedStopwatch.Elapsed.TotalMilliseconds);
         }
         timings.Sort();
         roundTrips.Sort();
+        tracedRoundTrips.Sort();
+        static double Quantile(List<double> sorted, double p)
+        {
+            var rank = p * (sorted.Count - 1);
+            var low = (int)Math.Floor(rank);
+            var high = (int)Math.Ceiling(rank);
+            return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
+        }
+        var handlerP95 = Quantile(timings, 0.95);
+        var traceOverheadP95 = Quantile(tracedRoundTrips, 0.95) - Quantile(roundTrips, 0.95);
         if (Environment.GetEnvironmentVariable("TASK_CORE_BENCH_REPORT") is { Length: > 0 } report)
             File.WriteAllText(report, JsonSerializer.Serialize(new
             {
                 fixtureTaskKeys = keys,
                 samples = timings.Count,
-                handlerP50Ms = timings[49],
-                handlerP95Ms = timings[94],
-                httpRoundTripP95Ms = roundTrips[94],
+                handlerP50Ms = Quantile(timings, 0.5),
+                handlerP95Ms = handlerP95,
+                httpRoundTripP95Ms = Quantile(roundTrips, 0.95),
+                tracedHttpRoundTripP95Ms = Quantile(tracedRoundTrips, 0.95),
+                traceOverheadP95Ms = traceOverheadP95,
                 maxUtf8Bytes = maxBytes,
             }, new JsonSerializerOptions { WriteIndented = true }));
         Assert.True(maxBytes <= 16 * 1024, $"Core response was {maxBytes} bytes.");
-        Assert.True(timings[94] <= 30,
-            $"Core handler p95 was {timings[94]:F1} ms; HTTP round-trip p95 was {roundTrips[94]:F1} ms.");
+        Assert.True(handlerP95 <= 30,
+            $"Core handler p95 was {handlerP95:F1} ms; HTTP round-trip p95 was {Quantile(roundTrips, 0.95):F1} ms.");
+        Assert.True(traceOverheadP95 <= 1,
+            $"Opt-in trace added {traceOverheadP95:F3} ms to HTTP round-trip p95 on this host.");
     }
 
     private WebApplicationFactory<Program> Factory() =>

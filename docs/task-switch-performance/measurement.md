@@ -168,6 +168,92 @@ Never infer per-switch Git counts from `git-index-run` sample averages.
 
 ## Workstation gate
 
+### Card 6 gate wiring (7 October 2026)
+
+The existing machine-bound `task-switch-workstation-budget` suite in
+`.agent-studio/project.yml` runs `npm --prefix frontend run e2e:task-switch-budget`
+with one Playwright worker. Set `TASK_SWITCH_PROFILE` to the designated
+workstation identifier, `TASK_SWITCH_SOURCE` to the tested revision,
+`TASK_SWITCH_PROFILE_KIND=designated-workstation`, and
+`TASK_CORE_BENCH_FIXTURE` to production-shaped task folders, plus the four
+`TASK_SWITCH_{ACTIVE,REVIEW,ARCHIVED,LONG}_KEY` values. The default is
+100 measured switches after five warmups in each declared cohort. Output goes
+to `JOB_RESULTS_DIR` when present. The normal Stable capture requires its
+backend to be ready and changes no Stable data. The isolated spec starts any
+task-worktree backend through `frontend/e2e/fixtures/dev-backend.ts`.
+
+`frontend/e2e/perf/task-switch-budget.spec.ts` records the raw attempts, page
+errors, API waterfall, core decoded bytes, Server-Timing stages, request IDs,
+Git spawn and workspace-scan counters, and screenshot paths. The offline
+`evaluate-budget.mjs` uses the same interpolated percentile convention as this
+protocol and fails on any missing required cohort, timeout, warming response,
+missing stage, missing counter, excess concurrency or failed core DOM check.
+It requires both themes and the normal, cached, cold-client, dirty-index,
+mutation and Git-failure cohort names. The isolated evaluator tests exercise
+150 ms delay, one request Git spawn and one selection board read; these are
+synthetic fault proofs, not workstation measurements. The normal browser spec
+collects seven cohort types. `task-switch-budget-isolated.spec.ts` uses the
+existing `dev-backend` fixture to create disposable tasks, mutate an unrelated
+task or the target task, and simulate Git resource 503 and held responses with
+page-local routes. These are labeled fixture faults; they do not prove a real
+Git worker was disconnected or hung. The runner combines both raw captures
+only if their declared workstation and backend revision match. Neither suite
+was run for 100-switch populations in this Linux task run.
+One isolated Linux diagnostic of the unrelated mutation cohort completed one
+switch in each theme against the fixture-managed worktree backend. Both
+samples had zero grouped reads, zero core Git spawns and zero core workspace
+scans, with decoded core bodies below 16 KiB. Paint times were 777.1 ms in
+light and 1321.3 ms in dark. These are one-sample remote diagnostics under
+dev-server load, not cohort percentiles or workstation acceptance evidence.
+The four correlated core responses from those two switches report these
+diagnostic stage values. Each row is an independent percentile of four
+requests; parent `task-core` and `task-op` include child work and cannot be
+added to it.
+
+| Stage | p50 / p95 (ms) | n |
+| --- | ---: | ---: |
+| Core index lookup | 0.011 / 0.012 | 4 |
+| Runtime facts | 0.005 / 0.013 | 4 |
+| Core serialization | 0.075 / 0.084 | 4 |
+| Core handler | 0.177 / 0.219 | 4 |
+| Endpoint filter (`task-op`) | 0.381 / 0.439 | 4 |
+
+Decoded core bodies were 2374 and 2432 bytes. All four traced requests
+reported zero Git spawns and zero workspace scans. These values describe the
+new core route in an isolated Linux fixture, not the old detail route in the
+Dossier's historical stage table.
+
+The additive core response now emits `core-index`, `core-runtime`,
+`core-serialize` and `task-core` Server-Timing metrics. An opt-in
+`X-Task-Switch-Trace: 1` core read also returns
+`X-Task-Core-Git-Spawns` and `X-Task-Core-Workspace-Scans`; missing counters
+are distinct from measured zero. The legacy detail trace remains separate.
+The production-shaped .NET helper is marked `MachineBound` and uses the same
+interpolated p95 convention for handler, HTTP and traced HTTP timings. With
+`TASK_CORE_BENCH_FIXTURE` set on the designated host, the suite runs it before
+Playwright and enforces the
+opt-in trace overhead target of at most 1 ms at p95. It was not run without
+that fixture in this task worktree.
+
+No workstation capture or before/after comparison has been completed in this
+Linux task run, so the Dossier's historical unavailable cells remain unknown.
+The read-only Linux proxy diagnostic on 7 October 2026 reached Stable v0.9.4
+(`c076d2da98799a8b09c5e5d2562176ba1f2ddea8`) but the shared crash
+recovery overlay still covered the board. Preflight stopped before any switch;
+the saved raw capture and screenshot are a remote diagnostic, not a baseline.
+The overlay was not changed.
+
+The read-only API replay was repeated against the same Stable v0.9.4 through
+the Linux-to-Windows forward on 7 October 2026. It used 30 detail reads, ten
+unconditional grouped reads and ten fixed-validator conditional grouped
+attempts. All 30 detail reads returned 200. Detail `task-op` p50/p95 was
+532.961/2284.465 ms; full client p50/p95 was 570.877/2337.369 ms. These use
+linear interpolation on successful samples. The largest detail body was
+121291 decoded bytes. These are current remote API values, not the old v0.9.1
+population, not a browser core paint cohort and not a before/after saving.
+The repeat still exposes only `task-op` for the legacy detail route; it cannot
+fill the Dossier's previously unavailable internal-stage cells.
+
 Use at least 100 measured switches per cohort after five declared warmups.
 Keep board click, pager, back/forward, deep link, archive and long-history
 populations separate. Cover a ready backend with a cold client cache, a warm
