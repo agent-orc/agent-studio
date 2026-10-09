@@ -230,7 +230,8 @@ public sealed partial class CodexSignInCoordinator(
         if (journal is null) return Get(hostId, handle);
         var receipt = await journal.GetAsync(handle, ct);
         if (receipt is null || receipt.HostId != hostId || receipt.Method != "R3") return null;
-        if (receipt.Step == "installed") receipt = await journal.TryVerifyAsync(receipt, ct);
+        if (receipt.Step is "installed" or "recovery-required")
+            receipt = await journal.TryVerifyAsync(receipt, ct);
         if (receipt.Step == "complete")
         {
             if (_sessions.TryGetValue(handle, out var state))

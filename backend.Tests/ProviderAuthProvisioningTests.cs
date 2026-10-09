@@ -375,6 +375,36 @@ public sealed class ProviderAuthProvisioningTests
     }
 
     [Fact]
+    public async Task Expired_claude_renewal_can_complete_from_recovery_receipt()
+    {
+        var journal = new FakeRenewalJournal("R2");
+        var receipt = await journal.BeginAsync("agent-runner-01", "R2", "operator", null, default);
+        journal.ExpireIntoRecovery();
+        var coordinator = new ClaudeSignInCoordinator(new FakeClaudeDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        journal.RealProof = true;
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
+    public async Task Expired_codex_renewal_can_complete_from_recovery_receipt()
+    {
+        var journal = new FakeRenewalJournal("R3");
+        var receipt = await journal.BeginAsync("agent-runner-01", "R3", "operator", null, default);
+        journal.ExpireIntoRecovery();
+        var coordinator = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        journal.RealProof = true;
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
     public async Task ClaudeDeviceAuth_FakeSshTranscriptReturnsUrlAndAuditsOneTerminalOutcome()
     {
         var transport = new FakeClaudeDeviceAuthTransport();
@@ -519,6 +549,9 @@ public sealed class ProviderAuthProvisioningTests
         private ProviderRenewalReceiptDto? _receipt;
         public string? Step => _receipt?.Step;
         public bool RealProof { get; set; }
+
+        public void ExpireIntoRecovery()
+            => _receipt = _receipt! with { Deadline = _now.AddMinutes(-1), Step = "recovery-required" };
 
         public Task<ProviderRenewalReceiptDto> BeginAsync(string hostId, string requestedMethod,
             string actorId, string? key, CancellationToken ct)
