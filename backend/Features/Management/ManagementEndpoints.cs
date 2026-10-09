@@ -204,13 +204,30 @@ public static class ManagementEndpoints
             }
         });
         group.MapGet("/remote-hosts/provider-auth-renewals/{operationId}", async (
-            HttpContext context, string operationId, IProviderRenewalJournal renewal,
+            HttpContext context, string operationId, string? sshTarget,
+            IProviderAuthProvisioner provisioner, IProviderRenewalJournal renewal,
             IConfiguration configuration, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
             var receipt = await renewal.GetAsync(operationId, ct);
-            return receipt is null ? Results.NotFound() : Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
+            if (receipt is null) return Results.NotFound();
+            if (receipt.Method == "R8" && receipt.Step == "installed")
+            {
+                if (string.IsNullOrWhiteSpace(sshTarget)) return Results.Ok(receipt);
+                try
+                {
+                    var hostResult = await provisioner.FinalizePendingAsync(sshTarget, operationId, ct);
+                    if (hostResult is "recovery-required" or "rollback-restored")
+                        return Results.Ok(await renewal.AdvanceAsync(operationId, "recovery-required", ct));
+                    if (hostResult is not ("verified" or "started")) return Results.Ok(receipt);
+                }
+                catch (Exception)
+                {
+                    return Results.Ok(receipt);
+                }
+            }
+            return Results.Ok(await renewal.TryVerifyAsync(receipt, ct));
         });
         group.MapPost("/remote-hosts/{id}/codex-sign-in", async (
             HttpContext context,

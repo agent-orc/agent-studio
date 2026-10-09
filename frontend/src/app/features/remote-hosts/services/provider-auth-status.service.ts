@@ -103,11 +103,12 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  waitForRenewalCompletion(operationId: string, timeoutMs = 75_000): Observable<'complete' | 'recovery-required'> {
+  waitForRenewalCompletion(operationId: string, timeoutMs = 75_000, sshTarget?: string): Observable<'complete' | 'recovery-required'> {
     if (!this.http) throw new Error('Provider renewal verification requires the Studio HTTP client.');
     return timer(0, 2_000).pipe(
       switchMap(() => this.http!.get<{ step: string }>(
-        `/api/v1/management/remote-hosts/provider-auth-renewals/${encodeURIComponent(operationId)}`)),
+        `/api/v1/management/remote-hosts/provider-auth-renewals/${encodeURIComponent(operationId)}` +
+        (sshTarget ? `?sshTarget=${encodeURIComponent(sshTarget)}` : ''))),
       map(receipt => receipt.step),
       filter((step): step is 'complete' | 'recovery-required' =>
         step === 'complete' || step === 'recovery-required'),

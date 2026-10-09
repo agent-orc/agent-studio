@@ -64,11 +64,36 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("systemctl stop \"$unit\"", trap);
         Assert.Contains("/proc/$1/environ", trap);
         Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", trap);
-        Assert.Contains("if ((result == 0)); then\n    rm -f -- \"$rollback_file\"", trap);
+        Assert.Contains("if ((result == 0 && verified_all == 1)); then\n    rm -f -- \"$rollback_file\"", trap);
         Assert.Contains("for dropin in \"${created_dropins[@]}\"", trap);
         Assert.True(trap.IndexOf("/proc/$1/environ", StringComparison.Ordinal)
             < trap.IndexOf("provider-auth-rollback-restored", StringComparison.Ordinal));
         Assert.Contains("install -m 0600 -o root -g root \"$provider_auth_file\" \"$rollback_file\"", script);
+        Assert.Contains("install -m 0600 -o root -g root /dev/null \"$rollback_file\"", script);
+        Assert.True(script.IndexOf("verified_all=1", StringComparison.Ordinal) <
+            script.LastIndexOf("install_committed=1", StringComparison.Ordinal));
+        Assert.Contains("installed-awaiting-runner\\n%s\\n%s\\n%s\\n", script);
+        Assert.Contains("printf 'pending=%s\\n' \"$unit\"", script);
+    }
+
+    [Fact]
+    public void Pending_provisioning_keeps_copy_until_host_verifies_or_restores_every_unit()
+    {
+        var provision = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value",
+            new ProviderAuthRenewalFence("renewal_fixture", "generation-a"));
+        var finalizer = SshProviderAuthProvisioner.BuildPendingFinalizationScriptForTest("renewal_fixture");
+        Assert.Contains("if ((result == 0 && verified_all == 1))", provision);
+        Assert.Contains("\"$rollback_file\" \"$had_prior_file\"", provision);
+        Assert.Contains("printf 'pending=%s\\n' \"$unit\"", provision);
+        Assert.Contains("/proc/${pid}/environ", finalizer);
+        Assert.Contains("[[ \"$generation\" == \"$installed_generation\" ]]", finalizer);
+        Assert.True(finalizer.IndexOf("/proc/${pid}/environ", StringComparison.Ordinal) <
+            finalizer.LastIndexOf("rm -f -- \"$rollback_file\"", StringComparison.Ordinal));
+        Assert.Contains("trap recover ERR", finalizer);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", finalizer);
+        Assert.Contains("systemctl stop \"$unit\"", finalizer);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", finalizer);
     }
 
     [Fact]

@@ -127,7 +127,24 @@ export class RunnerSetupDialogComponent implements OnInit, OnDestroy {
         this.providerAuthBootstrapReady.set(!response.processEnvironmentVerified);
         this.providerAuthPhase.set('waiting');
         this.providerAuthDetail.set(response.detail);
-        if (!response.processEnvironmentVerified) return;
+        const awaitRenewal = () => {
+          if (!response.operationId) return;
+          this.providerAuthDetail.set('Waiting for real requests from both runner units.');
+          this.verificationSubscription = this.providerAuth.waitForRenewalCompletion(response.operationId, 75_000, sshTarget).subscribe({
+            next: step => {
+              this.providerAuthPhase.set(step === 'complete' ? 'ok' : 'unavailable');
+              this.providerAuthDetail.set(step === 'complete'
+                ? 'Both runner units verified the new provider generation with a real request.'
+                : 'The host renewal needs recovery before another credential can be issued.');
+            },
+            error: () => this.providerAuthDetail.set(
+              'The new generation is installed. Waiting for both runner units to complete a real request.'),
+          });
+        };
+        if (!response.processEnvironmentVerified) {
+          awaitRenewal();
+          return;
+        }
         this.verificationSubscription = this.providerAuth.waitForFreshProbe(
           'claude',
           [host.id, host.clientId, host.capacityHostId ?? '', host.name],
@@ -139,17 +156,7 @@ export class RunnerSetupDialogComponent implements OnInit, OnDestroy {
               this.providerAuthDetail.set(status.detail);
               return;
             }
-            this.providerAuthDetail.set('Waiting for real requests from both runner units.');
-            this.verificationSubscription = this.providerAuth.waitForRenewalCompletion(response.operationId).subscribe({
-              next: step => {
-                this.providerAuthPhase.set(step === 'complete' ? 'ok' : 'unavailable');
-                this.providerAuthDetail.set(step === 'complete'
-                  ? 'Both runner units verified the new provider generation with a real request.'
-                  : 'The host renewal needs recovery before another credential can be issued.');
-              },
-              error: () => this.providerAuthDetail.set(
-                'The new generation is installed. Waiting for both runner units to complete a real request.'),
-            });
+            awaitRenewal();
           },
           error: () => {
             this.providerAuthPhase.set('waiting');

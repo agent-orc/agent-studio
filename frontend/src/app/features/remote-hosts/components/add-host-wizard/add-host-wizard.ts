@@ -125,7 +125,7 @@ export class AddHostWizardComponent implements OnDestroy {
         this.providerAuthDetail.set(response.detail);
         if (response.operationId) {
           this.providerAuthSubscription = this.providerAuth.waitForRenewalCompletion(
-            response.operationId, 15 * 60_000).subscribe({
+            response.operationId, 15 * 60_000, sshTarget).subscribe({
             next: step => {
               this.providerAuthPhase.set(step === 'complete' ? 'ok' : 'unavailable');
               this.providerAuthDetail.set(step === 'complete'

@@ -73,7 +73,7 @@ describe('AddHostWizardComponent renewal verification', () => {
     TestBed.inject(HttpTestingController).expectOne('/api/v1/management/remote-hosts/provider-auth')
       .flush({ operationId: 'renewal_fixture', processEnvironmentVerified: true,
         detail: 'Installed; awaiting proof.' });
-    expect(wait).toHaveBeenCalledWith('renewal_fixture', 15 * 60_000);
+    expect(wait).toHaveBeenCalledWith('renewal_fixture', 15 * 60_000, 'agent@runner-02');
     expect(component.providerAuthPhase()).toBe('waiting');
     expect(component.claudeAuthed()).toBe(false);
     proof.next('complete');

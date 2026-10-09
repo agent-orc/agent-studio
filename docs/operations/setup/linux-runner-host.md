@@ -523,7 +523,13 @@ generation through the same two-unit check before another login starts.
 
 Claude environment renewal writes an opaque generation marker beside the token
 in `provider-auth.env`; no token-derived hash is used as a generation. The host
-keeps a protected `root:agent 0640` rollback copy while verification is pending. If `runner.env`
+keeps a protected `root:root 0600` rollback copy while verification is pending.
+For API-key provisioning, a pending Review restart writes a host-only
+`installed-awaiting-runner` receipt with the copy path and pending units. The
+next status poll retries the guarded restart and checks both live unit process
+environments before deleting the copy. A failed check restores and verifies the
+prior generation; if that cannot be proved, it stops affected units and marks
+the host receipt `recovery-required`. If `runner.env`
 still has a provider value, identify each daemon's effective source first, then
 remove the duplicate through the owned host configuration flow after both units
 and a real request prove the shared file. Do not infer token expiry from a
