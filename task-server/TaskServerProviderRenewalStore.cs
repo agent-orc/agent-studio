@@ -189,6 +189,55 @@ public sealed partial class TaskServerStore
                 EvidenceRefs = request.EvidenceRefs.Count > 0 ? request.EvidenceRefs : previous.EvidenceRefs,
                 UpdatedAt = UtcNow,
             };
+            if (request.Step == "complete")
+            {
+                var payload = await ScalarAsync(connection, """
+                    SELECT payload_json FROM credential_registry
+                     WHERE installation_id = $installation AND host_id = $host
+                       AND credential_id = $credential AND generation = $expected;
+                    """, ct, transaction, ("$installation", previous.InstallationId),
+                    ("$host", previous.HostId), ("$credential", previous.CredentialId),
+                    ("$expected", previous.ExpectedGeneration)) as string;
+                if (payload is null || result.ObservedGeneration is null)
+                    throw new TaskServerConflictException("stale-credential-generation",
+                        "Credential generation changed before renewal completed.");
+                var current = JsonSerializer.Deserialize<CredentialRegistryRecordDto>(payload, CredentialRegistryJson)!;
+                var unknownReasons = new Dictionary<string, string>(current.UnknownReasons)
+                {
+                    ["expiresAt"] = "not-observed-for-new-generation",
+                    ["rotationDueAt"] = "not-observed-for-new-generation",
+                    ["accessTokenExpiresAt"] = "not-observed-for-new-generation",
+                    ["nextProbeAt"] = "not-observed-for-new-generation",
+                };
+                var advanced = current with {
+                    Generation = result.ObservedGeneration,
+                    Supersedes = previous.ExpectedGeneration,
+                    LastOperationId = operationId,
+                    LastRenewedBy = actorId,
+                    LastRenewedAt = UtcNow,
+                    LastVerifiedAt = UtcNow,
+                    LastRealSuccessAt = UtcNow,
+                    LastOutcome = "healthy",
+                    ExpiryKnowledge = "unknown",
+                    ExpiresAt = null,
+                    RotationDueAt = null,
+                    AccessTokenExpiresAt = null,
+                    NextProbeAt = null,
+                    UnknownReasons = unknownReasons,
+                };
+                if (await ExecuteAsync(connection, """
+                    UPDATE credential_registry SET generation = $generation, payload_json = $payload,
+                        observed_at = $observed, updated_at = $updated
+                     WHERE installation_id = $installation AND host_id = $host
+                       AND credential_id = $credential AND generation = $expected;
+                    """, ct, transaction, ("$generation", advanced.Generation),
+                    ("$payload", JsonSerializer.Serialize(advanced, CredentialRegistryJson)),
+                    ("$observed", Iso(UtcNow)), ("$updated", Iso(UtcNow)),
+                    ("$installation", previous.InstallationId), ("$host", previous.HostId),
+                    ("$credential", previous.CredentialId), ("$expected", previous.ExpectedGeneration)) != 1)
+                    throw new TaskServerConflictException("stale-credential-generation",
+                        "Credential generation changed before renewal completed.");
+            }
             await WriteRenewalAsync(connection, transaction, result, ct);
             await AuditAsync(connection, transaction, actorId, "provider-renewal." + request.Step,
                 "credential", previous.CredentialId,
