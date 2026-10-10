@@ -247,11 +247,29 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("sha256sum \"$unit_store\"", normal);
         Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
         Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
-        Assert.Contains("if (( result == 0 )); then\n    rm -f \"$rollback_store\"", script);
+        Assert.Contains("if (( result == 0 )); then\n    if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
         Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
                     normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal));
         Assert.True(normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal) <
                     normal.IndexOf("claude-login-status=verified", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_native_zero_units_keep_the_store_pending()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        var normal = script[script.LastIndexOf("for unit in agent-host.service agent-runner.service agent-runner-review.service; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("installed-awaiting-runner", normal);
+        Assert.Contains("\"$rollback_store\" \"$new_store_digest\" \"$published_generation\" >\"$receipt_file\"", normal);
+        Assert.Contains("if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.Contains("if (( ! journaled )); then exit 45; fi", script);
+        Assert.True(normal.IndexOf("verified_count=$((verified_count + 1))", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-login-status=verified", StringComparison.Ordinal));
+        Assert.Contains("echo 'claude-login-status=verified'\nelse\n  if (( ! journaled )); then exit 45; fi\n  printf 'installed-awaiting-runner", normal);
     }
 
     [Fact]
@@ -267,6 +285,11 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("claude-login-status=recovery-required", script);
         Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
         Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("claude-login-status=installed-awaiting-runner", normal);
+        Assert.Contains("if (( verified_all )); then", script);
     }
 
     [Fact]
@@ -302,11 +325,29 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("sha256sum \"$unit_store\"", normal);
         Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
         Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
-        Assert.Contains("if (( result == 0 )); then\n    rm -f \"$rollback_store\"", script);
+        Assert.Contains("if (( result == 0 )); then\n    if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
         Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
                     normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal));
         Assert.True(normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal) <
                     normal.IndexOf("codex-login-status=verified", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Codex_zero_units_keep_the_store_pending()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("installed-awaiting-runner", normal);
+        Assert.Contains("\"$rollback_store\" \"$new_store_digest\" \"$published_generation\" >\"$receipt_file\"", normal);
+        Assert.Contains("if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.Contains("if (( ! journaled )); then exit 45; fi", script);
+        Assert.True(normal.IndexOf("verified_count=$((verified_count + 1))", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-login-status=verified", StringComparison.Ordinal));
+        Assert.Contains("echo 'codex-login-status=verified'\nelse\n  if (( ! journaled )); then exit 45; fi\n  printf 'installed-awaiting-runner", normal);
     }
 
     [Fact]
@@ -410,6 +451,40 @@ public sealed class ProviderAuthProvisioningTests
             new RecordingProviderSignInAudit(), journal);
         Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default))?.State);
         Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
+    public async Task Missing_codex_units_leave_the_durable_renewal_installed_and_pending()
+    {
+        var transport = new FakeCodexDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R3");
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "missing-units"), "operator", default);
+
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+    }
+
+    [Fact]
+    public async Task Missing_claude_units_leave_the_durable_renewal_installed_and_pending()
+    {
+        var transport = new FakeClaudeDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R2");
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "missing-units", "native"), "operator", default);
+
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
     }
 
     [Fact]

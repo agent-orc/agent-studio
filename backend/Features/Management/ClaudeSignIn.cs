@@ -31,7 +31,8 @@ public sealed class ClaudeSignInException(int statusCode, string code, string me
 public sealed record ClaudeDeviceAuthTransportResult(
     int ExitCode,
     bool LoginStatusVerified,
-    IReadOnlyList<string> RestartedServices);
+    IReadOnlyList<string> RestartedServices,
+    bool InstallationPending = false);
 
 public sealed class ClaudeDeviceAuthTransportSession(
     Task<ClaudeDeviceAuthTransportResult> completion,
@@ -287,7 +288,7 @@ public sealed partial class ClaudeSignInCoordinator(
         try
         {
             var result = await state.Transport!.Completion.ConfigureAwait(false);
-            if (result.ExitCode == 0 && result.LoginStatusVerified)
+            if (result.ExitCode == 0 && (result.LoginStatusVerified || result.InstallationPending))
             {
                 if (journal is not null)
                 {
@@ -520,7 +521,8 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
                     .Select(line => line["claude-probe-unit=".Length..])
                     .Where(unit => unit.Length > 0)
                     .Distinct(StringComparer.Ordinal)
-                    .ToArray());
+                    .ToArray(),
+                markers.Contains("claude-login-status=installed-awaiting-runner", StringComparer.Ordinal));
         }
         catch (OperationCanceledException)
         {
@@ -542,6 +544,7 @@ public sealed class SshClaudeDeviceAuthTransport : IClaudeDeviceAuthTransport
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             if (line == "claude-login-status=verified"
+                || line == "claude-login-status=installed-awaiting-runner"
                 || line.StartsWith("claude-probe-unit=", StringComparison.Ordinal))
             {
                 safeMarkers.Add(line);
@@ -590,6 +593,11 @@ if pgrep -u "$(id -u)" -x claude >/dev/null 2>&1; then
   echo 'claude-login-status=workers-busy'
   exit 73
 fi
+journaled=1
+if [[ -z "$operation_id" ]]; then
+  journaled=0
+  operation_id="local_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+fi
 if [[ -n "$operation_id" ]]; then
   receipt_dir="$HOME/.local/state/agent-studio/provider-renewal"
   mkdir -p "$receipt_dir"
@@ -609,6 +617,7 @@ env_tmp=$(mktemp)
 provider_auth_file=/etc/agent-runner/provider-auth.env
 rollback_file=
 install_committed=0
+verified_all=0
 had_prior_file=0
 units=()
 if sudo -n systemctl cat agent-host.service >/dev/null 2>&1; then
@@ -625,7 +634,9 @@ rollback_environment_on_failure() {
   trap '' HUP INT TERM
   rm -f "$out_tmp" "$env_tmp"
   if (( result == 0 )); then
-    [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
+    if (( verified_all )); then
+      [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
+    fi
     exit 0
   fi
   if (( ! install_committed )); then
@@ -669,6 +680,7 @@ rollback_environment_on_failure() {
     echo 'claude-login-status=recovery-required'
   else
     echo 'claude-login-status=rollback-restored'
+    [[ -z "${receipt_file:-}" ]] || printf 'rollback-restored\n' >"$receipt_file"
     [[ -z "$rollback_file" ]] || sudo -n rm -f -- "$rollback_file"
   fi
   exit "$result"
@@ -703,6 +715,8 @@ if sudo -n test -f "$provider_auth_file"; then
   had_prior_file=1
   sudo -n awk -F= '$1 != "CLAUDE_CODE_OAUTH_TOKEN" && $1 != "ANTHROPIC_API_KEY" && $1 != "AGENT_STUDIO_CLAUDE_AUTH_GENERATION" { print }' \
     "$provider_auth_file" >"$env_tmp" || exit 74
+else
+  sudo -n install -m 0600 -o root -g root /dev/null "$rollback_file" || exit 74
 fi
 printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$token" >>"$env_tmp" || exit 74
 printf 'AGENT_STUDIO_CLAUDE_AUTH_GENERATION=%s\n' "$generation" >>"$env_tmp" || exit 74
@@ -718,6 +732,8 @@ if ! sudo -n bash -c 'set -a; source /etc/agent-runner/provider-auth.env; set +a
 fi
 unset token
 
+expected_units=2
+verified_count=0
 for unit in "${units[@]}"; do
   if [[ "$unit" == agent-runner-review.service ]]; then
     sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
@@ -729,9 +745,26 @@ for unit in "${units[@]}"; do
   if ! sudo -n bash -c 'set -a; source /etc/agent-runner/provider-auth.env; set +a; while IFS= read -r -d "" entry; do [[ "$entry" == "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" ]] && exit 0; done <"/proc/$1/environ"; exit 1' bash "$pid"; then
     exit 44
   fi
+  verified_count=$((verified_count + 1))
   printf 'claude-probe-unit=%s\n' "$unit"
 done
-echo 'claude-login-status=verified'
+if (( verified_count == expected_units && verified_count > 0 )); then
+  printf 'verified\n' >"$receipt_file" || exit 74
+  verified_all=1
+  echo 'claude-login-status=verified'
+else
+  if (( ! journaled )); then exit 45; fi
+  printf 'installed-awaiting-runner\n%s\n%s\n' \
+    "$rollback_file" "$generation" >"$receipt_file" || exit 74
+  if ! sudo -n systemctl cat agent-host.service >/dev/null 2>&1 \
+      && ! sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
+    printf 'pending=coding-runner\n' >>"$receipt_file" || exit 74
+  fi
+  if ! sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
+    printf 'pending=agent-runner-review.service\n' >>"$receipt_file" || exit 74
+  fi
+  echo 'claude-login-status=installed-awaiting-runner'
+fi
 """;
 
     // Native login keeps the CLI's refreshable store on this host. Existing
@@ -762,6 +795,11 @@ if pgrep -u "$(id -u)" -x claude >/dev/null 2>&1; then
   echo 'claude-login-status=workers-busy'
   exit 73
 fi
+journaled=1
+if [[ -z "$operation_id" ]]; then
+  journaled=0
+  operation_id="local_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+fi
 if [[ -n "$operation_id" ]]; then
   receipt_dir="$HOME/.local/state/agent-studio/provider-renewal"
   mkdir -p "$receipt_dir"
@@ -784,6 +822,7 @@ rollback_store=$(mktemp "$HOME/.claude/.agent-studio-rollback.XXXXXXXX") || {
   echo 'claude-login-status=recovery-required'; exit 74;
 }
 had_prior_store=0
+verified_all=0
 if [[ -f "$credential_store" ]]; then
   if ! cp -p -- "$credential_store" "$rollback_store" || ! chmod 0600 "$rollback_store"; then
     rm -f "$rollback_store"
@@ -798,7 +837,7 @@ rollback_native_on_failure() {
   trap '' HUP INT TERM
   rm -f "$out_tmp"
   if (( result == 0 )); then
-    rm -f "$rollback_store"
+    if (( verified_all )); then rm -f "$rollback_store"; fi
     exit 0
   fi
   # A browser timeout or cancellation before replacement needs no rebind.
@@ -871,6 +910,7 @@ rollback_native_on_failure() {
     echo 'claude-login-status=recovery-required'
   else
     echo 'claude-login-status=rollback-restored'
+    [[ -z "${receipt_file:-}" ]] || printf 'rollback-restored\n' >"$receipt_file"
     rm -f "$rollback_store"
   fi
   exit "$result"
@@ -919,6 +959,12 @@ if ! command -v agent-host >/dev/null 2>&1 \
   echo 'claude-login-status=rebind-required'
   exit 43
 fi
+expected_units=2
+if sudo -n systemctl cat agent-host.service >/dev/null 2>&1 \
+    && sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
+  expected_units=3
+fi
+verified_count=0
 for unit in agent-host.service agent-runner.service agent-runner-review.service; do
   sudo -n systemctl cat "$unit" >/dev/null 2>&1 || continue
   if [[ "$unit" == agent-runner-review.service ]]; then
@@ -946,8 +992,25 @@ for unit in agent-host.service agent-runner.service agent-runner-review.service;
   ' bash "$pid" "$credential_store" "$new_store_digest" "$published_generation"; then
     exit 44
   fi
+  verified_count=$((verified_count + 1))
   printf 'claude-probe-unit=%s\n' "$unit"
 done
-echo 'claude-login-status=verified'
+if (( verified_count == expected_units && verified_count > 0 )); then
+  printf 'verified\n' >"$receipt_file" || exit 74
+  verified_all=1
+  echo 'claude-login-status=verified'
+else
+  if (( ! journaled )); then exit 45; fi
+  printf 'installed-awaiting-runner\n%s\n%s\n%s\n' \
+    "$rollback_store" "$new_store_digest" "$published_generation" >"$receipt_file" || exit 74
+  if ! sudo -n systemctl cat agent-host.service >/dev/null 2>&1 \
+      && ! sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
+    printf 'pending=coding-runner\n' >>"$receipt_file" || exit 74
+  fi
+  if ! sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
+    printf 'pending=agent-runner-review.service\n' >>"$receipt_file" || exit 74
+  fi
+  echo 'claude-login-status=installed-awaiting-runner'
+fi
 """;
 }

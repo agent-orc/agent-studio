@@ -567,6 +567,11 @@ Native Claude renewal requires a changed local store after successful CLI login
 and status verification. The host advances its opaque timestamp generation if
 the CLI rewrites the file within the old timestamp millisecond; an unchanged
 store remains unresolved and cannot complete the Task Server receipt.
+The host reports local verification only after the expected Coding and Review
+units pass live source, digest and generation checks. If a unit is absent, a
+centrally journaled login records `installed-awaiting-runner`, the missing unit
+and the protected rollback path, and retains the copy. A login without a
+central operation rolls back instead of leaving an untracked pending copy.
 Before browser login, the host saves a mode-preserving local copy of the prior
 native Claude store. If login, rebinding or a unit restart fails after the store
 changes, the host atomically restores that copy, rebinds drained consumers and

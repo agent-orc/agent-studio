@@ -32,7 +32,8 @@ public sealed class CodexSignInException(int statusCode, string code, string mes
 public sealed record CodexDeviceAuthTransportResult(
     int ExitCode,
     bool LoginStatusVerified,
-    IReadOnlyList<string> RestartedServices);
+    IReadOnlyList<string> RestartedServices,
+    bool InstallationPending = false);
 
 public sealed class CodexDeviceAuthTransportSession(
     Task<CodexDeviceAuthTransportResult> completion,
@@ -300,7 +301,7 @@ public sealed partial class CodexSignInCoordinator(
         try
         {
             var result = await state.Transport!.Completion.ConfigureAwait(false);
-            if (result.ExitCode == 0 && result.LoginStatusVerified)
+            if (result.ExitCode == 0 && (result.LoginStatusVerified || result.InstallationPending))
             {
                 if (journal is not null)
                 {
@@ -532,7 +533,8 @@ public sealed class SshCodexDeviceAuthTransport : ICodexDeviceAuthTransport
                     .Select(line => line["codex-probe-unit=".Length..])
                     .Where(unit => unit.Length > 0)
                     .Distinct(StringComparer.Ordinal)
-                    .ToArray());
+                    .ToArray(),
+                markers.Contains("codex-login-status=installed-awaiting-runner", StringComparer.Ordinal));
         }
         catch (OperationCanceledException)
         {
@@ -554,6 +556,7 @@ public sealed class SshCodexDeviceAuthTransport : ICodexDeviceAuthTransport
         while (await reader.ReadLineAsync(cancellationToken) is { } line)
         {
             if (line == "codex-login-status=verified"
+                || line == "codex-login-status=installed-awaiting-runner"
                 || line.StartsWith("codex-probe-unit=", StringComparison.Ordinal))
                 safeMarkers.Add(line);
             onOutput(line);
@@ -594,6 +597,11 @@ if pgrep -u "$(id -u)" -x codex >/dev/null 2>&1; then
   echo 'codex-login-status=workers-busy'
   exit 73
 fi
+journaled=1
+if [[ -z "$operation_id" ]]; then
+  journaled=0
+  operation_id="local_$(tr -d '-' </proc/sys/kernel/random/uuid)"
+fi
 if [[ -n "$operation_id" ]]; then
   receipt_dir="$HOME/.local/state/agent-studio/provider-renewal"
   mkdir -p "$receipt_dir"
@@ -613,6 +621,7 @@ rollback_store=$(mktemp "$HOME/.codex/.agent-studio-rollback.XXXXXXXX") || {
   echo 'codex-login-status=recovery-required'; exit 74;
 }
 had_prior_store=0
+verified_all=0
 previous_store_digest=absent
 previous_store_generation=absent
 if [[ -f "$credential_store" ]]; then
@@ -631,7 +640,7 @@ rollback_codex_on_failure() {
   trap '' HUP INT TERM
   rm -f "$out_tmp"
   if (( result == 0 )); then
-    rm -f "$rollback_store"
+    if (( verified_all )); then rm -f "$rollback_store"; fi
     exit 0
   fi
   if (( had_prior_store )) && [[ -f "$credential_store" ]] \
@@ -699,6 +708,7 @@ rollback_codex_on_failure() {
     echo 'codex-login-status=recovery-required'
   else
     rm -f "$rollback_store"
+    [[ -z "${receipt_file:-}" ]] || printf 'rollback-restored\n' >"$receipt_file"
     echo 'codex-login-status=rollback-restored'
   fi
   exit "$result"
@@ -756,6 +766,8 @@ fi
 if sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
   units+=(agent-runner-review.service)
 fi
+expected_units=2
+verified_count=0
 for unit in "${units[@]}"; do
   if [[ "$unit" == agent-runner-review.service ]]; then
     sudo -n /usr/local/sbin/agent-runner-deploy restart-review || exit 44
@@ -782,8 +794,25 @@ for unit in "${units[@]}"; do
   ' bash "$pid" "$credential_store" "$new_store_digest" "$published_generation"; then
     exit 44
   fi
+  verified_count=$((verified_count + 1))
   printf 'codex-probe-unit=%s\n' "$unit"
 done
-echo 'codex-login-status=verified'
+if (( verified_count == expected_units && verified_count > 0 )); then
+  printf 'verified\n' >"$receipt_file" || exit 74
+  verified_all=1
+  echo 'codex-login-status=verified'
+else
+  if (( ! journaled )); then exit 45; fi
+  printf 'installed-awaiting-runner\n%s\n%s\n%s\n' \
+    "$rollback_store" "$new_store_digest" "$published_generation" >"$receipt_file" || exit 74
+  if ! sudo -n systemctl cat agent-host.service >/dev/null 2>&1 \
+      && ! sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
+    printf 'pending=coding-runner\n' >>"$receipt_file" || exit 74
+  fi
+  if ! sudo -n systemctl cat agent-runner-review.service >/dev/null 2>&1; then
+    printf 'pending=agent-runner-review.service\n' >>"$receipt_file" || exit 74
+  fi
+  echo 'codex-login-status=installed-awaiting-runner'
+fi
 """;
 }
