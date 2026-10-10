@@ -11,8 +11,33 @@ import { ProjectLookupService } from './services/project-lookup.service';
 import { studioTabKey } from './features/studio-shell';
 import { TaskSelectionService, TriageController } from './features/task-detail/runtime';
 import { ensureBrowserStorage } from '../testing/browser-storage';
+import { OrchestratorFeedStore } from './features/orchestrator/state/orchestrator-feed.store';
 
 ensureBrowserStorage();
+
+describe('App workspace Feed navigation', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('focuses the feed tab, marks alerts seen, and never opens the project overlay', () => {
+    localStorage.removeItem('atp.studio.tabs.v1');
+    TestBed.configureTestingModule({
+      providers: [App, provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    const app = TestBed.inject(App);
+    const feed = TestBed.inject(OrchestratorFeedStore);
+    const markSeen = vi.spyOn(feed, 'markAlertsSeen');
+
+    app.openWorkspaceFeed();
+    expect(app.studioTabState.activeTab()).toEqual({ kind: 'feed' });
+    expect(app.orchFeedProject()).toBeNull();
+    expect(markSeen).toHaveBeenCalledOnce();
+
+    app.openWorkspaceFeed();
+    expect(app.studioTabState.tabs().filter(tab => tab.kind === 'feed')).toHaveLength(1);
+    expect(app.orchFeedProject()).toBeNull();
+    expect(markSeen).toHaveBeenCalledTimes(2);
+  });
+});
 
 /**
  * Cycle 11c smoke. Compiles + instantiates the standalone component.

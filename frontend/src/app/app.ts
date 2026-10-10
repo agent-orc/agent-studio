@@ -1595,10 +1595,9 @@ export class App implements OnInit, OnDestroy {
     this.orchFeedProject.set(null);
   }
 
-  /** Tooltip for the toolbar button; shows which project the feed will open for. */
-  orchFeedTooltip(): string {
-    const project = this.pickOrchFeedProject();
-    return project ? `Open orchestrator feed for "${project}"` : 'No project selected';
+  openWorkspaceFeed(): void {
+    this.orchestratorFeedStore.markAlertsSeen();
+    this.studioTabState.open({ kind: 'feed' });
   }
 
   /**
