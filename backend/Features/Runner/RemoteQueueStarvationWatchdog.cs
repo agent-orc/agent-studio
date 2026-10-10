@@ -46,7 +46,8 @@ public static class RemoteQueueStarvationPolicy
         IEnumerable<TaskInfo> tasks,
         Func<string, ProjectSettings> projectSettings,
         TaskReferenceIndex references,
-        IEnumerable<ClientIdentity> runners)
+        IEnumerable<ClientIdentity> runners,
+        bool allowsLocalCoding = false)
     {
         var liveRunners = runners
             .Where(runner => string.Equals(
@@ -72,7 +73,9 @@ public static class RemoteQueueStarvationPolicy
             .Where(task =>
             {
                 var settings = projectSettings(task.ProjectName);
-                return ProjectExecutionPolicy.ResolveExecutionLocation(settings) != ExecutionLocations.Local
+                var location = ProjectExecutionPolicy.ResolveExecutionLocation(settings);
+                return (location != ExecutionLocations.Local
+                        || (!allowsLocalCoding && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
                        && ProjectExecutionPolicy.AllowsAutomaticPickup(settings)
                        && AgentTypes.IsAutoPickupEligible(task.Agent)
                        && !TaskSlugs.IsHumanDecisionNeeded(task.Id)
@@ -92,8 +95,12 @@ public static class RemoteQueueStarvationPolicy
 
         var items = routedReadyTasks
             .Select(task => (Task: task, Gate: BuildProfileGate.Evaluate(
-                projectSettings(task.ProjectName).BuildProfile)))
+                projectSettings(task.ProjectName).BuildProfile),
+                LocalPlacementBlocked: ProjectExecutionPolicy.ResolveExecutionLocation(projectSettings(task.ProjectName))
+                    == ExecutionLocations.Local && !allowsLocalCoding
+                    && WorktreeRunPolicy.RequiresWorktree(task.Mode, false)))
             .Where(candidate => !candidate.Gate.AllowsPickup
+                           || candidate.LocalPlacementBlocked
                            || candidate.Task.RemoteDispatchRejection is not null
                            || (claimProgressStalled
                                && now - candidate.Task.EnteredLaneAt.ToUniversalTime() >= threshold))
@@ -106,8 +113,11 @@ public static class RemoteQueueStarvationPolicy
                 Title = candidate.Task.Title,
                 EnteredLaneAt = candidate.Task.EnteredLaneAt,
                 LastRejection = candidate.Task.RemoteDispatchRejection,
-                BlockReasonCode = candidate.Gate.AllowsPickup ? null : "build-profile-gate",
-                BlockReason = candidate.Gate.AllowsPickup ? null : candidate.Gate.Reason,
+                BlockReasonCode = candidate.LocalPlacementBlocked ? RemoteExecutionRequirement.Code
+                    : candidate.Gate.AllowsPickup ? null : "build-profile-gate",
+                BlockReason = candidate.LocalPlacementBlocked
+                    ? $"Project {candidate.Task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator."
+                    : candidate.Gate.AllowsPickup ? null : candidate.Gate.Reason,
             })
             .ToList();
         var hasRejections = items.Any(item => item.LastRejection is not null);
@@ -116,7 +126,7 @@ public static class RemoteQueueStarvationPolicy
         {
             Active = items.Count > 0
                      && (availableSlots > 0 || items.Any(item =>
-                         string.Equals(item.BlockReasonCode, "build-profile-gate", StringComparison.Ordinal))),
+                         item.BlockReasonCode is "build-profile-gate" or RemoteExecutionRequirement.Code)),
             WaitingTaskCount = items.Count,
             AvailableSlots = availableSlots,
             ThresholdMinutes = Math.Max(1, (int)Math.Ceiling(threshold.TotalMinutes)),
@@ -201,6 +211,7 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
     private readonly ClientIdentityStore _clients;
     private readonly IConfiguration _configuration;
     private readonly ILogger<RemoteQueueStarvationWatchdog> _logger;
+    private readonly TaskRunnerService? _runner;
     private readonly object _gate = new();
     private RemoteQueueStarvationSnapshot _current = new() { ObservedAt = DateTime.UtcNow };
     private string? _warningSignature;
@@ -211,13 +222,15 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
         ProjectSettingsService settings,
         ClientIdentityStore clients,
         IConfiguration configuration,
-        ILogger<RemoteQueueStarvationWatchdog> logger)
+        ILogger<RemoteQueueStarvationWatchdog> logger,
+        TaskRunnerService? runner = null)
     {
         _scanner = scanner;
         _settings = settings;
         _clients = clients;
         _configuration = configuration;
         _logger = logger;
+        _runner = runner;
     }
 
     public RemoteQueueStarvationSnapshot Current
@@ -240,7 +253,8 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             snapshot.Live,
             _settings.Get,
             snapshot.References,
-            _clients.ListAll());
+            _clients.ListAll(),
+            _runner?.AllowsLocalCoding == true);
 
         lock (_gate)
         {
@@ -296,18 +310,20 @@ public sealed class RemoteQueueStarvationWatchdog : BackgroundService
             return;
         }
 
-        var signature = string.Join(',', next.Items.Select(item => item.TaskKey));
+        var signature = string.Join(',', next.Items.Select(item => $"{item.TaskKey}:{item.BlockReasonCode}:{item.BlockReason}"));
         var repeatDue = _lastWarningAt is null || now - _lastWarningAt >= TimeSpan.FromMinutes(30);
         if (string.Equals(signature, _warningSignature, StringComparison.Ordinal) && !repeatDue)
             return;
 
         _logger.LogWarning(
-            "remote-ready-starvation waitingTasks={WaitingTaskCount} availableSlots={AvailableSlots} oldestEnteredLaneAt={OldestEnteredLaneAt} lastSuccessfulClaimAt={LastSuccessfulClaimAt} rejectedTasks={RejectedTaskCount}",
+            "remote-ready-starvation waitingTasks={WaitingTaskCount} availableSlots={AvailableSlots} oldestEnteredLaneAt={OldestEnteredLaneAt} lastSuccessfulClaimAt={LastSuccessfulClaimAt} rejectedTasks={RejectedTaskCount} causes={Causes}",
             next.WaitingTaskCount,
             next.AvailableSlots,
             next.OldestEnteredLaneAt,
             next.LastSuccessfulClaimAt,
-            next.Items.Count(item => item.LastRejection is not null));
+            next.Items.Count(item => item.LastRejection is not null),
+            string.Join("; ", next.Items.Where(item => item.BlockReason is not null)
+                .Select(item => $"{item.TaskKey}: {item.BlockReason}")));
         _warningSignature = signature;
         _lastWarningAt = now;
     }

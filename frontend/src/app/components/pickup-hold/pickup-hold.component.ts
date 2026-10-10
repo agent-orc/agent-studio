@@ -13,6 +13,7 @@ const MECHANISM_LABELS: Record<string, string> = {
   'epic-container': 'Epic container',
   'crash-backoff': 'Crash cooldown',
   'pickup-policy': 'Pickup policy',
+  'execution-placement': 'Execution placement',
 };
 
 export const PICKUP_HOLD_RESOLUTION_KINDS = {
@@ -30,6 +31,7 @@ export const PICKUP_HOLD_RESOLUTION_KINDS = {
   assignAgent: 'assign-agent',
   passIntake: 'pass-intake',
   decideEscalation: 'decide-escalation',
+  routeToRemoteRunner: 'route-to-remote-runner',
 } as const;
 
 export type PickupHoldResolutionKind =
@@ -57,6 +59,7 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
   'assign-agent': 'non-actionable',
   'pass-intake': 'non-actionable',
   'decide-escalation': 'non-actionable',
+  'route-to-remote-runner': 'non-actionable',
 };
 
 /**

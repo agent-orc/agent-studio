@@ -26,19 +26,25 @@ public sealed class PickupHoldSweep
     private readonly ILogger<PickupHoldSweep> _logger;
     private readonly TimeProvider _clock;
     private readonly AttemptAuthorityService? _attemptAuthority;
+    private readonly TaskRunnerService? _runners;
+    private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
 
     public PickupHoldSweep(
         TaskScannerService scanner,
         ProjectSettingsService projectSettings,
         ILogger<PickupHoldSweep> logger,
         TimeProvider? clock = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        TaskRunnerService? runners = null,
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
     {
         _scanner = scanner;
         _projectSettings = projectSettings;
         _logger = logger;
         _clock = clock ?? TimeProvider.System;
         _attemptAuthority = attemptAuthority;
+        _runners = runners;
+        _localCodingAdmission = localCodingAdmission;
     }
 
     /// <summary>
@@ -85,7 +91,11 @@ public sealed class PickupHoldSweep
                 IntakeEnabled: _projectSettings.Get(task.ProjectName).IntakeEnabled == true,
                 CrashBackoffUntilUtc: null,
                 Rejection: task.RemoteDispatchRejection,
-                NowUtc: now));
+                NowUtc: now,
+                ExecutionLocation: ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(task.ProjectName)),
+                AllowsLocalCoding: (_runners?.AllowsLocalCoding
+                    ?? _localCodingAdmission?.AllowsLocalCoding) == true,
+                SuggestedRemoteRunnerId: _runners?.SuggestedRemoteRunnerId));
             if (hold == null) continue;
 
             held.Add(new HeldPickupCard(
@@ -104,7 +114,9 @@ public sealed class PickupHoldSweep
 
     /// <summary>
     /// Runs the sweep once and writes the backlog to the log as one structured
-    /// line per held card plus a summary. Called at boot; a failure here must
+    /// line per held card plus a summary. Placement holds are logged by the
+    /// auto-pickup path once per Ready-lane stay, so the boot sweep omits their
+    /// individual lines. Called at boot; a failure here must
     /// never take the host down, so the caller wraps it.
     /// </summary>
     public IReadOnlyList<HeldPickupCard> RunOnce(CancellationToken ct = default)
@@ -124,6 +136,8 @@ public sealed class PickupHoldSweep
 
         foreach (var card in held)
         {
+            if (card.Hold.Mechanism == PickupHoldMechanisms.ExecutionPlacement)
+                continue;
             _logger.LogWarning(
                 "[taskboard] pickup-hold {Key} ({Project}, {Lane}): mechanism={Mechanism} unsatisfiable={Unsatisfiable} held={HeldDays:F1}d reason={Reason} waysOut={WaysOut}",
                 card.Key,

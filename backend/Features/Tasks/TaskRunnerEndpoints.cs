@@ -35,6 +35,8 @@ public static class TaskRunnerEndpoints
             }
             catch (TaskOperationException ex)
             {
+                if (ex.Message.StartsWith(RemoteExecutionRequirement.Code, StringComparison.Ordinal))
+                    return Results.Json(new { code = RemoteExecutionRequirement.Code, error = ex.Message }, statusCode: ex.Status);
                 return Results.Json(new { error = ex.Message }, statusCode: ex.Status);
             }
         }).WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Start);

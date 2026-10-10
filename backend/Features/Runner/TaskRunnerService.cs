@@ -92,6 +92,7 @@ public class TaskRunnerService : BackgroundService
     private readonly RemoteDispatchRejectionStore? _dispatchRejections;
     private readonly AgentStudio.Pipeline.FailureInterventionService? _failureInterventions;
     private readonly AgentStudio.Registry.IProjectUrlPortInspector? _projectUrlPortInspector;
+    private readonly ILocalCodingAdmissionPolicy? _localCodingAdmission;
     private readonly ConcurrentDictionary<string, ProjectRunner> _runners = new();
 
     /// <summary>
@@ -165,7 +166,8 @@ public class TaskRunnerService : BackgroundService
         QuotaAdmissionService? quotaAdmission = null,
         AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
-        RemoteDispatchRejectionStore? dispatchRejections = null)
+        RemoteDispatchRejectionStore? dispatchRejections = null,
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
     {
         _config = config;
         _logger = logger;
@@ -214,6 +216,7 @@ public class TaskRunnerService : BackgroundService
         _runLeases = runLeases;
         _runnerIdentity = runnerIdentity;
         _clients = clients;
+        _localCodingAdmission = localCodingAdmission;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _executionAdmission = executionAdmission;
@@ -402,7 +405,8 @@ public class TaskRunnerService : BackgroundService
                 failureInterventions: _failureInterventions,
                 projectUrls: registryProject?.Urls,
                 projectUrlPortInspector: _projectUrlPortInspector,
-                dispatchRejections: _dispatchRejections);
+                dispatchRejections: _dispatchRejections,
+                localCodingAdmission: _localCodingAdmission);
             runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
             runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
             _stuckLoopBudget = LoadStuckLoopBudget(_config);
@@ -674,6 +678,13 @@ public class TaskRunnerService : BackgroundService
         var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
         if (admission.Action == FollowUpAdmissionAction.Queue)
             return QueueFollowUp(info, jobId, watchPath, ContinueModes.Continue, prompt: string.Empty, admission);
+
+        if (ProjectExecutionPolicy.IsLocalExecution(_projectSettings.Get(info.ProjectName))
+            && !AllowsLocalCoding
+            && WorktreeRunPolicy.RequiresWorktree(info.Mode,
+                EpicRunPolicy.IsPlanningRun(info.Kind, RunIntent.ManualStart)))
+            throw new TaskOperationException(
+                RemoteExecutionRequirement.Code + ": " + RemoteExecutionRequirement.Message, 400);
 
         var cli = _router.Get(info.CliType);
         if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
@@ -1192,6 +1203,19 @@ public class TaskRunnerService : BackgroundService
         => !string.IsNullOrEmpty(projectName)
             && _projectSettings.Get(projectName).IntakeEnabled == true;
 
+    public bool AllowsLocalCoding => _localCodingAdmission?.AllowsLocalCoding == true;
+
+    public string ResolvePlacement(string projectName)
+        => ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(projectName));
+
+    public string? SuggestedRemoteRunnerId => _clients?.ListAll()
+        .Where(client => client.Kind != ClientIdentityKind.Retired
+            && !string.IsNullOrWhiteSpace(client.RunnerDaemonState)
+            && !string.Equals(client.Id, _runnerIdentity?.RunnerId, StringComparison.OrdinalIgnoreCase))
+        .Select(client => client.Id)
+        .Take(2)
+        .ToArray() is { Length: 1 } ids ? ids[0] : null;
+
     /// <summary>Build the canonical execution location from runtime ownership facts.</summary>
     public AgentStudio.Shared.TaskExecutionLocation ResolveExecutionLocation(
         AgentStudio.Shared.TaskInfo job,
@@ -1669,7 +1693,8 @@ public class TaskRunnerService : BackgroundService
             failureInterventions: _failureInterventions,
             projectUrls: registryProject?.Urls,
             projectUrlPortInspector: _projectUrlPortInspector,
-            dispatchRejections: _dispatchRejections);
+            dispatchRejections: _dispatchRejections,
+            localCodingAdmission: _localCodingAdmission);
         runner.ConfigureWatchdog(LoadWatchdogConfig(_config), PhaseBudgetTable.FromConfig(_config));
         runner.ConfigureCircuitBreaker(RunnerCircuitBreakerOptions.FromConfig(_config));
         runner.ConfigureStuckLoopBudget(LoadStuckLoopBudget(_config));

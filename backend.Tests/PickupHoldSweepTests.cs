@@ -171,7 +171,8 @@ public sealed class PickupHoldSweepTests : IDisposable
     private IReadOnlyList<HeldPickupCard> Sweep() => BuildSweep().Sweep();
 
     private PickupHoldSweep BuildSweep() =>
-        new(_scanner, _settings, NullLogger<PickupHoldSweep>.Instance, _clock);
+        new(_scanner, _settings, NullLogger<PickupHoldSweep>.Instance, _clock,
+            localCodingAdmission: AllowLocalCodingForTests.Instance);
 
     private void WriteJob(
         string watchPath,

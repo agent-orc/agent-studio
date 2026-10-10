@@ -41,7 +41,8 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         task["mode"] = taskMode;
         File.WriteAllText(taskPath, task.ToJsonString());
         var cli = new FailingCliService();
-        var runner = BuildRunner(cli, allowLocalCoding: false);
+        var logger = new CapturingLogger<ProjectRunner>();
+        var runner = BuildRunner(cli, logger: logger, allowLocalCoding: false);
         var readyFolder = Path.Combine(_watchPath, TaskStates.Ready, "remote-only");
         var originalTask = File.ReadAllText(Path.Combine(readyFolder, "task.json"));
 
@@ -49,6 +50,11 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
         {
             runner.SetMode("auto-continuous");
             await runner.TickAsync(CancellationToken.None);
+            await runner.TickAsync(CancellationToken.None);
+            Assert.Contains("local coding is disabled", runner.GetStatus().LastPickReason);
+            Assert.Single(logger.Entries.Where(entry => entry.Any(item =>
+                item.Key == "{OriginalFormat}"
+                && item.Value?.ToString()?.Contains("auto-pickup-rejected", StringComparison.Ordinal) == true)));
         }
         else
         {

@@ -1,11 +1,21 @@
 # Runner Domain Map
 
-Version: 2026-10-06
+Version: 2026-10-10
 Status: System-of-record map for runner-side changes.
 
 Use this when a change touches task pickup, active execution, post-run outcome
 policy, reissue behavior, crash recovery, supervisor loops, or runtime runner
 state.
+
+For a Ready coding card placed at `local` while `ILocalCodingAdmissionPolicy`
+denies local coding, `PickupHoldPolicy` projects an unsatisfiable
+`execution-placement` hold. The picker skips it before `RunCliAsync`, records
+the hold reason as `lastPickReason`, and logs one refusal per card and reason
+until the card leaves Ready. The queue-starvation view includes these cards
+even with zero remote slots. Route the project with
+`PUT /api/projects/{projectName}/execution-runner` and a remote runner ID;
+the system does not change placement automatically. The project settings
+projection exposes `localCodingAdmitted` for the placement warning.
 
 Prelaunch infrastructure faults use the per-card fingerprint budget described
 in the [Execution hosts runbook](../../operations/remote-hosts.md#prelaunch-infrastructure-failures).

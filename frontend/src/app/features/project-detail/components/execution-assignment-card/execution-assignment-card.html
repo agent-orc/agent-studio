@@ -12,6 +12,12 @@
     to another runner does not pause or resume its queue.
   </p>
 
+  @if (pickupMode() === 'auto' && selectedHostId() === 'local' && !localCodingAdmitted()) {
+    <p class="execution-card__placement-warning" role="alert" data-testid="local-coding-disabled-warning">
+      Local coding is disabled on this orchestrator. Ready coding tasks will wait until this project is routed to a remote runner.
+    </p>
+  }
+
   <fieldset class="execution-card__field" data-testid="project-pickup-mode-control">
     <legend>Pickup mode</legend>
     <div class="execution-card__mode-options">
