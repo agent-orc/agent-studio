@@ -45,6 +45,8 @@ public sealed class CodexDeviceAuthTransportSession(
 
 public interface ICodexDeviceAuthTransport
 {
+    Task<string> FinalizePendingAsync(string sshTarget, string operationId,
+        CancellationToken cancellationToken) => Task.FromResult("pending");
     CodexDeviceAuthTransportSession Start(
         string sshTarget,
         Action<string> onOutput,
@@ -133,6 +135,7 @@ public sealed partial class CodexSignInCoordinator(
         var state = new SessionState(
             handle,
             normalizedHost,
+            request.SshTarget.Trim(),
             actor,
             now,
             now.Add(SessionTimeout));
@@ -226,11 +229,30 @@ public sealed partial class CodexSignInCoordinator(
     }
 
     public async Task<CodexSignInStatusResponse?> GetAsync(
-        string hostId, string handle, CancellationToken ct)
+        string hostId, string handle, CancellationToken ct, string? sshTarget = null)
     {
         if (journal is null) return Get(hostId, handle);
         var receipt = await journal.GetAsync(handle, ct);
         if (receipt is null || receipt.HostId != hostId || receipt.Method != "R3") return null;
+        if (receipt.Step is "installed" or "recovery-required")
+        {
+            var target = _sessions.TryGetValue(handle, out var session) ? session.SshTarget
+                : !string.IsNullOrWhiteSpace(sshTarget) ? sshTarget : hostId;
+            string hostResult;
+            try { hostResult = await transport.FinalizePendingAsync(target, handle, ct); }
+            catch (Exception) when (!ct.IsCancellationRequested) { hostResult = "pending"; }
+            if (hostResult is "rollback-restored" or "recovery-required")
+            {
+                if (receipt.Step != "recovery-required")
+                    receipt = await journal.AdvanceAsync(handle, "recovery-required", ct);
+                return new(handle, "failed", "Host renewal needs recovery before another login can start.",
+                    receipt.UpdatedAt, receipt.Deadline, receipt.UpdatedAt);
+            }
+            else if (hostResult != "verified")
+                return new(handle, receipt.Step == "recovery-required" ? "failed" : "pending",
+                    "Host renewal is awaiting live generation verification from both runner units.",
+                    receipt.UpdatedAt, receipt.Deadline, null);
+        }
         if (receipt.Step is "installed" or "recovery-required")
             receipt = await journal.TryVerifyAsync(receipt, ct);
         if (receipt.Step == "complete")
@@ -418,6 +440,7 @@ public sealed partial class CodexSignInCoordinator(
     private sealed class SessionState(
         string handle,
         string hostId,
+        string sshTarget,
         string actor,
         DateTime requestedAt,
         DateTime expiresAt)
@@ -425,6 +448,7 @@ public sealed partial class CodexSignInCoordinator(
         public object Gate { get; } = new();
         public string Handle { get; } = handle;
         public string HostId { get; } = hostId;
+        public string SshTarget { get; } = sshTarget;
         public string Actor { get; set; } = actor;
         public DateTime RequestedAt { get; } = requestedAt;
         public DateTime ExpiresAt { get; } = expiresAt;
@@ -446,6 +470,14 @@ public sealed partial class CodexSignInCoordinator(
 /// </summary>
 public sealed class SshCodexDeviceAuthTransport : ICodexDeviceAuthTransport
 {
+    public Task<string> FinalizePendingAsync(string sshTarget, string operationId,
+        CancellationToken cancellationToken)
+        => ProviderSignInPendingFinalizer.RunAsync(sshTarget,
+            ProviderSignInPendingFinalizer.NativeScript(operationId, "codex"), cancellationToken);
+
+    internal static string BuildPendingFinalizationScriptForTest(string operationId)
+        => ProviderSignInPendingFinalizer.NativeScript(operationId, "codex");
+
     public CodexDeviceAuthTransportSession Start(
         string sshTarget,
         Action<string> onOutput,
@@ -803,8 +835,8 @@ if (( verified_count == expected_units && verified_count > 0 )); then
   echo 'codex-login-status=verified'
 else
   if (( ! journaled )); then exit 45; fi
-  printf 'installed-awaiting-runner\n%s\n%s\n%s\n' \
-    "$rollback_store" "$new_store_digest" "$published_generation" >"$receipt_file" || exit 74
+  printf 'installed-awaiting-runner\n%s\n%s\n%s\n%s\n' \
+    "$rollback_store" "$new_store_digest" "$published_generation" "$had_prior_store" >"$receipt_file" || exit 74
   if ! sudo -n systemctl cat agent-host.service >/dev/null 2>&1 \
       && ! sudo -n systemctl cat agent-runner.service >/dev/null 2>&1; then
     printf 'pending=coding-runner\n' >>"$receipt_file" || exit 74

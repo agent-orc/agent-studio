@@ -2659,3 +2659,6 @@ Linux load evidence closes Review admission. Existing Coding and Review runs
 continue. Every immutable ReviewPlan also limits `dotnet test` to two MSBuild
 nodes and disables xUnit test-collection parallelism, including baseline and
 retry executions.
+# Pending Claude and Codex renewal finalization
+
+When a browser-assisted Claude or Codex renewal reports `installed-awaiting-runner`, keep polling its existing sign-in status route with the original SSH target. The host finalizer uses the saved local receipt and binding lock to restart and check late Coding and Review units. It removes the protected rollback copy only after both units use the installed source and generation. A wrong generation triggers restoration; if restoration cannot be proved, the affected units stop and the receipt stays `recovery-required`. Task Server still requires fresh real requests from both units before it completes the operation. Polling never repeats browser consent or token issuance.

@@ -252,13 +252,14 @@ public static class ManagementEndpoints
             HttpContext context,
             string id,
             string handle,
+            string? sshTarget,
             CodexSignInCoordinator coordinator,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var status = await coordinator.GetAsync(id, handle, ct);
+            var status = await coordinator.GetAsync(id, handle, ct, sshTarget);
             return status is null
                 ? Results.Json(
                     new { error = "codex-sign-in-session-not-found", message = "The Codex sign-in session was not found for this host." },
@@ -297,13 +298,14 @@ public static class ManagementEndpoints
             HttpContext context,
             string id,
             string handle,
+            string? sshTarget,
             ClaudeSignInCoordinator coordinator,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
             if (!TryAuthorize(context, configuration, out var denied, out _, out _)) return denied!;
-            var status = await coordinator.GetAsync(id, handle, ct);
+            var status = await coordinator.GetAsync(id, handle, ct, sshTarget);
             return status is null
                 ? Results.Json(
                     new { error = "claude-sign-in-session-not-found", message = "The Claude sign-in session was not found for this host." },
