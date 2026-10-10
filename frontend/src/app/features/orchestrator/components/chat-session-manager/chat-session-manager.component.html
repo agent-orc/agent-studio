@@ -1,0 +1,166 @@
+<section class="chats" data-testid="chat-session-manager" aria-label="Chats">
+  <div class="chats__toolbar">
+    <button #newChatButton
+            type="button"
+            class="chats__new"
+            aria-haspopup="menu"
+            [attr.aria-expanded]="newChatOpen()"
+            data-testid="chat-new"
+            (click)="toggleNewChat(newChatButton)">
+      <app-studio-icon name="plus" [size]="14" />
+      <span>New chat</span>
+    </button>
+    <div class="chats__filters">
+      <label class="chats__search">
+        <app-studio-icon name="search" [size]="12" />
+        <input type="search"
+               placeholder="Search chats"
+               aria-label="Search chats"
+               data-testid="chat-search"
+               [value]="query()"
+               (input)="onQuery($event)" />
+      </label>
+      <select class="chats__scope"
+              aria-label="Filter chats by scope"
+              data-testid="chat-scope-filter"
+              [value]="scope()"
+              (change)="onScope($event)">
+        @for (option of scopeOptions; track option.value) {
+          <option [value]="option.value" [selected]="option.value === scope()">{{ option.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (store.error(); as error) {
+    <p class="chats__error" role="alert" data-testid="chat-error">{{ error }}</p>
+  }
+
+  @if (!store.loaded()) {
+    <p class="chats__note" data-testid="chat-loading">Loading chats...</p>
+  } @else if (isEmpty() && !filtered()) {
+    <p class="chats__note" data-testid="chat-empty">No chats yet. Start one with New chat.</p>
+  } @else if (isEmpty()) {
+    <p class="chats__note" data-testid="chat-empty-filtered">No chats match this search.</p>
+  }
+
+  @if (groups().active.length > 0) {
+    <section class="chats__group" data-testid="chat-group-active" aria-label="Active chats">
+      <app-section-header title="Active" [count]="groups().active.length" testid="chat-group-active-head" />
+      <ul class="chats__list" role="list">
+        @for (row of groups().active; track row.contextKey) {
+          <ng-container *ngTemplateOutlet="rowTemplate; context: { $implicit: row }" />
+        }
+      </ul>
+    </section>
+  }
+
+  @if (groups().recent.length > 0) {
+    <section class="chats__group" data-testid="chat-group-recent" aria-label="Recent chats">
+      <app-section-header title="Recent" [divider]="groups().active.length > 0" testid="chat-group-recent-head" />
+      <ul class="chats__list" role="list">
+        @for (row of groups().recent; track row.contextKey) {
+          <ng-container *ngTemplateOutlet="rowTemplate; context: { $implicit: row }" />
+        }
+      </ul>
+    </section>
+  }
+
+  @if (groups().archived.length > 0) {
+    <section class="chats__group" data-testid="chat-group-archived" aria-label="Archived chats">
+      <app-section-header title="Archived"
+                          [count]="groups().archived.length"
+                          [divider]="true"
+                          [collapsible]="true"
+                          [collapsed]="!archivedOpen()"
+                          testid="chat-group-archived-toggle"
+                          (collapsedChange)="archivedOpen.set(!$event)" />
+      @if (archivedOpen()) {
+        <ul class="chats__list" role="list">
+          @for (row of groups().archived; track row.contextKey) {
+            <ng-container *ngTemplateOutlet="rowTemplate; context: { $implicit: row }" />
+          }
+        </ul>
+      }
+    </section>
+  }
+</section>
+
+<ng-template #rowTemplate let-row>
+  <li class="chat-row"
+      [class.chat-row--open]="row.contextKey === store.openContextKey()"
+      [class.chat-row--archived]="row.archived && !row.live"
+      [attr.data-live]="row.live"
+      [attr.data-testid]="'chat-row-' + row.contextKey">
+    <button type="button"
+            class="chat-row__main"
+            [attr.aria-current]="row.contextKey === store.openContextKey() ? 'true' : null"
+            [attr.aria-label]="rowLabel(row)"
+            [attr.data-testid]="'chat-row-open-' + row.contextKey"
+            (click)="open(row)">
+      <span class="chat-row__line">
+        <span class="chat-row__lead" aria-hidden="true">
+          @if (row.live) {
+            <span class="chat-row__live-dot" data-testid="chat-row-live-dot"></span>
+          } @else if (row.unread) {
+            <span class="chat-row__unread-dot" data-testid="chat-row-unread"></span>
+          }
+        </span>
+        <span class="chat-row__title" data-testid="chat-row-title">{{ row.title }}</span>
+        <time class="chat-row__time" data-testid="chat-row-time" [attr.title]="row.timeTitle">{{ row.timeLabel }}</time>
+      </span>
+      <span class="chat-row__line chat-row__line--meta">
+        <span class="chat-row__lead" aria-hidden="true"></span>
+        <span class="chat-row__scope" data-testid="chat-row-scope">{{ row.scopeLabel }}</span>
+        @if (row.modelLabel) {
+          <span class="chat-row__sep" aria-hidden="true">·</span>
+          <span class="chat-row__model" data-testid="chat-row-model">{{ row.modelLabel }}</span>
+        }
+        @if (row.tokenLabel) {
+          <span class="chat-row__sep" aria-hidden="true">·</span>
+          <span class="chat-row__tokens" data-testid="chat-row-tokens">{{ row.tokenLabel }}</span>
+        }
+        @if (row.liveLabel) {
+          <span class="chat-row__state" data-testid="chat-row-state">{{ row.liveLabel }}</span>
+        }
+      </span>
+    </button>
+    <span class="chat-row__actions">
+      <button type="button"
+              class="chat-row__action"
+              [attr.aria-label]="'Go to the location of ' + row.title"
+              [attr.title]="'Go to location'"
+              [attr.data-testid]="'chat-row-navigate-' + row.contextKey"
+              (click)="navigate(row)">&rarr;</button>
+      @if (row.archived && !row.live) {
+        <button type="button"
+                class="chat-row__action"
+                [attr.aria-label]="'Unarchive ' + row.title"
+                title="Unarchive"
+                [attr.data-testid]="'chat-row-unarchive-' + row.contextKey"
+                (click)="setArchived(row, false)">
+          <app-studio-icon name="refresh" [size]="12" />
+        </button>
+      } @else if (row.canArchive && row.kind !== 'global') {
+        <button type="button"
+                class="chat-row__action"
+                [attr.aria-label]="'Archive ' + row.title"
+                title="Archive"
+                [attr.data-testid]="'chat-row-archive-' + row.contextKey"
+                (click)="setArchived(row, true)">
+          <app-studio-icon name="archive" [size]="12" />
+        </button>
+      }
+    </span>
+  </li>
+</ng-template>
+
+<app-menu [items]="newChatItems()"
+          [open]="newChatOpen()"
+          [anchorEl]="newChatAnchor()"
+          placement="below"
+          testIdPrefix="chat-new-menu"
+          ariaLabel="Start a chat in"
+          [minWidth]="200"
+          (itemClick)="onNewChat($event)"
+          (closeRequest)="newChatOpen.set(false)" />

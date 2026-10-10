@@ -98,6 +98,23 @@ public sealed class StudioLifecycleCoordinator(TaskServerStore store, IStudioEve
         return response;
     }
 
+    public async Task<OrchestratorSessionDto> SetOrchestratorSessionArchivedAsync(
+        string projectIdentity,
+        string? taskIdentity,
+        string? workbenchIdentity,
+        bool archived,
+        string actorId,
+        CancellationToken ct)
+    {
+        var context = await store.SetOrchestratorContextArchivedAsync(
+            projectIdentity, taskIdentity, workbenchIdentity, archived, actorId, ct);
+        var evt = await store.AppendStudioStreamEventAsync(
+            StudioStreamEventKinds.OrchestratorContextArchiveChanged, context.ProjectId, context.TaskId,
+            new { context.ContextKey, context.ArchivedAt }, ct);
+        await publisher.PublishAsync(evt, ct);
+        return TaskServerStore.ToStudioOrchestratorSession(context);
+    }
+
     private async Task PublishTaskEventAsync(string kind, TaskDto task, CancellationToken ct, object? payload = null)
     {
         var evt = await store.AppendStudioStreamEventAsync(

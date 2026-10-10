@@ -26,7 +26,6 @@ describe('resolveTaskTabScope (origin → scope stamp)', () => {
       { kind: 'project', projectName: 'Alpha' },
     ],
     ['orchestrator feed is workspace-wide', { kind: 'feed' }, { kind: 'all-projects' }],
-    ['chat history is workspace-wide', { kind: 'chat-history' }, { kind: 'all-projects' }],
     ['workspace-wide epics overview', { kind: 'epics', projectName: null }, { kind: 'all-projects' }],
     [
       'project epics overview',

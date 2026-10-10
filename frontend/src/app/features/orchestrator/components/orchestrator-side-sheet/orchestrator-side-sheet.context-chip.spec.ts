@@ -6,10 +6,10 @@ import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ChatComponent } from 'coding-agent-chat/composer';
-import type { OrchestratorContextSession } from '../../models/orchestrator.model';
+import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
 import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.component';
 
-describe('OrchestratorSideSheetComponent context badge and menu', () => {
+describe('OrchestratorSideSheetComponent context trigger and actions', () => {
   beforeEach(() => sessionStorage.removeItem('atp.studio.orchestratorOpen.v1'));
 
   async function makeFixture() {
@@ -28,45 +28,34 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     return fixture;
   }
 
-  it('counts every distinct global, project and task context', async () => {
+  it('lists no sessions in the sheet: the header opens the sidebar Chats panel', async () => {
     const fixture = await makeFixture();
-    const session = (contextKey: string, kind: OrchestratorContextSession['kind']): OrchestratorContextSession => ({
-      contextKey,
-      kind,
-      projectId: kind === 'global' ? null : 'demo-project',
-      taskKey: kind === 'task' ? 'AGT-2087' : null,
-      updatedAt: '2026-07-11T10:00:00Z',
-      model: null,
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
-      cumulativeCacheReadTokens: 0,
-      cumulativeCacheCreationTokens: 0,
-      runtimeStatus: 'idle',
-      queuePosition: 0,
-    });
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    const panels = TestBed.inject(StudioPanelStateService);
+    panels.open('explorer');
 
-    fixture.componentInstance.contextSessions.set([
-      session('project:demo-project', 'project'),
-      session('task:demo-project/AGT-2087', 'task'),
-    ]);
+    expect(root.querySelector('[data-testid="orch-context-count"]')).toBeNull();
+    expect(root.querySelector('[data-testid="chat-context-list"]')).toBeNull();
+    (root.querySelector('[data-testid="orch-open-chats-panel"]') as HTMLButtonElement).click();
 
-    expect(fixture.componentInstance.contextCount()).toBe(3);
+    expect(panels.active()).toBe('chats');
+    expect(panels.visible()).toBe(true);
   });
 
-  it('keeps only picker and count badge in the collapsed header', async () => {
+  it('keeps only the context trigger in the collapsed header', async () => {
     const fixture = await makeFixture();
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="orch-context-badge"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="orch-context-count"]')?.textContent?.trim()).toBe('2');
     expect(root.querySelector('[data-testid="orch-context-menu"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-pin"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-settings"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-refresh"]')).toBeNull();
   });
 
-  it('opens the full context menu and moves header actions into it', async () => {
+  it('opens the context actions over the conversation instead of replacing it', async () => {
     const fixture = await makeFixture();
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
@@ -75,11 +64,12 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     fixture.detectChanges();
 
     expect(root.querySelector('[data-testid="orch-context-menu"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="chat-context-list"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-pin"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-settings"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-refresh"]')).not.toBeNull();
-    expect(root.textContent).toContain('Chat history');
+    expect(root.querySelector('[data-testid="orch-context-send-toggle"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="orchestrator-conversation"]')).not.toBeNull();
+    expect(root.textContent).not.toContain('Chat history');
   });
 
   it('offers a repository page as the first stable current-tab source', async () => {

@@ -2639,6 +2639,29 @@ export class TaskService {
   }
 
   /**
+   * Operator archive toggle for one chat session (AGT-3032). Every context
+   * shape has its own literal route, like the digest routes below; the global
+   * session has no persisted row and cannot be archived.
+   */
+  setOrchestratorSessionArchived(contextKey: string, archived: boolean) {
+    const context = orchestratorDigestContext(contextKey);
+    if (!context || context.kind === 'global') return invalidOrchestratorContextKey<unknown>();
+    const { projectId, key: taskKey, key: workbenchKey } = context;
+    const body = { archived };
+    switch (context.kind) {
+      case 'project':
+        return this.http.post<unknown>(
+          `/api/v1/studio/orchestrator/sessions/project:${encodeURIComponent(projectId)}/archive`, body);
+      case 'task':
+        return this.http.post<unknown>(
+          `/api/v1/studio/orchestrator/sessions/task:${encodeURIComponent(projectId)}/${encodeURIComponent(taskKey)}/archive`, body);
+      case 'workbench':
+        return this.http.post<unknown>(
+          `/api/v1/studio/orchestrator/sessions/workbench:${encodeURIComponent(projectId)}/${encodeURIComponent(workbenchKey)}/archive`, body);
+    }
+  }
+
+  /**
    * Read the compact ORCH-1 application digest for one multichat context.
    * Every context shape has its own literal route (AGT-2983): the Task Server
    * serves `global`, `project:{projectId}` and `task:{projectId}/{taskKey}`,

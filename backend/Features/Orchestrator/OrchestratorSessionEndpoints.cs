@@ -1,3 +1,5 @@
+using AgentStudio.TaskServer.Contracts;
+
 namespace AgentStudio.Orchestrator;
 
 public static class OrchestratorSessionEndpoints
@@ -21,7 +23,9 @@ public static class OrchestratorSessionEndpoints
                     group => group.Key,
                     group => group.OrderBy(item => item.Status == OrchestratorTurnService.StatusActive ? 0 : 1).First(),
                     StringComparer.Ordinal);
-            var contexts = await persistence.ListContextsAsync(includeHidden: false, ct);
+            // Hidden (task archived) and operator-archived contexts are listed
+            // too: the Studio session manager shows them in its Archived group.
+            var contexts = await persistence.ListContextsAsync(includeHidden: true, ct);
             var sessions = contexts.Select(session => new
             {
                 session.ContextKey,
@@ -36,9 +40,12 @@ public static class OrchestratorSessionEndpoints
                 session.CumulativeCacheReadTokens,
                 session.CumulativeCacheCreationTokens,
                 Calls = session.TurnCount,
+                session.TurnCount,
                 LastUsedAt = session.UpdatedAt,
                 Summary = session.Summary,
                 HiddenAt = session.HiddenAt,
+                session.ArchivedAt,
+                session.WorkbenchKey,
                 RuntimeStatus = statuses.GetValueOrDefault(session.ContextKey)?.Status ?? "idle",
                 QueuePosition = statuses.GetValueOrDefault(session.ContextKey)?.QueuePosition ?? 0
             });
@@ -86,6 +93,43 @@ public static class OrchestratorSessionEndpoints
 
             return Results.Ok(turns.Park(parsedPark.Value));
         }
+
+        static async Task<IResult> SetArchived(
+            string contextKey,
+            SetOrchestratorContextArchivedRequest request,
+            OrchestratorTurnService turns,
+            IOrchestratorChatPersistence persistence,
+            AgentStudio.Host.OrchestratorContextHubBroadcaster broadcaster,
+            CancellationToken ct)
+        {
+            if (!OrchestratorContextKey.TryParse(contextKey, out var parsed) || parsed.ProjectId is null)
+                return Results.BadRequest(new { error = "Invalid orchestrator context key." });
+
+            var runtimeStatus = turns.SnapshotStatuses()
+                .Where(item => string.Equals(item.ContextKey, parsed.Value, StringComparison.Ordinal))
+                .Select(item => item.Status)
+                .FirstOrDefault();
+            if (request.Archived && !OrchestratorContextArchivePolicy.CanArchive(runtimeStatus))
+                return Results.Conflict(new { error = "A running or queued chat cannot be archived." });
+
+            try
+            {
+                var context = await persistence.SetArchivedAsync(parsed, request.Archived, ct);
+                await broadcaster.ContextChangedAsync(context.ProjectName, context.ContextKey, context.UpdatedAt, ct);
+                return Results.Ok(context);
+            }
+            catch (KeyNotFoundException exception)
+            {
+                return Results.NotFound(new { error = exception.Message });
+            }
+        }
+
+        group.MapPost("/project:{projectId}/archive", (string projectId, SetOrchestratorContextArchivedRequest request, OrchestratorTurnService turns, IOrchestratorChatPersistence persistence, AgentStudio.Host.OrchestratorContextHubBroadcaster broadcaster, CancellationToken ct) =>
+            SetArchived($"project:{projectId}", request, turns, persistence, broadcaster, ct));
+        group.MapPost("/workbench:{projectId}/{workbenchKey}/archive", (string projectId, string workbenchKey, SetOrchestratorContextArchivedRequest request, OrchestratorTurnService turns, IOrchestratorChatPersistence persistence, AgentStudio.Host.OrchestratorContextHubBroadcaster broadcaster, CancellationToken ct) =>
+            SetArchived($"workbench:{projectId}/{workbenchKey}", request, turns, persistence, broadcaster, ct));
+        group.MapPost("/task:{projectId}/{taskKey}/archive", (string projectId, string taskKey, SetOrchestratorContextArchivedRequest request, OrchestratorTurnService turns, IOrchestratorChatPersistence persistence, AgentStudio.Host.OrchestratorContextHubBroadcaster broadcaster, CancellationToken ct) =>
+            SetArchived($"task:{projectId}/{taskKey}", request, turns, persistence, broadcaster, ct));
 
         group.MapPost("/global/turns", (OrchestratorTurnRequest request, OrchestratorSessionRegistry registry, OrchestratorTurnService turns) =>
             PostTurn("global", request, registry, turns))

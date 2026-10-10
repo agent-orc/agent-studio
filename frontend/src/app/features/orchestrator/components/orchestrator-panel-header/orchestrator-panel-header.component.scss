@@ -139,10 +139,38 @@
   background: var(--studio-border-strong);
 }
 
-.panel-head__count {
-  min-width: 16px;
-  color: var(--studio-accent);
+.panel-head__open-chats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--studio-spacing-1);
+  height: 28px;
+  padding: 0 var(--studio-spacing-2);
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg-elevated);
+  color: var(--studio-fg);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.panel-head__open-chats:hover {
+  border-color: var(--studio-border-strong);
+  background: var(--studio-bg-hover);
+}
+
+.panel-head__open-chats:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
+.panel-head__live {
+  min-width: 14px;
+  color: var(--studio-success);
   font-size: 10px;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }

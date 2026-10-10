@@ -20,6 +20,39 @@ public static class OrchestratorContextVisibilityPolicy
            && string.Equals(taskState, "7-archive", StringComparison.Ordinal);
 }
 
+/// <summary>
+/// Operator archive for chat sessions (AGT-3032). Archive is a separate,
+/// operator-owned mark next to the automatic <see cref="OrchestratorContextVisibilityPolicy"/>
+/// hide: the automatic hide is recomputed from the task lane on every read,
+/// the operator mark persists until the operator unarchives the session or a
+/// new turn lands in it.
+/// </summary>
+public static class OrchestratorContextArchivePolicy
+{
+    public const string RuntimeActive = "active";
+    public const string RuntimeQueued = "queued";
+
+    /// <summary>
+    /// A session with a running or queued turn cannot be archived; it would
+    /// vanish from the Active group while it is still producing output.
+    /// Unarchive is always allowed.
+    /// </summary>
+    public static bool CanArchive(string? runtimeStatus)
+        => !string.Equals(runtimeStatus, RuntimeActive, StringComparison.Ordinal)
+           && !string.Equals(runtimeStatus, RuntimeQueued, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The archive mark after an operator request, keeping the first archive
+    /// time on repeats. A new turn clears the mark in the store directly.
+    /// </summary>
+    public static DateTime? ArchivedAtAfterRequest(DateTime? current, bool archived, DateTime now)
+        => archived ? current ?? now : null;
+
+    /// <summary>A session lands in the Archived group when either mark is set.</summary>
+    public static bool IsArchived(DateTime? archivedAt, DateTime? hiddenAt)
+        => archivedAt is not null || hiddenAt is not null;
+}
+
 public sealed record OrchestratorContextDto(
     string ContextKey,
     string Kind,
@@ -37,7 +70,11 @@ public sealed record OrchestratorContextDto(
     long CumulativeOutputTokens = 0,
     long CumulativeCacheReadTokens = 0,
     long CumulativeCacheCreationTokens = 0,
-    string? WorkbenchKey = null);
+    string? WorkbenchKey = null,
+    DateTime? ArchivedAt = null);
+
+/// <summary>Operator archive toggle for one chat session (AGT-3032).</summary>
+public sealed record SetOrchestratorContextArchivedRequest(bool Archived);
 
 public sealed record OrchestratorContextListResponse(
     IReadOnlyList<OrchestratorContextDto> Contexts);

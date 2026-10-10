@@ -19,7 +19,6 @@ import type {
   ChatExecutionContext,
   ComposerLocationContext,
   OrchestratorChatTurn,
-  OrchestratorContextSession,
   OrchestratorContextSourceOption,
 } from '../../../../features/orchestrator';
 import {
@@ -36,7 +35,6 @@ import {
 import { SidesheetComponent } from '../../../../components/sidesheet/sidesheet.component';
 import { AppTooltipDirective } from '../../../../components/tooltip/app-tooltip.directive';
 import { OrchestratorContextHeaderComponent } from '../orchestrator-context-header/orchestrator-context-header.component';
-import { ChatSwitcherRailComponent } from '../chat-switcher-rail/chat-switcher-rail.component';
 import { OrchestratorPanelHeaderComponent } from '../orchestrator-panel-header/orchestrator-panel-header.component';
 import { OrchestratorJumpLatestComponent } from '../orchestrator-jump-latest/orchestrator-jump-latest.component';
 import { OrchestratorContextReceiptComponent } from '../orchestrator-context-receipt/orchestrator-context-receipt.component';
@@ -45,6 +43,7 @@ import { OrchestratorChatWaitingComponent } from '../orchestrator-chat-waiting/o
 import { OrchestratorChatUsageHeaderComponent } from '../orchestrator-chat-usage-header/orchestrator-chat-usage-header.component';
 import { OrchestratorPanelStateService } from '../../state/orchestrator-panel-state.service';
 import { OrchestratorChatActivityService } from '../../state/orchestrator-chat-activity.service';
+import { OrchestratorChatSessionsStore } from '../../state/orchestrator-chat-sessions.store';
 import { OrchestratorContextDigestService } from '../../state/orchestrator-context-digest.service';
 import { OrchestratorComposerModelService } from '../../state/orchestrator-composer-model.service';
 import {
@@ -67,7 +66,7 @@ import {
 import { UiPreferencesService } from '../../../shell/state/ui-preferences.service';
 import { PlanStripComponent } from '../../../plan-strip';
 import { OrchestratorTaskPlanStore } from '../../state/orchestrator-task-plan.store';
-import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
 
 /**
  * Push-layout side sheet hosting automatic context-keyed orchestrator chats.
@@ -87,7 +86,6 @@ import { StudioTabStateService } from '../../../studio-shell/services/studio-tab
     OrchestratorContextPickerComponent,
     OrchestratorChatWaitingComponent,
     OrchestratorChatUsageHeaderComponent,
-    ChatSwitcherRailComponent,
     OrchestratorPanelHeaderComponent,
     OrchestratorJumpLatestComponent,
     PlanStripComponent,
@@ -169,53 +167,22 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   private readonly panelState = inject(OrchestratorPanelStateService);
   readonly chatActivity = inject(OrchestratorChatActivityService);
   private readonly uiPreferences = inject(UiPreferencesService);
-  private readonly studioTabs = inject(StudioTabStateService);
+  private readonly studioPanels = inject(StudioPanelStateService);
+  /** Workspace-wide session list, shared with the left-sidebar Chats panel. */
+  private readonly sessionsStore = inject(OrchestratorChatSessionsStore);
 
-  /**
-   * Dossier titles for the chat switcher rail, keyed by the same
-   * `workbench:<PROJ>/<KEY>` context key used everywhere else. Sourced from
-   * the tabs the operator already has open rather than a dedicated
-   * app-wide Dossier catalogue fetch; a Dossier session not currently
-   * tabbed falls back to its bare key in the rail (see
-   * `ChatSwitcherRailComponent.workbenchLabel`).
-   */
-  readonly workbenchTitles = computed<ReadonlyMap<string, string>>(() => {
-    const titles = new Map<string, string>();
-    for (const tab of this.studioTabs.tabs()) {
-      if (tab.kind !== 'workbench' || !tab.key || !tab.title) continue;
-      const key = buildWorkbenchContextKey(tab.projectName, tab.key);
-      if (key) titles.set(key, tab.title);
-    }
-    return titles;
-  });
   readonly open = this.panelState.open;
   readonly panelWidth = this.panelState.width;
   readonly activeProject = signal<string | null>(null);
   readonly selectedContextKey = signal<string | null>(null);
   private readonly selectedContextNavigationKey = signal<string | null>(null);
-  readonly contextSessions = signal<OrchestratorContextSession[]>([]);
-  readonly activeChatCount = computed(() =>
-    this.chatActivity.workingContextKeys(this.contextSessions()).size);
+  readonly contextSessions = this.sessionsStore.sessions;
+  readonly activeChatCount = this.sessionsStore.activeChatCount;
+  /** Context-actions popover: pin, debug, settings, refresh, context toggle. */
   readonly contextMenuOpen = signal(false);
   readonly contextDigestState = inject(OrchestratorContextDigestService);
   readonly taskPlanState = inject(OrchestratorTaskPlanStore);
-  private readonly seenContexts = signal<Record<string, string>>(this.readSeenContexts());
-
-  /** Total selectable scopes represented by the header context badge. */
-  readonly contextCount = computed(() => {
-    const keys = new Set<string>(['global']);
-    for (const project of this.projects()) keys.add(`project:${project}`);
-    for (const session of this.contextSessions()) keys.add(session.contextKey);
-    return keys.size;
-  });
-
-  readonly unreadContextKeys = computed<ReadonlySet<string>>(() => {
-    const seen = this.seenContexts();
-    return new Set(this.contextSessions()
-      .filter(session => session.updatedAt && session.contextKey !== this.contextKey()
-        && session.updatedAt > (seen[session.contextKey] ?? ''))
-      .map(session => session.contextKey));
-  });
+  private releaseSessions: (() => void) | null = null;
 
   private readonly selectedSession = computed(() => {
     const key = this.effectiveSelectionKey();
@@ -463,10 +430,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   }
 
   private pollTimer: VisibleIntervalHandle | null = null;
-  private contextPollTimer: VisibleIntervalHandle | null = null;
   private previousProjectEntryRevision = 0;
   private pendingStandardProjectEntry = false;
-  private contextSessionsLoading = false;
 
   /** Canonical next-gen transcript consumed by `<cac-conversation-view>`. */
   readonly conversationEvents = computed(() => buildOrchestratorConversationEvents(
@@ -493,6 +458,27 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   });
 
   constructor() {
+    // The Chats panel highlights the session open here and offers the
+    // current task or Dossier as a "New chat" scope.
+    effect(() => {
+      const key = this.open() ? this.contextKey() : null;
+      untracked(() => this.sessionsStore.setOpenContext(key));
+    });
+    effect(() => {
+      const key = this.navigationContextKey();
+      const parsed = parseOrchestratorContextKey(key);
+      const kind = parsed?.kind;
+      const label = kind === 'task'
+        ? (this.navigationJobKey() ?? parsed?.taskKey ?? '')
+        : kind === 'workbench'
+          ? (parsed?.workbenchKey ?? '')
+          : (parsed?.projectId ?? '');
+      untracked(() => this.sessionsStore.setCurrentScope(
+        key && (kind === 'task' || kind === 'workbench' || kind === 'project')
+          ? { contextKey: key, kind, label }
+          : null));
+    });
+
     // Session rows can outlive the navigation scope that selected them. The
     // resolver falls back synchronously; this effect also clears stale picker
     // state so subsequent interactions remain on the current navigation key.
@@ -635,14 +621,10 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
       }
     }, 30_000);
     // Active and queued managed turns remain visible even while the panel is
-    // closed. SignalR refreshes the central history, while this bounded poll
-    // is the convergence fallback for the always-present shell indicator.
-    this.contextPollTimer = setVisibleInterval(() => {
-      this.refreshContextSessions();
-    }, 2_000);
+    // closed: the shared store polls while any consumer is connected.
+    this.releaseSessions = this.sessionsStore.connect();
 
     this.maybeSeedDemoEvents();
-    this.refreshContextSessions();
   }
 
   /**
@@ -663,8 +645,8 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     if (this.pollTimer != null) clearVisibleInterval(this.pollTimer);
     this.pollTimer = null;
-    if (this.contextPollTimer != null) clearVisibleInterval(this.contextPollTimer);
-    this.contextPollTimer = null;
+    this.releaseSessions?.();
+    this.releaseSessions = null;
   }
 
   show(): void { this.panelState.setOpen(true); }
@@ -696,29 +678,36 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
   selectChatContext(contextKey: string): void {
     this.selectedContextNavigationKey.set(this.navigationContextKey());
     this.selectedContextKey.set(contextKey);
-    const session = this.contextSessions().find(item => item.contextKey === contextKey);
-    const updatedAt = session?.updatedAt ?? new Date().toISOString();
-    this.seenContexts.update(seen => ({ ...seen, [contextKey]: updatedAt }));
-    this.persistSeenContexts();
+    this.sessionsStore.markSeen(contextKey);
     this.contextMenuOpen.set(false);
   }
 
-  /** Open one Task Server-managed context from the workspace Chat History. */
+  /** Open one Task Server-managed session from the left-sidebar Chats panel. */
   openManagedContext(contextKey: string): void {
     this.show();
-    if (this.contextSessions().some(context => context.contextKey === contextKey)) {
+    this.selectChatContext(contextKey);
+  }
+
+  /**
+   * "New chat" from the Chats panel. A context key starts in that scope
+   * (global or a project); `null` drops any selection so the sheet follows
+   * the current task or Dossier again.
+   */
+  startNewChat(contextKey: string | null): void {
+    this.show();
+    if (contextKey) {
       this.selectChatContext(contextKey);
       return;
     }
-    this.jobService.getOrchestratorContextSessions().subscribe({
-      next: response => {
-        const sessions = response.sessions ?? [];
-        this.contextSessions.set(sessions);
-        if (sessions.some(context => context.contextKey === contextKey)) {
-          this.selectChatContext(contextKey);
-        }
-      },
-    });
+    this.selectedContextKey.set(null);
+    this.selectedContextNavigationKey.set(null);
+    this.contextMenuOpen.set(false);
+  }
+
+  /** The header Chats affordance focuses the one session list in the sidebar. */
+  openChatsPanel(): void {
+    this.contextMenuOpen.set(false);
+    this.studioPanels.open('chats');
   }
 
   onNavigateToContext(contextKey: string): void {
@@ -727,19 +716,9 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.contextMenuOpen.set(false);
     this.navigateToContext.emit(contextKey);
   }
+
   private refreshContextSessions(): void {
-    if (this.contextSessionsLoading) return;
-    this.contextSessionsLoading = true;
-    this.jobService.getOrchestratorContextSessions().subscribe({
-      next: response => {
-        this.contextSessions.set(response.sessions ?? []);
-        this.contextSessionsLoading = false;
-      },
-      error: () => {
-        this.contextSessions.set([]);
-        this.contextSessionsLoading = false;
-      },
-    });
+    this.sessionsStore.refresh();
   }
 
   refreshCurrentContext(): void {
@@ -748,17 +727,6 @@ export class OrchestratorSideSheetComponent implements OnInit, OnDestroy {
     this.contextDigestState.load(key, true);
     if (this.effectiveProject()) this.refreshChat(false, false);
     this.refreshContextSessions();
-  }
-
-  private readSeenContexts(): Record<string, string> {
-    if (typeof window === 'undefined') return {};
-    try { return JSON.parse(window.localStorage?.getItem('atp.chatSwitcher.seen.v1') ?? '{}'); }
-    catch { return {}; }
-  }
-  private persistSeenContexts(): void {
-    if (typeof window === 'undefined') return;
-    try { window.localStorage?.setItem('atp.chatSwitcher.seen.v1', JSON.stringify(this.seenContexts())); }
-    catch { /* optional local read state */ }
   }
 
   selectProjectTab(proj: string): void {

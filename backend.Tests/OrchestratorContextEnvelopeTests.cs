@@ -589,6 +589,12 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
             bool includeHidden,
             CancellationToken ct)
             => Task.FromResult<IReadOnlyList<OrchestratorContextDto>>([]);
+
+        public Task<OrchestratorContextDto> SetArchivedAsync(
+            OrchestratorContextKey context,
+            bool archived,
+            CancellationToken ct)
+            => throw new KeyNotFoundException(context.Value);
     }
 
     private sealed class TestHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory

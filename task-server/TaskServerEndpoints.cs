@@ -214,6 +214,35 @@ public static class TaskServerEndpoints
                 projectIdentity, workbenchIdentity, request, Actor(context), ct), StatusCodes.Status201Created))
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestratorContexts.MapPost("/projects/{projectIdentity}/archive", async (
+            HttpContext context,
+            string projectIdentity,
+            SetOrchestratorContextArchivedRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.SetOrchestratorContextArchivedAsync(
+                projectIdentity, null, null, request.Archived, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestratorContexts.MapPost("/projects/{projectIdentity}/tasks/{taskIdentity}/archive", async (
+            HttpContext context,
+            string projectIdentity,
+            string taskIdentity,
+            SetOrchestratorContextArchivedRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.SetOrchestratorContextArchivedAsync(
+                projectIdentity, taskIdentity, null, request.Archived, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestratorContexts.MapPost("/projects/{projectIdentity}/workbenches/{workbenchIdentity}/archive", async (
+            HttpContext context,
+            string projectIdentity,
+            string workbenchIdentity,
+            SetOrchestratorContextArchivedRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.SetOrchestratorContextArchivedAsync(
+                projectIdentity, null, workbenchIdentity, request.Archived, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPost("/projects/{projectIdentity}/legacy-import", async (
             HttpContext context,
             string projectIdentity,

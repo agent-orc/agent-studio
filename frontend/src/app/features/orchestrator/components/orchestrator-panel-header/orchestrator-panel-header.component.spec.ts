@@ -38,7 +38,7 @@ describe('OrchestratorPanelHeaderComponent', () => {
       pageType: 'workbench',
       excerpt: '',
     });
-    fixture.componentRef.setInput('contextCount', 17);
+    fixture.componentRef.setInput('activeChatCount', 2);
     fixture.detectChanges();
 
     const host = fixture.nativeElement as HTMLElement;
@@ -48,6 +48,28 @@ describe('OrchestratorPanelHeaderComponent', () => {
     expect(host.querySelector('[data-testid="orch-panel-context-name"]')?.textContent).toContain(
       'AGT-W34',
     );
-    expect(host.querySelector('[data-testid="orch-context-count"]')?.textContent).toContain('17');
+    expect(host.querySelector('[data-testid="orch-open-chats-live"]')?.textContent).toContain('2');
+  });
+
+  it('opens the sidebar Chats panel instead of a sheet-local session list', async () => {
+    await TestBed.configureTestingModule({
+      imports: [OrchestratorPanelHeaderComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(OrchestratorPanelHeaderComponent);
+    let chatsRequested = 0;
+    let contextToggled = 0;
+    fixture.componentInstance.chatsRequested.subscribe(() => chatsRequested++);
+    fixture.componentInstance.contextToggle.subscribe(() => contextToggled++);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    (host.querySelector('[data-testid="orch-open-chats-panel"]') as HTMLButtonElement).click();
+    (host.querySelector('[data-testid="orch-context-badge"]') as HTMLButtonElement).click();
+
+    expect(chatsRequested).toBe(1);
+    expect(contextToggled).toBe(1);
+    expect(host.querySelector('[data-testid="orch-context-count"]')).toBeNull();
+    expect(host.querySelector('[data-testid="orch-open-chats-live"]')).toBeNull();
   });
 });

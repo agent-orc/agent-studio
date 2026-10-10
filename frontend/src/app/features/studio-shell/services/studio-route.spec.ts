@@ -3,6 +3,7 @@ import type { StudioTab } from '../studio-shell.types';
 import {
   parseStudioRoute,
   navigateStudioRoute,
+  replaceStudioRoute,
   replaceStudioRouteQuery,
   replaceTaskViewRoute,
   studioRouteForTab,
@@ -20,6 +21,7 @@ describe('Studio route contract', () => {
       projectSlug: null,
     });
     expect(parseStudioRoute('#/feed')).toEqual({ kind: 'feed' });
+    // Retired tab (AGT-3032): still parsed so the shell can redirect it.
     expect(parseStudioRoute('#/chat-history')).toEqual({ kind: 'chat-history' });
     expect(parseStudioRoute('#/projects/agent-studio/board')).toEqual({
       kind: 'board',
@@ -86,7 +88,6 @@ describe('Studio route contract', () => {
     const cases: [StudioTab, string | null, string][] = [
       [{ kind: 'board', projectName: '__all__' }, null, '/board'],
       [{ kind: 'feed' }, null, '/feed'],
-      [{ kind: 'chat-history' }, null, '/chat-history'],
       [{ kind: 'board', projectName: 'Agent Studio' }, null, '/projects/agent-studio/board'],
       [{ kind: 'hub', projectName: 'Agent Studio', section: 'wiki' }, null, '/projects/agent-studio/wiki'],
       [
@@ -120,6 +121,22 @@ describe('Studio route contract', () => {
     replaceStudioRouteQuery({ page: 'README.md', folder: null });
     expect(replace).toHaveBeenCalledTimes(1);
     expect(location.hash).toBe('#/projects/agent-studio/wiki?page=README.md&filters=x');
+  });
+
+  it('redirects the retired Chat History route in place without a Back entry', () => {
+    history.replaceState(null, '', '/#/chat-history&filters=x');
+    const replace = vi.spyOn(history, 'replaceState');
+    const push = vi.spyOn(history, 'pushState');
+
+    replaceStudioRoute(null);
+    expect(location.hash).toBe('#filters=x');
+    // The active-tab effect then writes its route; with no route segment left
+    // that is a replace as well, so Back skips the retired route entirely.
+    navigateStudioRoute('/board');
+
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledTimes(2);
+    expect(location.hash).toBe('#/board&filters=x');
   });
 
   it('adds history entries between project and All Projects boards', () => {

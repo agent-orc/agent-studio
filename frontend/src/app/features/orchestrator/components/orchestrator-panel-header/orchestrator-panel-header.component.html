@@ -20,10 +20,11 @@
   <button
     class="panel-head__chats"
     type="button"
+    aria-haspopup="dialog"
     aria-controls="orch-context-menu"
-    [attr.aria-expanded]="chatsOpen()"
-    [class.panel-head__chats--open]="chatsOpen()"
-    (click)="chatsToggle.emit()"
+    [attr.aria-expanded]="contextOpen()"
+    [class.panel-head__chats--open]="contextOpen()"
+    (click)="contextToggle.emit()"
     data-testid="orch-context-badge"
   >
     <span
@@ -48,12 +49,26 @@
       </span>
     </span>
     <span class="panel-head__divider" aria-hidden="true"></span>
-    <span>Chats</span>
-    <strong class="panel-head__count" data-testid="orch-context-count">{{ contextCount() }}</strong>
+    <span>Context</span>
     <app-studio-icon
       class="panel-head__caret"
-      [name]="chatsOpen() ? 'chevronDown' : 'chevronRight'"
+      [name]="contextOpen() ? 'chevronDown' : 'chevronRight'"
       [size]="12"
     />
+  </button>
+
+  <button
+    class="panel-head__open-chats"
+    type="button"
+    title="Show all chats in the sidebar"
+    aria-label="Show all chats in the sidebar"
+    (click)="chatsRequested.emit()"
+    data-testid="orch-open-chats-panel"
+  >
+    <app-studio-icon name="list" [size]="12" />
+    <span>Chats</span>
+    @if (activeChatCount() > 0) {
+      <span class="panel-head__live" data-testid="orch-open-chats-live">{{ activeChatCount() }}</span>
+    }
   </button>
 </div>

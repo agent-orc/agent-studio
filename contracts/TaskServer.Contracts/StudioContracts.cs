@@ -156,7 +156,10 @@ public sealed record OrchestratorSessionDto(
     string Summary,
     DateTime? HiddenAt,
     string RuntimeStatus,
-    int QueuePosition);
+    int QueuePosition,
+    long TurnCount = 0,
+    DateTime? ArchivedAt = null,
+    string? WorkbenchKey = null);
 
 public sealed record OrchestratorSessionListResponse(IReadOnlyList<OrchestratorSessionDto> Sessions);
 
@@ -185,4 +188,5 @@ public static class StudioStreamEventKinds
     public const string TaskStopped = "task.stopped";
     public const string TaskContinued = "task.continued";
     public const string OrchestratorChatAppended = "orchestrator-chat.appended";
+    public const string OrchestratorContextArchiveChanged = "orchestrator-context.archive-changed";
 }

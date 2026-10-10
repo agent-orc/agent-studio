@@ -3,6 +3,7 @@ using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -339,6 +340,121 @@ public sealed class OrchestratorContextStoreTests
         Assert.Equal(
             "AGT-W43",
             Assert.Single(contexts.Contexts, context => context.Kind == OrchestratorContextKinds.Workbench).WorkbenchKey);
+    }
+
+    [Fact]
+    public async Task Seeded_project_context_has_no_turns_so_the_Studio_does_not_list_it()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Fresh Project", "FRP"), "test", default);
+
+        var seeded = Assert.Single(await store.ListOrchestratorContextsAsync(false, default));
+
+        Assert.Equal("Project chat for Fresh Project", seeded.Summary);
+        Assert.Equal(0, seeded.TurnCount);
+        Assert.Null(seeded.ArchivedAt);
+    }
+
+    [Fact]
+    public async Task Operator_archive_persists_across_restart_and_a_new_turn_unarchives()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Agent Studio", "AGT"), "test", default);
+        await store.AppendOrchestratorContextTurnAsync(
+            project.ProjectId, null,
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "usr_archive_1", DateTime.UtcNow, "user", "First question")),
+            "test", default);
+
+        var archived = await store.SetOrchestratorContextArchivedAsync(
+            project.ProjectId, null, null, archived: true, "test", default);
+        Assert.NotNull(archived.ArchivedAt);
+        var repeated = await store.SetOrchestratorContextArchivedAsync(
+            project.ProjectId, null, null, archived: true, "test", default);
+        Assert.Equal(archived.ArchivedAt, repeated.ArchivedAt);
+
+        var restarted = Store(temp.Path);
+        await restarted.InitializeAsync();
+        var listed = Assert.Single(await restarted.ListOrchestratorContextsAsync(false, default));
+        Assert.Equal(archived.ArchivedAt, listed.ArchivedAt);
+        Assert.Equal(1, listed.TurnCount);
+
+        await restarted.AppendOrchestratorContextTurnAsync(
+            project.ProjectId, null,
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "usr_archive_2", DateTime.UtcNow, "user", "Back again")),
+            "test", default);
+        Assert.Null(Assert.Single(await restarted.ListOrchestratorContextsAsync(false, default)).ArchivedAt);
+
+        await restarted.SetOrchestratorContextArchivedAsync(project.ProjectId, null, null, archived: true, "test", default);
+        var unarchived = await restarted.SetOrchestratorContextArchivedAsync(
+            project.ProjectId, null, null, archived: false, "test", default);
+        Assert.Null(unarchived.ArchivedAt);
+    }
+
+    [Fact]
+    public async Task Archiving_a_context_without_a_row_is_not_found()
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Agent Studio", "AGT"), "test", default);
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => store.SetOrchestratorContextArchivedAsync(
+            project.ProjectId, null, "AGT-W404", archived: true, "test", default));
+    }
+
+    [Fact]
+    public async Task Studio_archive_route_marks_the_session_and_the_list_keeps_hidden_task_sessions()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = new TaskServerFactory(temp.Path);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(TaskServerProtocol.HeaderName, TaskServerProtocol.Current.ToString());
+        var store = factory.Services.GetRequiredService<TaskServerStore>();
+        var workspace = await store.CreateWorkspaceAsync(new CreateWorkspaceRequest("Workspace"), "test", default);
+        var project = await store.CreateProjectAsync(
+            new CreateProjectRequest(workspace.WorkspaceId, "Agent Studio", "AGT"), "test", default);
+        var task = await store.CreateTaskAsync(
+            project.ProjectId, new CreateTaskRequest("Archived work", State: "2-ready"), "test", default);
+        await store.AppendOrchestratorContextTurnAsync(
+            project.ProjectId, task.TaskKey,
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "usr_task_1", DateTime.UtcNow, "user", "Task question")),
+            "test", default);
+        await store.UpdateTaskAsync(
+            project.ProjectId, task.TaskId, new UpdateTaskRequest(null, null, "7-archive", task.Version), "test", default);
+        await store.AppendOrchestratorContextTurnAsync(
+            project.ProjectId, null,
+            new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
+                "usr_project_1", DateTime.UtcNow, "user", "Project question")),
+            "test", default);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/studio/orchestrator/sessions/project:Agent%20Studio/archive",
+            new SetOrchestratorContextArchivedRequest(true));
+        response.EnsureSuccessStatusCode();
+        var marked = await response.Content.ReadFromJsonAsync<OrchestratorSessionDto>();
+        Assert.NotNull(marked!.ArchivedAt);
+
+        var sessions = await client.GetFromJsonAsync<OrchestratorSessionListResponse>(
+            "/api/v1/studio/orchestrator/sessions");
+        var projectSession = Assert.Single(sessions!.Sessions, session => session.Kind == OrchestratorContextKinds.Project);
+        Assert.NotNull(projectSession.ArchivedAt);
+        Assert.Equal(1, projectSession.TurnCount);
+        var taskSession = Assert.Single(sessions.Sessions, session => session.Kind == OrchestratorContextKinds.Task);
+        Assert.NotNull(taskSession.HiddenAt);
+        Assert.Null(taskSession.ArchivedAt);
     }
 
     private static TaskServerStore Store(string dataDirectory)

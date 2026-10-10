@@ -9,6 +9,8 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _summaries =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _archived =
+        new(StringComparer.Ordinal);
 
     public bool IsCentralTaskServerStore => true;
 
@@ -58,6 +60,7 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
                 _turns[key] = turns;
             }
             turns.Add(turn);
+            _archived.Remove(key);
             if (turn.Role == OrchestratorChatRoles.User && !string.IsNullOrWhiteSpace(turn.Text))
                 _summaries[key] = turn.Text;
             else if (!_summaries.ContainsKey(key))
@@ -88,10 +91,31 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
                     DateTime.UtcNow,
                     DateTime.UtcNow,
                     null,
-                    _turns[key].Count);
+                    _turns[key].Count,
+                    ArchivedAt: _archived.TryGetValue(key, out var archivedAt) ? archivedAt : null);
             }).ToArray();
             return Task.FromResult<IReadOnlyList<OrchestratorContextDto>>(contexts);
         }
+    }
+
+    public async Task<OrchestratorContextDto> SetArchivedAsync(
+        OrchestratorContextKey context,
+        bool archived,
+        CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (!_turns.ContainsKey(context.Value))
+                throw new KeyNotFoundException($"Chat session '{context.Value}' was not found.");
+            var next = OrchestratorContextArchivePolicy.ArchivedAtAfterRequest(
+                _archived.TryGetValue(context.Value, out var current) ? current : null,
+                archived,
+                DateTime.UtcNow);
+            if (next is { } mark) _archived[context.Value] = mark;
+            else _archived.Remove(context.Value);
+        }
+        var contexts = await ListContextsAsync(includeHidden: true, ct);
+        return contexts.Single(item => item.ContextKey == context.Value);
     }
 
     private static string ContextKey(string projectName, OrchestratorContextKey? context)

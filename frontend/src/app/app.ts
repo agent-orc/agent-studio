@@ -59,7 +59,7 @@ import {
 } from './features/task-detail/runtime';
 import {
   buildComposerLocationContext,
-  OrchestratorChatHistoryComponent,
+  ChatSessionManagerComponent,
   OrchestratorFeedComponent,
   OrchestratorFeedStore,
   OrchestratorSideSheetComponent,
@@ -107,6 +107,7 @@ import {
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
+  replaceStudioRoute,
   replaceTaskViewRoute,
   studioProjectSlug,
   studioRouteForTab,
@@ -178,7 +179,7 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
     OrchestratorSideSheetComponent,
-    OrchestratorChatHistoryComponent,
+    ChatSessionManagerComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
@@ -834,7 +835,6 @@ export class App implements OnInit, OnDestroy {
           project = tab.projectName === '__all__' ? null : tab.projectName;
           break;
         case 'feed':
-        case 'chat-history':
           project = null;
           break;
         case 'workbenches':
@@ -1665,10 +1665,6 @@ export class App implements OnInit, OnDestroy {
     this.orchSideSheetRef?.toggle();
   }
 
-  openChatHistoryContext(contextKey: string): void {
-    this.orchSideSheetRef?.openManagedContext(contextKey);
-  }
-
   onNavigateToChatContext(contextKey: string): void {
     if (contextKey === 'global') {
       this.studioTabState.activateAllProjectsBoard();
@@ -2102,8 +2098,9 @@ export class App implements OnInit, OnDestroy {
       case 'feed':
         this.studioTabState.open({ kind: 'feed' });
         break;
-      case 'chat-history':
-        this.studioTabState.open({ kind: 'chat-history' });
+      case 'chat-history': // AGT-3032: retired tab; its list is the sidebar Chats panel.
+        this.studioPanelState.open('chats');
+        replaceStudioRoute(null); // Back skips it; the active-tab effect restores the URL.
         break;
       case 'workbench':
         if (fromHistory) {

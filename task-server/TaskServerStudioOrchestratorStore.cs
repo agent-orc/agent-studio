@@ -93,31 +93,40 @@ public sealed partial class TaskServerStore
         return new StudioOrchestratorContextDigestResponse(transcript.Context.ContextKey, UtcNow, digest, sources);
     }
 
-    public async Task<OrchestratorSessionListResponse> ListStudioOrchestratorSessionsAsync(CancellationToken ct)
+    /// <summary>
+    /// The Studio session list. <paramref name="includeHidden"/> adds task
+    /// contexts auto-hidden by the task archive so the Studio can show them
+    /// in its Archived group next to operator-archived sessions (AGT-3032).
+    /// </summary>
+    public async Task<OrchestratorSessionListResponse> ListStudioOrchestratorSessionsAsync(
+        CancellationToken ct, bool includeHidden = false)
     {
-        var contexts = await ListOrchestratorContextsAsync(includeHidden: false, ct);
-        var sessions = contexts
-            .Select(context => new OrchestratorSessionDto(
-                context.ContextKey,
-                context.Kind,
-                context.ProjectId,
-                context.TaskKey,
-                context.CreatedAt,
-                context.UpdatedAt,
-                context.Model,
-                context.CumulativeInputTokens,
-                context.CumulativeOutputTokens,
-                context.CumulativeCacheReadTokens,
-                context.CumulativeCacheCreationTokens,
-                context.TurnCount,
-                context.UpdatedAt,
-                context.Summary,
-                context.HiddenAt,
-                "idle",
-                0))
-            .ToList();
-        return new OrchestratorSessionListResponse(sessions);
+        var contexts = await ListOrchestratorContextsAsync(includeHidden, ct);
+        return new OrchestratorSessionListResponse(contexts.Select(ToStudioOrchestratorSession).ToList());
     }
+
+    internal static OrchestratorSessionDto ToStudioOrchestratorSession(OrchestratorContextDto context)
+        => new(
+            context.ContextKey,
+            context.Kind,
+            context.ProjectId,
+            context.TaskKey,
+            context.CreatedAt,
+            context.UpdatedAt,
+            context.Model,
+            context.CumulativeInputTokens,
+            context.CumulativeOutputTokens,
+            context.CumulativeCacheReadTokens,
+            context.CumulativeCacheCreationTokens,
+            context.TurnCount,
+            context.UpdatedAt,
+            context.Summary,
+            context.HiddenAt,
+            "idle",
+            0,
+            context.TurnCount,
+            context.ArchivedAt,
+            context.WorkbenchKey);
 
     private async Task<StudioOrchestratorContextDigestResponse> BuildGlobalOrchestratorDigestAsync(CancellationToken ct)
     {

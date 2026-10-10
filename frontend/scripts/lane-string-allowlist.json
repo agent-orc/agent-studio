@@ -33,5 +33,10 @@
     "file": "src/app/features/task-server/components/task-server-panel/task-server-panel.html",
     "literal": "Ready",
     "reason": "Task Server connection readiness flag. Not the 2-ready lane."
+  },
+  {
+    "file": "src/app/features/orchestrator/components/chat-session-manager/chat-session-manager.component.html",
+    "literal": "Archive",
+    "reason": "Row action verb for archiving a chat session (AGT-3032). Not the 7-archive lane."
   }
 ]

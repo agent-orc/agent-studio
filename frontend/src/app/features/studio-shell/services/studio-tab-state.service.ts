@@ -1,4 +1,4 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import type {
   BoardTab,
   DocumentTabHistory,
@@ -12,6 +12,7 @@ import {
   normalizeTaskTabScope,
   resolveTaskTabScope,
 } from './task-tab-scope';
+import { StudioPanelStateService } from './studio-panel-state.service';
 
 const STORAGE_KEY = 'atp.studio.tabs.v1';
 const STORAGE_VERSION = 1;
@@ -19,6 +20,8 @@ const ALL_PROJECTS = ALL_PROJECTS_BOARD_NAME;
 const ALL_BOARD_TAB: BoardTab = { kind: 'board', projectName: ALL_PROJECTS };
 const ALL_BOARD_KEY = studioTabKey(ALL_BOARD_TAB);
 const DOCUMENT_HISTORY_LIMIT = 50;
+/** AGT-3032: retired editor tab whose session list moved to the sidebar Chats panel. */
+const RETIRED_CHAT_HISTORY_KIND = 'chat-history';
 
 interface PersistedState {
   v: number;
@@ -50,6 +53,7 @@ interface PersistedState {
  */
 @Injectable({ providedIn: 'root' })
 export class StudioTabStateService {
+  private readonly panels = inject(StudioPanelStateService);
   private readonly _tabs = signal<StudioTab[]>([]);
   private readonly _activeKey = signal<string | null>(null);
   private readonly _emptyProjectEntryRevision = signal(0);
@@ -393,6 +397,10 @@ export class StudioTabStateService {
         try { return typeof studioTabKey(t) === 'string'; }
         catch { return false; }
       });
+      // A persisted Chat History tab redirects to the sidebar Chats panel.
+      if (parsed.tabs.some(t => (t as { kind?: unknown } | null)?.kind === RETIRED_CHAT_HISTORY_KIND)) {
+        this.panels.open('chats');
+      }
       this._tabs.set(this.dedupe(safeTabs.map(t => this.normalizeTab(t))));
       // Only restore the active key if it points at a surviving tab.
       const normalizedTabs = this._tabs();
@@ -429,8 +437,6 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
-      case 'chat-history':
-        return { kind: 'chat-history' };
       case 'epics':
         return { kind: 'epics', projectName: tab.projectName };
       case 'epic':

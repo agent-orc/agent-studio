@@ -89,7 +89,7 @@ public sealed partial class TaskServerStore
                      WHERE turn.context_key = c.context_key), 0),
                    COALESCE((SELECT sum(turn.cache_creation_tokens) FROM orchestrator_context_turns turn
                      WHERE turn.context_key = c.context_key), 0),
-                   c.workbench_key
+                   c.workbench_key, c.archived_at
               FROM orchestrator_contexts c
               JOIN projects p ON p.id = c.project_id
               LEFT JOIN tasks t ON t.id = c.task_id
@@ -238,6 +238,56 @@ public sealed partial class TaskServerStore
         return result!;
     }
 
+    /// <summary>
+    /// Sets or clears the operator archive mark on an existing context
+    /// (AGT-3032). Archiving never creates a context: a scope without a row
+    /// has no turns and is not listed, so there is nothing to archive.
+    /// </summary>
+    public async Task<OrchestratorContextDto> SetOrchestratorContextArchivedAsync(
+        string projectIdentity,
+        string? taskIdentity,
+        string? workbenchIdentity,
+        bool archived,
+        string actorId,
+        CancellationToken ct)
+    {
+        RequireWritable();
+        string? contextKey = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var target = string.IsNullOrWhiteSpace(workbenchIdentity)
+                ? await ResolveOrchestratorContextTargetAsync(
+                    connection, transaction, projectIdentity, taskIdentity, ct)
+                : await ResolveOrchestratorWorkbenchContextTargetAsync(
+                    connection, transaction, projectIdentity, workbenchIdentity, ct);
+            var current = await ScalarAsync(
+                connection,
+                "SELECT COALESCE(archived_at, '') FROM orchestrator_contexts WHERE context_key = $key;",
+                ct,
+                transaction,
+                ("$key", target.ContextKey));
+            if (current is null)
+                throw new KeyNotFoundException($"Chat session '{target.ContextKey}' was not found.");
+            var currentText = Convert.ToString(current, CultureInfo.InvariantCulture);
+            var next = OrchestratorContextArchivePolicy.ArchivedAtAfterRequest(
+                string.IsNullOrEmpty(currentText) ? null : Parse(currentText),
+                archived,
+                UtcNow);
+            await ExecuteAsync(connection, """
+                UPDATE orchestrator_contexts SET archived_at = $archived WHERE context_key = $key;
+                """, ct, transaction,
+                ("$archived", next is null ? null : Iso(next.Value)),
+                ("$key", target.ContextKey));
+            await AuditAsync(connection, transaction, actorId,
+                archived ? "orchestrator-context.archived" : "orchestrator-context.unarchived",
+                "orchestrator-context", target.ContextKey,
+                JsonSerializer.Serialize(new { archivedAt = next }), ct);
+            contextKey = target.ContextKey;
+        }, ct);
+        var contexts = await ListOrchestratorContextsAsync(includeHidden: true, ct);
+        return contexts.First(context => string.Equals(context.ContextKey, contextKey, StringComparison.Ordinal));
+    }
+
     private async Task<OrchestratorContextTurnDto> AppendTurnToContextAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -322,9 +372,10 @@ public sealed partial class TaskServerStore
         var summary = string.Equals(canonicalTurn.Role, "user", StringComparison.Ordinal)
             ? BuildContextSummary(canonicalTurn.Body, context.Summary)
             : context.Summary;
+        // A new turn brings an operator-archived session back into the list.
         await ExecuteAsync(connection, """
             UPDATE orchestrator_contexts
-               SET summary = $summary, updated_at = $updated
+               SET summary = $summary, updated_at = $updated, archived_at = NULL
              WHERE context_key = $context;
             """, ct, transaction,
             ("$summary", summary),
@@ -535,7 +586,7 @@ public sealed partial class TaskServerStore
                    c.summary, c.created_at, c.updated_at, c.hidden_at,
                    (SELECT count(*) FROM orchestrator_context_turns turn WHERE turn.context_key = c.context_key),
                    NULL, 0, 0, 0, 0,
-                   c.workbench_key
+                   c.workbench_key, c.archived_at
               FROM orchestrator_contexts c
               JOIN projects p ON p.id = c.project_id
               LEFT JOIN tasks t ON t.id = c.task_id
@@ -561,7 +612,8 @@ public sealed partial class TaskServerStore
             reader.GetInt64(10),
             reader.IsDBNull(11) ? null : reader.GetString(11),
             reader.GetInt64(12), reader.GetInt64(13), reader.GetInt64(14), reader.GetInt64(15),
-            reader.IsDBNull(16) ? null : reader.GetString(16));
+            reader.IsDBNull(16) ? null : reader.GetString(16),
+            reader.IsDBNull(17) ? null : Parse(reader.GetString(17)));
 
     private static OrchestratorContextTurnDto ReadOrchestratorContextTurn(SqliteDataReader reader)
     {

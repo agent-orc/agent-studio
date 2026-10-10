@@ -3,10 +3,10 @@ export { OrchestratorFeedComponent } from './components/orchestrator-feed/orches
 export { GlobalOrchestratorCardComponent } from './components/global-orchestrator-card/global-orchestrator-card';
 export { LoadDistributionComponent } from './components/load-distribution/load-distribution.component';
 export { OrchestratorSideSheetComponent } from './components/orchestrator-side-sheet/orchestrator-side-sheet.component';
-export { OrchestratorChatHistoryComponent } from './components/orchestrator-chat-history/orchestrator-chat-history.component';
 export { OrchestratorContextHeaderComponent } from './components/orchestrator-context-header/orchestrator-context-header.component';
 export { OrchestratorContextReceiptComponent } from './components/orchestrator-context-receipt/orchestrator-context-receipt.component';
-export { ChatSwitcherRailComponent } from './components/chat-switcher-rail/chat-switcher-rail.component';
+export { ChatSessionManagerComponent } from './components/chat-session-manager/chat-session-manager.component';
+export { OrchestratorChatSessionsStore } from './state/orchestrator-chat-sessions.store';
 export { OrchestratorProjectPickerComponent } from './components/orchestrator-project-picker/orchestrator-project-picker.component';
 export { OrchestratorFeedStore } from './state/orchestrator-feed.store';
 // AGT-1812: the standalone OrchestratorSettingsModalComponent was retired; its

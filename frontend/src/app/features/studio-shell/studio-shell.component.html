@@ -164,7 +164,7 @@
       [hasEpics]="hasEpics()"
       (panelToggle)="togglePanel($event)"
       (openEpicsRequest)="onActivityBarOpenEpics()"
-      (openChatHistoryRequest)="openChatHistory()"
+      (chatsToggleRequest)="toggleChatsPanel()"
       (openWorkbenchesRequest)="openWorkbenches(null)" />
 
     <!-- Sidebar host -->
@@ -302,6 +302,14 @@
                      activity-bar filter panel so the user can scope the
                      board without sliding a separate sheet out. -->
                 <ng-content select="[studioFilterPanel]"></ng-content>
+              </section>
+            }
+            @case ('chats') {
+              <section class="studio-chats" data-testid="studio-chats-panel">
+                <!-- The one chat session list (AGT-3032), projected from
+                     app.html (`[studioChatsPanel]`) so it can open sessions
+                     in the orchestrator side sheet it sits beside. -->
+                <ng-content select="[studioChatsPanel]"></ng-content>
               </section>
             }
             @case ('cli') {

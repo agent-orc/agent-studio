@@ -34,10 +34,14 @@ export class OrchestratorPanelHeaderComponent {
   readonly pageContext = input<PageContext | null>(null);
   readonly contextKey = input<string | null>(null);
   readonly executionContext = input<ChatExecutionContext | null>(null);
-  readonly contextCount = input(0);
-  readonly chatsOpen = input(false);
+  /** Whether the context-actions popover (pin, debug, settings, refresh) is open. */
+  readonly contextOpen = input(false);
   readonly active = input(false);
-  readonly chatsToggle = output<void>();
+  /** Live chats across every session, shown on the Chats affordance. */
+  readonly activeChatCount = input(0);
+  readonly contextToggle = output<void>();
+  /** Opens the left-sidebar Chats panel, the one session list (AGT-3032). */
+  readonly chatsRequested = output<void>();
 
   readonly identity = computed<PanelContextIdentity>(() => {
     const page = this.pageContext();

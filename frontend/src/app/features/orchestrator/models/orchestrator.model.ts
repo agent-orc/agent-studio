@@ -96,7 +96,12 @@ export interface OrchestratorContextSession {
   runtimeStatus: 'idle' | 'active' | 'queued' | 'parked';
   queuePosition: number;
   calls?: number;
+  /** Persisted turns. A session without turns is never listed (AGT-3032). */
+  turnCount?: number;
+  /** Automatic hide: the task behind a task session is in `7-archive`. */
   hiddenAt?: string | null;
+  /** Operator archive mark (AGT-3032); cleared by unarchive or a new turn. */
+  archivedAt?: string | null;
   /** Short Task Server-owned preview of the latest user intent. */
   summary?: string | null;
 }

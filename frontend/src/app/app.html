@@ -68,6 +68,9 @@
           (openJobDetail)="onOpenJobDetailFromSheet($event)"
           (navigateToContext)="onNavigateToChatContext($event)"
           (openSettings)="openOrchestratorSettings()" />
+        <!-- AGT-3032: the left-sidebar Chats panel, the one chat session list. -->
+        <app-chat-session-manager studioChatsPanel [projects]="projectNames()" (sessionOpened)="orchSideSheet.openManagedContext($event)"
+          (locationRequested)="onNavigateToChatContext($event)" (newChatRequested)="orchSideSheet.startNewChat($event)" />
         <!-- Inline filter UI for the activity-bar Filter panel. Same
              component as the right-edge sheet, just rendered without
              the slide-in chrome. Hosted inside studio-shell's filter
@@ -312,10 +315,6 @@
                     (openTask)="onEpicOverviewOpenTask($event)" />
                 }
               }
-            }
-            @case ('chat-history') {
-              <app-orchestrator-chat-history
-                (contextOpened)="openChatHistoryContext($event)" />
             }
             @case ('workbenches') {
               @if (studioTabState.activeTab(); as tab) {

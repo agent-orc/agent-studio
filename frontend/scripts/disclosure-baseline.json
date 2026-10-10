@@ -78,9 +78,13 @@
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
+    "src/app/features/orchestrator/components/chat-session-manager/chat-session-manager.component.html": {
+      "kind": "popup-trigger",
+      "reason": "New chat trigger; opens the scope picker as an overlay <app-menu>. The Archived group expands through the shared <app-section-header> disclosure."
+    },
     "src/app/features/orchestrator/components/orchestrator-panel-header/orchestrator-panel-header.component.html": {
       "kind": "popup-trigger",
-      "reason": "Panel-header chats trigger; opens the orchestrator context menu as an overlay."
+      "reason": "Panel-header context trigger; opens the context-actions popover over the conversation."
     },
     "src/app/features/project-cycle-time/components/project-cycle-time-panel/project-cycle-time-panel.component.html": {
       "kind": "staged-adoption",

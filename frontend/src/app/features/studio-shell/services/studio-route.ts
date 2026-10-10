@@ -18,6 +18,7 @@ export type TaskInspectorRouteTab = 'task' | 'activity' | 'protocol';
 export type StudioRoute =
   | { kind: 'board'; projectSlug: string | null }
   | { kind: 'feed' }
+  /** Retired Chat History tab (AGT-3032); the shell redirects it to the sidebar Chats panel. */
   | { kind: 'chat-history' }
   | { kind: 'hub'; projectSlug: string; section: string; page: string | null; folder: string | null }
   | { kind: 'workbenches'; projectSlug: string | null }
@@ -120,8 +121,6 @@ export function studioRouteForTab(
         : `/projects/${studioProjectSlug(tab.projectName)}/board`;
     case 'feed':
       return '/feed';
-    case 'chat-history':
-      return '/chat-history';
     case 'hub': {
       const base = `/projects/${studioProjectSlug(tab.projectName)}`;
       return !tab.section || tab.section === 'overview' ? base : `${base}/${encodeURIComponent(tab.section)}`;
@@ -171,6 +170,17 @@ export function navigateStudioRoute(route: string): void {
     '',
     window.location.pathname + window.location.search + target,
   );
+}
+
+/**
+ * Replace the current route segment in place (or drop it with `null`) so a
+ * redirected, retired route never stays in the Back history.
+ */
+export function replaceStudioRoute(route: string | null): void {
+  if (typeof window === 'undefined') return;
+  const target = withRouteSegment(window.location.hash, route);
+  if (target === window.location.hash) return;
+  window.history.replaceState(null, '', window.location.pathname + window.location.search + target);
 }
 
 /** Replace only the query carried by the current canonical route. */

@@ -102,7 +102,7 @@ describe('StudioActivityBarComponent settings destination', () => {
    * that two items can never light up together — assert it on the DOM.
    */
   it('marks at most one button active for any active key', () => {
-    for (const key of ['explorer', 'filters', 'chat-history', 'epics', 'settings', null]) {
+    for (const key of ['explorer', 'filters', 'chats', 'epics', 'settings', null]) {
       const fixture = mount(key);
       fixture.componentRef.setInput('hasEpics', true);
       fixture.detectChanges();
@@ -154,12 +154,12 @@ describe('resolveActiveActivityKey', () => {
     })).toBe('epics');
   });
 
-  it('maps Chat History to its workspace destination', () => {
+  it('marks the Chats button while the sidebar Chats panel is open', () => {
     expect(resolveActiveActivityKey({
-      activeTabKind: 'chat-history',
-      activePanel: 'explorer',
+      activeTabKind: 'board',
+      activePanel: 'chats',
       sidebarVisible: true,
-    })).toBe('chat-history');
+    })).toBe('chats');
   });
 
   it('falls back to the open sidebar panel for non-destination tabs', () => {

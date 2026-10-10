@@ -204,6 +204,95 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
         Assert.Equal(3, record.CumulativeOutputTokens);
     }
 
+    [Fact]
+    public async Task Archive_endpoint_sets_lists_and_clears_the_operator_mark()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        _central.SeedContext("task:PROJ-001/AGT-7", "Why is the build red?",
+            new OrchestratorChatTurn { Role = OrchestratorChatRoles.User, Text = "Why is the build red?" });
+
+        using var archive = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/task:PROJ-001/AGT-7/archive", new { archived = true });
+        archive.EnsureSuccessStatusCode();
+        var archived = await ListedSessionAsync(client, "task:PROJ-001/AGT-7");
+        Assert.Equal(JsonValueKind.String, archived.GetProperty("archivedAt").ValueKind);
+        Assert.Equal(1, archived.GetProperty("turnCount").GetInt64());
+
+        using var unarchive = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/task:PROJ-001/AGT-7/archive", new { archived = false });
+        unarchive.EnsureSuccessStatusCode();
+        var restored = await ListedSessionAsync(client, "task:PROJ-001/AGT-7");
+        Assert.Equal(JsonValueKind.Null, restored.GetProperty("archivedAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task Archive_endpoint_is_cleared_by_a_new_turn()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        _central.SeedContext("project:PROJ-001", "Old question",
+            new OrchestratorChatTurn { Role = OrchestratorChatRoles.User, Text = "Old question" });
+        using var archive = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/project:PROJ-001/archive", new { archived = true });
+        archive.EnsureSuccessStatusCode();
+
+        await _central.AppendAsync("PROJ-001", _root, context: null,
+            new OrchestratorChatTurn { Role = OrchestratorChatRoles.User, Text = "New question" },
+            CancellationToken.None);
+
+        var session = await ListedSessionAsync(client, "project:PROJ-001");
+        Assert.Equal(JsonValueKind.Null, session.GetProperty("archivedAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task Archive_endpoint_returns_not_found_for_a_session_without_transcript()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/project:PROJ-404/archive", new { archived = true });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Archive_endpoint_refuses_a_running_session_but_still_unarchives()
+    {
+        var runner = new BlockingFakeOrchestratorRunner();
+        using var factory = CreateFactory(runner);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        _central.SeedContext("project:PROJ-001", "Busy",
+            new OrchestratorChatTurn { Role = OrchestratorChatRoles.User, Text = "Busy" });
+        using var turn = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/project:PROJ-001/turns", new { prompt = "work" });
+        Assert.Equal(HttpStatusCode.Accepted, turn.StatusCode);
+
+        using var archive = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/project:PROJ-001/archive", new { archived = true });
+        using var unarchive = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/project:PROJ-001/archive", new { archived = false });
+
+        Assert.Equal(HttpStatusCode.Conflict, archive.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, unarchive.StatusCode);
+        runner.ReleaseAll();
+    }
+
+    private static async Task<JsonElement> ListedSessionAsync(HttpClient client, string contextKey)
+    {
+        using var list = await client.GetAsync("/api/orchestrator/sessions");
+        list.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+        return document.RootElement.GetProperty("sessions").EnumerateArray()
+            .Single(session => session.GetProperty("contextKey").GetString() == contextKey)
+            .Clone();
+    }
+
     private OrchestratorSessionRegistry Build()
     {
         var legacy = new GlobalOrchestratorSessionStore(_config, NullLogger<GlobalOrchestratorSessionStore>.Instance);

@@ -110,7 +110,22 @@ public static class StudioEndpoints
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
 
         orchestrator.MapGet("/sessions", async (TaskServerStore store, CancellationToken ct)
-            => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioOrchestratorSessionsAsync(ct)));
+            => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioOrchestratorSessionsAsync(ct, includeHidden: true)));
+        orchestrator.MapPost("/sessions/project:{projectIdentity}/archive", (
+            string projectIdentity, HttpContext context, SetOrchestratorContextArchivedRequest request,
+            StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => SetSessionArchivedAsync(projectIdentity, null, null, request, context, coordinator, ct))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestrator.MapPost("/sessions/task:{projectIdentity}/{taskIdentity}/archive", (
+            string projectIdentity, string taskIdentity, HttpContext context, SetOrchestratorContextArchivedRequest request,
+            StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => SetSessionArchivedAsync(projectIdentity, taskIdentity, null, request, context, coordinator, ct))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
+        orchestrator.MapPost("/sessions/workbench:{projectIdentity}/{workbenchIdentity}/archive", (
+            string projectIdentity, string workbenchIdentity, HttpContext context, SetOrchestratorContextArchivedRequest request,
+            StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => SetSessionArchivedAsync(projectIdentity, null, workbenchIdentity, request, context, coordinator, ct))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestrator.MapPost("/sessions/workbench:{projectIdentity}/{workbenchIdentity}/turns", async (
             string projectIdentity, string workbenchIdentity, HttpContext context, StudioOrchestratorTurnRequest request,
             StudioLifecycleCoordinator coordinator, CancellationToken ct)
@@ -121,6 +136,14 @@ public static class StudioEndpoints
             .WithPublicDemoExecutionDenied(ExecutionAdmissionPath.Chat)
             .RequireTaskServerScope(TaskServerScopes.TasksWrite);
     }
+
+    private static Task<IResult> SetSessionArchivedAsync(
+        string projectIdentity, string? taskIdentity, string? workbenchIdentity,
+        SetOrchestratorContextArchivedRequest request, HttpContext context,
+        StudioLifecycleCoordinator coordinator, CancellationToken ct)
+        => TaskServerEndpoints.InvokeAsync(() => coordinator.SetOrchestratorSessionArchivedAsync(
+            projectIdentity, taskIdentity, workbenchIdentity, request.Archived,
+            TaskServerEndpoints.Actor(context), ct));
 
     private static Task<IResult> BuildOrchestratorDigestAsync(
         string rawContextKey, HttpContext context, TaskServerStore store, CancellationToken ct)

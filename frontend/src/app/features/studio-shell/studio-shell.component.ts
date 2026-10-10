@@ -654,8 +654,8 @@ export class StudioShellComponent {
     this.tabState.open({ kind: 'feed' });
   }
 
-  openChatHistory(): void {
-    this.tabState.open({ kind: 'chat-history' });
+  toggleChatsPanel(): void {
+    this.panelState.toggle('chats');
   }
 
   /**
@@ -1134,8 +1134,6 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
-      case 'chat-history':
-        return 'Chat History';
       case 'epics':
         return tab.projectName === null ? 'All projects · Epics' : `${this.projectShortLabel(tab.projectName)} · Epics`;
       case 'workbenches':
@@ -1232,7 +1230,6 @@ export class StudioShellComponent {
       return this.railItemForSection(tab.section).railIcon ?? null;
     }
     if (tab.kind === 'url-preview') return 'link';
-    if (tab.kind === 'chat-history') return 'bot';
     if (tab.kind === 'workbenches') return 'eye';
     if (tab.kind === 'workbench') return 'eye';
     return null;

@@ -109,6 +109,13 @@ public static class StudioV1LegacyRouteAlias
         if (rest.Length == 5 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions")
             && rest[2].StartsWith("workbench:", StringComparison.OrdinalIgnoreCase) && Is(rest[4], "turns") && post)
             return new LegacyTarget("/api/orchestrator/sessions" + Tail(rest, 2), null);
+        if (post && rest.Length is 4 or 5 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions") && Is(rest[^1], "archive"))
+        {
+            var projectScope = rest.Length == 4 && HasPrefix(rest[2], "project:");
+            var nestedScope = rest.Length == 5 && (HasPrefix(rest[2], "task:") || HasPrefix(rest[2], "workbench:"));
+            if (projectScope || nestedScope)
+                return new LegacyTarget("/api/orchestrator/sessions" + Tail(rest, 2), null);
+        }
         if (rest.Length == 2 && Is(rest[0], "runner") && Is(rest[1], "status") && get)
             return new LegacyTarget("/api/runner/status", null);
         if (rest.Length == 3 && Is(rest[0], "runner") && Is(rest[2], "orchestrator-chat") && (get || post))

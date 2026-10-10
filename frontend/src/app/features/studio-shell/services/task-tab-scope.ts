@@ -37,7 +37,6 @@ export function resolveTaskTabScope(origin: StudioTab | null): TaskTabScope | un
         ? { kind: 'all-projects' }
         : { kind: 'project', projectName: origin.projectName };
     case 'feed':
-    case 'chat-history':
       return { kind: 'all-projects' };
     case 'epics':
     case 'workbenches':
