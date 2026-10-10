@@ -9,6 +9,10 @@ public sealed class GateResultCachePolicyTests
     public void Local_toolchain_identity_changes_when_selected_sdk_changes_without_host_binary_change()
     {
         var repository = Path.GetFullPath(Path.GetTempPath());
+        var launcherDirectory = Path.Combine(repository, "gate-toolchain-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(launcherDirectory);
+        var launcher = Path.Combine(launcherDirectory, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+        File.WriteAllText(launcher, "stable host binary");
         var commands = new[]
         {
             new VerifyCommand(VerifyEcosystem.DotNet, VerifyCommandKind.Test, "", "dotnet test"),
@@ -17,13 +21,21 @@ public sealed class GateResultCachePolicyTests
             commands, repository,
             (executable, directory, argument) =>
             {
+                Assert.Equal(launcher, executable);
                 Assert.Equal("--version", argument);
                 Assert.Equal(repository, directory);
-                // The resolved executable carries a platform extension on Windows (dotnet.exe).
-                return Path.GetFileNameWithoutExtension(executable) == "dotnet" ? sdk : "unchanged";
-            });
+                return sdk;
+            },
+            name => name == "dotnet" ? launcher : null);
 
-        Assert.NotEqual(Identity("10.0.301"), Identity("10.0.302"));
+        try
+        {
+            Assert.NotEqual(Identity("10.0.301"), Identity("10.0.302"));
+        }
+        finally
+        {
+            Directory.Delete(launcherDirectory, recursive: true);
+        }
     }
 
     [Fact]

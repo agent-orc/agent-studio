@@ -165,6 +165,12 @@ public sealed class GateResultCache
     internal static string LocalToolchainIdentity(
         IReadOnlyList<VerifyCommand> commands, string repositoryPath,
         Func<string, string, string, string> readVersion)
+        => LocalToolchainIdentity(commands, repositoryPath, readVersion, ResolveExecutable);
+
+    internal static string LocalToolchainIdentity(
+        IReadOnlyList<VerifyCommand> commands, string repositoryPath,
+        Func<string, string, string, string> readVersion,
+        Func<string, string?> resolveExecutable)
     {
         var names = commands.Select(command => command.Command.Split(' ', '\t', '\r', '\n')
                 .FirstOrDefault() ?? "")
@@ -178,11 +184,9 @@ public sealed class GateResultCache
             RuntimeInformation.ProcessArchitecture.ToString(),
             RuntimeInformation.FrameworkDescription,
         };
-        var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
         foreach (var name in names)
         {
-            var path = paths.SelectMany(dir => ExecutableFileNames(name).Select(file => Path.Combine(dir, file)))
-                .FirstOrDefault(File.Exists);
+            var path = resolveExecutable(name);
             if (path is null) { parts.Add(name + ":missing"); continue; }
             var info = new FileInfo(path);
             parts.Add($"{name}:{info.FullName}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
@@ -202,6 +206,13 @@ public sealed class GateResultCache
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("|", parts))))
             .ToLowerInvariant();
+    }
+
+    private static string? ResolveExecutable(string name)
+    {
+        var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
+        return paths.SelectMany(dir => ExecutableFileNames(name).Select(file => Path.Combine(dir, file)))
+            .FirstOrDefault(File.Exists);
     }
 
     /// <summary>
