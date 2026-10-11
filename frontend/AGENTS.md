@@ -39,7 +39,7 @@ After **every** frontend change under `frontend/src/` that touches layout, spaci
 
 Workflow:
 
-1. Make sure backend (`http://localhost:5030`) and frontend (`http://localhost:4010`) are running. Tests do **not** spawn them — they fail fast if missing.
+1. Run from the task worktree on the Linux runner. `npm run e2e` prepares prebuilt assets and starts an isolated stack on dynamic ports. Focused runs reuse the built assets.
 2. Run the relevant spec, or the full suite for cross-cutting changes (sh — never PowerShell):
    ```sh
    npm --prefix frontend run e2e                          # full suite, headless
@@ -48,6 +48,7 @@ Workflow:
    npm --prefix frontend run e2e:headed                   # watch the browser
    SKIP_BILLABLE=1 npm --prefix frontend run e2e          # skip CLI-quota-burning specs
    ```
+   `npm --prefix frontend run e2e:external` targets an already running stack for operator inspection.
 3. If your change isn't covered by an existing spec, **add or extend one** as part of the same change. Regression coverage is the deliverable, not optional.
 4. For CLI-execution changes (Claude / Codex / Copilot start path, model wiring, quota), run `claude-hello-world.spec.ts` end-to-end. It uses real quota (~10s, one Haiku call) but is cheap.
 
