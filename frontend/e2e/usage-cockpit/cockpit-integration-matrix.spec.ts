@@ -104,7 +104,7 @@ async function shot(page: Page, name: string, headerOnly = false): Promise<void>
 }
 
 test('product after-state matrix and expanded usage evidence', async ({ page, devBackend }) => {
-  expect(devBackend.baseUrl).toContain('5030');
+  expect(devBackend.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   page.setDefaultNavigationTimeout(120_000);
   mkdirSync(OUT, { recursive: true });
   checkFixture();

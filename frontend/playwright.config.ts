@@ -24,6 +24,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const pwTarget = (process.env.PW_TARGET ?? 'dev').toLowerCase();
 const prebuilt = process.env.PW_PREBUILT === '1';
+const profile = process.env.PW_E2E_PROFILE ?? 'standard';
 const backendPort = process.env.PW_E2E_BACKEND_PORT;
 const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
 if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
@@ -46,6 +47,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: !!process.env.CI,
   workers: 1,
   reporter: reporters,
   ...(prebuilt ? {
@@ -69,21 +71,28 @@ export default defineConfig({
   } : {}),
   use: {
     baseURL: resolvedBaseUrl,
-    trace: 'on-first-retry',
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'off',
     actionTimeout: 10_000,
-    navigationTimeout: 15_000
+    navigationTimeout: 15_000,
+    serviceWorkers: 'block',
   },
   projects: [
     {
       name: 'chromium',
-      testIgnore: /visual-evidence\//,
+      ...(prebuilt ? {
+        testMatch: profile === 'recovery' ? '**/system/crash-recovery-prompt.spec.ts'
+          : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts' : '**/*.spec.ts',
+        testIgnore: profile === 'standard'
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          : /visual-evidence\//,
+      } : { testIgnore: /visual-evidence\// }),
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },
     {
       name: 'visual-evidence',
-      testMatch: /visual-evidence\/.*\.spec\.ts/,
+      testMatch: profile === 'standard' ? /visual-evidence\/.*\.spec\.ts/ : /$^/,
       use: { ...devices['Desktop Chrome'], channel: undefined, video: 'retain-on-failure' },
     },
   ],

@@ -195,8 +195,9 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
   demoWorkspace: [false, { option: true }],
   devBackend: async ({ recoveryRepository, demoWorkspace }, use, testInfo) => {
     if (process.env.PW_PREBUILT === '1') {
-      if (recoveryRepository || demoWorkspace) {
-        throw new Error('This spec requires a fixture-owned workspace and cannot use the shared prebuilt backend.');
+      const profile = process.env.PW_E2E_PROFILE ?? 'standard';
+      if ((recoveryRepository && profile !== 'recovery') || (demoWorkspace && profile !== 'demo')) {
+        throw new Error('This spec requires the matching isolated prebuilt recovery or demo profile.');
       }
       if (!await isHealthy() || !await hasWatchPath()) {
         throw new Error('The prebuilt backend is unavailable or has no watch path; its webServer owns the lifecycle.');
@@ -204,7 +205,7 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
       await use({
         port: DEV_PORT,
         baseUrl: DEV_BASE_URL,
-        workspace: process.env.PW_E2E_WORKSPACE ?? await discoverWorkspace(),
+        workspace: process.env.PW_E2E_CHECKOUT ?? await discoverWorkspace(),
       });
       return;
     }
