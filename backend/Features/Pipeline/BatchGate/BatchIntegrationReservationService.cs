@@ -10,6 +10,8 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class BatchIntegrationReservationService
 {
+    public sealed record PendingCodePush(string JobId, string ApprovedSha, DateTimeOffset SinceUtc);
+
     private readonly string? _root;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _projects =
         new(StringComparer.OrdinalIgnoreCase);
@@ -18,9 +20,10 @@ public sealed class BatchIntegrationReservationService
 
     public BatchIntegrationReservationService(string? root = null) => _root = root;
 
-    private sealed class PendingPushes(IEnumerable<string> jobs)
+    private sealed class PendingPushes(IEnumerable<PendingCodePush> jobs)
     {
-        public HashSet<string> Jobs { get; } = new(jobs, StringComparer.Ordinal);
+        public Dictionary<string, PendingCodePush> Jobs { get; } = jobs.ToDictionary(
+            job => Hash(PushKey(job.JobId, job.ApprovedSha)), StringComparer.Ordinal);
         public TaskCompletionSource Cleared { get; set; } = Completed(jobs.Any());
 
         private static TaskCompletionSource Completed(bool pending)
@@ -33,12 +36,18 @@ public sealed class BatchIntegrationReservationService
 
     private PendingPushes ForProject(string project)
         => _pushes.GetOrAdd(project, name => new PendingPushes(
-            _root is null ? [] : Directory.Exists(ProjectDirectory(name))
-                ? Directory.EnumerateFiles(ProjectDirectory(name), "*.pending")
-                    .Select(Path.GetFileNameWithoutExtension)
-                    .Where(value => value is not null)
-                    .Select(value => value!).ToArray()
-                : []));
+            _root is null || !Directory.Exists(ProjectDirectory(name))
+                ? [] : Directory.EnumerateFiles(ProjectDirectory(name), "*.pending")
+                    .Select(ReadMarker).Where(value => value is not null)
+                    .Select(value => value!).ToArray()));
+
+    private static PendingCodePush? ReadMarker(string path)
+    {
+        var parts = File.ReadAllText(path).Split('\n', 2);
+        return parts.Length == 2
+            ? new PendingCodePush(parts[0], parts[1], File.GetLastWriteTimeUtc(path))
+            : null;
+    }
 
     private string ProjectDirectory(string project)
         => Path.Combine(_root!, Hash(project.ToUpperInvariant()));
@@ -72,8 +81,25 @@ public sealed class BatchIntegrationReservationService
                 wait = pending.Cleared.Task;
             }
             grant.Dispose();
-            await wait.WaitAsync(ct).ConfigureAwait(false);
+            // The coordinator reconciles durable markers on each tick. Recheck
+            // even if a notification was lost during a process restart.
+            await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(30), ct))
+                .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
         }
+    }
+
+    public IReadOnlyList<PendingCodePush> ListPending(string project)
+    {
+        var pending = ForProject(project);
+        lock (pending) return pending.Jobs.Values.OrderBy(item => item.SinceUtc).ToArray();
+    }
+
+    public void Reconcile(string project, Func<PendingCodePush, bool> isResolved)
+    {
+        foreach (var marker in ListPending(project))
+            if (isResolved(marker))
+                MarkPushVerified(project, marker.JobId, marker.ApprovedSha);
     }
 
     // Called while the code merge owns the reservation, before its push enters
@@ -93,7 +119,11 @@ public sealed class BatchIntegrationReservationService
             if (pending.Jobs.Count == 0)
                 pending.Cleared = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously);
-            pending.Jobs.Add(_root is null ? pushKey : Hash(pushKey));
+            var key = Hash(pushKey);
+            if (!pending.Jobs.ContainsKey(key))
+                pending.Jobs[key] = new PendingCodePush(jobId, approvedSha ?? string.Empty,
+                    _root is null ? DateTimeOffset.UtcNow : File.GetLastWriteTimeUtc(
+                        PendingPath(project, pushKey)));
         }
     }
 
@@ -108,7 +138,7 @@ public sealed class BatchIntegrationReservationService
                 var path = PendingPath(project, pushKey);
                 if (File.Exists(path)) File.Delete(path);
             }
-            pending.Jobs.Remove(_root is null ? pushKey : Hash(pushKey));
+            pending.Jobs.Remove(Hash(pushKey));
             if (pending.Jobs.Count == 0) pending.Cleared.TrySetResult();
         }
     }

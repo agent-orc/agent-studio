@@ -6,7 +6,8 @@ public static class BatchGateStateSnapshotReader
 {
     public static object Read(BatchGateStore store, string project,
         BatchGateFormationOptions settings, int history = 10,
-        IReadOnlyDictionary<string, double>? risks = null)
+        IReadOnlyDictionary<string, double>? risks = null,
+        string? pendingPushReason = null)
     {
         var now = DateTimeOffset.UtcNow;
         var pending = store.ListPending().Where(item =>
@@ -18,6 +19,9 @@ public static class BatchGateStateSnapshotReader
                 ?? new BatchPlanDecision(pending.Length == 0 ? "idle" : "wait",
                     pending.Length == 0 ? "no eligible cards" : "awaiting planner tick",
                     null, [], 0, []);
+        if (settings.Enabled && pendingPushReason is not null)
+            plan = plan with { Decision = "wait", Reason = pendingPushReason,
+                CloseAtUtc = null };
         var manifests = store.ListManifests()
             .Where(item => string.Equals(item.Scope.Project, project, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(item => item.ClosedAtUtc)

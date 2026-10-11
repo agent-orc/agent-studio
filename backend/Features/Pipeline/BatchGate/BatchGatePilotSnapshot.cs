@@ -14,7 +14,8 @@ public sealed record BatchGatePilotSnapshot(
     decimal? GateCostUsd, int StaleAttemptPasses,
     int MissingShaMappings, int UntestedPublishShas,
     int FalseCompletedCards, bool CorrectnessFloorMet,
-    int IntegrationBranchRedBatches = 0);
+    int IntegrationBranchRedBatches = 0,
+    string? PendingPushWait = null);
 
 public static class BatchGatePilotSnapshotReader
 {

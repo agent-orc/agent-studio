@@ -119,6 +119,28 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task State_and_report_explain_the_pending_code_push()
+    {
+        using var factory = BuildFactory();
+        using var client = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var reservations = factory.Services.GetRequiredService<BatchIntegrationReservationService>();
+        var sha = Git(_repo, "rev-parse", "develop");
+        reservations.MarkPushPending(ProjectName, "AGT-PUSH", sha);
+
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state"));
+        Assert.Equal("wait", state.RootElement.GetProperty("plan")
+            .GetProperty("decision").GetString());
+        Assert.Contains($"AGT-PUSH@{sha}", state.RootElement.GetProperty("plan")
+            .GetProperty("reason").GetString());
+        using var report = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/report"));
+        Assert.Contains($"AGT-PUSH@{sha}", report.RootElement
+            .GetProperty("pendingPushWait").GetString());
+    }
+
+    [Fact]
     public async Task Pending_member_uses_current_gate_profile_when_the_project_profile_changes()
     {
         using var factory = BuildFactory();

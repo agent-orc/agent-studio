@@ -96,6 +96,47 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Reconciliation_clears_durable_marker_and_wakes_waiting_batch()
+    {
+        var root = Path.Combine(_tempDir, "reconciled-pushes");
+        new BatchIntegrationReservationService(root).MarkPushPending("Fixture", "card-1", "sha-1");
+        var restarted = new BatchIntegrationReservationService(root);
+        var batch = restarted.AcquireBatchAsync("Fixture", CancellationToken.None);
+        Assert.False(batch.IsCompleted);
+        Assert.Equal("card-1", Assert.Single(restarted.ListPending("Fixture")).JobId);
+
+        restarted.Reconcile("Fixture", marker => marker.ApprovedSha == "sha-1");
+
+        using var grant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(restarted.ListPending("Fixture"));
+        Assert.Empty(Directory.EnumerateFiles(root, "*.pending", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(true, false, true, true, "approved")]
+    [InlineData(false, false, true, true, "approved")]
+    [InlineData(false, true, true, true, "new-approved")]
+    [InlineData(false, true, true, false, "approved")]
+    public async Task Stale_push_reconciliation_releases_the_waiting_batch(
+        bool originContainsApproved, bool originIsAncestorOfApproved,
+        bool hasOrigin, bool mergePassed, string currentApprovedSha)
+    {
+        var root = Path.Combine(_tempDir, Guid.NewGuid().ToString("N"));
+        new BatchIntegrationReservationService(root).MarkPushPending(
+            "Fixture", "card-1", "approved");
+        var restarted = new BatchIntegrationReservationService(root);
+        var waiting = restarted.AcquireBatchAsync("Fixture", CancellationToken.None);
+        Assert.False(waiting.IsCompleted);
+
+        restarted.Reconcile("Fixture", marker => PendingCodePushPolicy.IsResolved(
+            originContainsApproved, originIsAncestorOfApproved, hasOrigin,
+            true, mergePassed, currentApprovedSha, marker.ApprovedSha));
+
+        using var grant = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(restarted.ListPending("Fixture"));
+    }
+
+    [Fact]
     public void Run_MergesTaskBranch_AndRecordsStepPassed()
     {
         var repo = SeedRepo("runner-merge");

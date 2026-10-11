@@ -19,6 +19,8 @@ public static class PipelineHealthConventions
     public static readonly TimeSpan SensorInterval = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan AlertCooldown = TimeSpan.FromHours(1);
     public const string EvidenceFlushStalledKind = "evidence-flush-stalled";
+    public const string PendingCodePushStalledKind = "pending-code-push-stalled";
+    public static readonly TimeSpan PendingCodePushAlertAge = TimeSpan.FromMinutes(20);
 }
 
 public sealed record PipelineGateContext(
@@ -76,6 +78,20 @@ public sealed record PipelineHealthSnapshot(
     PipelineFingerprintHealth? Fingerprint,
     IReadOnlyList<PipelineLaneDrainHealth> Lanes,
     IReadOnlyList<PipelineHealthAlert> Alerts);
+
+public static class PendingCodePushHealthPolicy
+{
+    public static IReadOnlyList<PipelineHealthAlert> Alerts(
+        IReadOnlyList<BatchIntegrationReservationService.PendingCodePush> markers,
+        DateTime nowUtc)
+        => markers.Where(marker => new DateTimeOffset(nowUtc) - marker.SinceUtc
+                >= PipelineHealthConventions.PendingCodePushAlertAge)
+            .Select(marker => new PipelineHealthAlert(
+                PipelineHealthConventions.PendingCodePushStalledKind, "high",
+                $"Code push for {marker.JobId} is still pending",
+                $"Batch formation waits on {marker.JobId}@{marker.ApprovedSha} since {marker.SinceUtc:O}.",
+                nowUtc, marker.JobId)).ToArray();
+}
 
 /// <summary>
 /// Pure, deterministic state machine shared by live sensing and log replay.
@@ -264,6 +280,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
     private readonly ConcurrentDictionary<string, PipelineHealthAlert> _currentAlerts =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
+    private readonly BatchIntegrationReservationService? _batchReservations;
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
     internal const string ReviewClaimStallIdentity = "review-claims:" + TaskStates.AutoReview;
@@ -274,7 +291,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         TimelineLog timeline,
         OrchestratorLog orchestratorLog,
         ILogger<PipelineHealthService> logger,
-        AutoReviewQueueStagnationWatchdog? reviewQueue = null)
+        AutoReviewQueueStagnationWatchdog? reviewQueue = null,
+        BatchIntegrationReservationService? batchReservations = null)
     {
         _detector = detector;
         _scanner = scanner;
@@ -282,6 +300,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         _orchestratorLog = orchestratorLog;
         _logger = logger;
         _reviewQueue = reviewQueue;
+        _batchReservations = batchReservations;
     }
 
     public void GateAcquired(PipelineGateContext gate) => _detector.GateAcquired(gate);
@@ -313,11 +332,14 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             .Where(pair => pair.Key.StartsWith(project + "\0", StringComparison.OrdinalIgnoreCase))
             .Select(pair => pair.Value)
             .OrderByDescending(alert => alert.DetectedAtUtc)
-            .ToArray();
+            .Concat(PendingCodePushHealthPolicy.Alerts(
+                _batchReservations?.ListPending(project) ?? [], now))
+            .OrderByDescending(alert => alert.DetectedAtUtc).ToArray();
         var unhealthy = activeGate?.IsHanging == true
             || fingerprint?.IsSystemic == true
             || lanes.Any(lane => lane.IsStalled)
             || alerts.Any(alert => alert.Kind == PipelineHealthConventions.EvidenceFlushStalledKind)
+            || alerts.Any(alert => alert.Kind == PipelineHealthConventions.PendingCodePushStalledKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,

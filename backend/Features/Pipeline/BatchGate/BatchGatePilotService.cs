@@ -30,6 +30,9 @@ public sealed class BatchGatePilotService
     private readonly BatchGateSnapshotBuilder _snapshots;
     private readonly BatchGateAdvisorService? _advisor;
     private readonly BatchIntegrationReservationService? _reservations;
+    private readonly PipelineExecutionLog? _pipeline;
+    private readonly Dictionary<string, DateTimeOffset> _pendingPushAlerts =
+        new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
     private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningBatches = new(StringComparer.OrdinalIgnoreCase);
@@ -52,7 +55,8 @@ public sealed class BatchGatePilotService
         ILogger<BatchGatePilotService> logger,
         ILoadThrottleGate? load = null, TimeProvider? timeProvider = null,
         BatchGateAdvisorService? advisor = null,
-        BatchIntegrationReservationService? reservations = null)
+        BatchIntegrationReservationService? reservations = null,
+        PipelineExecutionLog? pipeline = null)
     {
         _store = store;
         _leases = leases;
@@ -72,6 +76,7 @@ public sealed class BatchGatePilotService
         _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git);
         _advisor = advisor;
         _reservations = reservations;
+        _pipeline = pipeline;
     }
 
     public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
@@ -192,7 +197,10 @@ public sealed class BatchGatePilotService
             }
         }
         return BatchGatePilotSnapshotReader.Read(_store, project,
-            falseCompleted, staleReleased);
+            falseCompleted, staleReleased) with
+        {
+            PendingPushWait = PendingPushReason(project),
+        };
     }
 
     public bool RequestEject(string project, string taskKey)
@@ -207,6 +215,69 @@ public sealed class BatchGatePilotService
 
     public void RequestCloseNow(string project) => _store.RequestCloseNow(project);
 
+    private string? PendingPushReason(string project)
+    {
+        var marker = _reservations?.ListPending(project).FirstOrDefault();
+        return marker is null ? null
+            : $"waiting on push {marker.JobId}@{marker.ApprovedSha} since {marker.SinceUtc:O}";
+    }
+
+    private void ReconcilePendingPushes(CancellationToken ct)
+    {
+        if (_reservations is null) return;
+        foreach (var entry in _scanner.GetWatchPaths())
+        {
+            ct.ThrowIfCancellationRequested();
+            var markers = _reservations.ListPending(entry.Name);
+            if (markers.Count == 0) continue;
+            var repo = string.IsNullOrWhiteSpace(entry.RepositoryPath)
+                ? entry.RootPath : entry.RepositoryPath;
+            if (string.IsNullOrWhiteSpace(repo) || !Directory.Exists(repo)) continue;
+            try
+            {
+                var branch = _settings.Get(entry.Name).IntegrationBranch;
+                var origin = _git.FetchBatchIntegrationTip(repo, branch, ct);
+                _reservations.Reconcile(entry.Name, marker =>
+                {
+                    var task = _scanner.FindJob(marker.JobId, entry.Path);
+                    var merge = task is null ? null : _pipeline?.Read(task.FolderPath)?.Steps
+                        .LastOrDefault(step => step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+                    var resolved = PendingCodePushPolicy.IsResolved(
+                        origin is not null && _git.IsAncestor(repo, marker.ApprovedSha, origin),
+                        origin is not null && _git.IsAncestor(repo, origin, marker.ApprovedSha),
+                        origin is not null,
+                        task?.State is TaskStates.AutoReview or TaskStates.HumanReview
+                            or TaskStates.Completed or TaskStates.Archive,
+                        _pipeline is null || merge?.Status == PipelineStepStatus.Passed,
+                        _pipeline is null ? marker.ApprovedSha : merge?.ApprovedIntegrationSha,
+                        marker.ApprovedSha);
+                    if (resolved)
+                        _logger.LogInformation(
+                            "batch-push-reservation-reconciled project={Project} job={JobId} sha={Sha} origin={Origin}",
+                            entry.Name, marker.JobId, marker.ApprovedSha, origin);
+                    return resolved;
+                });
+                foreach (var marker in _reservations.ListPending(entry.Name))
+                {
+                    var now = _time.GetUtcNow();
+                    if (now - marker.SinceUtc < TimeSpan.FromMinutes(20)) continue;
+                    var key = entry.Name + "\n" + marker.JobId + "\n" + marker.ApprovedSha;
+                    if (_pendingPushAlerts.TryGetValue(key, out var last)
+                        && now - last < TimeSpan.FromHours(1)) continue;
+                    _pendingPushAlerts[key] = now;
+                    _logger.LogWarning(
+                        "batch-push-reservation-stale project={Project} job={JobId} sha={Sha} since={SinceUtc}",
+                        entry.Name, marker.JobId, marker.ApprovedSha, marker.SinceUtc);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "batch-push-reservation-reconciliation-failed project={Project}", entry.Name);
+            }
+        }
+    }
+
     public object State(string project, int history = 10)
     {
         var options = _settings.Get(project).BatchGate;
@@ -219,7 +290,8 @@ public sealed class BatchGatePilotService
                 .GroupBy(card => card.TaskKey, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Last().Risk,
                     StringComparer.Ordinal);
-        return BatchGateStateSnapshotReader.Read(_store, project, options, history, risks);
+        return BatchGateStateSnapshotReader.Read(_store, project, options, history,
+            risks, PendingPushReason(project));
     }
 
     public async Task TickAsync(CancellationToken ct)
@@ -227,6 +299,7 @@ public sealed class BatchGatePilotService
         if (!await _tick.WaitAsync(0, ct).ConfigureAwait(false)) return;
         try
         {
+            ReconcilePendingPushes(ct);
             RecoverInterrupted();
             await ResolvePausedAsync(ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
