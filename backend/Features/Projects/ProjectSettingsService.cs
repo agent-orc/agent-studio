@@ -181,8 +181,8 @@ public class ProjectSettingsService
     public void SetBatchGate(string projectName, AgentStudio.Pipeline.BatchGateFormationOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (!options.IsValid || !options.DocumentationOnly)
-            throw new ArgumentException("The pilot requires valid documentation-only thresholds.", nameof(options));
+        if (!options.IsValid)
+            throw new ArgumentException($"Invalid batch gate setting: {options.InvalidField}.", nameof(options));
         EnsureLoaded();
         lock (_lock)
         {

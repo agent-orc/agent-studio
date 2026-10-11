@@ -810,7 +810,7 @@ public static class V1ReviewPlaneEndpoints
                 {
                     Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
                         "build-tests", "deferred-to-batch", "DeferredToBatch",
-                        "The complete suite is owned by the documentation-only batch gate.")).ToArray(),
+                        "The complete suite is owned by the batch gate; per-card verification ran separately.")).ToArray(),
                 };
             }
 
@@ -2263,9 +2263,10 @@ public static class V1ReviewPlaneEndpoints
         string? repositoryPath,
         BuildProfile? profile,
         string? integrationRef,
-        IReadOnlyList<string>? changedFiles = null)
+        IReadOnlyList<string>? changedFiles = null,
+        VerifyPlan? verifyOverride = null)
     {
-        var verify = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var verify = verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var preparation = GatePreparationPlanner.Plan(
                 repositoryPath ?? string.Empty,
                 profile,
