@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using AgentStudio.Diagnostics;
 
@@ -32,7 +34,7 @@ public sealed record GitLockScope(
 /// <summary>Answers whether any running git process may hold a lock in a repository.</summary>
 public interface IGitLockOwnerProbe
 {
-    GitLockOwnership Probe(GitLockScope scope);
+    GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc);
 }
 
 /// <summary>
@@ -95,7 +97,7 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         _inventory = inventory;
     }
 
-    public GitLockOwnership Probe(GitLockScope scope)
+    public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
     {
         var paths = scope.Paths().Select(NormalizeDirectory).ToArray();
         if (_serverChildren().Any(cwd => IsInside(cwd, paths)))
@@ -106,15 +108,21 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
 
         var processes = _inventory();
         if (processes is null) return GitLockOwnership.Unknown;
-        if (processes.Any(process => IsTiedTo(process, paths)))
+        var possibleOwners = processes.Where(process =>
+            !IsFsmonitorDaemon(process.CommandLine)
+            && (process.StartedAtUtc is null || process.StartedAtUtc <= lockLastWriteTimeUtc));
+        if (possibleOwners.Any(process => IsTiedTo(process, paths)))
             return GitLockOwnership.Owned;
         // Win32_Process does not expose cwd. `git add` started inside this
         // repository can have no repository path in its command line, so an
         // unmatched process without cwd cannot prove the lock is unowned.
-        return processes.Any(process => process.WorkingDirectory is null)
+        return possibleOwners.Any(process => process.WorkingDirectory is null)
             ? GitLockOwnership.Unknown
             : GitLockOwnership.None;
     }
+
+    private static bool IsFsmonitorDaemon(string? commandLine)
+        => commandLine?.Contains("fsmonitor--daemon", StringComparison.OrdinalIgnoreCase) == true;
 
     internal static bool IsTiedTo(GitProcessObservation process, IReadOnlyList<string> normalizedPaths)
     {
@@ -167,9 +175,28 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
                 {
                     var comm = readText(Path.Combine(dir, "comm")).Trim();
                     if (!comm.StartsWith("git", StringComparison.Ordinal)) continue;
-                    var cwd = readLinkTarget(Path.Combine(dir, "cwd"));
+                    string? cwd;
+                    try { cwd = readLinkTarget(Path.Combine(dir, "cwd")); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // The command and start time can still rule this process out.
+                        SilentCatch.Note(ex, "GitProcessLockOwnerProbe: process cwd unavailable");
+                        cwd = null;
+                    }
                     var cmdline = readText(Path.Combine(dir, "cmdline")).Replace('\0', ' ').Trim();
-                    result.Add(new GitProcessObservation(pid, comm, cwd, cmdline));
+                    DateTime? startedAtUtc = null;
+                    try
+                    {
+                        var stat = readText(Path.Combine(dir, "stat"));
+                        var uptime = readText(Path.Combine(procRoot, "uptime"));
+                        startedAtUtc = ParseLinuxStartTime(stat, uptime, DateTime.UtcNow);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // Missing timing data cannot rule out this process.
+                        SilentCatch.Note(ex, "GitProcessLockOwnerProbe: process start time unavailable");
+                    }
+                    result.Add(new GitProcessObservation(pid, comm, cwd, cmdline, startedAtUtc));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -189,6 +216,26 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
             return null;
         }
     }
+
+    internal static DateTime? ParseLinuxStartTime(string stat, string uptime, DateTime nowUtc)
+    {
+        var endName = stat.LastIndexOf(')');
+        if (endName < 0) return null;
+        var fields = stat[(endName + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length <= 19
+            || !ulong.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var startTicks)
+            || !double.TryParse(uptime.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var uptimeSeconds))
+            return null;
+        var ticksPerSecond = sysconf(2); // _SC_CLK_TCK on Linux.
+        if (ticksPerSecond <= 0) return null;
+        var ageSeconds = uptimeSeconds - startTicks / (double)ticksPerSecond;
+        if (ageSeconds < 0 || ageSeconds > TimeSpan.MaxValue.TotalSeconds) return null;
+        return nowUtc - TimeSpan.FromSeconds(ageSeconds);
+    }
+
+    [DllImport("libc", EntryPoint = "sysconf")]
+    private static extern long sysconf(int name);
 
     private static bool IsDefinitelyGone(int pid)
     {
@@ -212,7 +259,7 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
     {
         const string script =
             "$ErrorActionPreference='Stop'; " +
-            "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine) | ConvertTo-Json -Compress";
+            "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine,CreationDate) | ConvertTo-Json -Compress";
         var json = ReadProcessOutput(new ProcessStartInfo
         {
             FileName = "powershell.exe",
@@ -281,9 +328,15 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
                 element.GetProperty("ProcessId").GetInt32(),
                 GetString(element, "Name"),
                 WorkingDirectory: null,
-                GetString(element, "CommandLine")))
+                GetString(element, "CommandLine"),
+                ParseWindowsStartTime(GetString(element, "CreationDate"))))
             .ToArray();
     }
+
+    private static DateTime? ParseWindowsStartTime(string? value)
+        => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var started)
+            ? started.UtcDateTime
+            : null;
 
     private static string? GetString(JsonElement element, string property)
         => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
@@ -296,4 +349,5 @@ public sealed record GitProcessObservation(
     int ProcessId,
     string? Name,
     string? WorkingDirectory,
-    string? CommandLine);
+    string? CommandLine,
+    DateTime? StartedAtUtc = null);
