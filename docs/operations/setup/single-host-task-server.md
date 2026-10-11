@@ -185,6 +185,12 @@ existing supervised reverse link; use that origin in the D6 switch scripts
 instead of the dedicated-VM WireGuard examples. Keep the old link configuration
 available but disabled after the final switch.
 
+Create the cutover evidence directory in the Task Server store before the
+entry checks. Save each check's timestamp, command, exit code, and response
+there, together with the inventory and import reports, backup verification,
+switch timings, and signed release-gate matrix. Link that directory from the
+dossier so a failed or aborted window remains reviewable.
+
 ### Automated entry checks (budget 15 minutes)
 
 Run these checks against both the Windows authority and the rehearsal remote
