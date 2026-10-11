@@ -172,6 +172,14 @@ public sealed partial class MergeIntoDevelopRunner
         Interlocked.Increment(ref _mergeGateUsers);
         try
         {
+            var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+                ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+            using var batchReservation = _batchReservations is null
+                || string.IsNullOrWhiteSpace(reservationRepo)
+                || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                    ReviewSubjectStore.Read(jobFolderPath))
+                ? null
+                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             await _mergeGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -238,10 +246,6 @@ public sealed partial class MergeIntoDevelopRunner
             }
 
             var reviewSubject = ReviewSubjectStore.Read(jobFolderPath);
-            using var batchReservation = _batchReservations is null
-                || IsDocumentationDelivery(developerRoot, integrationBranch, reviewSubject)
-                ? null
-                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
 
             // The direct merge may advance a ref before its in-process gate
             // decides whether to keep it. Hold the shared publish boundary for
@@ -1583,17 +1587,19 @@ public sealed partial class MergeIntoDevelopRunner
         CancellationToken ct = default,
         string? approvedSha = null)
     {
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        using var batchReservation = _batchReservations is null
+            || string.IsNullOrWhiteSpace(reservationRepo)
+            || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath))
+            ? null
+            : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
         await _pushGate.WaitAsync(ct);
         try
         {
             var repoRoot = _git.ResolveRepoRootForWatchPath(watchPath)
                 ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-            using var batchReservation = _batchReservations is null
-                || string.IsNullOrWhiteSpace(repoRoot)
-                || IsDocumentationDelivery(repoRoot, integrationBranch,
-                    ReviewSubjectStore.Read(jobFolderPath))
-                ? null
-                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             using var refMutationLease = _refMutationLeases is null
                 || string.IsNullOrWhiteSpace(repoRoot)
                 ? null

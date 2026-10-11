@@ -40,6 +40,44 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Reserved_project_does_not_hold_the_global_merge_gate_for_another_project()
+    {
+        var repo = SeedRepo("runner-reserved-project");
+        RunGit(repo, "checkout -q -b develop");
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "reserved");
+        var reservations = new BatchIntegrationReservationService();
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: reservations);
+        using var held = await reservations.AcquireAsync("batch-project", CancellationToken.None);
+        var blocked = runner.RunAsync("batch-project", "reserved", jobFolder,
+            repo, "develop", CancellationToken.None);
+        Task? blockedPush = null;
+        try
+        {
+            Assert.False(blocked.IsCompleted);
+            var other = await runner.RunAsync("other-project", "reserved", jobFolder,
+                repo, "develop", CancellationToken.None);
+            Assert.NotNull(other);
+            Assert.False(blocked.IsCompleted);
+            blockedPush = runner.PushIntegrationBranchAsync("batch-project", "reserved",
+                jobFolder, repo, "develop");
+            Assert.False(blockedPush.IsCompleted);
+            var otherPush = await runner.PushIntegrationBranchAsync("other-project", "reserved",
+                jobFolder, repo, "develop");
+            Assert.NotNull(otherPush);
+            Assert.False(blockedPush.IsCompleted);
+        }
+        finally
+        {
+            held.Dispose();
+            await blocked;
+            if (blockedPush is not null) await blockedPush;
+        }
+    }
+
+    [Fact]
     public void Run_MergesTaskBranch_AndRecordsStepPassed()
     {
         var repo = SeedRepo("runner-merge");
