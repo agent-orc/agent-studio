@@ -38,7 +38,6 @@ describe('OrchestratorPanelHeaderComponent', () => {
       pageType: 'workbench',
       excerpt: '',
     });
-    fixture.componentRef.setInput('contextCount', 17);
     fixture.detectChanges();
 
     const host = fixture.nativeElement as HTMLElement;
@@ -48,6 +47,30 @@ describe('OrchestratorPanelHeaderComponent', () => {
     expect(host.querySelector('[data-testid="orch-panel-context-name"]')?.textContent).toContain(
       'AGT-W34',
     );
-    expect(host.querySelector('[data-testid="orch-context-count"]')?.textContent).toContain('17');
+    expect(host.querySelector('[data-testid="orch-context-badge"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="orch-open-chats-panel"]')).not.toBeNull();
+  });
+
+  it('separates the context actions toggle from the sidebar Chats affordance', async () => {
+    await TestBed.configureTestingModule({
+      imports: [OrchestratorPanelHeaderComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(OrchestratorPanelHeaderComponent);
+    let actions = 0;
+    let chats = 0;
+    fixture.componentInstance.actionsToggle.subscribe(() => actions++);
+    fixture.componentInstance.chatsPanelRequest.subscribe(() => chats++);
+    fixture.componentRef.setInput('actionsOpen', true);
+    fixture.detectChanges();
+
+    const host = fixture.nativeElement as HTMLElement;
+    const toggle = host.querySelector<HTMLButtonElement>('[data-testid="orch-context-badge"]')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-testid="orch-context-count"]')).toBeNull();
+    toggle.click();
+    host.querySelector<HTMLButtonElement>('[data-testid="orch-open-chats-panel"]')!.click();
+    expect(actions).toBe(1);
+    expect(chats).toBe(1);
   });
 });

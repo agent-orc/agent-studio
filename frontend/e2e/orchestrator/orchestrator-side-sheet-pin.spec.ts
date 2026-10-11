@@ -98,13 +98,13 @@ async function stubWorkspace(page: Page) {
           contextKey: `project:${PROJECT}`, kind: 'project', projectId: PROJECT, taskKey: null,
           updatedAt: '2026-07-11T10:00:00Z', model: 'codex', cumulativeInputTokens: 800,
           cumulativeOutputTokens: 200, cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
-          runtimeStatus: 'active', queuePosition: 0, summary: 'Review the project rollout',
+          runtimeStatus: 'active', queuePosition: 0, summary: 'Review the project rollout', turnCount: 3,
         },
         {
           contextKey: `task:${PROJECT}/AGT-1933`, kind: 'task', projectId: PROJECT, taskKey: 'AGT-1933',
           updatedAt: '2026-07-11T10:01:00Z', model: 'codex', cumulativeInputTokens: 12_000,
           cumulativeOutputTokens: 3_000, cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
-          runtimeStatus: 'parked', queuePosition: 0, summary: 'Verify the task context lifecycle',
+          runtimeStatus: 'parked', queuePosition: 0, summary: 'Verify the task context lifecycle', turnCount: 2,
         },
       ] }),
     });
@@ -195,9 +195,9 @@ test.describe('Orchestrator side sheet · navigation context + pin', () => {
     await stubWorkspace(page);
     await openSideSheet(page);
 
-    await page.getByTestId('orch-context-badge').click();
-    const taskRow = page.getByTestId(`chat-switcher-row-task:${PROJECT}/AGT-1933`);
-    await taskRow.getByRole('button').first().click();
+    await page.getByTestId('orch-open-chats-panel').click();
+    const taskRow = page.getByTestId(`chat-session-row-task:${PROJECT}/AGT-1933`);
+    await taskRow.getByTestId('chat-session-open').click();
 
     await page.getByTestId('orch-context-badge').click();
     await expect(page.getByTestId('orch-context-header'))
@@ -218,7 +218,7 @@ test.describe('Orchestrator side sheet · navigation context + pin', () => {
     const badge = page.getByTestId('orch-context-badge');
     await expect(badge).toBeVisible();
     await expect(badge).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByTestId('orch-context-count')).toHaveText('3');
+    await expect(page.getByTestId('orch-context-count')).toHaveCount(0);
     await expect(page.getByTestId('orch-context-menu')).toHaveCount(0);
     await expect(page.getByTestId('orch-side-sheet-pin')).toHaveCount(0);
     await expect(page.getByTestId('orch-side-sheet-settings')).toHaveCount(0);
@@ -233,7 +233,8 @@ test.describe('Orchestrator side sheet · navigation context + pin', () => {
     await expect(badge).toHaveAttribute('aria-expanded', 'true');
     const contextMenu = page.getByTestId('orch-context-menu');
     await expect(contextMenu).toBeVisible();
-    await expect(page.getByTestId('chat-context-groups')).toBeVisible();
+    // The session list moved to the sidebar; the popover only carries actions.
+    await expect(page.getByTestId('chat-context-groups')).toHaveCount(0);
 
     const sheetBox = await page.getByTestId('orch-side-sheet').boundingBox();
     const menuBox = await contextMenu.boundingBox();
@@ -248,11 +249,14 @@ test.describe('Orchestrator side sheet · navigation context + pin', () => {
     await expect(header).toHaveAttribute('data-context-key', `project:${PROJECT}`);
     await expect(page.getByTestId('orch-context-scope')).toHaveText('Project context');
     await expect(page.getByTestId('orch-context-freshness')).toContainText('Context captured');
-    await expect(page.getByTestId(`chat-switcher-row-project:${PROJECT}`)).toContainText('running');
-    await expect(page.getByTestId(`chat-switcher-row-project:${PROJECT}`)).toContainText('Review the project rollout');
-    await expect(page.getByTestId(`chat-switcher-row-task:${PROJECT}/AGT-1933`)).toContainText('parked');
-    await expect(page.getByTestId(`chat-switcher-row-task:${PROJECT}/AGT-1933`)).toContainText('15k');
-    await expect(page.getByTestId(`chat-switcher-row-task:${PROJECT}/AGT-1933`)).toContainText('Verify the task context lifecycle');
+    await page.getByTestId('orch-open-chats-panel').click();
+    const activeGroup = page.getByTestId('chat-sessions-active');
+    await expect(activeGroup.getByTestId(`chat-session-row-project:${PROJECT}`)).toContainText('running');
+    await expect(activeGroup.getByTestId(`chat-session-row-project:${PROJECT}`)).toContainText('Review the project rollout');
+    await expect(activeGroup.getByTestId(`chat-session-row-task:${PROJECT}/AGT-1933`)).toContainText('parked');
+    await expect(activeGroup.getByTestId(`chat-session-row-task:${PROJECT}/AGT-1933`)).toContainText('15k tok');
+    await expect(activeGroup.getByTestId(`chat-session-row-task:${PROJECT}/AGT-1933`)).toContainText('Verify the task context lifecycle');
+    await page.getByTestId('orch-context-badge').click();
 
     if (resultsDir) {
       await page.screenshot({ path: path.join(resultsDir, 'orchestrator-context-expanded--mocked.png'), fullPage: false });

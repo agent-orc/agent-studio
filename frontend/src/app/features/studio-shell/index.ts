@@ -25,6 +25,7 @@ export {
   isTaskInspectorTab,
   parseStudioRoute,
   navigateStudioRoute,
+  replaceStudioRoute,
   replaceStudioRouteQuery,
   replaceTaskViewRoute,
   studioProjectSlug,

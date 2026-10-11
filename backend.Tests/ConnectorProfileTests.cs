@@ -18,14 +18,14 @@ namespace AgentStudio.Tests;
 public sealed class ConnectorProfileTests
 {
     [Fact]
-    public void Inventory_is_the_approved_108_local_and_325_proxy_surface()
+    public void Inventory_is_the_approved_108_local_and_326_proxy_surface()
     {
         var inventory = ConnectorRouteInventory.Load();
 
         Assert.Equal(ConnectorRouteInventory.ExpectedInventorySha256, inventory.SourceChecksum);
-        Assert.Equal(433, inventory.Operations.Count);
+        Assert.Equal(434, inventory.Operations.Count);
         Assert.Equal(108, inventory.DevSeatOperations.Count);
-        Assert.Equal(325, inventory.TaskServerOperations.Count);
+        Assert.Equal(326, inventory.TaskServerOperations.Count);
         var hub = Assert.Single(inventory.TaskServerOperations, operation => operation.Method == "WS");
         Assert.Equal("/hubs/v1/studio", hub.Path);
     }
@@ -52,7 +52,7 @@ public sealed class ConnectorProfileTests
 
         Assert.All(endpoints, endpoint => Assert.NotEmpty(
             endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>()));
-        Assert.Equal(433, metadata.Length);
+        Assert.Equal(434, metadata.Length);
         Assert.Equal(108, endpoints
             .SelectMany(endpoint => endpoint.Metadata.GetOrderedMetadata<ConnectorClassifiedEndpointMetadata>())
             .Where(item => item.Classification == ConnectorRouteInventory.DevSeatClassification)
@@ -114,7 +114,7 @@ public sealed class ConnectorProfileTests
         }
 
         Assert.True(failures.Count == 0, "Task Server routes not forwarded:\n" + string.Join('\n', failures));
-        Assert.Equal(325, forwarded);
+        Assert.Equal(326, forwarded);
     }
 
     [Fact]

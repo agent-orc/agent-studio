@@ -59,7 +59,6 @@ import {
 } from './features/task-detail/runtime';
 import {
   buildComposerLocationContext,
-  OrchestratorChatHistoryComponent,
   OrchestratorFeedComponent,
   OrchestratorFeedStore,
   OrchestratorSideSheetComponent,
@@ -107,6 +106,7 @@ import {
   studioTabKey,
   parseStudioRoute,
   navigateStudioRoute,
+  replaceStudioRoute,
   replaceTaskViewRoute,
   studioProjectSlug,
   studioRouteForTab,
@@ -178,7 +178,6 @@ const SHELL_PANES_FALLBACK: ShellPanesVisible = {
     DetailLoadErrorComponent,
     TaskDetailLoadSectionsComponent,
     OrchestratorSideSheetComponent,
-    OrchestratorChatHistoryComponent,
     OrchestratorFeedComponent,
     ProjectOverlaysComponent,
     AutoReviewIndicatorComponent,
@@ -834,7 +833,6 @@ export class App implements OnInit, OnDestroy {
           project = tab.projectName === '__all__' ? null : tab.projectName;
           break;
         case 'feed':
-        case 'chat-history':
           project = null;
           break;
         case 'workbenches':
@@ -1665,10 +1663,6 @@ export class App implements OnInit, OnDestroy {
     this.orchSideSheetRef?.toggle();
   }
 
-  openChatHistoryContext(contextKey: string): void {
-    this.orchSideSheetRef?.openManagedContext(contextKey);
-  }
-
   onNavigateToChatContext(contextKey: string): void {
     if (contextKey === 'global') {
       this.studioTabState.activateAllProjectsBoard();
@@ -2102,9 +2096,15 @@ export class App implements OnInit, OnDestroy {
       case 'feed':
         this.studioTabState.open({ kind: 'feed' });
         break;
-      case 'chat-history':
-        this.studioTabState.open({ kind: 'chat-history' });
+      case 'chat-history': {
+        // Retired tab: the session list lives in the sidebar Chats panel.
+        // Open it and put the URL back on the surface the editor shows.
+        this.studioPanelState.open('chats');
+        const tab = this.studioTabState.activeTab();
+        const canonical = tab && tab.kind !== 'hub' ? studioRouteForTab(tab, null) : null;
+        replaceStudioRoute(canonical ?? '/board');
         break;
+      }
       case 'workbench':
         if (fromHistory) {
           this.studioTabState.restoreDocumentRoute({

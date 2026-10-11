@@ -313,10 +313,6 @@
                 }
               }
             }
-            @case ('chat-history') {
-              <app-orchestrator-chat-history
-                (contextOpened)="openChatHistoryContext($event)" />
-            }
             @case ('workbenches') {
               @if (studioTabState.activeTab(); as tab) {
                 @if (tab.kind === 'workbenches') {

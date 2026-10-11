@@ -61,8 +61,9 @@ bodies do not enter the receipt.
 
 Project and task transcript authority is the central Task Server. Every project
 context is permanent. Opening task Chat materializes a managed task context;
-archive hides it without deleting its turns. Chat History reads the central
-current-context list and compact summaries. Machine-local
+archive hides it without deleting its turns. The sidebar Chats panel reads the
+central context list and compact summaries; operators can also archive a
+session there (`archivedAt`). Machine-local
 `.orchestrator/orchestrator-chat.jsonl` is an idempotent migration source only.
 The task detail Activity tab remains the unchanged task-agent execution surface.
 

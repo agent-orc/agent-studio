@@ -56,8 +56,6 @@ export function compactTabLabel(tab: StudioTab, input: CompactTabLabelInputs): s
       return tab.commitSha.slice(0, 7);
     case 'feed':
       return 'Activity';
-    case 'chat-history':
-      return 'Chat';
     case 'workspace-settings':
       return 'Settings';
     default: {

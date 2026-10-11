@@ -1,4 +1,4 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import type {
   BoardTab,
   DocumentTabHistory,
@@ -7,6 +7,7 @@ import type {
   StudioTabReusePolicy,
 } from '../studio-shell.types';
 import { studioTabKey } from '../studio-shell.types';
+import { StudioPanelStateService } from './studio-panel-state.service';
 import {
   ALL_PROJECTS_BOARD_NAME,
   normalizeTaskTabScope,
@@ -73,8 +74,15 @@ export class StudioTabStateService {
     return this.isDocumentTab(tab) ? (tab.documentHistory?.entries.length ?? 1) : 0;
   });
 
+  private readonly panels = inject(StudioPanelStateService);
+
   constructor() {
     const hadSnapshot = this.restore();
+    if (this.restoredRetiredChatHistory) {
+      // The Chat History tab was retired in favour of the sidebar Chats
+      // panel; a persisted tab lands on that panel instead.
+      this.panels.open('chats');
+    }
     if (!hadSnapshot) {
       // Fresh boot / dropped payload: seed the cross-project board so the
       // user isn't dropped straight onto the empty-state on first run.
@@ -378,6 +386,8 @@ export class StudioTabStateService {
    * A valid-but-empty tab list counts as a snapshot: it means the user
    * deliberately closed every tab and should land on the empty-state.
    */
+  private restoredRetiredChatHistory = false;
+
   private restore(): boolean {
     if (typeof window === 'undefined') return false;
     try {
@@ -389,6 +399,7 @@ export class StudioTabStateService {
       // Drop retired and future tab kinds that don't round-trip through
       // studioTabKey. This is also the migration for persisted Backlog Triage
       // tabs from builds that still exposed that feature.
+      this.restoredRetiredChatHistory = parsed.tabs.some(t => (t as { kind?: string })?.kind === 'chat-history');
       const safeTabs = parsed.tabs.filter(t => {
         try { return typeof studioTabKey(t) === 'string'; }
         catch { return false; }
@@ -429,8 +440,6 @@ export class StudioTabStateService {
         return { kind: 'board', projectName: tab.projectName };
       case 'feed':
         return { kind: 'feed' };
-      case 'chat-history':
-        return { kind: 'chat-history' };
       case 'epics':
         return { kind: 'epics', projectName: tab.projectName };
       case 'epic':

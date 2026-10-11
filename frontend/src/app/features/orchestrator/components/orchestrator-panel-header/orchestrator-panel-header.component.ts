@@ -34,10 +34,12 @@ export class OrchestratorPanelHeaderComponent {
   readonly pageContext = input<PageContext | null>(null);
   readonly contextKey = input<string | null>(null);
   readonly executionContext = input<ChatExecutionContext | null>(null);
-  readonly contextCount = input(0);
-  readonly chatsOpen = input(false);
+  readonly actionsOpen = input(false);
   readonly active = input(false);
-  readonly chatsToggle = output<void>();
+  /** Toggles the side sheet's context actions popover (pin, debug, settings, refresh). */
+  readonly actionsToggle = output<void>();
+  /** Opens or focuses the Chats panel in the left Studio sidebar. */
+  readonly chatsPanelRequest = output<void>();
 
   readonly identity = computed<PanelContextIdentity>(() => {
     const page = this.pageContext();

@@ -3586,6 +3586,7 @@ public sealed partial class TaskServerStore
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 hidden_at TEXT,
+                archived_at TEXT,
                 CHECK(
                     (kind = 'project' AND task_id IS NULL AND workbench_key IS NULL) OR
                     (kind = 'task' AND task_id IS NOT NULL AND workbench_key IS NULL) OR
@@ -4347,6 +4348,10 @@ public sealed partial class TaskServerStore
             CREATE INDEX IF NOT EXISTS ix_studio_stream_events_project ON studio_stream_events(project_id, cursor);
             """, ct);
         await ApplyWorkbenchContextMigrationAsync(connection, ct);
+        // Operator archive marker for orchestrator chat contexts. Added after
+        // the workbench rebuild so a pre-workbench table is rebuilt first and
+        // then gains the nullable column like any existing install.
+        await EnsureColumnAsync(connection, "orchestrator_contexts", "archived_at", "TEXT", ct);
         await ApplyOperationsPrincipalMigrationAsync(connection, ct);
         await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS principal_rotations(

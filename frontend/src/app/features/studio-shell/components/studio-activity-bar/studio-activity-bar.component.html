@@ -61,11 +61,11 @@
   }
   <button type="button"
           class="studio-ab__btn"
-          [class.studio-ab__btn--active]="activeKey() === 'chat-history'"
-          cacTooltip="Open Chat History"
-          aria-label="Open Chat History"
-          data-testid="studio-ab-chat-history"
-          (click)="openChatHistoryRequest.emit()">
+          [class.studio-ab__btn--active]="activeKey() === 'chats'"
+          cacTooltip="Chats"
+          aria-label="Chats"
+          data-testid="studio-ab-chats"
+          (click)="panelToggle.emit('chats')">
     <app-studio-icon name="bot" [size]="22"></app-studio-icon>
   </button>
   <button type="button"

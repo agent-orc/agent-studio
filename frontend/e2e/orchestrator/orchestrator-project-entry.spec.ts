@@ -441,28 +441,33 @@ test.describe('Orchestrator Chat shell posture and activity', () => {
       cumulativeCacheCreationTokens: 0,
       runtimeStatus,
       queuePosition: 0,
+      turnCount: 2,
       summary: 'Checking navigation state',
     }];
     await installRoutes(page, [], sessions);
     await seedBrowserState(page, '1', BETA.name);
+    // The retired Chat History route redirects to the sidebar Chats panel.
     await page.goto('/#/chat-history', { waitUntil: 'domcontentloaded' });
 
     const access = page.getByTestId('orch-side-sheet-toggle');
-    const row = page.locator(`[data-testid="chat-history-row"][data-context-key="project:${ALPHA.name}"]`);
+    const row = page.getByTestId(`chat-session-row-project:${ALPHA.name}`);
+    await expect(page.getByTestId('chat-sessions-panel')).toBeVisible();
     await expect(access).toContainText('1 active');
     await expect(access).toHaveAttribute('data-pulsing', 'true');
-    await expect(row).toHaveAttribute('data-runtime-status', 'active');
-    await expect(row.getByTestId('chat-history-runtime-status')).toContainText('Running');
+    await expect(row).toHaveAttribute('data-live', 'running');
+    await expect(page.getByTestId('chat-sessions-active').getByTestId('chat-session-live')).toContainText('running');
     await dismissTransientChrome(page);
     await page.screenshot({
       path: evidencePath(testInfo, 'orchestrator-active-chat-visible--mocked.png'),
       fullPage: false,
     });
 
+    // Idle again: the bounded poll moves the row out of Active without a reload.
     runtimeStatus = 'idle';
-    await page.getByTestId('chat-history-refresh').click();
-    await expect(row).toHaveAttribute('data-runtime-status', 'idle');
-    await expect(row.getByTestId('chat-history-runtime-status')).toHaveCount(0);
+    await expect(page.getByTestId('chat-sessions-recent').getByTestId(`chat-session-row-project:${ALPHA.name}`))
+      .toBeVisible({ timeout: 10_000 });
+    await expect(row).not.toHaveAttribute('data-live', /.+/);
+    await expect(page.getByTestId('chat-sessions-active')).toHaveCount(0);
     await expect(access).not.toContainText('active', { timeout: 10_000 });
     await expect(access).toHaveAttribute('data-pulsing', 'false');
   });
