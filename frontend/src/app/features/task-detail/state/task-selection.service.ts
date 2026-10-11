@@ -55,8 +55,8 @@ const REVIEW_FACT_LANES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** Whether the detail renders review facts before any tab opens. */
-function reviewFactsShownUpfront(info: TaskInfo): boolean {
-  return REVIEW_FACT_LANES.has(info.state) || !!info.needsInput;
+function reviewFactsShownUpfront(info: TaskInfo, core: TaskCore): boolean {
+  return REVIEW_FACT_LANES.has(info.state) || !!core.blocking.needsInput;
 }
 
 /** The 202 body of a resource read while the task index re-hydrates. */
@@ -733,7 +733,7 @@ export class TaskSelectionService {
         // and the delivery-claim panel, which show without opening a tab on
         // cards in review, escalated, completed or waiting for input. Other
         // lanes load review only when its tab opens.
-        if (reviewFactsShownUpfront(info)) this.loadResource('review');
+        if (reviewFactsShownUpfront(info, core)) this.loadResource('review');
         this.loadResourcesForTab(this.expandedTab);
       });
     };

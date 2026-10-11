@@ -513,6 +513,26 @@ describe('TaskSelectionService · stable task URLs', () => {
     });
   });
 
+  it.each([
+    ['4-auto-review', false], ['5-human-review', false],
+    ['5e-escalated', false], ['6-completed', false], ['2-ready', true],
+  ])('loads review facts after paint for lane %s with needs-input %s', async (state, needsInput) => {
+    const task = { ...info, state, needsInput: null } as TaskInfo;
+    const core = coreFor(task, 'Agent Studio');
+    selection.openDetail(task);
+    http.expectOne(req => req.url.endsWith(`/${task.id}/core`)).flush({
+      ...core, blocking: { ...core.blocking, needsInput: needsInput ? 'Choose a path' : null },
+    });
+    await paintRich(task, { flushReview: false });
+    const review = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(review.request.params.has('evidence')).toBe(false);
+    review.flush({
+      id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+    });
+  });
+
   describe('expanded tab resources', () => {
     it('keeps a pending review projection retryable without clearing the task', async () => {
       selection.openDetail(readyInfo);
