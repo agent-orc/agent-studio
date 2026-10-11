@@ -56,6 +56,7 @@ public sealed record BatchGateFormationOptions(
     int GateTimeoutMinutes = 150, BatchGateAdvisorOptions? Advisor = null)
 {
     public string EffectiveScope => !DocumentationOnly || Scope == "code" ? "code" : Scope;
+    public IReadOnlyList<string> EffectiveUrgentTags => UrgentTags ?? ["urgent"];
     public string? InvalidField =>
         EffectiveScope is not ("documentation" or "code") ? "scope" :
         Planner is not ("threshold" or "look-ahead") ? "planner" :
