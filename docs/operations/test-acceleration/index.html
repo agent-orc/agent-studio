@@ -417,9 +417,9 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
   <thead><tr><th>Lever</th><th>Status</th><th>Commit</th><th>Before → after</th><th>Source of measurement</th></tr></thead>
   <tbody>
     <tr><td>P1</td><td><span class="pill part">part</span></td><td><code>e8852c87f</code></td><td>No compact summary → 2 JSON summaries; 85.58 and 93.22 min wall, 6,455 and 8,700 s summed tests. TRX capture and automatic per-run persistence remain open.</td><td><code>results/p1-baseline-7850e.json</code>, <code>results/p1-baseline-a583.json</code>; agent-runner-01, 6 concurrent suites, load 28–42 (historical range)</td></tr>
-    <tr><td>P2</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>P2</td><td><span class="pill part">part</span></td><td><code>62bd9f6ae</code></td><td>Runner A/B: 12 threads, 164.35 s TRX wall → 2 threads, 264.23 s (+61%); the runner cap was rejected. Backend now has a 2-thread config; its before/after is still being measured.</td><td><code>results/p2-twelve-summary.json</code>, <code>results/p2-two-summary.json</code> and matching TRX; agent-runner-01, 10 concurrent suites, load 43.95 → 32.69</td></tr>
     <tr><td>P3</td><td><span class="pill part">part</span></td><td><code>14be298bb</code></td><td>Full clean repeat of the 8,982-test suite: 85.58 min → failed-class selection implemented; the two failed classes in that run summed 634 s (10.57 min), a historical estimate rather than a timed clean repeat. The ≤5 min retry target remains unproved.</td><td><code>results/p1-baseline-7850e.json</code> (agent-runner-01, 6 suites, load 28–42); <code>results/p3-p4-policy_net10.0_20261011125404.trx</code> (agent-runner-01, about 10 suites)</td></tr>
-    <tr><td>P4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>P4</td><td><span class="pill part">part</span></td><td><code>62bd9f6ae</code></td><td>VSTest default per-test hang timeout 60 min → configured 10 min; 15 policy tests passed. No real hang occurred, so dump capture remains unmeasured.</td><td><code>dotnet test --help</code> on agent-runner-01; <code>results/p3-p4-policy_net10.0_20261011125404.trx</code>, about 10 concurrent suites</td></tr>
     <tr><td>P5</td><td><span class="pill open">open</span></td><td></td><td></td><td>waits for D1</td></tr>
     <tr><td>P6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>B1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
@@ -437,12 +437,13 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 </div>
 <h3>Findings and new ideas</h3>
 <ul>
+  <li>B11 idea: a fixed two-thread cap added 99.88 s (61%) to the 1,298-test Runner suite even while the twelve-thread sample saw higher host load. Use per-suite measurements and CPU admission rather than imposing one xUnit cap across projects; backend and Task Server need independent A/B samples.</li>
   <li>P3: the two failures in run 7850e came from <code>WaitsOnEndpointsTests</code> (299 s summed) and <code>BatchGatePilotServiceTests</code> (335 s summed). A class-level retry preserves all assertions in those classes while avoiding the other 8,000+ tests. A timed red-path run is still needed to establish wall time.</li>
   <li>P1: verbose console logs yielded 8,981 of 8,982 and 8,977 of 8,981 reported test durations; their incomplete counts confirm why TRX is needed. The top four classes in run 7850e total 2,446 s (37.9% of summed test time). The measured wall times are 5,134.68 and 5,592.96 s under six concurrent suites.</li>
 </ul>
 <h3>Rejected levers</h3>
 <ul>
-  <li>No entries yet.</li>
+  <li>P2 runner-wide two-thread cap rejected: 264.23 s versus 164.35 s TRX wall on the same assembly and filter, with ten concurrent suites. Backend cap stays partial pending its own measurement.</li>
 </ul>
 </section>
 
