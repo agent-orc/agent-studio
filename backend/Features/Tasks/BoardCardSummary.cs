@@ -242,7 +242,8 @@ internal static class BoardCardSummary
                     .Select(item => new
                     {
                         item.Key, item.Resolved, item.PendingDecision, item.Fulfilled,
-                        item.WaitingForRelease, item.Unsatisfiable, item.TargetJobId,
+                        item.ReleaseGate, item.TargetReleased, item.WaitingForRelease,
+                        item.Unsatisfiable, item.TargetJobId,
                         item.TargetState,
                         targetTitle = Short(item.TargetTitle, 40), item.TargetWatchPath,
                     }).ToArray(),
