@@ -411,11 +411,22 @@ public sealed class BatchGatePilotService
             }
             if (WaitForFlightsInTick)
             {
-                Task[] batches;
-                Task[] fallbacks;
-                lock (_runningBatches) batches = _runningBatches.Values.ToArray();
-                lock (_fallbackFlights) fallbacks = _fallbackFlights.Values.ToArray();
-                await Task.WhenAll(batches.Concat(fallbacks)).WaitAsync(ct).ConfigureAwait(false);
+                // A batch can schedule its ejected members only after releasing
+                // the project reservation. Observe that second wave as well.
+                while (true)
+                {
+                    Task[] batches;
+                    Task[] fallbacks;
+                    lock (_runningBatches) batches = _runningBatches.Values.ToArray();
+                    lock (_fallbackFlights) fallbacks = _fallbackFlights.Values.ToArray();
+                    if (batches.Length == 0 && fallbacks.Length == 0) break;
+                    await Task.WhenAll(batches.Concat(fallbacks)).WaitAsync(ct).ConfigureAwait(false);
+                    lock (_runningBatches)
+                        if (_runningBatches.Values.Any(task => !task.IsCompleted)) continue;
+                    lock (_fallbackFlights)
+                        if (_fallbackFlights.Values.Any(task => !task.IsCompleted)) continue;
+                    break;
+                }
             }
         }
         finally
@@ -729,6 +740,7 @@ public sealed class BatchGatePilotService
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
         string repo, CancellationToken ct)
     {
+        var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
         using var reservation = _reservations is null ? null
             : await _reservations.AcquireAsync(manifest.Scope.Project, ct).ConfigureAwait(false);
         BatchCoordinatorLease? lease;
@@ -797,8 +809,7 @@ public sealed class BatchGatePilotService
                 State(manifest, BatchPhase.Abandoned, null, lease.Fence, "no-admitted-members");
                 ReturnToPending(manifest);
                 foreach (var key in assembly.EjectedKeys.Concat(assembly.DeferredKeys))
-                    await RunPerTaskFallbackAsync(pending[key], cancellation.Token)
-                        .ConfigureAwait(false);
+                    fallbackKeys.Add(key);
                 return;
             }
             var run = NewRun(manifest, assembly.CandidateSha, lease.Fence,
@@ -852,7 +863,7 @@ public sealed class BatchGatePilotService
                     State(manifest, BatchPhase.Green, assembly.CandidateSha, lease.Fence,
                         "pre-existing failures match base");
                     await PublishGreenAsync(manifest, assembly, run, preExisting, lease,
-                        pending, repo, cancellation.Token).ConfigureAwait(false);
+                        pending, repo, fallbackKeys, cancellation.Token).ConfigureAwait(false);
                     return;
                 }
                 if (gate.FlakyQuarantinedFailures.Count > 0)
@@ -866,7 +877,7 @@ public sealed class BatchGatePilotService
                 State(manifest, BatchPhase.Red, assembly.CandidateSha, lease.Fence,
                     "deterministic suite red");
                 await IsolateAsync(manifest, assembly, lease, pending, repo,
-                    cancellation.Token).ConfigureAwait(false);
+                    fallbackKeys, cancellation.Token).ConfigureAwait(false);
                 return;
             }
             var verdict = RecordVerdict(run, gate,
@@ -878,7 +889,7 @@ public sealed class BatchGatePilotService
                     _settings.Get(manifest.Scope.Project).BuildProfile),
                 run.BatchRunId, run.Host, run.CandidateSha, _time.GetUtcNow().UtcDateTime);
             await PublishGreenAsync(manifest, assembly, run, verdict, lease,
-                pending, repo, cancellation.Token).ConfigureAwait(false);
+                pending, repo, fallbackKeys, cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && !RouteEnabled())
         {
@@ -920,6 +931,9 @@ public sealed class BatchGatePilotService
                 SilentCatch.Note(ex, "Batch gate coordinator heartbeat stopped");
             }
             _leases.Release(lease);
+            reservation?.Dispose();
+            foreach (var key in fallbackKeys)
+                ScheduleFallback(pending[key], ct);
         }
 
         bool MembersCurrent() => manifest.Members.All(member =>
@@ -949,7 +963,7 @@ public sealed class BatchGatePilotService
         BatchGateAssembly assembly, BatchGateRunRecord run,
         BatchGateRunVerdict verdict, BatchCoordinatorLease lease,
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
-        string repo, CancellationToken ct)
+        string repo, ISet<string> fallbackKeys, CancellationToken ct)
     {
         using (var refLease = await _refLeases.AcquireAsync(
             manifest.Scope.Project, repo, manifest.Scope.IntegrationBranch,
@@ -1048,7 +1062,7 @@ public sealed class BatchGatePilotService
             await ReleaseMemberAsync(manifest, run, pending[key], ct)
                 .ConfigureAwait(false);
         foreach (var key in assembly.EjectedKeys)
-            await RunPerTaskFallbackAsync(pending[key], ct).ConfigureAwait(false);
+            fallbackKeys.Add(key);
     }
 
     private bool QueueOnMovedDocumentationBase(BatchGateManifest manifest,
@@ -1093,7 +1107,7 @@ public sealed class BatchGatePilotService
     private async Task IsolateAsync(BatchGateManifest failedManifest,
         BatchGateAssembly failedAssembly, BatchCoordinatorLease lease,
         IReadOnlyDictionary<string, BatchGatePendingRecord> pending,
-        string repo, CancellationToken ct)
+        string repo, ISet<string> fallbackKeys, CancellationToken ct)
     {
         var ordered = failedManifest.Members
             .Where(member => failedAssembly.AdmittedKeys.Contains(member.TaskKey))
@@ -1155,17 +1169,17 @@ public sealed class BatchGatePilotService
                          .Concat(isolated.EjectedKeys)
                          .Concat(failedAssembly.EjectedKeys)
                          .Distinct(StringComparer.Ordinal))
-                await RunPerTaskFallbackAsync(pending[key], ct).ConfigureAwait(false);
+                fallbackKeys.Add(key);
             return;
         }
         await PublishGreenAsync(prepared.Manifest, prepared.Assembly,
-            prepared.Run, prepared.Verdict, lease, pending, repo, ct).ConfigureAwait(false);
+            prepared.Run, prepared.Verdict, lease, pending, repo, fallbackKeys, ct).ConfigureAwait(false);
         if (_store.LatestState(prepared.Manifest.BatchId).Phase == BatchPhase.Published)
         {
             foreach (var key in isolated.EjectedKeys
                          .Concat(failedAssembly.EjectedKeys)
                          .Distinct(StringComparer.Ordinal))
-                await RunPerTaskFallbackAsync(pending[key], ct).ConfigureAwait(false);
+                fallbackKeys.Add(key);
         }
     }
 
