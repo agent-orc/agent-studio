@@ -112,15 +112,18 @@ export class ReferencesSectionComponent {
     const info = this.info();
     // Re-seed on job switch (taskKey changes) so an open editor follows the
     // selected card; the parent's fileSaved → detail re-fetch also lands here.
-    const refs = info.references ?? emptyRefs();
     if (this.lastSeededKey !== info.taskKey) {
       this.lastSeededKey = info.taskKey;
       this.adding.set(false);
+      this.localRefs.set(emptyRefs());
       this.loadBlocking(info);
       this.loadWorkbenchIndex(info);
     }
-    if (this.busyKind() === null) {
-      this.localRefs.set(cloneRefs(refs));
+    // Slim board cards carry no references; they arrive with the overview
+    // resource. Until then keep the last known set instead of seeding an
+    // empty one that a replace-all save would write back.
+    if (info.references !== undefined && this.busyKind() === null) {
+      this.localRefs.set(cloneRefs(info.references));
     }
   });
 
@@ -343,6 +346,12 @@ export class ReferencesSectionComponent {
 
   private persist(kind: TaskReferenceKind, next: TaskReferences, snapshot: TaskReferences): void {
     const info = this.info();
+    // The save replaces the whole reference set. Never send one built while
+    // the task's references are still loading, or it would delete edges.
+    if (info.references === undefined) {
+      this.notifications.warning('References are still loading. Try again in a moment.');
+      return;
+    }
     this.localRefs.set(next);
     this.busyKind.set(kind);
     this.tasks.setTaskReferences(info.id, next, info.watchPath).subscribe({

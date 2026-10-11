@@ -199,6 +199,9 @@ internal static class BoardCardSummary
                 question = Short(decision.Question, 120),
                 decision.Status, decision.Decider, decision.DecidedBy,
                 decision.DueDate,
+                // Board badge tooltip and the Dossier decision inbox list the
+                // cards a pending decision blocks.
+                dependants = decision.Dependants.Count == 0 ? null : decision.Dependants.Take(10).ToList(),
             };
         if (job.OlderBriefDelivery is { } olderBrief)
             fields["olderBriefDelivery"] = new { olderBrief.Status };
