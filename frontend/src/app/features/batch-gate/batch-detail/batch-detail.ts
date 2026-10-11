@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
-import { batchMemberFor } from '../../../models/batch-gate.model';
+import { batchMemberFor, batchPublishedSha } from '../../../models/batch-gate.model';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { BatchPanelComponent } from '../batch-panel/batch-panel';
 
@@ -15,6 +15,7 @@ import { BatchPanelComponent } from '../batch-panel/batch-panel';
 export class BatchDetailComponent {
   readonly task = input.required<TaskInfo>();
   readonly panelOpen = signal(false);
+  readonly publishedSha = batchPublishedSha;
   readonly closePanel = () => this.panelOpen.set(false);
   private readonly gate = inject(BatchGateService);
   readonly project = computed(() => this.task().projectName);

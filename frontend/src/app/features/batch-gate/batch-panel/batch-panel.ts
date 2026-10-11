@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, ElementRef, Injector, OnDestroy, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
 import { ModalStackService } from '../../../services/modal-stack.service';
+import { batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../../../models/batch-gate.model';
 
 @Component({
   selector: 'app-batch-panel',
@@ -18,6 +19,9 @@ export class BatchPanelComponent implements OnDestroy {
   readonly confirm = signal<string | null>(null);
   readonly busy = signal(false);
   readonly actionError = signal<string | null>(null);
+  readonly riskLabel = batchRiskLabel;
+  readonly replayLabel = batchReplayLabel;
+  readonly publishedSha = batchPublishedSha;
   readonly phases = ['formed', 'assembling', 'assembled', 'running', 'green', 'publishing', 'published', 'red', 'paused', 'abandoned'];
   private readonly closeButton = viewChild<ElementRef<HTMLButtonElement>>('closeButton');
   private readonly confirmButton = viewChild<ElementRef<HTMLButtonElement>>('confirmButton');
@@ -41,12 +45,12 @@ export class BatchPanelComponent implements OnDestroy {
     queueMicrotask(() => this.previousFocus?.focus());
   }
 
-  date(value?: string): string {
+  date(value?: string | null): string {
     const stamp = value ? Date.parse(value) : NaN;
     if (!Number.isFinite(stamp)) return 'Unknown';
     return new Date(stamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
   }
-  duration(start?: string, end?: string): string {
+  duration(start?: string | null, end?: string | null): string {
     if (!start) return 'Waiting';
     if (!end) return 'Running';
     const elapsed = Date.parse(end) - Date.parse(start);

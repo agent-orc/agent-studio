@@ -29,22 +29,49 @@ export interface BatchGateState {
     closeAtUtc?: string;
     proposedMembers: string[];
     targetSize: number;
-    upcoming: { taskKey: string; stage: string; etaUtc?: string; risk: string; overlapsWith: string[] }[];
-    advisor?: { mode: string; verdict: string; reasons: string[]; model: string; atUtc: string };
+    upcoming: { taskKey: string; stage: string; etaUtc?: string | null; risk: BatchRisk; overlapsWith: string[] }[];
+    advisor?: { mode: string; verdict: string; reasons: string[]; model: string; atUtc: string } | null;
   };
-  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: string; exclusion?: string }[];
+  pending: { taskKey: string; reviewAttemptId: string; resultSha: string; waitMinutes: number; risk: BatchRisk; exclusion?: string | null }[];
   batches: {
     batchId: string;
-    parentBatchId?: string;
+    parentBatchId?: string | null;
     phase: string;
-    phaseReason?: string;
+    phaseReason?: string | null;
     baseSha: string;
-    candidateSha?: string;
-    members: { taskKey: string; replay: string; released: boolean }[];
-    runs: { batchRunId: string; host: string; outcome?: string; classification?: string; startedAtUtc?: string; finishedAtUtc?: string }[];
-    publication?: { candidateSha?: string; publishedSha?: string; atUtc?: string; [key: string]: unknown };
+    candidateSha?: string | null;
+    members: { taskKey: string; replay: BatchReplay; released: boolean }[];
+    runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
+    publication?: BatchPublication | null;
   }[];
-  members: Record<string, { status: BatchMemberStatus; batchId?: string; phase?: string; position?: number; size?: number }>;
+  members: Record<string, { status: BatchMemberStatus; batchId?: string | null; phase?: string | null; position?: number | null; size?: number | null }>;
+}
+
+/** The backend reports risk as a probability between 0 and 1. */
+export type BatchRisk = number | string | null;
+/** The backend reports a member's replay as an object with an outcome, or null before replay. */
+export type BatchReplay = { outcome?: string | null } | string | null;
+export interface BatchPublication {
+  verifiedRemoteSha?: string | null;
+  testedCandidateSha?: string | null;
+  publishedSha?: string | null;
+  candidateSha?: string | null;
+  atUtc?: string | null;
+  [key: string]: unknown;
+}
+
+export function batchRiskLabel(risk: BatchRisk | undefined): string {
+  if (typeof risk === 'number' && Number.isFinite(risk)) return `${Math.round(risk * 100)} %`;
+  return typeof risk === 'string' && risk ? risk : 'unknown';
+}
+
+export function batchReplayLabel(replay: BatchReplay | undefined): string {
+  if (typeof replay === 'string') return replay;
+  return replay?.outcome ?? 'not replayed';
+}
+
+export function batchPublishedSha(publication: BatchPublication | null | undefined): string | null {
+  return publication?.verifiedRemoteSha ?? publication?.publishedSha ?? null;
 }
 
 export function batchMemberFor(state: BatchGateState | null, ...keys: (string | null | undefined)[]) {

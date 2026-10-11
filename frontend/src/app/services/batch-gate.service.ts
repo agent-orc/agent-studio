@@ -126,6 +126,10 @@ const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const optionalString = (value: unknown): boolean => value == null || typeof value === 'string';
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string');
+const risk = (value: unknown): boolean => value == null || typeof value === 'number' || typeof value === 'string';
+const optionalNumber = (value: unknown): boolean => value == null || typeof value === 'number';
+const replay = (value: unknown): boolean => value == null || typeof value === 'string'
+  || (record(value) && optionalString(value['outcome']));
 
 function configuration(value: unknown): BatchGateConfiguration {
   if (!record(value) || !record(value['settings']) || !record(value['limits'])) throw new Error('Invalid batch settings response');
@@ -156,7 +160,7 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
       typeof plan['reason'] !== 'string' || typeof plan['targetSize'] !== 'number' ||
       !optionalString(plan['closeAtUtc']) || !strings(plan['proposedMembers']) || !Array.isArray(plan['upcoming'])) return false;
   if (!plan['upcoming'].every(item => record(item) && typeof item['taskKey'] === 'string' &&
-      typeof item['stage'] === 'string' && typeof item['risk'] === 'string' &&
+      typeof item['stage'] === 'string' && risk(item['risk']) &&
       optionalString(item['etaUtc']) && strings(item['overlapsWith']))) return false;
   if (plan['advisor'] != null && (!record(plan['advisor']) ||
       !strings(plan['advisor']['reasons']) || typeof plan['advisor']['mode'] !== 'string' ||
@@ -164,25 +168,21 @@ export function isBatchGateState(value: unknown): value is BatchGateState {
       typeof plan['advisor']['atUtc'] !== 'string')) return false;
   if (!value['pending'].every(item => record(item) && typeof item['taskKey'] === 'string' &&
       typeof item['reviewAttemptId'] === 'string' && typeof item['resultSha'] === 'string' &&
-      typeof item['waitMinutes'] === 'number' && typeof item['risk'] === 'string' &&
+      typeof item['waitMinutes'] === 'number' && risk(item['risk']) &&
       optionalString(item['exclusion']))) return false;
   if (!value['batches'].every(batch => record(batch) && typeof batch['batchId'] === 'string' &&
       typeof batch['phase'] === 'string' && typeof batch['baseSha'] === 'string' &&
       optionalString(batch['parentBatchId']) && optionalString(batch['phaseReason']) &&
       optionalString(batch['candidateSha']) && Array.isArray(batch['members']) && Array.isArray(batch['runs']) &&
       batch['members'].every((member: unknown) => record(member) && typeof member['taskKey'] === 'string' &&
-        typeof member['replay'] === 'string' && typeof member['released'] === 'boolean') &&
+        replay(member['replay']) && typeof member['released'] === 'boolean') &&
       batch['runs'].every((run: unknown) => record(run) && typeof run['batchRunId'] === 'string' &&
         typeof run['host'] === 'string' && optionalString(run['outcome']) &&
         optionalString(run['classification']) && optionalString(run['startedAtUtc']) &&
         optionalString(run['finishedAtUtc'])) &&
-      (batch['publication'] == null || (record(batch['publication']) &&
-        optionalString(batch['publication']['candidateSha']) &&
-        optionalString(batch['publication']['publishedSha']) &&
-        optionalString(batch['publication']['atUtc']))))) return false;
+      (batch['publication'] == null || record(batch['publication'])))) return false;
   return Object.values(value['members']).every(member => record(member) &&
     ['pending', 'in-batch', 'published', 'fallback'].includes(String(member['status'])) &&
     optionalString(member['batchId']) && optionalString(member['phase']) &&
-    (member['position'] === undefined || typeof member['position'] === 'number') &&
-    (member['size'] === undefined || typeof member['size'] === 'number'));
+    optionalNumber(member['position']) && optionalNumber(member['size']));
 }

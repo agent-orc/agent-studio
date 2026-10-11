@@ -10,7 +10,7 @@
         </p>
         @if (record(); as batch) {
           <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting' }}</p>
-          @if (batch.publication?.publishedSha; as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
+          @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
         }
       } @else {
         <p>This card is not in a batch.</p>

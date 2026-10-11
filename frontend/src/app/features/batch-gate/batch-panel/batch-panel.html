@@ -20,7 +20,7 @@
         <h3 id="batch-upcoming-title">Look ahead</h3>
         @if (data.plan.upcoming.length) {
           <ul>@for (item of data.plan.upcoming; track item.taskKey) {
-            <li><strong>{{ item.taskKey }}</strong> · {{ item.stage }} · {{ item.risk }} risk · ETA {{ date(item.etaUtc) }}
+            <li><strong>{{ item.taskKey }}</strong> · {{ item.stage }} · {{ riskLabel(item.risk) }} risk · ETA {{ date(item.etaUtc) }}
               @if (item.overlapsWith.length) { <span> · overlaps {{ item.overlapsWith.join(', ') }}</span> }
             </li>
           }</ul>
@@ -37,7 +37,7 @@
         <h3 id="batch-pending-title">Waiting cards ({{ data.pending.length }})</h3>
         @if (data.pending.length) {
           <ul>@for (item of data.pending; track item.taskKey) {
-            <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ item.risk }} risk
+            <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ riskLabel(item.risk) }} risk
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
               <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
             </li>
@@ -55,9 +55,9 @@
               }</p>
               @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
-              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ member.replay }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ replayLabel(member.replay) }}{{ member.released ? ', released' : '' }}) </span> }</p>
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
-                @if (batch.publication?.publishedSha) { · Published {{ batch.publication?.publishedSha }} }
+                @if (publishedSha(batch.publication); as sha) { · Published {{ sha }} }
               </p>
               @if (batch.runs.length) {
                 <ul>@for (run of batch.runs; track run.batchRunId) {

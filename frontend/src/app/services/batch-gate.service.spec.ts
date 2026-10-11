@@ -2,9 +2,10 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BatchGateService } from './batch-gate.service';
+import { BatchGateService, isBatchGateState } from './batch-gate.service';
+import { batchPublishedSha, batchReplayLabel, batchRiskLabel } from '../models/batch-gate.model';
 import { clientIdInterceptor } from './client-id.interceptor';
-import { batchSettings, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
+import { backendShapedState, batchSettings, redHalvingState } from '../features/batch-gate/testing/batch-fixtures';
 
 describe('BatchGateService', () => {
   let service: BatchGateService;
@@ -117,5 +118,19 @@ describe('BatchGateService', () => {
     await Promise.resolve();
     stop();
     hidden.mockRestore();
+  });
+});
+
+describe('batch state from the AGT-3052 backend', () => {
+  it('accepts numeric risk, replay objects and explicit nulls', () => {
+    expect(isBatchGateState(JSON.parse(JSON.stringify(backendShapedState)))).toBe(true);
+  });
+
+  it('renders risk as a percentage, the replay outcome and the verified published SHA', () => {
+    expect(batchRiskLabel(0.35)).toBe('35 %');
+    expect(batchRiskLabel('high')).toBe('high');
+    expect(batchReplayLabel({ outcome: 'applied' })).toBe('applied');
+    expect(batchReplayLabel(null)).toBe('not replayed');
+    expect(batchPublishedSha(backendShapedState.batches[0].publication)).toBe('c'.repeat(40));
   });
 });
