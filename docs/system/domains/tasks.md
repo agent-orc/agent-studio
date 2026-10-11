@@ -1522,13 +1522,16 @@ whose index is still hydrating returns `202` with `state=warming`. A known
 record whose sidecar refresh or safety sweep is pending returns `state=stale`.
 Durable deletion tombstones known core aliases immediately, so a deleted task
 does not reappear or wait for hydration to return `missing`.
+Core identity fields retain their full values. Lookup accepts the full id, the
+public key, and a unique legacy 128-byte id prefix from older core replies.
+An ambiguous prefix does not override a canonical identity.
 
 `TaskIndexCache.GetCore` is keyed and cache-only. It never calls `EnsureFresh`,
 `FindJob`, Git, token aggregation, review readers, or a filesystem search.
 The index producer reads `status.md`, `prompt.md`, and `logs/timeline.jsonl`
 outside the request, publishing UTF-8-safe heads with original lengths and
 SHA-256 hashes. Status text is capped at 1 KiB, prompt text at 2 KiB, and the
-last five timeline events at 2 KiB total. The whole JSON body is capped at
+up to the last five timeline events at 2 KiB total. The whole JSON body is capped at
 16 KiB. Missing sidecars are explicit. The prompt exposes its full-document
 link, and the timeline exposes a sequence cursor for older events. No model
 summarizes these fields. The route reads runtime and lease facts from memory,

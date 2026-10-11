@@ -256,6 +256,22 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(location.search).toBe('?view=board');
   });
 
+  it('opens a long-id board card and accepts its canonical id through a legacy reference', () => {
+    const id = `long-task-${'a'.repeat(190)}`;
+    const task = { ...info, id, key: 'AGT-2993', displayKey: 'AGT-2993',
+      taskKey: `${info.watchPath}::${id}` } as TaskInfo;
+    selection.openDetail(task);
+    http.expectOne(req => req.url.endsWith(`/${id}/core`)).flush(coreFor(task));
+    expect(selection.selectedCore()?.id).toBe(id);
+    expect(selection.detailLoadError()).toBeNull();
+
+    const legacy = { ...task, id: id.slice(0, 128) } as TaskInfo;
+    selection.openDetail(legacy);
+    http.expectOne(req => req.url.endsWith(`/${legacy.id}/core`)).flush(coreFor(task));
+    expect(selection.selectedCore()?.id).toBe(id);
+    expect(selection.detailLoadError()).toBeNull();
+  });
+
   it('pushes an advance and restores its prior task, lane anchor, and pager position on popstate', () => {
     projects.setWorkspaces(([{ projects: [{ id: 'PROJ-001', shortCode: 'AGT',
       displayName: 'Agent Studio', storageLocation: 'C:\\private\\project' }] }]

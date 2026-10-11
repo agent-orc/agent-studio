@@ -493,7 +493,8 @@ export class TaskSelectionService {
     this.resourceStates.set(idleResources());
     const accept = (core: TaskCore): boolean => {
       if (token !== this.openDetailToken || core.state === 'warming') return false;
-      if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)) return false;
+      if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)
+        && !sameReference(core.key, info.key)) return false;
       if (info.taskKey && core.taskKey !== info.taskKey) return false;
       this.acceptCore(core, info, project, token, opts);
       return true;
