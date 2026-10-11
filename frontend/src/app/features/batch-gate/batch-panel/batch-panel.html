@@ -1,0 +1,81 @@
+<div class="batch-panel-backdrop" (click)="close()" aria-hidden="true"></div>
+<aside class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
+  <header class="batch-panel__header">
+    <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
+    <button type="button" aria-label="Close batch panel" autofocus (click)="close()">Close</button>
+  </header>
+  <div class="batch-panel__body">
+    @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
+    @if (state(); as data) {
+      <section aria-labelledby="batch-plan-title">
+        <h3 id="batch-plan-title">Current plan</h3>
+        <p><strong>{{ data.plan.decision }}</strong> · {{ data.plan.reason }}</p>
+        <p>Target {{ data.plan.targetSize }} · Closes {{ data.plan.closeAtUtc ? date(data.plan.closeAtUtc) : 'when ready' }}</p>
+        <p>Proposed: {{ data.plan.proposedMembers.length ? data.plan.proposedMembers.join(', ') : 'No members yet' }}</p>
+        @if (data.plan.decision !== 'disabled') {
+          <button type="button" data-testid="batch-close-now" (click)="confirm.set('close')">Close batch now</button>
+        }
+      </section>
+      <section aria-labelledby="batch-upcoming-title">
+        <h3 id="batch-upcoming-title">Look ahead</h3>
+        @if (data.plan.upcoming.length) {
+          <ul>@for (item of data.plan.upcoming; track item.taskKey) {
+            <li><strong>{{ item.taskKey }}</strong> · {{ item.stage }} · {{ item.risk }} risk · ETA {{ date(item.etaUtc) }}
+              @if (item.overlapsWith.length) { <span> · overlaps {{ item.overlapsWith.join(', ') }}</span> }
+            </li>
+          }</ul>
+        } @else { <p>No upcoming cards in the look-ahead window.</p> }
+      </section>
+      @if (data.plan.advisor; as advisor) {
+        <section aria-labelledby="batch-advisor-title" data-testid="batch-advisor">
+          <h3 id="batch-advisor-title">LLM advisor</h3>
+          <p><strong>{{ advisor.verdict }}</strong> · {{ advisor.mode }} · {{ advisor.model }} · {{ date(advisor.atUtc) }}</p>
+          <ul>@for (reason of advisor.reasons; track reason) { <li>{{ reason }}</li> }</ul>
+        </section>
+      }
+      <section aria-labelledby="batch-pending-title">
+        <h3 id="batch-pending-title">Waiting cards ({{ data.pending.length }})</h3>
+        @if (data.pending.length) {
+          <ul>@for (item of data.pending; track item.taskKey) {
+            <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ item.risk }} risk
+              @if (item.exclusion) { · {{ item.exclusion }} }</span>
+              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="confirm.set(item.taskKey)">Eject</button>
+            </li>
+          }</ul>
+        } @else { <p>No cards are waiting for a batch.</p> }
+      </section>
+      <section aria-labelledby="batch-history-title">
+        <h3 id="batch-history-title">Running and recent batches</h3>
+        @if (data.batches.length) {
+          @for (batch of data.batches; track batch.batchId) {
+            <article class="batch-panel__batch" [attr.data-phase]="batch.phase">
+              <h4>Batch {{ batch.batchId }} @if (batch.parentBatchId) { <small>from {{ batch.parentBatchId }}</small> }</h4>
+              <p class="batch-panel__timeline" aria-label="Batch phases">@for (phase of phases; track phase) {
+                <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
+              }</p>
+              <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
+              <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ member.replay }}{{ member.released ? ', released' : '' }}) </span> }</p>
+              <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
+                @if (batch.publication?.publishedSha) { · Published {{ batch.publication?.publishedSha }} }
+              </p>
+              @if (batch.runs.length) {
+                <ul>@for (run of batch.runs; track run.batchRunId) {
+                  <li>{{ run.host }} · {{ run.outcome ?? 'running' }} @if (run.classification) { · {{ run.classification }} }
+                    · {{ duration(run.startedAtUtc, run.finishedAtUtc) }}</li>
+                }</ul>
+              }
+            </article>
+          }
+        } @else { <p>No batches have run yet.</p> }
+      </section>
+    } @else if (!error()) { <p>Loading batch verification…</p> }
+  </div>
+  @if (confirm(); as target) {
+    <div class="batch-panel__confirm" role="group" aria-label="Confirm batch action" data-testid="batch-confirm">
+      <p>{{ target === 'close' ? 'Close the current batch now?' : 'Eject ' + target + ' from the batch?' }}</p>
+      @if (actionError()) { <p role="alert">{{ actionError() }}</p> }
+      <button type="button" [disabled]="busy()" (click)="act()">Confirm</button>
+      <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
+    </div>
+  }
+</aside>

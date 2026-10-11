@@ -35,6 +35,7 @@ import {
 import { ProjectBuildProfileContradictionNoticeComponent } from '../project-build-profile-contradiction-notice/project-build-profile-contradiction-notice.component';
 import { RetentionRulesTableComponent } from '../../../retention/components/retention-rules-table/retention-rules-table.component';
 import { ProjectExecutionDefinitionComponent } from '../project-execution-definition/project-execution-definition';
+import { BatchSettingsComponent } from '../../../batch-gate/batch-settings/batch-settings';
 
 const STORAGE_DEFAULT_CLI = 'defaultCliType';
 const STORAGE_DEFAULT_MODEL_PREFIX = 'defaultModel:';
@@ -103,6 +104,7 @@ interface WorkspaceListItemLite {
     ProjectBuildProfileContradictionNoticeComponent,
     RetentionRulesTableComponent,
     ProjectExecutionDefinitionComponent,
+    BatchSettingsComponent,
   ],
   templateUrl: './project-settings-panel.component.html',
   styleUrl: './project-settings-panel.component.scss',

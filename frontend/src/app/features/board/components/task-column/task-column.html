@@ -57,6 +57,21 @@
         @if (state() === '4-auto-review') {
           <app-post-processing-summary [jobs]="jobs()" [nowMs]="nowMs()" />
         }
+        @for (project of batchProjects(); track project) {
+          @if (batchStateFor(project); as batch) {
+            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
+                    (click)="batchPanelProject.set(project)">
+              @if (batchProjects().length > 1) { {{ project }} · }
+              @if (batch.plan.decision === 'disabled') { Batch off }
+              @else {
+                Batch: {{ batch.pending.length }} waiting · closes {{ batch.plan.closeAtUtc ? (batch.plan.closeAtUtc | date:'shortTime') : 'when ready' }} · running {{ batchRunningFor(project) }}
+              }
+            </button>
+          } @else if (batchErrorFor(project)) {
+            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
+                    (click)="batchPanelProject.set(project)">{{ project }} · Batch unavailable</button>
+          }
+        }
         @if (sortIndicator(); as sort) {
           <span class="column__sort-indicator"
                 [attr.data-testid]="'lane-sort-indicator-' + state()"
@@ -254,4 +269,7 @@
         }
       </div>
     </div>
+    }
+    @if (batchPanelProject(); as project) {
+      <app-batch-panel [project]="project" [closed]="closeBatchPanel" />
     }

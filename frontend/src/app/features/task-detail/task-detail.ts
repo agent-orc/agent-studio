@@ -75,6 +75,8 @@ import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
+import { BatchGateService } from '../../services/batch-gate.service';
+import { BatchPanelComponent } from '../batch-gate/batch-panel/batch-panel';
 
 @Component({
   selector: 'app-task-detail, app-job-detail',
@@ -99,6 +101,7 @@ import { OlderBriefOfferComponent } from './components/older-brief-offer/older-b
     TooltipDirective,
     OlderBriefOfferComponent,
     TaskResourceStatusComponent,
+    BatchPanelComponent,
   ],
   providers: [
     LayoutPanesService,
@@ -127,6 +130,17 @@ import { OlderBriefOfferComponent } from './components/older-brief-offer/older-b
 })
 export class TaskDetailComponent implements OnDestroy {
   private jobService = inject(TaskService);
+  private readonly batchGate = inject(BatchGateService);
+  readonly batchPanelOpen = signal(false);
+  readonly closeBatchPanel = () => this.batchPanelOpen.set(false);
+  readonly batchState = computed(() => this.batchGate.state(this.detail().info.projectName)());
+  readonly batchError = computed(() => this.batchGate.error(this.detail().info.projectName)());
+  readonly batchMember = computed(() => this.batchState()?.members?.[this.detail().info.taskKey] ?? null);
+  readonly batchRecord = computed(() => this.batchState()?.batches.find(batch =>
+    batch.batchId === this.batchMember()?.batchId || batch.members.some(member => member.taskKey === this.detail().info.taskKey)) ?? null);
+  private readonly batchWatch = effect(onCleanup => {
+    onCleanup(this.batchGate.watch(this.detail().info.projectName));
+  });
   private catalogStore = inject(CliCatalogStore);
   private errorDialog = inject(ErrorDialogService);
   private clientService = inject(ClientService);

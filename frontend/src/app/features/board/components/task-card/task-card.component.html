@@ -104,6 +104,7 @@
     </section>
   }
   <div class="task-card__badges">
+    <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" />
     @if (stalledState(); as stalled) {
       <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"
             [cacTooltip]="stalled.tooltip" role="status"><span aria-hidden="true">⚠</span> {{ stalled.label }}</span>

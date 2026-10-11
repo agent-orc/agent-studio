@@ -44,6 +44,33 @@
   <!-- AGT-2378: the live strip reads the board-fresh runtime overlay, not the
        detail snapshot frozen at open time. -->
   <app-task-live-status [task]="liveRunInfo()" variant="detail" />
+  @if (batchState(); as state) {
+    <section class="detail__batch" aria-labelledby="task-batch-title" data-testid="task-batch-verification">
+      <h2 id="task-batch-title">Batch verification</h2>
+      @if (batchMember(); as member) {
+        <p><strong>{{ member.status }}</strong>
+          @if (member.batchId) { · Batch {{ member.batchId }} }
+          @if (member.position && member.size) { · {{ member.position }} of {{ member.size }} }
+          @if (member.phase) { · {{ member.phase }} }
+        </p>
+        @if (batchRecord(); as batch) {
+          <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting' }}</p>
+          @if (batch.publication?.publishedSha; as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
+        }
+      } @else {
+        <p>{{ state.plan.decision === 'disabled' ? 'Batch verification is disabled for this project.' : 'This card is not in a batch.' }}</p>
+      }
+      <button type="button" (click)="batchPanelOpen.set(true)">Open batch panel</button>
+    </section>
+  } @else if (batchError()) {
+    <section class="detail__batch" aria-label="Batch verification" data-testid="task-batch-verification">
+      <p>Batch status is unavailable.</p>
+      <button type="button" (click)="batchPanelOpen.set(true)">Open batch panel</button>
+    </section>
+  }
+  @if (batchPanelOpen()) {
+    <app-batch-panel [project]="detail().info.projectName" [closed]="closeBatchPanel" />
+  }
   <app-older-brief-offer [task]="detail().info" (saved)="fileSaved.emit()" (failed)="showError($event)" />
 
   @if (detail().info.reviewProjection?.roundBudget; as budget) {
