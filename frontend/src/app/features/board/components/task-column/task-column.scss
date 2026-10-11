@@ -697,6 +697,8 @@
       }
     }
 .column__batch {
+  display: block;
+  width: 100%;
   border: 1px solid var(--studio-border);
   border-radius: var(--studio-action-radius-sm);
   background: var(--studio-bg-elevated);
@@ -705,5 +707,10 @@
   font-size: .7rem;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: var(--studio-spacing-1);
 }
 .column__batch:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

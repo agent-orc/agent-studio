@@ -26,4 +26,25 @@ describe('BatchPanelComponent', () => {
     expect(text).toContain('agent-runner-01');
     http.verify();
   });
+
+  it('requires page confirmation before ejecting a waiting card', async () => {
+    TestBed.configureTestingModule({ providers: [provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting()] });
+    const fixture = TestBed.createComponent(BatchPanelComponent);
+    fixture.componentRef.setInput('project', 'Demo');
+    fixture.componentRef.setInput('closed', () => {});
+    await fixture.whenStable();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    await Promise.resolve();
+    fixture.detectChanges();
+    fixture.nativeElement.querySelector('[aria-label="Eject AGT-1"]').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="batch-confirm"]')).toBeTruthy();
+    expect(http.match('/api/projects/Demo/batch-gate/members/AGT-1/eject')).toHaveLength(0);
+    fixture.nativeElement.querySelector('[data-testid="batch-confirm"] button').click();
+    http.expectOne('/api/projects/Demo/batch-gate/members/AGT-1/eject').flush({}, { status: 202, statusText: 'Accepted' });
+    http.expectOne('/api/projects/Demo/batch-gate/state?history=10').flush(redHalvingState);
+    await fixture.whenStable();
+    http.verify();
+  });
 });

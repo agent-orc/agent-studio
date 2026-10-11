@@ -57,21 +57,6 @@
         @if (state() === '4-auto-review') {
           <app-post-processing-summary [jobs]="jobs()" [nowMs]="nowMs()" />
         }
-        @for (project of batchProjects(); track project) {
-          @if (batchStateFor(project); as batch) {
-            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
-                    (click)="batchPanelProject.set(project)">
-              @if (batchProjects().length > 1) { {{ project }} · }
-              @if (batch.plan.decision === 'disabled') { Batch off }
-              @else {
-                Batch: {{ batch.pending.length }} waiting · closes {{ batch.plan.closeAtUtc ? (batch.plan.closeAtUtc | date:'shortTime') : 'when ready' }} · running {{ batchRunningFor(project) }}
-              }
-            </button>
-          } @else if (batchErrorFor(project)) {
-            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
-                    (click)="batchPanelProject.set(project)">{{ project }} · Batch unavailable</button>
-          }
-        }
         @if (sortIndicator(); as sort) {
           <span class="column__sort-indicator"
                 [attr.data-testid]="'lane-sort-indicator-' + state()"
@@ -151,6 +136,21 @@
                 [cacTooltip]="'Collapse ' + title() + ' lane'"
                 (click)="collapseToggle.emit()">‹</button>
       </div>
+        @for (project of batchProjects(); track project) {
+          @if (batchStateFor(project); as batch) {
+            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
+                    (click)="batchPanelProject.set(project)">
+              @if (batchProjects().length > 1) { {{ project }} · }
+              @if (batch.plan.decision === 'disabled') { Batch off }
+              @else {
+                Batch: {{ batch.pending.length }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ batchRunningFor(project) }} running
+              }
+            </button>
+          } @else if (batchErrorFor(project)) {
+            <button type="button" class="column__batch" data-testid="batch-lane-indicator"
+                    (click)="batchPanelProject.set(project)">{{ project }} · Batch unavailable</button>
+          }
+        }
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
       }

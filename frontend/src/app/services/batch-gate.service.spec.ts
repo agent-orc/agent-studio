@@ -46,4 +46,17 @@ describe('BatchGateService', () => {
     expect(eject.request.headers.get('X-Client-Id')).toBe('local-default');
     eject.flush({}, { status: 202, statusText: 'Accepted' });
   });
+
+  it('polls at 15 seconds and stops when the last consumer leaves', async () => {
+    vi.useFakeTimers();
+    const stop = service.watch('Demo Project');
+    http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(15_000);
+    http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
+    await Promise.resolve();
+    stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(http.match(`${base}/state?history=10`)).toHaveLength(0);
+  });
 });

@@ -67,6 +67,10 @@
       <p>Batch status is unavailable.</p>
       <button type="button" (click)="batchPanelOpen.set(true)">Open batch panel</button>
     </section>
+  } @else {
+    <section class="detail__batch" aria-label="Batch verification" data-testid="task-batch-verification">
+      <p>Loading batch verification…</p>
+    </section>
   }
   @if (batchPanelOpen()) {
     <app-batch-panel [project]="detail().info.projectName" [closed]="closeBatchPanel" />
