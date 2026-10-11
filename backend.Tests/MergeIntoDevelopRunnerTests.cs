@@ -1568,6 +1568,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var (repo, remote) = SeedRepoWithOrigin("batch-merge-push-window");
         RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
         RunGit(repo, "checkout -q -b task/merge-push-window");
         File.WriteAllText(Path.Combine(repo, "code.cs"), "code change");
         Commit(repo, "feat: code change");

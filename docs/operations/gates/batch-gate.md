@@ -29,6 +29,7 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   Members stay pending until a new base SHA triggers reconstruction. The remote
   worker does not spend the batch budget on a
   clean-repeat diagnosis.
+  The report counts batches currently held for a red integration branch.
 - Full-suite execution runs outside the 30-second planning tick. One batch runs
   per project. A documentation-only base movement queues a successor manifest
   for replay and another full gate. Publication pushes the tested SHA to origin

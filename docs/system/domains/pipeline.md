@@ -175,7 +175,7 @@ rerun when needed; the batch request does not trigger the remote clean-repeat
 diagnosis. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
-and the correctness floor; comparable baseline and cost fields remain null
+including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
 until measured on the same window.
 
 ## Compose-render gate step (AGT-2981)
