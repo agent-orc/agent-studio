@@ -401,6 +401,9 @@ export interface WaitsOnItem {
  */
 export interface WaitsOnStatus {
   items: WaitsOnItem[];
+  /** Full edge count when the board summary carries only the first few labels. */
+  itemCount?: number;
+  openCount?: number;
   /** At least one dependency is not yet fulfilled (open or unknown). */
   blocked: boolean;
   /** The card sits on a dependsOn cycle - a configuration error. */

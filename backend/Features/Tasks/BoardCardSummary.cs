@@ -193,6 +193,8 @@ internal static class BoardCardSummary
                 decision.Status, decision.Decider, decision.DecidedBy,
                 decision.DueDate, decision.Dependants,
             };
+        if (job.OlderBriefDelivery is { } olderBrief)
+            fields["olderBriefDelivery"] = new { olderBrief.Status };
         // Small status projections used directly by board badges and filters.
         Add(fields, "execution", job.Execution);
         Add(fields, "quotaFallback", job.QuotaFallback);
@@ -214,10 +216,19 @@ internal static class BoardCardSummary
             fields["postProcessingChecks"] = new[] { runningCheck with { Detail = null } };
         Add(fields, "references", job.References);
         if (job.WaitsOn is { } waits)
-            fields["waitsOn"] = waits with
+            fields["waitsOn"] = new
             {
-                Items = waits.Items.Take(3).ToList(),
-                CyclePath = [],
+                waits.Blocked, waits.CycleDetected, waits.UnsatisfiableGate,
+                itemCount = waits.Items.Count,
+                openCount = waits.Items.Count(item => !item.Fulfilled),
+                items = waits.Items.OrderByDescending(item => item.Unsatisfiable)
+                    .ThenBy(item => item.Fulfilled).Take(3)
+                    .Select(item => new
+                    {
+                        item.Key, item.Resolved, item.PendingDecision, item.Fulfilled,
+                        item.WaitingForRelease, item.Unsatisfiable, item.TargetJobId,
+                        targetTitle = Short(item.TargetTitle, 40), item.TargetWatchPath,
+                    }).ToArray(),
             };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
         Add(fields, "transitiveWaiters", job.TransitiveWaiters);

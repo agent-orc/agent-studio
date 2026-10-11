@@ -67,6 +67,9 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.Equal("Choose a path", root.GetProperty("needsInput").GetProperty("message").GetString());
         Assert.False(root.GetProperty("autoLoop").TryGetProperty("lastReply", out _));
         Assert.Equal(3, root.GetProperty("liveStatus").GetProperty("nextSteps").GetArrayLength());
+        Assert.Equal(1, root.GetProperty("waitsOn").GetProperty("itemCount").GetInt32());
+        Assert.False(root.GetProperty("waitsOn").GetProperty("items")[0]
+            .TryGetProperty("unsatisfiableReason", out _));
     }
 
     [Fact]

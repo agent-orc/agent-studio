@@ -12,15 +12,17 @@ using Xunit.Abstractions;
 
 namespace AgentStudio.Tests;
 
-public sealed class TaskListProjectFilterEndpointTests(ITestOutputHelper output) : IDisposable
+public sealed class TaskListProjectFilterEndpointTests : IDisposable
 {
+    private readonly ITestOutputHelper _output;
     private readonly string _workspace = Path.Combine(
         Path.GetTempPath(), "task-list-project-filter-" + Guid.NewGuid().ToString("N"));
     private readonly string _alphaPath;
     private readonly string _betaPath;
 
-    public TaskListProjectFilterEndpointTests()
+    public TaskListProjectFilterEndpointTests(ITestOutputHelper output)
     {
+        _output = output;
         _alphaPath = Path.Combine(_workspace, "alpha");
         _betaPath = Path.Combine(_workspace, "beta");
         SeedTask(_alphaPath, "alpha-task", "Alpha task");
@@ -141,7 +143,7 @@ public sealed class TaskListProjectFilterEndpointTests(ITestOutputHelper output)
             var bytes = await warm.Content.ReadAsByteArrayAsync();
             timer.Stop();
             warm.EnsureSuccessStatusCode();
-            output.WriteLine($"{name}: {bytes.Length} bytes; warm {timer.Elapsed.TotalMilliseconds:F1} ms");
+            _output.WriteLine($"{name}: {bytes.Length} bytes; warm {timer.Elapsed.TotalMilliseconds:F1} ms");
             Assert.True(bytes.Length < 500_000, $"{name} was {bytes.Length} bytes");
         }
     }

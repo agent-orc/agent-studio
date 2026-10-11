@@ -1664,7 +1664,9 @@ export interface DependencyChip {
 export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChip | null {
   if (!waitsOn || waitsOn.items.length === 0) return null;
   const items = waitsOn.items;
-  const tooltip = dependencyTooltip(items, waitsOn.cycleDetected);
+  const count = waitsOn.itemCount ?? items.length;
+  const tooltip = dependencyTooltip(items, waitsOn.cycleDetected)
+    + (count > items.length ? `\n+${count - items.length} more dependencies` : '');
 
   if (waitsOn.cycleDetected) {
     const primary = items[0];
@@ -1682,7 +1684,7 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
   const open = items.filter((i) => !i.fulfilled);
   const blocked = open.find((i) => i.unsatisfiable);
   if (blocked) {
-    const extra = open.length - 1;
+    const extra = (waitsOn.openCount ?? open.length) - 1;
     return {
       glyph: '⚠',
       label: `gate cannot open: ${blocked.key}${extra > 0 ? ` +${extra}` : ''}`,
@@ -1696,7 +1698,7 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
 
   if (open.length > 0) {
     const primary = open[0];
-    const extra = open.length - 1;
+    const extra = (waitsOn.openCount ?? open.length) - 1;
     const waitReason = primary.waitingForRelease ? 'release' : 'completion';
     return {
       glyph: '⏳',
@@ -1710,7 +1712,7 @@ export function buildDependencyChip(waitsOn: TaskInfo['waitsOn']): DependencyChi
   }
 
   const primary = items[0];
-  const extra = items.length - 1;
+  const extra = count - 1;
   return {
     glyph: '✓',
     label: `${primary.key}${extra > 0 ? ` +${extra}` : ''}`,
