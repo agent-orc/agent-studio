@@ -75,6 +75,7 @@ import { taskDetailShortcutTargetAllowed, taskNavigationOwnsFocus } from './task
 import { ArchivedTaskNoticeComponent } from '../retention/components/archived-task-notice/archived-task-notice.component';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { OlderBriefOfferComponent } from './components/older-brief-offer/older-brief-offer.component';
+import { BatchDetailComponent } from '../batch-gate/batch-detail/batch-detail';
 
 @Component({
   selector: 'app-task-detail, app-job-detail',
@@ -99,6 +100,7 @@ import { OlderBriefOfferComponent } from './components/older-brief-offer/older-b
     TooltipDirective,
     OlderBriefOfferComponent,
     TaskResourceStatusComponent,
+    BatchDetailComponent,
   ],
   providers: [
     LayoutPanesService,

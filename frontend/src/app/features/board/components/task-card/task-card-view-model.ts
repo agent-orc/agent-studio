@@ -11,6 +11,13 @@ import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
 import { lanePresentation } from '../../../../models/lane-presentation';
+import type { StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+
+export function taskTypeIconName(kind: string): StudioIconName {
+  if (kind === 'bug') return 'warn';
+  if (kind === 'feature') return 'plus';
+  return 'dot';
+}
 
 export interface TaskTypeChip {
   kind: string;

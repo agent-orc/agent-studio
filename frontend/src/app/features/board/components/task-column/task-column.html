@@ -136,6 +136,7 @@
                 [cacTooltip]="'Collapse ' + title() + ' lane'"
                 (click)="collapseToggle.emit()">‹</button>
       </div>
+      <app-batch-lane-indicator [laneState]="state()" [projectScope]="projectScope()" [jobs]="allBoardJobs()" />
       @if (state() === '5-human-review') {
         <app-decision-backlog-hint [tasks]="jobs()" [allTasks]="allBoardJobs()" (taskClick)="jobClick.emit($event)" />
       }

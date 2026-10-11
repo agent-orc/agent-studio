@@ -1,0 +1,10 @@
+@if (task().state === autoReviewState && task().reviewQueuePosition; as position) {
+  <span class="review-queue-pill" data-testid="task-card-review-queue"
+        [attr.data-priority]="task().reviewPriority"
+        [cacTooltip]="'Review queue position ' + position">
+    @if (task().reviewPriority === 'urgent') { Urgent · }Review #{{ position }}
+  </span>
+} @else if (task().state === autoReviewState && task().reviewPriority === 'urgent') {
+  <span class="review-queue-pill" data-testid="task-card-review-queue"
+        data-priority="urgent" cacTooltip="Priority applies when review is ready">Urgent</span>
+}

@@ -918,8 +918,8 @@ that instead of always naming the same one.
 
 **Safe parallelism.** With the fence in place, review parallelism is bounded by
 host CPU, memory and I/O, not by a shared build server. Each attempt runs
-`dotnet test` with `-maxcpucount:2` and `ParallelizeTestCollections=false`
-(`ReviewPlanResourcePolicy`), so budget roughly two cores and the peak resident
+`dotnet test` with `-maxcpucount:2`. This limits MSBuild nodes, not xUnit
+collection threads. Budget the observed CPU demand and the peak resident
 set of one test run per slot. Four slots on a 12-core host is the validated
 configuration; the helper's hard ceiling of 6 remains a host-flood guard rather
 than a recommendation.
@@ -2579,5 +2579,10 @@ fresh sample immediately before every claim and admits at most one new slot per
 poll only while `Load1 < CpuCores * RUNNER_CLAIM_MAX_LOAD_PER_CORE`. Missing
 Linux load evidence closes Review admission. Existing Coding and Review runs
 continue. Every immutable ReviewPlan also limits `dotnet test` to two MSBuild
-nodes and disables xUnit test-collection parallelism, including baseline and
-retry executions.
+nodes and gives it a ten-minute per-test hang timeout. A fixed two-thread xUnit
+cap was removed after Runner and backend A/B samples measured slower wall time;
+collection parallelism remains the xUnit default pending per-suite and
+host-admission evidence.
+Review test commands also write TRX alongside verbose console output; the
+runner retains compressed TRX and a compact per-class timing summary with the
+review evidence.
