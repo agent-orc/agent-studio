@@ -1606,6 +1606,14 @@ export class TaskService {
     ).pipe(this.afterMutation(jobId, watchPath));
   }
 
+  setReviewPriority(jobId: string, priority: 'urgent' | 'normal', watchPath?: string) {
+    return this.http.post<{ priority: 'urgent' | 'normal'; position: number | null }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-priority`,
+      { priority },
+      this.withWatchPath(watchPath),
+    ).pipe(this.afterMutation(jobId, watchPath));
+  }
+
   changeProject(jobId: string, targetWatchPath: string, watchPath?: string) {
     return this.http.post(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/change-project`,

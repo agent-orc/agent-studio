@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { dismissDevErrorDialog } from '../helpers/theme';
 
 /**
  * The card "Running" cue must follow the lane, not a stale execution snapshot.
@@ -72,11 +73,20 @@ function makeTask(id: string, state: string, title: string, order: number) {
 // Titles are crafted so none is a substring of another - Playwright `hasText`
 // does substring matching.
 const PROGRESS_TASK = makeTask('pill-lane-A-progress', '3-progress', 'Pill lane progress alpha', 1);
-const AUTO_REVIEW_TASK = makeTask('pill-lane-B-auto', '4-auto-review', 'Pill lane auto review bravo', 1);
+const AUTO_REVIEW_TASK = {
+  ...makeTask('pill-lane-B-auto', '4-auto-review', 'Pill lane auto review bravo', 1),
+  reviewPriority: 'urgent',
+  reviewQueuePosition: 1,
+};
+const NORMAL_REVIEW_TASK = {
+  ...makeTask('pill-lane-E-auto', '4-auto-review', 'Pill lane normal review echo', 2),
+  reviewPriority: 'normal',
+  reviewQueuePosition: 2,
+};
 const HUMAN_REVIEW_TASK = makeTask('pill-lane-C-human', '5-human-review', 'Pill lane human review charlie', 1);
 const COMPLETED_TASK = makeTask('pill-lane-D-done', '6-completed', 'Pill lane completed delta', 1);
 
-const NON_PROGRESS = [AUTO_REVIEW_TASK, HUMAN_REVIEW_TASK, COMPLETED_TASK];
+const NON_PROGRESS = [AUTO_REVIEW_TASK, NORMAL_REVIEW_TASK, HUMAN_REVIEW_TASK, COMPLETED_TASK];
 
 const GROUPED_PAYLOAD = {
   backlog: [],
@@ -86,7 +96,7 @@ const GROUPED_PAYLOAD = {
   progress: [PROGRESS_TASK],
   failedPickup: [],
   review: [],
-  autoReview: [AUTO_REVIEW_TASK],
+  autoReview: [AUTO_REVIEW_TASK, NORMAL_REVIEW_TASK],
   humanReview: [HUMAN_REVIEW_TASK],
   completed: [COMPLETED_TASK],
   archive: [],
@@ -104,6 +114,10 @@ async function installRoutes(page: Page) {
 
   await page.route('**/api/v1/studio/board**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(GROUPED_PAYLOAD) }));
+
+  await page.route('**/api/v1/studio/auth/status', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) }));
 
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({

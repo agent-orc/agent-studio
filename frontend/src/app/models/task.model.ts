@@ -541,6 +541,8 @@ export interface BetterCandidateNote {
 export interface TaskInfo {
   id: string;
   taskKey: string;
+  reviewPriority?: 'urgent' | 'normal';
+  reviewQueuePosition?: number | null;
   olderBriefDelivery?: {
     attemptId: string;
     briefVersion: string;
