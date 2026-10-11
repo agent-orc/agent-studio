@@ -50,6 +50,15 @@ function coreRejection(result: TaskCoreResult): { status: number } | null {
   return null;
 }
 
+const REVIEW_FACT_LANES: ReadonlySet<string> = new Set<string>([
+  TaskState.AutoReview, TaskState.HumanReview, TaskState.Escalated, TaskState.Completed,
+]);
+
+/** Whether the detail renders review facts before any tab opens. */
+function reviewFactsShownUpfront(info: TaskInfo): boolean {
+  return REVIEW_FACT_LANES.has(info.state) || !!info.needsInput;
+}
+
 /** The 202 body of a resource read while the task index re-hydrates. */
 function indexWarming(reply: { reason: string | null }): boolean {
   return reply.reason === 'task-index-warming';
@@ -720,6 +729,11 @@ export class TaskSelectionService {
         if (!current()) return;
         this.loadResource('usage');
         this.loadResource('overview');
+        // Review facts feed the round-budget banner, the escalation summary
+        // and the delivery-claim panel, which show without opening a tab on
+        // cards in review, escalated, completed or waiting for input. Other
+        // lanes load review only when its tab opens.
+        if (reviewFactsShownUpfront(info)) this.loadResource('review');
         this.loadResourcesForTab(this.expandedTab);
       });
     };
