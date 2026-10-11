@@ -101,6 +101,12 @@ public sealed class BatchGateReviewPlanTests
                 "refs/heads/agent-studio/results/code-task");
             Assert.True(codeBatch.BuildTestDeferredToBatch);
             Assert.Equal("build-only", codeBatch.TestLevel);
+            var changedInventory = builder.Build(task, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true,
+                    Scope: "code") }, "develop", codeSha,
+                [".agent-studio/project.yml"],
+                "refs/heads/agent-studio/results/code-task");
+            Assert.False(changedInventory.BuildTestDeferredToBatch);
         }
         finally
         {
