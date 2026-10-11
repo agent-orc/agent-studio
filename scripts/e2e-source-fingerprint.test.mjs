@@ -23,6 +23,9 @@ test('prebuilt fingerprint changes for tracked edits and untracked files', () =>
     const edited = fingerprint();
     assert.notEqual(edited, baseline);
     writeFileSync(join(root, 'new.ts'), 'untracked\n');
+    assert.equal(fingerprint(), edited, 'unrelated generated files do not invalidate a build');
+    mkdirSync(join(root, 'frontend', 'src'), { recursive: true });
+    writeFileSync(join(root, 'frontend', 'src', 'new.ts'), 'untracked source\n');
     assert.notEqual(fingerprint(), edited);
   } finally {
     rmSync(root, { recursive: true, force: true });
