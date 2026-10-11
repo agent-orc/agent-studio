@@ -660,6 +660,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal("integration-branch-red",
             AssertPhase(store, manifest.BatchId, BatchPhase.Paused).Reason);
         Assert.Null(store.ReadPublication(manifest.BatchId));
+        var run = Assert.Single(store.ListRuns(manifest.BatchId));
+        Assert.Equal("integration-branch-red",
+            store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Classification);
         Assert.Single(store.ListManifests());
         Assert.Equal(0, _gate.FallbackRuns);
     }

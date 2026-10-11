@@ -978,12 +978,18 @@ public sealed class BatchGatePilotService
                 // The gate runner already spent its single targeted failed-test
                 // rerun. A matching red base is project debt, not a member
                 // regression. Keep its diagnostic evidence on the batch run.
-                if (await BaseRedMatchesAsync(manifest, run, gate, repo,
+                if (await BaseIsRedAsync(manifest, run, gate, repo,
                         cancellation.Token).ConfigureAwait(false)
                     && string.Equals(gate.TestedSha, assembly.CandidateSha,
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    RecordVerdict(run, gate, "pre-existing-base-red");
+                    var baseline = _store.ReadBaseVerdict(manifest.Scope.Project,
+                        manifest.BaseSha, run.GateProfileDigest);
+                    var sameFailure = string.Equals(baseline?.FailureFingerprint,
+                        BuildTestGateRunner.DiagnosticFingerprint(gate),
+                        StringComparison.Ordinal);
+                    RecordVerdict(run, gate, sameFailure
+                        ? "pre-existing-base-red" : "integration-branch-red");
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha, lease.Fence,
                         "integration-branch-red");
                     return;
@@ -1429,7 +1435,7 @@ public sealed class BatchGatePilotService
         return verdict;
     }
 
-    private async Task<bool> BaseRedMatchesAsync(BatchGateManifest manifest,
+    private async Task<bool> BaseIsRedAsync(BatchGateManifest manifest,
         BatchGateRunRecord run, BuildTestGateResult candidate, string repo,
         CancellationToken ct)
     {
