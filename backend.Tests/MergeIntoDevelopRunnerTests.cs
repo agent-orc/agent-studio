@@ -82,13 +82,16 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     {
         var root = Path.Combine(_tempDir, "pending-code-pushes");
         var first = new BatchIntegrationReservationService(root);
-        first.MarkPushPending("Fixture", "card-1");
+        first.MarkPushPending("Fixture", "card-1", "sha-1");
+        first.MarkPushPending("Fixture", "card-1", "sha-2");
 
         var restarted = new BatchIntegrationReservationService(root);
-        var batch = restarted.AcquireBatchAsync("Fixture", CancellationToken.None);
+        var batch = restarted.AcquireBatchAsync("fixture", CancellationToken.None);
         Assert.False(batch.IsCompleted);
 
-        restarted.MarkPushVerified("Fixture", "card-1");
+        restarted.MarkPushVerified("Fixture", "card-1", "sha-1");
+        Assert.False(batch.IsCompleted);
+        restarted.MarkPushVerified("Fixture", "card-1", "sha-2");
         using var grant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
@@ -1589,13 +1592,17 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Commit(repo, "feat: code change");
         RunGit(repo, "checkout -q develop");
         var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false));
         var queue = new IntegrationPushQueue();
         var reservations = new BatchIntegrationReservationService();
         var jobFolder = BeginRun(log, repo, jobId: "merge-push-window");
         var runner = new MergeIntoDevelopRunner(git, log,
             NullLogger<MergeIntoDevelopRunner>.Instance,
             pushQueue: queue, projectSettings: settings,
-            batchReservations: reservations);
+            batchReservations: reservations,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
 
         var merged = await runner.RunAsync("Fixture", "merge-push-window", jobFolder,
             repo, "develop", CancellationToken.None);

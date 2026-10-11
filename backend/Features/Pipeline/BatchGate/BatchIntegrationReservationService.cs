@@ -4,7 +4,10 @@ using System.Text;
 
 namespace AgentStudio.Pipeline;
 
-/// <summary>Serializes a code integration with a batch run for the same project.</summary>
+/// <summary>
+/// Serializes code integration and batch execution per project. A pending push
+/// marker fences the gap between a local merge and verified origin publication.
+/// </summary>
 public sealed class BatchIntegrationReservationService
 {
     private readonly string? _root;
@@ -38,10 +41,13 @@ public sealed class BatchIntegrationReservationService
                 : []));
 
     private string ProjectDirectory(string project)
-        => Path.Combine(_root!, Hash(project));
+        => Path.Combine(_root!, Hash(project.ToUpperInvariant()));
 
-    private string PendingPath(string project, string jobId)
-        => Path.Combine(ProjectDirectory(project), Hash(jobId) + ".pending");
+    private string PendingPath(string project, string pushKey)
+        => Path.Combine(ProjectDirectory(project), Hash(pushKey) + ".pending");
+
+    private static string PushKey(string jobId, string? approvedSha)
+        => jobId + "\n" + (approvedSha ?? string.Empty);
 
     private static string Hash(string value)
         => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -72,35 +78,37 @@ public sealed class BatchIntegrationReservationService
 
     // Called while the code merge owns the reservation, before its push enters
     // the background queue. A failed push remains pending for the backstop.
-    public void MarkPushPending(string project, string jobId)
+    public void MarkPushPending(string project, string jobId, string? approvedSha)
     {
+        var pushKey = PushKey(jobId, approvedSha);
         var pending = ForProject(project);
         lock (pending)
         {
             if (_root is not null)
             {
-                var path = PendingPath(project, jobId);
+                var path = PendingPath(project, pushKey);
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                if (!File.Exists(path)) File.WriteAllText(path, jobId);
+                if (!File.Exists(path)) File.WriteAllText(path, pushKey);
             }
             if (pending.Jobs.Count == 0)
                 pending.Cleared = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously);
-            pending.Jobs.Add(_root is null ? jobId : Hash(jobId));
+            pending.Jobs.Add(_root is null ? pushKey : Hash(pushKey));
         }
     }
 
-    public void MarkPushVerified(string project, string jobId)
+    public void MarkPushVerified(string project, string jobId, string? approvedSha)
     {
+        var pushKey = PushKey(jobId, approvedSha);
         var pending = ForProject(project);
         lock (pending)
         {
             if (_root is not null)
             {
-                var path = PendingPath(project, jobId);
+                var path = PendingPath(project, pushKey);
                 if (File.Exists(path)) File.Delete(path);
             }
-            pending.Jobs.Remove(_root is null ? jobId : Hash(jobId));
+            pending.Jobs.Remove(_root is null ? pushKey : Hash(pushKey));
             if (pending.Jobs.Count == 0) pending.Cleared.TrySetResult();
         }
     }
