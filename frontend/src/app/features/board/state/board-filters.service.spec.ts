@@ -458,6 +458,24 @@ describe('BoardFiltersService waiting-for-release facet', () => {
     expect(svc.filteredTaskCount()).toBe(2);
   });
 
+  it('matches release waiters and every target beyond the three visible labels', () => {
+    const target = makeJob('fourth-target', 'Agent Task Processor', '6-completed');
+    const dependent = {
+      ...makeJob('many-waits', 'Agent Task Processor', '2-ready'),
+      waitsOn: {
+        blocked: true, cycleDetected: false, anyWaitingForRelease: true,
+        items: ['AGT-1', 'AGT-2', 'AGT-3'].map(key => ({
+          key, fulfilled: false, waitingForRelease: false,
+        })),
+        releaseTargets: [{ targetJobId: target.id, targetWatchPath: target.watchPath }],
+      },
+    } as TaskInfo;
+    jobs.grouped.set(makeGrouped([dependent, target]));
+    svc.setWaitingForReleaseOnly(true);
+    expect(svc.filteredGrouped().ready.map(job => job.id)).toEqual(['many-waits']);
+    expect(svc.filteredGrouped().completed.map(job => job.id)).toEqual(['fourth-target']);
+  });
+
   it('counts as an active filter and renders a removable pill', () => {
     svc.setWaitingForReleaseOnly(true);
 

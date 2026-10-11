@@ -740,7 +740,8 @@ function taskRef(watchPath: string, taskId: string): string {
 
 /** True when the task is a dependent held back only by a missing release. */
 function isWaitingForRelease(job: TaskInfo): boolean {
-  return (job.waitsOn?.items ?? []).some(item => item.waitingForRelease === true);
+  return job.waitsOn?.anyWaitingForRelease === true
+    || (job.waitsOn?.items ?? []).some(item => item.waitingForRelease === true);
 }
 
 /**
@@ -755,6 +756,12 @@ function collectPendingReleaseTargets(grouped: GroupedJobs): ReadonlySet<string>
   for (const lane of Object.values(grouped)) {
     if (!Array.isArray(lane)) continue;
     for (const job of lane as TaskInfo[]) {
+      if (job.waitsOn?.releaseTargets) {
+        for (const target of job.waitsOn.releaseTargets) {
+          refs.add(taskRef(target.targetWatchPath ?? job.watchPath, target.targetJobId));
+        }
+        continue;
+      }
       for (const item of job.waitsOn?.items ?? []) {
         if (item.waitingForRelease === true && item.targetJobId) {
           refs.add(taskRef(item.targetWatchPath ?? job.watchPath, item.targetJobId));

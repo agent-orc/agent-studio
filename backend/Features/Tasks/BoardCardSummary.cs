@@ -239,6 +239,9 @@ internal static class BoardCardSummary
                 waits.Blocked, waits.CycleDetected, waits.UnsatisfiableGate,
                 itemCount = waits.Items.Count,
                 openCount = waits.Items.Count(item => !item.Fulfilled),
+                anyWaitingForRelease = waits.Items.Any(item => item.WaitingForRelease),
+                releaseTargets = waits.Items.Where(item => item.WaitingForRelease && item.TargetJobId is not null)
+                    .Select(item => new { item.TargetJobId, item.TargetWatchPath }).ToArray(),
                 items = waits.Items.OrderByDescending(item => item.Unsatisfiable)
                     .ThenBy(item => item.Fulfilled).Take(3)
                     .Select(item => new

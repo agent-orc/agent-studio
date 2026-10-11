@@ -86,10 +86,36 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         var bytes = BoardCardSummary.Serialize(job);
         using var document = JsonDocument.Parse(bytes);
         var references = document.RootElement.GetProperty("references");
-        Assert.True(bytes.Length < 2048, $"Card was {bytes.Length} bytes");
+        Assert.True(bytes.Length < 4096, $"100-edge card was {bytes.Length} bytes");
         Assert.Equal(100, references.GetProperty("dependsOnCount").GetInt32());
         Assert.Equal(3, references.GetProperty("dependsOn").GetArrayLength());
+        Assert.Equal(100, references.GetProperty("dependsOnKeys").GetArrayLength());
+        Assert.Equal("AGT-99", references.GetProperty("dependsOnKeys")[99].GetString());
         Assert.True(references.GetProperty("dependsOn")[1].GetProperty("releaseGate").GetBoolean());
+    }
+
+    [Fact]
+    public void Release_targets_include_waits_beyond_the_visible_labels()
+    {
+        var job = Fixture() with
+        {
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items = Enumerable.Range(0, 5).Select(i => new WaitsOnItem
+                {
+                    Key = $"AGT-{i}", Fulfilled = false,
+                    WaitingForRelease = i == 4,
+                    TargetJobId = $"agt-{i}",
+                }).ToList(),
+            },
+        };
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        var waits = document.RootElement.GetProperty("waitsOn");
+        Assert.True(waits.GetProperty("anyWaitingForRelease").GetBoolean());
+        Assert.Equal(3, waits.GetProperty("items").GetArrayLength());
+        Assert.Equal("agt-4", waits.GetProperty("releaseTargets")[0]
+            .GetProperty("targetJobId").GetString());
     }
 
     [Fact]
