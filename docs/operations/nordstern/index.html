@@ -86,6 +86,8 @@
   .svg-node { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.3; }
   .svg-authority { fill: var(--accent-soft); stroke: var(--develop); stroke-width: 1.5; }
   .svg-execution { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.5; }
+  .svg-decide { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.5; }
+  .svg-flow-dashed { fill: none; stroke: var(--ink-3); stroke-width: 1.5; stroke-dasharray: 5 4; marker-end: url(#ns-arrow); }
   .svg-history { fill: var(--surface-3); stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
   .svg-label { fill: var(--ink-1); font: 650 13px system-ui, sans-serif; }
   .svg-sub { fill: var(--ink-2); font: 11.5px system-ui, sans-serif; }
@@ -101,7 +103,7 @@
 <header class="page">
   <p class="kicker">North star &middot; Agent Studio &middot; entry point</p>
   <h1>Agent Studio: target picture and delivery</h1>
-  <p class="lede">The one starting point. It holds the arc of the target picture at today's state, names the decisions that currently define it, and carries the history of the four Dossiers it replaced. Detail lives in the linked documents, never in a copy here.</p>
+  <p class="lede">The one starting point. It states the target picture as decided on 11 October 2026: five runtime roles, how a card moves through them, the deployment forms, the decision register, the few points still open, and the path from today's installation. Arguments stay in the owning Dossiers.</p>
   <div class="meta">
     <span><b>Status</b> Decision pending</span>
     <span><b>Phase</b> Decision ready</span>
@@ -115,39 +117,34 @@
   <h3>Contents</h3>
   <div class="toc">
     <a href="#s1">&sect;1 What this document is</a><br>
-    <a href="#s2">&sect;2 Target picture at today's state</a><br>
-    <a href="#s3">&sect;3 The live decisions</a><br>
-    <a href="#s4">&sect;4 Guardrails in force</a><br>
-    <a href="#s5">&sect;5 Map of current Dossiers</a><br>
-    <a href="#s6">&sect;6 History: what this Dossier absorbed</a><br>
-    <a href="#s7">&sect;7 Alternatives</a><br>
-    <a href="#s8">&sect;8 Recommendation</a><br>
-    <a href="#s9">&sect;9 Evidence</a><br>
-    <a href="#s10">&sect;10 Open decisions</a><br>
+    <a href="#s2">&sect;2 The target picture</a><br>
+    <a href="#actors">&nbsp;&nbsp;&nbsp;Who decides: operators and steps</a><br>
+    <a href="#s3">&sect;3 How a card moves in the target</a><br>
+    <a href="#s4">&sect;4 Deployment forms</a><br>
+    <a href="#guardrails">&sect;5 Guardrails in force</a><br>
+    <a href="#register">&sect;6 Decision register</a><br>
+    <a href="#still-open">&sect;7 What is still open</a><br>
+    <a href="#path">&sect;8 From today to the target</a><br>
+    <a href="#s5">&sect;9 Map of current Dossiers</a><br>
+    <a href="#s6">&sect;10 History: what this Dossier absorbed</a><br>
+    <a href="#s7">&sect;11 Alternatives</a><br>
+    <a href="#s8">&sect;12 Recommendation</a><br>
+    <a href="#s9">&sect;13 Evidence</a><br>
+    <a href="#s10">&sect;14 Open decisions</a><br>
     <a href="#sources">&sect; Sources</a>
   </div>
 </div>
 
 <h2 id="s1"><span class="no">&sect;1</span>What this document is</h2>
-<p>Agent Studio orchestrates coding agents: cards run through code, automatic review, and integration. The North star is the single entry point to that target picture. It answers one question, "what are we building and what has already been decided", and then hands the reader to the document that owns each area.</p>
-<p>The rule that keeps it usable is a division of labour. Live decisions are linked, never copied, so a decision has exactly one home and cannot drift into a second, slowly ageing version here. Superseded material is absorbed as history: a short section that says what the old Dossier claimed, and which decision replaced it. Dated situation reports are not part of the arc; they age out by design and are linked as snapshots.</p>
-<div class="box accent">
-  <h3>Reading order</h3>
-  <p>The arc is here. The two decisions that define the current target are <a href="../operations-server-backchannel/index.html">AGT-W49</a> (Operations Server beside the Task Server) and <a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> (isolated execution with preparation scripts). Everything in &sect;6 is history and is kept for provenance only.</p>
-</div>
+<p>Agent Studio orchestrates coding agents: cards run through code, automatic review, batch verification and integration. The North star is the single entry point to that target picture. It answers "what are we building and what has already been decided" in one page, and then hands the reader to the Dossier that owns each part.</p>
+<p>Since 11 October 2026 this page states the finished target picture: the decided outcomes, consolidated. Arguments, alternatives and evidence stay in the owning Dossiers and are linked from the decision register in &sect;6. When a decision changes, its Dossier changes first and this page follows in the same edit.</p>
 
-<h2 id="s2"><span class="no">&sect;2</span>Target picture at today's state</h2>
-<div class="box accent">
-  <h3>Update 11 October 2026</h3>
-  <p>AGT-W49 was decided on 25 September 2026, and ADR-0076 accepted the Operations Server as fourth runtime role. Its delivered foundation holds one read-only operation and has no product caller. Steering decisions now sit in two further Dossiers: <a href="../../task-server-bus/index.html">AGT-W65</a>, the Task Server bus (D5 to D13 decided and delivered; D14 to D21 open, among them where transition decisions and model-backed planners run and the process form of engine and Operations Server), and <a href="../../orchestrator-rule-core/index.html">AGT-W73</a>, orchestrator decisions between steps (open). Production still runs the monolith; the standalone Task Server, the Orchestrator Engine and the Operations Server run in no production installation. N2 in &sect;10 is overtaken by ADR-0076.</p>
-</div>
-
-<p>Three planes, with one authority each. Durable product truth stays in the Task Server: cards, runs, reviews, workspace identity, orchestration sessions, leases, and lane transitions. Executable work that touches a host, a checkout, a toolchain, a process, or a local secret sits behind an operations boundary and runs on a declared host. Every run of project code or an agent CLI is prepared by a script that travels with the project and executes isolated, with an orchestrator that diagnoses failures, heals the pipeline, and appends follow-up prompts.</p>
-
+<h2 id="s2"><span class="no">&sect;2</span>The target picture</h2>
+<p>Five runtime roles, each with one job. The roles are the same in every deployment form; only their placement differs (&sect;4).</p>
 <figure>
-  <svg viewBox="0 0 1040 430" role="img" aria-labelledby="fig1-title fig1-desc">
-    <title id="fig1-title">Three planes of the Agent Studio target picture</title>
-    <desc id="fig1-desc">Frontends call a browser edge. The edge calls the Task Server for durable task truth and the Operations Server for executable operations. The Operations Server dispatches to outbound operations agents on workstation, runner, and quality hosts. Every run on those hosts passes through a project preparation script and a per-run isolation boundary, watched by the orchestrator.</desc>
+  <svg viewBox="0 0 1040 470" role="img" aria-labelledby="fig1-title fig1-desc">
+    <title id="fig1-title">Target picture: five runtime roles</title>
+    <desc id="fig1-desc">Clients reach browser edges. Edges call the Task Server and the Operations Server. The Orchestrator Engine reads facts from the Task Server and writes intents to it. Runner hosts claim work from the Task Server and report results. Operations agents connect outbound to the Operations Server, which checks task-linked permits with the Task Server.</desc>
     <defs>
       <marker id="ns-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" style="fill: var(--ink-3)"></path>
@@ -157,130 +154,312 @@
       </marker>
     </defs>
 
-    <text class="svg-tiny" x="24" y="26">FRONTENDS AND EDGE</text>
-    <rect class="svg-node" x="24" y="38" width="200" height="62" rx="9"></rect>
-    <text class="svg-label" x="40" y="62">Local Studio</text>
-    <text class="svg-sub" x="40" y="80">loopback Connector edge</text>
-    <rect class="svg-node" x="240" y="38" width="200" height="62" rx="9"></rect>
-    <text class="svg-label" x="256" y="62">Further frontends</text>
-    <text class="svg-sub" x="256" y="80">Dossier app, fleet controls</text>
+    <text class="svg-tiny" x="24" y="22">CLIENTS AND EDGES</text>
+    <rect class="svg-node" x="24" y="32" width="476" height="68" rx="9"></rect>
+    <text class="svg-label" x="40" y="56">Studio UIs and further frontends</text>
+    <text class="svg-sub" x="40" y="76">several at once, replaceable, closing them stops nothing</text>
+    <text class="svg-tiny" x="40" y="92">no task state, no service bearer in the browser</text>
+    <rect class="svg-node" x="540" y="32" width="476" height="68" rx="9"></rect>
+    <text class="svg-label" x="556" y="56">Browser edges</text>
+    <text class="svg-sub" x="556" y="76">Connector on a workstation; HTTPS edge with BFF for one-box and LAN</text>
+    <text class="svg-tiny" x="556" y="92">hold the service credentials; AGT-W49</text>
 
-    <rect class="svg-authority" x="24" y="152" width="290" height="86" rx="9"></rect>
-    <text class="svg-label" x="42" y="178">Task Server</text>
-    <text class="svg-sub" x="42" y="197">cards, runs, reviews, workspace</text>
-    <text class="svg-sub" x="42" y="214">sessions, policy, permits, leases</text>
-    <text class="svg-tiny" x="42" y="230">system of record &middot; AGT-W49</text>
-    <rect class="svg-node" x="330" y="152" width="170" height="86" rx="9"></rect>
-    <text class="svg-label" x="346" y="178">Orchestrator Engine</text>
-    <text class="svg-sub" x="346" y="197">evaluates persisted facts</text>
-    <text class="svg-sub" x="346" y="214">requests bounded actions</text>
+    <text class="svg-tiny" x="24" y="132">CONTROL PLANE</text>
+    <rect class="svg-decide" x="24" y="142" width="266" height="98" rx="9"></rect>
+    <text class="svg-label" x="40" y="166">Orchestrator Engine</text>
+    <text class="svg-sub" x="40" y="186">the only decider between steps</text>
+    <text class="svg-sub" x="40" y="204">planners, advisors, receipts</text>
+    <text class="svg-tiny" x="40" y="226">AGT-W65 D14, D15 &middot; AGT-W73</text>
+    <rect class="svg-authority" x="370" y="142" width="310" height="98" rx="9"></rect>
+    <text class="svg-label" x="386" y="166">Task Server</text>
+    <text class="svg-sub" x="386" y="186">the only authority: tasks, runs, reviews,</text>
+    <text class="svg-sub" x="386" y="204">intents, leases, fences, budgets, audit</text>
+    <text class="svg-tiny" x="386" y="226">AGT-W49 D4 &middot; AGT-W65 D5</text>
+    <rect class="svg-node" x="740" y="142" width="276" height="98" rx="9"></rect>
+    <text class="svg-label" x="756" y="166">Operations Server</text>
+    <text class="svg-sub" x="756" y="186">host operations that are not claims</text>
+    <text class="svg-sub" x="756" y="204">service principals, outbound agents</text>
+    <text class="svg-tiny" x="756" y="226">AGT-W49 &middot; ADR-0076 &middot; AGT-W65 D16</text>
 
-    <text class="svg-tiny" x="560" y="140">OPERATIONS BOUNDARY</text>
-    <rect class="svg-authority" x="560" y="152" width="290" height="86" rx="9"></rect>
-    <text class="svg-label" x="578" y="178">Operations Server</text>
-    <text class="svg-sub" x="578" y="197">operation catalogue, dispatch</text>
-    <text class="svg-sub" x="578" y="214">bounded attempts, no task authority</text>
-    <text class="svg-tiny" x="578" y="230">decided &middot; ADR-0076 &middot; AGT-W49</text>
-    <rect class="svg-node" x="866" y="152" width="150" height="86" rx="9"></rect>
-    <text class="svg-label" x="882" y="176">Operations</text>
-    <text class="svg-label" x="882" y="195">agents</text>
-    <text class="svg-sub" x="882" y="216">outbound, per host</text>
+    <text class="svg-tiny" x="24" y="300">EXECUTION</text>
+    <rect class="svg-execution" x="24" y="310" width="656" height="132" rx="9"></rect>
+    <text class="svg-label" x="40" y="334">Runner hosts: Linux &times; N, Windows &times; M, workstations &times; W</text>
+    <text class="svg-sub" x="40" y="356">coding, review and gate roles with their own slots and budgets</text>
+    <text class="svg-sub" x="40" y="376">one claimed unit at a time: worktree, preparation script, isolated run,</text>
+    <text class="svg-sub" x="40" y="396">agent CLI or suite, fenced result ref, report</text>
+    <text class="svg-tiny" x="40" y="426">AGT-W51 &middot; AGT-W59 D7 &middot; AGT-W63 D3 &middot; AGT-W65 D11 to D13, D16</text>
+    <rect class="svg-node" x="740" y="310" width="276" height="132" rx="9"></rect>
+    <text class="svg-label" x="756" y="334">Operations agents</text>
+    <text class="svg-sub" x="756" y="356">one per host, connect outbound</text>
+    <text class="svg-sub" x="756" y="376">drain, restart, update, diagnostics,</text>
+    <text class="svg-sub" x="756" y="396">developer-seat files and Git</text>
+    <text class="svg-tiny" x="756" y="426">results never move a task</text>
 
-    <rect class="svg-execution" x="24" y="302" width="230" height="100" rx="9"></rect>
-    <text class="svg-label" x="42" y="328">1 &middot; Preparation</text>
-    <text class="svg-sub" x="42" y="347">travels with the commit</text>
-    <text class="svg-sub" x="42" y="364">versions, dependencies, caches</text>
-    <text class="svg-tiny" x="42" y="382">owned by the project</text>
-    <rect class="svg-execution" x="270" y="302" width="230" height="100" rx="9"></rect>
-    <text class="svg-label" x="288" y="328">2 &middot; Isolation per run</text>
-    <text class="svg-sub" x="288" y="347">sandbox process by default</text>
-    <text class="svg-sub" x="288" y="364">container optional, micro VM for proofs</text>
-    <text class="svg-tiny" x="288" y="382">owned by the product</text>
-    <rect class="svg-execution" x="516" y="302" width="250" height="100" rx="9"></rect>
-    <text class="svg-label" x="534" y="328">3 &middot; Healing orchestrator</text>
-    <text class="svg-sub" x="534" y="347">diagnosis, retry, follow-up prompt</text>
-    <text class="svg-sub" x="534" y="364">test inventory and run history</text>
-    <text class="svg-tiny" x="534" y="382">owned by the product &middot; AGT-W51</text>
-    <rect class="svg-node" x="782" y="302" width="234" height="100" rx="9"></rect>
-    <text class="svg-label" x="800" y="328">Runner and review</text>
-    <text class="svg-sub" x="800" y="347">outbound claim and lease</text>
-    <text class="svg-sub" x="800" y="364">fenced by Task Server authority</text>
-    <text class="svg-tiny" x="800" y="382">one execution path, no drift</text>
-
-    <path class="svg-flow-accent" d="M 124 100 L 124 152"></path>
-    <path class="svg-flow-accent" d="M 340 100 L 340 130 L 700 130 L 700 152"></path>
-    <path class="svg-flow" d="M 314 195 L 330 195"></path>
-    <path class="svg-flow" d="M 500 195 L 560 195"></path>
-    <path class="svg-flow" d="M 850 195 L 866 195"></path>
-    <path class="svg-flow" d="M 941 238 L 941 302"></path>
-    <path class="svg-flow" d="M 139 238 L 139 302"></path>
-    <path class="svg-flow" d="M 254 352 L 270 352"></path>
-    <path class="svg-flow" d="M 500 352 L 516 352"></path>
-    <rect class="svg-label-bg" x="21" y="130" width="200" height="14"></rect>
-    <text class="svg-tiny" x="24" y="140">CONTROL PLANE (DURABLE AUTHORITY)</text>
-    <rect class="svg-label-bg" x="21" y="280" width="146" height="14"></rect>
-    <text class="svg-tiny" x="24" y="290">EXECUTION ON EVERY HOST</text>
+    <path class="svg-flow" d="M 500 66 L 538 66"></path>
+    <path class="svg-flow-accent" d="M 600 100 L 600 140"></path>
+    <path class="svg-flow" d="M 878 100 L 878 140"></path>
+    <path class="svg-flow-accent" d="M 370 172 L 292 172"></path>
+    <path class="svg-flow-accent" d="M 290 210 L 368 210"></path>
+    <path class="svg-flow" d="M 740 218 L 682 218"></path>
+    <path class="svg-flow-accent" d="M 470 308 L 470 242"></path>
+    <path class="svg-flow-accent" d="M 590 242 L 590 308"></path>
+    <path class="svg-flow" d="M 878 308 L 878 242"></path>
+    <rect class="svg-label-bg" x="300" y="152" width="62" height="14"></rect>
+    <text class="svg-tiny" x="304" y="163">facts</text>
+    <rect class="svg-label-bg" x="300" y="216" width="62" height="14"></rect>
+    <text class="svg-tiny" x="304" y="227">intents</text>
+    <rect class="svg-label-bg" x="688" y="198" width="46" height="14"></rect>
+    <text class="svg-tiny" x="690" y="209">permits</text>
+    <text class="svg-tiny" x="390" y="279">claims, reports</text>
+    <text class="svg-tiny" x="598" y="279">leases, plans</text>
+    <text class="svg-tiny" x="886" y="279">outbound poll</text>
   </svg>
-  <figcaption><b>Figure 1.</b> The target picture as the two live decisions define it. Blue marks durable authority and the browser edge path; green marks the execution layers that AGT-W51 decided on 12 September 2026. The Operations Server box shows the role that AGT-W49 decided on 25 September 2026 and ADR-0076 accepted; on 11 October 2026 the delivered service is a foundation with one read-only operation and no product caller.</figcaption>
+  <figcaption><b>Figure 1.</b> Target picture as decided on 11 October 2026. Amber marks the one decider, blue the one authority and the browser path into it, green the execution on runner hosts. The engine has no channel to a runner host: every decision travels as an intent through the Task Server, and every execution starts as a claim.</figcaption>
 </figure>
 
-<p>The two boundaries are independent. Where the Task Server and the Operations Server run is the subject of AGT-W49. How a run is prepared and isolated on whatever host it lands on is the subject of AGT-W51. Neither answers the other, and this document does not merge them.</p>
-
-<h2 id="s3"><span class="no">&sect;3</span>The live decisions</h2>
-<p>Four Dossiers carry the current target picture. Their content is not reproduced here. The table states what each one owns, its status on 11 October 2026, and what the North star takes from it.</p>
 <div class="tablewrap">
 <table>
-  <thead><tr><th>Dossier</th><th>Owns</th><th>Status</th><th>What the arc takes from it</th></tr></thead>
+  <thead><tr><th>Role</th><th>Does</th><th>Never does</th><th>Decided in</th></tr></thead>
   <tbody>
-    <tr>
-      <td><a href="../operations-server-backchannel/index.html">AGT-W49</a><span class="d">Operations Server beside the Task Server</span></td>
-      <td>The authority boundary between durable task truth and executable host operations, the browser and service authentication model, and the workstation, one box Docker and distributed deployment forms.</td>
-      <td><span class="tag ok">decided</span><span class="d">Operator decisions of 25 September 2026; ADR-0076; foundation delivered by AGT-2907.</span></td>
-      <td>The Task Server stays the sole durable authority. Executable operations move behind a separate boundary with scoped principals and outbound agents. One box Docker is the intended product standard after full parity.</td>
-    </tr>
-    <tr>
-      <td><a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a><span class="d">Isolated execution: preparation scripts, isolation, healing orchestrator</span></td>
-      <td>How any run of project code or an agent CLI is prepared and contained, on any operating system, and how the orchestrator diagnoses and heals failures.</td>
-      <td><span class="tag ok">decided</span><span class="d">Operator decisions of 12 September 2026, afternoon revision.</span></td>
-      <td>No run executes as a bare process with the Studio's inherited environment. Preparation is a project owned script; isolation is a product owned executor profile; Docker is an optional accelerator, not a precondition. Migration runs as stages M1 to M7.</td>
-    </tr>
-    <tr>
-      <td><a href="../../task-server-bus/index.html">AGT-W65</a><span class="d">Task Server bus between the engine and runner hosts</span></td>
-      <td>Who steers the pipeline: the Task Server as the only steering boundary, the engine writing intent, runner hosts claiming work. Records pipeline control as it runs today and decides where transition decisions and planners run, the fix-round base and the round budget.</td>
-      <td><span class="tag accent">partly decided</span><span class="d">D5 to D13 decided on 26 September 2026 and delivered; D14 to D21 open since 11 October 2026.</span></td>
-      <td>Execution stays on runner hosts through claims; the Operations Server is outside task scheduling. Today the monolith still decides every transition between units.</td>
-    </tr>
-    <tr>
-      <td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a><span class="d">Orchestrator decisions between steps</span></td>
-      <td>How a transition is decided: bounded decision grounds, a strong model choosing a typed action, mechanical authority floors, receipts and cost per decision.</td>
-      <td><span class="tag accent">decision pending</span><span class="d">Open since 6 October 2026.</span></td>
-      <td>Guard rails produce signals; a strong model chooses between steps; a wide emergency limit replaces shaping timeouts.</td>
-    </tr>
+    <tr><td><b>Studio and browser edges</b><span class="d">Angular UIs, Connector, HTTPS edge with BFF</span></td><td>Human interaction, board and task views, decisions in Dossiers, operator commands. Several UIs at the same time. The edge holds the service credentials.</td><td>Hold task state, run processes, decide transitions, keep a service bearer in the browser.</td><td><a href="../operations-server-backchannel/index.html">AGT-W49</a></td></tr>
+    <tr><td><b>Task Server</b><span class="d">the only authority</span></td><td>Tasks, lanes, runs, review subjects and attempts, steering intents, orchestration sessions, budgets, leases, fences, permits, events, artifacts, audit. Validates every intent against authority floors and grants fenced claims.</td><td>Start processes, touch checkouts, choose the next step.</td><td><a href="../operations-server-backchannel/index.html">AGT-W49</a> D4, <a href="../../task-server-bus/index.html">AGT-W65</a> D5 to D10</td></tr>
+    <tr><td><b>Orchestrator Engine</b><span class="d">the only decider</span></td><td>Every transition between steps: after coding, after review, rework, batch, integration, escalation. Planners and advisors such as the batch advisor, capacity check and improvement scout. Reads facts, writes versioned intents, records a receipt per decision.</td><td>Command a runner host directly, hold task truth, access host files.</td><td><a href="../../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14, D15</a>; model step in <a href="../../orchestrator-rule-core/index.html">AGT-W73</a></td></tr>
+    <tr><td><b>Runner hosts</b><span class="d">execution plane</span></td><td>Claimable work only: coding attempts, review attempts, gate and batch attempts, orchestrator chat turns, with their model calls, builds and tests. One claimed unit at a time per slot, prepared by the project's script and isolated per run.</td><td>Decide lanes, claim without admission, extend their own authority.</td><td><a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a>, <a href="../gates/index.html">AGT-W59</a> D7, <a href="../deployment-story/index.html">AGT-W63</a> D3, AGT-W65 D11 to D13, D16</td></tr>
+    <tr><td><b>Operations Server and agents</b><span class="d">working name Operations Broker (D21 open)</span></td><td>Host operations that are not claimable units: developer-seat files and Git, drain, restart, update, diagnostics, rendering on request. Service principals only; Task Server permits for task-linked operations.</td><td>Run a pipeline step, mint authority, move a task.</td><td>AGT-W49, ADR-0076, AGT-W65 D15, D16</td></tr>
   </tbody>
 </table>
 </div>
-<div class="box warn">
-  <h3>The one correction the afternoon of 12 September made</h3>
-  <p>The morning wording was "Docker mandatory, Windows is no longer an execution world". The afternoon revision kept the second half and dropped the first: the source of reproducibility is the preparation script, and a container image is a built result of that script which may be used when it exists. Any text that still presents the container image as the source of truth is superseded, including the container default Dossier absorbed in &sect;6.</p>
+<div class="box accent">
+  <h3>Five rules</h3>
+  <p><b>One authority:</b> the Task Server. <b>One decider:</b> the Orchestrator Engine; nothing decides in the monolith once the programme in &sect;8 is through. <b>One execution path:</b> claims on runner hosts. <b>Host operations apart:</b> the Operations Server never touches task state. <b>Replaceable UIs:</b> closing every Studio window stops nothing.</p>
 </div>
 
-<h2 id="s4"><span class="no">&sect;4</span>Guardrails in force</h2>
-<p>These are consequences of the two live decisions and of the architectural decision record, restated here because they constrain every card. Each one has an owner document; none of them is decided in this Dossier.</p>
+<h3 id="actors">Who decides: two operators and two kinds of steps</h3>
+<p>The Orchestrator Engine is a runtime, not an actor. Two operators and two kinds of steps make the decisions and do the work; the engine runs the AI Operator and the decision steps. Proposed on 11 October 2026 in answer to the operator's question; confirm or change it in <a href="../../orchestrator-rule-core/index.html#o1-actor-model">AGT-W73 O1</a>.</p>
+<figure>
+  <svg viewBox="0 0 1040 400" role="img" aria-labelledby="fig-actors-title fig-actors-desc">
+    <title id="fig-actors-title">Who decides: two operators and two kinds of steps</title>
+    <desc id="fig-actors-desc">The Human Operator, the AI Operator and decision steps act only through intents on the Task Server. Decision steps ask the AI Operator; the AI Operator proposes to and asks the human. The AI Operator and the decision steps run in the Orchestrator Engine. Execution steps run on runner hosts; host operations run through the Operations Server.</desc>
+    <defs>
+      <marker id="ns-arrow-actors" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" style="fill: var(--ink-3)"></path>
+      </marker>
+    </defs>
+    <rect class="svg-history" x="352" y="12" width="676" height="136" rx="12"></rect>
+    <text class="svg-tiny" x="366" y="28">ORCHESTRATOR ENGINE, THE RUNTIME FOR BOTH</text>
+    <rect class="svg-node" x="24" y="40" width="300" height="96" rx="9"></rect>
+    <text class="svg-label" x="40" y="64">Human Operator</text>
+    <text class="svg-sub" x="40" y="84">goals, rules, Dossier decisions,</text>
+    <text class="svg-sub" x="40" y="102">approves proposals, accepts deliveries</text>
+    <text class="svg-tiny" x="40" y="124">a person, through any Studio UI</text>
+    <rect class="svg-decide" x="370" y="40" width="300" height="96" rx="9"></rect>
+    <text class="svg-label" x="386" y="64">AI Operator</text>
+    <text class="svg-sub" x="386" y="84">watches the whole system, steers,</text>
+    <text class="svg-sub" x="386" y="102">heals, proposes, talks with the human</text>
+    <text class="svg-tiny" x="386" y="124">a standing role with its own sessions</text>
+    <rect class="svg-decide" x="716" y="40" width="300" height="96" rx="9"></rect>
+    <text class="svg-label" x="732" y="64">Decision steps</text>
+    <text class="svg-sub" x="732" y="84">one card or one plan, one question,</text>
+    <text class="svg-sub" x="732" y="102">one typed action, one receipt</text>
+    <text class="svg-tiny" x="732" y="124">pipeline elements, no initiative</text>
+    <path class="svg-flow" d="M 714 92 L 673 92" style="marker-end: url(#ns-arrow-actors)"></path>
+    <path class="svg-flow" d="M 368 92 L 327 92" style="marker-end: url(#ns-arrow-actors)"></path>
+    <rect class="svg-authority" x="24" y="196" width="992" height="48" rx="9"></rect>
+    <text class="svg-sub" x="40" y="225">Task Server: every operator action and every decision is an intent, checked against the same authority floors and written to the same audit</text>
+    <path class="svg-flow" d="M 174 138 L 174 194" style="marker-end: url(#ns-arrow-actors)"></path>
+    <path class="svg-flow" d="M 520 138 L 520 194" style="marker-end: url(#ns-arrow-actors)"></path>
+    <path class="svg-flow" d="M 866 138 L 866 194" style="marker-end: url(#ns-arrow-actors)"></path>
+    <rect class="svg-execution" x="24" y="292" width="600" height="84" rx="9"></rect>
+    <text class="svg-label" x="40" y="316">Runner hosts: execution steps</text>
+    <text class="svg-sub" x="40" y="336">coding agent, review aspects, builds, tests, batch suite</text>
+    <text class="svg-tiny" x="40" y="358">work that produces evidence, never the choice of the next step</text>
+    <rect class="svg-node" x="660" y="292" width="356" height="84" rx="9"></rect>
+    <text class="svg-label" x="676" y="316">Operations Server: host operations</text>
+    <text class="svg-sub" x="676" y="336">drain, restart, update, diagnostics</text>
+    <text class="svg-tiny" x="676" y="358">requested by either operator</text>
+    <path class="svg-flow" d="M 324 246 L 324 290" style="marker-end: url(#ns-arrow-actors)"></path>
+    <path class="svg-flow" d="M 838 246 L 838 290" style="marker-end: url(#ns-arrow-actors)"></path>
+  </svg>
+  <figcaption><b>Figure 2.</b> Who decides. Decision steps ask the AI Operator when their grounds or action set do not allow a choice; the AI Operator proposes to and asks the human for approvals and human-only actions. The Orchestrator Engine is the runtime for the AI Operator and the decision steps, not an actor of its own. Proposed on 11 October 2026; confirmation in AGT-W73 O1.</figcaption>
+</figure>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Level</th><th>What it is</th><th>Examples</th><th>Runs in</th></tr></thead>
+  <tbody>
+    <tr><td><b>Human Operator</b></td><td>A person. Sets goals and rules, decides Dossiers, approves proposals, accepts deliveries in Human Review, takes human-only actions.</td><td>Dossier decisions, releases, priorities, approvals of proposed actions</td><td>Any Studio UI</td></tr>
+    <tr><td><b>AI Operator</b></td><td>A standing role with its own sessions and context. Watches the whole system, steers, heals, proposes improvements and talks with the human. Acts on its own within autonomy classes A0 and A1, prepares A2 as a proposal, never takes A3.</td><td>Capacity and quota pacing, priorities across cards, rescue of stuck cards, gate triage, outage handling, improvement proposals, orchestrator chat</td><td>Orchestrator Engine: periodic, event-triggered and chat occurrences</td></tr>
+    <tr><td><b>Decision step</b></td><td>A pipeline element. Answers one bounded question for one card or one plan from frozen grounds, chooses one typed action, writes a receipt and ends. No memory beyond its grounds, no view of other cards, no initiative.</td><td>Next step after a review, fix round or escalation at budget end, composition of a batch wave</td><td>Orchestrator Engine</td></tr>
+    <tr><td><b>Execution step</b></td><td>Work that produces evidence. A model may run inside it, but it never chooses the next step.</td><td>Coding agent, review aspects, builds and tests, batch suite</td><td>Runner hosts</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Escalation runs one way: a decision step asks the AI Operator; the AI Operator asks the human. Both operators act only through Task Server intents with the same floors and audit, so for every action the autonomy class allows, the human and the AI Operator are interchangeable. A step that looks like operator work is still a step: it answers a question it was given. The AI Operator is the instance that notices what no step was asked. Today that role is played largely by operating Claude sessions in the devspace (night shift, sweeps, triage); AGT-3011 moved the first sweeps into the product, and the programme in &sect;8 moves the role into the engine. Host operations it needs, such as restarting a stuck daemon, go through the Operations Server like a human's.</p>
+
+<h2 id="s3"><span class="no">&sect;3</span>How a card moves in the target</h2>
+<figure>
+  <svg viewBox="0 0 1040 340" role="img" aria-labelledby="fig3-title fig3-desc">
+    <title id="fig3-title">How a card moves through the target</title>
+    <desc id="fig3-desc">A coding attempt and a review attempt run on runner hosts. The engine decides the next step. A pass goes to the batch gate, integration and Human Review. A blocking review opens a fix round that continues on the reviewed delivery. A spent budget degrades non-test blocks or escalates test blocks. The Task Server records every step.</desc>
+    <defs>
+      <marker id="ns-arrow-3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" style="fill: var(--ink-3)"></path>
+      </marker>
+    </defs>
+    <rect class="svg-execution" x="24" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="36" y="62">Coding attempt</text>
+    <text class="svg-sub" x="36" y="81">runner host, fenced</text>
+    <text class="svg-tiny" x="36" y="99">one claimed unit</text>
+    <rect class="svg-execution" x="192" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="204" y="62">Review attempt</text>
+    <text class="svg-sub" x="204" y="81">exact SHA, new clone</text>
+    <text class="svg-tiny" x="204" y="99">prefer another host</text>
+    <rect class="svg-decide" x="360" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="372" y="62">Engine decides</text>
+    <text class="svg-sub" x="372" y="81">pass, fix or escalate</text>
+    <text class="svg-tiny" x="372" y="99">receipt per decision</text>
+    <rect class="svg-execution" x="528" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="540" y="62">Batch gate</text>
+    <text class="svg-sub" x="540" y="81">full suite per wave</text>
+    <text class="svg-tiny" x="540" y="99">claimable gate attempt</text>
+    <rect class="svg-execution" x="696" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="708" y="62">Integration</text>
+    <text class="svg-sub" x="708" y="81">merge and push</text>
+    <text class="svg-tiny" x="708" y="99">publication lease</text>
+    <rect class="svg-node" x="864" y="40" width="146" height="72" rx="9"></rect>
+    <text class="svg-label" x="876" y="62">Human Review</text>
+    <text class="svg-sub" x="876" y="81">after integration</text>
+    <text class="svg-tiny" x="876" y="99">acceptance</text>
+
+    <rect class="svg-decide" x="24" y="172" width="306" height="68" rx="9"></rect>
+    <text class="svg-label" x="40" y="196">Fix round</text>
+    <text class="svg-sub" x="40" y="215">continues on the reviewed delivery,</text>
+    <text class="svg-sub" x="40" y="231">findings in the prompt</text>
+    <rect class="svg-decide" x="546" y="172" width="314" height="68" rx="9"></rect>
+    <text class="svg-label" x="562" y="196">Budget end</text>
+    <text class="svg-sub" x="562" y="215">non-test blocks degrade with a follow-up card,</text>
+    <text class="svg-sub" x="562" y="231">build and test blocks escalate</text>
+
+    <rect class="svg-authority" x="24" y="276" width="992" height="44" rx="9"></rect>
+    <text class="svg-sub" x="40" y="303">Task Server: every attempt, result, verdict, decision, lease and fence is recorded here; the engine reads facts and writes intents.</text>
+
+    <path class="svg-flow" d="M 171 76 L 189 76" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 339 76 L 357 76" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 507 76 L 525 76" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 675 76 L 693 76" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 843 76 L 861 76" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 400 114 L 400 206 L 334 206" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 110 170 L 110 116" style="marker-end: url(#ns-arrow-3)"></path>
+    <path class="svg-flow" d="M 470 114 L 470 206 L 542 206" style="marker-end: url(#ns-arrow-3)"></path>
+  </svg>
+  <figcaption><b>Figure 3.</b> A card in the target. Green steps run on runner hosts as claimed units; amber steps are engine decisions; the person acts only in Human Review. The model step of AGT-W73, once decided, chooses inside the amber boxes; the authority floors of the Task Server stay mechanical.</figcaption>
+</figure>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Step</th><th>Decides</th><th>Executes</th><th>Rule</th><th>Decided in</th></tr></thead>
+  <tbody>
+    <tr><td>Coding attempt</td><td>Task Server admits the claim</td><td>Runner host</td><td>One fenced attempt per claim; worktree, preparation script, isolated run, fenced result ref. Git belongs to the platform.</td><td>AGT-W51, AGT-W65 D5</td></tr>
+    <tr><td>Review attempt</td><td>Engine requests it</td><td>Review-capable runner host</td><td>Exact result SHA in a fresh clone; model review, build and the tests for the changed files per card.</td><td>AGT-W59 D1, AGT-W77 D1, AGT-W65 D13</td></tr>
+    <tr><td>Next step</td><td>Engine</td><td>Task Server applies the intent</td><td>Pass, fix round, wait for the batch, or escalate, with a receipt. Guard rails are signals for the decision.</td><td>AGT-W65 D14, AGT-W73</td></tr>
+    <tr><td>Fix round</td><td>Engine</td><td>Runner host</td><td>Continues on the reviewed delivery with the findings in the prompt.</td><td>AGT-W65 D17</td></tr>
+    <tr><td>Budget end</td><td>Engine</td><td>Task Server applies</td><td>One per-card budget for every automatic round; non-test blocks degrade with a follow-up card, build and test blocks escalate.</td><td>AGT-W65 D18</td></tr>
+    <tr><td>Batch gate</td><td>Engine (planner and advisor)</td><td>Runner host, claimable gate attempt</td><td>The full suite runs once per wave on the combined candidate and before every release; red batches are isolated with a bounded budget.</td><td>AGT-W59 D1 to D8, AGT-W57 D3, AGT-W77 D1</td></tr>
+    <tr><td>Integration</td><td>Engine</td><td>Runner host</td><td>One fenced publication lease for every canonical push; the remote host merges, the Studio observes.</td><td>AGT-W59 D4, AGT-W57</td></tr>
+    <tr><td>Human Review</td><td>Person</td><td>Studio</td><td>Starts only after integration; acceptance confirms it.</td><td>AGT-W57 D5, D6</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="s4"><span class="no">&sect;4</span>Deployment forms</h2>
+<p>The same five roles and contracts in every form; placement and network differ. One browser edge and one Task Server per installation.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Form</th><th>Placement</th><th>Network</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td><b>Workstation</b></td><td>Everything on one developer machine; the workstation is an ordinary runner host; Connector as browser edge; native host manager.</td><td>Loopback only.</td><td>A single operator, Windows tooling as runner capability.</td></tr>
+    <tr><td><b>One-box Docker</b><span class="d">product standard after parity</span></td><td>HTTPS edge with BFF, Task Server, Orchestrator Engine, Operations Server and the first runner host in one Compose installation; host-native operations through an enrolled agent, no Docker socket.</td><td>Only the HTTPS edge is published.</td><td>The default product installation.</td></tr>
+    <tr><td><b>Distributed</b></td><td>Task Server, engine and Operations Server as separate containers, which may share one control-plane host; runner hosts join as N Linux, M Windows and W workstations; further UIs through their own edges.</td><td>Private HTTPS over WireGuard; supervised reverse SSH only as a bounded transition.</td><td>Fleets and remote authority.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The ladder runs from one box to added runner hosts to a relocated authority (AGT-W63 D1). An installer-owned bootstrap feeds server-owned human, principal and project records (D5); one versioned installation manifest drives placement-specific updaters (D6); an installation counts as accepted only after a verified full recovery and an empty-target rehearsal (D7) and after detached coding, review, publication and recovery are proven (D8). The approved first step of the authority move places Task Server and engine in Docker on agent-runner-01.</p>
+
+<h2 id="guardrails"><span class="no">&sect;5</span>Guardrails in force</h2>
 <ul>
-  <li><b>One durable authority.</b> Cards, runs, reviews, leases, and lane transitions live in the Task Server. No second store of task truth is created, and an operations credential never authorizes a task mutation. <span class="muted">Owner: AGT-W49.</span></li>
-  <li><b>Isolation applies to the run, not to the sources.</b> A run is contained in its process tree, filesystem, network, secrets, and time budget. Reading neighbouring project sources remains deliberate and allowed. The worktree model stays: one stable checkout per project, one leased worktree per run. <span class="muted">Owner: AGT-W51.</span></li>
-  <li><b>Preparation travels with the commit.</b> Versions, dependencies, and caches are declared in the project repository and executed by a script the orchestrator co-authors with the team. The product supplies the technology building blocks and the caches. <span class="muted">Owner: AGT-W51.</span></li>
-  <li><b>Git ownership belongs to the platform.</b> Pre and post pipeline steps commit, push, and manage worktrees. The agent in the run does not. <span class="muted">Owner: <a href="../git/commit-push-doctrine.md">commit and push doctrine</a>, ADR-0052.</span></li>
-  <li><b>One execution path.</b> Spawn paths converge so that container, mount, token, and image handling exist once and cannot drift apart. <span class="muted">Owner: AGT-W51, inherited from the convergence work absorbed in &sect;6.</span></li>
-  <li><b>The browser never holds a service bearer.</b> A browser talks to its edge; the edge holds audience bound credentials for the central services. <span class="muted">Owner: AGT-W49.</span></li>
+  <li><b>One durable authority.</b> Tasks, runs, reviews, leases and lane transitions live in the Task Server; an operations credential never authorizes a task mutation. <span class="muted">Owner: AGT-W49.</span></li>
+  <li><b>One decider.</b> Transition decisions, planners and advisors run in the Orchestrator Engine and act through intents; the monolith keeps no decision once the programme is through. <span class="muted">Owner: AGT-W65 D14.</span></li>
+  <li><b>Claimable work stays on runner hosts.</b> Model calls, builds, tests, review and batch suites run inside claimed units; the Operations Server runs only host operations. <span class="muted">Owner: AGT-W65 D16.</span></li>
+  <li><b>Isolation applies to the run, not to the sources.</b> One stable checkout per project, one leased worktree per run, prepared by a script that travels with the commit. <span class="muted">Owner: AGT-W51.</span></li>
+  <li><b>Git ownership belongs to the platform.</b> Pre and post steps commit, push and manage worktrees; one fenced publication lease guards every canonical push. <span class="muted">Owner: ADR-0052, AGT-W59 D4.</span></li>
+  <li><b>Review before integration, Human Review after it.</b> Model review and cheap checks per round, full suite once per batch. <span class="muted">Owner: AGT-W59 D1, AGT-W57 D5.</span></li>
+  <li><b>The browser never holds a service bearer.</b> <span class="muted">Owner: AGT-W49.</span></li>
+  <li><b>No fallback authority.</b> When the Task Server is down nothing claims or decides; when the engine is down transitions wait visibly. <span class="muted">Owner: AGT-W49, AGT-W65.</span></li>
 </ul>
 
-<h2 id="s5"><span class="no">&sect;5</span>Map of current Dossiers</h2>
-<p>The entry point links the documents that are current. It does not link superseded ones: those are reachable through the History list of the Dossier explorer and through &sect;6 below. The consolidation programme that produces the remaining theme Dossiers is AGT-W55; until its cards have run, some themes are still spread over their source Dossiers.</p>
+<h2 id="register"><span class="no">&sect;6</span>Decision register</h2>
+<p>Every decision the target picture rests on, with its date. The arguments live in the linked Dossier.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Dossier</th><th>Decided</th><th>Outcome</th></tr></thead>
+  <tbody>
+    <tr><td><a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a> Isolated execution</td><td>12 September 2026</td><td>Preparation script per project, isolation per run by executor profile, Docker optional, healing orchestrator, tests as a product feature; migration M1 to M7.</td></tr>
+    <tr><td><a href="../operations-server-backchannel/index.html">AGT-W49</a> Operations Server</td><td>25 September 2026, ADR-0076</td><td>New Operations Server beside the Task Server; one-box Docker as standard after parity; orchestrator sessions in the Task Server; AGT-2736 ships the bounded baseline.</td></tr>
+    <tr><td><a href="../delivery-chain/index.html">AGT-W57</a> Delivery chain</td><td>25 September 2026</td><td>D1 to D7: first-bounce rule and strong guardian (placement amended by AGT-W65 D14), batch assembly by shadow comparison, flaky quarantine with expiry and card, Human Review after integration, pull-request approval separate, mechanical rebase rounds resume the captured session.</td></tr>
+    <tr><td><a href="../gates/index.html">AGT-W59</a> Gates</td><td>25 September 2026</td><td>D1 to D10: model review per round, full suite once as batch gate; batch gate primary; append-only member evidence; one publication lease; bounded red-path diagnosis; pilot thresholds; claimable gate step; fail closed on eligible hosts; SSH bridge removed after cutover; measure before a staging lane.</td></tr>
+    <tr><td>ADR-0075, ADR-0077</td><td>24 and 26 September 2026</td><td>One-box Compose uses distributed authority and product-managed credentials; CodingAgentRunner is the only card-run CLI layer.</td></tr>
+    <tr><td><a href="../../task-server-bus/index.html">AGT-W65</a> Task Server bus</td><td>26 September 2026 (D5 to D13), 11 October 2026 (D14 to D18)</td><td>Task Server as the only steering boundary; versioned intents; durable stop; durable settlement; outage drill; correlated feedback; many runner hosts by capability; workstation is a runner host; quality as library steps. Engine as the only decider, out of the monolith; engine and Operations Server separate processes; claimable work on runner hosts; fix rounds on the reviewed delivery; one per-card round budget.</td></tr>
+    <tr><td><a href="../deployment-story/index.html">AGT-W63</a> Deployment story</td><td>26 September 2026</td><td>D1 to D8: one-box first, then hosts, then authority; limited baseline with explicit deltas; one runner-host family; WireGuard target; installer bootstrap; versioned manifest; verified recovery; proven remote completion.</td></tr>
+    <tr><td><a href="../test-acceleration/index.html">AGT-W77</a> Test acceleration</td><td>11 October 2026 (D1)</td><td>Per card: model review, build and the tests for the changed files; full suite per batch and before every release.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="still-open"><span class="no">&sect;7</span>What is still open</h2>
+<p>The roles, the flow and the deployment forms are decided. These points still change parts of the target picture:</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Point</th><th>Question</th><th>Recommendation</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Actor model</td><td>Is the AI Operator a role of its own beside the decision steps, both running in the engine?</td><td>Yes: two operators, two kinds of steps (&sect;2).</td><td><a href="../../orchestrator-rule-core/index.html#o1-actor-model">AGT-W73 O1</a></td></tr>
+    <tr><td>Model step between steps</td><td>Does a strong model choose the next action from bounded grounds, with signals instead of counter-selected actions, a 24-hour emergency stop and cost caps?</td><td>Yes, receipt-only shadow first, then one transition at a time.</td><td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a>; siblings <a href="../../run-budget-per-card/index.html">AGT-W68</a>, <a href="../../fluid-capacity/index.html">AGT-W74</a>, <a href="../../orchestrator-improvement-scout/index.html">AGT-W76</a></td></tr>
+    <tr><td>Review host separation</td><td>Must review run on a different host than coding?</td><td>Prefer another host, never wait for it.</td><td><a href="../../task-server-bus/index.html#d19-review-host">AGT-W65 D19</a></td></tr>
+    <tr><td>Engine instances</td><td>One supervised instance or several under leases?</td><td>Interchangeable instances; one in one-box, two in distributed.</td><td><a href="../../task-server-bus/index.html#d20-engine-instances">AGT-W65 D20</a></td></tr>
+    <tr><td>Name</td><td>Operations Broker instead of Operations Server?</td><td>In documentation and UI only.</td><td><a href="../../task-server-bus/index.html#d21-broker-name">AGT-W65 D21</a></td></tr>
+    <tr><td>End-to-end build</td><td>Production bundle or dedicated e2e build for Playwright?</td><td>Dedicated build only if specs need development helpers.</td><td><a href="../test-acceleration/index.html">AGT-W77 D2</a></td></tr>
+    <tr><td>Integration throughput</td><td>Review reuse and speculative merge train on top of the batch gate?</td><td>As recommended there, after the batch gate is measured.</td><td><a href="../../merge-gate-economics/index.html">AGT-W69</a>, <a href="../../integration-lane-throughput/index.html">AGT-W70</a></td></tr>
+    <tr><td>Entry encoding</td><td>Standing map or decision Dossier for this page?</td><td>Standing map once &sect;7 is empty.</td><td>&sect;14, N1</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">Product capability Dossiers with open points that do not change the roles or the flow: <a href="../../model-routing-by-complexity/index.html">AGT-W56</a> model routing, <a href="../observation/index.html">AGT-W58</a> observation, <a href="../../task-switch-performance/index.html">AGT-W64</a> task switch, <a href="../../header-usage-cockpit/index.html">AGT-W66</a> usage cockpit, <a href="../task-and-board-ui/index.html">AGT-W60</a> board UI, AGT-W41 security audit, AGT-W47 route ownership, AGT-W71 and AGT-W72 documentation reviews.</p>
+
+<h2 id="path"><span class="no">&sect;8</span>From today to the target</h2>
+<p><b>Today (11 October 2026).</b> The Windows monolith (OrchestratorApi) is task authority, decider and UI backend at once; agent-runner-01 executes coding, review and gate work through claims; the standalone Task Server, the engine and the Operations Server run in no production installation. The reconstruction is in <a href="../../task-server-bus/index.html#pipeline-control">AGT-W65, Pipeline control today</a>.</p>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Step</th><th>Result</th><th>Cards</th></tr></thead>
+  <tbody>
+    <tr><td>1 &middot; Batch verification and loop hygiene</td><td>Full suite per wave; per-card round budget; fix rounds on the reviewed delivery; still decided in the monolith as library code.</td><td>AGT-3052, AGT-3053, AGT-3054, AGT-3056</td></tr>
+    <tr><td>2 &middot; Decision library</td><td>Every transition rule leaves the monolith code and lives in one library.</td><td>AGT-3057</td></tr>
+    <tr><td>3 &middot; Orchestration plane in the monolith</td><td>The engine can decide against today's authority; per-transition switch.</td><td>AGT-3058</td></tr>
+    <tr><td>4 &middot; Engine decides</td><td>Dedicated remote process on agent-runner-01; shadow, then switch per transition; batch planner and advisor in the engine.</td><td>AGT-3059, AGT-3055</td></tr>
+    <tr><td>5 &middot; Monolith without decisions</td><td>Background deciders moved; decision code deleted and guarded.</td><td>AGT-3060</td></tr>
+    <tr><td>6 &middot; Authority leaves the monolith</td><td>Standalone Task Server completes the loop; cutover with rollback drill and detached Studio proof.</td><td>AGT-3061, AGT-2737, AGT-2949</td></tr>
+    <tr><td>7 &middot; Host operations</td><td>Full operation catalogue; Connector and BFF operations behind the Operations Server.</td><td>AGT-2907 follow-up stages</td></tr>
+    <tr><td>8 &middot; Model decisions</td><td>The engine's choices become model decisions with receipts and cost caps.</td><td>AGT-W73 OD-S1 to OD-S6, once decided</td></tr>
+  </tbody>
+</table>
+</div>
+<p>ADR-0078 and the canonical target architecture record these decisions (AGT-3062).</p>
+
+<h2 id="s5"><span class="no">&sect;9</span>Map of current Dossiers</h2>
 <div class="map">
   <a class="card" href="../operations-server-backchannel/index.html"><h4>Operations Server beside the Task Server</h4><div class="path">operations/operations-server-backchannel/ &middot; AGT-W49</div><p>Authority boundary, security model, deployment forms, and the programme from the transitional Compose baseline to the standard one box profile.</p></a>
   <a class="card" href="../../task-server-bus/index.html"><h4>Task Server bus</h4><div class="path">task-server-bus/ &middot; AGT-W65 &middot; Source AGT-2905</div><p>Steering boundary between engine and runner hosts, pipeline control as it runs on 11 October 2026, decisions D14 to D21 on decision placement, engine and Operations Server process form, fix-round base and round budget.</p></a>
   <a class="card" href="../../orchestrator-rule-core/index.html"><h4>Orchestrator decisions between steps</h4><div class="path">orchestrator-rule-core/ &middot; AGT-W73 &middot; Source AGT-3018</div><p>A strong model chooses the next typed action from bounded grounds; guard rails become signals. Related: run budget per card (AGT-W68), fluid capacity (AGT-W74), improvement scout (AGT-W76). Decision pending.</p></a>
+  <a class="card" href="../delivery-chain/index.html"><h4>Delivery chain</h4><div class="path">operations/delivery-chain/ &middot; AGT-W57</div><p>Integration, recovery and robustness from the last commit to a published release; D1 to D7 decided 25 September 2026.</p></a>
+  <a class="card" href="../gates/index.html"><h4>Gates</h4><div class="path">operations/gates/ &middot; AGT-W59</div><p>Batch gate and remote gate: when the full suite runs, on what subject, who owns the attempt; D1 to D10 decided 25 September 2026.</p></a>
+  <a class="card" href="../test-acceleration/index.html"><h4>Test acceleration</h4><div class="path">operations/test-acceleration/ &middot; AGT-W77</div><p>Measured baseline and levers for backend and frontend tests; D1 decided 11 October 2026, D2 open.</p></a>
   <a class="card" href="../deployment-story/index.html"><h4>Deployment story</h4><div class="path">operations/deployment-story/ &middot; AGT-W63 &middot; Source AGT-2906</div><p>Operator and administrator journeys from one-box installation to additional runner hosts and remote authority, with availability, gaps and acceptance checkpoints. Authority and bus decisions remain in AGT-W49 and AGT-2905.</p></a>
   <a class="card" href="../docker-ausfuehrungswelt-migration/index.html"><h4>Isolated execution</h4><div class="path">operations/docker-ausfuehrungswelt-migration/ &middot; AGT-W51</div><p>Preparation script, per run isolation, healing orchestrator, tests as a product feature, migration stages M1 to M7.</p></a>
   <a class="card" href="../dossier-consolidation-and-area-tags/index.html"><h4>Dossier consolidation and area tags</h4><div class="path">operations/dossier-consolidation-and-area-tags/ &middot; AGT-W55</div><p>The sixteen Dossier target set, the archiving rule, and the area and facet tag system. This rewrite is its first delivery slice.</p></a>
@@ -292,7 +471,7 @@
   <a class="card" href="../lagebild-2026-09-01/index.html"><h4>Situation report, September 2026</h4><div class="path">operations/lagebild-2026-09-01/</div><p>Dated snapshot of what runs where, with lane numbers. It is not part of the arc and ages out by design.</p></a>
 </div>
 
-<h2 id="s6"><span class="no">&sect;6</span>History: what this Dossier absorbed</h2>
+<h2 id="s6"><span class="no">&sect;10</span>History: what this Dossier absorbed</h2>
 <p>Four Dossiers are recorded as superseded by AGT-W14 and leave the current list. Their durable content is the sentence or two below, plus the decision that replaced them. Nothing else survived: their plans were written against a topology and a card set that no longer exist. Per the operator's archiving rule of 13 September 2026, a Dossier superseded by a theme Dossier needs no separate artefact, because its content lives in the theme Dossier.</p>
 
 <figure>
@@ -335,7 +514,7 @@
     <path class="svg-flow-accent" d="M 710 118 L 740 118 L 740 85 L 770 85"></path>
     <path class="svg-flow-accent" d="M 710 146 L 740 146 L 740 179 L 770 179"></path>
   </svg>
-  <figcaption><b>Figure 2.</b> Lineage. Dashed boxes are superseded and move to the Dossier explorer History list; the solid arrows into W14 are absorption, the blue arrows out of it are links to the live decisions. AGT-W25 fed the target picture directly rather than through an intermediate plan, which is why its arrow is short.</figcaption>
+  <figcaption><b>Figure 4.</b> Lineage. Dashed boxes are superseded and move to the Dossier explorer History list; the solid arrows into W14 are absorption, the blue arrows out of it are links to the live decisions. AGT-W25 fed the target picture directly rather than through an intermediate plan, which is why its arrow is short.</figcaption>
 </figure>
 
 <div class="history">
@@ -369,8 +548,8 @@
 <p class="muted">The previous version of this Dossier, dated 28 July 2026, is superseded by this rewrite. Its situation table, its four phase list, and its map of ten deep documents were the three parts that had aged; the entry point role is what carried over.</p>
 
 <section id="s7" data-concept-section="alternatives" data-document-section="alternatives">
-<h2><span class="no">&sect;7</span>Alternatives</h2>
-<p>How should the entry point relate to the decisions it points at? Three shapes were available for this rewrite.</p>
+<h2><span class="no">&sect;11</span>Alternatives</h2>
+<p>How should the entry point relate to the decisions it points at? Three shapes were available for the September rewrite. On 11 October 2026 the operator asked for a finished target picture; this page now consolidates decided outcomes (closest to B) while arguments stay in the owning Dossiers (as in A).</p>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Criterion</th><th>A &middot; Map with history, links only</th><th>B &middot; Full summary of both decisions</th><th>C &middot; Merge W49 and W51 into the North star</th></tr></thead>
@@ -386,9 +565,11 @@
 </section>
 
 <section id="s8" data-concept-section="recommendation" data-document-section="recommendation">
-<h2><span class="no">&sect;8</span>Recommendation</h2>
+<h2><span class="no">&sect;12</span>Recommendation</h2>
 <div class="box accent">
-  <h3>A, map with history and links only</h3>
+  <h3>Since 11 October 2026: outcomes here, arguments in the Dossiers</h3>
+  <p>The operator asked for a finished target picture. This page therefore states the decided outcomes of every Dossier that shapes the target, with the decision register as the link back. The September recommendation below still governs the arguments: they are never copied here.</p>
+  <h3>September recommendation: A, map with history and links only</h3>
   <p>The North star keeps the arc, the guardrails, and the history of what it absorbed, and links every live decision instead of summarising it. This is what the operator's answer to D1 of AGT-W55 asks for: sixteen Dossiers with W14 rewritten as the single entry point, and W49 and W51 kept as separate current Dossiers rather than folded in.</p>
 </div>
 <p>Two consequences follow, and this rewrite applies both. First, the four absorbed Dossiers are recorded as superseded by AGT-W14 in their descriptors, and their status is set so that they leave the current list. Second, no separate archive artefact is written for them, because the operator's D2 note states that a Dossier superseded by a theme Dossier needs no artefact: its content lives in the theme Dossier, and artefacts are only for historical Dossiers whose knowledge has no home.</p>
@@ -396,8 +577,10 @@
 </section>
 
 <section id="s9" data-concept-section="evidence" data-document-section="evidence">
-<h2><span class="no">&sect;9</span>Evidence</h2>
+<h2><span class="no">&sect;13</span>Evidence</h2>
 <div class="evidence-list">
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The operator's decisions and request of 11 October 2026</b><small>AGT-W65 D14 to D18 decided as A, with the note that everything goes into the engine and out of the monolith; then the request to arrive at a finished target picture. Recorded in AGT-W65 and in this rewrite.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Production topology on 11 October 2026</b><small>The Stable backend answers protocol negotiation as <code>orchestrator-monolith</code> with the review plane only; the runner journal on agent-runner-01 shows claims, reviews and fix rounds against it. No production installation runs the standalone Task Server, the engine or the Operations Server.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The operator's answers, 13 September 2026, 07:53 UTC</b><small>D1 A, sixteen Dossiers with W14 rewritten as the entry point. D2 A, archive when the durable knowledge has a documentation home, with the note that a Dossier superseded by a theme Dossier needs no artefact. Recorded in <a href="../dossier-consolidation-and-area-tags/index.html">AGT-W55</a> &sect;9 and its descriptor.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The AGT-W53 matrix classified all 52 Dossiers on 13 September 2026</b><small>23 current, 12 partially superseded, 6 superseded, 11 historical. W6, W8, W22, W25 and the previous W14 are in the superseded row of the consolidation map in AGT-W55 &sect;3, with "target architecture" as their destination. Source: <a href="../dossier-review-2026-09/index.html">docs/operations/dossier-review-2026-09</a>.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Catalogue projection: status decides the current list</b><small><code>backend/Features/Docs/WorkbenchCatalogueService.cs</code> defines <code>CurrentStatuses</code> as active, decision-pending, decided, and counts archived and documented as history. Setting an absorbed descriptor to <code>documented</code> therefore removes it from the current list without deleting it.</small></span></div>
@@ -409,7 +592,7 @@
 </section>
 
 <section id="s10" data-concept-section="open-decisions" data-document-section="open-decisions">
-<h2><span class="no">&sect;10</span>Open decisions</h2>
+<h2><span class="no">&sect;14</span>Open decisions</h2>
 <p>One choice remains for a human. N2 is overtaken by ADR-0076; N1 stays open.</p>
 
 <div class="decision">
@@ -449,6 +632,7 @@
   <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
     <li><b>2026-10-11 · Status update.</b> AGT-W49 recorded as decided (25 September 2026, ADR-0076); AGT-W65 and AGT-W73 added to the live decisions and the map; N2 marked as overtaken. The arc in &sect;2 and the guardrails in &sect;4 are unchanged.</li>
+    <li><b>2026-10-11 · Finished target picture.</b> Rewritten after the operator's decisions D14 to D18 in AGT-W65 and the request for a finished target picture: five runtime roles, the flow of a card, deployment forms, decision register, open points and the path with programme cards AGT-3052 to AGT-3062.</li>
 <!-- agent-studio:implementation-log:end -->
   </ol>
 </section>
