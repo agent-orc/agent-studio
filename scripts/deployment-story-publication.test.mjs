@@ -233,16 +233,17 @@ test('the Dossier keeps the develop-side AGT-2942 log after the 1 October merge'
   assert.equal((decisions.match(/data-decision-id="D\d"/g) ?? []).length, 8);
 });
 
-test('I10 is published while AGT-2906 registration remains pending', () => {
+test('I10 is published and its navigation record reports the verified task references', () => {
   const html = read(canonicalEntry);
   const item = between(html, '<tr id="I10">', '</tr>');
   assert.match(item, /Published at <code>docs\/operations\/deployment-story\/index\.html<\/code>/);
   assert.doesNotMatch(item, /requested North star entry|separately scoped publication step/);
   const navigation = read(join(canonicalDir, 'navigation-integration.md'));
-  assert.match(navigation, /Status: I10 publication is present in this delivery branch/);
+  assert.match(navigation, /Status: I10 publication is present/);
   assert.match(navigation, /POST \/api\/tasks\/AGT-2906\/concept-dossier\?project=PROJ-002/);
-  assert.match(navigation, /not a completed API update/);
-  assert.match(html, /The API mutation remains an operator follow-up/);
+  assert.match(navigation, /Both file reads returned HTTP 200 through the stable application API/);
+  assert.match(navigation, /A repeat POST on that date returned HTTP 400/);
+  assert.match(html, /The task-record references are present/);
   assert.doesNotMatch(html, /AGT-2951 delivery records for this run/);
 });
 
