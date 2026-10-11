@@ -80,6 +80,10 @@ Remote Review passes to a durable pending queue. The review plan records the
 full suite as `DeferredToBatch` while retaining model review. For code cards,
 the per-card review retains preparation, build, lint, and selected work-package
 tests; a selection that needs the full suite keeps the ordinary per-card gate.
+Selection reads the existing project inventory and exact changed paths without
+creating a result worktree for each queued review. A changed project inventory
+keeps the ordinary full per-card gate. Batch setting edits replan queued reviews
+in the background; an executor claim can proceed during selection.
 The plan carries its test level and selection digest. The
 settlement journal of such a pass carries no delivery record, so neither the
 settlement reconciler nor Auto Review resume integrates the card or settles it
@@ -98,7 +102,11 @@ look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
 The look-ahead policy is pure and estimates the suite runs per member across
 the configured size range. Its snapshot includes queued cards and upcoming
-review or coding cards. An advisor may approve, adjust, or veto that plan
+pending or leased review and coding cards. Diff statistics are cached by result
+SHA for repeated state reads. High-risk members use smaller batches or the
+per-card gate; `overlap: separate` excludes a card touching a selected member's
+files. Operator close-now overrides an advisor veto hold. An advisor may approve,
+adjust, or veto that plan
 within the configured bounds; failed or late advice falls back to the
 deterministic result. Advice is stored outside the membership digest.
 Green publication rechecks member generations and the remote pre-tip under a
@@ -116,7 +124,9 @@ the remote still resolves to the tested SHA and matches that passing durable run
 then records publication and releases the members. If the remote differs, it
 returns the members for reconstruction on the current base. The pilot publishes
 only a tested fast-forward candidate; it does not synthesize a merge commit
-after the gate.
+after the gate. A dirty or stale local checkout cannot hold the verified remote
+publication in `Publishing`; local sync is best effort. Ejected and unresolved
+members start per-card fallbacks after the project batch reservation is released.
 Each admitted member receives an
 append-only batch-gate record. The card-local ownership marker makes both
 Human Review entry and Completed acceptance fail closed on missing or stale
@@ -148,8 +158,12 @@ is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
-The gate is currently executed by the backend hosted worker using the local
-gate runner. It does not claim an independently claimable remote `GateAttempt`;
+The backend worker sends the full gate through `RemoteBuildTestGateRunner` to
+the configured remote gate host. A red candidate is compared on the server
+with a durable base verdict keyed by exact base SHA and gate profile. The
+candidate and base each run one full suite, including a targeted failed-test
+rerun when needed; the batch request does not trigger the remote clean-repeat
+diagnosis. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 and the correctness floor; comparable baseline and cost fields remain null
