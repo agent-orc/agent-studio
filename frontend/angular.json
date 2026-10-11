@@ -84,6 +84,14 @@
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true
+            },
+            "unit-test": {
+              "browser": "src/test-main.ts",
+              "assets": [],
+              "styles": [],
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
             }
           },
           "defaultConfiguration": "production"
@@ -116,7 +124,7 @@
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {
-            "buildTarget": "frontend:build:development",
+            "buildTarget": "frontend:build:unit-test",
             "tsConfig": "tsconfig.spec.json",
             "runner": "vitest",
             "runnerConfig": "vitest.config.ts",
