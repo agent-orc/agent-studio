@@ -1082,19 +1082,46 @@ public static class ProjectSettingsEndpoints
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
-        app.MapPut("/api/projects/{projectName}/batch-gate", (string projectName, BatchGateFormationOptions options,
+        app.MapPut("/api/projects/{projectName}/batch-gate", async (string projectName,
             HttpContext context, ProjectSettingsService settings, TaskScannerService scanner,
             ProjectRegistry projects, GitService git, RemoteReviewPlanBuilder remoteReviewPlans,
-            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            ILogger<ProjectSettingsService> logger) =>
         {
             if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
             if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            BatchGateFormationOptions options;
+            try
+            {
+                options = await System.Text.Json.JsonSerializer.DeserializeAsync<BatchGateFormationOptions>(
+                    context.Request.Body,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web),
+                    context.RequestAborted) ?? new BatchGateFormationOptions();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                var invalidField = ex.Path?.TrimStart('$', '.')
+                    .Split(['.', '['], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
+                    ?? "body";
+                return Results.BadRequest(new { error = "Invalid batch gate setting.", field = invalidField });
+            }
             if (options.InvalidField is { } field)
                 return Results.BadRequest(new { error = $"Invalid batch gate setting: {field}.", field });
             settings.SetBatchGate(projectName, options);
-            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    ReplanQueuedReviewAttempts(projectName, settings, projects, git,
+                        remoteReviewPlans, reviewLifecycle);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "batch-gate-replan-failed project={Project}", projectName);
+                }
+            });
             return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate));
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
@@ -1115,7 +1142,7 @@ public static class ProjectSettingsEndpoints
             if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
             pilot.RequestCloseNow(projectName);
-            return Results.Accepted();
+            return Results.Accepted(value: new { accepted = true });
         });
         app.MapPost("/api/projects/{projectName}/batch-gate/members/{taskKey}/eject", (
             string projectName, string taskKey, HttpContext context,
@@ -1127,7 +1154,7 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
             if (!pilot.RequestEject(projectName, taskKey))
                 return Results.NotFound(new { error = $"Batch member '{taskKey}' was not found." });
-            return Results.Accepted();
+            return Results.Accepted(value: new { accepted = true });
         });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (
@@ -1407,7 +1434,7 @@ public static class ProjectSettingsEndpoints
             value.MaximumSize,
             value.DeadlineMinutes,
             value.LookAheadMinutes,
-            urgentTags = value.UrgentTags ?? [],
+            urgentTags = value.EffectiveUrgentTags,
             value.RiskPolicy,
             value.Overlap,
             value.ReviewTestLevel,
