@@ -67,7 +67,7 @@ internal static partial class ReviewTargetedRerunPolicy
 
     internal static ReviewCommandDto? PrecedingBuild(ReviewPlanDto plan, ReviewCommandDto test)
         => plan.Commands.TakeWhile(command => command.StepId != test.StepId)
-            .LastOrDefault(command => command.FileName is "dotnet" or "sh" or "bash" or "dash"
+            .LastOrDefault(command => Path.GetFileName(command.FileName) is "dotnet" or "sh" or "bash" or "dash"
                 && command.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal)
                     || argument == "build"));
 

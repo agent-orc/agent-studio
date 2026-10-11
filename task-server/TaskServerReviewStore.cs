@@ -1214,6 +1214,7 @@ public sealed partial class TaskServerStore
             if (!ReviewRepeatFilterPolicy.IsValid(command, request.Commands))
                 return ("ReviewInfra", "CommandPlanMismatch");
             if (planned?.CompareToBaseline == true
+                && command.WorkspaceRole == "candidate"
                 && command.BaselineSha is not null
                 && (!ValidDigest(command.BaselineSha, 40, 64)
                     || command.NewFailures is null
@@ -1263,6 +1264,30 @@ public sealed partial class TaskServerStore
                 command.StepId == failed.StepId
                 && command.Phase == "clean-repeat"
                 && command.WorkspaceRole == "clean-repeat");
+            var precedingBuild = failed.Arguments.Any(argument =>
+                    argument.Contains("--no-build", StringComparison.Ordinal))
+                ? subject.Plan.Commands.TakeWhile(step => step.StepId != failed.StepId)
+                    .LastOrDefault(step => Path.GetFileName(step.FileName) is "dotnet" or "sh" or "bash" or "dash"
+                        && step.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal)
+                            || argument == "build"))
+                : null;
+            if (clean is null && failed.Diagnosis.Classification == IntegrationBranchDefectOutcome
+                && failed.BaselineExitCode is > 0 && precedingBuild is not null
+                && request.Commands.Any(command => command.StepId == precedingBuild.StepId
+                    && command.Phase == "verification"
+                    && command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+                    && command.BaselineSha == failed.BaselineSha
+                    && command.ExitCode is > 0))
+                continue;
+            if (clean is null && failed.Arguments.Any(argument =>
+                    argument.Contains("--no-build", StringComparison.Ordinal)))
+            {
+                clean = request.Commands.FirstOrDefault(command =>
+                    command.StepId == precedingBuild?.StepId
+                    && command.Phase == "clean-repeat"
+                    && command.WorkspaceRole == "clean-repeat"
+                    && command.ExitCode is > 0);
+            }
             if (clean is null)
                 return ("ReviewInfra", "CleanRepeatMissing");
             if (failed.Diagnosis.ChargesCard

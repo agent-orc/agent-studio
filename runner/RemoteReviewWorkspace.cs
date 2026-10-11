@@ -536,7 +536,7 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
-                    if (comparison is not null)
+                    if (comparison is not null && !comparison.BlockedByIsolatedBuild)
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                         retryPerformed = true;
@@ -657,12 +657,18 @@ public sealed class RemoteReviewWorkspace
                             repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
-                    comparison = requiredComparison with
-                    {
-                        Diagnosis = await DiagnoseFailureAsync(
-                            command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
-                    };
-                    if (comparison.Diagnosis.Classification == DeliveryFailureDiagnosis.Environment
+                    comparison = requiredComparison.BlockedByIsolatedBuild
+                        ? requiredComparison
+                        : requiredComparison with
+                        {
+                            Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                                ? new DeliveryFailureDiagnosisResult(
+                                    IntegrationBranchDefectClassification, 1,
+                                    [$"build {command.StepId} was already red on the integration branch"])
+                                : await DiagnoseFailureAsync(
+                                    command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
+                        };
+                    if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
                     {
                         foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
@@ -1682,7 +1688,25 @@ public sealed class RemoteReviewWorkspace
                 ["rev-parse", "HEAD^{tree}"],
                 environment,
                 ct);
-            await BuildBeforeNoBuildAsync(command, baselinePath, environment, "BaselineUnavailable", ct);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(
+                command, baselinePath, environment, "BaselineUnavailable", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                await AddIsolatedBuildEvidenceAsync(
+                    isolatedBuild, baselineHead, baselineTree, workspaceRole,
+                    baselineSha, "verification", commands, artifacts, ct);
+                return BaselineComparison.Create(
+                    baselineSha, [], SubjectFailures(command, subjectResult),
+                    cacheHit: false, isolatedBuild.Execution.Process.ExitCode) with
+                {
+                    NewFailures = [],
+                    PreExistingFailures = [],
+                    BlockedByIsolatedBuild = true,
+                    Diagnosis = new DeliveryFailureDiagnosisResult(
+                        IntegrationBranchDefectClassification, 1,
+                        [$"isolated baseline build {isolatedBuild.Build.StepId} exited {isolatedBuild.Execution.Process.ExitCode}"]),
+                };
+            }
             execution = await RunCommandAsync(command, baselinePath, ct, environment);
             commands.Add(await AddCommandEvidenceAsync(
                 command.StepId,
@@ -1807,9 +1831,19 @@ public sealed class RemoteReviewWorkspace
             await ExecutePreparationAsync(
                 path, "clean-repeat", _subject.ExpectedResultSha, environment,
                 commands, artifacts, ct, restoreCache: false);
-            await BuildBeforeNoBuildAsync(plannedCommand, path, environment, "CleanRepeatUnavailable", ct);
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
             var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(
+                plannedCommand, path, environment, "CleanRepeatUnavailable", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                if (!commands.Any(item => item.StepId == isolatedBuild.Build.StepId
+                    && item.Phase == "clean-repeat" && item.WorkspaceRole == "clean-repeat"))
+                    await AddIsolatedBuildEvidenceAsync(
+                        isolatedBuild, head, tree, "clean-repeat", _baselineSha,
+                        "clean-repeat", commands, artifacts, ct);
+                return isolatedBuild.Execution;
+            }
             var command = selectedCommand;
             var execution = await RunCommandAsync(command, path, ct, environment);
             string? repeatFilter = null;
@@ -1855,7 +1889,7 @@ public sealed class RemoteReviewWorkspace
         }
     }
 
-    private async Task BuildBeforeNoBuildAsync(
+    private async Task<IsolatedBuildResult?> BuildBeforeNoBuildAsync(
         ReviewCommandDto command,
         string workspacePath,
         IReadOnlyDictionary<string, string?> environment,
@@ -1863,17 +1897,38 @@ public sealed class RemoteReviewWorkspace
         CancellationToken ct)
     {
         if (!command.Arguments.Any(argument => argument.Contains("--no-build", StringComparison.Ordinal)))
-            return;
+            return null;
         var build = ReviewTargetedRerunPolicy.PrecedingBuild(_subject.Plan, command);
         if (build is null)
             throw new ReviewInfrastructureException(classification,
                 $"Isolated test '{command.StepId}' needs a build before --no-build, but the plan has no preceding build step.");
         var execution = await RunCommandAsync(build, workspacePath, ct, environment);
-        if (!execution.Process.Success || execution.Signal is not null)
+        if (MissingToolchain(execution.Process)
+            || TmpMountTornDownDuringBuild(execution.Process)
+            || execution.Signal is not null || execution.Process.ExitCode < 0)
             throw new ReviewInfrastructureException(classification,
-                $"Isolated test build '{build.StepId}' failed: exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
-        _log($"review isolated test built assemblies for step={command.StepId} with planned step={build.StepId}");
+                $"Isolated test build '{build.StepId}' could not complete: exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
+        _log($"review isolated test build step={build.StepId} for test={command.StepId} exit={execution.Process.ExitCode}");
+        return new IsolatedBuildResult(build, execution);
     }
+
+    private static bool IsBuildCommand(ReviewCommandDto command)
+        => Path.GetFileName(command.FileName) == "dotnet" && command.Arguments.FirstOrDefault() == "build"
+           || command.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal));
+
+    private async Task AddIsolatedBuildEvidenceAsync(
+        IsolatedBuildResult build, string head, string tree, string workspaceRole,
+        string? baselineSha, string phase,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts, CancellationToken ct)
+        => commands.Add(await AddCommandEvidenceAsync(
+            build.Build.StepId, build.Build.Aspect, build.Build.FileName,
+            build.Build.Arguments, head, tree, build.Execution.Process,
+            build.Execution.StartedAt, build.Execution.FinishedAt,
+            build.Execution.Signal, build.Build.TimeoutSeconds, phase, workspaceRole,
+            baselineSha, comparison: null, retryPerformed: phase == "clean-repeat",
+            dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
+            build.Build));
 
     private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
         ReviewCommandDto command,
@@ -2950,6 +3005,8 @@ internal sealed record CommandExecution(
     RemoteAgentUsage? AgentUsage = null,
     StallDiagnostics? Stall = null);
 
+internal sealed record IsolatedBuildResult(ReviewCommandDto Build, CommandExecution Execution);
+
 internal sealed record RemoteAgentUsage(
     string Model,
     long InputTokens,
@@ -2970,6 +3027,7 @@ internal sealed record BaselineComparison(
     TimeSpan? ReusedAge = null)
 {
     public IReadOnlyList<string> InitialFailures { get; init; } = [];
+    public bool BlockedByIsolatedBuild { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
