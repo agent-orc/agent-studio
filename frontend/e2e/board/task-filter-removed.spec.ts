@@ -53,8 +53,6 @@ test.describe('Task filter axis removed from filter list', () => {
 
   test('filter panel exposes the four faceted axes and no standalone Task axis', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(2000);
     await openBoard(page);
     await openFilterPanel(page);
 
@@ -82,8 +80,6 @@ test.describe('Task filter axis removed from filter list', () => {
     page.on('pageerror', e => errors.push(String(e)));
 
     await page.goto('/#filters=task:legacy-bookmark-value');
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(2000);
     await openBoard(page);
 
     // The unknown `task:` segment must apply no filter, so the activity-bar
@@ -95,8 +91,6 @@ test.describe('Task filter axis removed from filter list', () => {
 
   test('hash is normalised without task: after a real filter is applied', async ({ page }) => {
     await page.goto('/#filters=task:legacy-bookmark-value');
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(2000);
     await openBoard(page);
     await openFilterPanel(page);
 
