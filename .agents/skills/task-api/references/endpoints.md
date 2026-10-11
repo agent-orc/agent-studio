@@ -180,8 +180,17 @@ and refresh time, and Git process count/time.
 
 ### `POST /api/tasks/{jobId}/move-to-top?watchPath=...`
 
-Promote a job to the head of `2-ready`. No body. Returns
-`{ position: 0 }` on success, `404` if not found in a promotable lane.
+Promote a job to the head of `2-ready`. For a card in `4-auto-review`, set
+urgent review priority instead. No body. Requires `X-Client-Id`. Returns
+`{ position: 0 }` for Ready or `{ position, priority: "urgent" }` for AutoReview;
+returns `404` when the card is not in either lane.
+
+### `POST /api/tasks/{jobId}/review-priority?project=...`
+
+Set an AutoReview card's priority with `{ "priority": "urgent" }` or
+`{ "priority": "normal" }`. Requires `X-Client-Id` and records the operator
+in the card ledger. Returns `{ priority, position }`, where `position` is null
+until the review attempt is claimable. Within each priority, claims stay FIFO.
 
 ### `POST /api/tasks/reorder`
 

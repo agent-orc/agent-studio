@@ -15,7 +15,11 @@ public sealed record ReviewQueueEntry(string Priority, int? Position);
 
 internal readonly record struct BoardReviewActivity(
     AttemptLifecycleState State,
-    DateTime? LeaseExpiresAt);
+    DateTime? LeaseExpiresAt,
+    string Priority = "normal",
+    DateTime? CreatedAt = null,
+    string? AttemptId = null,
+    bool MissingResultEnvelope = false);
 
 internal sealed record ReviewLeaseIsolation(
     string ResourceNamespace,
@@ -116,41 +120,53 @@ public sealed class AttemptAuthorityService
     /// </summary>
     private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
     /// <summary>Sets the priority of this card and its current or future review attempt.</summary>
-    public bool SetReviewPriority(string taskKey, string priority)
+    public bool SetReviewPriority(string taskKey, string priority, Func<bool>? isInAutoReview = null)
     {
         if (priority is not ("urgent" or "normal") || Blank(taskKey)) return false;
         lock (_gate)
         {
+            if (isInAutoReview is not null && !isInAutoReview()) return false;
             taskKey = Normalize(taskKey);
             if (priority == "urgent") _state.ReviewPrioritiesByTask[taskKey] = priority;
             else _state.ReviewPrioritiesByTask.Remove(taskKey);
-            if (CurrentReview(taskKey) is { } review && !Terminal(review.State))
+            if (CurrentReview(taskKey) is { } review)
                 review.Priority = priority;
             PersistLocked();
             return true;
         }
     }
 
-    public IReadOnlyDictionary<string, ReviewQueueEntry> ReadReviewQueue()
+    /// <summary>Discard an operator priority after the card leaves the review lane.</summary>
+    public void ClearReviewPriority(string taskKey)
     {
+        if (Blank(taskKey)) return;
         lock (_gate)
         {
-            var now = _utcNow();
-            var entries = new Dictionary<string, ReviewQueueEntry>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (taskKey, priority) in _state.ReviewPrioritiesByTask)
-                entries[taskKey] = new ReviewQueueEntry(priority, null);
-            var queued = _state.ReviewAttempts
-                .Where(review => IsCurrentReview(review) && !Terminal(review.State))
-                .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
-                .Where(review => !IsUnmaterializableWithinGrace(review, now))
-                .OrderByDescending(review => review.Priority == "urgent")
-                .ThenBy(review => review.CreatedAt)
-                .ThenBy(review => review.AttemptId)
-                .ToArray();
-            for (var i = 0; i < queued.Length; i++)
-                entries[queued[i].TaskKey] = new ReviewQueueEntry(queued[i].Priority, i + 1);
-            return entries;
+            taskKey = Normalize(taskKey);
+            if (!_state.ReviewPrioritiesByTask.Remove(taskKey)) return;
+            if (CurrentReview(taskKey) is { } review) review.Priority = "normal";
+            PersistLocked();
         }
+    }
+
+    public IReadOnlyDictionary<string, ReviewQueueEntry> ReadReviewQueue()
+    {
+        var now = _utcNow();
+        var snapshot = ReadBoardReviewActivity();
+        var entries = new Dictionary<string, ReviewQueueEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (taskKey, review) in snapshot)
+            entries[taskKey] = new ReviewQueueEntry(review.Priority, null);
+        var queued = snapshot
+            .Where(item => item.Value.CreatedAt is not null && !Terminal(item.Value.State))
+            .Where(item => item.Value.LeaseExpiresAt is null || item.Value.LeaseExpiresAt <= now)
+            .Where(item => !item.Value.MissingResultEnvelope || now - item.Value.CreatedAt >= LegacyEnvelopeTerminalizeGrace)
+            .OrderByDescending(item => item.Value.Priority == "urgent")
+            .ThenBy(item => item.Value.CreatedAt)
+            .ThenBy(item => item.Value.AttemptId)
+            .ToArray();
+        for (var i = 0; i < queued.Length; i++)
+            entries[queued[i].Key] = new ReviewQueueEntry(queued[i].Value.Priority, i + 1);
+        return entries;
     }
 
     public AttemptAuthorityService(
@@ -680,7 +696,9 @@ public sealed class AttemptAuthorityService
                 RepositoryId = Normalize(request.RepositoryId),
                 SourceRunAttemptId = run.AttemptId,
                 SourceReviewAttemptId = sourceReview?.AttemptId,
-                Priority = _state.ReviewPrioritiesByTask.GetValueOrDefault(Normalize(request.TaskKey)) ?? "normal",
+                Priority = sourceReview?.Priority
+                    ?? _state.ReviewPrioritiesByTask.GetValueOrDefault(Normalize(request.TaskKey))
+                    ?? "normal",
                 Subject = subject,
                 State = AttemptLifecycleState.Pending,
                 AuthorityEpoch = _state.AuthorityEpoch,
@@ -1059,7 +1077,7 @@ public sealed class AttemptAuthorityService
                 pending.Length,
                 oldest?.AttemptId,
                 oldest?.TaskKey,
-                oldest?.CreatedAt,
+                pending.Length == 0 ? null : pending.Min(review => review.CreatedAt),
                 lastClaim);
         }
     }
@@ -1612,6 +1630,12 @@ public sealed class AttemptAuthorityService
                 ReviewTerminalOutcome.Superseded => AttemptLifecycleState.Superseded,
                 _ => AttemptLifecycleState.Failed,
             };
+            if (request.Outcome is not (ReviewTerminalOutcome.InfrastructureFailure
+                or ReviewTerminalOutcome.Inconclusive or ReviewTerminalOutcome.Cancellation))
+            {
+                _state.ReviewPrioritiesByTask.Remove(review.TaskKey);
+                review.Priority = "normal";
+            }
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }
@@ -2015,12 +2039,22 @@ public sealed class AttemptAuthorityService
         => Volatile.Read(ref _boardReviewActivity);
 
     private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()
-        => _state.ReviewAttempts
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (taskKey, priority) in _state.ReviewPrioritiesByTask)
+            builder[taskKey] = new BoardReviewActivity(AttemptLifecycleState.Completed, null, priority);
+        var runsWithEnvelope = _state.RunAttempts
+            .Where(run => run.ResultEnvelope is not null)
+            .Select(run => run.AttemptId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var review in _state.ReviewAttempts
             .Where(IsCurrentReview)
-            .ToImmutableDictionary(
-                review => review.TaskKey,
-                review => new BoardReviewActivity(review.State, review.Lease?.ExpiresAt),
-                StringComparer.OrdinalIgnoreCase);
+            .ToArray())
+            builder[review.TaskKey] = new BoardReviewActivity(
+                review.State, review.Lease?.ExpiresAt, review.Priority, review.CreatedAt,
+                review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId));
+        return builder.ToImmutable();
+    }
 
     public AttemptAuthorityProjection GetTaskProjection(string taskKey, bool includeArchived = false)
     {

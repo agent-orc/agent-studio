@@ -1621,9 +1621,11 @@ every byte of it is a byte the client already holds.
   start work. This prevents overlapping full-board projections from multiplying
   the heap under load. Responses are still built from current authorized inputs
   when their turn starts; the gate does not retain or share response bodies.
-- **Dependency review activity never waits for authority persistence.** The
-  board reads one immutable snapshot of the current review state and lease end
-  per task. It is initialized from durable authority and published only after
+- **Review activity and queue order never wait for authority persistence.** The
+  board reads one immutable snapshot of the current review state, priority,
+  creation time, result-envelope availability, and lease end per task. The
+  queue position is computed from that snapshot on each read, including 304
+  validation. It is initialized from durable authority and published only after
   a successful authority write; an in-flight or failed write leaves the last
   committed snapshot visible. Lease expiry is still evaluated at read time.
   This display projection does not change authoritative pickup, fencing, or

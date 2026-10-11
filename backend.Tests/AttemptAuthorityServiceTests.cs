@@ -1662,9 +1662,11 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         now = now.AddMinutes(1);
         var newer = Create("AGT-NEWER", 'b');
         Assert.False(first.SetReviewPriority("AGT-NEWER", "high"));
+        Assert.False(first.SetReviewPriority("AGT-NEWER", "urgent", () => false));
         Assert.True(first.SetReviewPriority("AGT-NEWER", "urgent"));
         Assert.Equal(1, first.ReadReviewQueue()["AGT-NEWER"].Position);
         Assert.Equal("AGT-NEWER", first.ReadReviewClaimActivity().OldestPendingTaskKey);
+        Assert.Equal(older.CreatedAt, first.ReadReviewClaimActivity().OldestPendingCreatedAt);
 
         var restarted = NewService(() => now);
         Assert.Equal("urgent", restarted.ReadReviewQueue()["AGT-NEWER"].Priority);
@@ -1692,6 +1694,30 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal("urgent", restarted.ReadReviewQueue()["AGT-LATER"].Priority);
         Assert.Equal("AGT-LATER",
             restarted.ClaimNextReview("reviewer", "review-host", "instance", 60).ReviewAttempt!.TaskKey);
+    }
+
+    [Fact]
+    public void Review_priority_follows_infrastructure_retry_and_clears_after_verdict()
+    {
+        var service = NewService();
+        var (run, first) = CompletedRunWithReview(service, "sha-a");
+        Assert.True(service.SetReviewPriority("AGT-1", "urgent"));
+        var claimed = service.ClaimReview(first.AttemptId, "reviewer", "host", 60, "claim-first").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "infra-failure"),
+            "sha-a", ReviewTerminalOutcome.InfrastructureFailure));
+        var retry = service.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-1", "PROJ-1", "sha-a", run.AttemptId, "req", "policy", [],
+            "retry-review", first.AttemptId)).ReviewAttempt!;
+        Assert.Equal("urgent", service.ReadReviewQueue()["AGT-1"].Priority);
+        Assert.True(service.SetReviewPriority("AGT-1", "normal"));
+        Assert.Equal("normal", service.ReadReviewQueue()["AGT-1"].Priority);
+        var leased = service.ClaimReview(retry.AttemptId, "reviewer", "host", 60, "claim-retry").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(leased.AttemptId, leased.LastFence, leased.AuthorityEpoch, "pass-review"),
+            "sha-a", ReviewTerminalOutcome.Pass));
+        Assert.Equal("normal", service.ReadReviewQueue()["AGT-1"].Priority);
+        Assert.Equal("normal", NewService().ReadReviewQueue()["AGT-1"].Priority);
     }
 
     /// <summary>
@@ -1773,13 +1799,17 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             () => service.ClaimReview(review.AttemptId, "reviewer", "host", 60, "claim-review"),
             CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Task<System.Collections.Immutable.ImmutableDictionary<string, BoardReviewActivity>>? read = null;
+        Task<IReadOnlyDictionary<string, ReviewQueueEntry>>? queueRead = null;
         var completedBeforeRelease = false;
         try
         {
             Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "Authority writer did not enter.");
             read = Task.Factory.StartNew(service.ReadBoardReviewActivity,
                 CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            completedBeforeRelease = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(3))) == read;
+            queueRead = Task.Factory.StartNew(service.ReadReviewQueue,
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            var bothReads = Task.WhenAll(read, queueRead);
+            completedBeforeRelease = await Task.WhenAny(bothReads, Task.Delay(TimeSpan.FromSeconds(3))) == bothReads;
         }
         finally
         {
@@ -1789,6 +1819,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         var duringWrite = await read!.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(completedBeforeRelease, "A board read waited for the authority persistence lock.");
         Assert.Equal(AttemptLifecycleState.Pending, duringWrite["AGT-1"].State);
+        Assert.True((await queueRead!).ContainsKey("AGT-1"));
         Assert.Equal(AttemptLifecycleState.Leased, service.ReadBoardReviewActivity()["AGT-1"].State);
     }
 

@@ -1031,13 +1031,17 @@ public static class TaskCrudEndpoints
                 if (string.IsNullOrWhiteSpace(ctx.Request.Headers["X-Client-Id"]))
                     return Results.BadRequest(new { error = "X-Client-Id is required" });
                 var authority = ctx.RequestServices.GetRequiredService<AttemptAuthorityService>();
-                authority.SetReviewPriority(reviewCard.TaskKey, "urgent");
+                var reviewKey = ReviewAuthorityKey(reviewCard);
+                if (!authority.SetReviewPriority(reviewKey, "urgent",
+                    () => ctx.RequestServices.GetRequiredService<TaskScannerService>()
+                        .FindJob(jobId, watchPath)?.State == TaskStates.AutoReview))
+                    return Results.NotFound();
                 var recorded = ctx.RequestServices.GetRequiredService<TimelineLog>().Append(reviewCard.FolderPath,
                     TimelineEventKinds.ReviewPriorityChanged, OperatorActor(ctx), "Review priority set to urgent",
                     details: new() { ["priority"] = "urgent" });
                 if (!recorded) return Results.Problem("Review priority changed but the operator ledger could not be written.");
                 var queue = authority.ReadReviewQueue();
-                int? reviewPosition = queue.TryGetValue(reviewCard.TaskKey, out var entry) ? entry.Position : null;
+                int? reviewPosition = queue.TryGetValue(reviewKey, out var entry) ? entry.Position : null;
                 return Results.Ok(new { position = reviewPosition, priority = "urgent" });
             }
             // Operator-initiated like the two move routes: the human actor lets
@@ -1059,13 +1063,16 @@ public static class TaskCrudEndpoints
             if (card is null || card.State != TaskStates.AutoReview) return Results.NotFound();
             if (!ProjectAccessAuthorization.AllowsTasks(ctx, [card.ProjectName], projects))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
-            authority.SetReviewPriority(card.TaskKey, req.Priority);
+            var reviewKey = ReviewAuthorityKey(card);
+            if (!authority.SetReviewPriority(reviewKey, req.Priority,
+                () => scanner.FindJob(jobId, watchPath)?.State == TaskStates.AutoReview))
+                return Results.NotFound();
             var recorded = timeline.Append(card.FolderPath, TimelineEventKinds.ReviewPriorityChanged,
                 OperatorActor(ctx), $"Review priority set to {req.Priority}",
                 details: new() { ["priority"] = req.Priority });
             if (!recorded) return Results.Problem("Review priority changed but the operator ledger could not be written.");
             var queue = authority.ReadReviewQueue();
-            int? position = queue.TryGetValue(card.TaskKey, out var entry) ? entry.Position : null;
+            int? position = queue.TryGetValue(reviewKey, out var entry) ? entry.Position : null;
             return Results.Ok(new { priority = req.Priority, position });
         });
 
@@ -1459,9 +1466,11 @@ public static class TaskCrudEndpoints
 
     private static TaskInfo WithReviewQueue(TaskInfo job, IReadOnlyDictionary<string, ReviewQueueEntry> queue)
     {
-        if (job.State != TaskStates.AutoReview || !queue.TryGetValue(job.TaskKey, out var entry)) return job;
+        if (job.State != TaskStates.AutoReview || !queue.TryGetValue(ReviewAuthorityKey(job), out var entry)) return job;
         return job with { ReviewPriority = entry.Priority, ReviewQueuePosition = entry.Position };
     }
+
+    private static string ReviewAuthorityKey(TaskInfo card) => card.Key ?? card.TaskKey ?? card.Id;
 
     /// <summary>
     /// AGT-2795: the decider identity for a decision-card write. Unlike

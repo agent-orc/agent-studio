@@ -413,8 +413,10 @@ rollout decision.
   then creation time within each priority. `POST /api/tasks/{jobId}/review-priority`
   with `{"priority":"urgent"}` or `{"priority":"normal"}` and `X-Client-Id`
   changes a card in `4-auto-review`; `move-to-top` sets `urgent` in that lane.
-  The authority persists the priority for current and future attempts, and the
-  board exposes the claimable queue position.
+  The authority persists the priority across infrastructure and lease-expiry
+  retries, then clears it on a final verdict or departure from AutoReview.
+  The board exposes the claimable queue position from a committed, lock-free
+  review snapshot.
   Every coding and review registration reports the exact fenced attempts whose
   detached process generation or durable terminal result is still positively
   present on the host. A restarted Task Server compares attempt, task, lease,
