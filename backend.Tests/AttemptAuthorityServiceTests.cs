@@ -1642,6 +1642,58 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Null(successor.Subject.Plan);
     }
 
+    [Fact]
+    public void Urgent_review_claims_before_older_normal_review_and_survives_restart()
+    {
+        var now = new DateTime(2026, 10, 11, 10, 0, 0, DateTimeKind.Utc);
+        var first = NewService(() => now);
+        ReviewAttemptDto Create(string taskKey, char digit)
+        {
+            var run = first.AcquireRun(taskKey, "PROJ-1", null, "runner", "host", 60,
+                $"run-{taskKey}").RunAttempt!;
+            var sha = new string(digit, 40);
+            SettleRunWithEnvelope(first, run, sha, $"settle-{taskKey}");
+            return first.CreateReviewAttempt(new CreateReviewAttemptRequest(
+                taskKey, "PROJ-1", sha, run.AttemptId, "requirements", "policy", [],
+                $"review-{taskKey}")).ReviewAttempt!;
+        }
+
+        var older = Create("AGT-OLDER", 'a');
+        now = now.AddMinutes(1);
+        var newer = Create("AGT-NEWER", 'b');
+        Assert.False(first.SetReviewPriority("AGT-NEWER", "high"));
+        Assert.True(first.SetReviewPriority("AGT-NEWER", "urgent"));
+        Assert.Equal(1, first.ReadReviewQueue()["AGT-NEWER"].Position);
+        Assert.Equal("AGT-NEWER", first.ReadReviewClaimActivity().OldestPendingTaskKey);
+
+        var restarted = NewService(() => now);
+        Assert.Equal("urgent", restarted.ReadReviewQueue()["AGT-NEWER"].Priority);
+        Assert.Equal(1, restarted.ReadReviewQueue()["AGT-NEWER"].Position);
+        Assert.Equal(newer.AttemptId,
+            restarted.ClaimNextReview("reviewer", "review-host", "instance", 60).ReviewAttempt!.AttemptId);
+        Assert.Equal(older.AttemptId,
+            restarted.ClaimNextReview("reviewer", "review-host", "instance", 60).ReviewAttempt!.AttemptId);
+    }
+
+    [Fact]
+    public void Review_priority_set_before_attempt_creation_is_applied_after_restart()
+    {
+        var first = NewService();
+        Assert.True(first.SetReviewPriority("AGT-LATER", "urgent"));
+        var restarted = NewService();
+        var run = restarted.AcquireRun("AGT-LATER", "PROJ-1", null, "runner", "host", 60,
+            "run-later").RunAttempt!;
+        var sha = new string('c', 40);
+        SettleRunWithEnvelope(restarted, run, sha, "settle-later");
+        restarted.CreateReviewAttempt(new CreateReviewAttemptRequest(
+            "AGT-LATER", "PROJ-1", sha, run.AttemptId,
+            "requirements", "policy", [], "review-later"));
+
+        Assert.Equal("urgent", restarted.ReadReviewQueue()["AGT-LATER"].Priority);
+        Assert.Equal("AGT-LATER",
+            restarted.ClaimNextReview("reviewer", "review-host", "instance", 60).ReviewAttempt!.TaskKey);
+    }
+
     /// <summary>
     /// When nothing else is queued, ClaimNextReview's own successor becomes
     /// the next claimable attempt instead of returning NotFound.

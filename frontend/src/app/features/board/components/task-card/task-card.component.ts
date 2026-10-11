@@ -42,6 +42,7 @@ import {
   EPIC_DETACH_ID,
   FILTER_DEPENDENTS_ID,
   DELETE_ID,
+  REVIEW_FIRST_ID,
   type CommitChainView,
   type CommitEmptyBadge,
   type DependencyChip,
@@ -90,6 +91,7 @@ if (typeof window !== 'undefined') {
   styleUrl: './task-card.component.scss',
 })
 export class TaskCardComponent implements OnInit, OnDestroy {
+  readonly autoReviewState = TaskState.AutoReview;
   readonly job = input.required<TaskInfo>();
   readonly epicSubTasks = input<readonly TaskInfo[]>([]);
   readonly compact = input<boolean>(false);
@@ -527,6 +529,15 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   onCardCtxMenuItemClick(ev: MenuItemClickEvent): void {
     const job = this.job();
+
+    if (ev.id === REVIEW_FIRST_ID) {
+      if (this.mutationsBlocked()) return;
+      this.jobs.moveJobToTop(job.id, job.watchPath).subscribe({
+        next: () => { this.notifications.success('Review moved to the front'); this.jobs.refresh(true); },
+        error: () => this.notifications.error('Could not prioritize review'),
+      });
+      return;
+    }
 
     if (ev.id === DELETE_ID) {
       if (this.mutationsBlocked()) return;

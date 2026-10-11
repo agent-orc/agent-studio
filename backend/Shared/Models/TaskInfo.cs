@@ -25,6 +25,10 @@ public record TaskInfo
     /// </summary>
     public TaskAcceptanceScope? AcceptanceScope { get; init; }
     public string State { get; init; } = "draft";
+    /// <summary>Operator review queue priority for a card in auto-review.</summary>
+    public string ReviewPriority { get; init; } = "normal";
+    /// <summary>One-based claimable review queue position, when an attempt is waiting.</summary>
+    public int? ReviewQueuePosition { get; init; }
     /// <summary>Consecutive runner infrastructure failure shown in Execution Hosts.</summary>
     public AgentStudio.Runner.RemoteClaimFailureState? RemoteClaimFailure { get; init; }
     /// <summary>Cold-storage marker when this task has an archive manifest.</summary>

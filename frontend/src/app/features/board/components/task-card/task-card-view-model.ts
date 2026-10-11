@@ -1798,6 +1798,7 @@ export const FILTER_DEPENDENTS_ID = 'filter-dependents';
  * the confirm/undo semantics.
  */
 export const DELETE_ID = 'delete-task';
+export const REVIEW_FIRST_ID = 'review-first';
 
 /**
  * Right-click context-menu rows for a card: copy actions + (for non-epic cards)
@@ -1822,6 +1823,11 @@ export function buildCardCtxMenuItems(
       id: FILTER_DEPENDENTS_ID,
       label: `Filter: tasks depending on ${job.key}`,
     });
+  }
+  if (job.state === TaskState.AutoReview) {
+    items.push({ kind: 'separator' });
+    items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
+      disabled: mutationsBlocked || job.reviewPriority === 'urgent' });
   }
 
   // Epic assignment is only meaningful for ordinary task cards - an epic is not

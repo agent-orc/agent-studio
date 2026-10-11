@@ -110,6 +110,7 @@ public static class TaskCrudEndpoints
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
             var liveLookup = liveStatus.BuildLookup(raw);
+            var reviewQueue = attemptAuthority.ReadReviewQueue();
             var jobs = raw.Select(job => betterCandidates.Attach(
                               WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
                               projectSettings.Get(job.ProjectName)))
@@ -119,6 +120,7 @@ public static class TaskCrudEndpoints
                           .WithPublishSignal(gitLookup.Publish)
                           .WithTestRunEvidence(gitLookup.TestRuns)
                           .WithReviewProjection(gitLookup.ReviewProjection)
+                          .Select(job => WithReviewQueue(job, reviewQueue))
                           .ToList();
             if (TaskQueryRequest.FromQuery(ctx.Request.Query) is { IsActive: true } query)
             {
@@ -168,6 +170,7 @@ public static class TaskCrudEndpoints
             var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
             var gitLookup = gitProjection.ReadCacheOnly(raw);
             var liveLookup = liveStatus.BuildLookup(raw);
+            var reviewQueue = attemptAuthority.ReadReviewQueue();
             var jobs = raw.Select(job => betterCandidates.Attach(
                               WithRuntime(job, router, runners, tokenLookup, verdictLookup, dependencyLookups.WaitsOn, dependencyLookups.TransitiveWaiters),
                               projectSettings.Get(job.ProjectName)))
@@ -177,6 +180,7 @@ public static class TaskCrudEndpoints
                           .WithPublishSignal(gitLookup.Publish)
                           .WithTestRunEvidence(gitLookup.TestRuns)
                           .WithReviewProjection(gitLookup.ReviewProjection)
+                          .Select(job => WithReviewQueue(job, reviewQueue))
                           .ToList();
             // F35: each lane is sorted using a per-project strategy. The kanban
             // mixes projects inside one lane, so the sort groups by project,
@@ -1019,10 +1023,50 @@ public static class TaskCrudEndpoints
         group.MapPost("/{jobId}/move-to-top", (string jobId, string? project, string? watchPath, HttpContext ctx, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
+            var reviewCard = ctx.RequestServices.GetRequiredService<TaskScannerService>().FindJob(jobId, watchPath);
+            if (reviewCard?.State == TaskStates.AutoReview)
+            {
+                if (!ProjectAccessAuthorization.AllowsTasks(ctx, [reviewCard.ProjectName], projects))
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                if (string.IsNullOrWhiteSpace(ctx.Request.Headers["X-Client-Id"]))
+                    return Results.BadRequest(new { error = "X-Client-Id is required" });
+                var authority = ctx.RequestServices.GetRequiredService<AttemptAuthorityService>();
+                authority.SetReviewPriority(reviewCard.TaskKey, "urgent");
+                var recorded = ctx.RequestServices.GetRequiredService<TimelineLog>().Append(reviewCard.FolderPath,
+                    TimelineEventKinds.ReviewPriorityChanged, OperatorActor(ctx), "Review priority set to urgent",
+                    details: new() { ["priority"] = "urgent" });
+                if (!recorded) return Results.Problem("Review priority changed but the operator ledger could not be written.");
+                var queue = authority.ReadReviewQueue();
+                int? reviewPosition = queue.TryGetValue(reviewCard.TaskKey, out var entry) ? entry.Position : null;
+                return Results.Ok(new { position = reviewPosition, priority = "urgent" });
+            }
             // Operator-initiated like the two move routes: the human actor lets
             // the ledger derive the operator cause of a lane change into Ready.
             var position = states.PromoteToReadyTop(jobId, watchPath, cause: OperatorActor(ctx));
             return position == 0 ? Results.NotFound() : Results.Ok(new { position });
+        });
+
+        group.MapPost("/{jobId}/review-priority", (string jobId, string? project, string? watchPath,
+            SetReviewPriorityRequest req, HttpContext ctx, TaskScannerService scanner,
+            AttemptAuthorityService authority, TimelineLog timeline, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            if (req.Priority is not ("urgent" or "normal"))
+                return Results.BadRequest(new { error = "priority must be urgent or normal" });
+            if (string.IsNullOrWhiteSpace(ctx.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required" });
+            watchPath = ResolveWatchPath(projects, project, watchPath);
+            var card = scanner.FindJob(jobId, watchPath);
+            if (card is null || card.State != TaskStates.AutoReview) return Results.NotFound();
+            if (!ProjectAccessAuthorization.AllowsTasks(ctx, [card.ProjectName], projects))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            authority.SetReviewPriority(card.TaskKey, req.Priority);
+            var recorded = timeline.Append(card.FolderPath, TimelineEventKinds.ReviewPriorityChanged,
+                OperatorActor(ctx), $"Review priority set to {req.Priority}",
+                details: new() { ["priority"] = req.Priority });
+            if (!recorded) return Results.Problem("Review priority changed but the operator ledger could not be written.");
+            var queue = authority.ReadReviewQueue();
+            int? position = queue.TryGetValue(card.TaskKey, out var entry) ? entry.Position : null;
+            return Results.Ok(new { priority = req.Priority, position });
         });
 
         group.MapPost("/{jobId}/change-project", (string jobId, string? project, string? watchPath, ChangeProjectRequest req, TaskStateMachine states, AgentStudio.Registry.ProjectRegistry projects) =>
@@ -1413,6 +1457,12 @@ public static class TaskCrudEndpoints
         return TimelineActors.Human(clientId ?? string.Empty);
     }
 
+    private static TaskInfo WithReviewQueue(TaskInfo job, IReadOnlyDictionary<string, ReviewQueueEntry> queue)
+    {
+        if (job.State != TaskStates.AutoReview || !queue.TryGetValue(job.TaskKey, out var entry)) return job;
+        return job with { ReviewPriority = entry.Priority, ReviewQueuePosition = entry.Position };
+    }
+
     /// <summary>
     /// AGT-2795: the decider identity for a decision-card write. Unlike
     /// <see cref="OperatorActor"/> this returns the raw client id (not a
@@ -1506,6 +1556,7 @@ public static class TaskCrudEndpoints
 public sealed record SetPlanningClosureRequest(bool Declared, string? Reason, string? DeclaredBy);
 
 public sealed record OlderBriefDeliveryDecisionRequest(string Decision);
+public sealed record SetReviewPriorityRequest(string Priority);
 
 public sealed record TaskReferenceStatusRequest(IReadOnlyList<string>? Keys);
 
