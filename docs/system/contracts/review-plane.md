@@ -8,6 +8,30 @@ is today's production implementation, and `task-server/TaskServerEndpoints.cs` +
 `TaskServerReviewStore.cs` is the standalone reference implementation for the
 target Server/Runner split. Both serve the same contract described here.
 
+## Target decision and execution boundary (ADR-0078)
+
+The Review Executor is a runner-host mode. Its claimable review attempt and
+every pipeline-library step run on the host holding the Task Server lease;
+model calls, build, tests, evidence capture and Git operations use that claim.
+The Operations Server performs only non-claimable host operations and is not a
+review or pipeline execution route. The Task Server owns the verdict, lease,
+budget and fenced transition record. The Orchestrator Engine alone chooses
+the next action from accepted review facts, including direct finding rounds,
+sweep rounds, operator continues and delivery-gate decisions. It writes
+versioned intent for Task Server validation and application.
+
+After a blocking review, each fix round uses the reviewed result ref and SHA
+as its continuation base and rebases onto the current integration branch.
+Every automatic round counts against one budget for the card's lifetime. At
+budget end, a non-test block becomes a concern with a linked follow-up card;
+`build-tests` or `tests-and-evidence` blocks escalate with a receipt. These
+are target decisions from
+[ADR-0078](../architecture/decisions/adr-archive.md#adr-0078---engine-decision-authority-and-runner-host-execution-2026-10-11),
+not a claim that the production monolith and standalone server already have
+identical behavior. Review host separation is open as AGT-W65 D19; Engine
+instance count and the proposed Operations Broker name remain open as D20 and
+D21.
+
 ## Endpoints
 
 | Endpoint | Purpose |

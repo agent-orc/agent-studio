@@ -1935,3 +1935,57 @@ Provider selection without argv construction:
 and [`Runner guard`](../../../../runner.Tests/CliInvocationCentralizationGuardTests.cs).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0078 - Engine decision authority and runner-host execution (2026-10-11)
+
+**Decision.** The Orchestrator Engine is the only process that chooses task
+transitions, between-step actions, periodic checks, planners and model-backed
+advice. It reads Task Server facts and writes versioned intent; the Task Server
+validates authority floors and applies fenced transitions. Shared policy code
+may support the monolith during migration, but the target has one decider.
+
+A unit admitted by the Task Server as claimable work executes on the runner host
+holding its lease. Coding, review and gate attempts and orchestrator chat turns
+keep their model calls, preparation, build, tests, commit and push on that path.
+The Operations Server brokers only non-claimable host operations, such as
+developer-seat file and Git actions, host lifecycle, diagnostics and
+person-requested rendering or capture. It does not execute pipeline steps or
+choose task transitions; its results never change task state by themselves.
+Engine and Operations Server are separate processes with separate credentials,
+stores and lifecycles. They may share a host or deployment unit.
+
+A fix round continues on the reviewed result ref and SHA and rebases onto the
+current integration branch. Direct finding rounds, sweep fix rounds and
+operator continues use that continuation base. Every automatic round consumes
+one per-card round budget. At budget end, non-test blocks degrade to concerns
+with a linked follow-up card; `build-tests` and `tests-and-evidence` blocks
+escalate with a receipt.
+
+**Context.** AGT-W65 reconstructed duplicate and divergent transition policy in
+the monolith and standalone path, a fix round that restarted from the
+integration branch, and inconsistent budget enforcement. AGT-W49 described a
+possible Operations Server path for admitted run and review steps although
+runner claims already own those units. The operator selected AGT-W65 D14 A,
+D15 A, D16 A, D17 A and D18 A on 11 October 2026.
+
+**Amendments.** ADR-0032's rule that an agent classifies and deterministic
+policy decides remains; the policy's target process is the Engine. ADR-0063's
+durable Task Server authority remains; its runtime role count is now five with
+the Engine and Operations Server. ADR-0076's Operations Server authority and
+security boundary remains; its consequence is restricted to non-claimable host
+operations, never claimable pipeline work.
+
+**Open decisions.** AGT-W65 D19 review host separation, D20 number of Engine
+instances, and D21 the Operations Broker name remain open. No deployment
+profile fixes those choices here.
+
+**Implementation pointers.** [Target architecture](../../../concepts/distributed-agent-studio-target-architecture.md),
+[Operations backchannel](../../contracts/operations-backchannel.md),
+[Review Plane](../../contracts/review-plane.md), and
+[AGT-W65 decisions](../../../task-server-bus/index.html#d14-to-d21).
+These are target contracts; the production monolith still hosts decisions
+until the migration is delivered.
+
+**Status.** Accepted.

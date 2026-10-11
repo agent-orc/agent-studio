@@ -7,6 +7,9 @@ records D1, D2 and D4. The
 records the selected D3 scope and original constraints. The operator's
 2026-09-26 instruction places the expansion on AGT-2907 and accepts this
 contract and outbound channel as its first delivery stage.
+[ADR-0078](../architecture/decisions/adr-archive.md#adr-0078---engine-decision-authority-and-runner-host-execution-2026-10-11)
+restricts this channel to non-claimable host operations and places all
+transition and planner decisions in the Orchestrator Engine.
 
 ## Current implementation and remaining gate
 
@@ -38,13 +41,29 @@ the baseline card nor its delivery is blocked by the later parity work.
 | Resource | Authority |
 |---|---|
 | Tasks, lanes, runs, reviews, accepted evidence, projects and workspace identity | Task Server |
-| Orchestrator sessions, context, budgets, model policy, decisions and accepted responses | Task Server |
+| Orchestrator sessions, context, budgets, accepted responses and fenced transitions | Task Server |
+| Transition decisions, between-step policy, periodic checks, planners and model-backed advisors | Orchestrator Engine |
 | Operation catalogue, command idempotency, bounded attempts and operational events | Operations Server |
 | Host tools, roots, filesystem and isolated executable actions | Operations Agent |
 | Human sessions, browser Origin and CSRF, server-side upstream credentials | Connector or separate LAN browser edge |
 
-Existing coding and review Runner protocols continue to use Task Server. The
-new channel does not replace their admission or outcome handling.
+Claimable coding, review and gate attempts and orchestrator chat turns execute
+on the runner host holding the Task Server lease. Their model calls,
+preparation, build, lint, tests, capture, commit and push stay within that
+claim, including pipeline-library steps. No pipeline step executes through the
+Operations Server. Its outbound Operations Agents perform only non-claimable
+host operations: developer-seat files and Git actions, host lifecycle and
+diagnostics, and rendering or capture requested by a person or frontend.
+Operation results cannot decide or apply task transitions. D19 review host
+separation, D20 Engine instance count and D21 the Operations Broker name remain
+open in [AGT-W65](../../task-server-bus/index.html#d19-review-host).
+
+The Engine and Operations Server have separate processes, credentials, stores
+and lifecycles. A workstation, one-box Compose deployment or distributed
+installation may place them on the same host or deployment unit. The Engine
+uses Task Server decision claims and versioned intent; the Operations Server
+uses its own service principal and agent protocol. A failure in one does not
+grant the other its authority.
 
 ## Protocol and access
 
@@ -118,7 +137,9 @@ endpoint, stale fence, expired permit, revoked credential, Task Server outage,
 read-only mode or maintenance mode fails closed. A Task Server restart
 quarantines live run authority according to its existing contract; possession
 of the old opaque permit does not bypass that quarantine. Only coding-run
-subjects are implemented; review and orchestrator subjects fail closed.
+subjects are implemented; review and orchestrator subjects fail closed. That
+foundation permit does not authorize routing a claimable pipeline step through
+the Operations Server under ADR-0078.
 
 ## Persistence, failure and replay
 
@@ -196,6 +217,11 @@ LAN-Origin denial, public-demo denial, cutover and rollback. Workstation preserv
 the local Connector boundary; distributed deployment requires private TLS over
 WireGuard and outbound-only agents. These profiles must not receive a production
 parity label from this rehearsal.
+
+Across these profiles, Engine and Operations Server remain separate processes.
+The workstation Connector remains a browser edge; one-box may package both
+processes in one Compose project; distributed placement may separate hosts.
+No profile assigns an Engine replica count while AGT-W65 D20 is open.
 
 ## Dependent work
 

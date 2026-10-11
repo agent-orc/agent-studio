@@ -1,7 +1,7 @@
 # Distributed Agent Studio target architecture
 
-Status: canonical target picture, amended by ADR-0076 on 2026-09-25. This page defines the intended
-separation of Agent Studio, Task Server, Agent Runner, and Operations Server. It is a product
+Status: canonical target picture, amended by ADR-0076 and ADR-0078 on 2026-10-11. This page defines the intended
+separation of Agent Studio, Task Server, Orchestrator Engine, Agent Runner, and Operations Server. It is a product
 and architecture target, not a claim that every boundary already ships.
 
 This page is the coordinating source for the implementation tasks listed in
@@ -11,34 +11,52 @@ security, or workspace-organization decisions here.
 
 ## 1. Decision summary
 
-Agent Studio for Software is one product made from four independently
+Agent Studio for Software is one product made from five independently
 deployable runtime components:
 
 1. **Agent Studio** is the replaceable human surface. It is primarily the
    Angular application and, where needed, a thin surface-specific BFF. Closing
    it must not stop work.
 2. **Task Server** is the always-on control plane and durable system of record.
-   It owns users, workspaces and project identity, tasks, orchestration
+   It owns users, workspaces and project identity, tasks, durable orchestration
    state, leases, events, artifacts, audit, and management APIs.
-3. **Agent Runner** is the execution plane. It owns host capabilities, code
+3. **Orchestrator Engine** is the sole decider for task transitions, between-step
+   policy, periodic checks, planners, and model-backed advisors. It claims
+   decision occurrences from the Task Server and requests fenced transitions;
+   it does not own task truth or execute host work.
+4. **Agent Runner** is the execution plane. It owns host capabilities, code
    checkouts, coding-agent processes, tool processes, containment, and bounded
    delivery of typed events and artifacts to the Task Server.
-
-4. **Operations Server** brokers bounded executable host and developer-seat
+5. **Operations Server** brokers bounded, non-claimable host and developer-seat
    operations through outbound Operations Agents. It accepts service principals,
    not browser sessions. Task Server remains the authority for task-linked permits
    and all orchestration sessions. Studio edges hold independent upstream credentials.
 
-Shared contracts and orchestration libraries remain modules, not runtime roles.
+Shared contracts and policy libraries remain modules, not runtime roles. The
+Engine and Operations Server are separate processes with separate credentials
+and lifecycles; a deployment unit or host may contain both processes.
 [ADR-0076](../system/architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
-amends the original three-component decision. The selected standard is one-box
+[ADR-0078](../system/architecture/decisions/adr-archive.md#adr-0078---engine-decision-authority-and-runner-host-execution-2026-10-11)
+amends the original three-component decision and clarifies its execution boundary. The selected standard is one-box
 Docker after full route and security parity. The initial service and read-only
 agent do not yet establish that parity. See the
 [Operations contract and remaining gates](../system/contracts/operations-backchannel.md).
 
-The task/run topology below remains valid. The additional operations path is
+Claimable work, including coding, review and gate attempts and orchestrator
+chat turns, runs on the runner host holding the Task Server lease. Its model
+calls, preparation, build, tests, commit and push stay in that claim. Pipeline
+steps do not execute through the Operations Server. The additional operations path is
 `frontend backend -> Operations Server <- outbound Operations Agent`, with
-Task Server permit introspection on admission, dispatch, renewal and results.
+Task Server permit introspection when a task-linked host operation is admitted,
+dispatched, renewed or reported. An operation result cannot change task state.
+
+After a blocking review, every automatic or operator-requested fix round
+continues from the reviewed result ref and SHA, rebasing onto the current
+integration branch. Every automatic round consumes the single per-card round
+budget. At exhaustion, non-test blocks become concerns with a linked follow-up
+card; `build-tests` and `tests-and-evidence` blocks escalate with a receipt.
+Review host separation (D19), engine instance count (D20), and the proposed
+Operations Broker name (D21) remain open.
 
 The release-defining scenario is:
 
@@ -75,43 +93,23 @@ autonomous project continues" is a separate future research question.
 ## 3. Target topology
 
 ```text
-                         HTTPS, one Task Server origin
-                                      |
-                 +--------------------+--------------------+
-                 |                                         |
-        Agent Studio clients                    Task Server management
-      Angular SPA, optional BFF                 bootstrap/recovery console
-                 |                                         |
-                 +--------------------+--------------------+
-                                      |
-                         +------------+-------------+
-                         |      TASK SERVER         |
-                         | control plane and truth  |
-                         |                          |
-                         | users and authorization  |
-                         | workspaces and projects  |
-                         | tasks and initiatives    |
-                         | orchestration state      |
-                         | leases and fencing       |
-                         | events and artifacts     |
-                         | audit and management API |
-                         +------------+-------------+
-                                      |
-                     outbound authenticated runner channel
-                                      |
-              +-----------------------+-----------------------+
-              |                                               |
-      +-------+--------+                              +-------+--------+
-      | AGENT RUNNER A |                              | AGENT RUNNER B |
-      | execution plane|                              | execution plane|
-      | CAR adapters   |                              | CAR adapters   |
-      | repo/worktrees |                              | repo/worktrees |
-      | CLI/tools      |                              | CLI/tools      |
-      | local spool    |                              | local spool    |
-      +-------+--------+                              +-------+--------+
-              |                                               |
-              +---------------- Git remotes ------------------+
-                         code channel, not task truth
+AGENT STUDIO clients and recovery console
+          | HTTPS and authenticated browser edge
+          v
+    TASK SERVER <---- versioned decision intent ---- ORCHESTRATOR ENGINE
+    durable truth       fenced occurrence claims     only transition decider
+       |     |
+       |     +---- runner claims, leases, reports ---- AGENT RUNNER HOSTS
+       |                                          coding, review, gates, chat
+       |                                          CLI, tools, Git, evidence
+       |
+       +---- permit introspection ---- OPERATIONS SERVER
+                                      non-claimable host commands only
+                                          |
+                                          +---- outbound OPERATIONS AGENTS
+                                                host diagnostics and actions
+
+Git remotes carry code between runner hosts, not task truth.
 ```
 
 Browsers never connect directly to a Runner for task mutations. Runners initiate
@@ -123,9 +121,10 @@ carries task authority, events, evidence metadata, and commands.
 | Component | Owns | Must not own |
 |---|---|---|
 | **Agent Studio** | Human interaction, board and project views, task authoring, orchestration observation, admin UI, explicit operator commands, local UI preferences | Durable task state, lease authority, CLI process handles, hidden filesystem writes, long-running service liveness |
-| **Task Server** | Canonical resources and IDs, Task API, orchestration state machine, scheduling/admission, users and authorization, service identities, durable leases/fences, event and artifact ingestion, audit, backup/restore metadata, management API | Coding-agent processes, host toolchains, repository worktrees, Angular component state |
+| **Task Server** | Canonical resources and IDs, Task API, durable orchestration state, scheduling/admission, users and authorization, service identities, durable leases/fences, event and artifact ingestion, audit, backup/restore metadata, management API | Transition and planner decisions, coding-agent processes, host toolchains, repository worktrees, Angular component state |
+| **Orchestrator Engine** | Fenced decision claims, transition policy, between-step decisions, periodic checks, planners and model-backed advisors | Durable task truth, independent lane writes, host execution, Operations Server commands or credentials |
 | **Agent Runner** | Host registration, capability probes, project workspaces, CodingAgentRunner integration, process containment, execution of an admitted run plan, typed output, artifact upload, bounded local spool | Global task namespace, user passwords, arbitrary lane changes, autonomous claims, policy changes, release authority |
-| **Operations Server** | Versioned catalogue, scoped commands, bounded attempts, agent capabilities and operational evidence | Task mutation, workspace identity, orchestration sessions, permit minting, browser cookies, native execution |
+| **Operations Server** | Versioned catalogue, scoped non-claimable host commands, bounded attempts, agent capabilities and operational evidence | Task mutation or transition decisions, workspace identity, orchestration sessions, permit minting, browser cookies, native execution, claimable pipeline steps |
 | **Shared contracts** | Versioned resource DTOs, event envelopes, command/result schemas, compatibility rules, deterministic policy primitives | Network hosting, persistence technology, UI projections, OS process ownership |
 
 **Implementation status (2026-09-24).** Local Studio runs and detached Agent
@@ -135,15 +134,29 @@ and process containment, but no longer own a second CLI argv or raw-spawn path.
 
 ### Where orchestration runs
 
-The Task Server owns the durable orchestration state machine. It may send an
-immutable run plan to a Runner and accept typed results, but the Runner cannot
-extend budgets or decide that another global task is available. Deterministic
-policy code may be packaged as a shared library and executed near the work for
-efficiency. Its decisions become authoritative only through a fenced Task
-Server transition.
+The Task Server owns durable orchestration state and fenced transitions. The
+Orchestrator Engine alone decides transitions, step policy, periodic checks,
+planners and advisors. It reads normalized Task Server facts, claims decision
+occurrences and requests bounded actions through the Task Server API. The Task
+Server validates and persists those actions; it does not run a competing
+decider. It may send an immutable run plan to a Runner and accept typed results,
+but the Runner cannot extend budgets or decide that another global task is
+available. Shared deterministic policy code does not create another decider.
 
 This split lets post-processing and reissue continue when Agent Studio is
 closed without turning every Runner into an independent Task Server.
+
+### Process forms by deployment profile
+
+| Profile | Process form |
+|---|---|
+| Workstation | Task Server, Engine, Operations Server and runner host roles run as separate processes on the workstation where deployed. The local Connector remains the browser edge. |
+| One-box Docker | Task Server, Engine and Operations Server run as separate processes or containers in one Compose deployment; runner-host claims and outbound Operations Agents retain their distinct protocols. Only the HTTPS browser edge is published. |
+| Distributed | Task Server, Engine and Operations Server may occupy separate hosts or share deployment infrastructure, but Engine and Operations Server remain separate processes with distinct credentials. Runner hosts claim task work; Operations Agents perform only non-claimable host operations. |
+
+These are process boundaries, not instance-count decisions. D20 remains open;
+no profile is assigned a required Engine replica count here. D19 leaves review
+host placement open. D21 leaves the Operations Broker working name open.
 
 ## 5. Independent lifecycles
 
