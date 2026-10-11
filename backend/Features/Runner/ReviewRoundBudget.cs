@@ -92,10 +92,13 @@ public static class ReviewRoundBudgetPolicy
         // The deterministic build/test gate owns its failure. Never turn that
         // failure, or a mixed review containing it, into an acceptance.
         if (blocked.Contains("build-tests", StringComparer.OrdinalIgnoreCase)
+            || blocked.Contains("review-verification", StringComparer.OrdinalIgnoreCase)
             || blocked.Contains("tests-and-evidence", StringComparer.OrdinalIgnoreCase))
             return new(roundNumber, maximumRounds, [],
                 blocked.Contains("build-tests", StringComparer.OrdinalIgnoreCase)
-                    ? "build-tests" : "tests-and-evidence");
+                    ? "build-tests"
+                    : blocked.Contains("review-verification", StringComparer.OrdinalIgnoreCase)
+                        ? "review-verification" : "tests-and-evidence");
 
         string? recurrent = null;
         foreach (var aspect in blocked)
