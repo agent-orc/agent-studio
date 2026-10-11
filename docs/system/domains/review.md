@@ -748,13 +748,11 @@ the two add roughly one and two minutes to a review, measured in the exact form
 --logger console;verbosity=normal --blame-hang-timeout 10m`): historically 691
 runner cases in 62 s, the same wall time as the bare command. xUnit collection
 parallelism therefore stays on for these gates, which is what makes them able to
-see a race like AGT-2864 at all. The backend test project now copies
-`xunit.runner.json` with two collection threads into its output. Six simultaneous
-backend suites at two threads each fit the 12-core review host budget; other
-coding and gate test processes can still contend with that budget. A two-thread
-runner-suite sample was 100 seconds slower than a twelve-thread sample under
-ten concurrent test processes, so that cap was not retained for runner tests.
-Task Server test parallelism still needs its own measurement. The former
+see a race like AGT-2864 at all. A fixed two-thread xUnit cap was measured and
+removed: under ten concurrent test processes it made the 1,298-test Runner
+suite 100 seconds slower, and under six concurrent test processes it made four
+backend endpoint tests 8.5 seconds slower. No xUnit config is retained until
+per-suite and admission measurements justify one. The former
 `-p:ParallelizeTestCollections=false` MSBuild property was inert and has been
 removed. A test that makes no progress for ten minutes now triggers VSTest's
 hang diagnostics.
