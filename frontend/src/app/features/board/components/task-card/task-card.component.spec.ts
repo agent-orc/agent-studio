@@ -336,7 +336,12 @@ describe('TaskCardComponent (smoke)', () => {
     fixture.detectChanges();
     expect(fixture.componentInstance.executionBadge()?.tone).toBe('running');
     expect(fixture.componentInstance.isRunning()).toBe(true);
-    expect(fixture.nativeElement.querySelector('[data-testid="task-card-progress"]')).toBeNull();
+    const card = () => fixture.nativeElement.querySelector('[data-testid="task-card"]') as HTMLElement | null;
+    expect(card()?.getAttribute('data-running')).toBe('true');
+    expect(card()?.classList.contains('task-card--running')).toBe(true);
+    expect(card()?.querySelector('[data-testid="task-card-progress"]')).toBeNull();
+    expect(card()?.querySelector('[data-testid="task-card-state"]')).toBeNull();
+    expect(card()?.textContent).not.toContain('Running live');
 
     // Same execution but lane has moved to 4-auto-review → suppress.
     for (const state of ['4-auto-review', '5-human-review', '6-completed', '4-review']) {
@@ -347,7 +352,11 @@ describe('TaskCardComponent (smoke)', () => {
       fixture.detectChanges();
       expect(fixture.componentInstance.executionBadge(), `state=${state}`).toBeNull();
       expect(fixture.componentInstance.isRunning(), `state=${state}`).toBe(false);
-      expect(fixture.nativeElement.querySelector('[data-testid="task-card-progress"]'), `state=${state}`).toBeNull();
+      expect(card()?.getAttribute('data-running'), `state=${state}`).toBeNull();
+      expect(card()?.classList.contains('task-card--running'), `state=${state}`).toBe(false);
+      expect(card()?.querySelector('[data-testid="task-card-progress"]'), `state=${state}`).toBeNull();
+      expect(card()?.querySelector('[data-testid="task-card-state"]'), `state=${state}`).toBeNull();
+      expect(card()?.textContent, `state=${state}`).not.toContain('Running live');
     }
   });
 

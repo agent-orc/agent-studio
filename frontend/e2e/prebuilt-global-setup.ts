@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -23,5 +23,14 @@ export default async function globalSetup(): Promise<void> {
   const expected = resolve(process.env.PW_E2E_WORKSPACE!, 'projects/agent-studio');
   if (!paths.some(item => item.path === expected)) {
     throw new Error('Prebuilt backend is not using the isolated Playwright workspace.');
+  }
+  if (process.env.PW_E2E_TIMING_FILE && process.env.PW_E2E_TEST_START_MS) {
+    writeFileSync(process.env.PW_E2E_TIMING_FILE, JSON.stringify({
+      host: process.env.HOSTNAME ?? 'unknown',
+      startToReadyMs: Date.now() - Number(process.env.PW_E2E_TEST_START_MS),
+      backendPort: process.env.PW_E2E_BACKEND_PORT,
+      frontendPort: process.env.PW_E2E_FRONTEND_PORT,
+      sourceCommit: sha,
+    }, null, 2) + '\n');
   }
 }
