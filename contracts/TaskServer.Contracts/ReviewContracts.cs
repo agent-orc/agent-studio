@@ -337,7 +337,9 @@ public sealed record ReviewCommandEvidenceDto(
     /// <summary>Class-only filter applied to a clean repeat; Arguments retain the frozen plan.</summary>
     string? RepeatFilter = null,
     /// <summary>Failed test names observed passing in a class-only clean repeat.</summary>
-    IReadOnlyList<string>? RepeatObservedTests = null);
+    IReadOnlyList<string>? RepeatObservedTests = null,
+    /// <summary>Original candidate failures, retained after a repeat clears comparison failures.</summary>
+    IReadOnlyList<string>? InitialFailures = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run

@@ -594,7 +594,9 @@ fingerprinted and counted. Review report admission uses
 `ReviewFlakeEvidencePolicy` through the shared diagnosis policy on both the
 Task Server and monolith paths. A retry flag or an item disappearing from
 failed retry output is insufficient: the evidence must include a successful
-clean repeat of the same command and arguments, commit, and tree. Unsupported
+clean repeat on the same commit and tree. Its evidence retains the frozen plan
+arguments. A class-only repeat declares the added filter and the original
+failed test names observed passing; both report authorities check them. Unsupported
 command or reviewer flake claims become `unclassified-first-occurrence`
 (the diagnosis contract's undecidable result), with the missing proof stated.
 Named items from unsupported command claims enter the existing fingerprint
@@ -775,9 +777,14 @@ the plan contract rather than a configuration entry.
 
 When a .NET review test step is red, the clean repeat now keeps the original
 category filter and reruns only the classes that reported failures, up to five
-classes and ten failed tests. An unparseable failure or a chained command keeps
-the full clean repeat. The original full-suite failure remains in the review
-evidence and the baseline comparison still determines attribution.
+classes and ten failed tests. An aborted or crashed run, an unparseable failure,
+or a chained command keeps the full clean repeat. A successful class subset
+that does not report every previously failed test triggers a full repeat; a
+green exit without those tests is not flake proof. The original full-suite
+failure remains in the review evidence and the baseline comparison still
+determines attribution. For a planned `--no-build` test, fresh baseline
+worktrees and clean-repeat clones replay the preceding frozen build after
+dependency preparation so the test assembly exists.
 
 ## Key code and tests
 

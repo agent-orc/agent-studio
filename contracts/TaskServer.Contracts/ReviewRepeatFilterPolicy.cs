@@ -13,9 +13,9 @@ public static class ReviewRepeatFilterPolicy
         var candidate = commands.FirstOrDefault(command => command.StepId == repeat.StepId
             && command.Phase == "verification" && command.WorkspaceRole == "candidate");
         if (candidate is null || repeat.RepeatObservedTests is null) return false;
-        var failed = (candidate.NewFailures ?? [])
+        var failed = (candidate.InitialFailures ?? (candidate.NewFailures ?? [])
             .Concat(candidate.PreExistingFailures ?? [])
-            .Concat(candidate.FlakyQuarantinedFailures ?? [])
+            .Concat(candidate.FlakyQuarantinedFailures ?? []).ToArray())
             .Select(WithoutParameters)
             .Distinct(StringComparer.Ordinal)
             .ToArray();

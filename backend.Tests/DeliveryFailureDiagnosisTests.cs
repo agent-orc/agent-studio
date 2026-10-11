@@ -310,7 +310,10 @@ public sealed class DeliveryFailureDiagnosisTests
         var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
         {
             RetryPerformed = true,
-            FlakyQuarantinedFailures = ["Product.Tests.Guard"],
+            InitialFailures = ["Product.Tests.Guard"],
+            NewFailures = [],
+            PreExistingFailures = [],
+            FlakyQuarantinedFailures = [],
         };
         var repeat = failed with
         {

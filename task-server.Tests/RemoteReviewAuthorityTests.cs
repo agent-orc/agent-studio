@@ -1847,15 +1847,18 @@ public sealed partial class RemoteReviewAuthorityTests
         var request = PassingReport(claim);
         var candidate = request.Commands[0] with
         {
+            ExitCode = 1,
             BaselineSha = new string('c', 40), BaselineExitCode = 0,
             NewFailures = [], PreExistingFailures = [], RetryPerformed = true,
-            FlakyQuarantinedFailures = ["Product.ProcessTiming"],
+            InitialFailures = ["Product.ProcessTiming"],
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.Intermittent, 0.9, ["clean-repeat=green"]),
         };
         request = request with
         {
             Commands = [candidate, candidate with
             {
-                Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
                 FlakyQuarantinedFailures = [],
                 RepeatFilter = "FullyQualifiedName~Product.",
                 RepeatObservedTests = observed ? ["Product.ProcessTiming"] : [],
@@ -1866,8 +1869,9 @@ public sealed partial class RemoteReviewAuthorityTests
 
         var report = await store.ReportReviewAsync(
             claim.Attempt!.AttemptId, request, "review-a", default);
-        Assert.Equal(observed ? "Pass" : "ReviewInfra", report.Outcome);
-        if (!observed) Assert.Equal("CommandPlanMismatch", report.FailureClassification);
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(observed ? DeliveryFailureDiagnosis.Intermittent : "CommandPlanMismatch",
+            report.FailureClassification);
     }
 
     [Fact]

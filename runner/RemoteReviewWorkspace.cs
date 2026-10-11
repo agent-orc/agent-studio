@@ -1379,7 +1379,8 @@ public sealed class RemoteReviewWorkspace
                   ?? _subject.Plan.Commands.FirstOrDefault(item => item.StepId == stepId)?.LibraryStep,
             comparison?.Diagnosis,
             repeatFilter,
-            repeatObservedTests);
+            repeatObservedTests,
+            comparison?.InitialFailures);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1681,6 +1682,7 @@ public sealed class RemoteReviewWorkspace
                 ["rev-parse", "HEAD^{tree}"],
                 environment,
                 ct);
+            await BuildBeforeNoBuildAsync(command, baselinePath, environment, "BaselineUnavailable", ct);
             execution = await RunCommandAsync(command, baselinePath, ct, environment);
             commands.Add(await AddCommandEvidenceAsync(
                 command.StepId,
@@ -1805,18 +1807,7 @@ public sealed class RemoteReviewWorkspace
             await ExecutePreparationAsync(
                 path, "clean-repeat", _subject.ExpectedResultSha, environment,
                 commands, artifacts, ct, restoreCache: false);
-            if (selectedCommand.Arguments.Any(argument => argument.Contains("--no-build", StringComparison.Ordinal)))
-            {
-                var build = ReviewTargetedRerunPolicy.PrecedingBuild(_subject.Plan, plannedCommand);
-                if (build is null)
-                    throw new ReviewInfrastructureException("CleanRepeatUnavailable",
-                        $"Clean repeat for '{plannedCommand.StepId}' needs a build before --no-build, but the plan has no preceding build step.");
-                var built = await RunCommandAsync(build, path, ct, environment);
-                if (!built.Process.Success || built.Signal is not null)
-                    throw new ReviewInfrastructureException("CleanRepeatUnavailable",
-                        $"Clean repeat build '{build.StepId}' failed: exit={built.Process.ExitCode}; signal={built.Signal ?? "none"}.");
-                _log($"review clean repeat built test assemblies with planned step={build.StepId}");
-            }
+            await BuildBeforeNoBuildAsync(plannedCommand, path, environment, "CleanRepeatUnavailable", ct);
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
             var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
             var command = selectedCommand;
@@ -1862,6 +1853,26 @@ public sealed class RemoteReviewWorkspace
             try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
             catch (IOException exception) { _log($"clean repeat clone removal failed: {exception.Message}"); }
         }
+    }
+
+    private async Task BuildBeforeNoBuildAsync(
+        ReviewCommandDto command,
+        string workspacePath,
+        IReadOnlyDictionary<string, string?> environment,
+        string classification,
+        CancellationToken ct)
+    {
+        if (!command.Arguments.Any(argument => argument.Contains("--no-build", StringComparison.Ordinal)))
+            return;
+        var build = ReviewTargetedRerunPolicy.PrecedingBuild(_subject.Plan, command);
+        if (build is null)
+            throw new ReviewInfrastructureException(classification,
+                $"Isolated test '{command.StepId}' needs a build before --no-build, but the plan has no preceding build step.");
+        var execution = await RunCommandAsync(build, workspacePath, ct, environment);
+        if (!execution.Process.Success || execution.Signal is not null)
+            throw new ReviewInfrastructureException(classification,
+                $"Isolated test build '{build.StepId}' failed: exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
+        _log($"review isolated test built assemblies for step={command.StepId} with planned step={build.StepId}");
     }
 
     private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
