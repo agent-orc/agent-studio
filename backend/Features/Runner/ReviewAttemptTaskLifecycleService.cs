@@ -217,19 +217,23 @@ public sealed class ReviewAttemptTaskLifecycleService
     {
         ArgumentNullException.ThrowIfNull(buildPlan);
 
-        lock (_gate)
+        var tasks = BuildTaskIndex(_scanner.ScanAllJobsWithArchive());
+        var pending = _authority.ListPendingReviewAttempts();
+        var replanned = new List<ReviewAttemptDto>();
+        foreach (var review in pending)
         {
-            var tasks = BuildTaskIndex(_scanner.ScanAllJobsWithArchive());
-            var replanned = new List<ReviewAttemptDto>();
-            foreach (var review in _authority.ListPendingReviewAttempts())
+            if (!tasks.TryGetValue(review.TaskKey, out var task)
+                || !string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Git diff and test selection may inspect thousands of files. A
+            // claim is free to win while this plan is built; the authority
+            // refuses the later write if the attempt is no longer pending.
+            var plan = buildPlan(task, review);
+            if (plan is null) continue;
+
+            lock (_gate)
             {
-                if (!tasks.TryGetValue(review.TaskKey, out var task)
-                    || !string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var plan = buildPlan(task, review);
-                if (plan is null) continue;
-
                 var result = _authority.ReplanPendingReview(review.AttemptId, plan);
                 if (result.Status != AttemptWriteStatus.Accepted || result.ReviewAttempt is not { } updated)
                     continue;
@@ -249,8 +253,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                     },
                 });
             }
-            return replanned;
         }
+        return replanned;
     }
 
     public IReadOnlyList<ReviewAttemptDto> ReplanQueuedReviewAttempts(
