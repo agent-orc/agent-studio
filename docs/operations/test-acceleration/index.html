@@ -420,21 +420,23 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
     <tr><td>P2</td><td><span class="pill part">part</span></td><td><code>62bd9f6ae</code></td><td>Runner A/B: 12 threads, 164.35 s TRX wall → 2 threads, 264.23 s (+61%); the runner cap was rejected. Backend now has a 2-thread config; its before/after is still being measured.</td><td><code>results/p2-twelve-summary.json</code>, <code>results/p2-two-summary.json</code> and matching TRX; agent-runner-01, 10 concurrent suites, load 43.95 → 32.69</td></tr>
     <tr><td>P3</td><td><span class="pill part">part</span></td><td><code>14be298bb</code></td><td>Full clean repeat of the 8,982-test suite: 85.58 min → failed-class selection implemented; the two failed classes in that run summed 634 s (10.57 min), a historical estimate rather than a timed clean repeat. The ≤5 min retry target remains unproved.</td><td><code>results/p1-baseline-7850e.json</code> (agent-runner-01, 6 suites, load 28–42); <code>results/p3-p4-policy_net10.0_20261011125404.trx</code> (agent-runner-01, about 10 suites)</td></tr>
     <tr><td>P4</td><td><span class="pill part">part</span></td><td><code>62bd9f6ae</code></td><td>VSTest default per-test hang timeout 60 min → configured 10 min; 15 policy tests passed. No real hang occurred, so dump capture remains unmeasured.</td><td><code>dotnet test --help</code> on agent-runner-01; <code>results/p3-p4-policy_net10.0_20261011125404.trx</code>, about 10 concurrent suites</td></tr>
-    <tr><td>P5</td><td><span class="pill open">open</span></td><td></td><td></td><td>waits for D1</td></tr>
-    <tr><td>P6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B2</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B3</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B5</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B7</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B8</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B9</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B10</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>P5</td><td><span class="pill open">open</span></td><td></td><td></td><td>D1 recommendation A selected; next: guard review selection behind a switch and attach scheduled full-run receipts.</td></tr>
+    <tr><td>P6</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: class shards behind a switch, using P1 class timings to balance shards.</td></tr>
+    <tr><td>B1</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: shared host with fresh workspace roots; top four classes sum 2,446 s in run 7850e.</td></tr>
+    <tr><td>B2</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: benchmark one template Git repository copied per test against the 113 git-init sites.</td></tr>
+    <tr><td>B3</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: one Eventually helper and fake clock for the 113 backend sleeps/polls.</td></tr>
+    <tr><td>B4</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: tag Perf tests and add a scheduled lane before excluding them from review.</td></tr>
+    <tr><td>B5</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: measure test and production boot by hosted service, then defer scans without changing request results.</td></tr>
+    <tr><td>B6</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: collect task-server per-class TRX; baseline is 691 tests in 19.9 min versus a 3 min target.</td></tr>
+    <tr><td>B7</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: reproduce the three named full-run flakes under controlled concurrency.</td></tr>
+    <tr><td>B8</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: classify 283 process-spawn sites and fake only processes that are not the subject.</td></tr>
+    <tr><td>B9</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: measure the slow endpoint paths against the 30 ms operation budget; keep Git off request paths.</td></tr>
+    <tr><td>B10</td><td><span class="pill open">open</span></td><td></td><td></td><td>Already configured with --no-build for all three review test projects; verify against the build/test logs.</td></tr>
   </tbody>
 </table>
 </div>
+<p><b>Target gap:</b> the backend suite remains at 85.58–93.22 min against ≤15 min under review concurrency; task-server remains at 19.9 min against ≤3 min. The current clean-repeat class estimate of 10.57 min for two failures exceeds the ≤5 min retry target. B1 and B5 are the next backend levers; neither has a measured after value yet.</p>
+<p>All <code>results/</code> paths in this section refer to <code>/home/agent/runner-work/tasks/AGT-3049/results/</code>.</p>
 <h3>Findings and new ideas</h3>
 <ul>
   <li>B11 idea: a fixed two-thread cap added 99.88 s (61%) to the 1,298-test Runner suite even while the twelve-thread sample saw higher host load. Use per-suite measurements and CPU admission rather than imposing one xUnit cap across projects; backend and Task Server need independent A/B samples.</li>
