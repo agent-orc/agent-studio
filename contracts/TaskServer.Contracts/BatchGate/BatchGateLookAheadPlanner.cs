@@ -42,9 +42,17 @@ public static class BatchGateLookAheadPlanner
         if (waiting.Length == 0)
             return new("idle", "no eligible cards", null, [], 0, upcoming);
 
-        var candidates = Order(waiting, input.Overlap).Take(input.MaximumSize).ToArray();
+        var riskLimit = HighRiskLimit(input.RiskPolicy);
+        var ordered = Order(waiting, input.Overlap)
+            .Where(card => card.Risk < riskLimit).ToArray();
+        var candidates = (input.Overlap == "separate"
+                ? Separate(ordered) : ordered)
+            .Take(input.MaximumSize).ToArray();
         var arriving = input.Upcoming.Where(card => card.EtaUtc is { } eta
-                && eta <= input.NowUtc.AddMinutes(input.LookAheadMinutes))
+                && eta <= input.NowUtc.AddMinutes(input.LookAheadMinutes)
+                && card.Risk < riskLimit
+                && (input.Overlap != "separate" || candidates.All(ready =>
+                    !Overlaps(ready.Paths, card.Paths))))
             .OrderBy(card => card.EtaUtc)
             .Select(card => new BatchPlanCard(card.TaskKey, card.EtaUtc!.Value,
                 card.Risk, card.Paths, []));
@@ -55,24 +63,23 @@ public static class BatchGateLookAheadPlanner
         var closeAt = oldest.ReadyAtUtc.AddMinutes(input.DeadlineMinutes);
         var urgent = waiting.Any(card => card.Tags.Any(tag => input.UrgentTags.Contains(tag,
             StringComparer.OrdinalIgnoreCase)));
-        var highRisk = waiting[0].Risk >= HighRiskLimit(input.RiskPolicy);
+        var highRisk = waiting[0].Risk >= riskLimit;
         if (highRisk)
             return new("per-task", "oldest card exceeds batch risk limit", null,
                 [oldest.TaskKey], 1, upcoming);
-        var due = upcoming.Any(card => card.Risk < HighRiskLimit(input.RiskPolicy)
-            && card.EtaUtc is { } eta && eta <= input.NowUtc.AddMinutes(input.LookAheadMinutes));
+        var due = arriving.Any();
         if (!input.CloseNow && !urgent && input.NowUtc < closeAt
-            && waiting.Length < target && due)
+            && candidates.Length < target && due)
             return new("wait", "compatible card due inside look-ahead window",
                 closeAt, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
         if (!input.CloseNow && !urgent && input.NowUtc < closeAt
-            && waiting.Length < target && !input.IdleGateHost)
+            && candidates.Length < target && !input.IdleGateHost)
             return new("wait", "waiting for target size or deadline",
                 closeAt, candidates.Select(card => card.TaskKey).ToArray(), target, upcoming);
-        if (waiting.Length < input.MinimumSize)
+        if (candidates.Length < input.MinimumSize)
             return new("per-task", "close condition reached below minimum batch size",
-                null, waiting.Select(card => card.TaskKey).ToArray(), input.MinimumSize, upcoming);
-        var count = Math.Min(waiting.Length, Math.Max(input.MinimumSize, target));
+                null, [oldest.TaskKey], input.MinimumSize, upcoming);
+        var count = Math.Min(candidates.Length, Math.Max(input.MinimumSize, target));
         return new("close", input.CloseNow ? "operator close-now"
             : urgent ? "urgent tag" : input.IdleGateHost ? "idle gate host"
             : input.NowUtc >= closeAt ? "deadline reached" : "target size reached",
@@ -118,6 +125,15 @@ public static class BatchGateLookAheadPlanner
             chosen.Add(next);
             remaining.Remove(next);
         }
+        return chosen.ToArray();
+    }
+
+    private static BatchPlanCard[] Separate(IReadOnlyList<BatchPlanCard> ordered)
+    {
+        var chosen = new List<BatchPlanCard>();
+        foreach (var card in ordered)
+            if (chosen.All(member => !Overlaps(member.Paths, card.Paths)))
+                chosen.Add(card);
         return chosen.ToArray();
     }
 
