@@ -333,7 +333,11 @@ public sealed record ReviewCommandEvidenceDto(
     /// </summary>
     int? BaselineExitCode = null,
     ReviewLibraryStepDto? LibraryStep = null,
-    DeliveryFailureDiagnosisResult? Diagnosis = null);
+    DeliveryFailureDiagnosisResult? Diagnosis = null,
+    /// <summary>Class-only filter applied to a clean repeat; Arguments retain the frozen plan.</summary>
+    string? RepeatFilter = null,
+    /// <summary>Failed test names observed passing in a class-only clean repeat.</summary>
+    IReadOnlyList<string>? RepeatObservedTests = null);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run

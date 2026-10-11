@@ -53,4 +53,50 @@ public sealed class ReviewTargetedRerunPolicyTests
 
         Assert.Same(command, ReviewTargetedRerunPolicy.Select(command, ["AgentStudio.Tests.FooTests.Fails"]));
     }
+
+    [Theory]
+    [InlineData("Test Run Aborted.")]
+    [InlineData("The active test run was aborted. Reason: Test host crashed")]
+    [InlineData("The test host crashed")]
+    public void Aborted_test_run_gets_a_full_repeat(string output)
+    {
+        var command = new ReviewCommandDto("verify-3", "build-tests", "dotnet", ["test", "backend.Tests"]);
+        Assert.Same(command, ReviewTargetedRerunPolicy.Select(
+            command, ["AgentStudio.Tests.FooTests.Fails"], output));
+    }
+
+    [Fact]
+    public void A_signal_gets_a_full_repeat()
+    {
+        var command = new ReviewCommandDto("verify-3", "build-tests", "dotnet", ["test", "backend.Tests"]);
+        Assert.Same(command, ReviewTargetedRerunPolicy.Select(
+            command, ["AgentStudio.Tests.FooTests.Fails"], signal: "timeout"));
+    }
+
+    [Fact]
+    public void Only_passed_test_lines_prove_the_selected_failure_ran()
+    {
+        var observed = ReviewTargetedRerunPolicy.ObservedPassingFailures(
+            "No test matches the given testcase filter\nPassed AgentStudio.Tests.FooTests.Other [1 ms]",
+            ["AgentStudio.Tests.FooTests.Fails(input: 1)"]);
+        Assert.Empty(observed);
+        observed = ReviewTargetedRerunPolicy.ObservedPassingFailures(
+            "Passed AgentStudio.Tests.FooTests.Fails(input: 1) [12 ms]",
+            ["AgentStudio.Tests.FooTests.Fails(input: 1)"]);
+        Assert.Equal(["AgentStudio.Tests.FooTests.Fails"], observed);
+    }
+
+    [Fact]
+    public void Fresh_clone_replays_the_frozen_build_before_no_build_test()
+    {
+        var build = new ReviewCommandDto("verify-1", "build-tests", "sh",
+            ["-lc", "dotnet build agent-taskboard.sln --no-restore"]);
+        var test = new ReviewCommandDto("verify-3", "build-tests", "sh",
+            ["-lc", "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build"]);
+        var plan = new ReviewPlanDto([build, test], ["build-tests"]);
+
+        Assert.Same(build, ReviewTargetedRerunPolicy.PrecedingBuild(plan, test));
+        Assert.Null(ReviewTargetedRerunPolicy.PrecedingBuild(
+            new ReviewPlanDto([test], ["build-tests"]), test));
+    }
 }

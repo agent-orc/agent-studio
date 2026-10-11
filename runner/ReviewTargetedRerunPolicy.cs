@@ -6,8 +6,10 @@ namespace AgentRunner;
 /// <summary>Limits a clean repeat to the classes that produced the original red test results.</summary>
 internal static partial class ReviewTargetedRerunPolicy
 {
-    internal static ReviewCommandDto Select(ReviewCommandDto command, IReadOnlyList<string> failures)
+    internal static ReviewCommandDto Select(
+        ReviewCommandDto command, IReadOnlyList<string> failures, string output = "", string? signal = null)
     {
+        if (signal is not null || AbortedRun().IsMatch(output)) return command;
         var names = failures
             .Select(name => name.Split('(', 2)[0])
             .ToArray();
@@ -21,7 +23,8 @@ internal static partial class ReviewTargetedRerunPolicy
         if (classes.Length is 0 or > 5)
             return command;
 
-        var classFilter = string.Join('|', classes.Select(name => $"FullyQualifiedName~{name}."));
+        var classFilter = ClassFilter(failures);
+        if (classFilter is null) return command;
         if (Path.GetFileNameWithoutExtension(command.FileName).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
             && command.Arguments.FirstOrDefault() == "test")
         {
@@ -51,6 +54,38 @@ internal static partial class ReviewTargetedRerunPolicy
         return command;
     }
 
+    internal static string? ClassFilter(IReadOnlyList<string> failures)
+    {
+        var names = failures.Select(name => name.Split('(', 2)[0]).ToArray();
+        if (failures.Count is 0 or > 10 || names.Any(name => !TestName().IsMatch(name)))
+            return null;
+        var classes = names.Select(name => name[..name.LastIndexOf('.')])
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        return classes.Length is 0 or > 5 ? null
+            : string.Join('|', classes.Select(name => $"FullyQualifiedName~{name}."));
+    }
+
+    internal static ReviewCommandDto? PrecedingBuild(ReviewPlanDto plan, ReviewCommandDto test)
+        => plan.Commands.TakeWhile(command => command.StepId != test.StepId)
+            .LastOrDefault(command => command.FileName is "dotnet" or "sh" or "bash" or "dash"
+                && command.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal)
+                    || argument == "build"));
+
+    internal static IReadOnlyList<string> ObservedPassingFailures(
+        string output, IReadOnlyList<string> failures)
+    {
+        var passed = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => PassedTest().Match(line))
+            .Where(match => match.Success)
+            .Select(match => match.Groups["name"].Value.Split('(', 2)[0])
+            .ToHashSet(StringComparer.Ordinal);
+        return failures.Select(name => name.Split('(', 2)[0])
+            .Distinct(StringComparer.Ordinal)
+            .Where(passed.Contains)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private static string? RemoveFilter(List<string> arguments)
     {
         for (var index = 0; index + 1 < arguments.Count; index++)
@@ -74,4 +109,10 @@ internal static partial class ReviewTargetedRerunPolicy
 
     [GeneratedRegex(@"\s--filter\s+(?<value>""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase)]
     private static partial Regex ShellFilter();
+
+    [GeneratedRegex(@"\b(?:Test Run Aborted|active test run was aborted|test host (?:crashed|terminated)|blame.*hang|process.*killed)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex AbortedRun();
+
+    [GeneratedRegex(@"^\s*Passed\s+(?<name>.+?)\s+\[[^\]]+\]\s*$")]
+    private static partial Regex PassedTest();
 }

@@ -543,11 +543,14 @@ public sealed class RemoteReviewWorkspace
                         // The clean repeat records its own clean-repeat evidence;
                         // the candidate evidence below keeps the first run, so a
                         // failure the repeat cleared stays visible to diagnosis.
+                        var failedTests = ParsedTestFailures(execution.Process);
                         var repeatCommand = ReviewTargetedRerunPolicy.Select(
-                            command, ParsedTestFailures(execution.Process));
+                            command, failedTests, execution.Process.StdOut + "\n" + execution.Process.StdErr,
+                            execution.Signal);
                         _log($"review clean repeat step={command.StepId} scope=" +
                              (ReferenceEquals(repeatCommand, command) ? "full" : "failed-classes"));
-                        cleanRepeat = await RunCleanRepeatAsync(repeatCommand, commands, artifacts, ct);
+                        cleanRepeat = await RunCleanRepeatAsync(
+                            command, repeatCommand, failedTests, commands, artifacts, ct);
                         if (MissingToolchain(cleanRepeat.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
@@ -1302,7 +1305,9 @@ public sealed class RemoteReviewWorkspace
         ReviewCommandDto? plannedCommand = null,
         RemoteAgentUsage? agentUsage = null,
         string? reusedFromAttemptId = null,
-        TimeSpan? reusedAge = null)
+        TimeSpan? reusedAge = null,
+        string? repeatFilter = null,
+        IReadOnlyList<string>? repeatObservedTests = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -1372,7 +1377,9 @@ public sealed class RemoteReviewWorkspace
                 ? (_subject.Plan.Preparation ?? []).FirstOrDefault(item => item.StepId == stepId)?.LibraryStep
                 : plannedCommand?.LibraryStep
                   ?? _subject.Plan.Commands.FirstOrDefault(item => item.StepId == stepId)?.LibraryStep,
-            comparison?.Diagnosis);
+            comparison?.Diagnosis,
+            repeatFilter,
+            repeatObservedTests);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1771,12 +1778,14 @@ public sealed class RemoteReviewWorkspace
     }
 
     private async Task<CommandExecution> RunCleanRepeatAsync(
-        ReviewCommandDto command,
+        ReviewCommandDto plannedCommand,
+        ReviewCommandDto selectedCommand,
+        IReadOnlyList<string> failedTests,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct)
     {
-        var hash = CommandHash(command);
+        var hash = CommandHash(plannedCommand);
         var path = Path.Combine(AttemptRoot, $"clean-repeat-{hash[..12]}-{Guid.NewGuid():N}");
         var cloned = await ProcessRunner.RunAsync(
             "git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
@@ -1796,16 +1805,56 @@ public sealed class RemoteReviewWorkspace
             await ExecutePreparationAsync(
                 path, "clean-repeat", _subject.ExpectedResultSha, environment,
                 commands, artifacts, ct, restoreCache: false);
+            if (selectedCommand.Arguments.Any(argument => argument.Contains("--no-build", StringComparison.Ordinal)))
+            {
+                var build = ReviewTargetedRerunPolicy.PrecedingBuild(_subject.Plan, plannedCommand);
+                if (build is null)
+                    throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                        $"Clean repeat for '{plannedCommand.StepId}' needs a build before --no-build, but the plan has no preceding build step.");
+                var built = await RunCommandAsync(build, path, ct, environment);
+                if (!built.Process.Success || built.Signal is not null)
+                    throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                        $"Clean repeat build '{build.StepId}' failed: exit={built.Process.ExitCode}; signal={built.Signal ?? "none"}.");
+                _log($"review clean repeat built test assemblies with planned step={build.StepId}");
+            }
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
             var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
+            var command = selectedCommand;
             var execution = await RunCommandAsync(command, path, ct, environment);
+            string? repeatFilter = null;
+            IReadOnlyList<string>? observed = null;
+            if (!ReferenceEquals(command, plannedCommand))
+            {
+                repeatFilter = ReviewTargetedRerunPolicy.ClassFilter(failedTests);
+                observed = ReviewTargetedRerunPolicy.ObservedPassingFailures(execution.Process.StdOut, failedTests);
+                if (execution.Process.Success
+                    && observed.Count != failedTests.Select(name => name.Split('(', 2)[0])
+                        .Distinct(StringComparer.Ordinal).Count())
+                {
+                    _log($"review clean repeat step={command.StepId} selected tests missing from output; running full command");
+                    command = plannedCommand;
+                    execution = await RunCommandAsync(command, path, ct, environment);
+                    repeatFilter = null;
+                    observed = null;
+                }
+            }
+            if (execution.Process.Success
+                && ReviewTargetedRerunPolicy.ClassFilter(failedTests) is not null
+                && (selectedCommand.FileName is "dotnet" or "sh" or "bash" or "dash")
+                && ReviewTargetedRerunPolicy.ObservedPassingFailures(
+                    execution.Process.StdOut, failedTests).Count
+                    != failedTests.Select(name => name.Split('(', 2)[0])
+                        .Distinct(StringComparer.Ordinal).Count())
+                throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                    $"Clean repeat '{command.StepId}' exited successfully without reporting every previously failed test.");
             commands.Add(await AddCommandEvidenceAsync(
-                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                command.StepId, command.Aspect, plannedCommand.FileName, plannedCommand.Arguments,
                 head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
                 execution.Signal, command.TimeoutSeconds, "clean-repeat", "clean-repeat",
                 _baselineSha, comparison: null, retryPerformed: true,
                 dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
-                command, execution.AgentUsage));
+                plannedCommand, execution.AgentUsage,
+                repeatFilter: repeatFilter, repeatObservedTests: observed));
             return execution;
         }
         finally

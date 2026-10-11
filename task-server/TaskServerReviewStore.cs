@@ -1211,6 +1211,8 @@ public sealed partial class TaskServerStore
                 string.Equals(item.StepId, command.StepId, StringComparison.Ordinal));
             if (!CommandMatchesPlan(command, planned, plannedPreparation))
                 return ("ReviewInfra", "CommandPlanMismatch");
+            if (!ReviewRepeatFilterPolicy.IsValid(command, request.Commands))
+                return ("ReviewInfra", "CommandPlanMismatch");
             if (planned?.CompareToBaseline == true
                 && command.BaselineSha is not null
                 && (!ValidDigest(command.BaselineSha, 40, 64)

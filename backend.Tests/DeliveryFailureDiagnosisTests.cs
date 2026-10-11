@@ -302,6 +302,35 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal(ReviewFlakyQuarantine.Classification, Assert.Single(normalized.Verdicts).Classification);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Grade_admits_class_subset_repeat_only_when_failed_test_was_observed(bool observed)
+    {
+        var failed = FailedCommand("tests", DeliveryFailureDiagnosis.Intermittent, false) with
+        {
+            RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.Tests.Guard"],
+        };
+        var repeat = failed with
+        {
+            Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+            Diagnosis = null, FlakyQuarantinedFailures = [],
+            RepeatFilter = "FullyQualifiedName~Product.Tests.",
+            RepeatObservedTests = observed ? ["Product.Tests.Guard"] : [],
+        };
+        var report = EmptyReport("ReviewInfra") with
+        {
+            Commands = [failed, repeat],
+            Verdicts = [new ReviewVerdictDto("build-tests", "pass", ReviewFlakyQuarantine.Classification,
+                "Product.Tests.Guard passed its repeat.")],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+        Assert.Equal(observed ? DeliveryFailureDiagnosis.Intermittent : DeliveryFailureDiagnosis.FirstOccurrence,
+            normalized.FailureClassification);
+    }
+
     [Fact]
     public void Semantic_flake_claim_without_measured_repeat_cannot_pass_the_grade()
     {

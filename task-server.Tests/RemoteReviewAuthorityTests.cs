@@ -1829,6 +1829,47 @@ public sealed partial class RemoteReviewAuthorityTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Report_admits_class_subset_repeat_with_planned_arguments_and_observed_test(bool observed)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "dotnet", ["test"], CompareToBaseline: true)],
+            ["build-tests"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        var candidate = request.Commands[0] with
+        {
+            BaselineSha = new string('c', 40), BaselineExitCode = 0,
+            NewFailures = [], PreExistingFailures = [], RetryPerformed = true,
+            FlakyQuarantinedFailures = ["Product.ProcessTiming"],
+        };
+        request = request with
+        {
+            Commands = [candidate, candidate with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+                FlakyQuarantinedFailures = [],
+                RepeatFilter = "FullyQualifiedName~Product.",
+                RepeatObservedTests = observed ? ["Product.ProcessTiming"] : [],
+            }],
+            Verdicts = [new ReviewVerdictDto("build-tests", "pass", "FlakyQuarantine",
+                "1 flaky quarantined failure: Product.ProcessTiming.")],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+        Assert.Equal(observed ? "Pass" : "ReviewInfra", report.Outcome);
+        if (!observed) Assert.Equal("CommandPlanMismatch", report.FailureClassification);
+    }
+
     [Fact]
     public async Task Semantic_block_without_citation_is_admitted_as_non_escalating_concern()
     {

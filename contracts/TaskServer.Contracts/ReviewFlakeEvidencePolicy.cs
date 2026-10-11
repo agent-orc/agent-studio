@@ -21,6 +21,7 @@ public static partial class ReviewFlakeEvidencePolicy
                && repeat.ExitCode == 0 && repeat.Signal is null
                && repeat.FileName == command.FileName
                && repeat.Arguments.SequenceEqual(command.Arguments)
+               && ReviewRepeatFilterPolicy.IsValid(repeat, report.Commands)
                && string.Equals(repeat.ExpectedResultSha, command.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
                && string.Equals(repeat.HeadBefore, command.HeadBefore, StringComparison.OrdinalIgnoreCase)
                && string.Equals(repeat.TreeBefore, command.TreeBefore, StringComparison.OrdinalIgnoreCase));
