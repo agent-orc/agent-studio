@@ -1534,7 +1534,7 @@ public sealed partial class MergeIntoDevelopRunner
         if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
             && !IsDocumentationDelivery(reservationRepo, integrationBranch,
                 ReviewSubjectStore.Read(jobFolderPath)))
-            _batchReservations.MarkPushPending(project, jobId);
+            _batchReservations.MarkPushPending(project, jobId, approvedSha);
 
         var enqueued = _pushQueue.Enqueue(new IntegrationPushRequest(
             project, jobId, jobFolderPath, watchPath, integrationBranch, approvedSha));
@@ -1665,7 +1665,7 @@ public sealed partial class MergeIntoDevelopRunner
                 approvedSha,
                 ct);
             if (pushed.Success)
-                _batchReservations?.MarkPushVerified(project, jobId);
+                _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
             return pushed;
         }
         finally
