@@ -827,7 +827,7 @@ public sealed class BatchGatePilotService
                 AbandonSuperseded("superseded during gate");
                 return;
             }
-            if (gate.IsInfrastructureFailure && !SameRedFailureOnBase(gate))
+            if (gate.IsInfrastructureFailure)
             {
                 // Only the same candidate SHA can consume the one healthy-host
                 // retry. The second infrastructure red remains a visible pause.
@@ -854,7 +854,8 @@ public sealed class BatchGatePilotService
                 // The gate runner already spent its single targeted failed-test
                 // rerun. A matching red base is project debt, not a member
                 // regression. Keep its diagnostic evidence on the batch run.
-                if (SameRedFailureOnBase(gate)
+                if (await BaseRedMatchesAsync(manifest, run, gate, repo,
+                        cancellation.Token).ConfigureAwait(false)
                     && string.Equals(gate.TestedSha, assembly.CandidateSha,
                         StringComparison.OrdinalIgnoreCase))
                 {
@@ -870,6 +871,10 @@ public sealed class BatchGatePilotService
                     RecordVerdict(run, gate, "flaky-red");
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
                         lease.Fence, "flaky quarantine requires a fresh gate verdict");
+                    _settings.MarkBuildProfileRemotelyValidated(manifest.Scope.Project,
+                        BuildProfileValidationFingerprint.Create(
+                            _settings.Get(manifest.Scope.Project).BuildProfile),
+                        run.BatchRunId, run.Host, run.CandidateSha, _time.GetUtcNow().UtcDateTime);
                     return;
                 }
                 RecordVerdict(run, gate, "deterministic-suite-red");
@@ -1245,7 +1250,6 @@ public sealed class BatchGatePilotService
                 Project = _store.ReadManifest(run.BatchId).Scope.Project,
                 GateId = "batch-gate",
                 SubjectRef = run.CandidateSha,
-                JobId = run.BatchId,
                 IntegrationRef = run.BaseSha,
                 RequiredTestLevel = TestExecutionLevels.Full,
                 TestExecution = _settings.Get(_store.ReadManifest(run.BatchId).Scope.Project).TestExecution,
@@ -1304,19 +1308,59 @@ public sealed class BatchGatePilotService
         return verdict;
     }
 
-    private static bool SameRedFailureOnBase(BuildTestGateResult gate)
+    private async Task<bool> BaseRedMatchesAsync(BatchGateManifest manifest,
+        BatchGateRunRecord run, BuildTestGateResult candidate, string repo,
+        CancellationToken ct)
     {
-        if (gate.Verdict != BuildTestGateVerdict.Fail || gate.Diagnosis is null)
+        if (candidate.Verdict != BuildTestGateVerdict.Fail
+            || candidate.FailureKind != BuildTestGateFailureKind.Code)
             return false;
-        var candidate = gate.Diagnosis.Evidence.FirstOrDefault(item =>
-            item.StartsWith("fingerprint=", StringComparison.Ordinal));
-        var baseline = gate.Diagnosis.Evidence.FirstOrDefault(item =>
-            item.StartsWith("baseline=red; fingerprint=", StringComparison.Ordinal));
-        if (candidate is null || baseline is null) return false;
-        var fingerprint = candidate["fingerprint=".Length..];
-        return !string.IsNullOrWhiteSpace(fingerprint) && fingerprint != "unavailable"
-            && string.Equals(baseline["baseline=red; fingerprint=".Length..],
-                fingerprint, StringComparison.Ordinal);
+        var baseline = _store.ReadBaseVerdict(manifest.Scope.Project,
+            manifest.BaseSha, run.GateProfileDigest);
+        if (baseline is null)
+        {
+            var settings = _settings.Get(manifest.Scope.Project);
+            if (GateProfile(settings.BuildProfile, repo) != run.GateProfileDigest)
+                throw new InvalidDataException("Batch gate profile changed before base verification.");
+            var started = _time.GetUtcNow();
+            var result = await _gate.RunAsync(new BuildTestGateRequest(
+                    repo, manifest.BaseSha, "batch-base")
+                {
+                    Project = manifest.Scope.Project,
+                    GateId = "batch-base",
+                    SubjectRef = manifest.BaseSha,
+                    IntegrationRef = manifest.BaseSha,
+                    RequiredTestLevel = TestExecutionLevels.Full,
+                    TestExecution = settings.TestExecution,
+                    DisableVerdictCache = true,
+                }, null, settings.BuildProfile, PostStepMode.Fail,
+                TimeSpan.FromMinutes(settings.BatchGate.GateTimeoutMinutes), ct)
+                .ConfigureAwait(false);
+            if (GateProfile(_settings.Get(manifest.Scope.Project).BuildProfile, repo)
+                != run.GateProfileDigest)
+                throw new InvalidDataException("Batch gate profile changed during base verification.");
+            if (!string.Equals(result.TestedSha, manifest.BaseSha,
+                    StringComparison.OrdinalIgnoreCase)
+                || result.IsInfrastructureFailure)
+                throw new IOException("The base verification did not produce an exact-SHA verdict.");
+            var evidencePath = Path.Combine(_store.BatchDirectory(manifest.BatchId),
+                "base-" + manifest.BaseSha + ".json");
+            File.WriteAllText(evidencePath, JsonSerializer.Serialize(result));
+            baseline = new BatchGateBaseVerdict(manifest.Scope.Project,
+                manifest.BaseSha, run.GateProfileDigest,
+                result.Verdict == BuildTestGateVerdict.Ok ? "pass" : "fail",
+                result.Verdict == BuildTestGateVerdict.Fail
+                    ? BuildTestGateRunner.DiagnosticFingerprint(result) : null,
+                result.Reason, evidencePath, _time.GetUtcNow());
+            _store.RecordBaseVerdict(baseline);
+            _store.RecordExecution(new BatchGateExecutionFact(
+                manifest.Scope.Project, manifest.BatchId, null, manifest.BaseSha,
+                result.Verdict.ToString(), Environment.MachineName,
+                started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, evidencePath));
+        }
+        return baseline.Outcome == "fail"
+            && string.Equals(baseline.FailureFingerprint,
+                BuildTestGateRunner.DiagnosticFingerprint(candidate), StringComparison.Ordinal);
     }
 
     private async Task ReleaseMemberAsync(BatchGateManifest manifest,

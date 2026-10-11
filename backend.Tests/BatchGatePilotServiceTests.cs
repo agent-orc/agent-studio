@@ -521,6 +521,40 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 1);
+    [Fact]
+    public async Task Base_red_with_matching_failure_is_reported_and_does_not_eject_the_member()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-BASE-RED", "docs/base-red.md");
+        _gate.Batch = request =>
+        {
+            Assert.Null(request.JobId);
+            return Red(request.ExpectedSha);
+        };
+        _gate.Base = request =>
+        {
+            Assert.Null(request.JobId);
+            return Red(request.ExpectedSha);
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(1, _gate.BaseRuns);
+        var publication = store.ReadPublication(manifest.BatchId)!;
+        Assert.Equal("pre-existing-base-red",
+            store.ReadVerdict(manifest.BatchId, publication.BatchRunId)!.Classification);
+        Assert.NotNull(store.ReadBaseVerdict(ProjectName, manifest.BaseSha,
+            manifest.Scope.GateProfileDigest));
+    }
+
         var member = SeedMember(factory, "DOC-LEASE", "docs/lease.md");
         var baseTip = RemoteTip();
         var leases = factory.Services.GetRequiredService<BatchGateLeaseService>();
@@ -1207,3 +1241,12 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         }
     }
 }
+        public Func<BuildTestGateRequest, BuildTestGateResult> Base { get; set; }
+            = request => Green(request.ExpectedSha);
+        private int _baseRuns;
+        public int BaseRuns => Volatile.Read(ref _baseRuns);
+            if (request.GateId == "batch-base")
+            {
+                Interlocked.Increment(ref _baseRuns);
+                return Task.FromResult(Base(request));
+            }
