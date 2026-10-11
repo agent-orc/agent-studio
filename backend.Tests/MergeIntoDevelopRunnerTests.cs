@@ -2212,7 +2212,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public void Run_MergedButPushDisabled_DoesNotEnqueue()
+    public async Task Run_MergedButPushDisabled_KeepsTheBatchWaiting()
     {
         var repo = SeedRepo("run-disabled");
         RunGit(repo, "checkout -q -b develop");
@@ -2224,14 +2224,22 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetPipelineStep("Fixture", PipelineCatalogue.MergeIntoDevelopPushStepId, new PipelineStepSetting { Enabled = false });
         var queue = new IntegrationPushQueue();
+        var reservations = new BatchIntegrationReservationService();
         var jobFolder = BeginRun(log, repo, jobId: "41");
         var runner = new MergeIntoDevelopRunner(
-            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue,
+            projectSettings: settings, batchReservations: reservations);
 
-        var outcome = runner.Run("Fixture", "41", jobFolder, repo, "develop");
+        var outcome = await runner.RunAsync("Fixture", "41", jobFolder,
+            repo, "develop", CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.False(queue.Reader.TryRead(out _), "no push must be enqueued when the push step is disabled");
+        using var cancellation = new CancellationTokenSource();
+        var batch = reservations.AcquireBatchAsync("Fixture", cancellation.Token);
+        Assert.False(batch.IsCompleted);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await batch);
     }
 
     /// <summary>
