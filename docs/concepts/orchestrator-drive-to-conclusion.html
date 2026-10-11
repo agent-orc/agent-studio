@@ -2957,6 +2957,13 @@
             unowned, zero-byte integration index locks.
           </td>
         </tr>
+        <tr id="case-isolated-review-build-classification">
+          <td>2026-10-11</td>
+          <td><code>AGT-3049</code><br><span class="small">isolated-review-build-classification</span></td>
+          <td>A failed build replay in an isolated review workspace ended the whole review as <code>ReviewInfra/CleanRepeatUnavailable</code> or <code>ReviewInfra/BaselineUnavailable</code>, losing the product or integration-branch verdict already supported by the build output.</td>
+          <td><code>BuildBeforeNoBuildAsync</code> threw on every nonzero exit before recording command evidence. Report admission also required a test repeat even when its prerequisite build failed.</td>
+          <td>The observed terminal was ReviewInfra. The corrected path records the red build under its planned step and reaches <code>ProductFailure</code> for a delivery compile error or <code>IntegrationBranchDefect</code> for a build already red on the integration branch. Two runner and two Task Server regression scenarios passed.</td>
+        </tr>
       </tbody>
     </table>
 

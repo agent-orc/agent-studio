@@ -30,10 +30,43 @@ public static class ReviewReportDiagnosisPolicy
         string? unproven = null;
         string? nonProduct = null;
         var confirmedProduct = false;
+        var integrationBranchDefect = false;
         foreach (var command in failed)
         {
             var clean = request.Commands.FirstOrDefault(repeat => repeat.StepId == command.StepId
                 && repeat.Phase == "clean-repeat" && repeat.WorkspaceRole == "clean-repeat");
+            var precedingBuild = command.Arguments.Any(argument =>
+                    argument.Contains("--no-build", StringComparison.Ordinal))
+                ? plan?.Commands.TakeWhile(step => step.StepId != command.StepId)
+                    .LastOrDefault(step => Path.GetFileName(step.FileName) is "dotnet" or "sh" or "bash" or "dash"
+                        && step.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal)
+                            || argument == "build"))
+                : null;
+            var blockedByBaselineBuild = precedingBuild is not null
+                && request.Commands.Any(baseline => baseline.StepId == precedingBuild.StepId
+                    && baseline.Phase == "verification"
+                    && baseline.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+                    && baseline.BaselineSha == command.BaselineSha
+                    && baseline.ExitCode is > 0);
+            if (command.Diagnosis?.Classification == "IntegrationBranchDefect")
+            {
+                if (command.BaselineExitCode is > 0 && (clean is not null || blockedByBaselineBuild))
+                    integrationBranchDefect = true;
+                else
+                    unproven ??= "DiagnosisEvidenceInvalid";
+                continue;
+            }
+            // A no-build test cannot run in a clean clone when its prerequisite
+            // build fails. The red build is recorded under its own planned step.
+            if (clean is null && command.Arguments.Any(argument =>
+                    argument.Contains("--no-build", StringComparison.Ordinal)))
+            {
+                clean = request.Commands.FirstOrDefault(repeat =>
+                    repeat.StepId == precedingBuild?.StepId
+                    && repeat.Phase == "clean-repeat"
+                    && repeat.WorkspaceRole == "clean-repeat"
+                    && repeat.ExitCode is > 0);
+            }
             if (command.Diagnosis is null
                 || command.BaselineExitCode is null
                 || clean is null)
@@ -63,6 +96,12 @@ public static class ReviewReportDiagnosisPolicy
             };
         if (nonProduct is not null)
             return request with { Outcome = "ReviewInfra", FailureClassification = nonProduct };
+        if (integrationBranchDefect)
+            return request with
+            {
+                Outcome = "IntegrationBranchDefect",
+                FailureClassification = "IntegrationBranchDefect",
+            };
         if (string.Equals(request.Outcome, "ProductFailure", StringComparison.OrdinalIgnoreCase)
             && failed.Length == 0
             && ReviewGradingPolicy.Grade(verdicts

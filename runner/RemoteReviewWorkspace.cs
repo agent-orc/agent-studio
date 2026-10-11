@@ -536,14 +536,21 @@ public sealed class RemoteReviewWorkspace
                         commands,
                         artifacts,
                         ct);
-                    if (comparison is not null)
+                    if (comparison is not null && !comparison.BlockedByIsolatedBuild)
                     {
                         var reviewFlakyTests = ReviewFlakyTestIndex.Discover(RepositoryPath, _log);
                         retryPerformed = true;
                         // The clean repeat records its own clean-repeat evidence;
                         // the candidate evidence below keeps the first run, so a
                         // failure the repeat cleared stays visible to diagnosis.
-                        cleanRepeat = await RunCleanRepeatAsync(command, commands, artifacts, ct);
+                        var failedTests = ParsedTestFailures(execution.Process);
+                        var repeatCommand = ReviewTargetedRerunPolicy.Select(
+                            command, failedTests, execution.Process.StdOut + "\n" + execution.Process.StdErr,
+                            execution.Signal);
+                        _log($"review clean repeat step={command.StepId} scope=" +
+                             (ReferenceEquals(repeatCommand, command) ? "full" : "failed-classes"));
+                        cleanRepeat = await RunCleanRepeatAsync(
+                            command, repeatCommand, failedTests, commands, artifacts, ct);
                         if (MissingToolchain(cleanRepeat.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
@@ -650,12 +657,18 @@ public sealed class RemoteReviewWorkspace
                             repeatPassed: cleanRepeat.Process.Success && cleanRepeat.Signal is null);
                     }
                     var requiredComparison = RequireBaselineComparison(comparison, command);
-                    comparison = requiredComparison with
-                    {
-                        Diagnosis = await DiagnoseFailureAsync(
-                            command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
-                    };
-                    if (comparison.Diagnosis.Classification == DeliveryFailureDiagnosis.Environment
+                    comparison = requiredComparison.BlockedByIsolatedBuild
+                        ? requiredComparison
+                        : requiredComparison with
+                        {
+                            Diagnosis = IsBuildCommand(command) && requiredComparison.BaselineExitCode != 0
+                                ? new DeliveryFailureDiagnosisResult(
+                                    IntegrationBranchDefectClassification, 1,
+                                    [$"build {command.StepId} was already red on the integration branch"])
+                                : await DiagnoseFailureAsync(
+                                    command, requiredComparison, execution.Process, cleanRepeat?.Process, ct),
+                        };
+                    if (comparison.Diagnosis?.Classification == DeliveryFailureDiagnosis.Environment
                         && candidateCache is not null)
                     {
                         foreach (var message in candidateCache.DiscardIncludingWorkspace("diagnosed-environment"))
@@ -1298,7 +1311,9 @@ public sealed class RemoteReviewWorkspace
         ReviewCommandDto? plannedCommand = null,
         RemoteAgentUsage? agentUsage = null,
         string? reusedFromAttemptId = null,
-        TimeSpan? reusedAge = null)
+        TimeSpan? reusedAge = null,
+        string? repeatFilter = null,
+        IReadOnlyList<string>? repeatObservedTests = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -1309,6 +1324,15 @@ public sealed class RemoteReviewWorkspace
         var stderr = await WriteArtifactAsync(stderrName, process.StdErr, includeContent, ct);
         artifacts.Add(stdout);
         artifacts.Add(stderr);
+        var timingArtifacts = await ReviewTestTimingEvidence.CaptureAsync(
+            process.StdOut,
+            AttemptRoot,
+            ArtifactPath,
+            $"{SafeSegment(workspaceRole)}.{SafeSegment(stepId)}.timing.{Guid.NewGuid():N}",
+            retryPerformed,
+            _log,
+            ct);
+        foreach (var artifact in timingArtifacts) artifacts.Add(artifact);
         var consumed = Math.Max(0, (long)(finishedAt - startedAt).TotalMilliseconds);
         var limit = Math.Clamp(timeoutSeconds, 1, 7200) * 1000L;
         return new ReviewCommandEvidenceDto(
@@ -1359,7 +1383,10 @@ public sealed class RemoteReviewWorkspace
                 ? (_subject.Plan.Preparation ?? []).FirstOrDefault(item => item.StepId == stepId)?.LibraryStep
                 : plannedCommand?.LibraryStep
                   ?? _subject.Plan.Commands.FirstOrDefault(item => item.StepId == stepId)?.LibraryStep,
-            comparison?.Diagnosis);
+            comparison?.Diagnosis,
+            repeatFilter,
+            repeatObservedTests,
+            comparison?.InitialFailures);
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -1661,6 +1688,25 @@ public sealed class RemoteReviewWorkspace
                 ["rev-parse", "HEAD^{tree}"],
                 environment,
                 ct);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(
+                command, baselinePath, environment, "BaselineUnavailable", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                await AddIsolatedBuildEvidenceAsync(
+                    isolatedBuild, baselineHead, baselineTree, workspaceRole,
+                    baselineSha, "verification", commands, artifacts, ct);
+                return BaselineComparison.Create(
+                    baselineSha, [], SubjectFailures(command, subjectResult),
+                    cacheHit: false, isolatedBuild.Execution.Process.ExitCode) with
+                {
+                    NewFailures = [],
+                    PreExistingFailures = [],
+                    BlockedByIsolatedBuild = true,
+                    Diagnosis = new DeliveryFailureDiagnosisResult(
+                        IntegrationBranchDefectClassification, 1,
+                        [$"isolated baseline build {isolatedBuild.Build.StepId} exited {isolatedBuild.Execution.Process.ExitCode}"]),
+                };
+            }
             execution = await RunCommandAsync(command, baselinePath, ct, environment);
             commands.Add(await AddCommandEvidenceAsync(
                 command.StepId,
@@ -1758,12 +1804,14 @@ public sealed class RemoteReviewWorkspace
     }
 
     private async Task<CommandExecution> RunCleanRepeatAsync(
-        ReviewCommandDto command,
+        ReviewCommandDto plannedCommand,
+        ReviewCommandDto selectedCommand,
+        IReadOnlyList<string> failedTests,
         ICollection<ReviewCommandEvidenceDto> commands,
         ICollection<ReviewArtifactEvidenceDto> artifacts,
         CancellationToken ct)
     {
-        var hash = CommandHash(command);
+        var hash = CommandHash(plannedCommand);
         var path = Path.Combine(AttemptRoot, $"clean-repeat-{hash[..12]}-{Guid.NewGuid():N}");
         var cloned = await ProcessRunner.RunAsync(
             "git", ["clone", "--shared", "--no-checkout", RepositoryPath, path],
@@ -1785,14 +1833,53 @@ public sealed class RemoteReviewWorkspace
                 commands, artifacts, ct, restoreCache: false);
             var head = await GitValueAtAsync(path, ["rev-parse", "HEAD"], environment, ct);
             var tree = await GitValueAtAsync(path, ["rev-parse", "HEAD^{tree}"], environment, ct);
+            var isolatedBuild = await BuildBeforeNoBuildAsync(
+                plannedCommand, path, environment, "CleanRepeatUnavailable", ct);
+            if (isolatedBuild is { Execution.Process.Success: false })
+            {
+                if (!commands.Any(item => item.StepId == isolatedBuild.Build.StepId
+                    && item.Phase == "clean-repeat" && item.WorkspaceRole == "clean-repeat"))
+                    await AddIsolatedBuildEvidenceAsync(
+                        isolatedBuild, head, tree, "clean-repeat", _baselineSha,
+                        "clean-repeat", commands, artifacts, ct);
+                return isolatedBuild.Execution;
+            }
+            var command = selectedCommand;
             var execution = await RunCommandAsync(command, path, ct, environment);
+            string? repeatFilter = null;
+            IReadOnlyList<string>? observed = null;
+            if (!ReferenceEquals(command, plannedCommand))
+            {
+                repeatFilter = ReviewTargetedRerunPolicy.ClassFilter(failedTests);
+                observed = ReviewTargetedRerunPolicy.ObservedPassingFailures(execution.Process.StdOut, failedTests);
+                if (execution.Process.Success
+                    && observed.Count != failedTests.Select(name => name.Split('(', 2)[0])
+                        .Distinct(StringComparer.Ordinal).Count())
+                {
+                    _log($"review clean repeat step={command.StepId} selected tests missing from output; running full command");
+                    command = plannedCommand;
+                    execution = await RunCommandAsync(command, path, ct, environment);
+                    repeatFilter = null;
+                    observed = null;
+                }
+            }
+            if (execution.Process.Success
+                && ReviewTargetedRerunPolicy.ClassFilter(failedTests) is not null
+                && (selectedCommand.FileName is "dotnet" or "sh" or "bash" or "dash")
+                && ReviewTargetedRerunPolicy.ObservedPassingFailures(
+                    execution.Process.StdOut, failedTests).Count
+                    != failedTests.Select(name => name.Split('(', 2)[0])
+                        .Distinct(StringComparer.Ordinal).Count())
+                throw new ReviewInfrastructureException("CleanRepeatUnavailable",
+                    $"Clean repeat '{command.StepId}' exited successfully without reporting every previously failed test.");
             commands.Add(await AddCommandEvidenceAsync(
-                command.StepId, command.Aspect, command.FileName, command.Arguments,
+                command.StepId, command.Aspect, plannedCommand.FileName, plannedCommand.Arguments,
                 head, tree, execution.Process, execution.StartedAt, execution.FinishedAt,
                 execution.Signal, command.TimeoutSeconds, "clean-repeat", "clean-repeat",
                 _baselineSha, comparison: null, retryPerformed: true,
                 dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
-                command, execution.AgentUsage));
+                plannedCommand, execution.AgentUsage,
+                repeatFilter: repeatFilter, repeatObservedTests: observed));
             return execution;
         }
         finally
@@ -1801,6 +1888,47 @@ public sealed class RemoteReviewWorkspace
             catch (IOException exception) { _log($"clean repeat clone removal failed: {exception.Message}"); }
         }
     }
+
+    private async Task<IsolatedBuildResult?> BuildBeforeNoBuildAsync(
+        ReviewCommandDto command,
+        string workspacePath,
+        IReadOnlyDictionary<string, string?> environment,
+        string classification,
+        CancellationToken ct)
+    {
+        if (!command.Arguments.Any(argument => argument.Contains("--no-build", StringComparison.Ordinal)))
+            return null;
+        var build = ReviewTargetedRerunPolicy.PrecedingBuild(_subject.Plan, command);
+        if (build is null)
+            throw new ReviewInfrastructureException(classification,
+                $"Isolated test '{command.StepId}' needs a build before --no-build, but the plan has no preceding build step.");
+        var execution = await RunCommandAsync(build, workspacePath, ct, environment);
+        if (MissingToolchain(execution.Process)
+            || TmpMountTornDownDuringBuild(execution.Process)
+            || execution.Signal is not null || execution.Process.ExitCode < 0)
+            throw new ReviewInfrastructureException(classification,
+                $"Isolated test build '{build.StepId}' could not complete: exit={execution.Process.ExitCode}; signal={execution.Signal ?? "none"}.");
+        _log($"review isolated test build step={build.StepId} for test={command.StepId} exit={execution.Process.ExitCode}");
+        return new IsolatedBuildResult(build, execution);
+    }
+
+    private static bool IsBuildCommand(ReviewCommandDto command)
+        => Path.GetFileName(command.FileName) == "dotnet" && command.Arguments.FirstOrDefault() == "build"
+           || command.Arguments.Any(argument => argument.Contains("dotnet build", StringComparison.Ordinal));
+
+    private async Task AddIsolatedBuildEvidenceAsync(
+        IsolatedBuildResult build, string head, string tree, string workspaceRole,
+        string? baselineSha, string phase,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts, CancellationToken ct)
+        => commands.Add(await AddCommandEvidenceAsync(
+            build.Build.StepId, build.Build.Aspect, build.Build.FileName,
+            build.Build.Arguments, head, tree, build.Execution.Process,
+            build.Execution.StartedAt, build.Execution.FinishedAt,
+            build.Execution.Signal, build.Build.TimeoutSeconds, phase, workspaceRole,
+            baselineSha, comparison: null, retryPerformed: phase == "clean-repeat",
+            dependencyCacheHit: false, dependencyCache: null, artifacts, ct,
+            build.Build));
 
     private async Task<DeliveryFailureDiagnosisResult> DiagnoseFailureAsync(
         ReviewCommandDto command,
@@ -2877,6 +3005,8 @@ internal sealed record CommandExecution(
     RemoteAgentUsage? AgentUsage = null,
     StallDiagnostics? Stall = null);
 
+internal sealed record IsolatedBuildResult(ReviewCommandDto Build, CommandExecution Execution);
+
 internal sealed record RemoteAgentUsage(
     string Model,
     long InputTokens,
@@ -2897,6 +3027,7 @@ internal sealed record BaselineComparison(
     TimeSpan? ReusedAge = null)
 {
     public IReadOnlyList<string> InitialFailures { get; init; } = [];
+    public bool BlockedByIsolatedBuild { get; init; }
     public DeliveryFailureDiagnosisResult? Diagnosis { get; init; }
     /// <summary>
     /// How the baseline side of this comparison was produced, worded once for
