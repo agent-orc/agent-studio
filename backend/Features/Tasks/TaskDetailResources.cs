@@ -17,6 +17,24 @@ public static class TaskDetailResources
 {
     public static void MapTaskDetailResources(this RouteGroupBuilder group)
     {
+        group.MapGet("/{jobId}/details/overview", (string jobId, string? project, long? generation,
+            HttpContext context, ProjectRegistry projects, TaskIndexCache index,
+            ITaskCoreRuntime runtime, TaskScannerService scanner) =>
+        {
+            var lookup = Resolve(jobId, project, generation, context, projects, index);
+            if (lookup.Error is not null) return lookup.Error;
+            var core = lookup.Core!;
+            var task = scanner.FindJob(core.Id, core.WatchPath);
+            if (task is null || task.TaskKey != core.TaskKey) return Results.NotFound();
+            var data = new TaskOverviewResource(task.Decision,
+                TaskEndpointHelpers.BuildPlanningSpawnSummary(task),
+                TaskEndpointHelpers.BuildConceptDossierSummary(task),
+                task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
+                task.CompletionClaim, task.ParkedBlocker);
+            return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
+                null, Modified(Path.Combine(core.FolderPath, "task.json")));
+        });
+
         group.MapGet("/{jobId}/details/git", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
             ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots, ILoggerFactory loggerFactory) =>
@@ -188,3 +206,7 @@ public sealed record TaskReviewResource(ReviewProjectionView? ReviewProjection,
 public sealed record TaskDocumentResource(string Name, string? Markdown, TaskSummaryState? SummaryState);
 public sealed record TaskHistoryResource(IReadOnlyList<TaskPromptHistoryEntry> PromptHistory,
     IReadOnlyList<TaskTitleHistoryEntry> TitleHistory, IReadOnlyList<TaskLogEntry> Log);
+public sealed record TaskOverviewResource(DecisionContent? Decision,
+    PlanningSpawnSummary? PlanningSpawn, ConceptDossierSummary? ConceptDossier,
+    OlderBriefDeliveryOffer? OlderBriefDelivery, IReadOnlyList<RelatedWikiPage> RelatedWikiPages,
+    string CreationSource, TaskCompletionClaim? CompletionClaim, ParkedBlockerStatus? ParkedBlocker);

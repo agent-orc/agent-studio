@@ -8,6 +8,7 @@ export const idleResources = (): ResourceStates => ({
   git: { phase: 'idle', reason: null }, usage: { phase: 'idle', reason: null },
   review: { phase: 'idle', reason: null }, documents: { phase: 'idle', reason: null },
   history: { phase: 'idle', reason: null },
+  overview: { phase: 'idle', reason: null },
 });
 
 export const emptyDetail = (info: TaskInfo, core: TaskCore): TaskDetail => ({

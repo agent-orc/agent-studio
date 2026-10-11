@@ -5,6 +5,7 @@ import { TaskSelectionService } from '../../state/task-selection.service';
 import { resourceReasonLabel } from '../../state/task-resource-states';
 
 const LABELS: Record<ResourceName, { title: string; retry: string }> = {
+  overview: { title: 'Overview', retry: 'Retry overview' },
   documents: { title: 'Documents unavailable', retry: 'Retry documents' },
   git: { title: 'Git information unavailable', retry: 'Retry Git' },
   usage: { title: 'Usage information unavailable', retry: 'Retry usage' },
