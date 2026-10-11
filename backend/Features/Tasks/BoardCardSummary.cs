@@ -76,7 +76,6 @@ internal static class BoardCardSummary
             ["createdAt"] = job.CreatedAt,
             ["watchPath"] = job.WatchPath,
             ["projectName"] = job.ProjectName,
-            ["folderPath"] = job.FolderPath,
             ["lastActivity"] = job.LastActivity,
             ["enteredLaneAt"] = job.EnteredLaneAt,
             ["model"] = job.Model,
@@ -123,13 +122,22 @@ internal static class BoardCardSummary
                 mergeSha = provenance.Merge?.MergeCommit,
             };
         if (job.TokenSummary is { } tokens)
-            fields["tokenSummary"] = new
+        {
+            var tokenFields = new Dictionary<string, object?>
             {
-                tokens.TotalTokens, tokens.InputTokens, tokens.OutputTokens, tokens.CacheReadTokens,
-                tokens.CacheCreationTokens, tokens.EstimatedApiCostUsd,
-                tokens.AllModelsPriced, tokens.LastModel, tokens.LastUpdate,
-                tokens.HasModelMismatch,
+                ["totalTokens"] = tokens.TotalTokens,
+                ["allModelsPriced"] = tokens.AllModelsPriced,
             };
+            if (tokens.InputTokens != 0) tokenFields["inputTokens"] = tokens.InputTokens;
+            if (tokens.OutputTokens != 0) tokenFields["outputTokens"] = tokens.OutputTokens;
+            if (tokens.CacheReadTokens != 0) tokenFields["cacheReadTokens"] = tokens.CacheReadTokens;
+            if (tokens.CacheCreationTokens != 0) tokenFields["cacheCreationTokens"] = tokens.CacheCreationTokens;
+            if (tokens.EstimatedApiCostUsd != 0) tokenFields["estimatedApiCostUsd"] = tokens.EstimatedApiCostUsd;
+            if (tokens.LastModel is not null) tokenFields["lastModel"] = tokens.LastModel;
+            if (tokens.LastUpdate is not null) tokenFields["lastUpdate"] = tokens.LastUpdate;
+            if (tokens.HasModelMismatch) tokenFields["hasModelMismatch"] = true;
+            fields["tokenSummary"] = tokenFields;
+        }
         if (job.Integration is { } integration)
             fields["integration"] = new
             {
@@ -203,17 +211,18 @@ internal static class BoardCardSummary
         Add(fields, "remoteClaimFailure", job.RemoteClaimFailure);
         Add(fields, "pendingIntent", job.PendingIntent);
         if (job.NeedsInput is { } need)
-            fields["needsInput"] = need with { Message = Short(need.FirstLine, 180) ?? "" };
+            fields["needsInput"] = new { message = Short(need.FirstLine, 120) ?? "" };
         if (job.AutoLoop is { } loop)
-            fields["autoLoop"] = loop with
+            fields["autoLoop"] = new
             {
-                LastQuestion = Short(loop.LastQuestion, 160),
-                LastReply = null,
-                LastError = Short(loop.LastError, 120),
+                loop.Iteration, loop.MaxIterations, loop.TokensUsed, loop.MaxTokens,
+                loop.StartedAt,
+                lastQuestion = Short(loop.LastQuestion, 120),
+                lastError = Short(loop.LastError, 100),
             };
         Add(fields, "summaryState", job.SummaryState);
         if (job.PostProcessingChecks.FirstOrDefault(check => check.Status == "running") is { } runningCheck)
-            fields["postProcessingChecks"] = new[] { runningCheck with { Detail = null } };
+            fields["postProcessingChecks"] = new[] { new { runningCheck.Name, runningCheck.Status } };
         Add(fields, "references", job.References);
         if (job.WaitsOn is { } waits)
             fields["waitsOn"] = new
@@ -235,7 +244,12 @@ internal static class BoardCardSummary
         Add(fields, "pickupHold", job.PickupHold);
         Add(fields, "runActivity", job.RunActivity);
         if (job.LiveStatus is { } live)
-            fields["liveStatus"] = live with { NextSteps = live.NextSteps.Take(3).ToList() };
+            fields["liveStatus"] = new
+            {
+                live.Attempt, live.ActiveStep,
+                nextSteps = live.NextSteps.Take(3).Select(step => new { step.DisplayName }).ToArray(),
+                live.Queue, live.LatestEventAt,
+            };
         Add(fields, "externalCompletion", job.ExternalCompletion);
         Add(fields, "runner", job.Runner);
         Add(fields, "executionLocation", job.ExecutionLocation);
