@@ -792,7 +792,7 @@ public sealed class BatchGatePilotService
     {
         var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
         using var reservation = _reservations is null ? null
-            : await _reservations.AcquireAsync(manifest.Scope.Project, ct).ConfigureAwait(false);
+            : await _reservations.AcquireBatchAsync(manifest.Scope.Project, ct).ConfigureAwait(false);
         BatchCoordinatorLease? lease;
         try { lease = _leases.TryAcquire(manifest.Scope, Environment.MachineName); }
         catch (IOException) { return; }

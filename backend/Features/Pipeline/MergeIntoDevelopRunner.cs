@@ -1529,6 +1529,13 @@ public sealed partial class MergeIntoDevelopRunner
             return;
         }
 
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
+            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath)))
+            _batchReservations.MarkPushPending(project, jobId);
+
         var enqueued = _pushQueue.Enqueue(new IntegrationPushRequest(
             project, jobId, jobFolderPath, watchPath, integrationBranch, approvedSha));
         if (enqueued)
@@ -1649,7 +1656,7 @@ public sealed partial class MergeIntoDevelopRunner
                 }
             }
 
-            return await PushIntegrationBranchSerializedAsync(
+            var pushed = await PushIntegrationBranchSerializedAsync(
                 project,
                 jobId,
                 jobFolderPath,
@@ -1657,6 +1664,9 @@ public sealed partial class MergeIntoDevelopRunner
                 integrationBranch,
                 approvedSha,
                 ct);
+            if (pushed.Success)
+                _batchReservations?.MarkPushVerified(project, jobId);
+            return pushed;
         }
         finally
         {
