@@ -228,7 +228,8 @@ internal static class BoardCardSummary
         if (!job.References.IsEmpty)
             fields["references"] = new
             {
-                dependsOn = job.References.DependsOn,
+                dependsOnCount = job.References.DependsOn.Count,
+                dependsOn = job.References.DependsOn.Take(3).ToArray(),
                 raisedFollowUps = job.References.RaisedFollowUps.Take(1).ToArray(),
             };
         if (job.WaitsOn is { } waits)

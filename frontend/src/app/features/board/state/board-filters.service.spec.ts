@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { BoardFiltersService } from './board-filters.service';
 import { TaskService } from '../../../services/task.service';
@@ -87,6 +87,26 @@ describe('BoardFiltersService project selection', () => {
     const g = svc.filteredGrouped();
     expect(g.ready.length).toBe(4);
     expect(g.archive.length).toBe(3);
+  });
+
+  it('loads full dependency keys only for overflow cards when the dependency filter is active', () => {
+    const card = {
+      ...makeJob('many-edges', 'Agent Task Processor', '2-ready'),
+      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnCount: 20,
+        relatedTo: [], blockedBy: [], supersedes: [] },
+    } as TaskInfo;
+    jobs.grouped.set(makeGrouped([card]));
+    svc.activeDependsOnFilter.set('AGT-20');
+    expect(svc.filteredGrouped().ready).toHaveLength(0);
+
+    TestBed.tick();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne(request => request.url.includes('/tasks/many-edges')).flush({
+      info: { ...card, references: { ...card.references,
+        dependsOn: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'] } },
+    });
+    expect(svc.filteredGrouped().ready).toEqual([card]);
+    http.verify();
   });
 
   it('selectProject switches to single-project view by default', () => {

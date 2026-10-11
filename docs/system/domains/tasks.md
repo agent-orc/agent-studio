@@ -15,6 +15,10 @@ count and latest short commit label, and the branch facts needed for the Git
 badge. They omit the full commit chain, provenance transitions, review
 projection, token call rows, and detailed test evidence. Opening a task loads
 full data through `GET /api/tasks/{id}/core` and the detail resources. The
+card's `references.dependsOn` contains at most three edges and
+`references.dependsOnCount` gives the full count. The board dependency filter
+loads full task detail for cards whose truncated edges could contain its target;
+the detail reference editor always uses the full relation set. The
 `overview` resource supplies decision options, planning and concept summaries,
 older brief offers, wiki links, creation and completion facts, parked blockers,
 and needs-input text. The `git` resource supplies the full commit chain and

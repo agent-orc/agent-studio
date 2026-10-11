@@ -1,5 +1,6 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { GroupedJobs, TaskInfo, taskDependencyKey } from '../../../models/task.model';
+import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { GroupedJobs, TaskDependency, TaskInfo, taskDependencyKey } from '../../../models/task.model';
 import { TaskService } from '../../../services/task.service';
 import { ClientService } from '../../../services/client.service';
 import { TagRegistryStore } from '../../../services/tag-registry.store';
@@ -44,8 +45,35 @@ export class BoardFiltersService {
   private readonly clientService = inject(ClientService);
   private readonly tagRegistryStore = inject(TagRegistryStore);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly expandedDependencies = new WeakMap<TaskInfo, TaskDependency[]>();
+  private readonly pendingDependencies = new WeakSet<TaskInfo>();
+  private readonly expandedDependenciesVersion = signal(0);
 
   constructor() {
+    effect(() => {
+      const target = this.activeDependsOnFilter()?.trim().toUpperCase();
+      if (!target) return;
+      const grouped = this.jobService.grouped();
+      for (const lane of Object.values(grouped)) {
+        if (!Array.isArray(lane)) continue;
+        for (const job of lane as TaskInfo[]) {
+          const refs = job.references;
+          if (!refs || (refs.dependsOnCount ?? refs.dependsOn.length) <= refs.dependsOn.length
+            || refs.dependsOn.some(edge => taskDependencyKey(edge).trim().toUpperCase() === target)
+            || this.expandedDependencies.has(job) || this.pendingDependencies.has(job)) continue;
+          this.pendingDependencies.add(job);
+          this.jobService.getDetail(job.id, job.watchPath, job.projectName)
+            .pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+              next: detail => {
+                this.expandedDependencies.set(job, detail.info.references?.dependsOn ?? []);
+                this.pendingDependencies.delete(job);
+                this.expandedDependenciesVersion.update(version => version + 1);
+              },
+              error: () => this.pendingDependencies.delete(job),
+            });
+        }
+      }
+    });
     if (typeof window === 'undefined') return;
     const syncHashFilters = () => this.readFilterHash();
     window.addEventListener('hashchange', syncHashFilters);
@@ -177,7 +205,8 @@ export class BoardFiltersService {
       if (active.size > 0 && !active.has(j.projectName)) return false;
       if (ownerId && j.ownerClientId !== ownerId) return false;
       if (dependsOnKey) {
-        const deps = j.references?.dependsOn ?? [];
+        this.expandedDependenciesVersion();
+        const deps = this.expandedDependencies.get(j) ?? j.references?.dependsOn ?? [];
         if (!deps.some(d => taskDependencyKey(d).trim().toUpperCase() === dependsOnKey)) return false;
       }
       if (types.size > 0) {

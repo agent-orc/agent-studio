@@ -310,6 +310,8 @@ export function taskDependencyRequiresRelease(dependency: TaskDependency): boole
 
 export interface TaskReferences {
   dependsOn: TaskDependency[];
+  /** Total dependency count when a board card carries only the first three edges. */
+  dependsOnCount?: number;
   relatedTo: string[];
   blockedBy: string[];
   supersedes: string[];

@@ -73,6 +73,26 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Many_dependencies_keep_the_card_bounded_and_preserve_release_gate_labels()
+    {
+        var job = Fixture() with
+        {
+            References = new TaskReferences
+            {
+                DependsOn = Enumerable.Range(0, 100)
+                    .Select(i => new TaskDependencyReference($"AGT-{i}", i == 1)).ToList(),
+            },
+        };
+        var bytes = BoardCardSummary.Serialize(job);
+        using var document = JsonDocument.Parse(bytes);
+        var references = document.RootElement.GetProperty("references");
+        Assert.True(bytes.Length < 2048, $"Card was {bytes.Length} bytes");
+        Assert.Equal(100, references.GetProperty("dependsOnCount").GetInt32());
+        Assert.Equal(3, references.GetProperty("dependsOn").GetArrayLength());
+        Assert.True(references.GetProperty("dependsOn")[1].GetProperty("releaseGate").GetBoolean());
+    }
+
+    [Fact]
     public async Task Two_hundred_thirty_five_cards_fit_in_board_budget()
     {
         var cards = Enumerable.Range(0, 235).Select(i => Fixture() with
