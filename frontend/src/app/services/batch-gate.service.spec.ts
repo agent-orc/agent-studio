@@ -15,7 +15,7 @@ describe('BatchGateService', () => {
     service = TestBed.inject(BatchGateService);
     http = TestBed.inject(HttpTestingController);
   });
-  afterEach(() => { http.verify(); vi.useRealTimers(); });
+  afterEach(() => { vi.useRealTimers(); http.verify(); });
 
   it('shares one state poll per visible project and retains contract data', async () => {
     const stopA = service.watch('Demo Project');
@@ -23,7 +23,8 @@ describe('BatchGateService', () => {
     http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
     await Promise.resolve();
     expect(http.match(`${base}/state?history=10`)).toHaveLength(0);
-    expect(service.state('Demo Project')()?.batches[0].phase).toBe('halving');
+    expect(service.state('Demo Project')()?.batches[0].phase).toBe('red');
+    expect(service.state('Demo Project')()?.batches[1].parentBatchId).toBe('batch-7');
     expect(service.state('Demo Project')()?.members['AGT-4'].status).toBe('fallback');
     expect(service.state('Demo Project')()?.plan.advisor?.verdict).toBe('veto');
     stopA(); stopB();
@@ -58,5 +59,63 @@ describe('BatchGateService', () => {
     stop();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(http.match(`${base}/state?history=10`)).toHaveLength(0);
+  });
+
+  it.each([404, 405])('hides unsupported endpoint %i and stops polling', async status => {
+    vi.useFakeTimers();
+    const stop = service.watch('Demo Project');
+    http.expectOne(`${base}/state?history=10`).flush({}, { status, statusText: 'Unavailable' });
+    await Promise.resolve();
+    expect(service.unavailable('Demo Project')()).toBe(true);
+    expect(service.state('Demo Project')()).toBeNull();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(http.match(`${base}/state?history=10`)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(255_000);
+    http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
+    await Promise.resolve();
+    expect(service.unavailable('Demo Project')()).toBe(false);
+    stop();
+  });
+
+  it('rejects a successful but malformed catch-all response', async () => {
+    const stop = service.watch('Demo Project');
+    http.expectOne(`${base}/state?history=10`).flush([]);
+    await Promise.resolve();
+    expect(service.unavailable('Demo Project')()).toBe(true);
+    expect(service.state('Demo Project')()).toBeNull();
+    stop();
+  });
+
+  it('rejects malformed settings without exposing them to the form', () => {
+    let failed = false;
+    service.getSettings('Demo Project').subscribe({ error: () => { failed = true; } });
+    http.expectOne(base).flush([]);
+    expect(failed).toBe(true);
+  });
+
+  it('keeps a disabled state safe for consumers', async () => {
+    const stop = service.watch('Demo Project');
+    http.expectOne(`${base}/state?history=10`).flush({ ...redHalvingState, plan: { ...redHalvingState.plan, decision: 'disabled' } });
+    await Promise.resolve();
+    expect(service.state('Demo Project')()?.plan.decision).toBe('disabled');
+    stop();
+  });
+
+  it('pauses in a hidden tab and resumes with one request', async () => {
+    vi.useFakeTimers();
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const stop = service.watch('Demo Project');
+    http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
+    await Promise.resolve();
+    hidden.mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(http.match(`${base}/state?history=10`)).toHaveLength(0);
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    http.expectOne(`${base}/state?history=10`).flush(redHalvingState);
+    await Promise.resolve();
+    stop();
+    hidden.mockRestore();
   });
 });
