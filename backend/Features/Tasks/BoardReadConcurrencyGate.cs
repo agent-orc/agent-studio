@@ -3,42 +3,31 @@ using System.Collections.Concurrent;
 namespace AgentStudio.Tasks;
 
 /// <summary>
-/// Single-flight cache for serialized board responses. The validator key
-/// includes the task-index generation and live projection generations, so
-/// waiting readers share the same build and then write independently.
+/// Shares one serialized body build among readers of the same board generation.
 /// </summary>
 public sealed class BoardReadConcurrencyGate
 {
-    private readonly ConcurrentDictionary<string, Lazy<byte[]>> _bodies = new();
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, Lazy<byte[]>>> _cards = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _bodies = new();
     private readonly Lock _trimLock = new();
 
-    public byte[] GetOrBuildCard(string generation, string taskKey, Func<byte[]> build)
+    public async Task<byte[]> GetOrBuildAsync(string key, Func<byte[]> build, CancellationToken cancellationToken)
     {
-        var cards = _cards.GetOrAdd(generation, _ => new ConcurrentDictionary<string, Lazy<byte[]>>());
-        var entry = cards.GetOrAdd(taskKey, _ => new Lazy<byte[]>(build,
-            LazyThreadSafetyMode.ExecutionAndPublication));
-        try { return entry.Value; }
-        catch
-        {
-            cards.TryRemove(new KeyValuePair<string, Lazy<byte[]>>(taskKey, entry));
-            throw;
-        }
-    }
-
-    public byte[] GetOrBuild(string key, Func<byte[]> build)
-    {
-        var entry = _bodies.GetOrAdd(key, _ => new Lazy<byte[]>(build,
-            LazyThreadSafetyMode.ExecutionAndPublication));
+        var entry = _bodies.GetOrAdd(key, _ => new Lazy<Task<byte[]>>(
+            () => Task.Run(build), LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
-            var body = entry.Value;
+            // Disconnecting one waiter does not cancel the shared build.
+            var body = await entry.Value.WaitAsync(cancellationToken);
             if (_bodies.Count > 24) Trim(key);
             return body;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
-            _bodies.TryRemove(new KeyValuePair<string, Lazy<byte[]>>(key, entry));
+            _bodies.TryRemove(new KeyValuePair<string, Lazy<Task<byte[]>>>(key, entry));
             throw;
         }
     }
@@ -49,12 +38,12 @@ public sealed class BoardReadConcurrencyGate
         {
             if (_bodies.Count <= 24) return;
             foreach (var key in _bodies
-                .Where(entry => entry.Key != current && entry.Value.IsValueCreated)
+                .Where(entry => entry.Key != current && entry.Value.IsValueCreated
+                    && entry.Value.Value.IsCompleted)
                 .Select(entry => entry.Key)
                 .Take(_bodies.Count - 12))
             {
                 _bodies.TryRemove(key, out _);
-                _cards.TryRemove(key, out _);
             }
         }
     }

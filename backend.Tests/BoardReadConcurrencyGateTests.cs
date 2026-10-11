@@ -20,9 +20,9 @@ public sealed class BoardReadConcurrencyGateTests
             return [1, 2, 3];
         }
 
-        var first = Task.Run(() => cache.GetOrBuild("generation-1", Build));
+        var first = cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None);
         await started.Task;
-        var second = Task.Run(() => cache.GetOrBuild("generation-1", Build));
+        var second = cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None);
         release.TrySetResult();
         var results = await Task.WhenAll(first, second);
 
@@ -31,37 +31,50 @@ public sealed class BoardReadConcurrencyGateTests
     }
 
     [Fact]
-    public void Changed_generation_builds_new_body()
+    public async Task Changed_generation_builds_new_body()
     {
         var cache = new BoardReadConcurrencyGate();
         var builds = 0;
         byte[] Build() => [(byte)Interlocked.Increment(ref builds)];
 
-        Assert.Same(cache.GetOrBuild("generation-1", Build), cache.GetOrBuild("generation-1", Build));
-        Assert.NotSame(cache.GetOrBuild("generation-1", Build), cache.GetOrBuild("generation-2", Build));
+        Assert.Same(await cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None),
+            await cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None));
+        Assert.NotSame(await cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None),
+            await cache.GetOrBuildAsync("generation-2", Build, CancellationToken.None));
         Assert.Equal(2, builds);
     }
 
     [Fact]
-    public void Failed_build_does_not_poison_waiting_readers()
+    public async Task Failed_build_does_not_poison_waiting_readers()
     {
         var cache = new BoardReadConcurrencyGate();
-        Assert.Throws<InvalidOperationException>(() =>
-            cache.GetOrBuild("generation-1", () => throw new InvalidOperationException()));
-        Assert.Equal([1], cache.GetOrBuild("generation-1", () => new byte[] { 1 }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrBuildAsync("generation-1", () => throw new InvalidOperationException(), CancellationToken.None));
+        Assert.Equal([1], await cache.GetOrBuildAsync("generation-1", () => new byte[] { 1 }, CancellationToken.None));
     }
 
     [Fact]
-    public void Card_summary_is_reused_within_generation_and_rebuilt_after_invalidation()
+    public async Task Canceled_waiter_does_not_cancel_the_shared_build()
     {
         var cache = new BoardReadConcurrencyGate();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var builds = 0;
-        byte[] Build() => [(byte)Interlocked.Increment(ref builds)];
-
-        Assert.Same(cache.GetOrBuildCard("generation-1", "AGT-3043", Build),
-            cache.GetOrBuildCard("generation-1", "AGT-3043", Build));
-        Assert.NotSame(cache.GetOrBuildCard("generation-1", "AGT-3043", Build),
-            cache.GetOrBuildCard("generation-2", "AGT-3043", Build));
-        Assert.Equal(2, builds);
+        byte[] Build()
+        {
+            Interlocked.Increment(ref builds);
+            started.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            return [1];
+        }
+        using var canceled = new CancellationTokenSource();
+        var first = cache.GetOrBuildAsync("generation-1", Build, CancellationToken.None);
+        await started.Task;
+        var waiter = cache.GetOrBuildAsync("generation-1", Build, canceled.Token);
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
+        release.TrySetResult();
+        Assert.Equal([1], await first);
+        Assert.Equal(1, builds);
     }
 }

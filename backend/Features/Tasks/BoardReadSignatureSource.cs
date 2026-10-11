@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 using AgentStudio.Cli;
 using AgentStudio.Projects;
@@ -113,6 +115,7 @@ public sealed class BoardReadSignatureSource(
             Part("settings", projectSettings.Version),
             Part("decisions", DecisionJournalFold(jobs)),
             Part("runtime", RuntimeFold(jobs, router, runners)),
+            "visible=" + VisibleSetDigest(jobs),
             Part("day", DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime).DayNumber),
             Part("tick", anyProgress ? ProgressTick() : -1),
             Part("count", jobs.Count));
@@ -120,6 +123,13 @@ public sealed class BoardReadSignatureSource(
 
     private static string Part(string name, long value)
         => name + "=" + value.ToString(CultureInfo.InvariantCulture);
+
+    private static string VisibleSetDigest(IReadOnlyList<TaskInfo> jobs)
+    {
+        var keys = jobs.Select(job => job.TaskKey).OrderBy(key => key, StringComparer.Ordinal);
+        var bytes = Encoding.UTF8.GetBytes(string.Join('\n', keys));
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
 
     private long ProgressTick()
         => _time.GetUtcNow().UtcDateTime.Ticks / ProgressClockTick.Ticks;

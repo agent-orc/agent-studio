@@ -14,6 +14,21 @@ public static class TaskCrudEndpoints
 {
     public static void MapTaskCrudEndpoints(this RouteGroupBuilder group)
     {
+        group.MapGet("/commit-owner/{sha}", (string sha, HttpContext context,
+            TaskScannerService scanner, AgentStudio.Registry.ProjectRegistry projects) =>
+        {
+            if (sha.Length is < 7 or > 64 || !sha.All(Uri.IsHexDigit))
+                return Results.BadRequest(new { error = "A commit SHA is required" });
+            var jobs = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobsWithArchive(), projects);
+            foreach (var job in jobs)
+            foreach (var commit in job.Commits)
+                if (commit.Sha is { Length: > 0 } commitSha
+                    && (commitSha.StartsWith(sha, StringComparison.OrdinalIgnoreCase)
+                        || sha.StartsWith(commitSha, StringComparison.OrdinalIgnoreCase)))
+                    return Results.Ok(new { job = BoardCardSummary.AsJsonElement(job), commit });
+            return Results.NotFound();
+        });
+
         // AGT-2050: one lightweight read for every task reference on a rendered
         // document/chat turn. The scanner and merge reachability service are both
         // cached, and merge membership is calculated once for the whole requested
@@ -72,7 +87,7 @@ public static class TaskCrudEndpoints
             return Results.Ok(new TaskReferenceStatusResponse(items!));
         });
 
-        group.MapGet("/", (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
+        group.MapGet("/", async (string? project, bool? includeFixtures, HttpContext ctx, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/list",
@@ -137,11 +152,11 @@ public static class TaskCrudEndpoints
                 return BoardReadValidator.Ok(ctx, etag, response);
             }
             return BoardReadValidator.Bytes(ctx, etag,
-                boardReads.GetOrBuild(etag, () => BoardCardSummary.SerializeList(BuildJobs(),
-                    job => boardReads.GetOrBuildCard(etag, job.TaskKey, () => BoardCardSummary.Serialize(job)))));
+                await boardReads.GetOrBuildAsync(etag,
+                    () => BoardCardSummary.SerializeList(BuildJobs()), ctx.RequestAborted));
         });
 
-        group.MapGet("/grouped", (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
+        group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = GitProcessTelemetry.BeginRequest(
                 "tasks/grouped",
@@ -284,11 +299,10 @@ public static class TaskCrudEndpoints
                     ["completed"] = grouped.Completed,
                     ["archive"] = grouped.Archive,
                 };
-                return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale,
-                    job => boardReads.GetOrBuildCard(etag, job.TaskKey, () => BoardCardSummary.Serialize(job)));
+                return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale);
             }
             return BoardReadValidator.Bytes(context, etag,
-                boardReads.GetOrBuild(etag, BuildPayload));
+                await boardReads.GetOrBuildAsync(etag, BuildPayload, context.RequestAborted));
         });
 
         // ASS-1727: dedicated paged read for the terminal 7-archive lane. The
