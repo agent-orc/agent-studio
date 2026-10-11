@@ -12,8 +12,11 @@ if [[ -f "${REPO_ROOT}/backend/appsettings.Local.json" && "${ATP_WORKTREE_TEST_A
   exit 1
 fi
 
+backend_started=0
 stop() {
-  "${REPO_ROOT}/api.sh" stop || true
+  if (( backend_started )); then
+    "${REPO_ROOT}/api.sh" stop || true
+  fi
   git -C "${REPO_ROOT}" worktree remove --force "${PW_E2E_CHECKOUT}" || true
 }
 trap stop EXIT
@@ -64,6 +67,7 @@ case "${PW_E2E_PROFILE:-standard}" in
   *) echo "Unknown PW_E2E_PROFILE: ${PW_E2E_PROFILE}" >&2; exit 2 ;;
 esac
 
+backend_started=1
 "${REPO_ROOT}/api.sh" start
 failures=0
 while true; do
