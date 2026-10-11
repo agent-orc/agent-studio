@@ -13,6 +13,8 @@ internal static class ReviewTestTimingEvidence
 {
     private const long MaxTrxBytes = 64L * 1024 * 1024;
     private const int MaxSummaryBytes = 256 * 1024;
+    private const int MaxEmbeddedBytesPerCommand = 512 * 1024;
+    private const int MaxTrxFilesPerCommand = 32;
     internal static async Task<IReadOnlyList<ReviewArtifactEvidenceDto>> CaptureAsync(
         string standardOutput,
         string attemptRoot,
@@ -23,10 +25,17 @@ internal static class ReviewTestTimingEvidence
         CancellationToken ct)
     {
         var artifacts = new List<ReviewArtifactEvidenceDto>();
+        var embeddedBytes = 0;
         var ordinal = 0;
+        var inspected = 0;
         foreach (var rawPath in ResultPaths(standardOutput))
         {
             ct.ThrowIfCancellationRequested();
+            if (inspected++ >= MaxTrxFilesPerCommand)
+            {
+                log($"review-test-timing stopped after {MaxTrxFilesPerCommand} TRX files");
+                break;
+            }
             try
             {
                 var path = Path.GetFullPath(rawPath);
@@ -59,19 +68,22 @@ internal static class ReviewTestTimingEvidence
                     WriteIndented = true,
                 }) + "\n";
                 var jsonBytes = Encoding.UTF8.GetBytes(json);
-                if (jsonBytes.Length > MaxSummaryBytes)
+                if (jsonBytes.Length > MaxSummaryBytes
+                    || embeddedBytes + jsonBytes.Length > MaxEmbeddedBytesPerCommand)
                 {
                     log($"review-test-timing skipped oversized summary bytes={jsonBytes.Length}");
                     continue;
                 }
+                embeddedBytes += jsonBytes.Length;
                 var summaryName = name + ".json";
                 await File.WriteAllBytesAsync(Path.Combine(artifactDirectory, summaryName), jsonBytes, ct);
                 artifacts.Add(Artifact(summaryName, "application/json", jsonBytes));
 
                 var trxName = name + ".trx";
-                await File.WriteAllBytesAsync(Path.Combine(artifactDirectory, trxName), source, ct);
+                var retainedTrxPath = Path.Combine(artifactDirectory, trxName);
+                await File.WriteAllBytesAsync(retainedTrxPath, source, ct);
                 artifacts.Add(new ReviewArtifactEvidenceDto(
-                    trxName, "application/vnd.ms-vstest.trx",
+                    retainedTrxPath, "application/vnd.ms-vstest.trx",
                     Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
                     source.LongLength, null));
                 log($"review-test-timing captured tests={summary.Total.Tests} " +

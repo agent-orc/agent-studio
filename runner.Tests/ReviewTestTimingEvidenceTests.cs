@@ -51,6 +51,7 @@ public sealed class ReviewTestTimingEvidenceTests
 
             var retained = Assert.Single(artifacts, item => item.Name.EndsWith(".trx", StringComparison.Ordinal));
             Assert.Null(retained.ContentBase64);
+            Assert.Equal(Path.Combine(artifactDirectory, Path.GetFileName(retained.Name)), retained.Name);
             Assert.Equal(Encoding.UTF8.GetByteCount(trx), retained.SizeBytes);
             Assert.Equal(trx, await File.ReadAllTextAsync(Path.Combine(artifactDirectory, retained.Name)));
             Assert.NotNull(jsonArtifact.ContentBase64);
@@ -124,6 +125,33 @@ public sealed class ReviewTestTimingEvidenceTests
                 $"Results File: {path}", root, artifacts, "timing", false, messages.Add, default);
             Assert.Empty(captured);
             Assert.Contains(messages, message => message.Contains("oversized TRX", StringComparison.Ordinal));
+            Assert.Empty(Directory.EnumerateFiles(artifacts));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task Oversized_summary_never_enters_review_evidence()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "review-test-timing-" + Guid.NewGuid().ToString("N"));
+        var artifacts = Path.Combine(root, "artifacts");
+        Directory.CreateDirectory(artifacts);
+        var path = Path.Combine(root, "large-summary.trx");
+        var xml = new StringBuilder("<TestRun><TestDefinitions>");
+        for (var index = 0; index < 1000; index++)
+            xml.Append($"<UnitTest id=\"{index}\"><TestMethod className=\"Test{index}_{new string('A', 300)}\" /></UnitTest>");
+        xml.Append("</TestDefinitions><Results>");
+        for (var index = 0; index < 1000; index++)
+            xml.Append($"<UnitTestResult testId=\"{index}\" testName=\"Test{index}\" duration=\"00:00:00.001\" outcome=\"Passed\" />");
+        xml.Append("</Results></TestRun>");
+        await File.WriteAllTextAsync(path, xml.ToString());
+        try
+        {
+            var messages = new List<string>();
+            var captured = await ReviewTestTimingEvidence.CaptureAsync(
+                $"Results File: {path}", root, artifacts, "timing", false, messages.Add, default);
+            Assert.Empty(captured);
+            Assert.Contains(messages, message => message.Contains("oversized summary", StringComparison.Ordinal));
             Assert.Empty(Directory.EnumerateFiles(artifacts));
         }
         finally { Directory.Delete(root, recursive: true); }
