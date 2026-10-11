@@ -1650,12 +1650,17 @@ was measured at roughly 1.9 MB, polled every two seconds; on an unchanged board
 every byte of it is a byte the client already holds.
 
 - **Concurrent board builds are bounded.** Both routes share one
-  `BoardReadConcurrencyGate`, held from the first scanner read through the
-  completion of JSON serialization. Waiting requests do not build snapshots;
-  `RequestAborted` removes disconnected clients from the queue before they
-  start work. This prevents overlapping full-board projections from multiplying
-  the heap under load. Responses are still built from current authorized inputs
-  when their turn starts; the gate does not retain or share response bodies.
+  `BoardReadConcurrencyGate`. A body is serialized once per cache key, and
+  concurrent callers await the same in-flight result with their own
+  `RequestAborted` cancellation. The body cache is invalidated by the task
+  index generation and other board validator inputs.
+- **Slim card dependencies remain complete for filters.** `references.dependsOn`
+  contains only the first three detailed edges on list and grouped reads;
+  `references.dependsOnKeys` contains every dependency key as a string. The
+  waiting-for-release facet reads `waitsOn.anyWaitingForRelease`, and
+  `waitsOn.releaseTargets` identifies every waiting target even when its label
+  is outside the first three `waitsOn.items`. Full reference and review facts
+  remain on task detail resources.
 - **Review activity and queue order never wait for authority persistence.** The
   board reads one immutable snapshot of the current review state, priority,
   creation time, result-envelope availability, and lease end per task. The
