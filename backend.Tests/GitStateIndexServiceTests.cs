@@ -1010,7 +1010,11 @@ public sealed class GitStateIndexServiceTests : IDisposable
             Volatile.Write(ref fail, 1);
             service.RequestRefresh("proj", "transient-failure");
             await WaitUntilAsync(() => service.GetRepositoryStatuses().Single().ReasonCode == "refresh-failed");
-            Assert.Equal(original, service.GetRepositoryStatuses().Single().GitStateAt);
+            var failedStatus = service.GetRepositoryStatuses().Single();
+            Assert.Equal(original, failedStatus.GitStateAt);
+            Assert.True(failedStatus.ConsecutiveFailures >= 1);
+            Assert.Contains("transient Git failure", failedStatus.LastError);
+            Assert.NotNull(failedStatus.FailureSince);
             Assert.True(cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
 
             Volatile.Write(ref fail, 0);

@@ -15,6 +15,63 @@ public sealed class TaskListGitProjectionCacheTests
     private static readonly DateTimeOffset SnapshotTime = DateTimeOffset.UnixEpoch;
 
     [Fact]
+    public void DuplicateSelection_PrefersLiveThenNewestWrite()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "duplicate-selection-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var olderPath = Path.Combine(root, "older");
+            var newerPath = Path.Combine(root, "newer");
+            Directory.CreateDirectory(olderPath);
+            Directory.CreateDirectory(newerPath);
+            var olderFile = Path.Combine(olderPath, "task.json");
+            var newerFile = Path.Combine(newerPath, "task.json");
+            File.WriteAllText(olderFile, "{}");
+            File.WriteAllText(newerFile, "{}");
+            File.SetLastWriteTimeUtc(olderFile, DateTime.UtcNow.AddMinutes(-2));
+            File.SetLastWriteTimeUtc(newerFile, DateTime.UtcNow.AddMinutes(-1));
+            var older = Job("same", root) with { FolderPath = olderPath };
+            var newer = older with { FolderPath = newerPath };
+            Assert.Same(newer, TaskProjectionCards.Select([older, newer]).Single());
+            Assert.Same(older, TaskProjectionCards.Select([older, newer with { State = TaskStates.Archive }]).Single());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task BuildProjectionAsync_DuplicateAndFailingCard_PublishesOtherCard()
+    {
+        var good = Job("good", "watch-a");
+        var bad = Job("bad", "watch-a");
+        var archived = good with { State = TaskStates.Archive };
+        var projection = await TaskListGitProjectionCache.BuildProjectionAsync(
+            [archived, good, bad],
+            jobs => jobs.ToDictionary(job => job.TaskKey, _ => new TaskMergeSignal(), StringComparer.Ordinal),
+            _ => new Dictionary<string, TaskIntegrationStatus>(),
+            _ => new Dictionary<string, TaskPublishSignal>(),
+            jobs => jobs.ToDictionary(job => job.TaskKey,
+                job => job.TaskKey == bad.TaskKey
+                    ? throw new IOException("card evidence unavailable")
+                    : new TaskTestRunEvidence(), StringComparer.Ordinal),
+            _ => new Dictionary<string, AgentStudio.Review.ReviewProjectionView>());
+
+        Assert.Equal(2, projection.Merge.Count);
+        Assert.Contains(good.TaskKey, projection.TestRuns.Keys);
+        Assert.Contains(bad.TaskKey, projection.UnavailableTasks);
+        var cache = new TaskListGitProjectionCache();
+        cache.SetSnapshot(good.WatchPath, projection with
+        {
+            Signatures = new Dictionary<string, string>
+            {
+                [good.TaskKey] = TaskGitSignature.For(good),
+                [bad.TaskKey] = TaskGitSignature.For(bad),
+            },
+        }, SnapshotTime);
+        Assert.Equal("ready", cache.ReadTask(good).State);
+        Assert.Equal("unavailable", cache.ReadTask(bad).State);
+    }
+
+    [Fact]
     public void ReadCacheOnly_BeforeAnySnapshot_ReturnsEmptyAndSpawnsNoGit()
     {
         var cache = new TaskListGitProjectionCache();

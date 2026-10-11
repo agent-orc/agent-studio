@@ -135,11 +135,11 @@ public sealed class TaskListGitProjectionCache
         // is still restricted to them, so a fact it carries for a task that now
         // lives in another repository never overwrites that repository's fact.
         var signed = projection.TaskSignatures.Count > 0;
-        var valid = tasks.Where(task => !signed
+        var valid = tasks.Where(task => !projection.UnavailableTasks.Contains(task.TaskKey) && (!signed
                 || projection.TaskSignatures.TryGetValue(task.TaskKey, out var signature)
                 && signature == TaskGitSignature.For(task)
                 && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
-                    || expected == SubjectVersion(task.FolderPath)))
+                    || expected == SubjectVersion(task.FolderPath))))
             .Select(task => task.TaskKey).ToHashSet(StringComparer.Ordinal);
         return projection with
         {
@@ -290,13 +290,14 @@ public sealed class TaskListGitProjectionCache
             && signature == TaskGitSignature.For(task)
             && (!projection.TaskSubjectVersions.TryGetValue(task.TaskKey, out var expected)
                 || expected == SubjectVersion(task.FolderPath));
+        var unavailable = projection.UnavailableTasks.Contains(task.TaskKey);
         var state = entry.GitStateAt is null
             ? entry.Reason is null ? "warming" : "unavailable"
-            : entry.Refreshing || entry.Reason is not null || !compatible ? "stale" : "ready";
+            : unavailable ? "unavailable" : entry.Refreshing || entry.Reason is not null || !compatible ? "stale" : "ready";
         return new TaskGitSnapshot(task.TaskKey, task.ProjectName, state, entry.GitStateAt, entry.Generation,
             TaskGitSignature.For(task),
-            entry.Reason ?? (!compatible && entry.GitStateAt is not null ? "task-changed" : null),
-            compatible ? projection.ForTask(task.TaskKey) : null, entry.InputKey);
+            unavailable ? "card-facts-unavailable" : entry.Reason ?? (!compatible && entry.GitStateAt is not null ? "task-changed" : null),
+            compatible && !unavailable ? projection.ForTask(task.TaskKey) : null, entry.InputKey);
     }
 
     internal static string NormalizePath(string path)
@@ -325,14 +326,15 @@ public sealed class TaskListGitProjectionCache
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskIntegrationStatus>> integrationLookup,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskPublishSignal>> publishLookup,
         Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, TaskTestRunEvidence>> testRunLookup,
-        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, AgentStudio.Review.ReviewProjectionView>> reviewProjectionLookup)
+        Func<IReadOnlyCollection<TaskInfo>, Dictionary<string, AgentStudio.Review.ReviewProjectionView>> reviewProjectionLookup,
+        ILogger? logger = null)
         => await BuildProjectionAsync(
             tasks,
             captured => Task.Run(() => mergeLookup(captured)),
             captured => Task.Run(() => integrationLookup(captured)),
             captured => Task.Run(() => publishLookup(captured)),
             captured => Task.Run(() => testRunLookup(captured)),
-            captured => Task.Run(() => reviewProjectionLookup(captured)));
+            captured => Task.Run(() => reviewProjectionLookup(captured)), logger);
 
     internal static async Task<TaskListGitProjection> BuildProjectionAsync(
         IReadOnlyCollection<TaskInfo> tasks,
@@ -340,13 +342,16 @@ public sealed class TaskListGitProjectionCache
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskIntegrationStatus>>> integrationLookup,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskPublishSignal>>> publishLookup,
         Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, TaskTestRunEvidence>>> testRunLookup,
-        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, AgentStudio.Review.ReviewProjectionView>>> reviewProjectionLookup)
+        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, AgentStudio.Review.ReviewProjectionView>>> reviewProjectionLookup,
+        ILogger? logger = null)
     {
-        var mergeTask = mergeLookup(tasks);
-        var integrationTask = integrationLookup(tasks);
-        var publishTask = publishLookup(tasks);
-        var testRunTask = testRunLookup(tasks);
-        var reviewProjectionTask = reviewProjectionLookup(tasks);
+        tasks = TaskProjectionCards.Select(tasks);
+        var unavailable = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        var mergeTask = SafeLookup(tasks, mergeLookup, unavailable, logger);
+        var integrationTask = SafeLookup(tasks, integrationLookup, unavailable, logger);
+        var publishTask = SafeLookup(tasks, publishLookup, unavailable, logger);
+        var testRunTask = SafeLookup(tasks, testRunLookup, unavailable, logger);
+        var reviewProjectionTask = SafeLookup(tasks, reviewProjectionLookup, unavailable, logger);
 
         await Task.WhenAll(mergeTask, integrationTask, publishTask, testRunTask, reviewProjectionTask);
         return new TaskListGitProjection(
@@ -354,7 +359,34 @@ public sealed class TaskListGitProjectionCache
             await integrationTask,
             await publishTask,
             await testRunTask,
-            await reviewProjectionTask);
+            await reviewProjectionTask,
+            Unavailable: unavailable.Keys.ToHashSet(StringComparer.Ordinal));
+    }
+
+    private static async Task<Dictionary<string, T>> SafeLookup<T>(
+        IReadOnlyCollection<TaskInfo> tasks,
+        Func<IReadOnlyCollection<TaskInfo>, Task<Dictionary<string, T>>> lookup,
+        ConcurrentDictionary<string, byte> unavailable,
+        ILogger? logger)
+    {
+        try { return await lookup(tasks).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var result = new Dictionary<string, T>(StringComparer.Ordinal);
+            foreach (var task in tasks)
+            {
+                try
+                {
+                    foreach (var pair in await lookup([task]).ConfigureAwait(false)) result[pair.Key] = pair.Value;
+                }
+                catch (Exception cardEx) when (cardEx is not OperationCanceledException)
+                {
+                    unavailable.TryAdd(task.TaskKey, 0);
+                    logger?.LogWarning(cardEx, "git-index-card-unavailable taskKey={TaskKey}", task.TaskKey);
+                }
+            }
+            return result;
+        }
     }
 
     private sealed record RepoEntry(TaskListGitProjection Snapshot, DateTimeOffset? GitStateAt,
@@ -376,11 +408,13 @@ public sealed record TaskListGitProjection(
     IReadOnlyDictionary<string, AgentStudio.Review.ReviewProjectionView> ReviewProjection,
     IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>>? Commits = null,
     IReadOnlyDictionary<string, string>? Signatures = null,
-    IReadOnlyDictionary<string, long>? SubjectVersions = null)
+    IReadOnlyDictionary<string, long>? SubjectVersions = null,
+    IReadOnlySet<string>? Unavailable = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TaskCommitInfo>> ReconstructedCommits => Commits ?? ImmutableDictionary<string, IReadOnlyList<TaskCommitInfo>>.Empty;
     public IReadOnlyDictionary<string, string> TaskSignatures => Signatures ?? ImmutableDictionary<string, string>.Empty;
     public IReadOnlyDictionary<string, long> TaskSubjectVersions => SubjectVersions ?? ImmutableDictionary<string, long>.Empty;
+    public IReadOnlySet<string> UnavailableTasks => Unavailable ?? ImmutableHashSet<string>.Empty;
 
     internal TaskListGitProjection Freeze() => this with
     {
@@ -393,6 +427,7 @@ public sealed record TaskListGitProjection(
             pair => (IReadOnlyList<TaskCommitInfo>)pair.Value.ToArray(), StringComparer.Ordinal),
         Signatures = TaskSignatures.ToImmutableDictionary(StringComparer.Ordinal),
         SubjectVersions = TaskSubjectVersions.ToImmutableDictionary(StringComparer.Ordinal),
+        Unavailable = UnavailableTasks.ToImmutableHashSet(StringComparer.Ordinal),
     };
 
     internal TaskGitFacts ForTask(string key) => new(
