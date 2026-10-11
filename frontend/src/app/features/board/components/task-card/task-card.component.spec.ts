@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
+import { vi } from 'vitest';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
@@ -8,6 +9,8 @@ import { TaskCardComponent } from './task-card.component';
 import { MODEL_IDS } from '../../../cli';
 import { ProviderAuthStatusService } from '../../../remote-hosts';
 import { TaskService } from '../../../../services/task.service';
+import { BoardMutationsService } from '../../state/board-mutations.service';
+import { MOVE_PREFIX } from './task-card-view-model';
 import type { TaskInfo, ClientSummary, TagRegistryEntry } from '../../../../models/task.model';
 import {
   buildEffectiveModelChip,
@@ -41,6 +44,28 @@ import {
  * stable across template tweaks.
  */
 describe('TaskCardComponent (smoke)', () => {
+  it('dispatches an enabled move through the optimistic lane service', async () => {
+    const changeStateFromDetail = vi.fn();
+    await TestBed.configureTestingModule({
+      imports: [TaskCardComponent],
+      providers: [
+        provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([]),
+        { provide: BoardMutationsService, useValue: { changeStateFromDetail } },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(TaskCardComponent);
+    const job = makeJob({ state: '5-human-review' });
+    fixture.componentRef.setInput('job', job);
+    fixture.componentRef.setInput('visibleLanes', ['2-ready', '5-human-review', '6-completed', '7-archive']);
+    fixture.detectChanges();
+
+    fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_PREFIX + '6-completed' } as never);
+    expect(changeStateFromDetail).toHaveBeenCalledWith(job, '6-completed', false);
+    fixture.componentRef.setInput('mutationsBlocked', true);
+    fixture.detectChanges();
+    fixture.componentInstance.onCardCtxMenuItemClick({ id: MOVE_PREFIX + '7-archive' } as never);
+    expect(changeStateFromDetail).toHaveBeenCalledTimes(1);
+  });
   it('compiles + instantiates without throwing', async () => {
     await TestBed.configureTestingModule({
       imports: [TaskCardComponent],

@@ -160,8 +160,13 @@ export class BoardMutationsService {
    * "changing" flag is cleared by the detail component's effect when
    * the new `state` arrives.
    */
-  changeStateFromDetail(info: TaskInfo, targetState: string): void {
+  changeStateFromDetail(info: TaskInfo, targetState: string, updateSelection = true): void {
     if (!targetState || targetState === info.state) return;
+    const refusal = decisionMoveRefusal(info, targetState);
+    if (refusal) {
+      this.notifications.warning(refusal, 'Move refused');
+      return;
+    }
     // Capture the prev lane + slot BEFORE the optimistic move so the
     // undo toast can put the card back at the exact position it sat in.
     const prevState = info.state;
@@ -194,6 +199,7 @@ export class BoardMutationsService {
       next: () => {
         this.jobService.endOptimisticPersist();
         persistResolve();
+        if (!updateSelection) return;
         // The user just moved THIS job out of the iteration lane (5-human-review
         // -> 7-archive, 2-ready, ...). Drop it from the pager snapshot and
         // advance the detail panel to the next item still in the original

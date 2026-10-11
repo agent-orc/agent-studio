@@ -152,6 +152,15 @@ export const ORCHESTRATOR_CONTROLLED_LANES: ReadonlySet<string> = new Set([
   TaskState.AutoReview,
 ]);
 
+/** Board context-menu destinations. Exception and failure lanes are produced by the runner. */
+export const MANUAL_MOVE_LANES: readonly string[] = LANE_PRESENTATIONS
+  .map((lane) => lane.state)
+  .filter((state) => !ORCHESTRATOR_CONTROLLED_LANES.has(state)
+    && state !== TaskState.OrchestratorPrep
+    && state !== TaskState.FailedPickup
+    && state !== TaskState.CodeNotComplete
+    && state !== TaskState.Escalated);
+
 /**
  * AGT-2069 — whether accepting `info` should surface the spawn-contract warning
  * (the AGT-1915 trap guard). True only when a planning task is being accepted

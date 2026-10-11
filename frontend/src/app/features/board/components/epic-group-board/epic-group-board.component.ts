@@ -30,6 +30,7 @@ export class EpicGroupBoardComponent {
   readonly tasks = input<readonly TaskInfo[]>([]);
   readonly compact = input<boolean>(false);
   readonly highlightJobId = input<string | null>(null);
+  readonly visibleLanes = input<readonly string[]>([]);
   readonly jobClick = output<TaskInfo>();
 
   readonly groups = computed<EpicGroupView[]>(() => buildEpicGroups(this.tasks()));

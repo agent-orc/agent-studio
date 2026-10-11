@@ -10,7 +10,8 @@ import { buildThinkingLevelIndicator, type ThinkingLevelIndicator } from '../../
 import { phaseStaticLabel } from '../../../../services/lifecycle-phase.util';
 import { isTaskRunActive, resolveRunActivityKind } from '../../../../services/run-activity.util';
 import { buildTokenCostTooltip, formatTokenCostDisplay } from '../../../tokens';
-import { lanePresentation } from '../../../../models/lane-presentation';
+import { LANE_PRESENTATIONS, laneName, lanePresentation } from '../../../../models/lane-presentation';
+import { MANUAL_MOVE_LANES } from '../../../task-detail/state/triage-actions.model';
 
 export interface TaskTypeChip {
   kind: string;
@@ -1798,6 +1799,12 @@ export const FILTER_DEPENDENTS_ID = 'filter-dependents';
  * the confirm/undo semantics.
  */
 export const DELETE_ID = 'delete-task';
+export const MOVE_PREFIX = 'move-card:';
+
+export function cardMoveTarget(id: string): string | null {
+  const target = id.startsWith(MOVE_PREFIX) ? id.slice(MOVE_PREFIX.length) : null;
+  return target && MANUAL_MOVE_LANES.includes(target) ? target : null;
+}
 
 /**
  * Right-click context-menu rows for a card: copy actions + (for non-epic cards)
@@ -1810,6 +1817,7 @@ export function buildCardCtxMenuItems(
   epics: readonly EpicRollup[],
   currentEpicId: string | null,
   mutationsBlocked = false,
+  visibleLanes: readonly string[] = MANUAL_MOVE_LANES,
 ): MenuItem[] {
   const items: MenuItem[] = [
     { kind: 'row', id: 'copy-name', label: 'Copy Name' },
@@ -1822,6 +1830,32 @@ export function buildCardCtxMenuItems(
       id: FILTER_DEPENDENTS_ID,
       label: `Filter: tasks depending on ${job.key}`,
     });
+  }
+
+  const current = job.state === '2-ready-intake' ? TaskState.Ready : job.state;
+  const targets = MANUAL_MOVE_LANES.filter((state) => visibleLanes.includes(state));
+  const laneOrder = LANE_PRESENTATIONS.map((lane) => lane.state);
+  const currentIndex = laneOrder.indexOf(current);
+  const previous = currentIndex >= 0
+    ? [...targets].reverse().find((state) => laneOrder.indexOf(state) < currentIndex) ?? null
+    : null;
+  const forward = currentIndex >= 0
+    ? targets.find((state) => laneOrder.indexOf(state) > currentIndex) ?? null
+    : null;
+  const moveRows: { state: string; label: string }[] = [];
+  if (previous) moveRows.push({ state: previous, label: `Move back: ${laneName(previous)}` });
+  if (forward) moveRows.push({ state: forward, label: `Move forward: ${laneName(forward)}` });
+  if (current !== TaskState.Completed && previous !== TaskState.Completed && forward !== TaskState.Completed) {
+    moveRows.push({ state: TaskState.Completed, label: `Move to ${laneName(TaskState.Completed)}` });
+  }
+  if (current !== TaskState.Archive && previous !== TaskState.Archive && forward !== TaskState.Archive) {
+    moveRows.push({ state: TaskState.Archive, label: `Move to ${laneName(TaskState.Archive)}` });
+  }
+  if (moveRows.length) {
+    items.push({ kind: 'separator' }, { kind: 'header', label: 'Move' });
+    for (const row of moveRows) {
+      items.push({ kind: 'row', id: MOVE_PREFIX + row.state, label: row.label, disabled: mutationsBlocked });
+    }
   }
 
   // Epic assignment is only meaningful for ordinary task cards - an epic is not

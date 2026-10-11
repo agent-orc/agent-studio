@@ -4,6 +4,8 @@ import {
   DELETE_ID,
   EPIC_ASSIGN_PREFIX,
   EPIC_DETACH_ID,
+  MOVE_PREFIX,
+  cardMoveTarget,
 } from './task-card-view-model';
 import { TaskState } from '../../../../models/task.model';
 import type { TaskInfo, EpicRollup } from '../../../../models/task.model';
@@ -93,5 +95,43 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === `${EPIC_ASSIGN_PREFIX}epic-9`)?.disabled).toBe(true);
     expect(rows.find(item => item.id === EPIC_DETACH_ID)?.disabled).toBe(true);
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
+  });
+});
+
+describe('card move rows', () => {
+  const moves = (state: string, blocked = false, visible?: readonly string[]) =>
+    buildCardCtxMenuItems(makeJob({ state }), false, [], null, blocked, visible)
+      .filter(isRow).filter((row) => row.id.startsWith(MOVE_PREFIX));
+
+  it('uses visible manual neighbours and removes duplicate shortcuts', () => {
+    const rows = moves(TaskState.HumanReview);
+    expect(rows.map((row) => row.label)).toEqual([
+      'Move back: Ready', 'Move forward: Delivered', 'Move to Archive',
+    ]);
+    expect(rows.map((row) => cardMoveTarget(row.id))).toEqual([
+      TaskState.Ready, TaskState.Completed, TaskState.Archive,
+    ]);
+  });
+
+  it('omits missing neighbours, hidden lanes, and current lane shortcuts', () => {
+    expect(moves(TaskState.Backlog).map((row) => row.label)).toEqual([
+      'Move forward: Preparation', 'Move to Delivered', 'Move to Archive',
+    ]);
+    expect(moves(TaskState.Archive).map((row) => row.label)).toEqual([
+      'Move back: Delivered',
+    ]);
+    expect(moves(TaskState.HumanReview, false, [TaskState.Backlog, TaskState.Ready, TaskState.HumanReview])
+      .map((row) => row.label)).toEqual([
+      'Move back: Ready', 'Move to Delivered', 'Move to Archive',
+    ]);
+  });
+
+  it('maps virtual Ready to Ready and disables every move when blocked', () => {
+    expect(moves('2-ready-intake', true).map((row) => row.label)[0]).toBe('Move back: Preparation');
+    expect(moves(TaskState.CodeNotComplete).map((row) => row.label).slice(0, 2)).toEqual([
+      'Move back: Ready', 'Move forward: Human review',
+    ]);
+    expect(moves(TaskState.Ready, true).every((row) => row.disabled)).toBe(true);
+    expect(cardMoveTarget(MOVE_PREFIX + TaskState.Progress)).toBeNull();
   });
 });
