@@ -78,6 +78,7 @@ th { color: var(--article-faint); font-size: 0.74rem; letter-spacing: 0.06em; te
 .box.warn, .callout[data-tone="warn"] { border-color: color-mix(in srgb, var(--article-warn) 35%, var(--article-line)); background: var(--article-warn-soft); }
 .box.bad, .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
 figure { margin: 30px 0; }
+.label-bg { fill: var(--article-paper); stroke: none; }
 figure > img, figure > svg { display: block; width: 100%; height: auto; border: 1px solid var(--article-line); border-radius: 10px; background: var(--article-paper); }
 figcaption { margin-top: 10px; color: var(--article-muted); font-size: 0.8rem; line-height: 1.5; }
 .breakout, .media-breakout { width: min(1120px, calc(100vw - 48px)); margin-left: 50%; transform: translateX(-50%); }
@@ -137,7 +138,7 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
     gate concept, the remote gate target architecture, and the async-validation principles that survived
     measurement, and keeps every choice that still needs an operator decision.</p>
     <div class="meta">
-      <span><b>Status</b> decision-pending</span>
+      <span><b>Status</b> decided 2026-09-25</span>
       <span><b>Phase</b> decision-ready</span>
       <span><b>As of</b> <time datetime="2026-09-14">14 September 2026</time></span>
       <span><b>Consolidates</b> AGT-W36, AGT-W18, AGT-W2</span>
@@ -252,33 +253,33 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
       <g>
         <rect class="step" x="16" y="116" width="162" height="58" rx="9"></rect>
         <text x="28" y="139">Eligible deliveries</text>
-        <text class="sub" x="28" y="155">settled envelope,</text>
-        <text class="sub" x="28" y="167">model review passed</text>
+        <text class="sub" x="28" y="154">settled envelope,</text>
+        <text class="sub" x="28" y="169">model review passed</text>
 
         <rect class="step-new" x="196" y="116" width="162" height="58" rx="9"></rect>
         <text x="208" y="139">Closed manifest</text>
-        <text class="sub" x="208" y="155">members, base SHA,</text>
-        <text class="sub" x="208" y="167">membership digest</text>
+        <text class="sub" x="208" y="154">members, base SHA,</text>
+        <text class="sub" x="208" y="169">membership digest</text>
 
         <rect class="step-exec" x="376" y="116" width="162" height="58" rx="9"></rect>
         <text x="388" y="139">Fenced candidate</text>
-        <text class="sub" x="388" y="155">mechanical replay,</text>
-        <text class="sub" x="388" y="167">conflicts ejected</text>
+        <text class="sub" x="388" y="154">mechanical replay,</text>
+        <text class="sub" x="388" y="169">conflicts ejected</text>
 
         <rect class="step-exec" x="556" y="116" width="162" height="58" rx="9"></rect>
         <text x="568" y="139">One full suite</text>
-        <text class="sub" x="568" y="155">clean checkout of</text>
-        <text class="sub" x="568" y="167">the candidate SHA</text>
+        <text class="sub" x="568" y="154">clean checkout of</text>
+        <text class="sub" x="568" y="169">the candidate SHA</text>
 
         <rect class="step-new" x="736" y="40" width="162" height="58" rx="9"></rect>
         <text x="748" y="63">Fenced publish</text>
-        <text class="sub" x="748" y="79">pre-tip check, shared</text>
-        <text class="sub" x="748" y="91">ref-mutation lease</text>
+        <text class="sub" x="748" y="78">pre-tip check, shared</text>
+        <text class="sub" x="748" y="93">ref-mutation lease</text>
 
         <rect class="step-exec" x="736" y="196" width="162" height="58" rx="9"></rect>
         <text x="748" y="219">Bounded halving</text>
-        <text class="sub" x="748" y="235">ceil(log2 n) runs,</text>
-        <text class="sub" x="748" y="247">then cohort fallback</text>
+        <text class="sub" x="748" y="234">ceil(log2 n) runs,</text>
+        <text class="sub" x="748" y="249">then cohort fallback</text>
       </g>
       <text class="num" x="742" y="30">GREEN</text>
       <text class="num" x="742" y="188">RED</text>
@@ -459,11 +460,14 @@ svg.diagram .num { font: 700 10px var(--article-sans); fill: var(--gate-note); l
         <text x="662" y="248">Agent Studio</text>
         <text class="sub" x="662" y="266">reads central status and evidence</text>
       </g>
-      <text class="lbl" x="288" y="112">Task API</text>
-      <text class="lbl" x="622" y="112" text-anchor="end">claim, renew, report</text>
-      <text class="lbl" x="628" y="212" text-anchor="end">read model</text>
       <text class="num" x="30" y="284">NO SSH CONTROL EDGE, NO NEW SUPERVISING ACTOR</text>
-    </svg>
+    <rect class="label-bg" x="284.2" y="100.4" width="53.4" height="15.0"/>
+<text class="lbl" x="288" y="112">Task API</text>
+<rect class="label-bg" x="496.3" y="100.4" width="129.0" height="15.0"/>
+<text class="lbl" x="622" y="112" text-anchor="end">claim, renew, report</text>
+<rect class="label-bg" x="556.9" y="200.4" width="74.3" height="15.0"/>
+<text class="lbl" x="628" y="212" text-anchor="end">read model</text>
+</svg>
     <figcaption>Fig. 2: recommended topology. Blue is authority and control plane, teal is execution.
     The Task Server persists facts and never checks out a repository or launches a build; the Agent Host
     executes and never decides pipeline outcomes.</figcaption>
