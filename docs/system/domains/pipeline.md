@@ -155,7 +155,8 @@ The `integration-branch-red` pause is different: a matching red base means the
 candidate suite stopped early, so the batch remains unpublished with members
 pending. It is reconstructed only after the base SHA moves; a red run never
 validates the build profile. Code integrations also keep batches waiting from
-the local merge until their queued origin push succeeds.
+the local merge until their queued origin push succeeds. A durable pending-push
+marker preserves that wait across backend restarts.
 
 The default local store is scoped by the backend content root and task data
 root under `<LocalApplicationData>/agentstudio/instances/`: `pending/` holds durable
