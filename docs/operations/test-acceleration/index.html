@@ -411,12 +411,12 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 
 <section id="backend-track">
 <h2><span class="no">§8</span>Backend track report</h2>
-<p class="stx stx-open"><b>Owner:</b> AGT-3049. <b>Status 2026-10-11:</b> started, no lever applied yet. This section is written by the backend track only.</p>
+<p class="stx stx-part"><b>Owner:</b> AGT-3049. <b>Status 2026-10-11:</b> measured baseline and implementing the backend levers. This section is written by the backend track only.</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Lever</th><th>Status</th><th>Commit</th><th>Before → after</th><th>Source of measurement</th></tr></thead>
   <tbody>
-    <tr><td>P1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>P1</td><td><span class="pill part">part</span></td><td><code>e8852c87f</code></td><td>No compact summary → 2 JSON summaries; 85.58 and 93.22 min wall, 6,455 and 8,700 s summed tests. TRX capture and automatic per-run persistence remain open.</td><td><code>results/p1-baseline-7850e.json</code>, <code>results/p1-baseline-a583.json</code>; agent-runner-01, 6 concurrent suites, load 28–42 (historical range)</td></tr>
     <tr><td>P2</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>P3</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>P4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
@@ -437,7 +437,7 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 </div>
 <h3>Findings and new ideas</h3>
 <ul>
-  <li>No entries yet.</li>
+  <li>P1: verbose console logs yielded 8,981 of 8,982 and 8,977 of 8,981 reported test durations; their incomplete counts confirm why TRX is needed. The top four classes in run 7850e total 2,446 s (37.9% of summed test time). The measured wall times are 5,134.68 and 5,592.96 s under six concurrent suites.</li>
 </ul>
 <h3>Rejected levers</h3>
 <ul>
