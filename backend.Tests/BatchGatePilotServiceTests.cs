@@ -548,7 +548,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Base_red_with_matching_failure_is_reported_and_does_not_eject_the_member()
+    public async Task Base_red_with_matching_failure_pauses_without_publication_or_validation()
     {
         using var factory = BuildFactory();
         _ = factory.CreateClient();
@@ -566,19 +566,47 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         };
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        var validatedBefore = settings.Get(ProjectName).BuildProfile.LastValidatedAt;
 
         await pilot.TickAsync(CancellationToken.None);
 
         var manifest = Assert.Single(store.ListManifests());
-        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
-        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Equal("integration-branch-red",
+            AssertPhase(store, manifest.BatchId, BatchPhase.Paused).Reason);
+        AssertLane(member.Key, TaskStates.AutoReview);
         Assert.Equal(1, _gate.BatchRuns);
         Assert.Equal(1, _gate.BaseRuns);
-        var publication = store.ReadPublication(manifest.BatchId)!;
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        var run = Assert.Single(store.ListRuns(manifest.BatchId));
         Assert.Equal("pre-existing-base-red",
-            store.ReadVerdict(manifest.BatchId, publication.BatchRunId)!.Classification);
+            store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Classification);
+        Assert.Equal("fail", store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Outcome);
+        Assert.Equal(validatedBefore, settings.Get(ProjectName).BuildProfile.LastValidatedAt);
         Assert.NotNull(store.ReadBaseVerdict(ProjectName, manifest.BaseSha,
             manifest.Scope.GateProfileDigest));
+
+        await pilot.TickAsync(CancellationToken.None);
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Single(store.ListPending());
+        Assert.Single(store.ListManifests());
+        Assert.Contains("integration-branch-red", JsonSerializer.Serialize(pilot.State(ProjectName)));
+
+        var previousBase = RemoteTip();
+        Git(_repo, "checkout", "-q", "--detach", previousBase);
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Base moved while red.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "base move");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        _gate.Batch = request => Green(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        var retry = Assert.Single(store.ListManifests(), item => item.BatchId != manifest.BatchId);
+        AssertPhase(store, retry.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
     }
 
     [Fact]

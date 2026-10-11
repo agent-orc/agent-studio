@@ -280,7 +280,8 @@ public sealed class BatchGatePilotService
             // outlived a project gate profile change or a platform upgrade.
             // Grouping on the stored values would exclude it from its own
             // batch on every subsequent tick.
-            waiting = _store.ListPending().Select(Refresh).ToArray();
+            waiting = _store.ListPending().Select(Refresh)
+                .Where(item => !HeldOnRedBase(item)).ToArray();
             foreach (var group in waiting.GroupBy(item =>
                          (item.Subject.Project, item.Subject.Repository,
                              item.Subject.IntegrationBranch, item.Subject.GateProfileDigest,
@@ -558,6 +559,25 @@ public sealed class BatchGatePilotService
             try
             {
                 var paused = _store.LatestState(manifest.BatchId);
+                var options = _settings.Get(manifest.Scope.Project).BatchGate;
+                if (paused.Reason == "integration-branch-red" && options.Enabled
+                    && (options.EffectiveScope == "code"
+                        || manifest.Members.All(member => member.DocumentationOnly)))
+                {
+                    var pending = _store.ListPending().FirstOrDefault(item =>
+                        manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
+                            && member.RunAttempt == item.Subject.RunAttempt));
+                    if (pending is null) continue;
+                    var currentBase = _git.FetchBatchIntegrationTip(pending.RepositoryPath,
+                        manifest.Scope.IntegrationBranch, ct);
+                    if (currentBase is null || string.Equals(currentBase, manifest.BaseSha,
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    ReturnToPending(manifest);
+                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                        "integration base changed; reconstruct batch");
+                    continue;
+                }
                 _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
                     manifest.BatchId, paused.Reason);
                 released = ReturnToPending(manifest);
@@ -890,15 +910,9 @@ public sealed class BatchGatePilotService
                     && string.Equals(gate.TestedSha, assembly.CandidateSha,
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    var preExisting = RecordVerdict(run, gate, "pre-existing-base-red");
-                    State(manifest, BatchPhase.Green, assembly.CandidateSha, lease.Fence,
-                        "pre-existing failures match base");
-                    _settings.MarkBuildProfileRemotelyValidated(manifest.Scope.Project,
-                        BuildProfileValidationFingerprint.Create(
-                            _settings.Get(manifest.Scope.Project).BuildProfile),
-                        run.BatchRunId, run.Host, run.CandidateSha, _time.GetUtcNow().UtcDateTime);
-                    await PublishGreenAsync(manifest, assembly, run, preExisting, lease,
-                        pending, repo, fallbackKeys, cancellation.Token).ConfigureAwait(false);
+                    RecordVerdict(run, gate, "pre-existing-base-red");
+                    State(manifest, BatchPhase.Paused, assembly.CandidateSha, lease.Fence,
+                        "integration-branch-red");
                     return;
                 }
                 if (gate.FlakyQuarantinedFailures.Count > 0)
@@ -1335,7 +1349,7 @@ public sealed class BatchGatePilotService
         var verdict = new BatchGateRunVerdict(
             run.BatchRunId, run.BatchId, run.MembershipDigest,
             gate.TestedSha ?? run.CandidateSha, run.GateProfileDigest,
-            classification is "pass" or "flaky-quarantined-pass" or "pre-existing-base-red"
+            classification is "pass" or "flaky-quarantined-pass"
                 ? "pass" : "fail", classification,
             run.EvidencePath, _time.GetUtcNow());
         _store.RecordVerdict(verdict);
