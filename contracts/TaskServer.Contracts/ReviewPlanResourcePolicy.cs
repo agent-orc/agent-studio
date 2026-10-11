@@ -141,6 +141,13 @@ public static partial class ReviewPlanResourcePolicy
                 index++;
                 continue;
             }
+            if (argument.StartsWith("--blame-hang-dump-type=", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (argument == "--blame-hang-dump-type" && index + 1 < source.Count)
+            {
+                index++;
+                continue;
+            }
             filtered.Add(argument);
         }
         filtered.InsertRange(1, LimitArguments(maxCpuCount, isTest));
@@ -155,6 +162,7 @@ public static partial class ReviewPlanResourcePolicy
         limited = TestCollectionParallelismShellArgument().Replace(limited, string.Empty);
         limited = LoggerShellArgument().Replace(limited, string.Empty);
         limited = BlameHangTimeoutShellArgument().Replace(limited, string.Empty);
+        limited = BlameHangDumpTypeShellArgument().Replace(limited, string.Empty);
         limited = CollapseUnquotedHorizontalWhitespace(limited);
         return DotNetBuildOrTest().Replace(
             limited,
@@ -177,7 +185,7 @@ public static partial class ReviewPlanResourcePolicy
             ? [
                 $"-maxcpucount:{maxCpuCount}", "-nodeReuse:false",
                 .. TestLoggerArguments,
-                "--blame-hang-timeout", "10m",
+                "--blame-hang-timeout", "10m", "--blame-hang-dump-type", "none",
               ]
             : [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false"];
 
@@ -273,5 +281,8 @@ public static partial class ReviewPlanResourcePolicy
 
     [GeneratedRegex(@"(?<!\S)--blame-hang-timeout(?:\s+|=)\S+", RegexOptions.IgnoreCase)]
     private static partial Regex BlameHangTimeoutShellArgument();
+
+    [GeneratedRegex(@"(?<!\S)--blame-hang-dump-type(?:\s+|=)\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex BlameHangDumpTypeShellArgument();
 
 }
