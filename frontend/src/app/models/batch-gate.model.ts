@@ -26,7 +26,7 @@ export interface BatchGateState {
   plan: {
     decision: BatchDecision;
     reason: string;
-    closeAtUtc?: string;
+    closeAtUtc?: string | null;
     proposedMembers: string[];
     targetSize: number;
     upcoming: { taskKey: string; stage: string; etaUtc?: string | null; risk: BatchRisk; overlapsWith: string[] }[];
