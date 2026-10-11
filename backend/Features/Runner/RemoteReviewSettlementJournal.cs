@@ -229,7 +229,9 @@ public static class RemoteReviewSettlementPolicy
     /// releases its lane, so recovery has no per-card integration to resume.
     /// </summary>
     public static bool IsBatchDeferredPass(RemoteReviewSettlementEntry entry)
-        => string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+        => (string.Equals(entry.Report.Outcome, "Pass", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(entry.Report.Outcome, "IntegrationBranchDefect",
+                StringComparison.OrdinalIgnoreCase))
            && entry.Report.Verdicts.Any(verdict =>
                string.Equals(verdict.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase)
                && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal));

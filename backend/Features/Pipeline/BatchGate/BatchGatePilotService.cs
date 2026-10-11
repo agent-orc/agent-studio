@@ -134,7 +134,8 @@ public sealed class BatchGatePilotService
             sourceRun.LastFence,
             review.TestedResultSha ?? string.Empty,
             envelope is not null && sourceRun.State == AttemptLifecycleState.Completed,
-            review.Outcome == ReviewTerminalOutcome.Pass,
+            review.Outcome is ReviewTerminalOutcome.Pass
+                or ReviewTerminalOutcome.IntegrationBranchDefect,
             review.Subject.Plan?.BuildTestDeferredToBatch == true,
             projection.CurrentRunAttempt?.AttemptId == sourceRun.AttemptId
                 && projection.CurrentReviewAttempt?.AttemptId == review.AttemptId,
@@ -1575,7 +1576,8 @@ public sealed class BatchGatePilotService
         var current = task is { State: TaskStates.AutoReview }
             && projection.CurrentRunAttempt?.AttemptId == subject.RunAttempt
             && projection.CurrentReviewAttempt?.AttemptId == pending.ReviewAttemptId
-            && projection.CurrentReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+            && (projection.CurrentReviewAttempt.Outcome is ReviewTerminalOutcome.Pass
+                or ReviewTerminalOutcome.IntegrationBranchDefect)
             && string.Equals(projection.CurrentReviewAttempt.TestedResultSha,
                 subject.ResultSha, StringComparison.OrdinalIgnoreCase)
             && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,
