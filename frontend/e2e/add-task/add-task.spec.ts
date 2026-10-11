@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, BACKEND } from '../helpers/api';
 
 /**
  * Verifies the Add Task dialog and that model catalogs reach the UI.
@@ -27,7 +27,7 @@ test.describe('Add Task — model selection', () => {
     // CopilotModelDiscovery used to throw and bubble a 500 to the UI. The
     // endpoint now falls back to disk cache or returns 503 with a body —
     // anything but 5xx-without-context.
-    const res = await request.get('http://localhost:5030/api/cli/copilot/models?refresh=true');
+    const res = await request.get(`${BACKEND}/api/cli/copilot/models?refresh=true`);
     expect([200, 503]).toContain(res.status());
     const body = await res.json();
     if (res.status() === 200) {
@@ -38,7 +38,7 @@ test.describe('Add Task — model selection', () => {
   });
 
   test('Codex model catalog comes from CLI discovery when available', async ({ request }) => {
-    const res = await request.get('http://localhost:5030/api/cli/codex/models?refresh=true');
+    const res = await request.get(`${BACKEND}/api/cli/codex/models?refresh=true`);
     expect([200, 503]).toContain(res.status());
     const body = await res.json();
     if (res.status() === 200) {
@@ -84,7 +84,7 @@ test.describe('Add Task — default model pre-selection', () => {
 
 test.describe('Add Task — project default', () => {
   test('defaults to the single active project filter', async ({ page }) => {
-    const watchPaths = await (await page.request.get('http://localhost:5030/api/watch-paths')).json();
+    const watchPaths = await (await page.request.get(`${BACKEND}/api/watch-paths`)).json();
     test.skip(!Array.isArray(watchPaths) || watchPaths.length < 2, 'needs at least two watch paths');
     const secondName = watchPaths[1].name;
 
@@ -108,7 +108,7 @@ test.describe('Add Task — project default', () => {
 
   test('with multiple active projects, uses lastCreateWatchPath', async ({ page }) => {
     // Pre-seed: pretend the user last created in the second project, and activate both.
-    const watchPaths = await (await page.request.get('http://localhost:5030/api/watch-paths')).json();
+    const watchPaths = await (await page.request.get(`${BACKEND}/api/watch-paths`)).json();
     test.skip(!Array.isArray(watchPaths) || watchPaths.length < 2, 'needs at least two watch paths');
     const names = watchPaths.map((wp: { name: string }) => wp.name);
     const lastPath = watchPaths[1].path;

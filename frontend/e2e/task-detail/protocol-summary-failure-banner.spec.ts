@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, BACKEND } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 
 interface WatchPathEntry { path: string; name: string }
@@ -37,7 +37,7 @@ test.describe('Protocol pane — summary failure banner', () => {
       // the backend records a Failed SummaryState with the German prerequisite
       // message instead of returning 400.
       const res = await page.request.post(
-        `http://localhost:5030/api/tasks/${encodeURIComponent(created.id)}/summary/regenerate?watchPath=${encodeURIComponent(watchPath)}`
+        `${BACKEND}/api/tasks/${encodeURIComponent(created.id)}/summary/regenerate?watchPath=${encodeURIComponent(watchPath)}`
       );
       expect(res.status()).toBe(202);
 

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, BACKEND } from '../helpers/api';
 import { createJob } from '../helpers/jobs';
 
 /**
@@ -33,7 +33,7 @@ async function uploadAttachment(jobId: string, watchPath: string, fileName: stri
   const formData = new FormData();
   const blob = new Blob([new Uint8Array(PNG_BYTES)], { type: 'image/png' });
   formData.append('file', blob, fileName);
-  const res = await fetch(`http://localhost:5030${url}`, {
+  const res = await fetch(`${BACKEND}${url}`, {
     method: 'POST',
     body: formData,
     headers: { 'X-Client-Id': 'e2e-image-lightbox' }

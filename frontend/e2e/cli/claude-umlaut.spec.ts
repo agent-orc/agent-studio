@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createJob, startJob, waitForJob, getJobOutput } from '../helpers/jobs';
-import { api } from '../helpers/api';
+import { api, BACKEND } from '../helpers/api';
 
 /**
  * Regression: starting a Claude task with a German-umlaut prompt and Sonnet 4.6
@@ -52,7 +52,7 @@ test.describe('Claude Code — umlaut prompt with Sonnet 4.6 @billable', () => {
     );
 
     // Smoke: API still alive after the run.
-    const health = await fetch('http://localhost:5030/healthz');
+    const health = await fetch(`${BACKEND}/healthz`);
     expect(health.ok, 'API must still be reachable after umlaut run').toBe(true);
 
     expect(finished.execution).not.toBeNull();

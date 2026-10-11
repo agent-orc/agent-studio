@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { api } from '../helpers/api';
+import { api, BACKEND } from '../helpers/api';
 import { createJob, getJobDetail } from '../helpers/jobs';
 
 /**
@@ -167,7 +167,7 @@ test.describe('Prompt editor — screenshot attachments', () => {
       expect(match).not.toBeNull();
       const fileName = match![1];
       const apiResp = await page.request.get(
-        `http://localhost:5030/api/tasks/${encodeURIComponent(job.id)}/attachments/${encodeURIComponent(fileName)}?watchPath=${encodeURIComponent(job.watchPath)}`
+        `${BACKEND}/api/tasks/${encodeURIComponent(job.id)}/attachments/${encodeURIComponent(fileName)}?watchPath=${encodeURIComponent(job.watchPath)}`
       );
       expect(apiResp.ok()).toBeTruthy();
       expect(apiResp.headers()['content-type']).toContain('image/');
