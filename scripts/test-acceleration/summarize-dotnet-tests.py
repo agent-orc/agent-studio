@@ -24,6 +24,15 @@ def seconds(value, unit):
 
 def trx_tests(path):
     root = ET.parse(path).getroot()
+    times = root.find(".//{*}Times")
+    wall = None
+    if times is not None and times.get("start") and times.get("finish"):
+        try:
+            start = dt.datetime.fromisoformat(times.get("start").replace("Z", "+00:00"))
+            finish = dt.datetime.fromisoformat(times.get("finish").replace("Z", "+00:00"))
+            wall = max(0, (finish - start).total_seconds())
+        except ValueError:
+            pass
     definitions = {}
     for definition in root.findall(".//{*}UnitTest"):
         method = definition.find("{*}TestMethod")
@@ -37,7 +46,7 @@ def trx_tests(path):
         elapsed = float(parts[-1]) + 60 * float(parts[-2]) + 3600 * float(parts[-3]) if len(parts) >= 3 else 0
         tests.append({"class": class_name, "name": f"{class_name}.{method_name}", "seconds": elapsed,
                       "outcome": result.get("outcome") or "Unknown"})
-    return tests, None
+    return tests, wall
 
 
 def console_tests(path):
@@ -72,8 +81,10 @@ def concurrent_suites():
         if not entry.name.isdigit():
             continue
         try:
-            words = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
-            if "dotnet test " in words and "vstest.console" not in words:
+            if (entry / "comm").read_text().strip() != "dotnet":
+                continue
+            words = (entry / "cmdline").read_bytes().split(b"\0")
+            if len(words) > 1 and Path(words[0].decode(errors="replace")).name == "dotnet" and words[1] == b"test":
                 count += 1
         except (OSError, PermissionError):
             continue
