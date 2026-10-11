@@ -25,7 +25,52 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Two_hundred_thirty_five_cards_fit_in_board_budget()
+    public void Summary_status_uses_the_host_string_enum_contract()
+    {
+        var job = Fixture() with { SummaryState = new TaskSummaryState { Status = TaskSummaryStatus.Failed } };
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        Assert.Equal("failed", document.RootElement.GetProperty("summaryState")
+            .GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public void Production_shaped_card_keeps_long_detail_off_the_list()
+    {
+        var job = Fixture() with
+        {
+            AutoLoop = new AutoLoopSnapshot
+            {
+                Iteration = 2, MaxIterations = 5,
+                LastQuestion = new string('Q', 400), LastReply = new string('R', 20_000),
+            },
+            PostProcessingChecks = [new LifecycleCheck
+                { Name = "build-test-gate", Status = "running", Detail = new string('D', 10_000) }],
+            NeedsInput = new NeedsInputStatus(new string('N', 10_000), "Choose a path",
+                "attempt-1", null, "/results/needs-input.md"),
+            LiveStatus = new TaskLiveStatus
+            {
+                Attempt = 2,
+                NextSteps = Enumerable.Range(0, 20).Select(i => new TaskLiveStepPreview
+                    { StepId = $"step-{i}", DisplayName = $"Step {i}" }).ToList(),
+            },
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items = [new WaitsOnItem { Key = "AGT-1", Resolved = true,
+                    TargetTitle = "A prerequisite", TargetJobId = "agt-1" }],
+            },
+        };
+        var bytes = BoardCardSummary.Serialize(job);
+        using var document = JsonDocument.Parse(bytes);
+        var root = document.RootElement;
+        Assert.True(bytes.Length < 2048, $"Production-shaped card was {bytes.Length} bytes");
+        Assert.Equal("Choose a path", root.GetProperty("needsInput").GetProperty("message").GetString());
+        Assert.False(root.GetProperty("autoLoop").TryGetProperty("lastReply", out _));
+        Assert.Equal(3, root.GetProperty("liveStatus").GetProperty("nextSteps").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Two_hundred_thirty_five_cards_fit_in_board_budget()
     {
         var cards = Enumerable.Range(0, 235).Select(i => Fixture() with
         {
@@ -49,16 +94,16 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         clock.Stop();
         var groupedBuildMs = clock.Elapsed.TotalMilliseconds;
         var cache = new BoardReadConcurrencyGate();
-        cache.GetOrBuild("list-generation-1", () => list);
+        await cache.GetOrBuildAsync("list-generation-1", () => list, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            cache.GetOrBuild("list-generation-1", () => throw new Exception("unexpected rebuild"));
+            await cache.GetOrBuildAsync("list-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         var listLookupMs = clock.Elapsed.TotalMilliseconds / 1000;
-        cache.GetOrBuild("grouped-generation-1", () => grouped);
+        await cache.GetOrBuildAsync("grouped-generation-1", () => grouped, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            cache.GetOrBuild("grouped-generation-1", () => throw new Exception("unexpected rebuild"));
+            await cache.GetOrBuildAsync("grouped-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         output.WriteLine($"235-card synthetic list: {list.Length} bytes; build {listBuildMs:F1} ms; cached lookup {listLookupMs:F4} ms");
         output.WriteLine($"235-card synthetic grouped: {grouped.Length} bytes; build {groupedBuildMs:F1} ms; cached lookup {clock.Elapsed.TotalMilliseconds / 1000:F4} ms");

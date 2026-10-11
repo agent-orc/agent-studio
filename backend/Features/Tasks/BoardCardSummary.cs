@@ -13,6 +13,7 @@ internal static class BoardCardSummary
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     public static byte[] SerializeList(IReadOnlyList<TaskInfo> jobs, Func<TaskInfo, byte[]>? serializeCard = null)
@@ -98,6 +99,7 @@ internal static class BoardCardSummary
             ["codeActivityDetected"] = job.CodeActivityDetected,
             ["commitCount"] = job.CommitCount,
             ["noBranchExpected"] = job.NoBranchExpected,
+            ["released"] = job.Released,
             ["requiresIntegration"] = job.RequiresIntegration,
             ["fixture"] = job.Fixture,
         };
@@ -198,17 +200,31 @@ internal static class BoardCardSummary
         Add(fields, "causeWait", job.CauseWait);
         Add(fields, "remoteClaimFailure", job.RemoteClaimFailure);
         Add(fields, "pendingIntent", job.PendingIntent);
-        Add(fields, "needsInput", job.NeedsInput);
-        Add(fields, "autoLoop", job.AutoLoop);
+        if (job.NeedsInput is { } need)
+            fields["needsInput"] = need with { Message = Short(need.FirstLine, 180) ?? "" };
+        if (job.AutoLoop is { } loop)
+            fields["autoLoop"] = loop with
+            {
+                LastQuestion = Short(loop.LastQuestion, 160),
+                LastReply = null,
+                LastError = Short(loop.LastError, 120),
+            };
         Add(fields, "summaryState", job.SummaryState);
-        Add(fields, "postProcessingChecks", job.PostProcessingChecks.Count == 0 ? null : job.PostProcessingChecks);
+        if (job.PostProcessingChecks.FirstOrDefault(check => check.Status == "running") is { } runningCheck)
+            fields["postProcessingChecks"] = new[] { runningCheck with { Detail = null } };
         Add(fields, "references", job.References);
-        Add(fields, "waitsOn", job.WaitsOn);
+        if (job.WaitsOn is { } waits)
+            fields["waitsOn"] = waits with
+            {
+                Items = waits.Items.Take(3).ToList(),
+                CyclePath = [],
+            };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
         Add(fields, "transitiveWaiters", job.TransitiveWaiters);
         Add(fields, "pickupHold", job.PickupHold);
         Add(fields, "runActivity", job.RunActivity);
-        Add(fields, "liveStatus", job.LiveStatus);
+        if (job.LiveStatus is { } live)
+            fields["liveStatus"] = live with { NextSteps = live.NextSteps.Take(3).ToList() };
         Add(fields, "externalCompletion", job.ExternalCompletion);
         Add(fields, "runner", job.Runner);
         Add(fields, "executionLocation", job.ExecutionLocation);
