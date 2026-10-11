@@ -55,6 +55,11 @@ public sealed record BatchGateExecutionFact(
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
     long QueueWaitMs, double OverloadMinutes, string EvidencePath);
 
+public sealed record BatchGateBaseVerdict(
+    string Project, string BaseSha, string GateProfileDigest,
+    string Outcome, string? FailureFingerprint, string Reason,
+    string EvidencePath, DateTimeOffset RecordedAtUtc);
+
 /// <summary>
 /// Durable batch authority. A closed manifest is written once before assembly;
 /// all later facts are append-only files carrying its digest. CreateNew and
@@ -76,6 +81,23 @@ public sealed class BatchGateStore
 
     public string BatchDirectory(string batchId)
         => Path.Combine(_root, SafeName(batchId));
+
+    public BatchGateBaseVerdict? ReadBaseVerdict(string project, string sha, string digest)
+    {
+        var path = BaseVerdictPath(project, sha, digest);
+        return File.Exists(path) ? Read<BatchGateBaseVerdict>(path) : null;
+    }
+
+    public void RecordBaseVerdict(BatchGateBaseVerdict verdict)
+    {
+        var path = BaseVerdictPath(verdict.Project, verdict.BaseSha, verdict.GateProfileDigest);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        if (!File.Exists(path)) WriteOnce(path, verdict);
+    }
+
+    private string BaseVerdictPath(string project, string sha, string digest)
+        => Path.Combine(_root, "base-verdicts", SafeName(project),
+            SafeName(sha) + "-" + SafeName(digest) + ".json");
 
     public void AppendPlanDecision(string project, BatchPlanDecision decision)
     {
@@ -499,9 +521,21 @@ public sealed class BatchGateStore
     private static void WriteOnce<T>(string path, T value)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(value, Json);
-        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        stream.Write(bytes);
-        stream.Flush(flushToDisk: true);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew,
+                       FileAccess.Write, FileShare.None))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: false);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 
     private static T Read<T>(string path)
