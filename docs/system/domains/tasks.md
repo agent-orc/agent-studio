@@ -7,6 +7,26 @@ Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
 or commit attribution.
 
+## Board read contract
+
+`GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
+They include identity, lane, sort and filter fields, card badges, a commit
+count and latest short commit label, and the branch facts needed for the Git
+badge. They omit the full commit chain, provenance transitions, review
+projection, token call rows, and detailed test evidence. Opening a task loads
+full data through `GET /api/tasks/{id}/core` and the detail resources. The
+`overview` resource supplies decision options, planning and concept summaries,
+older brief offers, wiki links, creation and completion facts, parked blockers,
+and needs-input text. The `git` resource supplies the full commit chain and
+provenance, while the `review` resource supplies review projection. A diff tab
+can resolve an older commit through `GET /api/tasks/commit-owner/{sha}`;
+`GET /api/tasks/{id}` remains the full compatibility read. The response ETag
+includes the task-index generation, live overlay generations, and a strong
+digest of the caller-visible task keys. Serialized response bodies are cached
+under that key, so concurrent warm readers share one build and disconnected
+readers stop waiting without cancelling it. ETag validation remains a separate
+HTTP optimization from the card contract.
+
 ## Execution modes
 
 The task core read exposes `core-index`, `core-runtime`, `core-serialize` and

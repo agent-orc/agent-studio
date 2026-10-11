@@ -46,6 +46,16 @@ describe('buildDependencyChip', () => {
     expect(chip!.targetWatchPath).toBe('/ws/lib');
   });
 
+  it('uses the full count when a slim card carries three dependency labels', () => {
+    const chip = buildDependencyChip(status({
+      itemCount: 5,
+      openCount: 5,
+      items: [item(), item({ key: 'DEP-2' }), item({ key: 'DEP-3' })],
+    }));
+    expect(chip?.label).toBe('waits for completion: DEP-1 +4');
+    expect(chip?.tooltip).toContain('+2 more dependencies');
+  });
+
   it('summarises multiple open dependencies with a +N suffix and points at the first open one', () => {
     const chip = buildDependencyChip(
       status({

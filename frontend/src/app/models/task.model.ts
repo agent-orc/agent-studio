@@ -401,6 +401,9 @@ export interface WaitsOnItem {
  */
 export interface WaitsOnStatus {
   items: WaitsOnItem[];
+  /** Full edge count when the board summary carries only the first few labels. */
+  itemCount?: number;
+  openCount?: number;
   /** At least one dependency is not yet fulfilled (open or unknown). */
   blocked: boolean;
   /** The card sits on a dependsOn cycle - a configuration error. */
@@ -584,8 +587,8 @@ export interface TaskInfo {
   /**
    * Per-job orchestrator token rollup. The kanban card renders a small
    * colour-tiered bubble (2.4k / 850k / 3.1M) when this is non-null and
-   * the total is greater than zero, with a hover popover showing the
-   * detailed breakdown.
+   * the total is greater than zero. List reads contain totals only; task
+   * detail carries the per-call rows.
    */
   tokenSummary?: TaskTokenSummary | null;
   model: string | null;
@@ -668,6 +671,17 @@ export interface TaskInfo {
    * is on disk, the backend surfaces it here as `[commit]`.
    */
   commits?: TaskCommitInfo[];
+  /** Board-only short commit label; the full chain is loaded with task detail. */
+  commitSummary?: {
+    count: number;
+    latestShortSha: string;
+    latestSubject: string;
+    latestFilesChanged: number;
+    hasFiles: boolean;
+  } | null;
+  commitCount?: number;
+  /** Board-only branch facts; full provenance is loaded with task detail. */
+  gitContext?: { branch: string; branchTip?: string | null; mergeSha?: string | null } | null;
   /**
    * Cheap "did any run move HEAD / was an auto-commit stamped" signal from
    * the scanner. Lets the card disambiguate a card with zero `commits[]`:
@@ -799,11 +813,8 @@ export interface TaskInfo {
   /** Active cards that reach this human-review card through dependsOn edges. */
   transitiveWaiters?: TransitiveWaitersStatus | null;
   /**
-   * Append-only commit-provenance record (ASS-1724). Mirrors backend
-   * `TaskInfo.Provenance` and ships on every board card so the git-state pill
-   * can show *where the work actually lives* (active `task/<id>` worktree vs
-   * landed in develop vs sequential main-checkout) from ground truth instead of
-   * guessing from the lane. Null on legacy `task.json` that predate the field.
+   * Append-only commit-provenance record (ASS-1724). Detail-only; board cards
+   * receive the bounded `gitContext` derived from these facts.
    */
   provenance?: TaskProvenanceRecord | null;
 
@@ -2273,6 +2284,9 @@ export interface TaskTestRunEvidence {
   summary: string;
   /** SHA-linked task-owned grades and gate logs that complement project TestRunStore runs. */
   sources?: TaskTestEvidenceSource[];
+  /** Card-only short source label and count; detail carries the source rows. */
+  sourceCount?: number;
+  sourceLabel?: string | null;
 }
 
 /** Which review plane produced a {@link ReviewAttempt}. */
