@@ -627,6 +627,10 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Git(_repo, "commit", "-qm", "base move");
         Git(_repo, "push", "-q", "origin", "HEAD:develop");
         _gate.Batch = request => Green(request.ExpectedSha);
+        await pilot.TickAsync(CancellationToken.None);
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+        Assert.Single(store.ListManifests());
+        _clock = _clock.AddMinutes(5);
 
         await pilot.TickAsync(CancellationToken.None);
 
@@ -665,6 +669,59 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Classification);
         Assert.Single(store.ListManifests());
         Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
+    public async Task Ejecting_a_member_from_a_red_base_hold_starts_its_fallback()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-HELD-EJECT", "docs/held-eject.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+
+        Assert.True(pilot.RequestEject(ProjectName, member.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.True(_gate.FallbackRuns > 0);
+    }
+
+    [Fact]
+    public async Task Ejecting_one_held_member_keeps_the_other_member_on_the_red_base_hold()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var first = SeedMember(factory, "DOC-HELD-ONE", "docs/held-one.md");
+        var second = SeedMember(factory, "DOC-HELD-TWO", "docs/held-two.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var original = Assert.Single(store.ListManifests());
+        AssertPhase(store, original.BatchId, BatchPhase.Paused);
+
+        Assert.True(pilot.RequestEject(ProjectName, first.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, original.BatchId, BatchPhase.Abandoned);
+        var successor = Assert.Single(store.ListManifests(), item =>
+            item.BatchId != original.BatchId);
+        Assert.Equal(second.Key, Assert.Single(successor.Members).TaskKey);
+        Assert.Equal("integration-branch-red",
+            AssertPhase(store, successor.BatchId, BatchPhase.Paused).Reason);
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.True(_gate.FallbackRuns > 0);
     }
 
     [Fact]

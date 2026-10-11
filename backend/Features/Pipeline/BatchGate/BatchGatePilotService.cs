@@ -31,6 +31,8 @@ public sealed class BatchGatePilotService
     private readonly BatchGateAdvisorService? _advisor;
     private readonly BatchIntegrationReservationService? _reservations;
     private readonly PipelineExecutionLog? _pipeline;
+    private readonly Dictionary<string, (DateTimeOffset CheckedAt, string? Sha)> _heldBaseChecks =
+        new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _pendingPushAlerts =
         new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
@@ -228,13 +230,13 @@ public sealed class BatchGatePilotService
         foreach (var entry in _scanner.GetWatchPaths())
         {
             ct.ThrowIfCancellationRequested();
-            var markers = _reservations.ListPending(entry.Name);
-            if (markers.Count == 0) continue;
-            var repo = string.IsNullOrWhiteSpace(entry.RepositoryPath)
-                ? entry.RootPath : entry.RepositoryPath;
-            if (string.IsNullOrWhiteSpace(repo) || !Directory.Exists(repo)) continue;
             try
             {
+                var markers = _reservations.ListPending(entry.Name);
+                if (markers.Count == 0) continue;
+                var repo = string.IsNullOrWhiteSpace(entry.RepositoryPath)
+                    ? entry.RootPath : entry.RepositoryPath;
+                if (string.IsNullOrWhiteSpace(repo) || !Directory.Exists(repo)) continue;
                 var branch = _settings.Get(entry.Name).IntegrationBranch;
                 var origin = _git.FetchBatchIntegrationTip(repo, branch, ct);
                 _reservations.Reconcile(entry.Name, marker =>
@@ -637,12 +639,57 @@ public sealed class BatchGatePilotService
                     && (options.EffectiveScope == "code"
                         || manifest.Members.All(member => member.DocumentationOnly)))
                 {
+                    var ejected = manifest.Members.Where(member =>
+                        _store.HasEject(manifest.Scope.Project, member.TaskKey)).ToArray();
+                    if (ejected.Length > 0)
+                    {
+                        released = ReturnToPending(manifest);
+                        State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                            "held member ejected; reconstruct batch");
+                        var retained = manifest.Members.Except(ejected).ToArray();
+                        if (retained.Length > 0)
+                        {
+                            var successor = manifest with
+                            {
+                                BatchId = Guid.NewGuid().ToString("N"),
+                                MembershipDigest = BatchGatePolicy.MembershipDigest(
+                                    manifest.BaseSha, manifest.Scope, retained),
+                                ClosedAtUtc = _time.GetUtcNow(),
+                                Members = retained,
+                                EligibleKeys = retained.Select(member => member.TaskKey).ToArray(),
+                                ParentBatchId = manifest.BatchId,
+                            };
+                            _store.CloseManifest(successor);
+                            State(successor, BatchPhase.Paused, null, lease.Fence,
+                                "integration-branch-red");
+                            foreach (var item in released.Where(item => retained.Any(member =>
+                                         member.TaskKey == item.Subject.TaskKey)))
+                            {
+                                var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
+                                if (task is not null)
+                                    BatchGateOwnershipStore.Write(task.FolderPath,
+                                        new BatchGateOwnership(item.ReviewAttemptId, item.Subject,
+                                            successor.BatchId));
+                            }
+                        }
+                        foreach (var item in released.Where(item => ejected.Any(member =>
+                                     member.TaskKey == item.Subject.TaskKey)))
+                            ScheduleFallback(item, ct, clearEject: true);
+                        continue;
+                    }
                     var pending = _store.ListPending().FirstOrDefault(item =>
                         manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
                             && member.RunAttempt == item.Subject.RunAttempt));
                     if (pending is null) continue;
-                    var currentBase = _git.FetchBatchIntegrationTip(pending.RepositoryPath,
-                        manifest.Scope.IntegrationBranch, ct);
+                    var now = _time.GetUtcNow();
+                    if (!_heldBaseChecks.TryGetValue(manifest.BatchId, out var check)
+                        || now - check.CheckedAt >= TimeSpan.FromMinutes(5))
+                    {
+                        check = (now, _git.FetchBatchIntegrationTip(pending.RepositoryPath,
+                            manifest.Scope.IntegrationBranch, ct));
+                        _heldBaseChecks[manifest.BatchId] = check;
+                    }
+                    var currentBase = check.Sha;
                     if (currentBase is null || string.Equals(currentBase, manifest.BaseSha,
                             StringComparison.OrdinalIgnoreCase))
                         continue;

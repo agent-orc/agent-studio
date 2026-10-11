@@ -23,12 +23,16 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
 - Batch runs request the full test level and use the configured timeout, default
   150 minutes. The gate runner performs its one targeted failed-test rerun.
   A red candidate is compared on the server with a durable full-suite base
-  verdict keyed by base SHA and gate profile. A matching red base is reported
-  as pre-existing and pauses as `integration-branch-red`. It cannot publish or
+  verdict keyed by base SHA and gate profile. Any red base pauses the batch as
+  `integration-branch-red`; only matching failures are classified as
+  pre-existing. A red base cannot publish or
   validate the build profile because the suite stopped at the first red step.
   Members stay pending until a new base SHA triggers reconstruction. The remote
   worker does not spend the batch budget on a
   clean-repeat diagnosis.
+  Held batches check for a changed base at most once every five minutes.
+  Operator ejection releases the held manifest and sends the selected card to
+  its per-card gate.
   The report counts batches currently held for a red integration branch.
 - Full-suite execution runs outside the 30-second planning tick. One batch runs
   per project. A documentation-only base movement queues a successor manifest
@@ -41,8 +45,12 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   Recovery failures are logged per manifest, allowing later batches to proceed.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker survives a backend restart for
-  the push backstop to clear after it publishes. Disabling the push step also
-  keeps code batching on hold while that local merge remains unpublished.
+  reconciliation to clear when origin contains the approved SHA, the merge is
+  superseded or rolled back, the card leaves the integration path, or origin
+  diverges from the unpublished merge. The remaining wait appears in state and
+  report; waits older than 20 minutes raise a pipeline health alert. Disabling
+  the push step keeps code batching on hold while that local merge remains
+  unpublished and still applies to the current card.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 
