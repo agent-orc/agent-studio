@@ -656,13 +656,11 @@ public sealed class BatchGatePilotService
                         throw new InvalidDataException("batch-gate-evidence-missing");
                     if (!_leases.IsCurrent(lease)
                         || !RefMutationLeaseService.IsCurrent(refLease)) continue;
-                    var local = _git.FastForwardPublishedBatchCheckout(
-                        pendingRepo.RepositoryPath, manifest.Scope.IntegrationBranch,
-                        publication.TestedCandidateSha);
-                    if (!local.Success) continue;
                     State(manifest, BatchPhase.Published,
                         publication.TestedCandidateSha, lease.Fence,
                         "resumed verified publication");
+                    TrySyncPublishedCheckout(pendingRepo.RepositoryPath,
+                        manifest.Scope.IntegrationBranch, publication.TestedCandidateSha);
                 }
                 finally { _leases.Release(lease); }
             }
@@ -1050,19 +1048,30 @@ public sealed class BatchGatePilotService
                 manifest.BatchId, manifest.MembershipDigest, run.BatchRunId,
                 manifest.BaseSha, assembly.CandidateSha, published.Sha,
                 lease.Fence, refLease.Fence, _time.GetUtcNow()));
-            // Local ref follows the verified remote object. Acceptance still
-            // checks ancestry and the batch record before Completed.
-            var local = _git.FastForwardPublishedBatchCheckout(repo,
-                manifest.Scope.IntegrationBranch, assembly.CandidateSha);
-            if (!local.Success)
-                throw new IOException(local.Error ?? "Verified batch could not advance the local integration ref.");
             State(manifest, BatchPhase.Published, assembly.CandidateSha, lease.Fence);
+            TrySyncPublishedCheckout(repo, manifest.Scope.IntegrationBranch,
+                assembly.CandidateSha);
         }
         foreach (var key in assembly.AdmittedKeys)
             await ReleaseMemberAsync(manifest, run, pending[key], ct)
                 .ConfigureAwait(false);
         foreach (var key in assembly.EjectedKeys)
             fallbackKeys.Add(key);
+    }
+
+    private void TrySyncPublishedCheckout(string repo, string branch, string sha)
+    {
+        try
+        {
+            var local = _git.FastForwardPublishedBatchCheckout(repo, branch, sha);
+            if (!local.Success)
+                _logger.LogWarning("batch-local-sync-deferred branch={Branch} sha={Sha} reason={Reason}",
+                    branch, sha, local.Error);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "batch-local-sync-deferred branch={Branch} sha={Sha}", branch, sha);
+        }
     }
 
     private bool QueueOnMovedDocumentationBase(BatchGateManifest manifest,
