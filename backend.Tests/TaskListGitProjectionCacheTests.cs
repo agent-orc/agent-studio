@@ -28,8 +28,9 @@ public sealed class TaskListGitProjectionCacheTests
             var newerFile = Path.Combine(newerPath, "task.json");
             File.WriteAllText(olderFile, "{}");
             File.WriteAllText(newerFile, "{}");
-            File.SetLastWriteTimeUtc(olderFile, DateTime.UtcNow.AddMinutes(-2));
-            File.SetLastWriteTimeUtc(newerFile, DateTime.UtcNow.AddMinutes(-1));
+            var written = new DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(olderFile, written.AddMinutes(-2));
+            File.SetLastWriteTimeUtc(newerFile, written.AddMinutes(-1));
             var older = Job("same", root) with { FolderPath = olderPath };
             var newer = older with { FolderPath = newerPath };
             Assert.Same(newer, TaskProjectionCards.Select([older, newer]).Single());
