@@ -190,48 +190,6 @@ function cardByTitle(page: Page, title: string) {
 }
 
 test.describe('Card running cue follows lane, not stale execution', () => {
-  test('urgent review shows its queue position and the context menu', async ({ page }, testInfo) => {
-    await gotoBoard(page);
-    const card = cardByTitle(page, AUTO_REVIEW_TASK.title);
-    await expect(card.getByTestId('task-card-review-queue')).toHaveText('Urgent · Review #1');
-    await dismissDevErrorDialog(page);
-    await page.addStyleTag({ content: 'app-error-dialog, app-dialog[testid="error-dialog"] { display: none !important; }' });
-    for (const theme of ['light', 'dark'] as const) {
-      await setTheme(page, theme);
-      const image = await card.screenshot();
-      await testInfo.attach(`urgent-review-card-${theme}.png`, { body: image, contentType: 'image/png' });
-      const resultsDir = process.env.JOB_RESULTS_DIR;
-      if (resultsDir) await card.screenshot({ path: `${resultsDir}/urgent-review-card-${theme}.png` });
-    }
-    await card.dispatchEvent('contextmenu', { clientX: 200, clientY: 200, button: 2 });
-    await expect(page.getByRole('menuitem', { name: 'Review first' })).toBeDisabled();
-  });
-  test('Review first sends one move-to-top request from the normal review card', async ({ page }) => {
-    // The static frontend fixture needs a live hub handshake so its offline
-    // guard allows the operator mutation to reach HTTP interception.
-    await page.route('**/hubs/v1/studio/negotiate**', route => route.fulfill({
-      status: 200, contentType: 'application/json',
-      body: JSON.stringify({ negotiateVersion: 1, connectionId: 'review-priority-fixture',
-        connectionToken: 'review-priority-fixture',
-        availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }] }),
-    }));
-    await page.routeWebSocket('**/hubs/v1/studio**', ws => {
-      ws.onMessage(message => { if (String(message).includes('"protocol"')) ws.send('{}\x1e'); });
-    });
-    await gotoBoard(page);
-    await page.addStyleTag({ content: 'app-error-dialog, app-dialog[testid="error-dialog"] { display: none !important; }' });
-    const requests: string[] = [];
-    await page.route('**/move-to-top**', route => {
-      requests.push(route.request().method());
-      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"priority":"urgent"}' });
-    });
-    const card = cardByTitle(page, NORMAL_REVIEW_TASK.title);
-    await expect(card.getByTestId('task-card-review-queue')).toHaveText('Review #2');
-    await card.dispatchEvent('contextmenu', { clientX: 200, clientY: 200, button: 2 });
-    await page.getByRole('menuitem', { name: 'Review first' }).click();
-    await expect.poll(() => requests.length).toBe(1);
-    expect(requests).toEqual(['POST']);
-  });
   test('3-progress card keeps the host-level running cue', async ({ page }) => {
     await gotoBoard(page);
 

@@ -43,6 +43,7 @@ import {
   FILTER_DEPENDENTS_ID,
   DELETE_ID,
   REVIEW_FIRST_ID,
+  REVIEW_NORMAL_ID,
   type CommitChainView,
   type CommitEmptyBadge,
   type DependencyChip,
@@ -530,11 +531,12 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   onCardCtxMenuItemClick(ev: MenuItemClickEvent): void {
     const job = this.job();
 
-    if (ev.id === REVIEW_FIRST_ID) {
+    if (ev.id === REVIEW_FIRST_ID || ev.id === REVIEW_NORMAL_ID) {
       if (this.mutationsBlocked()) return;
-      this.jobs.moveJobToTop(job.id, job.watchPath).subscribe({
-        next: () => { this.notifications.success('Review moved to the front'); this.jobs.refresh(true); },
-        error: () => this.notifications.error('Could not prioritize review'),
+      const priority = ev.id === REVIEW_FIRST_ID ? 'urgent' : 'normal';
+      this.jobs.setReviewPriority(job.id, priority, job.watchPath).subscribe({
+        next: () => { this.notifications.success(priority === 'urgent' ? 'Review moved to the front' : 'Review returned to normal order'); this.jobs.refresh(true); },
+        error: () => this.notifications.error('Could not change review priority'),
       });
       return;
     }

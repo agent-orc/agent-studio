@@ -1799,6 +1799,7 @@ export const FILTER_DEPENDENTS_ID = 'filter-dependents';
  */
 export const DELETE_ID = 'delete-task';
 export const REVIEW_FIRST_ID = 'review-first';
+export const REVIEW_NORMAL_ID = 'review-normal';
 
 /**
  * Right-click context-menu rows for a card: copy actions + (for non-epic cards)
@@ -1828,6 +1829,8 @@ export function buildCardCtxMenuItems(
     items.push({ kind: 'separator' });
     items.push({ kind: 'row', id: REVIEW_FIRST_ID, label: 'Review first',
       disabled: mutationsBlocked || job.reviewPriority === 'urgent' });
+    items.push({ kind: 'row', id: REVIEW_NORMAL_ID, label: 'Normal review order',
+      disabled: mutationsBlocked || job.reviewPriority !== 'urgent' });
   }
 
   // Epic assignment is only meaningful for ordinary task cards - an epic is not

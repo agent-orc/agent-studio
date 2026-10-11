@@ -96,10 +96,12 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
   });
 
-  it('offers Review first on normal auto-review cards and disables it after promotion', () => {
+  it('offers Review first and Normal review order on auto-review cards', () => {
     const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview }), false, [], null).filter(isRow);
     expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
+    expect(normal.find(item => item.id === 'review-normal')?.disabled).toBe(true);
     const urgent = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview, reviewPriority: 'urgent' }), false, [], null).filter(isRow);
     expect(urgent.find(item => item.id === REVIEW_FIRST_ID)?.disabled).toBe(true);
+    expect(urgent.find(item => item.id === 'review-normal')?.disabled).not.toBe(true);
   });
 });
