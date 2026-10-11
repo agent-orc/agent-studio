@@ -421,6 +421,45 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         var closed = Assert.Single(store.ListManifests());
         Assert.NotEqual(closed.BaseSha, RemoteTip());
         Assert.Null(store.ReadPublication(closed.BatchId));
+    [Fact]
+    public async Task Published_recovery_does_not_wait_for_an_ejected_members_running_fallback()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var admitted = SeedMember(factory, "DOC-RECOVER-ADMITTED", "docs/admitted.md");
+        var ejected = SeedMember(factory, "DOC-RECOVER-EJECTED", "README.md");
+        var originalBase = RemoteTip();
+        Git(_repo, "checkout", "-q", "--detach", originalBase);
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "integration conflict");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        _gate.FallbackAsync = async (request, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return Red(request.ExpectedSha);
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        try
+        {
+            await pilot.TickAsync(CancellationToken.None);
+            await WaitForAsync(() => store.ListManifests().Any(manifest =>
+                store.LatestState(manifest.BatchId).Phase == BatchPhase.Published));
+            await WaitForAsync(() => _gate.FallbackRuns == 1);
+            await WaitForAsync(() => Directory.Exists(Path.Combine(_watchPath,
+                TaskStates.HumanReview, admitted.Key)));
+            await pilot.TickAsync(CancellationToken.None);
+            AssertLane(admitted.Key, TaskStates.HumanReview);
+            AssertLane(ejected.Key, TaskStates.AutoReview);
+        }
+        finally { release.TrySetResult(); }
+    }
+
         var publishing = AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
         Assert.NotNull(publishing.BatchRunId);
         Assert.True(publishing.RefMutationFence!.Value > 0);
