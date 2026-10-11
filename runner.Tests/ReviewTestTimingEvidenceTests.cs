@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using AgentRunner;
@@ -11,7 +10,7 @@ namespace AgentRunner.Tests;
 public sealed class ReviewTestTimingEvidenceTests
 {
     [Fact]
-    public async Task Trx_is_retained_compressed_with_a_class_and_slowest_test_summary()
+    public async Task Trx_stays_on_runner_and_only_summary_content_enters_report()
     {
         var root = Path.Combine(Path.GetTempPath(), "review-test-timing-" + Guid.NewGuid().ToString("N"));
         var reportDirectory = Path.Combine(root, "repository", "suite", "TestResults");
@@ -50,12 +49,12 @@ public sealed class ReviewTestTimingEvidenceTests
             Assert.Equal("Slow", summary.RootElement.GetProperty("slowest50")[0].GetProperty("name").GetString());
             Assert.Equal(1, summary.RootElement.GetProperty("retries").GetInt32());
 
-            var compressed = Assert.Single(artifacts, item => item.Name.EndsWith(".trx.gz", StringComparison.Ordinal));
-            using var gzip = new GZipStream(File.OpenRead(Path.Combine(artifactDirectory, compressed.Name)),
-                CompressionMode.Decompress);
-            using var restored = new MemoryStream();
-            await gzip.CopyToAsync(restored);
-            Assert.Equal(trx, Encoding.UTF8.GetString(restored.ToArray()));
+            var retained = Assert.Single(artifacts, item => item.Name.EndsWith(".trx", StringComparison.Ordinal));
+            Assert.Null(retained.ContentBase64);
+            Assert.Equal(Encoding.UTF8.GetByteCount(trx), retained.SizeBytes);
+            Assert.Equal(trx, await File.ReadAllTextAsync(Path.Combine(artifactDirectory, retained.Name)));
+            Assert.NotNull(jsonArtifact.ContentBase64);
+            Assert.True(jsonArtifact.SizeBytes <= 256 * 1024);
         }
         finally
         {
@@ -83,7 +82,6 @@ public sealed class ReviewTestTimingEvidenceTests
     }
 
     [Fact]
-    [Trait("Category", "MachineBound")]
     public async Task Linked_trx_path_cannot_read_outside_the_review_attempt()
     {
         if (!OperatingSystem.IsLinux()) return;
@@ -109,5 +107,25 @@ public sealed class ReviewTestTimingEvidenceTests
             Directory.Delete(root, recursive: true);
             File.Delete(outside);
         }
+    }
+
+    [Fact]
+    public async Task Oversized_trx_is_rejected_before_reading_or_attaching_content()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "review-test-timing-" + Guid.NewGuid().ToString("N"));
+        var artifacts = Path.Combine(root, "artifacts");
+        Directory.CreateDirectory(artifacts);
+        var path = Path.Combine(root, "oversized.trx");
+        try
+        {
+            using (var stream = File.Create(path)) stream.SetLength(64L * 1024 * 1024 + 1);
+            var messages = new List<string>();
+            var captured = await ReviewTestTimingEvidence.CaptureAsync(
+                $"Results File: {path}", root, artifacts, "timing", false, messages.Add, default);
+            Assert.Empty(captured);
+            Assert.Contains(messages, message => message.Contains("oversized TRX", StringComparison.Ordinal));
+            Assert.Empty(Directory.EnumerateFiles(artifacts));
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 }
