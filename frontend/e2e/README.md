@@ -10,14 +10,14 @@ and unit tests do not catch UI regressions; this suite does.
 
 ## Prerequisites
 
-The tests assume the dev stack is already running:
+`npm run e2e` builds the frontend and publishes the backend once per checkout
+commit on the Linux runner, then starts a short-lived isolated stack on dynamic
+ports. Focused runs reuse the build. Do not start `ng serve` or `dotnet run` for
+routine specs.
 
-| Service  | Command                                    | URL                     |
-|----------|--------------------------------------------|-------------------------|
-| Backend  | `./api.sh start` (from repo root)          | http://localhost:5030   |
-| Frontend | `npm start --prefix frontend` (or VS Code task `Frontend: Start`) | http://localhost:4010 |
-
-`playwright.config.ts` does not spawn these — both fail fast if missing.
+`npm run e2e:external` targets an existing stack through `PW_BASE_URL` or
+`PW_TARGET`. It is for interactive inspection of services already managed by
+the operator. The task verification path is `npm run e2e`.
 
 ## Running
 
