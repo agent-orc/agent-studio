@@ -1848,6 +1848,9 @@ Task Server route migration remains valid. Native handlers move to agents;
 Studio and BFF remain browser edges. Agent loss expires authority and retains
 uncertain evidence. Mutating work cannot be reassigned without fence advancement
 and positive no-overlap proof. Closing Studio does not own any service lifetime.
+ADR-0078 further amends the role count and execution boundary: the Orchestrator
+Engine is a separate decider, while claimable pipeline work stays on runner hosts.
+The Operations Server handles non-claimable host operations only.
 
 **D3 staged delivery.** The operator resolved the card ownership on 2026-09-26:
 AGT-2736 delivers bounded Option C without scope extension. AGT-2907 owns D3's
@@ -1935,3 +1938,55 @@ Provider selection without argv construction:
 and [`Runner guard`](../../../../runner.Tests/CliInvocationCentralizationGuardTests.cs).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0078 - Engine decisions and runner execution boundary (2026-10-11)
+
+**Status.** Accepted target architecture. AGT-W65 D14 to D18 selected option A
+on 11 October 2026. The migration is staged; this decision does not claim that
+the production monolith has already been cut over.
+
+**Decision.** The Orchestrator Engine is the only process that chooses task and
+pipeline transitions, including the next step after coding, review, rework,
+batch and integration. Model-backed planners and advisors, including batch,
+capacity and improvement planning, run there. The Engine reads Task Server
+facts and submits versioned intents with decision receipts. The Task Server
+remains the only durable authority: it validates each intent against current
+state, budget, lease and fence, then applies or rejects it. The finished
+monolith retains no transition decider. A shared decision library may preserve
+behavior during migration, but does not become another runtime role.
+
+The Engine and Operations Server are separate processes with separate
+credentials and independent restart and scaling. They may share a host,
+Compose project or deployment unit. A Task Server claimable unit runs on the
+runner host holding its lease: coding, review, gate and batch attempts, and
+orchestrator chat turns, including their model calls, preparation, builds,
+tests, commit and push. The Operations Server and its outbound agents perform
+only non-claimable host operations, such as developer-seat File and Git
+actions, lifecycle control, diagnostics and user-requested rendering. An
+Operations result cannot itself move a card or execute a pipeline step.
+
+Every automatic round consumes one per-card round budget, including direct
+finding, sweep and reissue rounds. A fix round continues from the reviewed
+delivery's result ref and SHA, rebasing onto the current integration branch;
+it does not restart from the integration tip. At budget end, non-test blocks
+degrade to concerns with a linked follow-up card. `build-tests` and
+`tests-and-evidence` blocks escalate with a receipt.
+
+**Amendments.** This amends ADR-0032's placement of the binding decision: its
+typed input/output and loop-guard pattern remains, but transition decisions
+execute in the Engine and become binding only through Task Server validation.
+It amends ADR-0063's three-role picture and ADR-0076's four-role consequences
+to the five roles in the
+[canonical target architecture](../../../concepts/distributed-agent-studio-target-architecture.md):
+Studio and browser edges, Task Server, Orchestrator Engine, runner hosts, and
+Operations Server with agents. The
+[North star](../../../operations/nordstern/index.html) is the entry point for
+the finished target picture. The
+[AGT-W65 decision dossier](../../../task-server-bus/index.html#d14-to-d21)
+holds the operator receipts.
+
+**Open decisions.** AGT-W65 D19 review-host separation, D20 engine instance
+count by profile, and D21 the Operations Broker name remain open. This ADR
+sets no host-affinity rule, replica count or rename for them.

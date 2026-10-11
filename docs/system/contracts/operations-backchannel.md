@@ -3,6 +3,8 @@
 Status: accepted architecture, foundation stage delivered in AGT-2907, 2026-09-26.
 [ADR-0076](../architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
 records D1, D2 and D4. The
+[ADR-0078](../architecture/decisions/adr-archive.md#adr-0078---engine-decisions-and-runner-execution-boundary-2026-10-11)
+records AGT-W65 D14 to D18. The
 [source dossier](../../operations/operations-server-backchannel/index.html)
 records the selected D3 scope and original constraints. The operator's
 2026-09-26 instruction places the expansion on AGT-2907 and accepts this
@@ -38,13 +40,23 @@ the baseline card nor its delivery is blocked by the later parity work.
 | Resource | Authority |
 |---|---|
 | Tasks, lanes, runs, reviews, accepted evidence, projects and workspace identity | Task Server |
-| Orchestrator sessions, context, budgets, model policy, decisions and accepted responses | Task Server |
+| Orchestrator sessions, context, budgets, model policy, decision receipts and accepted responses | Task Server |
+| Transition choices, planners, advisors and versioned decision intents | Orchestrator Engine; Task Server validates and applies each intent |
 | Operation catalogue, command idempotency, bounded attempts and operational events | Operations Server |
 | Host tools, roots, filesystem and isolated executable actions | Operations Agent |
 | Human sessions, browser Origin and CSRF, server-side upstream credentials | Connector or separate LAN browser edge |
 
-Existing coding and review Runner protocols continue to use Task Server. The
-new channel does not replace their admission or outcome handling.
+Every claimable unit uses the Task Server claim protocol and executes on the
+runner host holding its lease: coding, review, gate and batch attempts and
+orchestrator chat turns, with their model calls, preparation, builds, tests,
+commit and push. The Operations Server executes only non-claimable host
+operations, such as developer-seat File and Git actions, host lifecycle,
+diagnostics and user-requested rendering. It never executes a pipeline step.
+Its result cannot move a card. Engine and Operations Server are separate
+processes and credentials, even when they share a deployment unit. The
+[North star](../../operations/nordstern/index.html) shows all five roles.
+AGT-W65 D19 review-host separation, D20 Engine instance count and D21 the
+Operations Broker name remain open.
 
 ## Protocol and access
 

@@ -8,6 +8,29 @@ is today's production implementation, and `task-server/TaskServerEndpoints.cs` +
 `TaskServerReviewStore.cs` is the standalone reference implementation for the
 target Server/Runner split. Both serve the same contract described here.
 
+## Target decision and execution boundary (ADR-0078)
+
+The [North star](../../operations/nordstern/index.html) and
+[ADR-0078](../architecture/decisions/adr-archive.md#adr-0078---engine-decisions-and-runner-execution-boundary-2026-10-11)
+define the target beyond the current monolith implementation described below.
+The Orchestrator Engine alone chooses the next step after a settled review,
+including pass, fix, batch, integration and escalation. It sends a versioned
+intent with a decision receipt; the Task Server validates and applies it under
+the current review generation, lease and fence. The Review Executor performs
+its claimable attempt on the runner host holding that lease. Review aspects,
+model calls, preparation, builds and tests remain inside that claimed unit;
+none executes through the Operations Server.
+
+A ProductFailure fix round continues from the reviewed delivery result ref
+and SHA, rebasing onto the current integration branch. Direct finding, sweep
+and reissue rounds all spend the same per-card automatic round budget. At its
+end, non-test blocks degrade to concerns with a linked follow-up card;
+`build-tests` and `tests-and-evidence` blocks escalate with a receipt. The
+current report endpoint and workers described below are migration behavior,
+not a second target decider. AGT-W65 D19, whether review prefers a different
+host, remains open; D20 Engine instances and D21 Operations Broker naming are
+also open.
+
 ## Endpoints
 
 | Endpoint | Purpose |
