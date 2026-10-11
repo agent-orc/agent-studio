@@ -5,14 +5,14 @@ import { TaskSelectionService } from '../../state/task-selection.service';
 import { resourceReasonLabel } from '../../state/task-resource-states';
 
 const LABELS: Record<ResourceName, { title: string; retry: string }> = {
-  overview: { title: 'Overview', retry: 'Retry overview' },
+  overview: { title: 'Overview information unavailable', retry: 'Retry overview' },
   documents: { title: 'Documents unavailable', retry: 'Retry documents' },
   git: { title: 'Git information unavailable', retry: 'Retry Git' },
   usage: { title: 'Usage information unavailable', retry: 'Retry usage' },
   review: { title: 'Review information unavailable', retry: 'Retry review' },
   history: { title: 'History unavailable', retry: 'Retry history' },
 };
-const ORDER: readonly ResourceName[] = ['documents', 'git', 'usage', 'review', 'history'];
+const ORDER: readonly ResourceName[] = ['overview', 'documents', 'git', 'usage', 'review', 'history'];
 
 /**
  * Independent enrichment state of the selected task inside the rich detail
