@@ -1,0 +1,13 @@
+@for (project of projects(); track project) {
+  @if (stateFor(project); as batch) {
+    @if (batch.plan.decision !== 'disabled') {
+      <button type="button" class="batch-lane-indicator" data-testid="batch-lane-indicator" (click)="panelProject.set(project)">
+        @if (projects().length > 1) { {{ project }} · }
+        Batch: {{ batch.pending.length }} waiting · @if (batch.plan.closeAtUtc) { ~{{ batch.plan.closeAtUtc | date:'shortTime' }} } @else { when ready } · {{ runningFor(project) }} running
+      </button>
+    }
+  }
+}
+@if (panelProject(); as project) {
+  <app-batch-panel [project]="project" [closed]="closePanel" />
+}

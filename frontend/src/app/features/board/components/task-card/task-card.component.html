@@ -102,18 +102,9 @@
         <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}</div>
       }
     </section>
-  }
-  <div class="task-card__badges">
-    @if (job().state === autoReviewState && job().reviewQueuePosition; as position) {
-      <span class="task-card__review-queue-pill" data-testid="task-card-review-queue"
-            [attr.data-priority]="job().reviewPriority"
-            [cacTooltip]="'Review queue position ' + position">
-        @if (job().reviewPriority === 'urgent') { Urgent · }Review #{{ position }}
-      </span>
-    } @else if (job().state === autoReviewState && job().reviewPriority === 'urgent') {
-      <span class="task-card__review-queue-pill" data-testid="task-card-review-queue"
-            data-priority="urgent" cacTooltip="Priority applies when review is ready">Urgent</span>
-    }
+  }<div class="task-card__badges">
+    <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" [referenceKey]="job().key" [displayKey]="job().displayKey" [taskId]="job().id" />
+    <app-review-queue-pill [task]="job()" />
     @if (stalledState(); as stalled) {
       <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"
             [cacTooltip]="stalled.tooltip" role="status"><span aria-hidden="true">⚠</span> {{ stalled.label }}</span>
