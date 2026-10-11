@@ -95,13 +95,12 @@ internal static class BoardCardSummary
             ["tags"] = job.Tags,
             ["taggingStatus"] = job.TaggingStatus,
             ["orchestratorVerdict"] = job.OrchestratorVerdict,
-            ["codeActivityDetected"] = job.CodeActivityDetected,
             ["commitCount"] = job.CommitCount,
-            ["noBranchExpected"] = job.NoBranchExpected,
-            ["released"] = job.Released,
             ["requiresIntegration"] = job.RequiresIntegration,
-            ["fixture"] = job.Fixture,
         };
+        if (job.CodeActivityDetected) fields["codeActivityDetected"] = true;
+        if (job.NoBranchExpected) fields["noBranchExpected"] = true;
+        if (job.Released) fields["released"] = true;
         if (job.Commits.Count > 0)
         {
             var latest = job.Commits[^1];
