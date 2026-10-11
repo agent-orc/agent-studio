@@ -36,6 +36,11 @@ internal static class ReviewTestTimingEvidence
                     log($"review-test-timing skipped outside attempt path={rawPath}");
                     continue;
                 }
+                if (ContainsLinkBetween(attemptRoot, path))
+                {
+                    log($"review-test-timing skipped linked report path={rawPath}");
+                    continue;
+                }
                 if (!File.Exists(path)) continue;
                 var source = await File.ReadAllBytesAsync(path, ct);
                 if (source.Length > 64 * 1024 * 1024)
@@ -142,6 +147,21 @@ internal static class ReviewTestTimingEvidence
     private static ReviewArtifactEvidenceDto Artifact(string name, string mediaType, byte[] bytes)
         => new(name, mediaType, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
             bytes.LongLength, Convert.ToBase64String(bytes));
+
+    private static bool ContainsLinkBetween(string root, string path)
+    {
+        var directory = Path.GetFullPath(root);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        for (var current = path; !string.Equals(current, directory, comparison);)
+        {
+            if (!File.Exists(current) && !Directory.Exists(current)) return false;
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+            var parent = Path.GetDirectoryName(current);
+            if (parent is null) return true;
+            current = parent;
+        }
+        return false;
+    }
 
     private static double? HostLoad1()
     {

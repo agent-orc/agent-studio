@@ -81,4 +81,33 @@ public sealed class ReviewTestTimingEvidenceTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Linked_trx_path_cannot_read_outside_the_review_attempt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var root = Path.Combine(Path.GetTempPath(), "review-test-timing-" + Guid.NewGuid().ToString("N"));
+        var outside = Path.Combine(Path.GetTempPath(), "review-test-timing-external-" + Guid.NewGuid().ToString("N") + ".trx");
+        var reports = Path.Combine(root, "repository", "TestResults");
+        var artifacts = Path.Combine(root, "artifacts");
+        Directory.CreateDirectory(reports);
+        Directory.CreateDirectory(artifacts);
+        File.WriteAllText(outside, "<TestRun />");
+        var linked = Path.Combine(reports, "linked.trx");
+        File.CreateSymbolicLink(linked, outside);
+        try
+        {
+            var captured = await ReviewTestTimingEvidence.CaptureAsync(
+                $"Results File: {linked}", root, artifacts, "candidate.verify-3.timing",
+                retryPerformed: false, _ => { }, default);
+
+            Assert.Empty(captured);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            File.Delete(outside);
+        }
+    }
 }
