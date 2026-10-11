@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgentStudio.Diagnostics;
 
 namespace AgentStudio.Git;
@@ -32,7 +35,7 @@ public sealed record GitLockScope(
 /// <summary>Answers whether any running git process may hold a lock in a repository.</summary>
 public interface IGitLockOwnerProbe
 {
-    GitLockOwnership Probe(GitLockScope scope);
+    GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc);
 }
 
 /// <summary>
@@ -95,7 +98,7 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         _inventory = inventory;
     }
 
-    public GitLockOwnership Probe(GitLockScope scope)
+    public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
     {
         var paths = scope.Paths().Select(NormalizeDirectory).ToArray();
         if (_serverChildren().Any(cwd => IsInside(cwd, paths)))
@@ -104,8 +107,9 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         // A sibling working tree we could not resolve may host the owner.
         if (!scope.SharedWorkTreesComplete) return GitLockOwnership.Unknown;
 
-        var processes = _inventory();
-        if (processes is null) return GitLockOwnership.Unknown;
+        var inventory = _inventory();
+        if (inventory is null) return GitLockOwnership.Unknown;
+        var processes = inventory.Where(process => CanHoldLock(process, lockLastWriteTimeUtc)).ToArray();
         if (processes.Any(process => IsTiedTo(process, paths)))
             return GitLockOwnership.Owned;
         // Win32_Process does not expose cwd. `git add` started inside this
@@ -115,6 +119,11 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
             ? GitLockOwnership.Unknown
             : GitLockOwnership.None;
     }
+
+    internal static bool CanHoldLock(GitProcessObservation process, DateTime lockLastWriteTimeUtc)
+        => (process.StartTimeUtc is null || process.StartTimeUtc <= lockLastWriteTimeUtc)
+            && (process.CommandLine is null || !Regex.IsMatch(
+                process.CommandLine, @"(?:^|\s)fsmonitor--daemon(?:\s|$)", RegexOptions.IgnoreCase));
 
     internal static bool IsTiedTo(GitProcessObservation process, IReadOnlyList<string> normalizedPaths)
     {
@@ -159,6 +168,7 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
         try
         {
             var result = new List<GitProcessObservation>();
+            var bootTimeUtc = ReadLinuxBootTime(procRoot, readText);
             foreach (var dir in Directory.EnumerateDirectories(procRoot))
             {
                 var name = Path.GetFileName(dir);
@@ -169,7 +179,8 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
                     if (!comm.StartsWith("git", StringComparison.Ordinal)) continue;
                     var cwd = readLinkTarget(Path.Combine(dir, "cwd"));
                     var cmdline = readText(Path.Combine(dir, "cmdline")).Replace('\0', ' ').Trim();
-                    result.Add(new GitProcessObservation(pid, comm, cwd, cmdline));
+                    var startTimeUtc = ReadLinuxStartTime(dir, readText, bootTimeUtc);
+                    result.Add(new GitProcessObservation(pid, comm, cwd, cmdline, startTimeUtc));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -189,6 +200,50 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
             return null;
         }
     }
+
+    private static DateTime? ReadLinuxBootTime(string procRoot, Func<string, string> readText)
+    {
+        try
+        {
+            var line = readText(Path.Combine(procRoot, "stat"))
+                .Split('\n').FirstOrDefault(line => line.StartsWith("btime ", StringComparison.Ordinal));
+            return line is not null && long.TryParse(line.AsSpan(6).Trim(), out var seconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime
+                : null;
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: Linux boot time unavailable");
+            return null;
+        }
+    }
+
+    private static DateTime? ReadLinuxStartTime(
+        string processDirectory, Func<string, string> readText, DateTime? bootTimeUtc)
+    {
+        if (bootTimeUtc is null) return null;
+        try
+        {
+            var stat = readText(Path.Combine(processDirectory, "stat"));
+            var closingParenthesis = stat.LastIndexOf(')');
+            if (closingParenthesis < 0) return null;
+            // Field 22 is starttime, measured in clock ticks since boot.
+            // The text following the process name begins with field 3.
+            var fields = stat[(closingParenthesis + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length <= 19 || !long.TryParse(fields[19], out var ticks)) return null;
+            var ticksPerSecond = sysconf(2); // Linux _SC_CLK_TCK
+            if (ticksPerSecond <= 0) return null;
+            return bootTimeUtc.Value.AddSeconds((double)ticks / ticksPerSecond);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "GitProcessLockOwnerProbe: Linux process start time unavailable");
+            return null;
+        }
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern long sysconf(int name);
 
     private static bool IsDefinitelyGone(int pid)
     {
@@ -212,7 +267,7 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
     {
         const string script =
             "$ErrorActionPreference='Stop'; " +
-            "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine) | ConvertTo-Json -Compress";
+            "@(Get-CimInstance Win32_Process -Filter \"Name LIKE 'git%'\" | Select-Object ProcessId,Name,CommandLine,@{Name='CreationDate';Expression={if ($_.CreationDate) {$_.CreationDate.ToUniversalTime().ToString('O')}}}) | ConvertTo-Json -Compress";
         var json = ReadProcessOutput(new ProcessStartInfo
         {
             FileName = "powershell.exe",
@@ -281,7 +336,10 @@ public sealed class GitProcessLockOwnerProbe : IGitLockOwnerProbe
                 element.GetProperty("ProcessId").GetInt32(),
                 GetString(element, "Name"),
                 WorkingDirectory: null,
-                GetString(element, "CommandLine")))
+                GetString(element, "CommandLine"),
+                DateTimeOffset.TryParse(GetString(element, "CreationDate"), CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal, out var startTime)
+                    ? startTime.UtcDateTime : null))
             .ToArray();
     }
 
@@ -296,4 +354,5 @@ public sealed record GitProcessObservation(
     int ProcessId,
     string? Name,
     string? WorkingDirectory,
-    string? CommandLine);
+    string? CommandLine,
+    DateTime? StartTimeUtc = null);
