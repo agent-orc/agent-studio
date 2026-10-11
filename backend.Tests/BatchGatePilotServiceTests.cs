@@ -310,6 +310,32 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Ejected_member_can_enter_the_integration_fallback_after_batch_reservation_releases()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-EJECT-INTEGRATE", "README.md");
+        var originalBase = RemoteTip();
+        Git(_repo, "checkout", "-q", "--detach", originalBase);
+        File.WriteAllText(Path.Combine(_repo, "README.md"), "Integration changed this line.\n");
+        Git(_repo, "add", "README.md");
+        Git(_repo, "commit", "-qm", "integration conflict");
+        Git(_repo, "push", "-q", "origin", "HEAD:develop");
+        _gate.Batch = _ => throw new InvalidOperationException("Ejected member reached the batch suite.");
+        _gate.Fallback = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, _gate.FallbackRuns);
+        Assert.Single(store.ListPending());
+        Assert.Equal(member.ResultSha, Ownership(member.Key)?.FallbackTestedSha);
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
     public async Task Green_batch_publishes_the_tested_candidate_and_releases_every_member()
     {
         using var factory = BuildFactory();
