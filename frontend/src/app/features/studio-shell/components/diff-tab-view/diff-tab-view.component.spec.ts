@@ -22,6 +22,28 @@ import { LARGE_DIFF_LINE_THRESHOLD } from '../../../../utils/large-diff-gate';
  * stable across template tweaks.
  */
 describe('StudioDiffViewComponent (smoke)', () => {
+  it('resolves a commit owner on demand when board cards omit commits', async () => {
+    await TestBed.configureTestingModule({
+      imports: [StudioDiffViewComponent],
+      providers: [provideZonelessChangeDetection(), provideHttpClient(),
+        provideHttpClientTesting(), provideRouter([])],
+    }).compileComponents();
+    const sha = 'abc1234abc1234abc1234abc1234abc1234abc1';
+    const fixture = TestBed.createComponent(StudioDiffViewComponent);
+    fixture.componentRef.setInput('commitSha', sha);
+    fixture.detectChanges();
+    const http = TestBed.inject(HttpTestingController);
+    http.expectOne(request => request.url.endsWith(`/api/tasks/commit-owner/${sha}`))
+      .flush({ job: { id: 'demo', taskKey: 'p::demo', title: 'Demo', state: '5-human-review',
+        watchPath: '/workspace', projectName: 'Demo' },
+      commit: { sha, message: 'Older commit', filesChanged: 1 } });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.owner()?.job.id).toBe('demo');
+    http.expectOne(request => request.url.includes(`/api/tasks/demo/commits/${sha}/files`))
+      .flush({ sha, files: [] });
+    http.verify();
+  });
+
   it('compiles + instantiates without throwing', async () => {
     try {
       await TestBed.configureTestingModule({

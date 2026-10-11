@@ -828,6 +828,11 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/details/${resource}`, { params });
   }
 
+  findCommitOwner(sha: string) {
+    return this.http.get<{ job: TaskInfo; commit: NonNullable<TaskInfo['commit']> }>(
+      `${this.baseUrl}/tasks/commit-owner/${encodeURIComponent(sha)}`);
+  }
+
   /**
    * Resolve a task through the registry-backed project handle. The watch-path
    * request is retained only as a compatibility fallback while callers migrate
