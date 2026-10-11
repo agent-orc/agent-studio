@@ -105,8 +105,8 @@
   <h1>Agent Studio: target picture and delivery</h1>
   <p class="lede">The one starting point. It states the target picture as decided on 11 October 2026: five runtime roles, how a card moves through them, the deployment forms, the decision register, the few points still open, and the path from today's installation. Arguments stay in the owning Dossiers.</p>
   <div class="meta">
-    <span><b>Status</b> Decision pending</span>
-    <span><b>Phase</b> Decision ready</span>
+    <span><b>Status</b> Active, standing map</span>
+    <span><b>Phase</b> Informational</span>
     <span><b>Updated</b> 11 October 2026</span>
     <span><b>Key</b> AGT-W14</span>
     <span><b>Card</b> AGT-2798, programme AGT-2797</span>
@@ -225,7 +225,7 @@
     <tr><td><b>Task Server</b><span class="d">the only authority</span></td><td>Tasks, lanes, runs, review subjects and attempts, steering intents, orchestration sessions, budgets, leases, fences, permits, events, artifacts, audit. Validates every intent against authority floors and grants fenced claims.</td><td>Start processes, touch checkouts, choose the next step.</td><td><a href="../operations-server-backchannel/index.html">AGT-W49</a> D4, <a href="../../task-server-bus/index.html">AGT-W65</a> D5 to D10</td></tr>
     <tr><td><b>Orchestrator Engine</b><span class="d">the only decider</span></td><td>Every transition between steps: after coding, after review, rework, batch, integration, escalation. Planners and advisors such as the batch advisor, capacity check and improvement scout. Reads facts, writes versioned intents, records a receipt per decision.</td><td>Command a runner host directly, hold task truth, access host files.</td><td><a href="../../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14, D15</a>; model step in <a href="../../orchestrator-rule-core/index.html">AGT-W73</a></td></tr>
     <tr><td><b>Runner hosts</b><span class="d">execution plane</span></td><td>Claimable work only: coding attempts, review attempts, gate and batch attempts, orchestrator chat turns, with their model calls, builds and tests. One claimed unit at a time per slot, prepared by the project's script and isolated per run.</td><td>Decide lanes, claim without admission, extend their own authority.</td><td><a href="../docker-ausfuehrungswelt-migration/index.html">AGT-W51</a>, <a href="../gates/index.html">AGT-W59</a> D7, <a href="../deployment-story/index.html">AGT-W63</a> D3, AGT-W65 D11 to D13, D16</td></tr>
-    <tr><td><b>Operations Server and agents</b><span class="d">working name Operations Broker (D21 open)</span></td><td>Host operations that are not claimable units: developer-seat files and Git, drain, restart, update, diagnostics, rendering on request. Service principals only; Task Server permits for task-linked operations.</td><td>Run a pipeline step, mint authority, move a task.</td><td>AGT-W49, ADR-0076, AGT-W65 D15, D16</td></tr>
+    <tr><td><b>Operations Server and agents</b><span class="d">Operations Broker in documentation and UI (D21 A)</span></td><td>Host operations that are not claimable units: developer-seat files and Git, drain, restart, update, diagnostics, rendering on request. Service principals only; Task Server permits for task-linked operations.</td><td>Run a pipeline step, mint authority, move a task.</td><td>AGT-W49, ADR-0076, AGT-W65 D15, D16</td></tr>
   </tbody>
 </table>
 </div>
@@ -235,7 +235,7 @@
 </div>
 
 <h3 id="actors">Who decides: two operators and two kinds of steps</h3>
-<p>The Orchestrator Engine is a runtime, not an actor. Two operators and two kinds of steps make the decisions and do the work; the engine runs the AI Operator and the decision steps. Proposed on 11 October 2026 in answer to the operator's question; confirm or change it in <a href="../../orchestrator-rule-core/index.html#o1-actor-model">AGT-W73 O1</a>.</p>
+<p>The Orchestrator Engine is a runtime, not an actor. Two operators and two kinds of steps make the decisions and do the work; the engine runs the AI Operator and the decision steps. Decided on 11 October 2026 (<a href="../../orchestrator-rule-core/index.html#o1-actor-model">AGT-W73 O1 A</a>), in answer to the operator's question.</p>
 <figure>
   <svg viewBox="0 0 1040 400" role="img" aria-labelledby="fig-actors-title fig-actors-desc">
     <title id="fig-actors-title">Who decides: two operators and two kinds of steps</title>
@@ -280,7 +280,7 @@
     <path class="svg-flow" d="M 324 246 L 324 290" style="marker-end: url(#ns-arrow-actors)"></path>
     <path class="svg-flow" d="M 838 246 L 838 290" style="marker-end: url(#ns-arrow-actors)"></path>
   </svg>
-  <figcaption><b>Figure 2.</b> Who decides. Decision steps ask the AI Operator when their grounds or action set do not allow a choice; the AI Operator proposes to and asks the human for approvals and human-only actions. The Orchestrator Engine is the runtime for the AI Operator and the decision steps, not an actor of its own. Proposed on 11 October 2026; confirmation in AGT-W73 O1.</figcaption>
+  <figcaption><b>Figure 2.</b> Who decides. Decision steps ask the AI Operator when their grounds or action set do not allow a choice; the AI Operator proposes to and asks the human for approvals and human-only actions. The Orchestrator Engine is the runtime for the AI Operator and the decision steps, not an actor of its own. Decided on 11 October 2026 (AGT-W73 O1 A).</figcaption>
 </figure>
 <div class="tablewrap">
 <table>
@@ -377,8 +377,8 @@
   <thead><tr><th>Form</th><th>Placement</th><th>Network</th><th>Use</th></tr></thead>
   <tbody>
     <tr><td><b>Workstation</b></td><td>Everything on one developer machine; the workstation is an ordinary runner host; Connector as browser edge; native host manager.</td><td>Loopback only.</td><td>A single operator, Windows tooling as runner capability.</td></tr>
-    <tr><td><b>One-box Docker</b><span class="d">product standard after parity</span></td><td>HTTPS edge with BFF, Task Server, Orchestrator Engine, Operations Server and the first runner host in one Compose installation; host-native operations through an enrolled agent, no Docker socket.</td><td>Only the HTTPS edge is published.</td><td>The default product installation.</td></tr>
-    <tr><td><b>Distributed</b></td><td>Task Server, engine and Operations Server as separate containers, which may share one control-plane host; runner hosts join as N Linux, M Windows and W workstations; further UIs through their own edges.</td><td>Private HTTPS over WireGuard; supervised reverse SSH only as a bounded transition.</td><td>Fleets and remote authority.</td></tr>
+    <tr><td><b>One-box Docker</b><span class="d">product standard after parity</span></td><td>HTTPS edge with BFF, Task Server, one Orchestrator Engine instance, Operations Server and the first runner host in one Compose installation; host-native operations through an enrolled agent, no Docker socket.</td><td>Only the HTTPS edge is published.</td><td>The default product installation.</td></tr>
+    <tr><td><b>Distributed</b></td><td>Task Server, two interchangeable engine instances and Operations Server as separate containers, which may share one control-plane host; runner hosts join as N Linux, M Windows and W workstations; further UIs through their own edges.</td><td>Private HTTPS over WireGuard; supervised reverse SSH only as a bounded transition.</td><td>Fleets and remote authority.</td></tr>
   </tbody>
 </table>
 </div>
@@ -407,31 +407,31 @@
     <tr><td><a href="../delivery-chain/index.html">AGT-W57</a> Delivery chain</td><td>25 September 2026</td><td>D1 to D7: first-bounce rule and strong guardian (placement amended by AGT-W65 D14), batch assembly by shadow comparison, flaky quarantine with expiry and card, Human Review after integration, pull-request approval separate, mechanical rebase rounds resume the captured session.</td></tr>
     <tr><td><a href="../gates/index.html">AGT-W59</a> Gates</td><td>25 September 2026</td><td>D1 to D10: model review per round, full suite once as batch gate; batch gate primary; append-only member evidence; one publication lease; bounded red-path diagnosis; pilot thresholds; claimable gate step; fail closed on eligible hosts; SSH bridge removed after cutover; measure before a staging lane.</td></tr>
     <tr><td>ADR-0075, ADR-0077</td><td>24 and 26 September 2026</td><td>One-box Compose uses distributed authority and product-managed credentials; CodingAgentRunner is the only card-run CLI layer.</td></tr>
-    <tr><td><a href="../../task-server-bus/index.html">AGT-W65</a> Task Server bus</td><td>26 September 2026 (D5 to D13), 11 October 2026 (D14 to D18)</td><td>Task Server as the only steering boundary; versioned intents; durable stop; durable settlement; outage drill; correlated feedback; many runner hosts by capability; workstation is a runner host; quality as library steps. Engine as the only decider, out of the monolith; engine and Operations Server separate processes; claimable work on runner hosts; fix rounds on the reviewed delivery; one per-card round budget.</td></tr>
+    <tr><td><a href="../../task-server-bus/index.html">AGT-W65</a> Task Server bus</td><td>26 September 2026 (D5 to D13), 11 October 2026 (D14 to D18)</td><td>Task Server as the only steering boundary; versioned intents; durable stop; durable settlement; outage drill; correlated feedback; many runner hosts by capability; workstation is a runner host; quality as library steps. Engine as the only decider, out of the monolith; engine and Operations Server separate processes; claimable work on runner hosts; fix rounds on the reviewed delivery; one per-card round budget; review prefers another host; interchangeable engine instances under leases; Operations Broker as documentation and UI term.</td></tr>
+    <tr><td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a> Orchestrator decisions between steps</td><td>11 October 2026</td><td>A strong model chooses the next typed action from bounded grounds; mechanical floors, one alternate-model retry then ask and hold, 24-hour emergency limit, cost caps per card and per host-day, versioned rules with dry run, bounded artefacts; actor model O1: two operators, two kinds of steps. AGT-W68 run budgets absorbed.</td></tr>
+    <tr><td><a href="../../merge-gate-economics/index.html">AGT-W69</a>, <a href="../../integration-lane-throughput/index.html">AGT-W70</a></td><td>11 October 2026</td><td>Recommendations adopted after the batch gate is measured; measurement first (AGT-3070).</td></tr>
     <tr><td><a href="../deployment-story/index.html">AGT-W63</a> Deployment story</td><td>26 September 2026</td><td>D1 to D8: one-box first, then hosts, then authority; limited baseline with explicit deltas; one runner-host family; WireGuard target; installer bootstrap; versioned manifest; verified recovery; proven remote completion.</td></tr>
-    <tr><td><a href="../test-acceleration/index.html">AGT-W77</a> Test acceleration</td><td>11 October 2026 (D1)</td><td>Per card: model review, build and the tests for the changed files; full suite per batch and before every release.</td></tr>
+    <tr><td><a href="../test-acceleration/index.html">AGT-W77</a> Test acceleration</td><td>11 October 2026 (D1, D2)</td><td>Per card: model review, build and the tests for the changed files; full suite per batch and before every release. End-to-end tests run on the production bundle unless specs need development helpers.</td></tr>
   </tbody>
 </table>
 </div>
 
 <h2 id="still-open"><span class="no">&sect;7</span>What is still open</h2>
-<p>The roles, the flow and the deployment forms are decided. These points still change parts of the target picture:</p>
+<p>Nothing that shapes the roles, the actor model, the flow or the deployment forms. On 11 October 2026 the operator decided the remaining points by following the recommendations: the model step between steps and the actor model (AGT-W73), review host preference, engine instances and the Operations Broker term (AGT-W65 D19 to D21), the end-to-end build rule (AGT-W77 D2), the integration-throughput Dossiers after measurement (AGT-W69, AGT-W70), and this page as a standing map (N1).</p>
+<p>Still open, as capabilities of roles that are already placed:</p>
 <div class="tablewrap">
 <table>
-  <thead><tr><th>Point</th><th>Question</th><th>Recommendation</th><th>Where</th></tr></thead>
+  <thead><tr><th>Dossier</th><th>Question</th><th>Role it belongs to</th></tr></thead>
   <tbody>
-    <tr><td>Actor model</td><td>Is the AI Operator a role of its own beside the decision steps, both running in the engine?</td><td>Yes: two operators, two kinds of steps (&sect;2).</td><td><a href="../../orchestrator-rule-core/index.html#o1-actor-model">AGT-W73 O1</a></td></tr>
-    <tr><td>Model step between steps</td><td>Does a strong model choose the next action from bounded grounds, with signals instead of counter-selected actions, a 24-hour emergency stop and cost caps?</td><td>Yes, receipt-only shadow first, then one transition at a time.</td><td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a>; siblings <a href="../../run-budget-per-card/index.html">AGT-W68</a>, <a href="../../fluid-capacity/index.html">AGT-W74</a>, <a href="../../orchestrator-improvement-scout/index.html">AGT-W76</a></td></tr>
-    <tr><td>Review host separation</td><td>Must review run on a different host than coding?</td><td>Prefer another host, never wait for it.</td><td><a href="../../task-server-bus/index.html#d19-review-host">AGT-W65 D19</a></td></tr>
-    <tr><td>Engine instances</td><td>One supervised instance or several under leases?</td><td>Interchangeable instances; one in one-box, two in distributed.</td><td><a href="../../task-server-bus/index.html#d20-engine-instances">AGT-W65 D20</a></td></tr>
-    <tr><td>Name</td><td>Operations Broker instead of Operations Server?</td><td>In documentation and UI only.</td><td><a href="../../task-server-bus/index.html#d21-broker-name">AGT-W65 D21</a></td></tr>
-    <tr><td>End-to-end build</td><td>Production bundle or dedicated e2e build for Playwright?</td><td>Dedicated build only if specs need development helpers.</td><td><a href="../test-acceleration/index.html">AGT-W77 D2</a></td></tr>
-    <tr><td>Integration throughput</td><td>Review reuse and speculative merge train on top of the batch gate?</td><td>As recommended there, after the batch gate is measured.</td><td><a href="../../merge-gate-economics/index.html">AGT-W69</a>, <a href="../../integration-lane-throughput/index.html">AGT-W70</a></td></tr>
-    <tr><td>Entry encoding</td><td>Standing map or decision Dossier for this page?</td><td>Standing map once &sect;7 is empty.</td><td>&sect;14, N1</td></tr>
+    <tr><td><a href="../../fluid-capacity/index.html">AGT-W74</a> Fluid capacity</td><td>How the host capacity check allocates slots and pauses intake.</td><td>AI Operator, periodic occurrence (AGT-W73 OD-S6)</td></tr>
+    <tr><td><a href="../../orchestrator-improvement-scout/index.html">AGT-W76</a> Improvement scout</td><td>What the periodic scout looks for and proposes.</td><td>AI Operator, periodic occurrence</td></tr>
+    <tr><td><a href="../../model-routing-by-complexity/index.html">AGT-W56</a> Model routing</td><td>Model and thinking level by assessed complexity.</td><td>Decision steps and execution steps</td></tr>
+    <tr><td><a href="../observation/index.html">AGT-W58</a> Observation</td><td>Watcher, telemetry and project feed.</td><td>AI Operator inputs, Studio views</td></tr>
+    <tr><td><a href="../../task-switch-performance/index.html">AGT-W64</a>, <a href="../task-and-board-ui/index.html">AGT-W60</a>, <a href="../../header-usage-cockpit/index.html">AGT-W66</a></td><td>Task switch speed, board UI, usage cockpit.</td><td>Studio</td></tr>
   </tbody>
 </table>
 </div>
-<p class="muted">Product capability Dossiers with open points that do not change the roles or the flow: <a href="../../model-routing-by-complexity/index.html">AGT-W56</a> model routing, <a href="../observation/index.html">AGT-W58</a> observation, <a href="../../task-switch-performance/index.html">AGT-W64</a> task switch, <a href="../../header-usage-cockpit/index.html">AGT-W66</a> usage cockpit, <a href="../task-and-board-ui/index.html">AGT-W60</a> board UI, AGT-W41 security audit, AGT-W47 route ownership, AGT-W71 and AGT-W72 documentation reviews.</p>
+<p class="muted">Housekeeping Dossiers outside the picture: AGT-W41 security audit, AGT-W47 route ownership, AGT-W71 and AGT-W72 documentation reviews.</p>
 
 <h2 id="path"><span class="no">&sect;8</span>From today to the target</h2>
 <p><b>Today (11 October 2026).</b> The Windows monolith (OrchestratorApi) is task authority, decider and UI backend at once; agent-runner-01 executes coding, review and gate work through claims; the standalone Task Server, the engine and the Operations Server run in no production installation. The reconstruction is in <a href="../../task-server-bus/index.html#pipeline-control">AGT-W65, Pipeline control today</a>.</p>
@@ -439,18 +439,18 @@
 <table>
   <thead><tr><th>Step</th><th>Result</th><th>Cards</th></tr></thead>
   <tbody>
-    <tr><td>1 &middot; Batch verification and loop hygiene</td><td>Full suite per wave; per-card round budget; fix rounds on the reviewed delivery; still decided in the monolith as library code.</td><td>AGT-3052, AGT-3053, AGT-3054, AGT-3056</td></tr>
+    <tr><td>1 &middot; Batch verification and loop hygiene</td><td>Full suite per wave; per-card round budget; fix rounds on the reviewed delivery; review prefers another host; gate economics and integration lane measured; still decided in the monolith as library code.</td><td>AGT-3052, AGT-3053, AGT-3054, AGT-3056, AGT-3069, AGT-3070</td></tr>
     <tr><td>2 &middot; Decision library</td><td>Every transition rule leaves the monolith code and lives in one library.</td><td>AGT-3057</td></tr>
     <tr><td>3 &middot; Orchestration plane in the monolith</td><td>The engine can decide against today's authority; per-transition switch.</td><td>AGT-3058</td></tr>
     <tr><td>4 &middot; Engine decides</td><td>Dedicated remote process on agent-runner-01; shadow, then switch per transition; batch planner and advisor in the engine.</td><td>AGT-3059, AGT-3055</td></tr>
     <tr><td>5 &middot; Monolith without decisions</td><td>Background deciders moved; decision code deleted and guarded.</td><td>AGT-3060</td></tr>
     <tr><td>6 &middot; Authority leaves the monolith</td><td>Standalone Task Server completes the loop; cutover with rollback drill and detached Studio proof.</td><td>AGT-3061, AGT-2737, AGT-2949</td></tr>
     <tr><td>7 &middot; Host operations</td><td>Full operation catalogue; Connector and BFF operations behind the Operations Server.</td><td>AGT-2907 follow-up stages</td></tr>
-    <tr><td>8 &middot; Model decisions</td><td>The engine's choices become model decisions with receipts and cost caps.</td><td>AGT-W73 OD-S1 to OD-S6, once decided</td></tr>
+    <tr><td>8 &middot; Model decisions</td><td>The engine's choices become model decisions with receipts and cost caps; the AI Operator's periodic occurrences run on the same seam.</td><td>AGT-3063 to AGT-3068 (AGT-W73 OD-S1 to OD-S6)</td></tr>
   </tbody>
 </table>
 </div>
-<p>ADR-0078 and the canonical target architecture record these decisions (AGT-3062).</p>
+<p>ADR-0078 and the canonical target architecture record these decisions (AGT-3062, completed by AGT-3071).</p>
 
 <h2 id="s5"><span class="no">&sect;9</span>Map of current Dossiers</h2>
 <div class="map">
@@ -593,14 +593,14 @@
 
 <section id="s10" data-concept-section="open-decisions" data-document-section="open-decisions">
 <h2><span class="no">&sect;14</span>Open decisions</h2>
-<p>One choice remains for a human. N2 is overtaken by ADR-0076; N1 stays open.</p>
+<p>No choice remains. N1 was decided on 11 October 2026 (A, standing map); N2 is overtaken by ADR-0076.</p>
 
 <div class="decision">
   <h3>N1. How should the rewritten North star be encoded in the catalogue?</h3>
   <div class="opt"><b>A. Standing map: status active, phase informational</b><span>Matches the curation note of 17 August 2026, which argued that an entry point makes no deliverable promises of its own and has no operator decision pending. Requires that &sect;10 be emptied once N2 is answered.</span></div>
   <div class="opt"><b>B. Decision Dossier until N2 is answered, then A</b><span>Status decision-pending and phase decision-ready while this page still carries an unanswered question, then back to A. This is the encoding the rewrite ships with, and it is the recommendation, because the page currently does carry an open question and the concept delivery contract expects a decision-ready descriptor.</span></div>
   <div class="opt"><b>C. Permanent decision Dossier</b><span>Keeps the entry point on the decision surface forever, which produces a standing empty decision block and trains readers to ignore it.</span></div>
-  <p><b>Note, 11 October 2026.</b> With N2 overtaken, option B's own rule leads to A once the operator confirms.</p>
+  <p><b>Decision, 11 October 2026, operator: A</b> (following the recommendation). The page is a standing map: status active, phase informational.</p>
 </div>
 
 <div class="decision">
