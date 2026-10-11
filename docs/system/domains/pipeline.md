@@ -60,7 +60,7 @@ These metrics measure the exact-subject gate runner on its execution host; they 
 batch green rate or answer the staging-lane decision in the
 [Gates Dossier](../../operations/gates/index.html#sect5).
 
-## Documentation-only batch gate pilot
+## Batch gate for code and documentation deliveries
 
 `backend/Features/Pipeline/BatchGate/` contains the closed-manifest policy,
 membership digest, append-only replay and member evidence records, bounded
@@ -75,20 +75,32 @@ base SHA and member run IDs; its existing claimable executor still checks the
 exact candidate SHA. An infrastructure retry excludes the host of the previous
 attempt.
 
-The default-off `BatchGate` project setting routes documentation-only settled
+The default-off `BatchGate` project setting routes eligible settled
 Remote Review passes to a durable pending queue. The review plan records the
-build and test aspect as `DeferredToBatch` while retaining model review. The
+full suite as `DeferredToBatch` while retaining model review. For code cards,
+the per-card review retains preparation, build, lint, and selected work-package
+tests; a selection that needs the full suite keeps the ordinary per-card gate.
+The plan carries its test level and selection digest. The
 settlement journal of such a pass carries no delivery record, so neither the
 settlement reconciler nor Auto Review resume integrates the card or settles it
 as a failed delivery gate; the batch gate owns its publication. Set it
-with `PUT /api/projects/{projectName}/batch-gate` and a JSON
-`BatchGateFormationOptions` body: `enabled` (default `false`), `closeSize`
-(default 4), `maximumSize` (8), `deadlineMinutes` (15), `pressureSize` (2),
-`reviewQueuePressure` (12), and `documentationOnly` (`true`). The endpoint
-rejects invalid thresholds and `documentationOnly: false` for this pilot.
-The hosted pilot worker closes manifests at the configured size, age, or
-pressure threshold, assembles the candidate, persists a run before invoking
+with `PUT /api/projects/{projectName}/batch-gate`. New settings include
+`scope` (`documentation` or `code`), `planner` (`threshold` or `look-ahead`),
+size bounds, deadline and look-ahead windows, risk and overlap policy,
+review test level, gate timeout, and the optional LLM advisor. Legacy threshold
+fields remain accepted on input. The default scope is `documentation`.
+`GET` returns the settings and hard maximum of eight. `GET .../state` returns
+the latest plan decision, pending members, recent batches and member status.
+`POST .../close-now` and `POST .../members/{taskKey}/eject` request operator
+intervention. Mutations require `X-Client-Id`.
+The hosted worker closes manifests at the configured size, age, pressure, or
+look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
+The look-ahead policy is pure and estimates the suite runs per member across
+the configured size range. Its snapshot includes queued cards and upcoming
+review or coding cards. An advisor may approve, adjust, or veto that plan
+within the configured bounds; failed or late advice falls back to the
+deterministic result. Advice is stored outside the membership digest.
 Green publication rechecks member generations and the remote pre-tip under a
 coordinator lease and the shared fenced ref-mutation lease. A changed pre-tip
 returns members for reconstruction and another suite run. Both leases are
@@ -124,20 +136,19 @@ interrupted starts the card escalates as `GateInfra`. A batch that pauses (a sec
 infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
-batch as `Abandoned` with a `paused-to-per-task-gate` reason. Code-bearing
-cards keep the existing route.
+batch as `Abandoned` with a `paused-to-per-task-gate` reason.
 
-The default local store is
-`<LocalApplicationData>/agentstudio/batch-gates`: `pending/` holds durable
+The default local store is scoped by the backend content root and task data
+root under `<LocalApplicationData>/agentstudio/instances/`: `pending/` holds durable
 review subjects and each batch ID directory holds its closed manifest, state,
 replay, run, verdict, publication and member facts. Coordinator leases live in
-`<LocalApplicationData>/agentstudio/batch-gate-leases`; the shared publication
+the same instance root under `batch-gate-leases`; the shared publication
 lease lives in `ref-mutation-leases` beside it. The card-local admission marker
 is `logs/batch-gate-ownership.json`. Native member records carry the gate
 identity and evidence; the integration-record endpoint only records integration
 bookkeeping.
 
-The pilot is currently executed by the backend hosted worker using the local
+The gate is currently executed by the backend hosted worker using the local
 gate runner. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
