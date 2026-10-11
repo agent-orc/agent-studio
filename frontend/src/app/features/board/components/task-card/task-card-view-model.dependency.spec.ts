@@ -49,6 +49,7 @@ describe('buildDependencyChip', () => {
   it('uses the full count when a slim card carries three dependency labels', () => {
     const chip = buildDependencyChip(status({
       itemCount: 5,
+      openCount: 5,
       items: [item(), item({ key: 'DEP-2' }), item({ key: 'DEP-3' })],
     }));
     expect(chip?.label).toBe('waits for completion: DEP-1 +4');
