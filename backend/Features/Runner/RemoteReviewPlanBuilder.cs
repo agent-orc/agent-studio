@@ -85,21 +85,18 @@ public sealed class RemoteReviewPlanBuilder
         if (deferBuildTest)
         {
             var options = projectSettings!.BatchGate;
-            string? selectionWorktree = null;
             var selectionRepo = repositoryPath ?? string.Empty;
-            if (options.EffectiveScope == "code" && _git is not null
-                && !string.IsNullOrWhiteSpace(repositoryPath))
+            // Selection reads the project inventory from the existing checkout.
+            // A delivery that changes that inventory needs its own full gate;
+            // materializing a 7,000-file result worktree for every queued plan
+            // would hold review admission behind filesystem work.
+            if (changedPaths!.Any(path => path is ".agent-studio/project.yml"
+                    or "frontend/package.json" or "frontend/angular.json"
+                    or "backend/OrchestratorApi.csproj"
+                    or "backend.Tests/OrchestratorApi.Tests.csproj"))
+                deferBuildTest = false;
+            if (deferBuildTest)
             {
-                selectionWorktree = Path.Combine(Path.GetTempPath(),
-                    "agentstudio-review-selection-" + Guid.NewGuid().ToString("N"));
-                var added = _git.WorktreeAddDetached(repositoryPath, selectionWorktree, resultSha!);
-                if (added.Success) selectionRepo = selectionWorktree;
-                else { selectionWorktree = null; deferBuildTest = false; }
-            }
-            try
-            {
-                if (deferBuildTest)
-                {
                     var verify = VerifyCommandPlanner.Plan(selectionRepo, projectSettings.BuildProfile);
                     var level = DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
                         || options.ReviewTestLevel == "build-only"
@@ -138,12 +135,6 @@ public sealed class RemoteReviewPlanBuilder
                                 string.Join("\n", selected.Select(command =>
                                     $"{command.Kind}:{command.WorkingSubdir}:{command.Command}"))))));
                     }
-                }
-            }
-            finally
-            {
-                if (selectionWorktree is not null)
-                    _git!.WorktreeRemove(repositoryPath!, selectionWorktree);
             }
         }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
