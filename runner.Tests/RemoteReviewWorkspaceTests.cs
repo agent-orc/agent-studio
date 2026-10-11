@@ -100,9 +100,11 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var evidence = await workspace.ExecutePlanAsync(default);
 
         Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".json", StringComparison.Ordinal)
-            && artifact.ContentBase64 is not null);
-        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".trx.gz", StringComparison.Ordinal)
-            && artifact.ContentBase64 is not null);
+            && !string.IsNullOrEmpty(artifact.ContentBase64));
+        // The TRX stays on the runner: the report cites its retained path, hash
+        // and size, never its bytes.
+        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".trx", StringComparison.Ordinal)
+            && string.IsNullOrEmpty(artifact.ContentBase64) && artifact.SizeBytes > 0);
     }
 
     [Fact]

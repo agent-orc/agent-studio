@@ -237,7 +237,8 @@ public sealed partial class RemoteReviewAuthorityTests
 
         Assert.Equal(
             "dotnet test -maxcpucount:2 -nodeReuse:false " +
-            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m",
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m " +
+            "--blame-hang-dump-type none",
             Assert.Single(subject.Plan.Commands).Arguments[1]);
     }
 
