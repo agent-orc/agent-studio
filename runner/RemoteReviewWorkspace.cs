@@ -543,7 +543,11 @@ public sealed class RemoteReviewWorkspace
                         // The clean repeat records its own clean-repeat evidence;
                         // the candidate evidence below keeps the first run, so a
                         // failure the repeat cleared stays visible to diagnosis.
-                        cleanRepeat = await RunCleanRepeatAsync(command, commands, artifacts, ct);
+                        var repeatCommand = ReviewTargetedRerunPolicy.Select(
+                            command, ParsedTestFailures(execution.Process));
+                        _log($"review clean repeat step={command.StepId} scope=" +
+                             (ReferenceEquals(repeatCommand, command) ? "full" : "failed-classes"));
+                        cleanRepeat = await RunCleanRepeatAsync(repeatCommand, commands, artifacts, ct);
                         if (MissingToolchain(cleanRepeat.Process))
                         {
                             commands.Add(await AddCommandEvidenceAsync(
