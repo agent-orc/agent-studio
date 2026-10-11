@@ -12,7 +12,7 @@ describe('CostBreakdownDialogComponent', () => {
       error: signal<string | null>(null), provider: signal('TokenEconomy'),
       close: () => fake.open.set(false),
       items: signal([{
-        model: 'claude-opus-4-7', label: 'Core agent', calculatedAt: '2026-07-11T10:00:00Z',
+        model: 'claude-opus-4-7', label: 'Core agent', recordedCostUsd: 12.5, recordedModelPriced: true, calculatedAt: '2026-07-11T10:00:00Z',
         inputTokens: 1_000_000, outputTokens: 200_000, cacheReadTokens: 100_000, cacheWriteTokens: 50_000,
         estimate: {
           inputUsd: 5, outputUsd: 5, cacheReadUsd: 0.05, cacheWriteUsd: 0.3125,
@@ -38,6 +38,31 @@ describe('CostBreakdownDialogComponent', () => {
     expect(text).toContain('Anthropic published pricing');
     expect(text).toContain('Price effective date');
     expect(text).toContain('$10.36');
+    expect(text).toContain('Recorded usage cost: $12.50');
+    fixture.destroy();
+  });
+  it('shows a recorded cost when a historical model has no current price', async () => {
+    const fake = {
+      open: signal(true), title: signal("Usage cost at today's price"), loading: signal(false),
+      error: signal<string | null>(null), provider: signal('TokenEconomy'), close: () => {},
+      items: signal([{
+        model: 'retired-model', label: 'Retired model', calculatedAt: '2026-10-11T00:00:00Z',
+        inputTokens: 1_000, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+        recordedCostUsd: 4.25, recordedModelPriced: true,
+        estimate: { inputUsd: 0, outputUsd: 0, cacheReadUsd: 0, cacheWriteUsd: 0,
+          total: 0, modelId: 'retired-model', modelKnown: false, status: 'noPriceForDate', priceBasis: null },
+      }]),
+    };
+    await TestBed.configureTestingModule({
+      imports: [CostBreakdownDialogComponent],
+      providers: [provideZonelessChangeDetection(), { provide: CostBreakdownService, useValue: fake }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CostBreakdownDialogComponent);
+    fixture.detectChanges();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('No current price');
+    expect(text).toContain('Recorded usage cost: $4.25');
+    expect(text).not.toContain('Unknown');
     fixture.destroy();
   });
 });

@@ -50,6 +50,8 @@ public class TokenSummaryAggregateTests
         Assert.Equal(300L, row.OutputTokens);
         Assert.Equal(0.03m, row.EstimatedApiCostUsd);
         Assert.Equal("GPT-5.5", row.Model);
+        Assert.Equal("gpt-5.5", row.ModelId);
+        Assert.Equal("codex", row.Cli);
     }
 
     [Fact]
@@ -98,5 +100,6 @@ public class TokenSummaryAggregateTests
         var row = Assert.Single(aggregate.ByModel);
         Assert.Equal(2, row.Calls);
         Assert.Equal(display, row.Model);
+        Assert.Equal(modelId, row.ModelId);
     }
 }

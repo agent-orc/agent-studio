@@ -118,4 +118,8 @@ public sealed record AdHocUsageByModel(
     long CacheReadTokens,
     long CacheCreationTokens,
     decimal EstimatedApiCostUsd,
-    bool ModelPriced);
+    bool ModelPriced)
+{
+    public string ModelId { get; init; } = AgentStudio.Tokens.ModelIdentity.Resolve(Model)?.ModelId ?? Model;
+    public string? Cli { get; init; } = AgentStudio.Tokens.ModelIdentity.Resolve(Model)?.Cli;
+}

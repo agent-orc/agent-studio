@@ -67,8 +67,8 @@ public static class TokenPricing
         long cacheCreationTokens,
         DateTime? recordedAt = null)
     {
-        return Provider.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens,
-            cacheCreationTokens, recordedAt);
+        return Provider.Estimate(AgentStudio.Tokens.ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
+            inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
     }
 
     /// <summary>
@@ -86,14 +86,7 @@ public static class TokenPricing
     /// </summary>
     public static string? CanonicalModelId(string? modelOrLabel)
     {
-        if (string.IsNullOrWhiteSpace(modelOrLabel)) return null;
-        var trimmed = modelOrLabel.Trim();
-
-        var byIdOrAlias = Source.Find(trimmed);
-        if (byIdOrAlias != null) return byIdOrAlias.ModelId;
-
-        return Source.Listings
-            .FirstOrDefault(listing => string.Equals(listing.DisplayName, trimmed, StringComparison.OrdinalIgnoreCase))
-            ?.ModelId;
+        var identity = AgentStudio.Tokens.ModelIdentity.Resolve(modelOrLabel);
+        return identity is not null && Catalog.ContainsKey(identity.ModelId) ? identity.ModelId : null;
     }
 }

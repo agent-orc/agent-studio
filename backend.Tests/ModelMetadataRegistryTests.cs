@@ -7,9 +7,8 @@ namespace AgentStudio.Tests;
 /// durable receipt's display label back to the catalog id it was formed
 /// from, so a receipt that persisted <see cref="ModelMetadata.Label"/>
 /// instead of <see cref="ModelMetadata.Id"/> still prices correctly. This
-/// only protects models TokenEconomy actually prices; several registry
-/// entries (e.g. GPT-4o, Gemini) are deliberately unpriced placeholders
-/// (see <c>ModelMetadataRegistry</c> comments) and are out of scope here.
+/// only protects models TokenEconomy actually prices. Gemini remains outside
+/// this Claude/Codex price-coverage contract.
 /// </summary>
 public class ModelMetadataRegistryTests
 {

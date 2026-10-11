@@ -62,6 +62,22 @@ describe('CliUsageDetailComponent (smoke)', () => {
     expect(rows[1].totalTokens).toBe(20);
   });
 
+  it('assigns models to the backend CLI regardless of the display label', async () => {
+    await TestBed.configureTestingModule({
+      imports: [CliUsageDetailComponent],
+      providers: [provideZonelessChangeDetection()],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(CliUsageDetailComponent);
+    const row = {
+      model: 'Claude-looking text', modelId: 'gpt-6-sol', cli: 'codex', calls: 1,
+      inputTokens: 10, outputTokens: 0, cacheReadTokens: 0,
+      cacheCreationTokens: 0, estimatedApiCostUsd: 1, modelPriced: true,
+    };
+    fixture.componentRef.setInput('tokens', { byModel: [row] } as never);
+    expect(fixture.componentInstance.modelRowsFor('codex')).toHaveLength(1);
+    expect(fixture.componentInstance.modelRowsFor('claude')).toHaveLength(0);
+  });
+
   it('emits openProjectSettings with the raw project name', async () => {
     await TestBed.configureTestingModule({
       imports: [CliUsageDetailComponent],

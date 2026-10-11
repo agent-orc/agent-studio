@@ -10,7 +10,9 @@ public sealed record TokenPriceCalculationItem(
     long CacheReadTokens,
     long CacheWriteTokens,
     DateTime? RecordedAt = null,
-    string? Label = null);
+    string? Label = null,
+    decimal? RecordedCostUsd = null,
+    bool? RecordedModelPriced = null);
 
 public sealed record TokenPriceCalculationResult(
     string Model,
@@ -20,7 +22,9 @@ public sealed record TokenPriceCalculationResult(
     long OutputTokens,
     long CacheReadTokens,
     long CacheWriteTokens,
-    TokenCostEstimate Estimate);
+    TokenCostEstimate Estimate,
+    decimal? RecordedCostUsd,
+    bool? RecordedModelPriced);
 
 /// <summary>
 /// One model id that is active in recorded usage but absent from the pinned
@@ -39,20 +43,7 @@ public static class TokenPricingEndpoints
             if (request.Items.Count is < 1 or > 100)
                 return Results.BadRequest(new { error = "Provide between 1 and 100 pricing items." });
 
-            var rows = request.Items.Select(item =>
-            {
-                var at = (item.RecordedAt ?? DateTime.UtcNow).ToUniversalTime();
-                return new TokenPriceCalculationResult(
-                    item.Model,
-                    item.Label,
-                    at,
-                    Math.Max(0, item.InputTokens),
-                    Math.Max(0, item.OutputTokens),
-                    Math.Max(0, item.CacheReadTokens),
-                    Math.Max(0, item.CacheWriteTokens),
-                    TokenPricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
-                        item.CacheReadTokens, item.CacheWriteTokens, at));
-            }).ToList();
+            var rows = CalculateItems(request);
             return Results.Ok(new { items = rows, provider = "TokenEconomy" });
         });
 
@@ -76,12 +67,31 @@ public static class TokenPricingEndpoints
             });
     }
 
+    internal static IReadOnlyList<TokenPriceCalculationResult> CalculateItems(TokenPriceCalculationRequest request)
+    {
+        return request.Items.Select(item =>
+        {
+            var at = (item.RecordedAt ?? DateTime.UtcNow).ToUniversalTime();
+            return new TokenPriceCalculationResult(
+                item.Model,
+                item.Label,
+                at,
+                Math.Max(0, item.InputTokens),
+                Math.Max(0, item.OutputTokens),
+                Math.Max(0, item.CacheReadTokens),
+                Math.Max(0, item.CacheWriteTokens),
+                TokenPricing.Estimate(item.Model, item.InputTokens, item.OutputTokens,
+                    item.CacheReadTokens, item.CacheWriteTokens, at),
+                item.RecordedCostUsd, item.RecordedModelPriced);
+        }).ToList();
+    }
+
     /// <summary>Pure projection so the selection rule is unit-testable without standing up the endpoint.</summary>
     internal static IReadOnlyList<UnpricedModelRow> SelectUnpricedModels(TokenSummaryAggregate aggregate)
         => aggregate.ByModel
             .Where(m => !m.ModelInCatalog)
             .Select(m => new UnpricedModelRow(
-                m.Model,
+                m.ModelId,
                 m.Calls,
                 m.InputTokens + m.OutputTokens + m.CacheReadTokens + m.CacheCreationTokens,
                 m.EstimatedApiCostUsd))
