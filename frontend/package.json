@@ -26,6 +26,7 @@
     "test:release": "ng test frontend --watch=false --progress=false --coverage",
     "watch": "ng build frontend --watch --configuration development",
     "e2e": "bash scripts/run-prebuilt-e2e.sh",
+    "e2e:mocked": "bash scripts/run-mocked-e2e.sh",
     "e2e:external": "playwright test",
     "e2e:task-switch-budget": "node scripts/run-task-switch-budget.mjs",
     "e2e:ui": "playwright test --ui",
