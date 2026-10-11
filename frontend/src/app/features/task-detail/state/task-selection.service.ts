@@ -720,7 +720,6 @@ export class TaskSelectionService {
         if (!current()) return;
         this.loadResource('usage');
         this.loadResource('overview');
-        this.loadResource('review');
         this.loadResourcesForTab(this.expandedTab);
       });
     };
