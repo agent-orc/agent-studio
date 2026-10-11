@@ -162,16 +162,25 @@ public sealed class GitStateIndexService : BackgroundService
     public IReadOnlyList<GitStateRepositoryStatus> GetRepositoryStatuses(TimeProvider? timeProvider = null)
     {
         var now = (timeProvider ?? _timeProvider).GetUtcNow();
+        // Read each repository's failure fields under its gate: a failed run
+        // sets the reason before it counts the failure, so an unlocked read
+        // could report "refresh-failed" with zero consecutive failures.
         return _repos.Values
-            .Select(state => new GitStateRepositoryStatus(
-                state.ProjectName,
-                state.LastIndexedAt,
-                Volatile.Read(ref state.Running) == 1,
-                state.LastIndexedAt is { } at ? (now - at).TotalSeconds : null,
-                state.LastErrorReason,
-                state.Failures,
-                state.LastError,
-                state.FailureSince))
+            .Select(state =>
+            {
+                lock (state.Gate)
+                {
+                    return new GitStateRepositoryStatus(
+                        state.ProjectName,
+                        state.LastIndexedAt,
+                        Volatile.Read(ref state.Running) == 1,
+                        state.LastIndexedAt is { } at ? (now - at).TotalSeconds : null,
+                        state.LastErrorReason,
+                        state.Failures,
+                        state.LastError,
+                        state.FailureSince);
+                }
+            })
             .OrderBy(status => status.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
