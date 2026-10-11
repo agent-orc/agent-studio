@@ -6,6 +6,8 @@ using Xunit;
 
 namespace AgentRunner.Tests;
 
+// clock-independent: fixed TRX timestamps only test parser duration and never meet current time.
+
 public sealed class ReviewTestTimingEvidenceTests
 {
     [Fact]
