@@ -370,6 +370,31 @@ test.describe('Task core board reuse (AGT-2956)', () => {
     expect(traffic.legacyDetail).toBe(0);
   });
 
+  test('opening a slim card loads overview and defers review until its tab opens', async ({ page }) => {
+    await openBoard(page, '#/board');
+    const resources: string[] = [];
+    page.on('request', request => {
+      const match = request.url().match(/\/api\/tasks\/task-04\/details\/(overview|review)(?:\?|$)/);
+      if (match) resources.push(match[1]);
+    });
+
+    await card(page, REUSE, 4).click();
+    await waitForTask(page, 'Reuse task-04');
+    await expect(page.getByTestId('overview-title')).toContainText('Reuse task-04');
+    await expect.poll(() => resources.filter(resource => resource === 'overview').length).toBe(1);
+    expect(resources).not.toContain('review');
+
+    await page.getByTestId('prompt-tab-code-review').click();
+    await expect.poll(() => resources.filter(resource => resource === 'review').length).toBe(1);
+    if (RESULTS_DIR) {
+      fs.mkdirSync(RESULTS_DIR, { recursive: true });
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+        await page.screenshot({ path: path.join(RESULTS_DIR, `slim-card-detail-review-${theme}.png`) });
+      }
+    }
+  });
+
   test('identical slugs in two projects read two cores', async ({ page }) => {
     const traffic = await openBoard(page, '#/board');
     await card(page, REUSE, 0).click();
