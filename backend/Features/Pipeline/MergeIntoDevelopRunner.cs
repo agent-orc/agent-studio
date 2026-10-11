@@ -1521,6 +1521,13 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType)
     {
         if (_pushQueue == null) return;
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
+            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath)))
+            _batchReservations.MarkPushPending(project, jobId, approvedSha);
+
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
@@ -1528,13 +1535,6 @@ public sealed partial class MergeIntoDevelopRunner
                 project, jobId);
             return;
         }
-
-        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
-            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
-        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
-            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
-                ReviewSubjectStore.Read(jobFolderPath)))
-            _batchReservations.MarkPushPending(project, jobId, approvedSha);
 
         var enqueued = _pushQueue.Enqueue(new IntegrationPushRequest(
             project, jobId, jobFolderPath, watchPath, integrationBranch, approvedSha));
