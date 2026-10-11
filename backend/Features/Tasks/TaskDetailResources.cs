@@ -30,7 +30,9 @@ public static class TaskDetailResources
                 TaskEndpointHelpers.BuildPlanningSpawnSummary(task),
                 TaskEndpointHelpers.BuildConceptDossierSummary(task),
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
-                task.CompletionClaim, task.ParkedBlocker, task.NeedsInput);
+                task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
+                task.References, task.References.DependsOn.Count > 0
+                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null);
             return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
                 null, Modified(Path.Combine(core.FolderPath, "task.json")));
         });
@@ -211,4 +213,4 @@ public sealed record TaskOverviewResource(DecisionContent? Decision,
     PlanningSpawnSummary? PlanningSpawn, ConceptDossierSummary? ConceptDossier,
     OlderBriefDeliveryOffer? OlderBriefDelivery, IReadOnlyList<RelatedWikiPage> RelatedWikiPages,
     string CreationSource, TaskCompletionClaim? CompletionClaim, ParkedBlockerStatus? ParkedBlocker,
-    NeedsInputStatus? NeedsInput);
+    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn);
