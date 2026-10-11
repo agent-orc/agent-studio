@@ -1479,9 +1479,9 @@ public sealed class BatchGatePilotService
                 result.Verdict.ToString(), Environment.MachineName,
                 started, _time.GetUtcNow(), result.GateQueueWaitMs, 0, evidencePath));
         }
-        return baseline.Outcome == "fail"
-            && string.Equals(baseline.FailureFingerprint,
-                BuildTestGateRunner.DiagnosticFingerprint(candidate), StringComparison.Ordinal);
+        // A red base proves the candidate's incomplete suite cannot be used for
+        // publication, even when its first failure differs from the base's.
+        return baseline.Outcome == "fail";
     }
 
     private async Task ReleaseMemberAsync(BatchGateManifest manifest,

@@ -637,6 +637,34 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Base_red_with_different_first_failure_still_pauses_without_isolation()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        SeedMember(factory, "DOC-BASE-OTHER-RED", "docs/base-other-red.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Reason = "candidate failure",
+        };
+        _gate.Base = request => Red(request.ExpectedSha) with
+        {
+            Reason = "different base failure",
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.Equal("integration-branch-red",
+            AssertPhase(store, manifest.BatchId, BatchPhase.Paused).Reason);
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        Assert.Single(store.ListManifests());
+        Assert.Equal(0, _gate.FallbackRuns);
+    }
+
+    [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
         using var factory = BuildFactory();
