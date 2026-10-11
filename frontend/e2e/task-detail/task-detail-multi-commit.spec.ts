@@ -70,6 +70,32 @@ const COMMITS: CommitFixture[] = [
   }
 ];
 
+const SLIM_CARD = {
+  id: JOB_ID,
+  taskKey: `${WATCH_PATH}::${JOB_ID}`,
+  key: 'FIX-3043',
+  title: 'Multi-commit fixture',
+  state: '5-human-review',
+  order: 1,
+  agent: 'claude',
+  cliType: 'claude',
+  model: 'claude-opus-4-7',
+  watchPath: WATCH_PATH,
+  projectName: PROJECT,
+  folderPath: `${WATCH_PATH}/.orchestrator/jobs/5-human-review/${JOB_ID}`,
+  lastActivity: '2026-05-11T11:15:00Z',
+  ownerClientId: 'local-default',
+  commitCount: 3,
+  commitSummary: {
+    count: 3,
+    latestShortSha: '3333333',
+    latestSubject: 'chore: update docs after operator steer',
+    latestFilesChanged: 3,
+    hasFiles: true,
+  },
+  gitContext: { branch: 'task/multi-commit-task', branchTip: COMMITS[2].sha },
+};
+
 // Union of every file touched across the chain — what the aggregated
 // "All commits" file list surfaces.
 const AGGREGATE_FILES = [
@@ -172,10 +198,21 @@ async function installRoutes(page: Page) {
     route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        preparation: [], orchestratorPrep: [],
-        ready: [], progress: [], failedPickup: [],
-        autoReview: [], humanReview: [], completed: [], archive: []
+        backlog: [], preparation: [], orchestratorPrep: [],
+        ready: [], progress: [], failedPickup: [], codeNotComplete: [],
+        autoReview: [], humanReview: [SLIM_CARD], escalated: [],
+        review: [], completed: [], archive: []
       })
+    }));
+  await page.route('**/api/tasks/grouped**', (route) =>
+    route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        backlog: [], preparation: [], orchestratorPrep: [],
+        ready: [], progress: [], failedPickup: [], codeNotComplete: [],
+        autoReview: [], humanReview: [SLIM_CARD], escalated: [],
+        review: [], completed: [], archive: [],
+      }),
     }));
   await page.route('**/api/watch-paths**', (route) =>
     route.fulfill({
@@ -197,7 +234,9 @@ async function installRoutes(page: Page) {
   await page.route('**/api/clients', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/api/cli/usage**', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) }));
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ clis: [], at: '2026-05-29T00:00:00Z' }) }));
+  await page.route('**/api/usage/cockpit**', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
   await page.route('**/api/cli/quota**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ at: '2026-05-29T00:00:00Z', snapshots: [] }) }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) =>
@@ -265,6 +304,43 @@ async function installRoutes(page: Page) {
   }
   await page.route(new RegExp(`/api/v1/projects/[^/]+/tasks/${idEsc}(\\?|$)`), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) }));
+  await page.route(new RegExp(`/api/tasks/${idEsc}/core(\\?|$)`), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      state: 'ready', projectId: PROJECT, projectName: PROJECT,
+      id: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, key: 'FIX-3043',
+      watchPath: WATCH_PATH, folderPath: `${WATCH_PATH}/.orchestrator/jobs/5-human-review/${JOB_ID}`,
+      title: SLIM_CARD.title, kind: 'task', taskType: 'chore', lane: '5-human-review',
+      enteredLaneAt: '2026-05-11T11:15:00Z', order: 1, mode: 'coding',
+      released: false, pendingIntent: false, coreVersion: '1', runtimeVersion: '1',
+      pins: { model: 'claude-opus-4-7', modelExplicit: true, thinkingLevel: null,
+        thinkingLevelExplicit: true, cliType: 'claude', contextMode: null,
+        useOwnSession: null, allowWebAccess: false, noBranchExpected: false },
+      actions: { canEdit: true, canMove: true, canDelete: true, canContinue: true },
+      blocking: { dependencyBlocked: false, dependencyState: 'ready', dependencies: [],
+        dependsOn: [], blockedBy: [] },
+      runtime: { location: 'none', leaseState: 'none', attemptId: null },
+      statusSummary: { state: 'ready', text: 'Three commits across iterations.', originalBytes: 32 },
+      prompt: { state: 'ready', text: 'Pretend prompt with three iterations.', originalBytes: 37 },
+      timeline: { state: 'ready', events: [], originalBytes: 0 },
+    }) }));
+  await page.route(new RegExp(`/api/tasks/${idEsc}/details/(git|usage|review|history|documents)(\\?|$)`), (route) => {
+    const resource = /\/details\/([^?]+)/.exec(route.request().url())?.[1] ?? 'git';
+    const name = new URL(route.request().url()).searchParams.get('name') || 'prompt';
+    const data: Record<string, unknown> = {
+      git: { commit: COMMITS[2], commits: COMMITS, mergeSignal: null, integration: null,
+        publishSignal: null, testEvidence: null },
+      usage: { tokenSummary: null, lastUsage: null, contextUsage: null },
+      review: { reviewProjection: null, evidence: [] },
+      history: { promptHistory: [], titleHistory: [], log: [] },
+      documents: { name, markdown: name === 'prompt' ? detail.promptMarkdown : detail.statusMarkdown,
+        summaryState: null },
+    };
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      id: JOB_ID, taskKey: `${WATCH_PATH}::${JOB_ID}`, projectId: PROJECT,
+      attemptId: null, coreVersion: '1', resource, version: '1',
+      computedAt: '2026-05-11T11:15:00Z', state: 'ready', data: data[resource], reason: null,
+    }) });
+  });
 }
 
 async function installMechanicallySupersededDetail(page: Page) {
@@ -456,6 +532,7 @@ async function expectedCommitChainMetas(page: Page): Promise<string[]> {
 }
 
 test.describe('Task-detail multi-commit chain', () => {
+  test.use({ serviceWorkers: 'block' });
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       try {
@@ -463,6 +540,23 @@ test.describe('Task-detail multi-commit chain', () => {
         localStorage.setItem('taskboard.gitPane.commitGroupCollapsed', '1');
       } catch { /* private mode */ }
     });
+  });
+
+  test('slim board card opens the full commit chain on demand', async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.addInitScript(() => {
+      localStorage.setItem('atp.flag.vsCodeLayout', '0');
+    });
+    await installRoutes(page);
+    await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    const card = page.locator('[data-testid="task-card"]', { hasText: SLIM_CARD.title });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await expect(card).toContainText('3 commits');
+
+    await card.dispatchEvent('click');
+    await expect(page.getByTestId('pane-git')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('pane-git')).toContainText('3 task commits');
+    await expect(page.getByTestId('pane-git')).toContainText('3333333');
   });
 
   test('defaults to a collapsed aggregated all-commits group', async ({ page }) => {

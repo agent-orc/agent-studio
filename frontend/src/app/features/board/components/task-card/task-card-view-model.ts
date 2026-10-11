@@ -153,6 +153,23 @@ function commitSubject(commit: TaskCommitInfo): string {
 
 export function buildCommitChainView(job: TaskInfo, variant: 'full' | 'review'): CommitChainView | null {
   const chain = commitChainOf(job);
+  if (chain.length === 0 && job.commitSummary) {
+    const summary = job.commitSummary;
+    return {
+      variant,
+      rows: [{
+        shortSha: summary.latestShortSha,
+        subject: summary.latestSubject,
+        filesChanged: summary.latestFilesChanged,
+        hasFiles: summary.hasFiles,
+        tooltip: summary.latestSubject,
+      }],
+      moreCount: Math.max(0, summary.count - 1),
+      totalCount: summary.count,
+      anyFiles: summary.hasFiles,
+      moreTooltip: summary.count > 1 ? `${summary.count - 1} earlier commits. Open the task for the full chain.` : '',
+    };
+  }
   if (chain.length === 0) return null;
   const shown = chain.slice(0, COMMIT_ROWS_MAX);
   const rows: CommitRowView[] = shown.map((c) => ({
@@ -200,6 +217,10 @@ export function commitChainVariant(state: string): 'full' | 'review' | null {
  *  up file-change total. Empty chain -> no tooltip. Never sources repo HEAD. */
 export function buildCommitChainTooltip(job: TaskInfo): StructuredTooltip | string {
   const chain = commitChainOf(job);
+  if (chain.length === 0 && job.commitSummary) {
+    const summary = job.commitSummary;
+    return `${summary.count} commit(s). Latest: ${summary.latestShortSha} ${summary.latestSubject}. Open the task for the full chain.`;
+  }
   if (chain.length === 0) return '';
   if (chain.length === 1) return buildCommitTooltip(chain[0]);
   const totalFiles = chain.reduce((sum, c) => sum + (c.filesChanged ?? 0), 0);
@@ -228,7 +249,7 @@ export interface CommitEmptyBadge {
  *     visibly different from a correct no-op. */
 export function buildCommitEmptyBadge(job: TaskInfo): CommitEmptyBadge | null {
   if (!COMMIT_REVIEW_LANES.has(job.state)) return null;
-  if (commitChainOf(job).length > 0) return null;
+  if (commitChainOf(job).length > 0 || (job.commitCount ?? 0) > 0) return null;
   const deliveryRef = job.integration?.deliveryRef?.trim() || null;
   if (job.codeActivityDetected || deliveryRef) {
     return {
@@ -279,7 +300,7 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
   const unpricedRuns = (tokenSummary.entries ?? [])
     .filter((entry) => !entry.modelPriced
       && (entry.inputTokens ?? 0) + (entry.outputTokens ?? 0) + (entry.cacheReadTokens ?? 0) + (entry.cacheCreationTokens ?? 0) > 0)
-    .length;
+    .length || (tokenSummary.allModelsPriced === false && !tokenSummary.entries?.length ? 1 : 0);
   return {
     label: formatTokens(total),
     total,
@@ -762,9 +783,9 @@ export function buildGitStateBadge(job: TaskInfo): GitStateBadge | null {
   }
 
   const prov = job.provenance ?? null;
-  const branchName = prov?.branch || `task/${job.key || job.id}`;
-  const tip = currentBranchTip(prov);
-  const mergeSha = recordedMergeSha(prov);
+  const branchName = job.gitContext?.branch || prov?.branch || `task/${job.key || job.id}`;
+  const tip = job.gitContext?.branchTip || currentBranchTip(prov);
+  const mergeSha = job.gitContext?.mergeSha || recordedMergeSha(prov);
   const canonicalIntegration = currentIntegrationStatus(job);
   const usesCanonicalIntegration = INTEGRATION_STATUS_LANES.has(job.state);
   const deliveryRef = usesCanonicalIntegration
@@ -899,7 +920,7 @@ function shortShaOf(sha: string | null | undefined): string | null {
  * develop", the false statement the operator hit.
  */
 function hasTaskCommits(job: TaskInfo): boolean {
-  return commitChainOf(job).length > 0;
+  return (job.commitCount ?? commitChainOf(job).length) > 0;
 }
 
 /**
@@ -932,7 +953,7 @@ export function buildMergeSignal(job: TaskInfo): MergeSignalView | null {
       ? inDevelop ? canonicalIntegration?.sha ?? null : null
       : sig.integrationSha ?? null;
     mainSha = sig.releaseSha ?? null;
-    branch = sig.branch || prov?.branch || null;
+    branch = sig.branch || job.gitContext?.branch || prov?.branch || null;
     integrationLabel = canonicalIntegration?.integrationBranch || sig.integrationBranch || 'develop';
     releaseLabel = sig.releaseBranch || 'main';
   } else {
@@ -942,7 +963,7 @@ export function buildMergeSignal(job: TaskInfo): MergeSignalView | null {
     inMain = false;
     developSha = inDevelop ? shortShaOf(canonicalIntegration?.sha) : null;
     mainSha = null;
-    branch = prov?.branch || null;
+    branch = job.gitContext?.branch || prov?.branch || null;
     integrationLabel = canonicalIntegration?.integrationBranch || 'develop';
     releaseLabel = 'main';
   }
