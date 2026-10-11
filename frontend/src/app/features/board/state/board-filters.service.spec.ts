@@ -98,7 +98,7 @@ describe('BoardFiltersService project selection', () => {
     jobs.grouped.set(makeGrouped([card]));
     svc.activeDependsOnFilter.set('AGT-20');
     expect(svc.filteredGrouped().ready).toEqual([card]);
-    const refreshed = { ...card, references: { ...card.references } };
+    const refreshed = { ...card, references: { ...card.references } } as TaskInfo;
     jobs.grouped.set(makeGrouped([refreshed]));
     expect(svc.filteredGrouped().ready).toEqual([refreshed]);
     const http = TestBed.inject(HttpTestingController);
