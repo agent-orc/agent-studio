@@ -1020,6 +1020,40 @@ public sealed class BatchGatePilotServiceTests : IDisposable
 
     private static BuildTestGateResult Red(string? sha)
         => new(BuildTestGateVerdict.Fail, 1, 1, "failed", "deterministic-suite-red", false, false)
+    [Fact]
+    public async Task Deferred_review_with_a_base_branch_defect_still_enters_the_batch()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-BASE-DEFECT", "docs/base-defect.md",
+            settleReview: false);
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        var report = PassingReport(claim, "batch-base-defect") with
+        {
+            Outcome = "IntegrationBranchDefect",
+        };
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt!.AttemptId}/report", report);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(member.ReviewAttemptId,
+            Assert.Single(factory.Services.GetRequiredService<BatchGateStore>().ListPending()).ReviewAttemptId);
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        var entry = RemoteReviewSettlementJournal.Read(folder, member.ReviewAttemptId).Entry;
+        Assert.NotNull(entry);
+        Assert.Null(entry!.Delivery);
+        Assert.True(RemoteReviewSettlementPolicy.IsBatchDeferredPass(entry));
+        AssertLane(member.Key, TaskStates.AutoReview);
+    }
+
         {
             TestedSha = sha,
             FailureKind = BuildTestGateFailureKind.Code,
