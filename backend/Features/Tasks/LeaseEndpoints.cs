@@ -1964,7 +1964,8 @@ public static class LeaseEndpoints
                             git,
                             repositoryPath,
                             deliveryRange?.MergeBaseSha ?? integrationRef,
-                            run.ResultSha)));
+                            run.ResultSha),
+                        deliveryBranch));
             }
 
             if (!isEpicPlanning
