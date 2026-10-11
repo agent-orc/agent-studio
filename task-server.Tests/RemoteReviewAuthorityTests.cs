@@ -236,8 +236,9 @@ public sealed partial class RemoteReviewAuthorityTests
         var subject = await SeedReviewSubjectAsync(store, plan: plan);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m " +
+            "--blame-hang-dump-type none",
             Assert.Single(subject.Plan.Commands).Arguments[1]);
     }
 
@@ -1645,6 +1646,91 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal(expectedOutcome, report.Outcome);
     }
 
+    [Theory]
+    [InlineData(false, "ProductFailure")]
+    [InlineData(true, "IntegrationBranchDefect")]
+    public async Task Failed_isolated_build_retains_product_or_integration_branch_verdict(
+        bool branchBuildRed, string expectedOutcome)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [
+                new ReviewCommandDto("verify-build", "build", "sh",
+                    ["-c", "dotnet build Fixture.csproj"], CompareToBaseline: true,
+                    BaselineMode: ReviewBaselineModes.ExitStatus),
+                new ReviewCommandDto("verify-test", "test", "sh",
+                    ["-c", "dotnet test Fixture.csproj --no-build"], CompareToBaseline: true,
+                    BaselineMode: ReviewBaselineModes.ExitStatus),
+            ],
+            ["build", "test"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var template = PassingReport(claim);
+        var baselineSha = new string('c', 40);
+        var output = Encoding.UTF8.GetBytes("compiler error\n");
+        var digest = Convert.ToHexString(SHA256.HashData(output)).ToLowerInvariant();
+        var build = template.Commands[0] with
+        {
+            ExitCode = 1, BaselineSha = baselineSha,
+            BaselineExitCode = branchBuildRed ? 1 : 0,
+            NewFailures = [], PreExistingFailures = [], RetryPerformed = true,
+            StdoutSha256 = digest, StderrSha256 = digest,
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                branchBuildRed ? "IntegrationBranchDefect" : DeliveryFailureDiagnosis.Product,
+                1, ["isolated build compared"]),
+        };
+        var test = template.Commands[1] with
+        {
+            ExitCode = 1, BaselineSha = baselineSha,
+            BaselineExitCode = branchBuildRed ? 1 : 0,
+            NewFailures = [], PreExistingFailures = [],
+            StdoutSha256 = digest, StderrSha256 = digest,
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                branchBuildRed ? "IntegrationBranchDefect" : DeliveryFailureDiagnosis.FirstOccurrence,
+                1, ["isolated prerequisite build failed"]),
+        };
+        var cleanBuild = template.Commands[0] with
+        {
+            ExitCode = 1, Phase = "clean-repeat", WorkspaceRole = "clean-repeat",
+            StdoutSha256 = digest, StderrSha256 = digest,
+        };
+        var baselineBuild = template.Commands[0] with
+        {
+            ExitCode = 1, Phase = "verification", WorkspaceRole = "baseline-build",
+            HeadBefore = baselineSha, BaselineSha = baselineSha,
+            StdoutSha256 = digest, StderrSha256 = digest,
+        };
+        var request = template with
+        {
+            Outcome = expectedOutcome,
+            Commands = branchBuildRed
+                ? [build, test, cleanBuild, baselineBuild]
+                : [build, test, cleanBuild],
+            Artifacts = [new ReviewArtifactEvidenceDto(
+                "compiler.log", "text/plain", digest, output.Length,
+                Convert.ToBase64String(output))],
+            Verdicts =
+            [
+                new ReviewVerdictDto("build", branchBuildRed ? "pass" : "block",
+                    branchBuildRed ? "IntegrationBranchDefect" : DeliveryFailureDiagnosis.Product,
+                    "build compared"),
+                new ReviewVerdictDto("test", "pass",
+                    branchBuildRed ? "IntegrationBranchDefect" : DeliveryFailureDiagnosis.FirstOccurrence,
+                    "test prerequisite build failed"),
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+
+        Assert.Equal(expectedOutcome, report.Outcome);
+        Assert.NotEqual("CleanRepeatMissing", report.FailureClassification);
+    }
+
     /// <summary>
     /// A report that measured a baseline but withheld its exit code cannot be
     /// attributed, so it is incomplete evidence rather than a product finding.
@@ -1827,6 +1913,51 @@ public sealed partial class RemoteReviewAuthorityTests
             Assert.Equal(1, Assert.Single(await store.ReadFailureFingerprintsAsync(
                 FailureItemFingerprint.Compute(["Product.ProcessTiming"]))).Count);
         }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Report_admits_class_subset_repeat_with_planned_arguments_and_observed_test(bool observed)
+    {
+        using var temp = new TempDirectory();
+        var store = Store(temp.Path);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "dotnet", ["test"], CompareToBaseline: true)],
+            ["build-tests"], IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        var candidate = request.Commands[0] with
+        {
+            ExitCode = 1,
+            BaselineSha = new string('c', 40), BaselineExitCode = 0,
+            NewFailures = [], PreExistingFailures = [], RetryPerformed = true,
+            InitialFailures = ["Product.ProcessTiming"],
+            Diagnosis = new DeliveryFailureDiagnosisResult(
+                DeliveryFailureDiagnosis.Intermittent, 0.9, ["clean-repeat=green"]),
+        };
+        request = request with
+        {
+            Commands = [candidate, candidate with
+            {
+                Phase = "clean-repeat", WorkspaceRole = "clean-repeat", ExitCode = 0,
+                FlakyQuarantinedFailures = [],
+                RepeatFilter = "FullyQualifiedName~Product.",
+                RepeatObservedTests = observed ? ["Product.ProcessTiming"] : [],
+            }],
+            Verdicts = [new ReviewVerdictDto("build-tests", "pass", "FlakyQuarantine",
+                "1 flaky quarantined failure: Product.ProcessTiming.")],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId, request, "review-a", default);
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(observed ? DeliveryFailureDiagnosis.Intermittent : "CommandPlanMismatch",
+            report.FailureClassification);
     }
 
     [Fact]

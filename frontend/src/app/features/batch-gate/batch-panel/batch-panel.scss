@@ -1,0 +1,22 @@
+.batch-panel-backdrop { position: fixed; inset: 0; background: var(--studio-scrim-soft); z-index: 1000; }
+.batch-panel { position: fixed; inset-block: 0; right: 0; z-index: 1001; width: min(560px, 100vw); display: flex; flex-direction: column; background: var(--studio-bg-surface); color: var(--studio-fg); border: 1px solid var(--studio-border); box-shadow: 0 12px 36px var(--studio-scrim-soft); }
+.batch-panel__header { display: flex; justify-content: space-between; align-items: start; padding: var(--studio-spacing-4); border-bottom: 1px solid var(--studio-border); }
+.batch-panel__header h2, .batch-panel__header p { margin: 0; }
+.batch-panel__body { overflow-y: auto; padding: var(--studio-spacing-4); }
+.batch-panel section { padding: var(--studio-spacing-4) 0; border-bottom: 1px solid var(--studio-border); }
+.batch-panel h3, .batch-panel h4 { margin: 0 0 var(--studio-spacing-2); }
+.batch-panel p { margin: 0 0 var(--studio-spacing-2); overflow-wrap: anywhere; }
+.batch-panel ul { margin: var(--studio-spacing-2) 0; padding-left: var(--studio-spacing-5); }
+.batch-panel li { margin-bottom: var(--studio-spacing-2); }
+.batch-panel__row { display: flex; justify-content: space-between; align-items: center; gap: var(--studio-spacing-2); }
+.batch-panel__batch { padding: var(--studio-spacing-3); margin-bottom: var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-elevated); }
+.batch-panel__timeline { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-1); color: var(--studio-fg-muted); font-size: .75rem; }
+.batch-panel__timeline span { border-radius: var(--studio-action-radius-sm); padding: var(--studio-spacing-1); }
+.batch-panel__phase-current { background: var(--studio-bg-hover); color: var(--studio-fg); font-weight: 700; }
+.batch-panel__confirm { padding: var(--studio-spacing-4); border-top: 1px solid var(--studio-border); background: var(--studio-bg-elevated); }
+.batch-panel__confirm button { margin-right: var(--studio-spacing-2); }
+.batch-panel__error { color: var(--studio-error); }
+.batch-panel button { cursor: pointer; min-height: 28px; border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-elevated); color: var(--studio-fg); padding: var(--studio-spacing-1) var(--studio-spacing-2); }
+.batch-panel button:hover { background: var(--studio-bg-hover); }
+.batch-panel button:disabled { cursor: default; opacity: .6; }
+.batch-panel button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

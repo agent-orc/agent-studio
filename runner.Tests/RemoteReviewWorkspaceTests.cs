@@ -81,6 +81,33 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_command_retains_trx_and_timing_summary_as_artifacts()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "printf 'Results File: %s\\n' \"$PWD/../artifacts/review-timing.trx\"");
+        var (workspace, _) = Workspace("attempt-test-timing", subjectSha, [command], 26210,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        await File.WriteAllTextAsync(Path.Combine(workspace.ArtifactPath, "review-timing.trx"), """
+            <TestRun>
+              <Times start="2026-10-11T10:00:00Z" finish="2026-10-11T10:00:01Z" />
+              <TestDefinitions><UnitTest id="one"><TestMethod className="Example.Tests" name="Pass" /></UnitTest></TestDefinitions>
+              <Results><UnitTestResult testId="one" testName="Pass" duration="00:00:00.100" outcome="Passed" /></Results>
+            </TestRun>
+            """);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".json", StringComparison.Ordinal)
+            && !string.IsNullOrEmpty(artifact.ContentBase64));
+        // The TRX stays on the runner: the report cites its retained path, hash
+        // and size, never its bytes.
+        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".trx", StringComparison.Ordinal)
+            && string.IsNullOrEmpty(artifact.ContentBase64) && artifact.SizeBytes > 0);
+    }
+
+    [Fact]
     public void Parsed_test_failures_strips_terminal_colours_and_ignores_tap_todo_items()
     {
         var result = new ProcessResult(
@@ -2077,6 +2104,82 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ["-c", shell],
             CompareToBaseline: true,
             BaselineMode: ReviewBaselineModes.ExitStatus);
+
+    [Fact]
+    public async Task Delivery_compile_error_remains_product_failure_after_isolated_repeat_build()
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["Fixture.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>",
+            ["Fixture.cs"] = "public class Fixture { public int Value => 1; }",
+        });
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/compile-error", "Fixture.cs", "public class Fixture { public int Value => ; }");
+        var (workspace, subject) = Workspace("attempt-compile-error", subjectSha,
+            IsolatedBuildPlan(), 26200, resultRef: "refs/heads/task/compile-error",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(
+            Report(evidence, workspace), subject.Plan);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ProductFailure", normalized.Outcome);
+        Assert.Contains(evidence.Commands, command => command is
+            { StepId: "verify-build", WorkspaceRole: "clean-repeat", ExitCode: > 0 });
+        Assert.Contains(evidence.Commands, command => command is
+            { StepId: "verify-test", WorkspaceRole: "candidate", ExitCode: > 0 });
+        Assert.Contains(evidence.Verdicts, verdict => verdict is
+            { Aspect: "build", Status: "block", Classification: DeliveryFailureDiagnosis.Product });
+        Assert.Contains(evidence.Artifacts, artifact =>
+            artifact.Name == "clean-repeat.verify-build.stderr.log"
+            && artifact.ContentBase64 is not null);
+    }
+
+    [Fact]
+    public async Task Red_integration_branch_build_keeps_integration_branch_attribution()
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["Fixture.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>",
+            ["Fixture.cs"] = "public class Fixture { public int Value => ; }",
+        });
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/branch-build-error", "product.txt", "unrelated delivery");
+        var (workspace, subject) = Workspace("attempt-branch-build-error", subjectSha,
+            IsolatedBuildPlan(), 26208, resultRef: "refs/heads/task/branch-build-error",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(
+            Report(evidence, workspace), subject.Plan);
+
+        Assert.Equal("IntegrationBranchDefect", evidence.Outcome);
+        Assert.Equal("IntegrationBranchDefect", normalized.Outcome);
+        Assert.Contains(evidence.Commands, command => command.StepId == "verify-build"
+            && command.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal)
+            && command.ExitCode is > 0);
+        Assert.Contains(evidence.Verdicts, verdict => verdict is
+            { Aspect: "test", Status: "pass", Classification: "IntegrationBranchDefect" });
+    }
+
+    private static IReadOnlyList<ReviewCommandDto> IsolatedBuildPlan()
+        => [
+            new("verify-build", "build", PosixShell.RequirePath(),
+                ["-c", "dotnet build Fixture.csproj --nologo -v:q"],
+                CompareToBaseline: true, BaselineMode: ReviewBaselineModes.ExitStatus),
+            new("verify-test", "test", PosixShell.RequirePath(),
+                ["-c", "test -f bin/Debug/net10.0/Fixture.dll; result=$?; : 'dotnet test --no-build'; exit $result"],
+                CompareToBaseline: true, BaselineMode: ReviewBaselineModes.ExitStatus),
+        ];
+
+    private static ReviewReportRequest Report(
+        ReviewExecutionEvidence evidence, RemoteReviewWorkspace workspace)
+        => new("review-executor", "review-instance", "lease-test", 1, "report-test",
+            evidence.Outcome, null, null, evidence.Workspace, workspace.EnvironmentEvidence(),
+            evidence.Commands, evidence.Artifacts, evidence.Verdicts);
 
     private static ReviewCommandDto BaselineCommand(string shell)
         => new(

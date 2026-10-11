@@ -38,6 +38,7 @@ import {
   cardNeedsAttention,
   commitChainVariant,
   formatTokens,
+  taskTypeIconName,
   EPIC_ASSIGN_PREFIX,
   EPIC_DETACH_ID,
   FILTER_DEPENDENTS_ID,
@@ -49,7 +50,7 @@ import {
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { TaskStatusPopoverDirective } from '../../../../components/task-status-card';
 import { MenuComponent, MenuItemClickEvent } from '../../../../components/menu';
-import { StudioIconComponent, type StudioIconName } from '../../../../components/studio-icon/studio-icon.component';
+import { StudioIconComponent } from '../../../../components/studio-icon/studio-icon.component';
 import { ModelLevelIndicatorComponent } from '../../../../components/model-level-indicator/model-level-indicator.component';
 import { ModelMigrationBadgeComponent } from '../../../../components/model-migration-badge/model-migration-badge.component';
 import { RunDispositionBadgesComponent } from '../run-disposition-badges/run-disposition-badges.component';
@@ -76,6 +77,9 @@ import { buildDecisionBadge, decisionBlockReason, decisionBlockers } from '../..
 import { TaskCardDecisionChipsComponent } from '../task-card-decision-chips/task-card-decision-chips.component';
 import { FailureInterventionChipComponent } from '../failure-intervention-chip/failure-intervention-chip.component';
 import { BetterCandidateLinesComponent } from '../../../../components/better-candidate-lines/better-candidate-lines.component';
+import { BatchMemberComponent } from '../../../batch-gate/batch-member/batch-member';
+import { ReviewQueuePillComponent } from '../review-queue-pill/review-queue-pill';
+import { handleReviewPriorityAction } from './review-priority-action';
 // Shared clock keeps relative timestamps in lockstep without NG0100 changes.
 const nowTick = signal(Date.now());
 if (typeof window !== 'undefined') {
@@ -84,7 +88,7 @@ if (typeof window !== 'undefined') {
 @Component({
   selector: 'app-task-card, app-job-card',
   standalone: true,
-  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent],
+  imports: [TaskCardDecisionChipsComponent, TooltipDirective, TaskStatusPopoverDirective, MenuComponent, StudioIconComponent, TokenPopoverDirective, TaskTokenUsagePopoverComponent, ModelLevelIndicatorComponent, ModelMigrationBadgeComponent, RunDispositionBadgesComponent, IntegrationStatusBadgeComponent, ReviewDecisionBadgesComponent, PostProcessingActivityComponent, TestEvidenceStatusComponent, TaskLiveStatusComponent, TaskCardQuotaWaitComponent, TaskCardCauseWaitComponent, CopyableTaskKeyComponent, FailureInterventionChipComponent, BetterCandidateLinesComponent, RemoteDispatchRejectionComponent, TagProposalsComponent, BatchMemberComponent, ReviewQueuePillComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './task-card.component.html',
   styleUrl: './task-card.component.scss',
@@ -129,14 +133,8 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly providerAuthStatus = inject(ProviderAuthStatusService); readonly codexSignIn = inject(CodexSignInDialogService); readonly claudeSignIn = inject(ClaudeSignInDialogService);
   private stopPolling: (() => void) | null = null;
   readonly taskTypeChip = computed(() => buildTaskTypeChip(this.job().taskType));
-  taskTypeIconName(kind: string): StudioIconName {
-    if (kind === 'bug') return 'warn';
-    if (kind === 'feature') return 'plus';
-    return 'dot';
-  }
-
+  readonly taskTypeIconName = taskTypeIconName;
   readonly issueLabel = computed(() => this.job().key || this.job().id);
-
   /**
    * Mode badge (planning / research). Null for coding so the board stays quiet
    * for the default mode; planning and research cards become recognizable at a
@@ -527,6 +525,8 @@ export class TaskCardComponent implements OnInit, OnDestroy {
 
   onCardCtxMenuItemClick(ev: MenuItemClickEvent): void {
     const job = this.job();
+
+    if (handleReviewPriorityAction(ev.id, job, this.mutationsBlocked(), this.jobs, this.notifications)) return;
 
     if (ev.id === DELETE_ID) {
       if (this.mutationsBlocked()) return;

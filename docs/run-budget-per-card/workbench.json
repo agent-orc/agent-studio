@@ -4,10 +4,10 @@
   "title": "Run budget per card",
   "summary": "AGT-2955 was killed at the host-wide 90-minute RUNNER_RUN_TIMEOUT_SECONDS four times on 28 and 29 September (fences 3, 6, 7, 8; the card reports five). Salvage kept every file (identical patch-ids in every later chain), but each round started a fresh session on the integration branch, cherry-picked the salvage itself, and lost verification state and in-flight diagnosis: the two operator redeliveries spent 84 of 86 and 84 of 90 minutes rerunning builds and suites at load 27 on 12 cores and added no change. The one AGT-2861 automatic continuation delivered in 29 minutes. Four alternatives compared (raise host timeout, per-card budget only, budget with soft-limit checkpoint and same-session continuation, verification offload). Recommended: a per-card budget (card, project, operator, host, clamped to a host ceiling), a soft limit at 0.8 of the budget that triggers a same-session checkpoint turn, continuation on the salvage in the same session when the continuation ledger admits it, progress-gated automatic rounds, and an operator decision (raise, cut, stop) at the third exhaustion per delivery, shown in a Run budget section on the card. Five implementation slices.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-29T12:40:00Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-2998"
   ],

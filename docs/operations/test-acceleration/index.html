@@ -85,7 +85,7 @@
   th { font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
   td b { font-weight: 600; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  code, .mono { font: 13px/1.5 ui-monospace, Consolas, monospace; background: var(--surface-3); border-radius: 4px; padding: 1px 5px; }
+  code, .mono { font: 13px/1.5 ui-monospace, Consolas, monospace; background: var(--surface-3); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
   .legend { display: flex; gap: 22px; flex-wrap: wrap; font-size: 13.5px; color: var(--ink-2); margin: 10px 0 0; }
   .legend span::before { content: ""; display: inline-block; width: 22px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: middle; background: var(--c); }
   .pill { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 99px; padding: 2px 10px; vertical-align: 1px; white-space: nowrap; }
@@ -214,6 +214,24 @@
   </tbody>
 </table>
 </div>
+
+<h3 id="baseline-quiet">Reference points on a quiet host</h3>
+<p class="stx stx-ok"><b>Measured 2026-10-11, 13:05 to 14:00:</b> agent-runner-01 with all reviews stopped (load 13 to 29 from coding agents, the promotion gate and these checks), operator fast-path verification of AGT-3042, AGT-3043, AGT-3047, AGT-3049 and AGT-3050 on merge results with develop.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Step</th><th>Quiet host</th><th>Under review contention (§1)</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Vitest, full suite (499 spec files)</td><td>54 s; 137 s including the test build</td><td>about 6.1 min</td><td><code>npx ng test frontend --watch=false</code>, fastpath/v3043 and v3050</td></tr>
+    <tr><td>Angular build</td><td>37 s development, 58 to 60 s production</td><td>1.0 to 2.6 min</td><td><code>ng build</code>, fastpath/v3043 and v3050</td></tr>
+    <tr><td>Backend test project build</td><td>185 to 281 s</td><td>4:33 to 10:45 min (whole solution)</td><td><code>dotnet build backend.Tests</code>, fastpath/v3042, v3047, v3043</td></tr>
+    <tr><td>task-server.Tests (691 tests)</td><td>10 min 8 s</td><td>19.9 min</td><td>fastpath/v3049</td></tr>
+    <tr><td>runner.Tests (1,305 tests)</td><td>1 min 54 s</td><td>1.8 min</td><td>fastpath/v3049</td></tr>
+    <tr><td>Targeted backend tests for one card</td><td>31 s to 2 min 13 s (84 to 128 tests)</td><td>part of the 85 to 93 min suite</td><td>fastpath/v3042, v3043, v3049</td></tr>
+    <tr><td>Mocked-API Playwright pilot (2 tests, 2 workers)</td><td>7 s plus about 50 s bundle build</td><td>not comparable</td><td><code>scripts/run-mocked-e2e.sh</code>, fastpath/v3050</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The frontend steps run three to six times faster on a quiet host, task-server tests twice as fast. Contention is the largest single cost today, followed by running the whole backend suite once per card. Both are addressed by batch verification (P7) and a host-wide CPU budget (P8).</p>
 
 <h2 id="backend"><span class="no">§2</span>Backend: where the time goes</h2>
 <p class="stx stx-open"><b>Status 2026-10-11:</b> Diagnosed, levers in the backend track (AGT-3049).</p>
@@ -374,6 +392,8 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
     <tr><td><b>F10</b></td><td>No coverage in review gates; coverage on release gates</td><td>Medium</td><td>low</td><td>Frontend</td></tr>
     <tr><td><b>F11</b></td><td>Vitest infrastructure: reuse build and cache, pool/threads and isolation settings</td><td>Medium</td><td>low to medium</td><td>Frontend</td></tr>
     <tr><td><b>F12</b></td><td>Make <code>ng test</code> green again so the unit suite gives signal</td><td>Signal</td><td>low</td><td>Frontend</td></tr>
+    <tr><td><b>P7</b></td><td>Batch verification for code cards: per-card model review with affected tests only, one full suite per batch on the combined candidate, look-ahead planner sizing the batch, LLM batch advisor, UI and settings (AGT-3052 backend, AGT-3053 frontend; engine-side move AGT-3055)</td><td>Very high: one suite per 2 to 6 cards instead of one per card</td><td>medium, D10 pass rates</td><td>Batch</td></tr>
+    <tr><td><b>P8</b></td><td>Host-wide CPU budget across reviews, batch runs, gates and coding runs; second runner host as review/batch host</td><td>High: the quiet-host reference points in §1 show steps 2 to 6× slower under contention</td><td>low</td><td>Operations</td></tr>
   </tbody>
 </table>
 </div>
@@ -399,49 +419,80 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 </table>
 </div>
 
-<h2 id="decisions"><span class="no">§7</span>Open decisions</h2>
-<div class="box warn">
-  <h4>D1 · Selection by changed files at review time (P5, F9)</h4>
-  <p>Option A: review gates run only the tests mapped to changed files and areas; the full suites run on a schedule (for example every 2 hours on develop) and before every release. Option B: full suites stay at review time; selection only for agent-local feedback. A gives the largest gain and moves a part of the safety net from the card to the schedule. Recommendation: A, with the full run's result attached to every card integrated since the last full run.</p>
+<h2 id="decisions"><span class="no">§7</span>Decisions</h2>
+<div class="box ok">
+  <h4>D1 · Selection by changed files at review time (P5, F9) — decided 2026-10-11</h4>
+  <p>Robert decided to put batch verification live now ("Das Konzept jetzt umsetzen und direkt deployen"). Per card, the review runs the model review, the build and the tests selected for the changed files and areas; the full suites run once per batch on the combined candidate and before every release. Implementation: AGT-3052 (backend, look-ahead planner, LLM batch advisor) and AGT-3053 (UI and settings). Until it is deployed, deliveries are integrated through an operator fast path that imitates it: independent model review per card, affected tests on the merge result with develop, one merge per card.</p>
 </div>
-<div class="box warn">
-  <h4>D2 · Production bundle for end-to-end tests (F2)</h4>
+<div class="box">
+  <h4>Rollout of batch verification on Agent Studio (after AGT-3052 is deployed)</h4>
+  <ol>
+    <li>Quiet window: no promotion gate running, Dev checkout clean and without <code>index.lock</code> (the batch publication fast-forwards the checkout that holds develop).</li>
+    <li>List the review attempts of the cards in 4-auto-review: pending ones are replanned by the settings PUT; leased ones keep their full-suite plans and integrate per card; the five attempts stopped on 2026-10-11 (workers killed) are re-created so they get the cheaper per-card plan.</li>
+    <li><code>PUT /api/projects/Agent%20Studio/batch-gate</code> with <code>enabled: true, scope: code, planner: look-ahead, minimumSize: 2, maximumSize: 4, overlap: separate, reviewTestLevel: work-package, gateTimeoutMinutes: 150, advisor.mode: advise</code>.</li>
+    <li>Watch <code>/state</code>, <code>/report</code> and the board panel for the first two batches: published SHA equals the verified remote SHA, every member carries a batch integration record, red batches halve to the culprit.</li>
+    <li>Record real batch pass rates in the report; they replace the D10 proxies (per-card gate green 57.9 %, four-card proxy 32.4 %). Raise <code>maximumSize</code> towards 6 and switch the advisor to enforce only when the pass rate supports it.</li>
+    <li>Rollback: <code>enabled: false</code> or <code>scope: documentation</code>; the running batch is abandoned and members fall back to the per-task gate on the same immutable SHA.</li>
+  </ol>
+  <p>Until then the review plane runs with three parallel reviews instead of six (Stable <code>AutoReviewQueueAdaptiveParallelism</code>, baseline 3, no raise), because six concurrent full suites on 12 cores slowed each other down (§1, quiet-host reference points). The planner and advisor move into the Orchestrator Engine with the engine programme (AGT-3055 after AGT-3059, decision D14).</p>
+</div>
+<div class="box ok">
+  <h4>D2 · Production bundle for end-to-end tests (F2) — decided 2026-10-11</h4>
+  <p>The operator follows the recommendation: a dedicated e2e build configuration only where specs rely on development helpers, otherwise the production bundle. The frontend track (AGT-3050) checks the specs and applies the rule.</p>
   <p>Option A: e2e runs against the production build (what users get, fastest to serve; development-only helpers are unavailable). Option B: a dedicated e2e build configuration (production optimisation plus test hooks). Recommendation: B if specs rely on development helpers, otherwise A.</p>
 </div>
 
 <section id="backend-track">
 <h2><span class="no">§8</span>Backend track report</h2>
-<p class="stx stx-open"><b>Owner:</b> AGT-3049. <b>Status 2026-10-11:</b> started, no lever applied yet. This section is written by the backend track only.</p>
+<p class="stx stx-part"><b>Owner:</b> AGT-3049. <b>Status 2026-10-11:</b> measured baseline and implementing the backend levers. This section is written by the backend track only.</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Lever</th><th>Status</th><th>Commit</th><th>Before → after</th><th>Source of measurement</th></tr></thead>
   <tbody>
-    <tr><td>P1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>P2</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>P3</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>P4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>P5</td><td><span class="pill open">open</span></td><td></td><td></td><td>waits for D1</td></tr>
-    <tr><td>P6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B2</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B3</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B5</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B7</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B8</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B9</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>B10</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>P1</td><td><span class="pill part">part</span></td><td><code>e8852c87f</code>, <code>e354d1f62</code>, <code>dc154fbbf</code>, <code>ff9515772</code></td><td>No retained timing summary → compact JSON summary retained, TRX remains runner-local with absolute path, SHA-256 and byte count only. The previously measured 1,935,198-byte TRX added 365,371 compressed bytes (about 487 KB base64) to each report; TRX content now adds 0 bytes. Each summary is capped at 256 KiB, all summaries per command at 512 KiB and 32 inspected TRX files. Full live review and API consumption remain unmeasured.</td><td>Historical sizes in this section's P1 finding; <code>results/p1-evidence-final.trx</code> (agent-studio-runner, concurrency not captured, 5 tests passed, including oversized summary and symlink rejection). Historical 6-suite load 28–42 baseline in §1–§2.</td></tr>
+    <tr><td>P2</td><td><span class="pill rejected">rejected</span></td><td><code>62bd9f6ae</code>, <code>a73134ecd</code></td><td>Single A/B samples at different host loads found the fixed 2-thread cap slower: backend 24.18 → 32.69 s (+35%) for 4 endpoint tests; Runner 164.35 → 264.23 s (+61%) for 1,298 tests. These are directional samples, not an equal-load benchmark. The cap was removed; the inert MSBuild property remains removed. Adaptive host admission is open.</td><td>Historical measurements preserved in this Dossier §8 P2 finding (original scratch TRX unavailable here); agent-runner-01, backend 6 suites at load 18.99 → 23.01, Runner 10 suites at load 43.95 → 32.69.</td></tr>
+    <tr><td>P3</td><td><span class="pill part">part</span></td><td><code>14be298bb</code>, <code>08c829e1a</code>, <code>46dbd054a</code>, <code>0f20782b1</code></td><td>Historical a583 full suite: 93.22 min → selected failed class: 7.30 s for 4 tests, at different loads. A fresh clone with <code>--no-build</code> failed before testing (exit 1) → build replay then 1 test passed (exit 0). Follow-up rebuild failure: operator review found product and integration-branch builds becoming ReviewInfra → both now retain their red build evidence and settle to ProductFailure and IntegrationBranchDefect. Two runner regression scenarios pass in 27.87 s wall; two Task Server admission cases pass. Live full red-path wall time remains unmeasured; the ≤5 min target is not assured.</td><td>Historical timing in §8 P3 and §1–§2 (agent-runner-01, 6 versus 1 suites). Current <code>results/agt3049-rebuild-measured.trx</code>, <code>agt3049-rebuild-measured.log</code>, <code>agt3049-rebuild-host-context.json</code>, <code>agt3049-taskserver-rebuild.trx</code>; agent-studio-runner, 4–6 <code>dotnet test</code> processes and load 22.29–25.37 during the measured runner test. Earlier P3 sources remain listed in findings.</td></tr>
+    <tr><td>P4</td><td><span class="pill done">done</span></td><td><code>62bd9f6ae</code>, <code>ace12f293</code></td><td>No hang timeout without <code>--blame-hang</code> → configured 10 min when Blame is enabled; hang dump type <code>none</code>, so configured hang dump bytes are 0. The Blame collector ran with the new switch and 11 policy tests passed. A real hang was not induced.</td><td><code>results/p4-followup.trx</code> and <code>p4-followup-summary.json</code>; agent-studio-runner, 4 suites and load 10.14 at summary capture. CLI help on the same host lists full, mini and none; earlier P4 measurement is recorded in this section.</td></tr>
+    <tr><td>P5</td><td><span class="pill open">open</span></td><td></td><td></td><td>D1 recommendation A selected; next: guard review selection behind a switch and attach scheduled full-run receipts.</td></tr>
+    <tr><td>P6</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: class shards behind a switch, using P1 class timings to balance shards.</td></tr>
+    <tr><td>B1</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: shared host with fresh workspace roots; top four classes sum 2,446 s in run 7850e.</td></tr>
+    <tr><td>B2</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: benchmark one template Git repository copied per test against the 113 git-init sites.</td></tr>
+    <tr><td>B3</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: one Eventually helper and fake clock for the 113 backend sleeps/polls.</td></tr>
+    <tr><td>B4</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: tag Perf tests and add a scheduled lane before excluding them from review.</td></tr>
+    <tr><td>B5</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: measure test and production boot by hosted service, then defer scans without changing request results.</td></tr>
+    <tr><td>B6</td><td><span class="pill part">part</span></td><td><code>ecb644310</code> (analysis tool)</td><td>19.9 min Dossier baseline → another historical run measured 24.75 min; no speed change. Top 10 of 62 classes sum 2,278 s (57.7% of test time).</td><td>Dossier §1 baseline and §8 B6 finding; original scratch JSON unavailable here. Agent-runner-01, 6 concurrent suites, load 28–42 (historical range).</td></tr>
+    <tr><td>B7</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: reproduce the three named full-run flakes under controlled concurrency.</td></tr>
+    <tr><td>B8</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: classify 283 process-spawn sites and fake only processes that are not the subject.</td></tr>
+    <tr><td>B9</td><td><span class="pill open">open</span></td><td></td><td></td><td>Next: measure the slow endpoint paths against the 30 ms operation budget; keep Git off request paths.</td></tr>
+    <tr><td>B10</td><td><span class="pill part">part</span></td><td><code>ca81864a8</code> (pre-existing), <code>46dbd054a</code>, <code>0f20782b1</code></td><td>Historical backend build 434.83 s → three <code>--no-build</code> test invocations with 0 recompilations (prior report, raw logs unavailable). Fresh-clone proof: missing assembly and exit 1 → build then 1/1 tests pass. The rebuild failure boundary now returns a red build result rather than an infrastructure exception; two classification scenarios pass. No new overall speed measurement.</td><td>Dossier §8 B10 prior finding; <code>results/p3-clean-clone-before.log</code>, <code>p3-clean-clone-build.log</code>, <code>p3-clean-clone-after.log</code> and TRX; current <code>results/agt3049-rebuild-measured.trx</code> and host context; agent-studio-runner, 4–6 test processes at load 22.29–25.37.</td></tr>
   </tbody>
 </table>
 </div>
+<p><b>Target gap:</b> the backend suite remains at 85.58–93.22 min against ≤15 min under review concurrency; task-server remains at 19.9–24.75 min against ≤3 min. The measured single-class retry slice is 7.30 s, but the 10.57 min historical sum for a two-class failure exceeds the ≤5 min retry target. B1 and B5 are the next backend levers; neither has a measured after value yet.</p>
+<p>All current <code>results/</code> paths in this section refer to <code>/home/agent/runner-work/tasks/AGT-3049/results/</code>. Historical scratch files from the first delivery are unavailable in this follow-up; their numbers remain recorded in this Dossier and are labeled historical.</p>
 <h3>Findings and new ideas</h3>
 <ul>
-  <li>No entries yet.</li>
+  <li>P3/B10 rebuild follow-up: <code>0f20782b1</code> records a failed isolated build under its own planned step. A red baseline build leaves the <code>--no-build</code> test blocked and preserves integration-branch attribution; a red clean-repeat build preserves the compiler output and fingerprint. The operator-reported pre-fix outcomes were <code>ReviewInfra/CleanRepeatUnavailable</code> and <code>ReviewInfra/BaselineUnavailable</code>; the same two scenarios now settle as <code>ProductFailure</code> and <code>IntegrationBranchDefect</code>. Runner 2/2 and Task Server 2/2 focused tests pass. Source: operator fast-path finding, <code>results/agt3049-rebuild-measured.trx</code>, <code>agt3049-taskserver-rebuild.trx</code>, and <code>agt3049-rebuild-host-context.json</code>.</li>
+  <li>P1 evidence retention: TRX files are runner-local and can be deleted with attempt cleanup. Their absolute paths in a report are diagnostic pointers, not durable artifacts; the retained compact JSON summary plus TRX SHA-256 and size is the durable evidence.</li>
+  <li>P3 follow-up: <code>46dbd054a</code> retains original failed test names after the comparison clears them and replays the frozen build in both isolated baseline worktrees and clean-repeat clones. The final focused tests passed: 12 Runner, 9 monolith and 2 Task Server. During the Task Server run, <code>results/p3-host-contention.json</code> sampled 5 concurrent <code>dotnet test</code> processes at load 6.90 on agent-studio-runner.</li>
+  <li>P1 follow-up: <code>ff9515772</code> records an absolute runner-local TRX path, SHA-256 and bytes with null content, while limiting capture to 32 inspected files, 256 KiB per summary and 512 KiB per command. The 5-test gate passed in <code>results/p1-evidence-final.trx</code> on agent-studio-runner; concurrency was not captured.</li>
+  <li>P1 documentation and parser follow-up: <code>35feeca10</code> accepts both MSBuild <code>Time Elapsed</code> forms and returns unknown host load when Windows has no <code>os.getloadavg()</code>. Two Python regression tests passed (<code>results/p1-parser-tests.log</code>); parsing <code>results/p4-followup.trx</code> produced 11 tests and 1.793 s wall in <code>results/p4-followup-summary.json</code>. The review domain guide now labels its 62 s Runner sample as historical rather than assigning it to the current command line.</li>
+  <li>P4 follow-up: <code>ace12f293</code> sets <code>--blame-hang-dump-type none</code> on every normalized test step, replacing any preexisting full setting. Eleven policy tests passed with the Blame collector active in <code>results/p4-followup.trx</code>; four suites were active at summary capture on agent-studio-runner, load 10.14.</li>
+  <li>P3 follow-up: a fresh Git clone contains no built test assembly, confirmed by exit 1 in <code>results/p3-clean-clone-before.log</code>. Replaying the frozen build before the same <code>--no-build</code> command yielded 1/1 passing tests. The review runner now does this in clean-repeat clones; the red-path cost includes that build and needs a live timing sample.</li>
+  <li>P3 follow-up: <code>08c829e1a</code> tests report admission for a declared class filter in both the monolith and Task Server. A green exit with zero observed failed tests is rejected; abort markers and signals select a full repeat. Focused results: 12 runner, 36 monolith and 4 Task Server tests passed.</li>
+  <li>P1 follow-up: <code>dc154fbbf</code> removed embedded TRX from review payloads, so the monolith does not write TRX into a task folder or tracked settlement JSON. The 4-test capture gate includes a runnable symlink check and an oversized-file rejection. Runner-local TRX metadata stays in the report. The source for this verification is <code>results/p1-followup.trx</code>; concurrency was not captured.</li>
+  <li>P4: the first smoke run caught a new fixed-date test fixture through <code>TestClockGuardTests</code>; the fixture was annotated as clock independent in <code>a0cae3b7c</code>. The repeated four-test smoke passed and printed the Blame collector line.</li>
+  <li>P1: VSTest writes TRX to <code>&lt;project&gt;/TestResults/</code> by default. An earlier implementation compressed a 1,298-test Runner TRX from 1,935,198 to 365,371 bytes (81% smaller); that embedded-TRX design was removed in <code>dc154fbbf</code>. Reports now retain only bounded compact JSON and runner-local TRX path, hash and size; full backend TRX size remains unmeasured.</li>
+  <li>B10: the review plan already separates one build from three <code>--no-build</code> .NET test steps. The local build took 434.83 s; three later test runs reused the same assembly without changing its 11:02:06 UTC modification time.</li>
+  <li>B6: the 691-test Task Server run has 690 parsed durations, 3,946 s summed time and 1,485 s wall. <code>StudioTaskMetadataTests</code> (317 s) creates a new <code>StudioTestApiFactory</code> per test; <code>RecoveryDrillTests</code> (270 s) repeatedly creates stores. The cost is spread across host and store setup, so the next slice should time those two boundaries separately before sharing fixtures.</li>
+  <li>B11 idea: single A/B samples at different loads found a fixed two-thread cap 99.88 s slower (61%) for 1,298 Runner tests and 8.51 s slower (35%) for four backend tests. Use controlled, repeated CPU admission measurements and per-suite profiles before adopting a cap; Task Server still needs its own A/B sample.</li>
+  <li>P3: a four-test class selected from the a583 failure completed in 7.30 s TRX wall and 8.12 s command wall with one active suite. This validates the class filter and the manual retry cost; the actual red-path clean repeat remains to be timed under comparable load.</li>
+  <li>P3: the two failures in run 7850e came from <code>WaitsOnEndpointsTests</code> (299 s summed) and <code>BatchGatePilotServiceTests</code> (335 s summed). A class-level retry preserves all assertions in those classes while avoiding the other 8,000+ tests. A timed red-path run is still needed to establish wall time.</li>
+  <li>P1: verbose console logs yielded 8,981 of 8,982 and 8,977 of 8,981 reported test durations; their incomplete counts confirm why TRX is needed. The top four classes in run 7850e total 2,446 s (37.9% of summed test time). The measured wall times are 5,134.68 and 5,592.96 s under six concurrent suites.</li>
 </ul>
 <h3>Rejected levers</h3>
 <ul>
-  <li>No entries yet.</li>
+  <li>P2 fixed two-thread cap rejected after single same-assembly A/B samples at different host loads: Runner 264.23 versus 164.35 s TRX wall with ten suites, backend four-test slice 32.69 versus 24.18 s with six suites. Both tests kept identical filters and assertions, but host load differed. The cap was removed in <code>a73134ecd</code>.</li>
 </ul>
 </section>
 
@@ -492,6 +543,21 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
   <li>Code: <code>contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs</code>, <code>backend.Tests/**</code>, <code>task-server.Tests/**</code>, <code>.agent-studio/project.yml</code>, <code>backend/Features/Pipeline/TestSelectionPlanner.cs</code>, <code>frontend/playwright.config.ts</code>, <code>frontend/e2e/**</code>, <code>frontend/angular.json</code>, <code>frontend/package.json</code>, <code>docs/system/domains/review.md:747-753</code>, <code>docs/operations/setup/linux-runner-host.md:902-921</code>.</li>
   <li>Related cards: AGT-2820 (build CPU cap), AGT-2851 (test logger for the silence watchdog), AGT-3042 / AGT-3043 / AGT-3044 (board and Git performance), QS-123 (Quality Studio aspect for measured performance and test speed).</li>
 </ul>
+
+<!-- agent-studio:implementation-section:start -->
+<section id="implementation" data-document-section="implementation">
+  <h2>Implementation</h2>
+  <p>Delivery slices append their current implementation status here.</p>
+  <ol class="implementation-log">
+<!-- agent-studio:implementation-log:start -->
+<li data-implementation-entry="" data-task-key="AGT-3049" data-delivered-at="2026-10-11" data-slice="Backend review evidence follow-up">
+  <strong>AGT-3049 · Backend review evidence follow-up</strong>
+  <span>Delivered bounded runner-local TRX timing metadata, validated class-subset clean repeats across both report authorities, rebuilt isolated baseline and clean-repeat workspaces before --no-build tests, disabled hang dumps, and corrected timing parsing; focused TRX and logs are retained in the AGT-3049 results directory.</span>
+</li>
+<!-- agent-studio:implementation-log:end -->
+  </ol>
+</section>
+<!-- agent-studio:implementation-section:end -->
 
 </main>
 </body>

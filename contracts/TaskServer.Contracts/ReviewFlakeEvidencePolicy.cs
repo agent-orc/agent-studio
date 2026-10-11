@@ -2,10 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.TaskServer.Contracts;
 
-/// <summary>A flake label requires a successful repeat of the same command on the same tree.</summary>
+/// <summary>A flake label requires a successful, observed repeat on the same tree.</summary>
 public static partial class ReviewFlakeEvidencePolicy
 {
-    public const string MissingProof = "No passing repeat of the same failing command on the same tree was recorded.";
+    public const string MissingProof = "No passing repeat of the planned command and its failed tests on the same tree was recorded.";
 
     public static IEnumerable<ReviewCommandEvidenceDto> UnprovenFailures(ReviewReportRequest report)
         => report.Commands.Where(command => command.Phase == "verification"
@@ -21,6 +21,7 @@ public static partial class ReviewFlakeEvidencePolicy
                && repeat.ExitCode == 0 && repeat.Signal is null
                && repeat.FileName == command.FileName
                && repeat.Arguments.SequenceEqual(command.Arguments)
+               && ReviewRepeatFilterPolicy.IsValid(repeat, report.Commands)
                && string.Equals(repeat.ExpectedResultSha, command.ExpectedResultSha, StringComparison.OrdinalIgnoreCase)
                && string.Equals(repeat.HeadBefore, command.HeadBefore, StringComparison.OrdinalIgnoreCase)
                && string.Equals(repeat.TreeBefore, command.TreeBefore, StringComparison.OrdinalIgnoreCase));

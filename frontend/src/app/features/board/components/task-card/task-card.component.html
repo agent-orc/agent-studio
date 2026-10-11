@@ -102,8 +102,9 @@
         <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}</div>
       }
     </section>
-  }
-  <div class="task-card__badges">
+  }<div class="task-card__badges">
+    <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" [referenceKey]="job().key" [displayKey]="job().displayKey" [taskId]="job().id" />
+    <app-review-queue-pill [task]="job()" />
     @if (stalledState(); as stalled) {
       <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"
             [cacTooltip]="stalled.tooltip" role="status"><span aria-hidden="true">⚠</span> {{ stalled.label }}</span>

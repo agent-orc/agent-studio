@@ -4,10 +4,10 @@
   "title": "Integration lane throughput",
   "summary": "Only publication must be serial per project. Today one process-wide merge semaphore and one machine gate slot serialise every project, and nothing is prepared ahead. Recommends a speculative merge train: prepare-ahead of 4, chained candidates gated on a core-bounded token pool (2 tokens of 3 cores on the 12-core host), ordered publication, agent rounds ejected and re-entered at the tail, and a backlog mode that gates the train tip. Modelled busy-project throughput rises from 1.20 to 2.34 merges per hour, or 4.60 in backlog mode. Five cards, starting with lane metrics in the Ops view.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-29T10:18:09Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-2994"
   ],
