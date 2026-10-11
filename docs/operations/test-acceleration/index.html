@@ -436,8 +436,9 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
   </ol>
   <p>Until then the review plane runs with three parallel reviews instead of six (Stable <code>AutoReviewQueueAdaptiveParallelism</code>, baseline 3, no raise), because six concurrent full suites on 12 cores slowed each other down (§1, quiet-host reference points). The planner and advisor move into the Orchestrator Engine with the engine programme (AGT-3055 after AGT-3059, decision D14).</p>
 </div>
-<div class="box warn">
-  <h4>D2 · Production bundle for end-to-end tests (F2)</h4>
+<div class="box ok">
+  <h4>D2 · Production bundle for end-to-end tests (F2) — decided 2026-10-11</h4>
+  <p>The operator follows the recommendation: a dedicated e2e build configuration only where specs rely on development helpers, otherwise the production bundle. The frontend track (AGT-3050) checks the specs and applies the rule.</p>
   <p>Option A: e2e runs against the production build (what users get, fastest to serve; development-only helpers are unavailable). Option B: a dedicated e2e build configuration (production optimisation plus test hooks). Recommendation: B if specs rely on development helpers, otherwise A.</p>
 </div>
 
