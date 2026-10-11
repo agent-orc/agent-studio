@@ -314,7 +314,12 @@
     .mechanism-node small { display: block; margin-top: 4px; color: var(--article-muted); font-size: 0.72rem; line-height: 1.4; }
     .mechanism svg { display: block; width: 100%; height: 50px; }
     @media (max-width: 550px) { .mechanism-row { grid-template-columns: 1fr; gap: 8px; } .mechanism svg { height: 30px; } }
-</style>
+    .decision { margin: 28px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; font-family: var(--article-sans); font-size: .92rem; }
+    .decision h3 { margin-top: 0; }
+    .decision label { display: block; margin: 12px 0; }
+    .decision input { margin-right: 10px; accent-color: var(--article-link); }
+    .decision textarea { width: 100%; min-height: 64px; color: var(--article-ink); background: var(--article-paper); border: 1px solid var(--article-line); font: inherit; }
+  </style>
 </head>
 <body>
 <main class="article">
@@ -429,7 +434,7 @@
       <tr><td>ProductFailure in Human Review to fix round</td><td>Operator sweep (AGT-3011)</td><td>Per-card budget of 4 rounds, then Escalated.</td></tr>
       <tr><td>Standalone path, not deployed</td><td>Five engine stage handlers and Task Server settlement</td><td>Reissue limit of 2 or the same block twice, then Escalated.</td></tr>
     </tbody></table>
-    <p>Two consequences for this Dossier. First, the vocabulary table maps model escalation, supervision, telemetry and ADR-0051 actions; the review-report follow-up and the operator sweeps belong in the same profile list when OD-S1 freezes its first transition. Second, a <code>retry(reopen)</code> action needs a declared base: today a fix round starts from the integration branch, not from the reviewed result (<a href="../task-server-bus/index.html#f1-fix-round-base">AGT-W65 F1</a>, <a href="../task-server-bus/index.html#d17-fix-round-base">D17</a>). Where the decision step runs, and where the batch planner and advisor started on 11 October 2026 run, is <a href="../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14</a>; its recommendation is the Orchestrator Engine as the only decider, fed by one shared decision library during the migration.</p>
+    <p>Two consequences for this Dossier. First, the vocabulary table maps model escalation, supervision, telemetry and ADR-0051 actions; the review-report follow-up and the operator sweeps belong in the same profile list when OD-S1 freezes its first transition. Second, a <code>retry(reopen)</code> action needs a declared base: today a fix round starts from the integration branch, not from the reviewed result (<a href="../task-server-bus/index.html#f1-fix-round-base">AGT-W65 F1</a>, <a href="../task-server-bus/index.html#d17-fix-round-base">D17</a>). Where the decision step runs was decided on 11 October 2026 in <a href="../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14</a>: in the Orchestrator Engine, and nothing of it stays in the monolith. The programme AGT-3057 (decision library), AGT-3058 (orchestration plane), AGT-3059 (engine decides as a dedicated remote process) and AGT-3060 (background deciders) gives this Dossier its execution home; the receipts of AGT-3059 use the shape of OrchestratorDecisionReceiptV1 so the model step of this Dossier can follow.</p>
   </section>
 
   <section id="adr">
@@ -462,6 +467,13 @@
 
   <section id="open-decisions" data-concept-section="open-decisions">
     <h2>Open decisions</h2>
+    <div class="decision" id="o1-actor-model" data-decision-id="o1-actor-model" data-decision-kind="single" data-decision-label="O1. Actor model: operators and steps"><h3>O1. Actor model: operators and steps</h3>
+      <p><b>Context.</b> On 11 October 2026 the operator asked whether the AI Operator is something other than the Orchestrator Engine, or whether there are only smart steps in the pipeline that look like decisions. AGT-W65 D14 placed every decision in the engine. This Dossier defines decision steps at transitions and periodic occurrences without card, but names no standing actor. Today the operator work (watching, steering, healing, triage) is done largely by operating Claude sessions and partly by AGT-3011 sweeps in the monolith.</p>
+      <label data-option-id="four-levels" data-option-label="A. Two operators, two kinds of steps (recommended)"><input type="radio" name="o1-actor-model" value="four-levels" checked><b>A. Two operators, two kinds of steps (recommended)</b><br>Human Operator and AI Operator are actors with the same intent interface and different rights (autonomy classes). Decision steps answer one bounded question per card or plan; execution steps do the work on runner hosts. The engine runs the AI Operator and the decision steps. Escalation: step to AI Operator to human.</label>
+      <label data-option-id="steps-only" data-option-label="B. Only steps"><input type="radio" name="o1-actor-model" value="steps-only"><b>B. Only steps</b><br>No AI Operator: every intelligent function is a decision step, card-scoped or periodic; the human is the only operator. Simpler, but nothing takes initiative across cards or holds a conversation with the human; whatever no step was asked stays unnoticed.</label>
+      <label data-option-id="separate-ai-operator" data-option-label="C. AI Operator as its own service"><input type="radio" name="o1-actor-model" value="separate-ai-operator"><b>C. AI Operator as its own service</b><br>The AI Operator runs as a process of its own beside the engine. Separates the stateful, conversational role from the high-volume decision steps, at the cost of a further control-plane process; its actions still go through intents.</label>
+      <p><b>Recommendation: A.</b> It gives the operator's request of 4 October 2026 for a smart instance a defined place without turning every step into an agent, and keeps one runtime for all decisions (AGT-W65 D14).</p>
+      <div data-comment="Operator note"><label>Operator note<textarea aria-label="O1. Actor model operator note"></textarea></label></div></div>
     <table><thead><tr><th>Decision point</th><th>Working recommendation</th><th>Rejected option</th></tr></thead><tbody>
       <tr><td>Authority</td><td>Strong model chooses; mechanical code checks floors and capability.</td><td>Pure decider selects ordinary action.</td></tr>
       <tr><td>Degraded mode</td><td>One bounded alternate-model transport retry, then <code>ask</code> and hold.</td><td>Silent deterministic continuation or repeated model calls.</td></tr>
