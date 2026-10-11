@@ -12,6 +12,8 @@ namespace AgentRunner;
 /// <summary>Persists complete TRX and a small timing index beside review command logs.</summary>
 internal static class ReviewTestTimingEvidence
 {
+    private const int MaximumArtifactBytes = 6 * 1024 * 1024;
+
     internal static async Task<IReadOnlyList<ReviewArtifactEvidenceDto>> CaptureAsync(
         string standardOutput,
         string attemptRoot,
@@ -57,6 +59,11 @@ internal static class ReviewTestTimingEvidence
                     WriteIndented = true,
                 }) + "\n";
                 var jsonBytes = Encoding.UTF8.GetBytes(json);
+                if (jsonBytes.Length > MaximumArtifactBytes)
+                {
+                    log($"review-test-timing skipped oversized summary bytes={jsonBytes.Length}");
+                    continue;
+                }
                 var summaryName = name + ".json";
                 await File.WriteAllBytesAsync(Path.Combine(artifactDirectory, summaryName), jsonBytes, ct);
                 artifacts.Add(Artifact(summaryName, "application/json", jsonBytes));
@@ -65,6 +72,11 @@ internal static class ReviewTestTimingEvidence
                 using (var compressor = new GZipStream(buffer, CompressionLevel.SmallestSize, leaveOpen: true))
                     await compressor.WriteAsync(source, ct);
                 var compressed = buffer.ToArray();
+                if (compressed.Length > MaximumArtifactBytes)
+                {
+                    log($"review-test-timing omitted oversized compressed TRX bytes={compressed.Length}");
+                    continue;
+                }
                 var trxName = name + ".trx.gz";
                 await File.WriteAllBytesAsync(Path.Combine(artifactDirectory, trxName), compressed, ct);
                 artifacts.Add(Artifact(trxName, "application/gzip", compressed));
