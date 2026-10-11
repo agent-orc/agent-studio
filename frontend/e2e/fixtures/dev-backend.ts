@@ -51,7 +51,7 @@ const DEV_BASE_URL = `http://127.0.0.1:${DEV_PORT}`;
 let isolatedWorkspace: string | undefined;
 let isolatedRecoveryRepository: string | undefined;
 
-function ensureIsolatedWorkspace(recoveryRepository: boolean, demoWorkspace: boolean): { taskRepository: string; watchPath: string } {
+function ensureIsolatedWorkspace(recoveryRepository: boolean, demoWorkspace: boolean, refDriftRepository = false): { taskRepository: string; watchPath: string } {
   isolatedWorkspace ??= mkdtempSync(path.join(tmpdir(), 'agent-studio-dev-backend-'));
   // A demo backend starts only while the port is offline. Re-seed on every
   // start so a retained fixture path cannot refer to a removed or mutated
@@ -62,7 +62,7 @@ function ensureIsolatedWorkspace(recoveryRepository: boolean, demoWorkspace: boo
   }
   const watchPath = path.join(isolatedWorkspace, 'projects', demoWorkspace ? 'demo-app' : 'agent-studio-worktree');
   mkdirSync(watchPath, { recursive: true });
-  if (recoveryRepository && !isolatedRecoveryRepository) {
+  if ((recoveryRepository || refDriftRepository) && !isolatedRecoveryRepository) {
     isolatedRecoveryRepository = path.join(isolatedWorkspace, 'recovery-repository');
     mkdirSync(isolatedRecoveryRepository, { recursive: true });
     for (const args of [
@@ -77,7 +77,25 @@ function ensureIsolatedWorkspace(recoveryRepository: boolean, demoWorkspace: boo
       const result = spawnSync('git', args, { cwd: isolatedRecoveryRepository });
       if (result.status !== 0) throw new Error(`Could not seed isolated recovery Git repository: git ${args.join(' ')}`);
     }
-    writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'pending operator decision\n');
+    if (refDriftRepository) {
+      const root = isolatedRecoveryRepository;
+      const git = (...args: string[]) => {
+        const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+        if (result.status !== 0) throw new Error(`Could not seed ref drift: git ${args.join(' ')}: ${result.stderr}`);
+        return result.stdout.trim();
+      };
+      const oldHead = git('rev-parse', 'HEAD');
+      writeFileSync(path.join(root, 'recovery-proof.txt'), 'new committed content\n');
+      writeFileSync(path.join(root, 'added-in-commit.txt'), 'committed addition\n');
+      git('add', '-A');
+      const tree = git('write-tree');
+      const advanced = git('commit-tree', tree, '-p', oldHead, '-m', 'advanced');
+      git('reset', '--hard', 'HEAD');
+      git('update-ref', `refs/heads/${git('symbolic-ref', '--short', 'HEAD')}`, advanced);
+      writeFileSync(path.join(root, 'unique-worktree.txt'), 'unique content\n');
+    } else {
+      writeFileSync(path.join(isolatedRecoveryRepository, 'recovery-proof.txt'), 'pending operator decision\n');
+    }
   }
   return { taskRepository: isolatedWorkspace, watchPath };
 }
@@ -107,10 +125,11 @@ function runScript(
   cmd: 'start' | 'stop' | 'status',
   recoveryRepository = false,
   demoWorkspace = false,
+  refDriftRepository = false,
 ): { code: number; stdout: string; stderr: string } {
   const scriptPath = resolveScriptPath();
   const devCheckout = resolveDevCheckout();
-  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace(recoveryRepository, demoWorkspace) : undefined;
+  const isolated = cmd === 'start' && devCheckout ? ensureIsolatedWorkspace(recoveryRepository, demoWorkspace, refDriftRepository) : undefined;
   if (!existsSync(scriptPath)) {
     throw new Error(`dev-lifecycle.sh not found at ${scriptPath}`);
   }
@@ -190,14 +209,15 @@ async function discoverWorkspace(): Promise<string> {
   return path.resolve(resolveRepoRoot(), '..', 'agent-taskboard-dev');
 }
 
-export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: boolean; demoWorkspace: boolean }>({
+export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: boolean; demoWorkspace: boolean; refDriftRepository: boolean }>({
   recoveryRepository: [false, { option: true }],
   demoWorkspace: [false, { option: true }],
-  devBackend: async ({ recoveryRepository, demoWorkspace }, use, testInfo) => {
+  refDriftRepository: [false, { option: true }],
+  devBackend: async ({ recoveryRepository, demoWorkspace, refDriftRepository }, use, testInfo) => {
     const startedHealthy = await isHealthy();
     let weStartedIt = false;
-    if (startedHealthy && demoWorkspace) {
-      throw new Error('Pinned demo capture requires the dev backend to be offline; refusing to replace a running backend.');
+    if (startedHealthy && (demoWorkspace || refDriftRepository)) {
+      throw new Error('Isolated repository capture requires the dev backend to be offline; refusing to replace a running backend.');
     }
 
     // A fixture-started worktree backend needs the isolated WatchPaths values
@@ -214,7 +234,7 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
     }
 
     if (!startedHealthy || !await isHealthy()) {
-      const r = runScript('start', recoveryRepository, demoWorkspace);
+      const r = runScript('start', recoveryRepository, demoWorkspace, refDriftRepository);
       if (r.code !== 0) {
         runScript('stop');
         if (isolatedWorkspace) {

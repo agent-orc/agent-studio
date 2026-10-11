@@ -30,6 +30,7 @@ export class CrashRecoveryPromptComponent implements OnInit {
   readonly busyId = signal<string | null>(null);
   readonly busyAll = signal(false);
   readonly error = signal<string | null>(null);
+  readonly largeConfirmationId = signal<string | null>(null);
   /** Only explicit operator opening may cover the current view. */
   readonly open = signal(false);
 
@@ -76,6 +77,7 @@ export class CrashRecoveryPromptComponent implements OnInit {
   closeLocal(): void {
     this.open.set(false);
     this.error.set(null);
+    this.largeConfirmationId.set(null);
   }
 
   refresh(): void {
@@ -97,9 +99,14 @@ export class CrashRecoveryPromptComponent implements OnInit {
 
   commit(item: CrashRecoveryPending): void {
     if (this.busyId() || this.busyAll()) return;
+    if (item.classification === 'ref-drift') return;
+    if (item.requiresSecondConfirmation && this.largeConfirmationId() !== item.id) {
+      this.largeConfirmationId.set(item.id);
+      return;
+    }
     this.busyId.set(item.id);
     this.error.set(null);
-    this.tasks.commitCrashRecovery(item.id).subscribe({
+    this.tasks.commitCrashRecovery(item.id, item.requiresSecondConfirmation === true).subscribe({
       next: () => {
         this.busyId.set(null);
         this.remove(item.id);
@@ -188,6 +195,7 @@ export class CrashRecoveryPromptComponent implements OnInit {
   }
 
   private remove(id: string): void {
+    if (this.largeConfirmationId() === id) this.largeConfirmationId.set(null);
     this.pending.update(items => items.filter(item => item.id !== id));
     if (this.reviewPending().length === 0) this.closeLocal();
     this.syncTrivialNotification();
