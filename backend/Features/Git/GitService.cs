@@ -62,6 +62,21 @@ public sealed record DeveloperCheckoutRelease(
     public static DeveloperCheckoutRelease Failed(string error) => new(null, null, null, error);
 }
 
+/// <summary>Read-only checkout state and the result of an explicit sync request.</summary>
+public sealed record DeveloperCheckoutSyncResult(
+    string Status,
+    string Checkout,
+    string Branch,
+    string? LocalSha,
+    string? PublishedSha,
+    int Behind,
+    IReadOnlyList<string> DirtyFiles,
+    string? LockFile,
+    string? Reason)
+{
+    public bool Synced => Status is "up-to-date" or "fast-forwarded";
+}
+
 /// <summary>
 /// Result of a single-file content lookup that backs the git-pane's
 /// rendered md/html preview (AGT-2008). <paramref name="Content"/> is the
@@ -623,6 +638,8 @@ public class GitService
         = (start, timeout, ct) => GitNetworkProcessRunner.Run(start, stdin: null, timeout, ct);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> IntegrationRemoteGates = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _checkoutLagStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _fastForwardedCheckouts = new(StringComparer.OrdinalIgnoreCase);
 
     public GitService(
         ILogger<GitService> logger,
@@ -5174,6 +5191,25 @@ public class GitService
         return GetBranchTip(repoRoot, lane) is null ? branch : lane;
     }
 
+    /// <summary>The merge and gate anchor before a lane exists. A lagging local
+    /// checkout branch is never used as the base when origin has published a
+    /// newer tip. Pending gated merges still take precedence on the lane.</summary>
+    public string IntegrationBaseRef(string repoRoot, string branch)
+    {
+        var lane = IntegrationLaneRef(branch);
+        if (GetBranchTip(repoRoot, lane) is not null) return lane;
+        return PublishedIntegrationRef(repoRoot, branch);
+    }
+
+    /// <summary>Base for local task worktrees. The integration lane can contain
+    /// gated merges not yet published, so local tasks use the published ref.</summary>
+    public string PublishedIntegrationRef(string repoRoot, string branch)
+    {
+        var published = $"refs/remotes/origin/{branch}";
+        return HasRemote(repoRoot, "origin") && GetBranchTip(repoRoot, published) is not null
+            ? published : $"refs/heads/{branch}";
+    }
+
     /// <summary>
     /// The integration line a merge primitive reads and moves at
     /// <paramref name="repoRoot"/>. Only the detached, Studio-owned integration
@@ -5264,13 +5300,9 @@ public class GitService
     }
 
     /// <summary>
-    /// Moves <paramref name="integrationBranch"/> forward to
-    /// <paramref name="newSha"/> without ever touching a working tree Studio does
-    /// not own. When a checkout still holds the branch, the fast-forward is asked
-    /// of that checkout first - git carries unrelated local modifications along
-    /// and refuses rather than overwriting them - so a clean checkout stays in
-    /// step with the branch. Otherwise the ref is advanced directly, compare-and-
-    /// swapped against <paramref name="expectedPreviousTip"/>.
+    /// Moves the local branch after publication. A holder checkout must move
+    /// its index and working tree with HEAD, so a failed merge leaves its ref
+    /// untouched. The Studio integration lane remains the merge base.
     /// </summary>
     private string? AdvanceIntegrationBranch(
         string repoRoot,
@@ -5286,24 +5318,122 @@ public class GitService
                 _logger.LogInformation(
                     "Checkout {Path} was fast-forwarded with {Branch} to {Sha}",
                     holder, integrationBranch, AbbreviateSha(newSha));
+                _checkoutLagStates.TryRemove(LagKey(holder, integrationBranch), out _);
+                _fastForwardedCheckouts[LagKey(holder, integrationBranch)] = newSha;
                 return null;
             }
-            _logger.LogInformation(
-                "Checkout {Path} keeps its working tree; {Branch} is advanced by reference only: {Error}",
-                holder, integrationBranch, forwardError.Trim());
+            RecordCheckoutLag(holder, integrationBranch, newSha, forwardError.Trim());
+            return $"{holder} is behind {integrationBranch}; checkout fast-forward failed: {forwardError.Trim()}";
         }
 
         return UpdateBranchRef(repoRoot, integrationBranch, newSha, expectedPreviousTip);
+    }
+
+    private static string LagKey(string checkout, string branch) => $"{Path.GetFullPath(checkout)}|{branch}";
+
+    private void RecordCheckoutLag(string checkout, string branch, string publishedSha, string reason)
+    {
+        var localSha = GetBranchTip(checkout, $"refs/heads/{branch}");
+        var (countRaw, _, countCode) = RunGitArgs(checkout, "rev-list", "--count", $"{localSha}..{publishedSha}");
+        var count = countCode == 0 && int.TryParse(countRaw.Trim(), out var n) ? n : 0;
+        var state = $"{localSha}|{publishedSha}|{reason}";
+        var key = LagKey(checkout, branch);
+        if (_checkoutLagStates.TryGetValue(key, out var previous) && previous == state) return;
+        _checkoutLagStates[key] = state;
+        _logger.LogWarning(
+            "{Checkout} is {Behind} commits behind {Branch}; reason: {Reason}",
+            checkout, count, branch, reason);
+    }
+
+    /// <summary>Reports whether a checked-out integration branch follows its
+    /// published remote ref. No fetch or mutation occurs on this read path.</summary>
+    public DeveloperCheckoutSyncResult GetDeveloperCheckoutStatus(string repoRoot, string branch)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(branch))
+            return new("invalid", repoRoot, branch, null, null, 0, [], null, "Repository or branch is invalid.");
+        var holder = WorktreeHolding(repoRoot, branch);
+        if (holder is null)
+            return new("not-checked-out", repoRoot, branch, GetBranchTip(repoRoot, $"refs/heads/{branch}"),
+                GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}"), 0, [], null,
+                "No checkout holds this branch.");
+
+        var localSha = GetBranchTip(holder, $"refs/heads/{branch}");
+        // The published remote-tracking ref is the base for a new integration.
+        // The Studio lane may contain later gated merges and is never a sync target.
+        var publishedSha = GetBranchTip(holder, $"refs/remotes/origin/{branch}");
+        if (publishedSha is null)
+            return new("no-published-ref", holder, branch, localSha, null, 0, [], null,
+                $"origin/{branch} is unavailable.");
+        if (localSha is null)
+            return new("missing-branch", holder, branch, null, publishedSha, 0, [], null,
+                $"Local branch '{branch}' is unavailable.");
+
+        var (countRaw, _, countCode) = RunGitArgs(holder, "rev-list", "--count", $"{localSha}..{publishedSha}");
+        var behind = countCode == 0 && int.TryParse(countRaw.Trim(), out var n) ? n : 0;
+        var (lockRaw, _, lockCode) = RunGitArgs(holder, "rev-parse", "--git-path", "index.lock");
+        var lockPath = lockCode == 0 ? Path.GetFullPath(lockRaw.Trim(), holder) : null;
+        if (lockPath is not null && !File.Exists(lockPath)) lockPath = null;
+        if (lockPath is null)
+        {
+            var (refLockRaw, _, refLockCode) = RunGitArgs(holder, "rev-parse", "--git-path", $"refs/heads/{branch}.lock");
+            var refLockPath = refLockCode == 0 ? Path.GetFullPath(refLockRaw.Trim(), holder) : null;
+            if (refLockPath is not null && File.Exists(refLockPath)) lockPath = refLockPath;
+        }
+        var (dirtyRaw, dirtyError, dirtyCode) = RunGitReadonly(holder, "status --porcelain=v1 --untracked-files=all");
+        var dirty = dirtyCode == 0
+            ? dirtyRaw.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Length > 3 ? line[3..].TrimEnd('\r') : line.TrimEnd('\r')).ToArray()
+            : [];
+        if (dirtyCode != 0)
+            return new("error", holder, branch, localSha, publishedSha, behind, dirty, lockPath, dirtyError.Trim());
+        if (string.Equals(localSha, publishedSha, StringComparison.OrdinalIgnoreCase))
+            return new("up-to-date", holder, branch, localSha, publishedSha, 0, dirty, lockPath, null);
+        if (!IsAncestor(holder, localSha, publishedSha))
+            return new("diverged", holder, branch, localSha, publishedSha, behind, dirty, lockPath,
+                $"Local {branch} has commits outside origin/{branch}.");
+        var reason = lockPath is not null ? $"Index lock exists: {lockPath}"
+            : dirty.Length > 0 ? $"Dirty files: {string.Join(", ", dirty)}"
+            : "Checkout has not been synced.";
+        if (_checkoutLagStates.TryGetValue(LagKey(holder, branch), out var recorded)
+            && recorded.StartsWith($"{localSha}|{publishedSha}|", StringComparison.OrdinalIgnoreCase))
+            reason = recorded[(localSha.Length + publishedSha.Length + 2)..];
+        return new("behind", holder, branch, localSha, publishedSha, behind, dirty, lockPath, reason);
+    }
+
+    /// <summary>Fetches the published branch and fast-forwards a clean holder
+    /// checkout only. The caller handles dirty files, locks and divergence.</summary>
+    public DeveloperCheckoutSyncResult SyncDeveloperCheckout(string repoRoot, string branch, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot) || !IsLikelyBranchName(branch))
+            return GetDeveloperCheckoutStatus(repoRoot, branch);
+        var fetched = FetchIntegrationBranch(repoRoot, branch, ct);
+        if (!fetched.Success || fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote)
+            return new("fetch-failed", repoRoot, branch, null, null, 0, [], null,
+                fetched.Error ?? $"origin/{branch} is unavailable.");
+        var status = GetDeveloperCheckoutStatus(repoRoot, branch);
+        if (status.Status != "behind")
+            return status;
+        if (status.LockFile is not null) return status with { Status = "locked" };
+        if (status.DirtyFiles.Count > 0) return status with { Status = "dirty" };
+        var (_, error, code) = RunGitArgs(status.Checkout, "merge", "--ff-only", status.PublishedSha!);
+        if (code != 0)
+            return GetDeveloperCheckoutStatus(repoRoot, branch) with
+            {
+                Status = "merge-failed",
+                Reason = error.Trim()
+            };
+        _checkoutLagStates.TryRemove(LagKey(status.Checkout, branch), out _);
+        return GetDeveloperCheckoutStatus(repoRoot, branch) with { Status = "fast-forwarded" };
     }
 
     /// <summary>
     /// Fast-forwards <paramref name="integrationBranch"/> onto an already rebased
     /// <paramref name="sourceRef"/>. The local worktree-run integration used to do
     /// this with <c>git merge --ff-only</c> inside the developer checkout, which
-    /// silently required that checkout to have the integration branch out and
-    /// failed on unrelated local modifications (AGT-2832). Advancing the branch by
-    /// reference needs no working tree at all: the rebase that made the delivery a
-    /// descendant already happened in the task worktree.
+    /// silently required that checkout to have the integration branch out
+    /// (AGT-2832). The rebase happens in the task worktree. An unheld branch
+    /// can advance by reference; a holder must fast-forward through Git or the
+    /// local integration reports an error without moving the branch.
     /// </summary>
     public GitWorktreeResult FastForwardIntegrationBranch(
         string repoRoot,
@@ -5347,8 +5477,7 @@ public class GitService
     /// <summary>
     /// Compare-and-swap on a local branch ref. <c>git update-ref</c> with an old
     /// value fails instead of overwriting when the branch moved since it was
-    /// observed, and unlike <c>git branch -f</c> it does not refuse just because
-    /// some checkout has the branch open.
+    /// observed. A branch checked out anywhere is refused before update-ref.
     /// </summary>
     private string? UpdateBranchRef(
         string repoRoot,
@@ -5359,6 +5488,8 @@ public class GitService
     {
         if (!IsLikelyBranchName(branch)) return $"Invalid integration branch '{branch}'.";
         if (!IsLikelyShaOrRef(newSha)) return $"Invalid integration commit '{newSha}'.";
+        if (WorktreeHolding(repoRoot, branch) is { } holder)
+            return $"Branch '{branch}' is checked out at '{holder}'; move it through that checkout.";
 
         var refName = $"refs/heads/{branch}";
         var args = string.IsNullOrWhiteSpace(expectedPreviousTip)
@@ -5438,9 +5569,6 @@ public class GitService
         if (string.Equals(rolledBackFrom, toSha, StringComparison.OrdinalIgnoreCase))
             return reset;
 
-        if (UpdateBranchRef(repoRoot, integrationBranch, toSha, rolledBackFrom, retryOnTimeout: true) is { } error)
-            return new GitWorktreeResult(false, repoRoot, error);
-
         if (forwardedCheckout is not null)
         {
             var restored = ResetHardForIntegrationRollback(forwardedCheckout, toSha);
@@ -5449,8 +5577,16 @@ public class GitService
                 _logger.LogWarning(
                     "Checkout {Path} could not be returned to {Sha} after the {Branch} rollback: {Error}",
                     forwardedCheckout, AbbreviateSha(toSha), integrationBranch, restored.Error);
+                return restored;
             }
+            _fastForwardedCheckouts.TryRemove(LagKey(forwardedCheckout, integrationBranch), out _);
+            return reset;
         }
+        if (WorktreeHolding(repoRoot, integrationBranch) is { } holder)
+            return new GitWorktreeResult(false, repoRoot,
+                $"Rollback left checked-out branch '{integrationBranch}' at {holder} untouched; this process did not fast-forward it.");
+        if (UpdateBranchRef(repoRoot, integrationBranch, toSha, rolledBackFrom, retryOnTimeout: true) is { } error)
+            return new GitWorktreeResult(false, repoRoot, error);
         return reset;
     }
 
@@ -5468,6 +5604,8 @@ public class GitService
         if (string.IsNullOrWhiteSpace(rolledBackFrom)) return null;
         if (WorktreeHolding(repoRoot, integrationBranch) is not { } holder) return null;
         if (!string.Equals(ReadHeadShaAt(holder), rolledBackFrom, StringComparison.OrdinalIgnoreCase)) return null;
+        if (!_fastForwardedCheckouts.TryGetValue(LagKey(holder, integrationBranch), out var forwardedSha)
+            || !string.Equals(forwardedSha, rolledBackFrom, StringComparison.OrdinalIgnoreCase)) return null;
 
         var status = GetStatusForRepoRoot(holder);
         if (status.IsRepo && status.Files.Count == 0) return holder;

@@ -204,14 +204,17 @@ public sealed class WorktreeTaskLifecycle
         var branch = BranchFor(taskId);
         var path = Path.Combine(worktreeRoot, WorktreeDirName(taskId));
 
-        var add = _git.WorktreeAdd(repoRoot, path, branch, integrationBranch);
+        // A developer checkout may lag after a refused fast-forward. New task
+        // work starts from published origin, never from an unapproved lane tip.
+        var baseRef = _git.PublishedIntegrationRef(repoRoot, integrationBranch);
+        var add = _git.WorktreeAdd(repoRoot, path, branch, baseRef);
         if (!add.Success)
         {
             _logger.LogWarning("Worktree prepare failed for task {TaskId} on {Branch}: {Error}", taskId, branch, add.Error);
             return new WorktreePreparation(false, path, branch, add.Error);
         }
         _logger.LogInformation("Prepared worktree for task {TaskId}: branch {Branch} off {From} at {Path}",
-            taskId, branch, integrationBranch, add.Path);
+            taskId, branch, baseRef, add.Path);
         return new WorktreePreparation(true, add.Path, branch, null);
     }
 
@@ -277,8 +280,9 @@ public sealed class WorktreeTaskLifecycle
             //    recut, so it is re-attached as before (no behavior change).
             var checkedOut = _git.WorktreePathForBranch(repoRoot, branch);
             var notCheckedOut = string.IsNullOrEmpty(checkedOut) || !Directory.Exists(checkedOut);
-            var mergedButStale = _git.IsAncestor(repoRoot, branch, integrationBranch)
-                                 && !_git.IsAncestor(repoRoot, integrationBranch, branch);
+            var baseRef = _git.PublishedIntegrationRef(repoRoot, integrationBranch);
+            var mergedButStale = _git.IsAncestor(repoRoot, branch, baseRef)
+                                 && !_git.IsAncestor(repoRoot, baseRef, branch);
             if (notCheckedOut && mergedButStale)
             {
                 _git.DeleteBranch(repoRoot, branch, force: true);
@@ -368,7 +372,7 @@ public sealed class WorktreeTaskLifecycle
 
         var rebase = _git.RebaseOnto(
             worktreePath,
-            integrationBranch,
+            _git.PublishedIntegrationRef(repoRoot, integrationBranch),
             abortOnConflict: !preserveConflictForResolution);
         if (!rebase.Success)
         {

@@ -76,10 +76,11 @@ public sealed class IntegrationWorktreeProvider
         if (cancellationToken.IsCancellationRequested)
             return IntegrationWorktreeResolution.Failed("Integration worktree preparation was cancelled.");
 
-        // The integration lane (AGT-2996) when one exists, else the branch.
+        // Prefer the Studio lane, then the published origin ref. A developer
+        // checkout may lag and must not seed the integration worktree.
         var line = string.IsNullOrWhiteSpace(integrationBranch)
             ? null
-            : _git.IntegrationLineRef(repoRoot!, integrationBranch!);
+            : _git.IntegrationBaseRef(repoRoot!, integrationBranch!);
         var baseRef = line is not null && _git.GetBranchTip(repoRoot!, line) is not null
             ? line
             : "HEAD";

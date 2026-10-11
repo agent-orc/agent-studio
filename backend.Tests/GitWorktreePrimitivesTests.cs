@@ -606,7 +606,8 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
-    public void ReleaseToCheckout_DirtyDeveloperCheckoutHoldsRelease_AdvancesBranchByReference()
+    [Trait("Category", "MachineBound")]
+    public void ReleaseToCheckout_DirtyDeveloperCheckoutHoldsRelease_LeavesBranchAndFilesUntouched()
     {
         var repo = SeedRepo("release-ff-dirty-holder");
         var git = BuildGitService(("Fixture", repo));
@@ -619,18 +620,92 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
         var developTip = RunGit(repo, "rev-parse develop").Out.Trim();
         RunGit(repo, "checkout -q main");
         File.WriteAllText(Path.Combine(repo, "README.md"), "operator edit in flight");
+        var mainBefore = RunGit(repo, "rev-parse refs/heads/main").Out.Trim();
+        var indexBefore = File.ReadAllBytes(Path.Combine(repo, ".git", "index"));
 
-        // AGT-2996: the published release result reaches the checkout's main.
+        // A published result must not move a held branch without its index.
         var release = git.ReleaseIntegrationBranchToCheckout(repo, "main", developTip);
 
-        // The dirty developer checkout does not block the release.
-        Assert.Null(release.Error);
+        // Publication remains valid; checkout release reports the obstacle.
+        Assert.NotNull(release.Error);
         Assert.Equal(DeveloperCheckoutReleaseAction.FastForward, release.Action);
-        Assert.Equal(developTip, RunGit(repo, "rev-parse refs/heads/main").Out.Trim());
-        // It keeps the branch and the uncommitted edit: the ref moved
-        // underneath it, nothing in its working tree was overwritten.
+        Assert.Equal(mainBefore, RunGit(repo, "rev-parse refs/heads/main").Out.Trim());
+        Assert.Equal(indexBefore, File.ReadAllBytes(Path.Combine(repo, ".git", "index")));
         Assert.Equal("main", RunGit(repo, "rev-parse --abbrev-ref HEAD").Out.Trim());
         Assert.Equal("operator edit in flight", File.ReadAllText(Path.Combine(repo, "README.md")));
+    }
+
+    [Theory]
+    [InlineData("clean", "fast-forwarded")]
+    [InlineData("dirty", "dirty")]
+    [InlineData("lock", "locked")]
+    [InlineData("diverged", "diverged")]
+    [Trait("Category", "MachineBound")]
+    public void SyncDeveloperCheckout_ReportsObstaclesAndOnlyMovesCleanCheckout(string setup, string expected)
+    {
+        var repo = SeedRepo("sync-" + setup);
+        var bare = Path.Combine(_tempDir, "remote-" + setup + ".git");
+        Directory.CreateDirectory(bare);
+        Assert.Equal(0, RunGit(bare, "init -q --bare").Code);
+        Assert.Equal(0, RunGit(repo, $"remote add origin \"{bare}\"").Code);
+        Assert.Equal(0, RunGit(repo, "push -q origin main").Code);
+        var before = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q -b published");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "published");
+        Commit(repo, "published");
+        var published = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        Assert.Equal(0, RunGit(repo, "push -q origin published:main").Code);
+        RunGit(repo, "checkout -q main");
+        if (setup == "dirty") File.WriteAllText(Path.Combine(repo, "README.md"), "operator edit");
+        if (setup == "lock") File.WriteAllText(Path.Combine(repo, ".git", "index.lock"), "held");
+        if (setup == "diverged")
+        {
+            File.WriteAllText(Path.Combine(repo, "local.txt"), "local");
+            Commit(repo, "local");
+        }
+        var localBefore = RunGit(repo, "rev-parse main").Out.Trim();
+        var indexBefore = File.ReadAllBytes(Path.Combine(repo, ".git", "index"));
+        var git = BuildGitService(("Fixture", repo));
+
+        var result = git.SyncDeveloperCheckout(repo, "main");
+
+        Assert.Equal(expected, result.Status);
+        Assert.Equal($"refs/remotes/origin/main", git.IntegrationBaseRef(repo, "main"));
+        Assert.Equal(setup == "clean" ? published : localBefore, RunGit(repo, "rev-parse main").Out.Trim());
+        if (setup != "clean") Assert.Equal(indexBefore, File.ReadAllBytes(Path.Combine(repo, ".git", "index")));
+        if (setup == "dirty") Assert.Contains("README.md", result.DirtyFiles);
+        if (setup == "lock") Assert.NotNull(result.LockFile);
+        if (setup == "diverged") Assert.NotEqual(before, localBefore);
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Rollback_RestoresOnlyAHolderFastForwardedByThisGitService()
+    {
+        var repo = SeedRepo("rollback-held-checkout");
+        var before = RunGit(repo, "rev-parse main").Out.Trim();
+        RunGit(repo, "checkout -q -b published");
+        File.WriteAllText(Path.Combine(repo, "new.txt"), "published");
+        Commit(repo, "published");
+        var published = RunGit(repo, "rev-parse published").Out.Trim();
+        RunGit(repo, "checkout -q main");
+        var slot = Path.Combine(_tempDir, "rollback-slot");
+        Assert.Equal(0, RunGit(repo, $"worktree add -q --detach \"{slot}\" main").Code);
+        var git = BuildGitService(("Fixture", repo));
+
+        Assert.True(git.FastForwardIntegrationBranch(repo, "main", "published").Success);
+        Assert.Equal(published, RunGit(repo, "rev-parse main").Out.Trim());
+        var unrelatedService = BuildGitService(("Fixture", repo));
+        var refused = unrelatedService.ResetIntegrationBranch(slot, "main", before);
+        Assert.False(refused.Success);
+        Assert.Equal(published, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.True(File.Exists(Path.Combine(repo, "new.txt")));
+        var rollback = git.ResetIntegrationBranch(slot, "main", before);
+
+        Assert.True(rollback.Success, rollback.Error);
+        Assert.Equal(before, RunGit(repo, "rev-parse main").Out.Trim());
+        Assert.False(File.Exists(Path.Combine(repo, "new.txt")));
+        Assert.Equal(string.Empty, RunGit(repo, "status --porcelain").Out.Trim());
     }
 
     private string SeedRepo(string name)

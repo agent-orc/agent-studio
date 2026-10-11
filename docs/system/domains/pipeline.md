@@ -668,7 +668,15 @@ comparison before Quality Studio's verdict contract can decide a review.
   stays detached and merges onto the integration lane
   `refs/agent-studio/integration/<branch>` (AGT-2996); only the integration push
   worker publishes `develop`, and the developer checkout's local branch is
-  fast-forwarded only after that push (never over commits made there).
+  fast-forwarded only after that push when Git can move its index and working
+  tree. A failed fast-forward leaves the checked-out branch ref untouched and
+  exposes a lag signal in the project snapshot. Integration reads the Studio
+  lane `refs/agent-studio/integration/<branch>` for pending gated merges and
+  `refs/remotes/origin/<branch>` for the published base; it does not use the
+  developer's lagging local branch as the next merge base. Checkout sync is a
+  separate `POST /api/projects/{project}/checkout/sync` action. Local task
+  worktrees cut and rebase from the published ref, without taking unapproved
+  merges from the Studio lane.
   Repository identity (default
   line, delivery attribution) is still read from the registered checkout,
   because a detached worktree cannot answer it. See

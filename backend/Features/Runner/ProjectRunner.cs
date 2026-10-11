@@ -1718,10 +1718,10 @@ public class ProjectRunner
                     }
                 }
 
-                // The tip of the integration branch itself, not the HEAD of the
-                // shared checkout: integration advances the branch by reference
-                // and does not require that checkout to have it checked out.
-                var integrationBaseSha = _git.GetBranchTip(repositoryRoot, workBranch);
+                // Attribution starts at the published ref used by the worktree
+                // rebase, even if the developer checkout has an older tip.
+                var integrationBaseSha = _git.GetBranchTip(
+                    repositoryRoot, _git.PublishedIntegrationRef(repositoryRoot, workBranch));
                 var leaseSuffix = integrationLease is null
                     ? ""
                     : $" Integration lease token `{integrationLease.FencingToken}` is current.";

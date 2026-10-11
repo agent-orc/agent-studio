@@ -844,8 +844,7 @@ public sealed partial class MergeIntoDevelopRunner
             JobId = jobId,
             RepoRoot = developerRoot,
             IntegrationBranch = integrationBranch,
-            PreMergeTip = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, integrationBranch))
-                          ?? _git.GetBranchTip(repoRoot, "origin/" + integrationBranch),
+            PreMergeTip = _git.GetBranchTip(repoRoot, _git.IntegrationBaseRef(repoRoot, integrationBranch)),
             StartedAt = DateTimeOffset.UtcNow,
         });
         var result = merge();
@@ -1718,9 +1717,9 @@ public sealed partial class MergeIntoDevelopRunner
             if (releaseWarning is not null)
             {
                 releaseWarning = $"Origin/{releaseBranch} was pushed to {result.Sha}, but developer checkout "
-                    + $"'{releaseRoot}' was not released: {releaseWarning}. Recover with "
-                    + $"git -C \"{releaseRoot}\" merge --ff-only origin/{releaseBranch}.";
-                _logger.LogWarning("merge-into-develop push: {ReleaseWarning}", releaseWarning);
+                    + $"'{releaseRoot}' was not released: {releaseWarning}. Inspect checkout status and use "
+                    + $"POST /api/projects/{project}/checkout/sync after resolving its obstacles.";
+                _logger.LogInformation("merge-into-develop push: {ReleaseWarning}", releaseWarning);
             }
         }
         try
