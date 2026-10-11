@@ -30,7 +30,7 @@ public sealed class BatchGateReviewPlanTests
             File.WriteAllText(Path.Combine(repo, ".agent-studio", "prepare"), "#!/bin/sh\nexit 0\n");
             File.WriteAllText(Path.Combine(repo, ".agent-studio", "project.yml"),
                 "schemaVersion: 1\nstack: [custom]\ntoolVersions:\ncommands:\n"
-                + "  prepare: .agent-studio/prepare\n  build:\n  test: [echo test]\n"
+                + "  prepare: .agent-studio/prepare\n  build: [echo build]\n  test: [echo test]\n"
                 + "  lint:\ntestSuites:\ncachePaths:\ncapabilities: [linux]\nenvironment:\n");
             Git(repo, "add", ".");
             Git(repo, "commit", "-qm", "base");
@@ -43,12 +43,6 @@ public sealed class BatchGateReviewPlanTests
             Git(repo, "switch", "-q", "develop");
 
             var resultRef = "refs/heads/agent-studio/results/task";
-            ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
-            {
-                TaskKey = "task", RunAttemptId = "run", AttemptChainId = "chain",
-                Project = "project", Repository = "repo", ResultSha = resultSha,
-                ImmutableResultRef = resultRef, CompletedAtUtc = Now,
-            });
             File.WriteAllText(Path.Combine(folder, "prompt.md"), "Document the pilot.\n");
             var config = new ConfigurationBuilder().AddInMemoryCollection().Build();
             var summary = new SummaryGenerationService(
@@ -67,12 +61,16 @@ public sealed class BatchGateReviewPlanTests
                 WatchPath = repo, FolderPath = folder, State = TaskStates.AutoReview,
             };
             var plan = builder.Build(task, repo,
-                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop");
+                new ProjectSettings { BatchGate = new(Enabled: true) }, "develop",
+                resultSha, ["docs/pilot.md"], resultRef);
 
             Assert.True(plan.BuildTestDeferredToBatch);
+            Assert.Equal("build-only", plan.TestLevel);
+            Assert.NotNull(plan.TestSelectionDigest);
+            Assert.Contains(plan.Commands, command => command.Arguments.Contains("echo build"));
             Assert.Contains(plan.Commands, command =>
                 AgentStudio.TaskServer.Contracts.ReviewCommandKinds.IsAgent(command.ExecutionKind));
-            Assert.DoesNotContain(plan.Commands, command => command.Aspect == "build-tests");
+            Assert.DoesNotContain(plan.Commands, command => command.Arguments.Contains("echo test"));
 
             Git(repo, "switch", "-qc", "agent-studio/results/code-task");
             Directory.CreateDirectory(Path.Combine(repo, "backend"));
@@ -91,6 +89,18 @@ public sealed class BatchGateReviewPlanTests
                 new ProjectSettings { BatchGate = new(Enabled: true) }, "develop");
             Assert.False(codePlan.BuildTestDeferredToBatch);
             Assert.Contains(codePlan.Commands, command => command.Aspect == "build-tests");
+
+            // The real completion path builds before writing ReviewSubjectStore.
+            // An explicit result envelope must therefore be sufficient for a
+            // code-scoped plan as well.
+            ReviewSubjectStore.InvalidateForNewAttempt(folder);
+            var codeBatch = builder.Build(task, repo,
+                new ProjectSettings { BatchGate = new(Enabled: true,
+                    Scope: "code", ReviewTestLevel: "build-only") }, "develop",
+                codeSha, ["backend/Pilot.cs"],
+                "refs/heads/agent-studio/results/code-task");
+            Assert.True(codeBatch.BuildTestDeferredToBatch);
+            Assert.Equal("build-only", codeBatch.TestLevel);
         }
         finally
         {
