@@ -743,10 +743,10 @@ now runs both suites as well:
 
 The filter is the one the backend gate already uses, so the machine-bound
 topology and daemon-recovery suites stay off the review host. On a 12 core host
-the two add roughly one and two minutes to a review, measured in the exact form
-`ReviewPlanResourcePolicy` produces (`-maxcpucount:2 -nodeReuse:false
---logger console;verbosity=normal --blame-hang-timeout 10m`): historically 691
-runner cases in 62 s, the same wall time as the bare command. xUnit collection
+the two add roughly one and two minutes to a review. The historical 691-case
+Runner sample completed in 62 s with an older command line; it is not a timing
+measurement for the current `ReviewPlanResourcePolicy` command, which includes
+TRX logging, a 10-minute hang timeout and no hang dump. xUnit collection
 parallelism therefore stays on for these gates, which is what makes them able to
 see a race like AGT-2864 at all. A fixed two-thread xUnit cap was measured and
 removed: under ten concurrent test processes it made the 1,298-test Runner

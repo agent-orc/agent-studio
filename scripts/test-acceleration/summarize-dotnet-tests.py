@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 CONSOLE_RESULT = re.compile(r"^\s*(Passed|Failed|Skipped)\s+(.+?)\s+\[(< 1|[\d.]+)\s*(ms|s|min)\]$")
-ELAPSED = re.compile(r"Time Elapsed:\s*([\d:.]+)")
+ELAPSED = re.compile(r"\bTime Elapsed:?\s*(\d+:\d{2}:\d{2}(?:\.\d+)?)", re.I)
 TOTAL_TIME = re.compile(r"Total time:\s*([\d.]+)\s*(Hours?|Minutes?|Seconds?)", re.I)
 TOTAL_TESTS = re.compile(r"^Total tests:\s*(\d+)")
 
@@ -91,6 +91,13 @@ def concurrent_suites():
     return count
 
 
+def host_load1():
+    try:
+        return os.getloadavg()[0]
+    except (AttributeError, OSError):
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", nargs="+", type=Path)
@@ -121,7 +128,7 @@ def main():
         "schemaVersion": 1,
         "recordedAtUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "host": socket.gethostname(),
-        "hostLoad1": args.host_load if args.host_load is not None else os.getloadavg()[0],
+        "hostLoad1": args.host_load if args.host_load is not None else host_load1(),
         "concurrentSuites": args.concurrent_suites if args.concurrent_suites is not None else concurrent_suites(),
         "retries": args.retries,
         "sourceNote": args.source_note,
