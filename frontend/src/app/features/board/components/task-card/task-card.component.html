@@ -462,6 +462,8 @@
              [attr.data-tone]="nb.tone">
           @if (nb.tone === 'discovery') {
             <span class="task-card__no-commits-glyph" aria-hidden="true">⚠</span>
+          } @else if (nb.tone === 'integrated') {
+            <span class="task-card__no-commits-glyph" aria-hidden="true">✓</span>
           } @else {
             <span class="task-card__no-commits-glyph" aria-hidden="true">∅</span>
           }

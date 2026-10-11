@@ -104,6 +104,41 @@ import type { OrchestratorLogEntry, OrchestratorSession } from '../features/orch
 
 // (GitProjectSummary, GitHygieneStatus, TaskHygieneContext now in features/git/models/git.model.ts; re-exported above)
 
+/** Mirrors backend `TaskIntegrationRecord`. */
+export interface TaskIntegrationRecord {
+  id: string;
+  classification: string;
+  recordedAtUtc?: string | null;
+  acceptedAtUtc?: string | null;
+  integrationBranch?: string | null;
+  commitShas?: string[];
+  evidence?: string | null;
+}
+
+/**
+ * AGT-3045 - the newest `integrated-*` integration record, or null. Such a
+ * record means the card delivered through an operator merge even when no
+ * commit is attributed yet.
+ */
+export function latestIntegratedRecord(
+  records: readonly TaskIntegrationRecord[] | null | undefined,
+): TaskIntegrationRecord | null {
+  const integrated = (records ?? []).filter(record => record.classification?.startsWith('integrated-'));
+  return integrated.length > 0 ? integrated[integrated.length - 1] : null;
+}
+
+/** Tooltip naming the integration record: id, branch, and an evidence excerpt. */
+export function integrationRecordTooltip(record: TaskIntegrationRecord): string {
+  const evidence = (record.evidence ?? '').trim();
+  const excerpt = evidence.length > 160 ? `${evidence.slice(0, 157)}...` : evidence;
+  return [
+    'Integrated via operator merge; no commit is attributed to this task yet.',
+    `Record: ${record.id}`,
+    `Branch: ${record.integrationBranch || 'unknown'}`,
+    excerpt ? `Evidence: ${excerpt}` : null,
+  ].filter((line): line is string => !!line).join('\n');
+}
+
 /**
  * AGT-2817 - the three grounds on which a card may claim completion. Mirrors
  * backend `CompletionClaimBases`.
@@ -825,6 +860,13 @@ export interface TaskInfo {
    * attempts cannot force membership. Null on cards not in an accepted lane.
    */
   integration?: TaskIntegrationStatus | null;
+
+  /**
+   * Append-only integration bookkeeping rows (backend `TaskInfo.IntegrationRecords`).
+   * AGT-3045: an `integrated-*` row proves delivery even when `commits[]` is
+   * empty, so the card never reads "no code change" next to it.
+   */
+  integrationRecords?: TaskIntegrationRecord[] | null;
 
   /**
    * AGT-2817: the grounds on which this card claims completion - a contained

@@ -32,6 +32,7 @@ export type PipelineRowStatusLike =
   | 'failed'
   | 'skipped'
   | 'notApplicable'
+  | 'needsDecision'
   | 'not-run'
   | 'planned'
   | 'disabled';
@@ -136,7 +137,7 @@ function verdictKey(verdict: string | null): string {
 
 /** A row that has run to some executed state (as opposed to pending/planned/off). */
 function rowHasRun(status: PipelineRowStatusLike): boolean {
-  return status === 'passed' || status === 'failed' || status === 'running';
+  return status === 'passed' || status === 'failed' || status === 'running' || status === 'needsDecision';
 }
 
 /** A row the operator should look at right now: active or problematic. */
@@ -147,7 +148,7 @@ export function rowIsRisk(row: PipelineGroupRowLike): boolean {
 
 /** A row carrying an unresolved concern (drives the concern rollup + row marker). */
 export function rowHasConcern(row: PipelineGroupRowLike): boolean {
-  if (row.status === 'failed' || row.attentionRequired) return true;
+  if (row.status === 'failed' || row.status === 'needsDecision' || row.attentionRequired) return true;
   return CONCERN_VERDICTS.has(verdictKey(row.verdict));
 }
 

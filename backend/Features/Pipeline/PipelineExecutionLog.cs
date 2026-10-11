@@ -471,7 +471,8 @@ public sealed class PipelineExecutionLog
             && step.Status is PipelineStepStatus.Passed
                 or PipelineStepStatus.Failed
                 or PipelineStepStatus.Skipped
-                or PipelineStepStatus.NotApplicable);
+                or PipelineStepStatus.NotApplicable
+                or PipelineStepStatus.NeedsDecision);
     }
 
     /// <summary>

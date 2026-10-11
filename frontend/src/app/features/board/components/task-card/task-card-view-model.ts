@@ -1,4 +1,4 @@
-import { TaskState } from '../../../../models/task.model';
+import { TaskState, integrationRecordTooltip, latestIntegratedRecord } from '../../../../models/task.model';
 import type { TaskInfo, ClientSummary, CliType, TagRegistryEntry, EpicRollup, AutoLoopSnapshot, PendingIntent, TaskMode } from '../../../../models/task.model';
 import type { TaskCommitInfo } from '../../../../features/git';
 import type { StructuredTooltip } from 'coding-agent-chat/shared';
@@ -213,7 +213,7 @@ export function buildCommitChainTooltip(job: TaskInfo): StructuredTooltip | stri
 }
 
 export interface CommitEmptyBadge {
-  tone: 'no-code' | 'discovery';
+  tone: 'no-code' | 'discovery' | 'integrated';
   label: string;
   tooltip: string;
 }
@@ -229,6 +229,10 @@ export interface CommitEmptyBadge {
 export function buildCommitEmptyBadge(job: TaskInfo): CommitEmptyBadge | null {
   if (!COMMIT_REVIEW_LANES.has(job.state)) return null;
   if (commitChainOf(job).length > 0) return null;
+  const record = latestIntegratedRecord(job.integrationRecords);
+  if (record) {
+    return { tone: 'integrated', label: 'integrated via operator merge', tooltip: integrationRecordTooltip(record) };
+  }
   const deliveryRef = job.integration?.deliveryRef?.trim() || null;
   if (job.codeActivityDetected || deliveryRef) {
     return {

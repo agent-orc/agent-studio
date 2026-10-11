@@ -1433,6 +1433,11 @@
       border: 1px solid rgba(148, 163, 184, 0.25);
       color: var(--studio-fg-dim);
     }
+    .task-card__no-commits--integrated {
+      background: color-mix(in srgb, var(--studio-success) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--studio-success) 35%, transparent);
+      color: var(--studio-success);
+    }
     .task-card__no-commits--discovery {
       background: rgba(251, 191, 36, 0.12);
       border: 1px solid rgba(251, 191, 36, 0.35);
