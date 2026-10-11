@@ -104,6 +104,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.True(state.RootElement.TryGetProperty("pending", out _));
         Assert.True(state.RootElement.TryGetProperty("batches", out _));
         Assert.True(state.RootElement.TryGetProperty("members", out _));
+
     }
 
     [Fact]
@@ -367,6 +368,33 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         }
         Assert.Empty(store.ListPending());
         Assert.True(pilot.Report(ProjectName).CorrectnessFloorMet);
+    }
+
+    [Fact]
+    public async Task Verified_remote_publication_releases_member_when_local_checkout_is_dirty()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-LOCAL-SYNC", "docs/local-sync.md");
+        var localBase = Git(_repo, "rev-parse", "develop").Trim();
+        Git(_repo, "checkout", "-q", "develop");
+        Directory.CreateDirectory(Path.Combine(_repo, "docs"));
+        File.WriteAllText(Path.Combine(_repo, "docs", "local-sync.md"), "local untracked edit\n");
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
+        Assert.Equal(store.ReadPublication(manifest.BatchId)!.TestedCandidateSha, RemoteTip());
+        Assert.Equal(localBase, Git(_repo, "rev-parse", "develop").Trim());
+        Assert.Equal("local untracked edit\n",
+            File.ReadAllText(Path.Combine(_repo, "docs", "local-sync.md")));
     }
 
     [Fact]
