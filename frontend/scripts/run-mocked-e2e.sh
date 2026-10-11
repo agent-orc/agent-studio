@@ -6,8 +6,12 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 if [[ "$(cat "${FRONTEND_ROOT}/dist/frontend/browser/.source-sha" 2>/dev/null || true)" != "${SHA}" ]]; then
-  echo 'Prebuilt frontend is missing or stale. Run npm --prefix frontend run e2e once to prepare it.' >&2
-  exit 2
+  npm --prefix "${FRONTEND_ROOT}" run build
+  printf '%s\n' "${SHA}" > "${FRONTEND_ROOT}/dist/frontend/browser/.source-sha"
+fi
+if [[ "$(git -C "${REPO_ROOT}" rev-parse HEAD)" != "${SHA}" ]]; then
+  echo 'Checkout HEAD changed during the frontend prebuild. Rerun after the commit settles.' >&2
+  exit 3
 fi
 PW_MOCKED_FRONTEND_PORT="$(node "${REPO_ROOT}/scripts/find-free-port.mjs")"
 export PW_MOCKED_FRONTEND_PORT
