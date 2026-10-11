@@ -24,7 +24,7 @@
         @if (invalid('deadlineMinutes')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
         <label>Look ahead (minutes) <input type="number" name="lookAheadMinutes" min="0" [ngModel]="form.lookAheadMinutes" (ngModelChange)="update('lookAheadMinutes', +$event)" [attr.aria-invalid]="invalid('lookAheadMinutes')"></label>
         @if (invalid('lookAheadMinutes')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
-        <label>Urgent tags <input type="text" name="urgentTags" [ngModel]="form.urgentTags.join(', ')" (ngModelChange)="update('urgentTags', parseTags($event))" [attr.aria-invalid]="invalid('urgentTags')" aria-describedby="batch-tags-help"></label>
+        <label>Urgent tags <input type="text" name="urgentTags" [ngModel]="tagsDraft()" (ngModelChange)="tagsDraft.set($event)" [attr.aria-invalid]="invalid('urgentTags')" aria-describedby="batch-tags-help"></label>
         @if (invalid('urgentTags')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
         <p id="batch-tags-help">Separate tags with commas. Urgent cards can close a batch sooner.</p>
       </fieldset>

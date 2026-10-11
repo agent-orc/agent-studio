@@ -1,0 +1,16 @@
+.review-queue-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--studio-card-pill-height);
+  padding: 0 var(--studio-card-pill-padding-x);
+  border-radius: 7px;
+  font-size: var(--studio-card-meta-size);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-text-muted);
+  background: var(--studio-surface-muted);
+}
+.review-queue-pill[data-priority='urgent'] {
+  color: var(--studio-accent-warn-strong);
+  background: color-mix(in srgb, var(--studio-accent-warn-strong) 13%, transparent);
+}

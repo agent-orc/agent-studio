@@ -6,14 +6,12 @@ import {
   OnInit,
   SimpleChanges,
   computed,
-  effect,
   inject,
   input,
   output,
   signal,
 } from '@angular/core';
 import type { Subscription } from 'rxjs';
-import { DatePipe } from '@angular/common';
 import {
   ArchivedTaskInfo,
   CliType,
@@ -36,8 +34,7 @@ import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
-import { BatchGateService } from '../../../../services/batch-gate.service';
-import { BatchPanelComponent } from '../../../batch-gate/batch-panel/batch-panel';
+import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -51,8 +48,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
-    BatchPanelComponent,
-    DatePipe,
+    BatchLaneIndicatorComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -62,26 +58,6 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
 export class TaskColumnComponent implements OnInit, OnChanges, OnDestroy {
   private readonly taskService = inject(TaskService);
   private readonly boardDrag = inject(BoardDragStateService);
-  private readonly batchGate = inject(BatchGateService);
-  readonly batchPanelProject = signal<string | null>(null);
-  readonly closeBatchPanel = () => this.batchPanelProject.set(null);
-  readonly batchProjects = computed(() => {
-    if (!['4-auto-review', '5-human-review', '4-review'].includes(this.state())) return [];
-    const scoped = this.projectScope();
-    if (scoped) return [scoped];
-    return [...new Set(this.allBoardJobs().map(job => job.projectName))].sort();
-  });
-  batchStateFor(project: string) { return this.batchGate.state(project)(); }
-  batchErrorFor(project: string) { return this.batchGate.error(project)(); }
-  batchRunningFor(project: string): number {
-    return this.batchStateFor(project)?.batches.filter(batch => !['published', 'abandoned'].includes(batch.phase)).length ?? 0;
-  }
-  constructor() {
-    effect(onCleanup => {
-      const stops = this.batchProjects().map(project => this.batchGate.watch(project));
-      onCleanup(() => stops.forEach(stop => stop()));
-    });
-  }
   readonly title = input.required<string>();
   readonly icon = input<string>('');
   readonly state = input.required<string>();

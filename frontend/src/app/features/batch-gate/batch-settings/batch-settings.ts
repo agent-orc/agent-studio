@@ -15,6 +15,7 @@ export class BatchSettingsComponent {
   readonly project = input.required<string>();
   private readonly gate = inject(BatchGateService);
   readonly settings = signal<BatchGateSettings | null>(null);
+  readonly tagsDraft = signal('');
   readonly maximum = signal(8);
   readonly loading = signal(true);
   readonly saving = signal(false);
@@ -32,6 +33,7 @@ export class BatchSettingsComponent {
     this.gate.getSettings(project).subscribe({
       next: data => {
         this.settings.set({ ...data.settings, urgentTags: [...data.settings.urgentTags], advisor: { ...data.settings.advisor } });
+        this.tagsDraft.set(data.settings.urgentTags.join(', '));
         this.maximum.set(data.limits.hardMaximumSize);
         this.loading.set(false);
       },
@@ -55,8 +57,15 @@ export class BatchSettingsComponent {
     this.saving.set(true);
     this.error.set(null);
     this.fieldError.set(null);
-    this.gate.putSettings(this.project(), settings).subscribe({
-      next: data => { this.settings.set(data.settings); this.maximum.set(data.limits.hardMaximumSize); this.saved.set(true); this.saving.set(false); },
+    const model = settings.advisor.model?.trim();
+    const request: BatchGateSettings = {
+      ...settings,
+      urgentTags: this.parseTags(this.tagsDraft()),
+      advisor: { ...settings.advisor, ...(model ? { model } : { model: undefined }) },
+    };
+    if (!model) delete request.advisor.model;
+    this.gate.putSettings(this.project(), request).subscribe({
+      next: data => { this.settings.set(data.settings); this.tagsDraft.set(data.settings.urgentTags.join(', ')); this.maximum.set(data.limits.hardMaximumSize); this.saved.set(true); this.saving.set(false); },
       error: err => {
         this.error.set(err?.error?.error ?? 'Could not save batch settings.');
         this.fieldError.set(err?.error?.field ?? null);

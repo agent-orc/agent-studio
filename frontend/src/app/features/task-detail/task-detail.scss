@@ -1238,7 +1238,3 @@
         padding: 16px;
       }
     }
-.detail__batch { padding: var(--studio-spacing-3); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-elevated); }
-.detail__batch h2 { margin: 0 0 var(--studio-spacing-2); font-size: 1rem; }
-.detail__batch p { margin: 0 0 var(--studio-spacing-2); }
-.detail__batch button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
