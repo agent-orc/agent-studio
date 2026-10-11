@@ -1563,6 +1563,39 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(outcome.MergedSha, queued.ApprovedSha);
     }
 
+    [Fact]
+    public async Task Code_merge_keeps_batch_reserved_until_queued_push_is_verified()
+    {
+        var (repo, remote) = SeedRepoWithOrigin("batch-merge-push-window");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "checkout -q -b task/merge-push-window");
+        File.WriteAllText(Path.Combine(repo, "code.cs"), "code change");
+        Commit(repo, "feat: code change");
+        RunGit(repo, "checkout -q develop");
+        var (git, log, settings) = BuildWithSettings(repo);
+        var queue = new IntegrationPushQueue();
+        var reservations = new BatchIntegrationReservationService();
+        var jobFolder = BeginRun(log, repo, jobId: "merge-push-window");
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: settings,
+            batchReservations: reservations);
+
+        var merged = await runner.RunAsync("Fixture", "merge-push-window", jobFolder,
+            repo, "develop", CancellationToken.None);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.True(queue.Reader.TryRead(out var queued));
+        var batch = reservations.AcquireBatchAsync("Fixture", CancellationToken.None);
+        Assert.False(batch.IsCompleted);
+
+        await new IntegrationPushWorker(queue, runner,
+            NullLogger<IntegrationPushWorker>.Instance)
+            .ProcessAsync(queued!, CancellationToken.None);
+
+        Assert.Equal(merged.MergedSha, RemoteSha(remote, "develop"));
+        using var batchGrant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     /// <summary>
     /// AGT-2936 (D8): a successor review generation created while the merge
     /// and gate ran refuses the publication fence. The stale merge is rolled
