@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "id": "task-server-bus",
   "title": "Task Server bus between the engine and runner hosts",
-  "summary": "Task Server as the steering bus between the Orchestrator Engine and runner hosts. D5 to D13 were decided on 26 September 2026 and delivered as AGT-2933 to AGT-2941. On 11 October 2026 the operator decided D14 to D18: the engine becomes the only decider and everything moves out of the monolith, engine and Operations Server stay separate processes, claimable work stays on runner hosts, fix rounds continue on the reviewed delivery, one per-card round budget. Programme cards AGT-3054 and AGT-3056 to AGT-3062. Open: D19 review host separation, D20 engine instances, D21 the Operations Broker name.",
+  "summary": "Task Server as the steering bus between the Orchestrator Engine and runner hosts. All decisions recorded: D5 to D13 on 26 September 2026 (delivered as AGT-2933 to AGT-2941), D14 to D21 by the operator on 11 October 2026: the engine is the only decider and everything moves out of the monolith, engine and Operations Server stay separate processes, claimable work stays on runner hosts, fix rounds continue on the reviewed delivery, one per-card round budget, review prefers another host, interchangeable engine instances, Operations Broker as documentation and UI term. Programme cards AGT-3054, AGT-3056 to AGT-3062, AGT-3069 and AGT-3071; AGT-3055 carries the batch part.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-10-11T13:30:00Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-2905"
   ],
@@ -40,7 +40,9 @@
     "AGT-3059",
     "AGT-3060",
     "AGT-3061",
-    "AGT-3062"
+    "AGT-3062",
+    "AGT-3069",
+    "AGT-3071"
   ],
   "implementationTasks": [
     {
