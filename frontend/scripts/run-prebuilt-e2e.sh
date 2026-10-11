@@ -5,10 +5,11 @@ set -euo pipefail
 FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
+  result=0
   for profile in standard recovery demo; do
-    PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0"
+    PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
-  exit 0
+  exit "${result}"
 fi
 PW_E2E_PROFILE="${PW_E2E_PROFILE:-standard}"
 for arg in "$@"; do
