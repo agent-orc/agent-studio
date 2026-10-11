@@ -495,6 +495,32 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Broken_published_manifest_does_not_block_the_next_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        SeedMember(factory, "DOC-BROKEN-RECOVERY", "docs/broken.md");
+        await pilot.TickAsync(CancellationToken.None);
+        var first = Assert.Single(store.ListManifests());
+        AssertPhase(store, first.BatchId, BatchPhase.Published);
+        var publication = store.ReadPublication(first.BatchId)!;
+        var verdictPath = Path.Combine(store.BatchDirectory(first.BatchId), "runs",
+            publication.BatchRunId + ".verdict.json");
+        File.WriteAllText(verdictPath, "{}");
+
+        var next = SeedMember(factory, "DOC-AFTER-BROKEN-RECOVERY", "docs/next.md");
+        await pilot.TickAsync(CancellationToken.None);
+
+        var second = Assert.Single(store.ListManifests(), manifest => manifest.BatchId != first.BatchId);
+        AssertPhase(store, second.BatchId, BatchPhase.Published);
+        AssertLane(next.Key, TaskStates.HumanReview);
+    }
+
+    [Fact]
     public async Task Verified_remote_publication_releases_member_when_local_checkout_is_dirty()
     {
         using var factory = BuildFactory();
@@ -1028,7 +1054,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         using var factory = BuildFactory();
         using var http = factory.CreateClient();
         http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
-        EnableBatchGate(factory, closeSize: 4);
+        EnableBatchGate(factory, closeSize: 1);
         var member = SeedMember(factory, "DOC-BASE-DEFECT", "docs/base-defect.md",
             settleReview: false);
         await RegisterReviewExecutorAsync(http);
@@ -1054,6 +1080,16 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Null(entry!.Delivery);
         Assert.True(RemoteReviewSettlementPolicy.IsBatchDeferredPass(entry));
         AssertLane(member.Key, TaskStates.AutoReview);
+
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
     }
 
     private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);

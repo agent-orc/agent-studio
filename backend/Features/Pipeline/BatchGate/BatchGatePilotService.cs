@@ -570,12 +570,23 @@ public sealed class BatchGatePilotService
         }
     }
 
+    private bool HeldOnRedBase(BatchGatePendingRecord pending)
+    {
+        var batchId = BatchGateOwnershipStore.Read(pending.JobFolderPath)?.BatchId;
+        if (batchId is null) return false;
+        var state = _store.LatestState(batchId);
+        return state.Phase == BatchPhase.Paused
+            && state.Reason == "integration-branch-red";
+    }
+
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
         var waiting = _store.ListPending();
         foreach (var manifest in _store.ListManifests())
         {
             ct.ThrowIfCancellationRequested();
+            try
+            {
             var publication = _store.ReadPublication(manifest.BatchId);
             var phase = _store.LatestState(manifest.BatchId).Phase;
             if (phase is not (BatchPhase.Publishing or BatchPhase.Published)) continue;
@@ -712,6 +723,17 @@ public sealed class BatchGatePilotService
                     continue;
                 }
                 await ReleaseMemberAsync(manifest, run, pending, ct).ConfigureAwait(false);
+            }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "batch-gate-publication-recovery-failed batch={BatchId} project={Project}",
+                    manifest.BatchId, manifest.Scope.Project);
             }
         }
     }
