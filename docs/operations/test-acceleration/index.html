@@ -447,21 +447,21 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 
 <section id="frontend-track">
 <h2><span class="no">§9</span>Frontend track report</h2>
-<p class="stx stx-open"><b>Owner:</b> AGT-3050. <b>Status 2026-10-11:</b> started, no lever applied yet. This section is written by the frontend track only.</p>
+<p class="stx stx-part"><b>Owner:</b> AGT-3050. <b>Status 2026-10-11:</b> measured collection and started the full Vitest baseline on agent-studio-runner; full Playwright timing is pending. This section is written by the frontend track only.</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Lever</th><th>Status</th><th>Commit</th><th>Before → after</th><th>Source of measurement</th></tr></thead>
   <tbody>
-    <tr><td>F1</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>F2</td><td><span class="pill open">open</span></td><td></td><td></td><td>D2</td></tr>
+    <tr><td>F1</td><td><span class="pill part">part</span></td><td>pending</td><td>1,317 estimated → 1,481 collected tests in 504 files; full run pending</td><td><code>results/playwright-list.txt</code>, agent-studio-runner, host load 49–69, concurrent suites present; Vitest JUnit run in progress</td></tr>
+    <tr><td>F2</td><td><span class="pill part">part</span></td><td>pending</td><td>compile on startup → prebuilt stack implemented, startup timing pending</td><td>Isolated dynamic ports; D2 option A (production bundle), subject to focused run</td></tr>
     <tr><td>F3</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>F4</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
-    <tr><td>F5</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>F4</td><td><span class="pill part">part</span></td><td>pending</td><td>366 fixed sleeps → 363; 6 s removed from one spec, run pending</td><td><code>e2e/board/task-filter-removed.spec.ts</code>; static count; focused run pending</td></tr>
+    <tr><td>F5</td><td><span class="pill part">part</span></td><td>pending</td><td>trace/video each test → trace on first retry, video in visual-evidence project; run pending</td><td><code>frontend/playwright.config.ts</code>; default 1 worker, CI retry 1</td></tr>
     <tr><td>F6</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>F7</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>F8</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>F9</td><td><span class="pill open">open</span></td><td></td><td></td><td>waits for D1</td></tr>
-    <tr><td>F10</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
+    <tr><td>F10</td><td><span class="pill part">part</span></td><td>pending</td><td>coverage in review → coverage-free review command; wall-time comparison pending</td><td><code>frontend/package.json</code>; release coverage command added, release gate wiring pending</td></tr>
     <tr><td>F11</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
     <tr><td>F12</td><td><span class="pill open">open</span></td><td></td><td></td><td></td></tr>
   </tbody>
@@ -469,7 +469,8 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 </div>
 <h3>Findings and new ideas</h3>
 <ul>
-  <li>No entries yet.</li>
+  <li><b>F1 collection:</b> the first full collection failed on a moved proposal screenshot path; after correcting the path, Playwright listed 1,481 tests in 504 files. The static Dossier count of 1,317 was low by 164 tests. <code>results/playwright-list.txt</code> is the source.</li>
+  <li><b>F13 candidate:</b> add a collection-only preflight to review verification. One stale top-level fixture path otherwise aborts the entire 504-file run before a single test starts.</li>
 </ul>
 <h3>Rejected levers</h3>
 <ul>
