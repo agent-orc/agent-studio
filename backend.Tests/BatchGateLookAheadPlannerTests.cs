@@ -10,6 +10,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: planner and advisor receive explicit timestamps as pure inputs.
 public sealed class BatchGateLookAheadPlannerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 11, 12, 0, 0, TimeSpan.Zero);
@@ -47,7 +48,7 @@ public sealed class BatchGateLookAheadPlannerTests
     }
 
     [Fact]
-    public void Separate_overlap_reorders_eligible_cards()
+    public void Separate_overlap_excludes_cards_touching_the_same_file()
     {
         var plan = BatchGateLookAheadPlanner.Plan(Input(
             [Card("A", .05, "shared.cs"), Card("B", .05, "shared.cs"),
@@ -57,12 +58,23 @@ public sealed class BatchGateLookAheadPlannerTests
             CloseNow = true,
         });
         Assert.Equal("close", plan.Decision);
-        Assert.Equal(["A", "C", "B"], plan.ProposedMembers);
+        Assert.Equal(["A", "C"], plan.ProposedMembers);
 
         var adjacent = BatchGateLookAheadPlanner.Plan(Input(
             [Card("A", .05, "shared.cs"), Card("C", .05, "other.cs"),
                 Card("B", .05, "shared.cs")], []) with { CloseNow = true });
         Assert.Equal(["A", "B", "C"], adjacent.ProposedMembers);
+    }
+
+    [Fact]
+    public void Later_high_risk_card_is_excluded_from_a_low_risk_batch()
+    {
+        var plan = BatchGateLookAheadPlanner.Plan(Input(
+            [Card("A", .05), Card("B", .8), Card("C", .05)], [])
+            with { CloseNow = true });
+
+        Assert.Equal("close", plan.Decision);
+        Assert.Equal(["A", "C"], plan.ProposedMembers);
     }
 
     [Fact]
@@ -162,7 +174,7 @@ public sealed class BatchGateLookAheadPlannerTests
             CancellationToken ct = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
-            return CliOneShotResult.SpawnFailure("timeout", DateTime.UtcNow, DateTime.UtcNow);
+            return CliOneShotResult.SpawnFailure("timeout", Now.UtcDateTime, Now.UtcDateTime);
         }
     }
 
