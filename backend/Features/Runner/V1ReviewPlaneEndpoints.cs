@@ -804,7 +804,9 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            if (batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+            var batchDeferredAccepted = batchDeferred
+                && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
+            if (batchDeferredAccepted)
             {
                 request = request with
                 {
@@ -868,7 +870,7 @@ public static class V1ReviewPlaneEndpoints
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
             if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
-                && !(batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+                && !batchDeferredAccepted
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -1012,8 +1014,7 @@ public static class V1ReviewPlaneEndpoints
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
             string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
-                && task.State == TaskStates.AutoReview)
+            if (batchDeferredAccepted && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -1135,7 +1136,7 @@ public static class V1ReviewPlaneEndpoints
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
 
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (batchDeferredAccepted)
             {
                 EnqueueEvidenceProjection();
                 return Results.Ok(new Contract.ReviewReportDto(
