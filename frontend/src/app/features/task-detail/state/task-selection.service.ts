@@ -701,7 +701,8 @@ export class TaskSelectionService {
       this.selected.set({ ...detail,
         promptMarkdown: docs.prompt?.markdown ?? core.prompt.text ?? null,
         statusMarkdown: docs.status?.markdown ?? core.statusSummary.text ?? null,
-        summaryState: docs.status?.summaryState ?? null });
+        summaryState: docs.status?.summaryState ?? null,
+        summaryAssessment: docs.status?.assessment ?? null });
       this.detailPreview.set(null);
       if (this.resourceStates().documents.phase === 'loading')
         this.setResourceState('documents', 'ready', null);

@@ -1212,6 +1212,39 @@ export interface ContinueTaskQueuedInfo {
 
 // (TokenSummaryByModel now in features/tokens/models/tokens.model.ts; re-exported below)
 
+/** Outcome classes of the closing Result assessment (AGT-3046). */
+export type SummaryOutcome =
+  | 'delivered'
+  | 'delivered-via-operator-merge'
+  | 'parked-on-decision'
+  | 'failed'
+  | 'no-op';
+
+/** Two card signals that cannot both be read at face value. */
+export interface SummaryInconsistency {
+  kind: string;
+  signalA: string;
+  signalB: string;
+  explanation: string;
+  workMayBeLost: boolean;
+}
+
+/**
+ * `summary-assessment.json`, written next to status.md by the
+ * `post-summary-assessment` step and served with the status document.
+ */
+export interface SummaryAssessment {
+  version: number;
+  outcome: SummaryOutcome;
+  outcomeReason: string | null;
+  policyOutcome: SummaryOutcome;
+  source: 'model' | 'policy';
+  fallbackReason: string | null;
+  model: string | null;
+  generatedAt: string;
+  inconsistencies: SummaryInconsistency[];
+}
+
 export interface TaskSummaryState {
   status: TaskSummaryStatus;
   startedAt: string | null;
@@ -1328,6 +1361,8 @@ export interface TaskDetail {
   contextUsage: ContextUsageSnapshot | null;
   log: TaskLogEntry[];
   summaryState: TaskSummaryState | null;
+  /** Closing Result assessment for the current status.md; absent before one ran. */
+  summaryAssessment?: SummaryAssessment | null;
   /**
    * Task-level review evidence. Populated from
    * `<job>/results/review-evidence.jsonl`. Findings produced by security

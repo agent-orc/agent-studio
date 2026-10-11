@@ -109,13 +109,14 @@ public static class PipelineStepConfigResolver
 
     /// <summary>
     /// Whether an operator may disable this catalogue step. The core agent run
-    /// and Dossier contract are mandatory, and the pre-loop guard mirrors an
-    /// always-on safety circuit breaker, so none may expose an enable/disable
-    /// control.
+    /// and Dossier contract are mandatory, the Result summary owns status.md,
+    /// and the pre-loop guard mirrors an always-on safety circuit breaker, so
+    /// none may expose an enable/disable control.
     /// </summary>
     public static bool CanDisable(PipelineStep step)
         => step.Kind is not (StepKind.Core or StepKind.Analysis)
            && !string.Equals(step.Id, PipelineCatalogue.LoopGuardStepId, StringComparison.Ordinal)
+           && !string.Equals(step.Id, PipelineCatalogue.SummaryAssessmentStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.DossierMaintenanceStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.UiIterationArtifactStepId, StringComparison.Ordinal)
            && !string.Equals(step.Id, PipelineCatalogue.UiVisualCaptureStepId, StringComparison.Ordinal)

@@ -85,14 +85,14 @@ public class PipelineCatalogueTests
         Assert.Equal(StepKind.Core, p.Core[0].Kind);
         Assert.False(p.Core[0].Idempotent); // Core agent runs are not safe to re-run blindly.
 
-        // Post includes the deterministic review/build gates, seven named
+        // Post includes the closing Result summary assessment, the deterministic review/build gates, seven named
         // Quality Studio analyses, four aspects,
         // implemented tool steps (incl. the opt-in wiki-maintenance, wiki-learnings
         // distillation, and agents/wiki-sync steps), the deferred operator-triggered
         // "Merge into Develop" step and its integration-branch push twin, the
         // automatic code-review quality-grade step, the opt-in task-spawner step,
         // final orchestrator decision, and opt-in drift dimensions.
-        Assert.Equal(34, p.Post.Count);
+        Assert.Equal(35, p.Post.Count);
         var intervention = Assert.Single(p.Post.Where(step =>
             step.Id == PipelineCatalogue.FailureInterventionStepId));
         Assert.False(intervention.DefaultEnabled);
@@ -149,7 +149,8 @@ public class PipelineCatalogueTests
         // distinct steps and must carry DISTINCT display names so the Overview
         // never renders the same "Orchestrator-Review" twice.
         var p = PipelineCatalogue.Standard;
-        var review = p.Post[0];
+        Assert.Equal(PipelineCatalogue.SummaryAssessmentStepId, p.Post[0].Id);
+        var review = p.Post[1];
         Assert.Equal(PipelineCatalogue.OrchestratorReviewStepId, review.Id);
         Assert.Equal(PipelineCatalogue.PostCoreReviewDisplayName, review.DisplayName);
         Assert.Equal(StepKind.Orchestrator, review.Kind);
@@ -822,7 +823,7 @@ public class PipelineCatalogueTests
         Assert.Equal(PipelineCatalogue.PreOrchestratorPrepStepId, ro.Pre[3].Id);
         Assert.Equal(PipelineCatalogue.PreReissueOpenItemsStepId, ro.Pre[4].Id);
         Assert.Equal(
-            [PipelineCatalogue.OrchestratorReviewStepId, PipelineCatalogue.OrchestratorDecisionStepId],
+            [PipelineCatalogue.SummaryAssessmentStepId, PipelineCatalogue.OrchestratorReviewStepId, PipelineCatalogue.OrchestratorDecisionStepId],
             ro.Post.Select(step => step.Id));
 
         Assert.DoesNotContain(ro.AllSteps, step =>

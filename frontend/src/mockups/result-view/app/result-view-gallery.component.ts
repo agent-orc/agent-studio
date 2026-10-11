@@ -81,6 +81,49 @@ const CARDS: GalleryCard[] = [
     ),
     verdict: verdict({ duration: '11 min' }),
   },
+  {
+    heading: 'assessment - AGT-2798 contradicting signals (AGT-3046)',
+    detail: {
+      ...detail(
+        `# Status\n\n- Result: NeedsInput\n- Case: blocked\n- Duration: 49 min\n- Files: 6\n\n## Overview\n- Problem: The North star Dossier was outdated.\n- Solution: Rewrote it; two operator decisions stay open.\n`,
+        { taskType: 'planning', mode: 'concept', commits: [], codeActivityDetected: false },
+      ),
+      summaryAssessment: {
+        version: 1,
+        outcome: 'delivered-via-operator-merge',
+        outcomeReason: 'No card commit carries the work; operator merge `5d480157f` on `main` delivered it.',
+        policyOutcome: 'delivered-via-operator-merge',
+        source: 'policy',
+        fallbackReason: null,
+        model: 'claude-opus-5-5',
+        generatedAt: '2026-10-11T12:00:00Z',
+        inconsistencies: [
+          {
+            kind: 'files-vs-no-code',
+            signalA: 'status.md header: Files: 6',
+            signalB: 'commit chain is empty and no code activity was detected ("no code change")',
+            explanation: 'The run\'s changes did not land as card commits. Operator merge `5d480157f` on `main` carried them (salvage commit `7aa00e27f`). The file count describes that work; "no code change" is a commit-attribution gap, not lost work.',
+            workMayBeLost: false,
+          },
+          {
+            kind: 'failure-vs-completed',
+            signalA: 'Pipeline failure: `post-integrate-merge` failed (run parked on NeedsInput; no publishable delivery commit)',
+            signalB: 'lane `6-completed` with completion claim `operator-override`',
+            explanation: 'The automated run did not finish delivery; the card was completed afterwards through operator merge `5d480157f` on `main` (salvage commit `7aa00e27f`).',
+            workMayBeLost: false,
+          },
+          {
+            kind: 'salvage-not-integrated',
+            signalA: 'salvage commit `0badc0de1` (illustrative possible-loss row)',
+            signalB: 'no card commit and no integration record',
+            explanation: 'Nothing on the card integrates it, so it is not on the delivery branch.',
+            workMayBeLost: true,
+          },
+        ],
+      },
+    } as TaskDetail,
+    verdict: verdict({ kind: 'problem', status: 'failed', label: 'Pipeline failure', emoji: '🔴', duration: '49 min' }),
+  },
 ];
 
 @Component({

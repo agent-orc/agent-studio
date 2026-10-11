@@ -87,8 +87,8 @@ test.describe('@mockup result-view (real component)', () => {
 
       const gallery = page.getByTestId('result-view-gallery');
       await expect(gallery).toBeVisible();
-      // All four case cards render.
-      await expect(page.getByTestId('gallery-card')).toHaveCount(4);
+      // All four case cards render, plus the AGT-3046 assessment card.
+      await expect(page.getByTestId('gallery-card')).toHaveCount(5);
       // The compact summary keeps outcome emphasis and renders quiet stats.
       await expect(page.getByTestId('result-case-dot').first()).toBeVisible();
       await expect(page.getByTestId('result-metric-files').first()).toBeVisible();
@@ -111,6 +111,38 @@ test.describe('@mockup result-view (real component)', () => {
         path: path.join(RESULTS_DIR, `result-view-${theme}--mocked.png`),
         fullPage: true,
       });
+    });
+  }
+
+  for (const theme of ['dark', 'light'] as const) {
+    test(`renders assessment inconsistencies under the verdict in the ${theme} theme`, async ({ page }) => {
+      await page.setViewportSize({ width: 860, height: 900 });
+      await page.goto(baseUrl);
+      await stampTheme(page, theme);
+
+      const card = page.getByTestId('gallery-card').nth(4);
+      const block = card.getByTestId('result-inconsistencies');
+      await expect(block).toBeVisible();
+      // Only the assessment card carries the block; clean cards render none.
+      await expect(page.getByTestId('result-inconsistencies')).toHaveCount(1);
+      await expect(card.getByTestId('result-inconsistency')).toHaveCount(3);
+      await expect(card.getByTestId('result-assessment-outcome')).toContainText('delivered via operator merge');
+      await expect(card.getByTestId('result-inconsistency-explanation').first()).toContainText('5d480157f');
+
+      // Directly under the verdict head, and no left accent bar (R1).
+      const placement = await block.evaluate((element) => ({
+        afterHead: element.previousElementSibling?.classList.contains('result__head') ?? false,
+        borderLeft: getComputedStyle(element).borderLeftWidth,
+        borderRight: getComputedStyle(element).borderRightWidth,
+      }));
+      expect(placement.afterHead).toBe(true);
+      expect(placement.borderLeft).toBe(placement.borderRight);
+
+      const badges = card.getByTestId('result-inconsistency-loss');
+      await expect(badges.nth(2)).toHaveAttribute('data-tone', 'problem');
+      await expect(badges.nth(0)).toHaveAttribute('data-tone', 'neutral');
+
+      await card.screenshot({ path: path.join(RESULTS_DIR, `result-assessment-inconsistencies-${theme}--mocked.png`) });
     });
   }
 

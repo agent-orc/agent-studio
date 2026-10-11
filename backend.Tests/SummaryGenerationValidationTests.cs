@@ -160,7 +160,7 @@ public sealed class SummaryGenerationValidationTests : IDisposable
 
     private string ReadSummary() => File.ReadAllText(Path.Combine(_root, "status.md")).Replace("\r\n", "\n").Trim();
 
-    private PipelineStepExecution SummaryStep() => Assert.Single(_pipeline.Read(_root)!.Steps, step => step.StepId == "summary");
+    private PipelineStepExecution SummaryStep() => Assert.Single(_pipeline.Read(_root)!.Steps, step => step.StepId == PipelineCatalogue.SummaryAssessmentStepId);
 
     private bool[] UsageOutcomes() => File.ReadAllLines(Path.Combine(_root, AdHocUsageRecorder.LogFileName))
         .Select(line => System.Text.Json.JsonSerializer.Deserialize<AdHocUsageRecord>(line,
