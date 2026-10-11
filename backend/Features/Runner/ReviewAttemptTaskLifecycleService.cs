@@ -213,7 +213,7 @@ public sealed class ReviewAttemptTaskLifecycleService
     /// </summary>
     public IReadOnlyList<ReviewAttemptDto> ReplanQueuedReviewAttempts(
         string projectName,
-        Func<TaskInfo, AgentStudio.TaskServer.Contracts.ReviewPlanDto?> buildPlan)
+        Func<TaskInfo, ReviewAttemptDto, AgentStudio.TaskServer.Contracts.ReviewPlanDto?> buildPlan)
     {
         ArgumentNullException.ThrowIfNull(buildPlan);
 
@@ -227,7 +227,7 @@ public sealed class ReviewAttemptTaskLifecycleService
                     || !string.Equals(task.ProjectName, projectName, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var plan = buildPlan(task);
+                var plan = buildPlan(task, review);
                 if (plan is null) continue;
 
                 var result = _authority.ReplanPendingReview(review.AttemptId, plan);
@@ -252,6 +252,11 @@ public sealed class ReviewAttemptTaskLifecycleService
             return replanned;
         }
     }
+
+    public IReadOnlyList<ReviewAttemptDto> ReplanQueuedReviewAttempts(
+        string projectName,
+        Func<TaskInfo, AgentStudio.TaskServer.Contracts.ReviewPlanDto?> buildPlan)
+        => ReplanQueuedReviewAttempts(projectName, (task, _) => buildPlan(task));
 
     /// <summary>
     /// Applies the same card-state guard to the attempt-addressed compatibility

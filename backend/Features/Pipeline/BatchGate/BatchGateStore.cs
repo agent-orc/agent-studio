@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 
 namespace AgentStudio.Pipeline;
 
@@ -75,6 +76,65 @@ public sealed class BatchGateStore
 
     public string BatchDirectory(string batchId)
         => Path.Combine(_root, SafeName(batchId));
+
+    public void AppendPlanDecision(string project, BatchPlanDecision decision)
+    {
+        var folder = Path.Combine(_root, "plans");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, SafeName(project) + ".jsonl");
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+        JsonSerializer.Serialize(stream, decision, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        stream.WriteByte((byte)'\n');
+        stream.Flush(flushToDisk: true);
+        var latest = Path.Combine(folder, SafeName(project) + ".latest.json");
+        var temporary = latest + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(file, decision, Json);
+            file.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, latest, overwrite: true);
+    }
+
+    public BatchPlanDecision? LatestPlanDecision(string project)
+    {
+        var path = Path.Combine(_root, "plans", SafeName(project) + ".latest.json");
+        if (!File.Exists(path)) return null;
+        return Read<BatchPlanDecision>(path);
+    }
+
+    public void RequestCloseNow(string project)
+    {
+        var folder = Path.Combine(_root, "requests");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, SafeName(project) + ".close"),
+            DateTimeOffset.UtcNow.ToString("O"));
+    }
+
+    public bool HasCloseNow(string project)
+        => File.Exists(Path.Combine(_root, "requests", SafeName(project) + ".close"));
+
+    public void ClearCloseNow(string project)
+    {
+        var path = Path.Combine(_root, "requests", SafeName(project) + ".close");
+        if (File.Exists(path)) File.Delete(path);
+    }
+
+    public void RequestEject(string project, string taskKey)
+    {
+        var folder = Path.Combine(_root, "requests", "eject", SafeName(project));
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, SafeName(taskKey)), DateTimeOffset.UtcNow.ToString("O"));
+    }
+
+    public bool HasEject(string project, string taskKey)
+        => File.Exists(Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey)));
+
+    public void ClearEject(string project, string taskKey)
+        => File.Delete(Path.Combine(_root, "requests", "eject", SafeName(project), SafeName(taskKey)));
+
+    public void RecordAdvice(string batchId, BatchAdvisorView advice)
+        => WriteOnce(Path.Combine(BatchDirectory(batchId), "advisor.json"), advice);
 
     public BatchGatePendingRecord Enqueue(BatchGatePendingRecord pending)
     {
