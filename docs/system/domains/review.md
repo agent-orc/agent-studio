@@ -763,6 +763,8 @@ summary as review artifacts. The summary records test count, summed and wall
 time, per-class totals, the slowest 50 tests, retry status, and host load and
 active test-process count sampled when the report is captured. A missing or
 malformed TRX is logged and does not change the test verdict.
+Only report files within the review attempt are read; linked paths are rejected.
+Each retained JSON or compressed TRX artifact is capped at 6 MiB.
 
 Both gates run for every review of this repository, not only for deliveries that
 touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
