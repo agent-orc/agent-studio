@@ -615,12 +615,20 @@ both apply the same `BranchRetentionPolicy` and share `GitRetention:Enabled` as 
 settings gate. It is wired into three lifecycle points, always after the transition
 lands and never blocking it on failure:
 
-1. **After integration.** `AcceptedIntegrationWorker.FinalizeAcceptedTaskAsync` calls
-   `ReclaimAfterIntegration` once a merge into the project's integration branch
-   succeeds (`MergeIntoIntegrationResult.Outcome.IsSuccessfulIntegration()`). It never
-   runs on a failed or skipped merge, and never for the branchless-delivery path
-   (`FinalizeBranchlessTaskAsync`, which has no ref to reclaim). It evaluates the
-   task's `task/*`, `runner/*`, and `delivery/*` refs.
+1. **After integration.** `RemoteDeliveryIntegrationCoordinator.IntegrateAndRecordAsync`
+   calls `ReclaimAfterIntegration` once the pre-Human-Review merge into the project's
+   integration branch succeeds (`MergeIntoIntegrationResult.Outcome.IsSuccessfulIntegration()`).
+   This is the merge every current Remote delivery actually takes (driven from
+   `V1ReviewPlaneEndpoints`, `BatchGatePilotService`, and
+   `AutoReviewDeliveryResumeService`, all of which integrate through the same
+   `RemoteDeliveryIntegrationCoordinator.EnqueueAsync`). It never runs on a failed,
+   skipped, or still-pending-agent-round merge. It evaluates the task's `task/*`,
+   `runner/*`, and `delivery/*` refs.
+   `AcceptedIntegrationWorker.FinalizeAcceptedTaskAsync` calls the same
+   `ReclaimAfterIntegration` as a redundant safety net on its own landed merge, but
+   that worker only replays acceptance transactions a now-retired backend version
+   already queued; new deliveries never enqueue work there, so it is not the trigger
+   that matters for current traffic.
 2. **When a card is archived.** `TaskTransitionService.MoveAsync` calls
    `ReclaimAfterArchive` once the move to `7-archive` lands successfully. It evaluates
    the same task/runner/delivery namespace plus this task's salvage and quarantine

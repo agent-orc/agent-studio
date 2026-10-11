@@ -173,7 +173,11 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     /// failed or skipped merge, and never for <see cref="FinalizeBranchlessTaskAsync"/>
     /// which has no delivery branch to reclaim. Best-effort: failures are
     /// logged by <see cref="BranchReclaimTriggerService"/> and never affect
-    /// the already-landed transition.
+    /// the already-landed transition. This path only replays transactions a
+    /// now-retired backend version queued (see the type doc comment); the
+    /// primary trigger for current traffic is
+    /// <c>RemoteDeliveryIntegration.TriggerBranchReclaim</c> on the
+    /// pre-Human-Review merge every live delivery actually takes.
     /// </summary>
     private void TriggerBranchReclaim(AcceptedIntegrationRequest request, TaskInfo job)
     {

@@ -1,5 +1,6 @@
 using AgentStudio.Shared;
 using AgentStudio.Runner;
+using AgentStudio.Git;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Pipeline;
@@ -185,7 +186,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         TimelineLog timeline,
         IntegrationAgentRoundService agentRounds,
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
-        AttemptAuthorityService authority)
+        AttemptAuthorityService authority,
+        GitService? git = null,
+        BranchReclaimTriggerService? branchReclaim = null)
         : this(
             request => IntegrateAndRecordAsync(
                 request,
@@ -193,6 +196,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 scanner,
                 provenance,
                 timeline,
+                git,
+                branchReclaim,
                 request.ReviewAttemptId is { } reviewAttemptId
                     ? apply => authority.TryApplyForCurrentReview(reviewAttemptId, apply)
                     : null),
@@ -490,6 +495,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         TaskScannerService scanner,
         TaskProvenanceService provenance,
         TimelineLog timeline,
+        GitService? git,
+        BranchReclaimTriggerService? branchReclaim,
         Func<Action, bool>? publicationFence)
     {
         // The start row pairs with the outcome row below, so the integration
@@ -547,7 +554,36 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                 ["detail"] = result.Error ?? string.Empty,
                 ["stage"] = PreHumanReviewStage,
             });
+
+        if (success) TriggerBranchReclaim(request, job, git, branchReclaim);
         return result;
+    }
+
+    /// <summary>
+    /// Fires after the live pre-Human-Review merge (this is the path every
+    /// current Remote delivery integrates through; <see
+    /// cref="AgentStudio.Pipeline.AcceptedIntegrationWorker"/> only replays
+    /// transactions a now-retired backend version queued and sees no new
+    /// traffic). Best-effort: failures are logged by
+    /// <see cref="BranchReclaimTriggerService"/> and never affect the
+    /// already-landed integration.
+    /// </summary>
+    private static void TriggerBranchReclaim(
+        RemoteDeliveryIntegrationRequest request,
+        TaskInfo job,
+        GitService? git,
+        BranchReclaimTriggerService? branchReclaim)
+    {
+        if (git is null || branchReclaim is null) return;
+        var repoPath = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (string.IsNullOrWhiteSpace(repoPath)) return;
+        var taskKey = !string.IsNullOrWhiteSpace(job.Key)
+            ? job.Key!
+            : !string.IsNullOrWhiteSpace(job.TaskKey)
+                ? job.TaskKey
+                : job.Id;
+        branchReclaim.ReclaimAfterIntegration(
+            request.Project, repoPath, taskKey, request.IntegrationBranch, job.FolderPath);
     }
 
     private static void RecordPreReviewFailure(
