@@ -46,3 +46,11 @@ export interface BatchGateState {
   }[];
   members: Record<string, { status: BatchMemberStatus; batchId?: string; phase?: string; position?: number; size?: number }>;
 }
+
+export function batchMemberFor(state: BatchGateState | null, ...keys: (string | null | undefined)[]) {
+  if (!state) return null;
+  for (const key of keys) {
+    if (key && state.members[key]) return state.members[key];
+  }
+  return null;
+}

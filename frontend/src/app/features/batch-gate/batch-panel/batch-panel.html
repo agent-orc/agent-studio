@@ -2,7 +2,7 @@
 <aside class="batch-panel" role="dialog" aria-modal="true" aria-labelledby="batch-panel-title" data-testid="batch-panel">
   <header class="batch-panel__header">
     <div><h2 id="batch-panel-title">Batch verification</h2><p>{{ project() }}</p></div>
-    <button type="button" aria-label="Close batch panel" autofocus (click)="close()">Close</button>
+    <button #closeButton type="button" aria-label="Close batch panel" (click)="close()">Close</button>
   </header>
   <div class="batch-panel__body">
     @if (error(); as message) { <p class="batch-panel__error" role="alert">{{ message }} <button type="button" (click)="gate.refresh(project())">Retry</button></p> }
@@ -13,7 +13,7 @@
         <p>Target {{ data.plan.targetSize }} · Closes {{ data.plan.closeAtUtc ? date(data.plan.closeAtUtc) : 'when ready' }}</p>
         <p>Proposed: {{ data.plan.proposedMembers.length ? data.plan.proposedMembers.join(', ') : 'No members yet' }}</p>
         @if (data.plan.decision !== 'disabled') {
-          <button type="button" data-testid="batch-close-now" (click)="confirm.set('close')">Close batch now</button>
+          <button type="button" data-testid="batch-close-now" (click)="showConfirm('close')">Close batch now</button>
         }
       </section>
       <section aria-labelledby="batch-upcoming-title">
@@ -39,7 +39,7 @@
           <ul>@for (item of data.pending; track item.taskKey) {
             <li class="batch-panel__row"><span><strong>{{ item.taskKey }}</strong> · {{ item.waitMinutes }} min · {{ item.risk }} risk
               @if (item.exclusion) { · {{ item.exclusion }} }</span>
-              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="confirm.set(item.taskKey)">Eject</button>
+              <button type="button" [attr.aria-label]="'Eject ' + item.taskKey" (click)="showConfirm(item.taskKey)">Eject</button>
             </li>
           }</ul>
         } @else { <p>No cards are waiting for a batch.</p> }
@@ -53,6 +53,7 @@
               <p class="batch-panel__timeline" aria-label="Batch phases">@for (phase of phases; track phase) {
                 <span [class.batch-panel__phase-current]="batch.phase === phase">{{ phaseLabel(phase) }}</span>
               }</p>
+              @if (!phases.includes(batch.phase)) { <p>Phase: {{ batch.phase }}</p> }
               <p><strong>{{ batch.phase }}</strong>@if (batch.phaseReason) { · {{ batch.phaseReason }} }</p>
               <p>Members: @for (member of batch.members; track member.taskKey) { <span>{{ member.taskKey }} ({{ member.replay }}{{ member.released ? ', released' : '' }}) </span> }</p>
               <p>Base {{ batch.baseSha }} · Candidate {{ batch.candidateSha ?? 'not created' }}
@@ -74,7 +75,7 @@
     <div class="batch-panel__confirm" role="group" aria-label="Confirm batch action" data-testid="batch-confirm">
       <p>{{ target === 'close' ? 'Close the current batch now?' : 'Eject ' + target + ' from the batch?' }}</p>
       @if (actionError()) { <p role="alert">{{ actionError() }}</p> }
-      <button type="button" [disabled]="busy()" (click)="act()">Confirm</button>
+      <button #confirmButton type="button" [disabled]="busy()" (click)="act()">Confirm</button>
       <button type="button" [disabled]="busy()" (click)="confirm.set(null)">Cancel</button>
     </div>
   }
