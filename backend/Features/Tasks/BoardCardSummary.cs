@@ -198,7 +198,7 @@ internal static class BoardCardSummary
             {
                 question = Short(decision.Question, 120),
                 decision.Status, decision.Decider, decision.DecidedBy,
-                decision.DueDate, decision.Dependants,
+                decision.DueDate,
             };
         if (job.OlderBriefDelivery is { } olderBrief)
             fields["olderBriefDelivery"] = new { olderBrief.Status };
@@ -222,7 +222,12 @@ internal static class BoardCardSummary
         Add(fields, "summaryState", job.SummaryState);
         if (job.PostProcessingChecks.FirstOrDefault(check => check.Status == "running") is { } runningCheck)
             fields["postProcessingChecks"] = new[] { new { runningCheck.Name, runningCheck.Status } };
-        Add(fields, "references", job.References);
+        if (!job.References.IsEmpty)
+            fields["references"] = new
+            {
+                dependsOn = job.References.DependsOn,
+                raisedFollowUps = job.References.RaisedFollowUps.Take(1).ToArray(),
+            };
         if (job.WaitsOn is { } waits)
             fields["waitsOn"] = new
             {
