@@ -209,6 +209,7 @@ test.describe('Card running cue follows lane, not stale execution', () => {
 
       // Sanity re-assert in this theme: progress shows the cue, auto-review does not.
       await expect(cardByTitle(page, PROGRESS_TASK.title)).toHaveAttribute('data-running', 'true');
+      await expect(cardByTitle(page, AUTO_REVIEW_TASK.title)).not.toHaveAttribute('data-running', 'true');
       await expect(cardByTitle(page, AUTO_REVIEW_TASK.title).locator('.task-card__execution-pill--running')).toHaveCount(0);
 
       const buf = await page.screenshot({ fullPage: false });
