@@ -31,6 +31,7 @@ export PW_BASE_URL="http://127.0.0.1:${PW_E2E_FRONTEND_PORT}"
 export PW_BACKEND_URL="http://127.0.0.1:${PW_E2E_BACKEND_PORT}"
 export DEV_PORT="${PW_E2E_BACKEND_PORT}"
 export PW_PREBUILT=1
+export PW_E2E_TEST_START_MS="$(node -p 'Date.now()')"
 
 cd "${FRONTEND_ROOT}"
 node ./node_modules/@playwright/test/cli.js test "$@"

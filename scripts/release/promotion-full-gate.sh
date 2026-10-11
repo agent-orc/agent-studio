@@ -81,8 +81,8 @@ run_at "$repo/frontend" 'Frontend lint' \
   npm run lint:ci
 run_at "$repo/frontend" 'Frontend type-check' \
   npm run typecheck
-run_at "$repo/frontend" 'Frontend unit tests' \
-  npm run test:ci
+run_at "$repo/frontend" 'Frontend unit tests with coverage' \
+  npm run test:release
 run_at "$repo/frontend" 'Frontend production build' \
   npm run build
 
