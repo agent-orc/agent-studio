@@ -86,7 +86,6 @@
               "sourceMap": true
             },
             "unit-test": {
-              "browser": "src/test-main.ts",
               "assets": [],
               "styles": [],
               "optimization": false,
@@ -129,6 +128,11 @@
             "runner": "vitest",
             "runnerConfig": "vitest.config.ts",
             "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts"]
+          },
+          "configurations": {
+            "release": {
+              "runnerConfig": "vitest.release.config.ts"
+            }
           }
         }
       }
