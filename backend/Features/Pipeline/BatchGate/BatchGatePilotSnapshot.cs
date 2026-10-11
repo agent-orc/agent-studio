@@ -13,7 +13,8 @@ public sealed record BatchGatePilotSnapshot(
     double? ConstructionEjectionRate, double FullSuiteHostMinutes,
     decimal? GateCostUsd, int StaleAttemptPasses,
     int MissingShaMappings, int UntestedPublishShas,
-    int FalseCompletedCards, bool CorrectnessFloorMet);
+    int FalseCompletedCards, bool CorrectnessFloorMet,
+    int IntegrationBranchRedBatches = 0);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -94,7 +95,9 @@ public static class BatchGatePilotSnapshotReader
             Ratio(ejected, attempted), hostMinutes, null,
             stale + staleReleasedCards, missingMappings, untested, falseCompletedCards,
             stale + staleReleasedCards == 0 && missingMappings == 0 && untested == 0
-            && falseCompletedCards == 0);
+            && falseCompletedCards == 0,
+            all.Count(item => store.LatestState(item.BatchId) is
+                { Phase: BatchPhase.Paused, Reason: "integration-branch-red" }));
     }
 
     private static double? Ratio(double numerator, double denominator)

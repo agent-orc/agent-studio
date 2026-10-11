@@ -553,6 +553,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         using var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 1);
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
+        settings.SetBuildProfile(ProjectName, new BuildProfile { BuildCmds = ["cd ."] });
         var member = SeedMember(factory, "DOC-BASE-RED", "docs/base-red.md");
         _gate.Batch = request =>
         {
@@ -566,7 +568,6 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         };
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
         var validatedBefore = settings.Get(ProjectName).BuildProfile.LastValidatedAt;
 
         await pilot.TickAsync(CancellationToken.None);
@@ -592,6 +593,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Single(store.ListPending());
         Assert.Single(store.ListManifests());
         Assert.Contains("integration-branch-red", JsonSerializer.Serialize(pilot.State(ProjectName)));
+        Assert.Equal(1, pilot.Report(ProjectName).IntegrationBranchRedBatches);
 
         var previousBase = RemoteTip();
         Git(_repo, "checkout", "-q", "--detach", previousBase);
