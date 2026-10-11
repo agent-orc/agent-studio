@@ -124,7 +124,8 @@ public class TaskStateMachine
         string? transitionDetail = null,
         DecisionReopenPermit? decisionReopenPermit = null,
         bool archiveOverride = false,
-        bool archiveOverrideRollback = false)
+        bool archiveOverrideRollback = false,
+        bool historicalAcceptanceRepair = false)
     {
         if (!TaskStates.All.Contains(targetState))
             return new MoveJobOutcome(MoveJobStatus.Failure, $"Invalid state: {targetState}");
@@ -178,12 +179,21 @@ public class TaskStateMachine
             return new MoveJobOutcome(MoveJobStatus.Failure,
                 "Archive override rollback is valid only from Archive to Completed.");
 
+        if (historicalAcceptanceRepair && (recheck.State != TaskStates.HumanReview
+            || targetState != TaskStates.Completed
+            || recheck.CompletionClaim?.Basis != CompletionClaimBases.OperatorOverride
+            || !CompletionContractPolicy.IsUsableReason(recheck.CompletionClaim?.Reason?.Trim())
+            || !string.Equals(_integrationStatus?.ReadLatestMergeStep(recheck)?.Verdict,
+                "operator-override", StringComparison.OrdinalIgnoreCase)))
+            return new MoveJobOutcome(MoveJobStatus.Failure,
+                "Historical acceptance repair requires a written operator override on a Human Review card.");
+
         if (_guardedDelivery && _integrationStatus is not null && !archiveOverrideRollback)
         {
             var status = _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
                 AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
-            if (!admission.Allowed)
+            if (!admission.Allowed && !historicalAcceptanceRepair)
             {
                 if (recheck.State == TaskStates.AutoReview && targetState == TaskStates.HumanReview)
                 {
@@ -195,14 +205,9 @@ public class TaskStateMachine
             }
             if (targetState == TaskStates.Archive && !archiveOverride
                 && AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck)
-                && recheck.CompletionClaim is not { Basis: CompletionClaimBases.IntegratedDelivery })
-                return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
-                    "The card has no accepted delivery epoch and result SHA. Complete human review before archiving.");
-            if (targetState == TaskStates.Archive && !archiveOverride
-                && recheck.CompletionClaim is { Basis: CompletionClaimBases.IntegratedDelivery }
                 && DeliveryLanePolicy.IsAcceptedDeliveryStale(recheck, status))
                 return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
-                    "The accepted delivery or target branch changed after human review. Reintegrate and review the current delivery.");
+                    "The accepted delivery changed or is no longer integrated. Reintegrate and review the current delivery.");
             if (archiveOverride && (recheck.State != TaskStates.Completed
                 || targetState != TaskStates.Archive
                 || !TimelineActors.IsHuman(cause)
