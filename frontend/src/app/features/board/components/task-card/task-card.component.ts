@@ -337,14 +337,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     this.job().state === TaskState.Progress ? this.job().autoLoop ?? null : null);
   readonly currentQuotaWait = computed(() =>
     this.job().state === TaskState.Progress ? this.job().quotaWait ?? null : null);
-  /**
-   * Card-level "code review running" flag. Reads the shared
-   * {@link CodeReviewActivityStore} singleton the detail-pane panel marks
-   * while a user-triggered review is in flight, so the operator sees the
-   * pass progressing on the board even after navigating away from the task
-   * (the user's "Progress an die Karte" requirement). Ephemeral: clears when
-   * the synchronous review call resolves.
-   */
+  /** Show a user-triggered review running after leaving the detail pane. */
   readonly codeReviewRunning = computed(() => {
     const job = this.job();
     return this.codeReviewActivity.isRunning(
@@ -430,19 +423,10 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly isRunning = computed(() =>
     this.job().state === TaskState.Progress && isTaskRunActive(this.job()));
   readonly stalledState = computed(() => deriveStalledTaskState(this.job(), nowTick()));
-  /**
-   * DtC step 6 CooldownRetry banner. Non-null only while a 3-progress card is
-   * holding out its infra-crash re-pickup backoff (`runActivity.failed-backoff`);
-   * renders distinctly from the "Running live" chip. Reads the shared `taskCardNow`
-   * so the "in Ns" countdown refreshes with every relative-time tick / poll.
-   * See {@link buildCooldownRetryBanner}.
-   */
+  /** Show the retry countdown for a progress card in failed backoff. */
   readonly cooldownBanner = computed(() => buildCooldownRetryBanner(this.job(), taskCardNow()));
 
-  /**
-   * AGT-2029 waits-on dependency chip from the backend-computed `waitsOn`
-   * status (fulfilled/open per target, blocked, cycle). Null when no deps.
-   */
+  /** Show the backend-computed dependency state when this card waits. */
   readonly dependencyChip = computed(() => buildVisibleDependencyChip(this.job()));
   readonly providerAuthWait = computed(() => this.providerAuthStatus.loaded()
     ? modelCliVersionWaitReason(this.job(), this.providerAuthStatus.capabilitySnapshots())
