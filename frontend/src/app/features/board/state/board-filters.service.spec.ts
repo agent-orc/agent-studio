@@ -89,23 +89,19 @@ describe('BoardFiltersService project selection', () => {
     expect(g.archive.length).toBe(3);
   });
 
-  it('loads full dependency keys only for overflow cards when the dependency filter is active', () => {
+  it('filters overflow dependencies from summary keys across board refreshes without detail reads', () => {
     const card = {
       ...makeJob('many-edges', 'Agent Task Processor', '2-ready'),
-      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnCount: 20,
+      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'], dependsOnCount: 20,
         relatedTo: [], blockedBy: [], supersedes: [] },
     } as TaskInfo;
     jobs.grouped.set(makeGrouped([card]));
     svc.activeDependsOnFilter.set('AGT-20');
-    expect(svc.filteredGrouped().ready).toHaveLength(0);
-
-    TestBed.tick();
-    const http = TestBed.inject(HttpTestingController);
-    http.expectOne(request => request.url.includes('/tasks/many-edges')).flush({
-      info: { ...card, references: { ...card.references,
-        dependsOn: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'] } },
-    });
     expect(svc.filteredGrouped().ready).toEqual([card]);
+    const refreshed = { ...card, references: { ...card.references } };
+    jobs.grouped.set(makeGrouped([refreshed]));
+    expect(svc.filteredGrouped().ready).toEqual([refreshed]);
+    const http = TestBed.inject(HttpTestingController);
     http.verify();
   });
 

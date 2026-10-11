@@ -312,6 +312,8 @@ export interface TaskReferences {
   dependsOn: TaskDependency[];
   /** Total dependency count when a board card carries only the first three edges. */
   dependsOnCount?: number;
+  /** Complete keys for board filtering; detailed edges remain capped on cards. */
+  dependsOnKeys?: string[];
   relatedTo: string[];
   blockedBy: string[];
   supersedes: string[];

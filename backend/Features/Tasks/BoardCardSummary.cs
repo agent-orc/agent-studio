@@ -229,6 +229,7 @@ internal static class BoardCardSummary
             fields["references"] = new
             {
                 dependsOnCount = job.References.DependsOn.Count,
+                dependsOnKeys = job.References.DependsOn.Select(dependency => dependency.Key).ToArray(),
                 dependsOn = job.References.DependsOn.Take(3).ToArray(),
                 raisedFollowUps = job.References.RaisedFollowUps.Take(1).ToArray(),
             };
