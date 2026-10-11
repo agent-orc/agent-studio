@@ -4,7 +4,7 @@
   "title": "Test acceleration",
   "summary": "Shared reference for making Agent Studio\u0027s tests and the code behind them massively faster. Measured baseline of 2026-10-11 (one review verification 131 min, backend suite 85-93 min, 4 percent of tests carry 97 percent of test time, contention from six parallel suites, inert parallelism flag, full-suite reruns; Playwright on one worker with 365 fixed sleeps and compiled servers), slow tests as a signal of slow code, a layered frontend test strategy, a lever catalogue P1-P6, B1-B10, F1-F12, targets, open decisions D1-D2 and the live reports of the backend track AGT-3049 and the frontend track AGT-3050.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "testing",
   "pattern": "architecture",
   "updatedAt": "2026-10-11T11:30:00Z",
