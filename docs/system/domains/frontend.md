@@ -104,6 +104,11 @@ schema, transient-state boundary,
 route map, and visual ownership diagram are in
 [Studio Route Restoration](../../concepts/studio-route-restoration.md).
 
+The status-bar Feed and left-rail Activity controls focus the same workspace
+feed tab at `#/feed`. Its active state follows the selected tab, and opening it
+marks workspace alerts seen. Project Hub feed entries and
+`#/project/<slug>/feed` retain their project-scoped overlay behavior.
+
 ### Editor tab reuse policy
 
 `StudioTabStateService.open` accepts an explicit reuse policy. `new` opens or
