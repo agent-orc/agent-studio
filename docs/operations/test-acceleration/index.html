@@ -424,6 +424,18 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
   <h4>D1 · Selection by changed files at review time (P5, F9) — decided 2026-10-11</h4>
   <p>Robert decided to put batch verification live now ("Das Konzept jetzt umsetzen und direkt deployen"). Per card, the review runs the model review, the build and the tests selected for the changed files and areas; the full suites run once per batch on the combined candidate and before every release. Implementation: AGT-3052 (backend, look-ahead planner, LLM batch advisor) and AGT-3053 (UI and settings). Until it is deployed, deliveries are integrated through an operator fast path that imitates it: independent model review per card, affected tests on the merge result with develop, one merge per card.</p>
 </div>
+<div class="box">
+  <h4>Rollout of batch verification on Agent Studio (after AGT-3052 is deployed)</h4>
+  <ol>
+    <li>Quiet window: no promotion gate running, Dev checkout clean and without <code>index.lock</code> (the batch publication fast-forwards the checkout that holds develop).</li>
+    <li>List the review attempts of the cards in 4-auto-review: pending ones are replanned by the settings PUT; leased ones keep their full-suite plans and integrate per card; the five attempts stopped on 2026-10-11 (workers killed) are re-created so they get the cheaper per-card plan.</li>
+    <li><code>PUT /api/projects/Agent%20Studio/batch-gate</code> with <code>enabled: true, scope: code, planner: look-ahead, minimumSize: 2, maximumSize: 4, overlap: separate, reviewTestLevel: work-package, gateTimeoutMinutes: 150, advisor.mode: advise</code>.</li>
+    <li>Watch <code>/state</code>, <code>/report</code> and the board panel for the first two batches: published SHA equals the verified remote SHA, every member carries a batch integration record, red batches halve to the culprit.</li>
+    <li>Record real batch pass rates in the report; they replace the D10 proxies (per-card gate green 57.9 %, four-card proxy 32.4 %). Raise <code>maximumSize</code> towards 6 and switch the advisor to enforce only when the pass rate supports it.</li>
+    <li>Rollback: <code>enabled: false</code> or <code>scope: documentation</code>; the running batch is abandoned and members fall back to the per-task gate on the same immutable SHA.</li>
+  </ol>
+  <p>Until then the review plane runs with three parallel reviews instead of six (Stable <code>AutoReviewQueueAdaptiveParallelism</code>, baseline 3, no raise), because six concurrent full suites on 12 cores slowed each other down (§1, quiet-host reference points). The planner and advisor move into the Orchestrator Engine with the engine programme (AGT-3055 after AGT-3059, decision D14).</p>
+</div>
 <div class="box warn">
   <h4>D2 · Production bundle for end-to-end tests (F2)</h4>
   <p>Option A: e2e runs against the production build (what users get, fastest to serve; development-only helpers are unavailable). Option B: a dedicated e2e build configuration (production optimisation plus test hooks). Recommendation: B if specs rely on development helpers, otherwise A.</p>
