@@ -606,7 +606,7 @@ public sealed class GitStateIndexServiceTests : IDisposable
         var cache = new TaskListGitProjectionCache();
         var builder = new FakeBuilder();
         using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
-            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), TimeProvider.System);
+            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), NewClock());
         await service.StartAsync(CancellationToken.None);
         try
         {

@@ -209,7 +209,8 @@ public sealed class TaskCoreCacheTests : IDisposable
         File.WriteAllText(TaskPaths.TimelineLog(task.FolderPath),
             System.Text.Json.JsonSerializer.Serialize(new
             {
-                ts = DateTime.UtcNow, kind = "note", actor, runId, summary = "Event",
+                // clock-independent: the event timestamp is only carried through, never compared with now
+                ts = new DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc), kind = "note", actor, runId, summary = "Event",
             }) + "\n");
 
         var evt = Assert.Single(TaskCoreRecord.Create(task).Timeline.Events);
