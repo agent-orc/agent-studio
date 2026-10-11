@@ -320,7 +320,7 @@ public sealed class BatchGatePilotService
                     var vetoHold = priorHold is
                     {
                         Decision: "wait", Advisor.Verdict: "veto", CloseAtUtc: not null,
-                    };
+                    } && !_store.HasCloseNow(first.Subject.Project);
                     var holdExpired = vetoHold
                         && priorHold!.CloseAtUtc!.Value <= _time.GetUtcNow();
                     var decision = BatchGateLookAheadPlanner.Plan(holdExpired
@@ -332,7 +332,8 @@ public sealed class BatchGatePilotService
                             CloseAtUtc = priorHold.CloseAtUtc,
                             Advisor = priorHold.Advisor,
                         };
-                    else if (_advisor is not null && !holdExpired)
+                    else if (_advisor is not null && !holdExpired
+                             && !_store.HasCloseNow(first.Subject.Project))
                         decision = await _advisor.AdviseAsync(first.Subject.Project,
                             _settings.Get(first.Subject.Project), snapshot, decision, ct)
                             .ConfigureAwait(false);
@@ -660,9 +661,9 @@ public sealed class BatchGatePilotService
                     State(manifest, BatchPhase.Published,
                         publication.TestedCandidateSha, lease.Fence,
                         "resumed verified publication");
-                    TrySyncPublishedCheckout(pendingRepo.RepositoryPath,
                     _git.FetchBatchIntegrationTip(pendingRepo.RepositoryPath,
                         manifest.Scope.IntegrationBranch, ct);
+                    TrySyncPublishedCheckout(pendingRepo.RepositoryPath,
                         manifest.Scope.IntegrationBranch, publication.TestedCandidateSha);
                 }
                 finally { _leases.Release(lease); }
@@ -673,13 +674,13 @@ public sealed class BatchGatePilotService
                 || publication.VerifiedRemoteSha != run.CandidateSha
                 || _store.ReadVerdict(manifest.BatchId, run.BatchRunId)?.Outcome != "pass")
                 throw new InvalidDataException("batch-gate-evidence-missing");
-            foreach (var member in manifest.Members)
             var releaseRepo = waiting.FirstOrDefault(item =>
                 manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
                     && member.RunAttempt == item.Subject.RunAttempt));
             if (releaseRepo is not null)
                 _git.FetchBatchIntegrationTip(releaseRepo.RepositoryPath,
                     manifest.Scope.IntegrationBranch, ct);
+            foreach (var member in manifest.Members)
             {
                 var pending = waiting.FirstOrDefault(item =>
                     item.Subject.TaskKey == member.TaskKey
@@ -870,6 +871,10 @@ public sealed class BatchGatePilotService
                     var preExisting = RecordVerdict(run, gate, "pre-existing-base-red");
                     State(manifest, BatchPhase.Green, assembly.CandidateSha, lease.Fence,
                         "pre-existing failures match base");
+                    _settings.MarkBuildProfileRemotelyValidated(manifest.Scope.Project,
+                        BuildProfileValidationFingerprint.Create(
+                            _settings.Get(manifest.Scope.Project).BuildProfile),
+                        run.BatchRunId, run.Host, run.CandidateSha, _time.GetUtcNow().UtcDateTime);
                     await PublishGreenAsync(manifest, assembly, run, preExisting, lease,
                         pending, repo, fallbackKeys, cancellation.Token).ConfigureAwait(false);
                     return;
@@ -879,10 +884,6 @@ public sealed class BatchGatePilotService
                     RecordVerdict(run, gate, "flaky-red");
                     State(manifest, BatchPhase.Paused, assembly.CandidateSha,
                         lease.Fence, "flaky quarantine requires a fresh gate verdict");
-                    _settings.MarkBuildProfileRemotelyValidated(manifest.Scope.Project,
-                        BuildProfileValidationFingerprint.Create(
-                            _settings.Get(manifest.Scope.Project).BuildProfile),
-                        run.BatchRunId, run.Host, run.CandidateSha, _time.GetUtcNow().UtcDateTime);
                     return;
                 }
                 RecordVerdict(run, gate, "deterministic-suite-red");
@@ -1063,15 +1064,15 @@ public sealed class BatchGatePilotService
                 manifest.BaseSha, assembly.CandidateSha, published.Sha,
                 lease.Fence, refLease.Fence, _time.GetUtcNow()));
             State(manifest, BatchPhase.Published, assembly.CandidateSha, lease.Fence);
-            TrySyncPublishedCheckout(repo, manifest.Scope.IntegrationBranch,
             // A push by object SHA does not necessarily advance origin/develop
             // in this checkout. The lane status projection reads that mirror.
             _git.FetchBatchIntegrationTip(repo, manifest.Scope.IntegrationBranch, ct);
+            TrySyncPublishedCheckout(repo, manifest.Scope.IntegrationBranch,
                 assembly.CandidateSha);
         }
-        foreach (var key in assembly.AdmittedKeys)
         foreach (var key in assembly.EjectedKeys)
             fallbackKeys.Add(key);
+        foreach (var key in assembly.AdmittedKeys)
             await ReleaseMemberAsync(manifest, run, pending[key], ct)
                 .ConfigureAwait(false);
     }
@@ -1406,11 +1407,11 @@ public sealed class BatchGatePilotService
         BatchGateOwnershipStore.Write(task.FolderPath,
             new BatchGateOwnership(pending.ReviewAttemptId, subject,
                 manifest.BatchId, run.BatchRunId));
-        var moved = await _transitions.MoveAsync(
         // The lane guard reads integration attribution before it permits the
         // move. A rebased member is not an ancestor by its original SHA, so
         // record its verified replacement mapping first.
         RecordBatchIntegration(task.FolderPath, manifest, run, replay);
+        var moved = await _transitions.MoveAsync(
             task.Id, TaskStates.HumanReview, task.WatchPath, ct,
             cause: $"batch-gate:{manifest.BatchId}",
             suppressProductExecution: true,
@@ -1429,7 +1430,6 @@ public sealed class BatchGatePilotService
         BatchGateManifest manifest, BatchGateRunRecord run,
         BatchGateReplayRecord replay)
     {
-        var shas = replay.Replacements.Select(item => item.RebasedSha)
         var member = manifest.Members.Single(item => item.TaskKey == replay.TaskKey);
         var resultReplacement = replay.Replacements.LastOrDefault(item =>
             string.Equals(item.OriginalSha, replay.OriginalResultSha,
@@ -1451,6 +1451,7 @@ public sealed class BatchGatePilotService
         };
         if (!_mutations.AppendIntegrationRecordOnFolder(folder, mapping).Succeeded)
             throw new IOException("Batch result mapping could not be recorded.");
+        var shas = replay.Replacements.Select(item => item.RebasedSha)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var record = new TaskIntegrationRecord
         {
