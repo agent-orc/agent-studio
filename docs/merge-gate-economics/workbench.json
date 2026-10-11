@@ -4,10 +4,10 @@
   "title": "Merge gate economics: cut the 42-minute full-suite gate without weakening it",
   "summary": "Explains why neither AGT-2839 review reuse (exact develop tip and delivery tree) nor the per-SHA verdict cache (new merge commit SHA, Windows-local) fired in the eight develop gates of 28/29 September 2026, and why test selection fell back to the full suite (no folder map; docs and multi-module spans force the fallback). Develop had moved 5 to 10 merges past each delivery\u0027s base. Recommends path-disjoint review reuse with a repo-contract slice, impact union from a generated project map, a daily develop full-suite guard that opens a cause card and suspends reuse when red, and per-branch gate slots with host capacity 2. Models 348 to about 201 gate minutes (-42%, range -37% to -46%) on the logged night, and cuts the work into six measured implementation cards.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-29T12:40:00Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-2997"
   ],

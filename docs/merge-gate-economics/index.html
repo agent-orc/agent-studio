@@ -319,6 +319,7 @@
     .ch-bar rect:hover { fill: color-mix(in srgb, var(--article-link) 75%, var(--article-ink)); }
     .ch-label text { fill: var(--article-ink); font: 13px var(--article-mono); }
     .ch-value text { fill: var(--article-muted); font: 12px var(--article-sans); }
+    .label-bg { fill: var(--article-paper); stroke: none; }
     figure > svg text { font-family: var(--article-sans); }
     .variant h4 { margin: 0 0 6px; }
   </style>
@@ -329,8 +330,10 @@
     <p class="kicker">Concept dossier &middot; AGT-2997</p>
     <h1>Merge gate economics</h1>
     <p class="lede">Every Agent Studio merge into develop runs the full backend suite for about 42 minutes, one merge at a time across all projects. This Dossier explains why neither existing reuse mechanism fired in the eight gates of 28/29 September 2026. It then proposes a rule set that keeps the gate honest but cheap, with modelled gate time, the guard against a wrong disjointness judgement, and implementation cards.</p>
-    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decision-pending</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-2997</span><span><b>Related</b> Gates Dossier AGT-W59</span><span><b>As of</b> develop <code>742936e0</code>, 29 September 2026</span></div>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> decided 2026-10-11</span><span><b>Phase</b> decision-ready</span><span><b>Source</b> AGT-2997</span><span><b>Related</b> Gates Dossier AGT-W59</span><span><b>As of</b> develop <code>742936e0</code>, 29 September 2026</span></div>
   </header>
+<div class="callout" data-tone="accent"><p><b>Status 11 October 2026.</b> The operator follows the recommendations of this Dossier, after the batch gate is live and measured. The measurement slice runs as AGT-3070 together with the first slice of AGT-W70; the remaining slices are promoted only when those numbers show the need. Batch verification (AGT-W59 D1, AGT-3052) changes the baseline: the full suite runs once per wave.</p></div>
+
 
   <section id="summary">
     <h2><span class="number">00</span> Summary</h2>
@@ -602,8 +605,8 @@
           <text x="10" y="182">9154dbd1 00:24</text><text x="10" y="218">c6673af8 01:33</text><text x="10" y="254">ebbaef7d 02:56</text><text x="10" y="290">2272ce8c 05:00</text>
         </g>
         <g class="ch-value">
-          <text x="456" y="38">40.1 impact</text><text x="456" y="74">43.5 impact</text><text x="456" y="110">38.9 impact</text><text x="232" y="146">9.6 reuse</text>
-          <text x="232" y="182">9.6 reuse</text><text x="232" y="218">9.6 reuse</text><text x="232" y="254">9.6 reuse</text><text x="456" y="290">40.1 impact</text>
+          <rect class="label-bg" x="452.2" y="23.8" width="68.2" height="18.5"/><text x="456" y="38">40.1 impact</text><rect class="label-bg" x="452.2" y="59.8" width="68.2" height="18.5"/><text x="456" y="74">43.5 impact</text><rect class="label-bg" x="453.0" y="95.8" width="67.3" height="18.5"/><text x="456" y="110">38.9 impact</text><text x="232" y="146">9.6 reuse</text>
+          <text x="232" y="182">9.6 reuse</text><text x="232" y="218">9.6 reuse</text><text x="232" y="254">9.6 reuse</text><rect class="label-bg" x="452.2" y="275.8" width="68.2" height="18.5"/><text x="456" y="290">40.1 impact</text>
         </g>
       </svg>
       <figcaption>Modelled minutes per merge (bars) against today's stated 41 to 46 minutes for every merge (shaded band). Hover a bar for its rule outcome. The table below is the same data.</figcaption>
