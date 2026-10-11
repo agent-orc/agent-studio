@@ -589,6 +589,38 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DuplicateTaskId_LiveAndArchived_PublishesSnapshotAndSettles()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        foreach (var (state, folderName) in new[] { (TaskStates.Progress, "dup-live"), (TaskStates.Archive, "dup-archived") })
+        {
+            var folder = Path.Combine(jobsPath, state, folderName);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"),
+                $"{{\"id\":\"dup\",\"state\":\"{state}\",\"title\":\"Duplicate\"}}");
+        }
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var cache = new TaskListGitProjectionCache();
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            // Before the fix every run compared the de-duplicated input with a
+            // raw re-read, was marked superseded and re-ran forever without
+            // publishing a snapshot.
+            await WaitUntilAsync(() => !service.IsRunning("proj") && Volatile.Read(ref builder.Calls) > 0
+                && !cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
+            var settled = Volatile.Read(ref builder.Calls);
+            await Task.Delay(300);
+            Assert.Equal(settled, Volatile.Read(ref builder.Calls));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
     public async Task MissedReviewSubjectEvent_IsRecoveredBySafetySweep()
     {
         var jobsPath = NewRepoWatchPath("proj");

@@ -479,7 +479,10 @@ public sealed class GitStateIndexService : BackgroundService
                 lock (state.Gate) invalidation = state.InvalidationVersion;
                 var projection = await _buildProjection(tasksForRepo)
                     .WaitAsync(deadline.Token).ConfigureAwait(false);
-                var after = CaptureInput(state, ReadTasks(state), effectiveConfig.Signature);
+                // Compare like with like: the input was captured from the
+                // de-duplicated cards, so a raw re-read would differ whenever a
+                // duplicate id exists and mark every run superseded forever.
+                var after = CaptureInput(state, TaskProjectionCards.Select(ReadTasks(state)), effectiveConfig.Signature);
                 bool superseded;
                 DateTimeOffset gitStateAt;
                 lock (state.Gate)

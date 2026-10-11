@@ -72,6 +72,26 @@ public sealed class TaskListGitProjectionCacheTests
     }
 
     [Fact]
+    public async Task BuildProjectionAsync_RepositoryWideLookupFailure_FailsTheRunInsteadOfPublishingAnEmptyProjection()
+    {
+        var jobs = Enumerable.Range(0, 10).Select(i => Job($"card-{i}", "watch-a")).ToArray();
+        var calls = 0;
+        await Assert.ThrowsAsync<IOException>(() => TaskListGitProjectionCache.BuildProjectionAsync(
+            jobs,
+            _ => new Dictionary<string, TaskMergeSignal>(),
+            _ => new Dictionary<string, TaskIntegrationStatus>(),
+            _ => new Dictionary<string, TaskPublishSignal>(),
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                throw new IOException("repository unavailable");
+            },
+            _ => new Dictionary<string, AgentStudio.Review.ReviewProjectionView>()));
+        // One batch call plus at most three per-card probes, not one per card.
+        Assert.True(Volatile.Read(ref calls) <= 4, $"lookup was called {calls} times");
+    }
+
+    [Fact]
     public void ReadCacheOnly_BeforeAnySnapshot_ReturnsEmptyAndSpawnsNoGit()
     {
         var cache = new TaskListGitProjectionCache();

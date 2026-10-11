@@ -373,18 +373,27 @@ public sealed class TaskListGitProjectionCache
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var result = new Dictionary<string, T>(StringComparer.Ordinal);
+            var failed = new List<string>();
+            var attempted = 0;
             foreach (var task in tasks)
             {
+                attempted++;
                 try
                 {
                     foreach (var pair in await lookup([task]).ConfigureAwait(false)) result[pair.Key] = pair.Value;
                 }
                 catch (Exception cardEx) when (cardEx is not OperationCanceledException)
                 {
-                    unavailable.TryAdd(task.TaskKey, 0);
+                    failed.Add(task.TaskKey);
                     logger?.LogWarning(cardEx, "git-index-card-unavailable taskKey={TaskKey}", task.TaskKey);
+                    // A repository-wide failure fails every card the same way.
+                    // Stop after the first few instead of spawning Git per card,
+                    // and fail the run so the last good snapshot keeps serving.
+                    if (failed.Count == attempted && attempted >= Math.Min(3, tasks.Count))
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
                 }
             }
+            foreach (var taskKey in failed) unavailable.TryAdd(taskKey, 0);
             return result;
         }
     }
