@@ -757,6 +757,13 @@ per-suite and admission measurements justify one. The former
 removed. A test that makes no progress for ten minutes now triggers VSTest's
 hang diagnostics.
 
+Every planned .NET review test command now writes both verbose console output
+and TRX. The review runner retains a compressed TRX and a compact JSON timing
+summary as review artifacts. The summary records test count, summed and wall
+time, per-class totals, the slowest 50 tests, retry status, and host load and
+active test-process count sampled when the report is captured. A missing or
+malformed TRX is logged and does not change the test verdict.
+
 Both gates run for every review of this repository, not only for deliveries that
 touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
 claimed and is immutable by contract, and the plan builder has no merge-base

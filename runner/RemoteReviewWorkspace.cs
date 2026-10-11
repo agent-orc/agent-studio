@@ -1313,6 +1313,15 @@ public sealed class RemoteReviewWorkspace
         var stderr = await WriteArtifactAsync(stderrName, process.StdErr, includeContent, ct);
         artifacts.Add(stdout);
         artifacts.Add(stderr);
+        var timingArtifacts = await ReviewTestTimingEvidence.CaptureAsync(
+            process.StdOut,
+            AttemptRoot,
+            ArtifactPath,
+            $"{SafeSegment(workspaceRole)}.{SafeSegment(stepId)}.timing.{Guid.NewGuid():N}",
+            retryPerformed,
+            _log,
+            ct);
+        foreach (var artifact in timingArtifacts) artifacts.Add(artifact);
         var consumed = Math.Max(0, (long)(finishedAt - startedAt).TotalMilliseconds);
         var limit = Math.Clamp(timeoutSeconds, 1, 7200) * 1000L;
         return new ReviewCommandEvidenceDto(

@@ -81,6 +81,31 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     }
 
     [Fact]
+    public async Task Review_command_retains_trx_and_timing_summary_as_artifacts()
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "printf 'Results File: %s\\n' \"$PWD/../artifacts/review-timing.trx\"");
+        var (workspace, _) = Workspace("attempt-test-timing", subjectSha, [command], 26210,
+            resultRef: "refs/heads/task/new-failure", integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+        await File.WriteAllTextAsync(Path.Combine(workspace.ArtifactPath, "review-timing.trx"), """
+            <TestRun>
+              <Times start="2026-10-11T10:00:00Z" finish="2026-10-11T10:00:01Z" />
+              <TestDefinitions><UnitTest id="one"><TestMethod className="Example.Tests" name="Pass" /></UnitTest></TestDefinitions>
+              <Results><UnitTestResult testId="one" testName="Pass" duration="00:00:00.100" outcome="Passed" /></Results>
+            </TestRun>
+            """);
+
+        var evidence = await workspace.ExecutePlanAsync(default);
+
+        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".json", StringComparison.Ordinal)
+            && artifact.ContentBase64 is not null);
+        Assert.Contains(evidence.Artifacts, artifact => artifact.Name.EndsWith(".trx.gz", StringComparison.Ordinal)
+            && artifact.ContentBase64 is not null);
+    }
+
+    [Fact]
     public void Parsed_test_failures_strips_terminal_colours_and_ignores_tap_todo_items()
     {
         var result = new ProcessResult(

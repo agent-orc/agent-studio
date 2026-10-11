@@ -176,18 +176,18 @@ public static partial class ReviewPlanResourcePolicy
         => isTest
             ? [
                 $"-maxcpucount:{maxCpuCount}", "-nodeReuse:false",
-                .. VerboseTestLoggerArguments,
+                .. TestLoggerArguments,
                 "--blame-hang-timeout", "10m",
               ]
             : [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false"];
 
     /// <summary>
-    /// AGT-2851: gives the review host's silence watchdog real per-test output to
-    /// watch through a long integration test run. The
-    /// value contains a semicolon, so the shell form must quote it; the direct
-    /// argv form passes it as one untouched array element either way.
+    /// The console logger feeds the review silence watchdog. The TRX logger
+    /// gives every .NET review step complete per-test timings for its evidence
+    /// summary. Both values contain semicolons, so shell commands quote them.
     /// </summary>
-    private static readonly string[] VerboseTestLoggerArguments = ["--logger", "console;verbosity=normal"];
+    private static readonly string[] TestLoggerArguments =
+        ["--logger", "console;verbosity=normal", "--logger", "trx;LogFilePrefix=review-timing"];
 
     private static string QuoteForShell(string value)
         => value.IndexOfAny(ShellMetacharacters) >= 0

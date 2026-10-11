@@ -2583,3 +2583,6 @@ nodes and gives it a ten-minute per-test hang timeout. A fixed two-thread xUnit
 cap was removed after Runner and backend A/B samples measured slower wall time;
 collection parallelism remains the xUnit default pending per-suite and
 host-admission evidence.
+Review test commands also write TRX alongside verbose console output; the
+runner retains compressed TRX and a compact per-class timing summary with the
+review evidence.
