@@ -14,7 +14,7 @@ export default defineConfig({
   projects: [{
     name: 'mocked-api',
     testMatch: '**/board/card-state-pill-matches-lane.spec.ts',
-    use: { ...devices['Desktop Chrome'], channel: undefined },
+    use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],
   webServer: {
     command: `node scripts/serve-prebuilt-frontend.mjs dist/frontend/browser ${port} http://127.0.0.1:9`,
