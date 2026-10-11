@@ -152,7 +152,8 @@ export interface TaskGitData {
   mergeSignal: TaskInfo['mergeSignal']; integration: TaskInfo['integration'];
   publishSignal: TaskInfo['publishSignal']; testEvidence: TaskInfo['testEvidence'];
   commit: TaskInfo['commit']; commits: TaskInfo['commits'];
+  provenance: TaskInfo['provenance'];
 }
 export type TaskOverviewData = Pick<TaskInfo,
   'decision' | 'planningSpawn' | 'conceptDossier' | 'olderBriefDelivery'
-  | 'relatedWikiPages' | 'creationSource' | 'completionClaim' | 'parkedBlocker'>;
+  | 'relatedWikiPages' | 'creationSource' | 'completionClaim' | 'parkedBlocker' | 'needsInput'>;
