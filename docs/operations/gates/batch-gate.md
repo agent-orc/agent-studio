@@ -41,7 +41,8 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   Recovery failures are logged per manifest, allowing later batches to proceed.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker survives a backend restart for
-  the push backstop to clear after it publishes.
+  the push backstop to clear after it publishes. Disabling the push step also
+  keeps code batching on hold while that local merge remains unpublished.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 
