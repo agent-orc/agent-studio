@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCardCtxMenuItems,
   DELETE_ID,
+  REVIEW_FIRST_ID,
   EPIC_ASSIGN_PREFIX,
   EPIC_DETACH_ID,
 } from './task-card-view-model';
@@ -93,5 +94,14 @@ describe('buildCardCtxMenuItems — delete row (AGT-2020)', () => {
     expect(rows.find(item => item.id === `${EPIC_ASSIGN_PREFIX}epic-9`)?.disabled).toBe(true);
     expect(rows.find(item => item.id === EPIC_DETACH_ID)?.disabled).toBe(true);
     expect(rows.find(item => item.id === DELETE_ID)?.disabled).toBe(true);
+  });
+
+  it('offers Review first and Normal review order on auto-review cards', () => {
+    const normal = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview }), false, [], null).filter(isRow);
+    expect(normal.find(item => item.id === REVIEW_FIRST_ID)?.disabled).not.toBe(true);
+    expect(normal.find(item => item.id === 'review-normal')?.disabled).toBe(true);
+    const urgent = buildCardCtxMenuItems(makeJob({ state: TaskState.AutoReview, reviewPriority: 'urgent' }), false, [], null).filter(isRow);
+    expect(urgent.find(item => item.id === REVIEW_FIRST_ID)?.disabled).toBe(true);
+    expect(urgent.find(item => item.id === 'review-normal')?.disabled).not.toBe(true);
   });
 });

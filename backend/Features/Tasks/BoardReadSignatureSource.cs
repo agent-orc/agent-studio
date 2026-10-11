@@ -38,6 +38,8 @@ namespace AgentStudio.Tasks;
 /// <item><description><b>Review decision journals</b> - the per-project
 /// <c>logs/decisions/{project}.jsonl</c> stamp. These live outside every watch
 /// path, so no watcher event covers them.</description></item>
+/// <item><description><b>Review queue</b> - the durable attempt authority's
+/// ordered priority and claimable position snapshot.</description></item>
 /// <item><description><b>In-memory runtime state</b> - the runtime fold below.
 /// CLI executions, run-activity facts, auto-loop snapshots, summariser state,
 /// runner badges, quota fallbacks, queue positions and execution locations
@@ -71,6 +73,7 @@ public sealed class BoardReadSignatureSource(
     TaskListGitProjectionCache gitProjection,
     ProjectSettingsService projectSettings,
     AutoReviewPostProcessingQueue reviewQueue,
+    AttemptAuthorityService attemptAuthority,
     IConfiguration configuration,
     TimeProvider? timeProvider = null)
 {
@@ -111,6 +114,9 @@ public sealed class BoardReadSignatureSource(
             Part("gitStateAt", freshness.GitStateAt?.UtcDateTime.Ticks ?? -1),
             Part("gitStale", freshness.Stale ? 1 : 0),
             Part("settings", projectSettings.Version),
+            "reviewQueue=" + BoardReadValidator.FormatETag(string.Join(';', attemptAuthority.ReadReviewQueue()
+                .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(entry => $"{Uri.EscapeDataString(entry.Key)}:{entry.Value.Priority}:{entry.Value.Position}"))),
             Part("decisions", DecisionJournalFold(jobs)),
             Part("runtime", RuntimeFold(jobs, router, runners)),
             Part("day", DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime).DayNumber),

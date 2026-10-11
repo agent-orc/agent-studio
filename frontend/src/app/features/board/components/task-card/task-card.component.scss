@@ -575,6 +575,22 @@
       font-weight: 600;
       letter-spacing: 0.02em;
     }
+    .task-card__review-queue-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--studio-card-pill-height);
+      padding: 0 var(--studio-card-pill-padding-x);
+      border-radius: 7px;
+      font-size: var(--studio-card-meta-size);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--studio-text-muted);
+      background: var(--studio-surface-muted);
+    }
+    .task-card__review-queue-pill[data-priority='urgent'] {
+      color: var(--studio-accent-warn-strong);
+      background: color-mix(in srgb, var(--studio-accent-warn-strong) 13%, transparent);
+    }
     /* Mode badge (planning / research / concept). Only non-coding modes render a pill so
        the board stays quiet for the default mode. AGT-2069: planning cards get
        a deliberately loud, filled badge ("here work is PLANNED") so a

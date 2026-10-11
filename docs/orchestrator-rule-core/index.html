@@ -322,9 +322,9 @@
     <p class="kicker">Concept Dossier · AGT-W73 · ORCH-3</p>
     <h1>Orchestrator decisions between steps</h1>
     <p class="lede">A strong model chooses the next typed action from clean, bounded grounds at each transition. Guard rails provide signals. Mechanical boundaries preserve authority, safety, and finite execution.</p>
-    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
+    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Status note</b> 11 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
   </header>
-  <nav class="contents" aria-label="Dossier sections"><a href="#decision-model">Decision model</a><a href="#grounds">Grounds</a><a href="#signals">Signals</a><a href="#actions">Actions</a><a href="#limit">Hard limit</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#adr">ADR</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a></nav>
+  <nav class="contents" aria-label="Dossier sections"><a href="#decision-model">Decision model</a><a href="#grounds">Grounds</a><a href="#signals">Signals</a><a href="#actions">Actions</a><a href="#limit">Hard limit</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#today">Today</a><a href="#adr">ADR</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a></nav>
 
   <section id="decision-model">
     <h2>Decision model</h2>
@@ -418,6 +418,18 @@
     </tbody></table>
     <p>AGT-W68 remains the run-budget Dossier. RB-S1's deduplicated per-card ledger and progress definition survive as grounds; RB-S3's verified-tree checkpoint contract survives as a model-selectable action; RB-S4's salvage handoff survives but its automatic progress-gated round becomes a decision candidate; RB-S5's operator raise/cut/stop controls survive as an <code>ask</code> destination. RB-S2's stepped 90/120/150/180/240-minute shaping budgets and RB-S1/RB-S5's third-exhaustion automatic gate are superseded. A signal, strong decision, and wide emergency stop replace them. This Dossier does not redesign <a href="../run-budget-per-card/index.html">AGT-W68</a>, <a href="../merge-gate-economics/index.html">AGT-W69</a> merge economics, <a href="../model-routing-by-complexity/index.html">AGT-W56</a> complexity routing, or <a href="../integration-lane-throughput/index.html">AGT-W70</a> integration throughput.</p>
     <p>From the salvaged AGT-W73, keep the signal set, honest consumption normalization, action union, bounded artefact proposal, and receipt fields because they produce useful decision grounds. Invert the pure rule core's final authority, algorithmic pressure thresholds, pre-claim admission formula, measured coding budget as a shaping instrument, and counter-selected escalation because they contradict the operator's 4 October corrections. Reuse hard checks only as validity and emergency boundaries.</p>
+  </section>
+
+  <section id="today">
+    <h2>Where transitions are decided on 11 October 2026</h2>
+    <p>This Dossier names <code>StepKind.Orchestrator</code> as the decider between steps but does not fix the process that runs it. A reconstruction on 11 October 2026 (<a href="../task-server-bus/index.html#pipeline-control">AGT-W65, Pipeline control today</a>) found the following deciders on the production path. None of them is a model choice.</p>
+    <table><thead><tr><th>Transition</th><th>Decider today</th><th>Rule</th></tr></thead><tbody>
+      <tr><td>Coding completion to review</td><td>Completion handler of the monolith</td><td>Done or NoOp with a fenced result creates a review subject and a server-built plan.</td></tr>
+      <tr><td>Review report to next step</td><td>Report handler of the monolith</td><td>Follow-up policy (finding round, concern round, accept); delivered-round budget that degrades after 4 rounds; delivery gate (integrate or Human Review); review infrastructure retry budget of 3.</td></tr>
+      <tr><td>ProductFailure in Human Review to fix round</td><td>Operator sweep (AGT-3011)</td><td>Per-card budget of 4 rounds, then Escalated.</td></tr>
+      <tr><td>Standalone path, not deployed</td><td>Five engine stage handlers and Task Server settlement</td><td>Reissue limit of 2 or the same block twice, then Escalated.</td></tr>
+    </tbody></table>
+    <p>Two consequences for this Dossier. First, the vocabulary table maps model escalation, supervision, telemetry and ADR-0051 actions; the review-report follow-up and the operator sweeps belong in the same profile list when OD-S1 freezes its first transition. Second, a <code>retry(reopen)</code> action needs a declared base: today a fix round starts from the integration branch, not from the reviewed result (<a href="../task-server-bus/index.html#f1-fix-round-base">AGT-W65 F1</a>, <a href="../task-server-bus/index.html#d17-fix-round-base">D17</a>). Where the decision step runs, and where the batch planner and advisor started on 11 October 2026 run, is <a href="../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14</a>; its recommendation is the Orchestrator Engine as the only decider, fed by one shared decision library during the migration.</p>
   </section>
 
   <section id="adr">

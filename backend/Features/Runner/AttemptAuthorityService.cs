@@ -11,9 +11,15 @@ public sealed record AttemptIndexedDeliveryRef(
     string ResultSha,
     DateTime RecordedAt);
 
+public sealed record ReviewQueueEntry(string Priority, int? Position);
+
 internal readonly record struct BoardReviewActivity(
     AttemptLifecycleState State,
-    DateTime? LeaseExpiresAt);
+    DateTime? LeaseExpiresAt,
+    string Priority = "normal",
+    DateTime? CreatedAt = null,
+    string? AttemptId = null,
+    bool MissingResultEnvelope = false);
 
 internal sealed record ReviewLeaseIsolation(
     string ResourceNamespace,
@@ -113,6 +119,55 @@ public sealed class AttemptAuthorityService
     /// out-of-order deferrals of concurrent claims exact (AGT-2987).
     /// </summary>
     private readonly Dictionary<(string AttemptId, long Fence), DateTime> _deferrableReviewClaims = new();
+    /// <summary>Sets the priority of this card and its current or future review attempt.</summary>
+    public bool SetReviewPriority(string taskKey, string priority, Func<bool>? isInAutoReview = null)
+    {
+        if (priority is not ("urgent" or "normal") || Blank(taskKey)) return false;
+        lock (_gate)
+        {
+            if (isInAutoReview is not null && !isInAutoReview()) return false;
+            taskKey = Normalize(taskKey);
+            if (priority == "urgent") _state.ReviewPrioritiesByTask[taskKey] = priority;
+            else _state.ReviewPrioritiesByTask.Remove(taskKey);
+            if (CurrentReview(taskKey) is { } review)
+                review.Priority = priority;
+            PersistLocked();
+            return true;
+        }
+    }
+
+    /// <summary>Discard an operator priority after the card leaves the review lane.</summary>
+    public void ClearReviewPriority(string taskKey)
+    {
+        if (Blank(taskKey)) return;
+        lock (_gate)
+        {
+            taskKey = Normalize(taskKey);
+            if (!_state.ReviewPrioritiesByTask.Remove(taskKey)) return;
+            if (CurrentReview(taskKey) is { } review) review.Priority = "normal";
+            PersistLocked();
+        }
+    }
+
+    public IReadOnlyDictionary<string, ReviewQueueEntry> ReadReviewQueue()
+    {
+        var now = _utcNow();
+        var snapshot = ReadBoardReviewActivity();
+        var entries = new Dictionary<string, ReviewQueueEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (taskKey, review) in snapshot)
+            entries[taskKey] = new ReviewQueueEntry(review.Priority, null);
+        var queued = snapshot
+            .Where(item => item.Value.CreatedAt is not null && !Terminal(item.Value.State))
+            .Where(item => item.Value.LeaseExpiresAt is null || item.Value.LeaseExpiresAt <= now)
+            .Where(item => !item.Value.MissingResultEnvelope || now - item.Value.CreatedAt >= LegacyEnvelopeTerminalizeGrace)
+            .OrderByDescending(item => item.Value.Priority == "urgent")
+            .ThenBy(item => item.Value.CreatedAt)
+            .ThenBy(item => item.Value.AttemptId)
+            .ToArray();
+        for (var i = 0; i < queued.Length; i++)
+            entries[queued[i].Key] = new ReviewQueueEntry(queued[i].Value.Priority, i + 1);
+        return entries;
+    }
 
     public AttemptAuthorityService(
         IConfiguration configuration,
@@ -641,6 +696,9 @@ public sealed class AttemptAuthorityService
                 RepositoryId = Normalize(request.RepositoryId),
                 SourceRunAttemptId = run.AttemptId,
                 SourceReviewAttemptId = sourceReview?.AttemptId,
+                Priority = sourceReview?.Priority
+                    ?? _state.ReviewPrioritiesByTask.GetValueOrDefault(Normalize(request.TaskKey))
+                    ?? "normal",
                 Subject = subject,
                 State = AttemptLifecycleState.Pending,
                 AuthorityEpoch = _state.AuthorityEpoch,
@@ -878,7 +936,7 @@ public sealed class AttemptAuthorityService
     }
 
     /// <summary>
-    /// Atomically selects the oldest current unleased ReviewAttempt and claims it.
+    /// Atomically selects the highest-priority current unleased ReviewAttempt and claims it.
     /// The versioned review plane uses this operation so selection and fencing
     /// cannot race across concurrent review executors.
     /// </summary>
@@ -924,7 +982,9 @@ public sealed class AttemptAuthorityService
                         || capabilities is null
                         || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
                             review.Subject.Plan, capabilities))
-                    .OrderBy(review => review.CreatedAt)
+                    .OrderByDescending(review => review.Priority == "urgent")
+                    .ThenBy(review => review.CreatedAt)
+                    .ThenBy(review => review.AttemptId)
                     .FirstOrDefault();
                 if (candidate is null)
                     return new AttemptWriteResult(AttemptWriteStatus.NotFound, string.Empty);
@@ -979,7 +1039,9 @@ public sealed class AttemptAuthorityService
                 .Select(review => (Review: review, Missing: AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
                     .MissingCapabilities(review.Subject.Plan!, capabilities)))
                 .Where(item => item.Missing.Count > 0)
-                .OrderBy(item => item.Review.CreatedAt)
+                .OrderByDescending(item => item.Review.Priority == "urgent")
+                .ThenBy(item => item.Review.CreatedAt)
+                .ThenBy(item => item.Review.AttemptId)
                 .Select(item => new AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto(
                     item.Review.AttemptId,
                     item.Review.TaskKey,
@@ -1001,7 +1063,9 @@ public sealed class AttemptAuthorityService
             var pending = _state.ReviewAttempts
                 .Where(IsCurrentReview)
                 .Where(review => review.State == AttemptLifecycleState.Pending)
-                .OrderBy(review => review.CreatedAt)
+                .OrderByDescending(review => review.Priority == "urgent")
+                .ThenBy(review => review.CreatedAt)
+                .ThenBy(review => review.AttemptId)
                 .ToArray();
             DateTime? persistedClaim = _state.ReviewAttempts
                 .Where(review => review.Lease is not null)
@@ -1013,7 +1077,7 @@ public sealed class AttemptAuthorityService
                 pending.Length,
                 oldest?.AttemptId,
                 oldest?.TaskKey,
-                oldest?.CreatedAt,
+                pending.Length == 0 ? null : pending.Min(review => review.CreatedAt),
                 lastClaim);
         }
     }
@@ -1077,6 +1141,7 @@ public sealed class AttemptAuthorityService
             RepositoryId = expired.RepositoryId,
             SourceRunAttemptId = expired.SourceRunAttemptId,
             SourceReviewAttemptId = expired.AttemptId,
+            Priority = expired.Priority,
             Subject = CopySubjectWithPlan(expired.Subject, plan: null),
             State = AttemptLifecycleState.Pending,
             AuthorityEpoch = _state.AuthorityEpoch,
@@ -1565,6 +1630,12 @@ public sealed class AttemptAuthorityService
                 ReviewTerminalOutcome.Superseded => AttemptLifecycleState.Superseded,
                 _ => AttemptLifecycleState.Failed,
             };
+            if (request.Outcome is not (ReviewTerminalOutcome.InfrastructureFailure
+                or ReviewTerminalOutcome.Inconclusive or ReviewTerminalOutcome.Cancellation))
+            {
+                _state.ReviewPrioritiesByTask.Remove(review.TaskKey);
+                review.Priority = "normal";
+            }
             PersistLocked();
             return new AttemptWriteResult(AttemptWriteStatus.Accepted, review.AttemptId, ReviewAttempt: ToDto(review));
         }
@@ -1968,12 +2039,22 @@ public sealed class AttemptAuthorityService
         => Volatile.Read(ref _boardReviewActivity);
 
     private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()
-        => _state.ReviewAttempts
+    {
+        var builder = ImmutableDictionary.CreateBuilder<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (taskKey, priority) in _state.ReviewPrioritiesByTask)
+            builder[taskKey] = new BoardReviewActivity(AttemptLifecycleState.Completed, null, priority);
+        var runsWithEnvelope = _state.RunAttempts
+            .Where(run => run.ResultEnvelope is not null)
+            .Select(run => run.AttemptId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var review in _state.ReviewAttempts
             .Where(IsCurrentReview)
-            .ToImmutableDictionary(
-                review => review.TaskKey,
-                review => new BoardReviewActivity(review.State, review.Lease?.ExpiresAt),
-                StringComparer.OrdinalIgnoreCase);
+            .ToArray())
+            builder[review.TaskKey] = new BoardReviewActivity(
+                review.State, review.Lease?.ExpiresAt, review.Priority, review.CreatedAt,
+                review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId));
+        return builder.ToImmutable();
+    }
 
     public AttemptAuthorityProjection GetTaskProjection(string taskKey, bool includeArchived = false)
     {
@@ -2311,6 +2392,8 @@ public sealed class AttemptAuthorityService
             _state.CurrentRunByTask ?? [], StringComparer.OrdinalIgnoreCase);
         _state.CurrentReviewByTask = new Dictionary<string, string>(
             _state.CurrentReviewByTask ?? [], StringComparer.OrdinalIgnoreCase);
+        _state.ReviewPrioritiesByTask = new Dictionary<string, string>(
+            _state.ReviewPrioritiesByTask ?? [], StringComparer.OrdinalIgnoreCase);
         _state.CurrentSubjectByTask = new Dictionary<string, ReviewSubjectRecord>(
             _state.CurrentSubjectByTask ?? [], StringComparer.OrdinalIgnoreCase);
         _state.ReviewDaemonRestarts = new Dictionary<string, ReviewDaemonRestartRecord>(
@@ -2770,6 +2853,7 @@ public sealed class AttemptAuthorityService
         public List<ReviewAttemptRecord> ReviewAttempts { get; set; } = [];
         public Dictionary<string, string> CurrentRunByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> CurrentReviewByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> ReviewPrioritiesByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, ReviewSubjectRecord> CurrentSubjectByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, ReviewDaemonRestartRecord> ReviewDaemonRestarts { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
@@ -2839,6 +2923,7 @@ public sealed class AttemptAuthorityService
 
     private sealed class ReviewAttemptRecord
     {
+        public string Priority { get; set; } = "normal";
         public string AttemptId { get; set; } = string.Empty;
         public string TaskKey { get; set; } = string.Empty;
         public string RepositoryId { get; set; } = string.Empty;

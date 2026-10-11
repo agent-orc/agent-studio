@@ -215,6 +215,24 @@
 </table>
 </div>
 
+<h3 id="baseline-quiet">Reference points on a quiet host</h3>
+<p class="stx stx-ok"><b>Measured 2026-10-11, 13:05 to 14:00:</b> agent-runner-01 with all reviews stopped (load 13 to 29 from coding agents, the promotion gate and these checks), operator fast-path verification of AGT-3042, AGT-3043, AGT-3047, AGT-3049 and AGT-3050 on merge results with develop.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Step</th><th>Quiet host</th><th>Under review contention (§1)</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Vitest, full suite (499 spec files)</td><td>54 s; 137 s including the test build</td><td>about 6.1 min</td><td><code>npx ng test frontend --watch=false</code>, fastpath/v3043 and v3050</td></tr>
+    <tr><td>Angular build</td><td>37 s development, 58 to 60 s production</td><td>1.0 to 2.6 min</td><td><code>ng build</code>, fastpath/v3043 and v3050</td></tr>
+    <tr><td>Backend test project build</td><td>185 to 281 s</td><td>4:33 to 10:45 min (whole solution)</td><td><code>dotnet build backend.Tests</code>, fastpath/v3042, v3047, v3043</td></tr>
+    <tr><td>task-server.Tests (691 tests)</td><td>10 min 8 s</td><td>19.9 min</td><td>fastpath/v3049</td></tr>
+    <tr><td>runner.Tests (1,305 tests)</td><td>1 min 54 s</td><td>1.8 min</td><td>fastpath/v3049</td></tr>
+    <tr><td>Targeted backend tests for one card</td><td>31 s to 2 min 13 s (84 to 128 tests)</td><td>part of the 85 to 93 min suite</td><td>fastpath/v3042, v3043, v3049</td></tr>
+    <tr><td>Mocked-API Playwright pilot (2 tests, 2 workers)</td><td>7 s plus about 50 s bundle build</td><td>not comparable</td><td><code>scripts/run-mocked-e2e.sh</code>, fastpath/v3050</td></tr>
+  </tbody>
+</table>
+</div>
+<p>The frontend steps run three to six times faster on a quiet host, task-server tests twice as fast. Contention is the largest single cost today, followed by running the whole backend suite once per card. Both are addressed by batch verification (P7) and a host-wide CPU budget (P8).</p>
+
 <h2 id="backend"><span class="no">§2</span>Backend: where the time goes</h2>
 <p class="stx stx-open"><b>Status 2026-10-11:</b> Diagnosed, levers in the backend track (AGT-3049).</p>
 
@@ -374,6 +392,8 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
     <tr><td><b>F10</b></td><td>No coverage in review gates; coverage on release gates</td><td>Medium</td><td>low</td><td>Frontend</td></tr>
     <tr><td><b>F11</b></td><td>Vitest infrastructure: reuse build and cache, pool/threads and isolation settings</td><td>Medium</td><td>low to medium</td><td>Frontend</td></tr>
     <tr><td><b>F12</b></td><td>Make <code>ng test</code> green again so the unit suite gives signal</td><td>Signal</td><td>low</td><td>Frontend</td></tr>
+    <tr><td><b>P7</b></td><td>Batch verification for code cards: per-card model review with affected tests only, one full suite per batch on the combined candidate, look-ahead planner sizing the batch, LLM batch advisor, UI and settings (AGT-3052 backend, AGT-3053 frontend; engine-side move AGT-3055)</td><td>Very high: one suite per 2 to 6 cards instead of one per card</td><td>medium, D10 pass rates</td><td>Batch</td></tr>
+    <tr><td><b>P8</b></td><td>Host-wide CPU budget across reviews, batch runs, gates and coding runs; second runner host as review/batch host</td><td>High: the quiet-host reference points in §1 show steps 2 to 6× slower under contention</td><td>low</td><td>Operations</td></tr>
   </tbody>
 </table>
 </div>
@@ -399,10 +419,10 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 </table>
 </div>
 
-<h2 id="decisions"><span class="no">§7</span>Open decisions</h2>
-<div class="box warn">
-  <h4>D1 · Selection by changed files at review time (P5, F9)</h4>
-  <p>Option A: review gates run only the tests mapped to changed files and areas; the full suites run on a schedule (for example every 2 hours on develop) and before every release. Option B: full suites stay at review time; selection only for agent-local feedback. A gives the largest gain and moves a part of the safety net from the card to the schedule. Recommendation: A, with the full run's result attached to every card integrated since the last full run.</p>
+<h2 id="decisions"><span class="no">§7</span>Decisions</h2>
+<div class="box ok">
+  <h4>D1 · Selection by changed files at review time (P5, F9) — decided 2026-10-11</h4>
+  <p>Robert decided to put batch verification live now ("Das Konzept jetzt umsetzen und direkt deployen"). Per card, the review runs the model review, the build and the tests selected for the changed files and areas; the full suites run once per batch on the combined candidate and before every release. Implementation: AGT-3052 (backend, look-ahead planner, LLM batch advisor) and AGT-3053 (UI and settings). Until it is deployed, deliveries are integrated through an operator fast path that imitates it: independent model review per card, affected tests on the merge result with develop, one merge per card.</p>
 </div>
 <div class="box warn">
   <h4>D2 · Production bundle for end-to-end tests (F2)</h4>

@@ -142,19 +142,32 @@ merge commit and cannot override a divergent branch graph.
 The gate uses the same honest-CI principle as tag-bound releases, but it does
 not publish versioned binaries. It runs, in order:
 
-1. .NET restore;
-2. frontend `npm ci` and the critical production dependency audit;
-3. release shell contract tests, including promotion and deploy-watcher tests;
-4. the .NET Release build;
-5. every non-machine-bound .NET test in the solution, including the
+1. Locked dependency identity guard: verifies that `backend/packages.lock.json`
+   exists, `OrchestratorApi.csproj` requires its NuGet lock file, and a locked
+   restore does not rewrite it;
+2. .NET solution restore: restores `agent-taskboard.sln` with `--locked-mode`;
+3. Frontend dependency install: installs dependencies with `npm ci`;
+4. Production dependency audit: checks production dependencies for critical
+   vulnerabilities;
+5. Release shell contract tests: runs the release scripts test suite, including
+   promotion and deploy-watcher tests;
+6. .NET Release build: builds the solution in Release configuration without
+   restoring again;
+7. .NET full non-machine-bound suite: runs every non-machine-bound .NET test in
+   the solution, including the
    legacy-plane completion contract test
    (`backend.Tests/LegacyRunnerCompletionContractTests.cs`);
-6. the [deployment regression scenario](testing/deployment-scenario.md) at
+8. Deployment regression scenario (smoke): runs the
+   [deployment regression scenario](testing/deployment-scenario.md) at
    `smoke` level, which runs the coding attempt on the v1 plane and on the
    legacy runner plane the production fleet uses;
-7. frontend lint and type-check;
-8. frontend unit tests; and
-9. the production frontend build.
+9. Frontend lint: runs the CI lint command;
+10. Frontend type-check: checks frontend types;
+11. Frontend unit tests: runs the CI unit test command; and
+12. Frontend production build: builds the production frontend.
+
+The script is the source of truth; a step added to or removed from it must be
+mirrored in this list in the same change.
 
 A gate that exercises only the v1 plane is not evidence for the fleet: Stable
 0.9.3 passed it and then had every production completion rejected on the

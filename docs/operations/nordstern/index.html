@@ -90,6 +90,7 @@
   .svg-label { fill: var(--ink-1); font: 650 13px system-ui, sans-serif; }
   .svg-sub { fill: var(--ink-2); font: 11.5px system-ui, sans-serif; }
   .svg-tiny { fill: var(--ink-3); font: 10.5px system-ui, sans-serif; }
+  .svg-label-bg { fill: var(--surface-1); stroke: none; }
   .svg-flow { fill: none; stroke: var(--ink-3); stroke-width: 1.5; marker-end: url(#ns-arrow); }
   .svg-flow-accent { fill: none; stroke: var(--develop); stroke-width: 1.7; marker-end: url(#ns-arrow-accent); }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; } }
@@ -100,11 +101,11 @@
 <header class="page">
   <p class="kicker">North star &middot; Agent Studio &middot; entry point</p>
   <h1>Agent Studio: target picture and delivery</h1>
-  <p class="lede">The one starting point. It holds the arc of the target picture at today's state, names the two decisions that currently define it, and carries the history of the four Dossiers it replaced. Detail lives in the linked documents, never in a copy here.</p>
+  <p class="lede">The one starting point. It holds the arc of the target picture at today's state, names the decisions that currently define it, and carries the history of the four Dossiers it replaced. Detail lives in the linked documents, never in a copy here.</p>
   <div class="meta">
     <span><b>Status</b> Decision pending</span>
     <span><b>Phase</b> Decision ready</span>
-    <span><b>Updated</b> 14 September 2026</span>
+    <span><b>Updated</b> 11 October 2026</span>
     <span><b>Key</b> AGT-W14</span>
     <span><b>Card</b> AGT-2798, programme AGT-2797</span>
   </div>
@@ -136,6 +137,11 @@
 </div>
 
 <h2 id="s2"><span class="no">&sect;2</span>Target picture at today's state</h2>
+<div class="box accent">
+  <h3>Update 11 October 2026</h3>
+  <p>AGT-W49 was decided on 25 September 2026, and ADR-0076 accepted the Operations Server as fourth runtime role. Its delivered foundation holds one read-only operation and has no product caller. Steering decisions now sit in two further Dossiers: <a href="../../task-server-bus/index.html">AGT-W65</a>, the Task Server bus (D5 to D13 decided and delivered; D14 to D21 open, among them where transition decisions and model-backed planners run and the process form of engine and Operations Server), and <a href="../../orchestrator-rule-core/index.html">AGT-W73</a>, orchestrator decisions between steps (open). Production still runs the monolith; the standalone Task Server, the Orchestrator Engine and the Operations Server run in no production installation. N2 in &sect;10 is overtaken by ADR-0076.</p>
+</div>
+
 <p>Three planes, with one authority each. Durable product truth stays in the Task Server: cards, runs, reviews, workspace identity, orchestration sessions, leases, and lane transitions. Executable work that touches a host, a checkout, a toolchain, a process, or a local secret sits behind an operations boundary and runs on a declared host. Every run of project code or an agent CLI is prepared by a script that travels with the project and executes isolated, with an orchestrator that diagnoses failures, heals the pipeline, and appends follow-up prompts.</p>
 
 <figure>
@@ -159,7 +165,6 @@
     <text class="svg-label" x="256" y="62">Further frontends</text>
     <text class="svg-sub" x="256" y="80">Dossier app, fleet controls</text>
 
-    <text class="svg-tiny" x="24" y="140">CONTROL PLANE (DURABLE AUTHORITY)</text>
     <rect class="svg-authority" x="24" y="152" width="290" height="86" rx="9"></rect>
     <text class="svg-label" x="42" y="178">Task Server</text>
     <text class="svg-sub" x="42" y="197">cards, runs, reviews, workspace</text>
@@ -175,13 +180,12 @@
     <text class="svg-label" x="578" y="178">Operations Server</text>
     <text class="svg-sub" x="578" y="197">operation catalogue, dispatch</text>
     <text class="svg-sub" x="578" y="214">bounded attempts, no task authority</text>
-    <text class="svg-tiny" x="578" y="230">proposed, decision pending &middot; AGT-W49</text>
+    <text class="svg-tiny" x="578" y="230">decided &middot; ADR-0076 &middot; AGT-W49</text>
     <rect class="svg-node" x="866" y="152" width="150" height="86" rx="9"></rect>
-    <text class="svg-label" x="882" y="178">Operations</text>
+    <text class="svg-label" x="882" y="176">Operations</text>
     <text class="svg-label" x="882" y="195">agents</text>
-    <text class="svg-sub" x="882" y="214">outbound, per host</text>
+    <text class="svg-sub" x="882" y="216">outbound, per host</text>
 
-    <text class="svg-tiny" x="24" y="290">EXECUTION ON EVERY HOST</text>
     <rect class="svg-execution" x="24" y="302" width="230" height="100" rx="9"></rect>
     <text class="svg-label" x="42" y="328">1 &middot; Preparation</text>
     <text class="svg-sub" x="42" y="347">travels with the commit</text>
@@ -212,14 +216,18 @@
     <path class="svg-flow" d="M 139 238 L 139 302"></path>
     <path class="svg-flow" d="M 254 352 L 270 352"></path>
     <path class="svg-flow" d="M 500 352 L 516 352"></path>
+    <rect class="svg-label-bg" x="21" y="130" width="200" height="14"></rect>
+    <text class="svg-tiny" x="24" y="140">CONTROL PLANE (DURABLE AUTHORITY)</text>
+    <rect class="svg-label-bg" x="21" y="280" width="146" height="14"></rect>
+    <text class="svg-tiny" x="24" y="290">EXECUTION ON EVERY HOST</text>
   </svg>
-  <figcaption><b>Figure 1.</b> The target picture as the two live decisions define it. Blue marks durable authority and the browser edge path; green marks the execution layers that AGT-W51 decided on 12 September 2026. The Operations Server box is drawn because AGT-W49 recommends it, not because it exists: that Dossier is still decision pending and its adoption requires an ADR that amends the three component target architecture.</figcaption>
+  <figcaption><b>Figure 1.</b> The target picture as the two live decisions define it. Blue marks durable authority and the browser edge path; green marks the execution layers that AGT-W51 decided on 12 September 2026. The Operations Server box shows the role that AGT-W49 decided on 25 September 2026 and ADR-0076 accepted; on 11 October 2026 the delivered service is a foundation with one read-only operation and no product caller.</figcaption>
 </figure>
 
 <p>The two boundaries are independent. Where the Task Server and the Operations Server run is the subject of AGT-W49. How a run is prepared and isolated on whatever host it lands on is the subject of AGT-W51. Neither answers the other, and this document does not merge them.</p>
 
 <h2 id="s3"><span class="no">&sect;3</span>The live decisions</h2>
-<p>Two Dossiers carry the current target picture. Their content is not reproduced here. The table states what each one owns, its status on 14 September 2026, and what the North star takes from it.</p>
+<p>Four Dossiers carry the current target picture. Their content is not reproduced here. The table states what each one owns, its status on 11 October 2026, and what the North star takes from it.</p>
 <div class="tablewrap">
 <table>
   <thead><tr><th>Dossier</th><th>Owns</th><th>Status</th><th>What the arc takes from it</th></tr></thead>
@@ -227,7 +235,7 @@
     <tr>
       <td><a href="../operations-server-backchannel/index.html">AGT-W49</a><span class="d">Operations Server beside the Task Server</span></td>
       <td>The authority boundary between durable task truth and executable host operations, the browser and service authentication model, and the workstation, one box Docker and distributed deployment forms.</td>
-      <td><span class="tag accent">decision pending</span><span class="d">Recommends alternative D with a staged start; D1 to D4 unanswered.</span></td>
+      <td><span class="tag ok">decided</span><span class="d">Operator decisions of 25 September 2026; ADR-0076; foundation delivered by AGT-2907.</span></td>
       <td>The Task Server stays the sole durable authority. Executable operations move behind a separate boundary with scoped principals and outbound agents. One box Docker is the intended product standard after full parity.</td>
     </tr>
     <tr>
@@ -235,6 +243,18 @@
       <td>How any run of project code or an agent CLI is prepared and contained, on any operating system, and how the orchestrator diagnoses and heals failures.</td>
       <td><span class="tag ok">decided</span><span class="d">Operator decisions of 12 September 2026, afternoon revision.</span></td>
       <td>No run executes as a bare process with the Studio's inherited environment. Preparation is a project owned script; isolation is a product owned executor profile; Docker is an optional accelerator, not a precondition. Migration runs as stages M1 to M7.</td>
+    </tr>
+    <tr>
+      <td><a href="../../task-server-bus/index.html">AGT-W65</a><span class="d">Task Server bus between the engine and runner hosts</span></td>
+      <td>Who steers the pipeline: the Task Server as the only steering boundary, the engine writing intent, runner hosts claiming work. Records pipeline control as it runs today and decides where transition decisions and planners run, the fix-round base and the round budget.</td>
+      <td><span class="tag accent">partly decided</span><span class="d">D5 to D13 decided on 26 September 2026 and delivered; D14 to D21 open since 11 October 2026.</span></td>
+      <td>Execution stays on runner hosts through claims; the Operations Server is outside task scheduling. Today the monolith still decides every transition between units.</td>
+    </tr>
+    <tr>
+      <td><a href="../../orchestrator-rule-core/index.html">AGT-W73</a><span class="d">Orchestrator decisions between steps</span></td>
+      <td>How a transition is decided: bounded decision grounds, a strong model choosing a typed action, mechanical authority floors, receipts and cost per decision.</td>
+      <td><span class="tag accent">decision pending</span><span class="d">Open since 6 October 2026.</span></td>
+      <td>Guard rails produce signals; a strong model chooses between steps; a wide emergency limit replaces shaping timeouts.</td>
     </tr>
   </tbody>
 </table>
@@ -259,6 +279,8 @@
 <p>The entry point links the documents that are current. It does not link superseded ones: those are reachable through the History list of the Dossier explorer and through &sect;6 below. The consolidation programme that produces the remaining theme Dossiers is AGT-W55; until its cards have run, some themes are still spread over their source Dossiers.</p>
 <div class="map">
   <a class="card" href="../operations-server-backchannel/index.html"><h4>Operations Server beside the Task Server</h4><div class="path">operations/operations-server-backchannel/ &middot; AGT-W49</div><p>Authority boundary, security model, deployment forms, and the programme from the transitional Compose baseline to the standard one box profile.</p></a>
+  <a class="card" href="../../task-server-bus/index.html"><h4>Task Server bus</h4><div class="path">task-server-bus/ &middot; AGT-W65 &middot; Source AGT-2905</div><p>Steering boundary between engine and runner hosts, pipeline control as it runs on 11 October 2026, decisions D14 to D21 on decision placement, engine and Operations Server process form, fix-round base and round budget.</p></a>
+  <a class="card" href="../../orchestrator-rule-core/index.html"><h4>Orchestrator decisions between steps</h4><div class="path">orchestrator-rule-core/ &middot; AGT-W73 &middot; Source AGT-3018</div><p>A strong model chooses the next typed action from bounded grounds; guard rails become signals. Related: run budget per card (AGT-W68), fluid capacity (AGT-W74), improvement scout (AGT-W76). Decision pending.</p></a>
   <a class="card" href="../deployment-story/index.html"><h4>Deployment story</h4><div class="path">operations/deployment-story/ &middot; AGT-W63 &middot; Source AGT-2906</div><p>Operator and administrator journeys from one-box installation to additional runner hosts and remote authority, with availability, gaps and acceptance checkpoints. Authority and bus decisions remain in AGT-W49 and AGT-2905.</p></a>
   <a class="card" href="../docker-ausfuehrungswelt-migration/index.html"><h4>Isolated execution</h4><div class="path">operations/docker-ausfuehrungswelt-migration/ &middot; AGT-W51</div><p>Preparation script, per run isolation, healing orchestrator, tests as a product feature, migration stages M1 to M7.</p></a>
   <a class="card" href="../dossier-consolidation-and-area-tags/index.html"><h4>Dossier consolidation and area tags</h4><div class="path">operations/dossier-consolidation-and-area-tags/ &middot; AGT-W55</div><p>The sixteen Dossier target set, the archiving rule, and the area and facet tag system. This rewrite is its first delivery slice.</p></a>
@@ -300,7 +322,7 @@
     <rect class="svg-node" x="770" y="52" width="246" height="66" rx="9"></rect>
     <text class="svg-label" x="788" y="76">AGT-W49</text>
     <text class="svg-sub" x="788" y="96">Operations Server, deployment</text>
-    <text class="svg-tiny" x="788" y="112">decision pending</text>
+    <text class="svg-tiny" x="788" y="112">decided 25 September 2026</text>
     <rect class="svg-node" x="770" y="146" width="246" height="66" rx="9"></rect>
     <text class="svg-label" x="788" y="170">AGT-W51</text>
     <text class="svg-sub" x="788" y="190">isolated execution, preparation</text>
@@ -308,7 +330,7 @@
 
     <path class="svg-flow" d="M 224 66 L 350 66 L 350 118 L 480 118"></path>
     <path class="svg-flow" d="M 224 132 L 480 132"></path>
-    <path class="svg-flow" d="M 224 198 L 350 198 L 350 146 L 480 146"></path>
+    <path class="svg-flow" d="M 224 198 L 458 198 L 458 146 L 480 146"></path>
     <path class="svg-flow" d="M 440 132 L 480 132"></path>
     <path class="svg-flow-accent" d="M 710 118 L 740 118 L 740 85 L 770 85"></path>
     <path class="svg-flow-accent" d="M 710 146 L 740 146 L 740 179 L 770 179"></path>
@@ -379,22 +401,23 @@
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The operator's answers, 13 September 2026, 07:53 UTC</b><small>D1 A, sixteen Dossiers with W14 rewritten as the entry point. D2 A, archive when the durable knowledge has a documentation home, with the note that a Dossier superseded by a theme Dossier needs no artefact. Recorded in <a href="../dossier-consolidation-and-area-tags/index.html">AGT-W55</a> &sect;9 and its descriptor.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The AGT-W53 matrix classified all 52 Dossiers on 13 September 2026</b><small>23 current, 12 partially superseded, 6 superseded, 11 historical. W6, W8, W22, W25 and the previous W14 are in the superseded row of the consolidation map in AGT-W55 &sect;3, with "target architecture" as their destination. Source: <a href="../dossier-review-2026-09/index.html">docs/operations/dossier-review-2026-09</a>.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>Catalogue projection: status decides the current list</b><small><code>backend/Features/Docs/WorkbenchCatalogueService.cs</code> defines <code>CurrentStatuses</code> as active, decision-pending, decided, and counts archived and documented as history. Setting an absorbed descriptor to <code>documented</code> therefore removes it from the current list without deleting it.</small></span></div>
-  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-W51 is decided, AGT-W49 is decision pending</b><small>Their descriptors carry <code>status</code> decided and decision-pending, and both carry a review verdict of current with an empty <code>supersededBy</code>, reviewed by the operator on 13 September 2026. AGT-W49 &sect;09 lists D1 to D4 as unanswered.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>AGT-W51 and AGT-W49 are decided</b><small>AGT-W51 carries <code>status</code> decided since 12 September 2026. AGT-W49 carries the operator's decision receipt of 25 September 2026 for D1 to D4 and <code>status</code> decided since 11 October 2026.</small></span></div>
   <div class="evidence"><span class="evidence-class" data-evidence-class="inferred">Inferred</span><span><b>Why the four absorbed Dossiers keep nothing beyond &sect;6</b><small>Each one is a plan or inventory keyed to the 27 July topology and its card chain. The decisions they contained are either delivered, restated as guardrails in &sect;4, or explicitly reversed by the afternoon revision of 12 September. What remains is provenance, which the History list preserves in full.</small></span></div>
-  <div class="evidence"><span class="evidence-class" data-evidence-class="proposed">Proposed</span><span><b>The Operations Server is drawn in Figure 1 as a target, not as a fact</b><small>AGT-W49 states that a separately deployable Operations Server is a fourth runtime component and that adopting it requires an ADR amending <code>docs/concepts/distributed-agent-studio-target-architecture.md</code>. Until that ADR exists, Figure 1 is the recommended target picture and is labelled as such.</small></span></div>
+  <div class="evidence"><span class="evidence-class" data-evidence-class="observed">Observed</span><span><b>The Operations Server exists as a foundation</b><small>ADR-0076 (25 September 2026) accepted the fourth runtime role and amended <code>docs/concepts/distributed-agent-studio-target-architecture.md</code>. AGT-2907 delivered service principals, the outbound agent channel, permits and fenced attempts with one read-only operation. No production installation runs it on 11 October 2026.</small></span></div>
 </div>
 <p class="muted">No screenshot is included. This Dossier makes no finding about a visible product surface: its claims concern descriptor state, the catalogue projection rule in the backend, and the content of four linked documents, all of which are verifiable in the repository. The list membership statements in &sect;5 and &sect;6 are statements about <code>status</code> fields and the projection rule cited above, not about what a particular screen renders. The pinned demo workspace used for published captures contains invented Dossiers and could not prove a claim about these specific descriptors, and a capture of the real workspace is excluded by the capture runbook. Human sight review is not claimed.</p>
 </section>
 
 <section id="s10" data-concept-section="open-decisions" data-document-section="open-decisions">
 <h2><span class="no">&sect;10</span>Open decisions</h2>
-<p>Two choices remain for a human. Each names a recommended option; neither is recorded as decided by this document.</p>
+<p>One choice remains for a human. N2 is overtaken by ADR-0076; N1 stays open.</p>
 
 <div class="decision">
   <h3>N1. How should the rewritten North star be encoded in the catalogue?</h3>
   <div class="opt"><b>A. Standing map: status active, phase informational</b><span>Matches the curation note of 17 August 2026, which argued that an entry point makes no deliverable promises of its own and has no operator decision pending. Requires that &sect;10 be emptied once N2 is answered.</span></div>
   <div class="opt"><b>B. Decision Dossier until N2 is answered, then A</b><span>Status decision-pending and phase decision-ready while this page still carries an unanswered question, then back to A. This is the encoding the rewrite ships with, and it is the recommendation, because the page currently does carry an open question and the concept delivery contract expects a decision-ready descriptor.</span></div>
   <div class="opt"><b>C. Permanent decision Dossier</b><span>Keeps the entry point on the decision surface forever, which produces a standing empty decision block and trains readers to ignore it.</span></div>
+  <p><b>Note, 11 October 2026.</b> With N2 overtaken, option B's own rule leads to A once the operator confirms.</p>
 </div>
 
 <div class="decision">
@@ -402,6 +425,7 @@
   <div class="opt"><b>A. Name it, labelled as recommended and decision pending</b><span>Figure 1 and &sect;3 show the boundary with an explicit pending marker, so readers see the direction without mistaking it for a decided architecture. This is the recommendation and what the rewrite ships, because AGT-W49 is the only current document that describes the deployment target at all, and leaving the entry point silent would send readers to the superseded W25 inventory.</span></div>
   <div class="opt"><b>B. Hold the three component target until the ADR lands</b><span>Strictly accurate against <code>docs/concepts/distributed-agent-studio-target-architecture.md</code>, but the North star would then describe a topology that the only current architecture Dossier already argues against.</span></div>
   <div class="opt"><b>C. Raise the ADR from this card</b><span>Settles the question properly, but writing an architectural decision record is a different card than rewriting an entry point, and the ADR is step 1 of the AGT-W49 programme, which is gated on its own D1.</span></div>
+  <p><b>Overtaken, 25 September 2026.</b> ADR-0076 accepted the Operations Server as a runtime role, so the question no longer applies; Figure 1 and &sect;3 show the role as decided. Recorded by the operating session on 11 October 2026.</p>
 </div>
 </section>
 
@@ -409,7 +433,8 @@
 <ul>
   <li><a href="../dossier-consolidation-and-area-tags/index.html">docs/operations/dossier-consolidation-and-area-tags/</a> (AGT-W55): target set &sect;2, consolidation map &sect;3, archiving rule &sect;4, operator answers to D1 and D2 of 13 September 2026.</li>
   <li><a href="../dossier-review-2026-09/index.html">docs/operations/dossier-review-2026-09/</a> (AGT-W53): the relevance matrix over all 52 Dossiers.</li>
-  <li><a href="../operations-server-backchannel/index.html">docs/operations/operations-server-backchannel/</a> (AGT-W49): ownership boundary, target topology, deployment forms, programme, open decisions D1 to D4.</li>
+  <li><a href="../operations-server-backchannel/index.html">docs/operations/operations-server-backchannel/</a> (AGT-W49): ownership boundary, target topology, deployment forms, programme, decisions D1 to D4 of 25 September 2026.</li>
+  <li><a href="../../task-server-bus/index.html">docs/task-server-bus/</a> (AGT-W65) and <a href="../../orchestrator-rule-core/index.html">docs/orchestrator-rule-core/</a> (AGT-W73): steering bus, pipeline control on 11 October 2026, and decisions between steps.</li>
   <li><a href="../docker-ausfuehrungswelt-migration/index.html">docs/operations/docker-ausfuehrungswelt-migration/</a> (AGT-W51): operator decisions of 12 September 2026, the three layers, migration stages M1 to M7.</li>
   <li>Absorbed as history: <code>docs/operations/execution-model-shift/</code> (AGT-W6), <code>docs/operations/installer-story/</code> (AGT-W8), <code>docs/operations/umsetzungsplan-zielbild/</code> (AGT-W22), <code>docs/operations/zielbild-komponenten-protokolle/</code> (AGT-W25).</li>
   <li><code>backend/Features/Docs/WorkbenchCatalogueService.cs</code>: <code>CurrentStatuses</code>, <code>AllowedStatuses</code>, <code>AllowedReviewVerdicts</code>, and the current against history projection.</li>
@@ -423,6 +448,7 @@
   <p>Delivery slices append their current implementation status here. Decision content above remains unchanged.</p>
   <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+    <li><b>2026-10-11 · Status update.</b> AGT-W49 recorded as decided (25 September 2026, ADR-0076); AGT-W65 and AGT-W73 added to the live decisions and the map; N2 marked as overtaken. The arc in &sect;2 and the guardrails in &sect;4 are unchanged.</li>
 <!-- agent-studio:implementation-log:end -->
   </ol>
 </section>
