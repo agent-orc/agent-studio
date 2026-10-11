@@ -1,0 +1,16 @@
+{
+  "seq": 1,
+  "note": "app booted, default tab",
+  "ts": "2026-10-11T13:10:57.820Z",
+  "railOpen": false,
+  "project": "All projects",
+  "lanes": {
+    "backlog": 0,
+    "lanes-backlog": 0,
+    "active": 0,
+    "lanes-active": 0,
+    "decide": 0,
+    "lanes-decide": 0
+  },
+  "url": "/"
+}
