@@ -280,6 +280,7 @@ public sealed class TaskIndexCache
             byFolder[folder] = record;
             AddCoreAliases(aliases, record);
         }
+        AddLegacyCoreAliases(aliases, byFolder.Values);
         lock (_lock)
         {
             _coreFactsByFolder = facts;
@@ -360,6 +361,18 @@ public sealed class TaskIndexCache
         core[CoreKey(record.WatchPath, record.Id)] = record;
         core[CoreKey(record.WatchPath, record.TaskKey)] = record;
         if (!string.IsNullOrWhiteSpace(record.Key)) core[CoreKey(record.WatchPath, record.Key)] = record;
+    }
+
+    private static void AddLegacyCoreAliases(Dictionary<string, TaskCoreRecord> core,
+        IEnumerable<TaskCoreRecord> records)
+    {
+        // Older core replies exposed only this prefix. Keep it as an alias
+        // when it identifies one task and does not shadow a canonical key.
+        var prefixes = records.Select(record => (Record: record, Prefix: TaskCoreRecord.Limit(record.Id, 128)!))
+            .Where(entry => entry.Prefix != entry.Record.Id)
+            .GroupBy(entry => CoreKey(entry.Record.WatchPath, entry.Prefix), StringComparer.OrdinalIgnoreCase);
+        foreach (var group in prefixes)
+            if (group.Count() == 1) core.TryAdd(group.Key, group.Single().Record);
     }
 
     /// <summary>
@@ -516,6 +529,7 @@ public sealed class TaskIndexCache
                 byFolder[record.FolderPath] = record;
                 factsByFolder[job.FolderPath] = job;
             }
+            AddLegacyCoreAliases(projected, byFolder.Values);
 
             lock (_corePublicationLock)
             lock (_lock)

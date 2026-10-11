@@ -85,28 +85,28 @@ public sealed record TaskCoreRecord
             ? previous.Timeline : TaskCoreTimeline.Read(timelinePath);
         var record = new TaskCoreRecord
         {
-            Id = Limit(info.Id, 128)!, TaskKey = Limit(info.TaskKey, 256)!, Key = Limit(info.Key, 128),
+            Id = info.Id, TaskKey = info.TaskKey, Key = info.Key,
             WatchPath = info.WatchPath, FolderPath = info.FolderPath,
             Commits = info.Commits.ToArray(), Commit = info.Commit,
             LastUsage = info.LastUsage,
             ProjectName = Limit(info.ProjectName, 128)!,
             Title = Limit(info.Title, 1024)!, State = info.State,
             ArchiveState = info.ArchiveState, EnteredLaneAt = info.EnteredLaneAt,
-            Phase = Limit(info.Phase, 80), PhaseEnteredAt = info.PhaseEnteredAt,
+            Phase = info.Phase, PhaseEnteredAt = info.PhaseEnteredAt,
             Order = info.Order, Mode = info.Mode, Kind = info.Kind, TaskType = info.TaskType,
             Released = info.Released, PendingIntent = info.PendingIntent is not null,
-            Model = Limit(info.Model, 128), ModelExplicit = info.ModelExplicit,
-            ThinkingLevel = Limit(info.ThinkingLevel, 64), ThinkingLevelExplicit = info.ThinkingLevelExplicit,
-            CliType = Limit(info.CliType, 64), ContextMode = Limit(info.ContextMode, 64),
+            Model = info.Model, ModelExplicit = info.ModelExplicit,
+            ThinkingLevel = info.ThinkingLevel, ThinkingLevelExplicit = info.ThinkingLevelExplicit,
+            CliType = info.CliType, ContextMode = info.ContextMode,
             UseOwnSession = info.UseOwnSession, AllowWebAccess = info.AllowWebAccess,
             NoBranchExpected = info.NoBranchExpected,
-            BlockerType = Limit(info.ParkedBlocker?.BlockerType, 128),
-            BlockerCondition = Limit(info.ParkedBlocker?.ConditionKind, 128),
-            BlockerStatus = Limit(info.ParkedBlocker?.RecallStatus, 128),
+            BlockerType = info.ParkedBlocker?.BlockerType,
+            BlockerCondition = info.ParkedBlocker?.ConditionKind,
+            BlockerStatus = info.ParkedBlocker?.RecallStatus,
             BlockerDescription = Limit(info.ParkedBlocker?.ConditionDescription, 256),
             OutcomeIssue = info.OutcomeIssue is { } issue
-                ? new TaskCoreOutcomeIssue(Limit(issue.Kind, 80)!,
-                    Limit(issue.Severity, 40)!, Limit(issue.Label, 80)!,
+                ? new TaskCoreOutcomeIssue(issue.Kind,
+                    issue.Severity, Limit(issue.Label, 80)!,
                     Limit(issue.Summary, 256)!) : null,
             NeedsInput = Limit(info.NeedsInput?.FirstLine, 256),
             Status = status, Prompt = prompt, Timeline = timeline,
@@ -121,10 +121,10 @@ public sealed record TaskCoreRecord
         var blocked = waitsOn?.Blocked == true;
         var state = info.References.DependsOn.Count > 0 && waitsOn is null ? "warming" : "ready";
         var dependencies = waitsOn?.Items.Take(16).Select(item => new TaskCoreDependency(
-            Limit(item.Key, 80)!, item.Resolved, item.Fulfilled,
+            item.Key, item.Resolved, item.Fulfilled,
             item.ReleaseGate, item.WaitingForRelease, item.Unsatisfiable)).ToArray() ?? [];
-        var dependsOn = info.References.DependsOn.Take(16).Select(edge => Limit(edge.Key, 80)!).ToArray();
-        var blockedBy = info.References.BlockedBy.Take(16).Select(key => Limit(key, 80)!).ToArray();
+        var dependsOn = info.References.DependsOn.Take(16).Select(edge => edge.Key).ToArray();
+        var blockedBy = info.References.BlockedBy.Take(16).ToArray();
         // A single sidecar update republishes the graph for every resident task.
         // Preserve unchanged records instead of serializing and hashing the
         // entire workspace again for each CLI flush or timeline append.
@@ -239,16 +239,15 @@ public sealed record TaskCoreTimeline(string State, IReadOnlyList<TaskCoreEvent>
                     var evt = JsonSerializer.Deserialize<TimelineEvent>(line, ReadOptions);
                     if (evt is null) continue;
                     recent.Enqueue(new TaskCoreEvent(sequence, evt.Ts,
-                        TaskCoreRecord.Limit(evt.Kind, 32)!, TaskCoreRecord.Limit(evt.Actor, 32)!,
-                        TaskCoreRecord.Limit(evt.RunId, 48), TaskCoreRecord.Limit(evt.Summary, 96)!));
+                        evt.Kind, evt.Actor,
+                        evt.RunId, TaskCoreRecord.Limit(evt.Summary, 96)!));
                     if (recent.Count > 5) recent.Dequeue();
                 }
                 catch (JsonException ex) { SilentCatch.Note(ex, "Task core: skip torn timeline row."); }
             }
             var events = recent.ToArray();
-            // Preserve all five events. Shorten their display summaries before
-            // sacrificing history, leaving room for the cursor and link in the
-            // 2 KiB timeline envelope.
+            // Shorten display summaries before dropping older events. Event
+            // identities remain intact within the 2 KiB timeline envelope.
             var summaryLimit = 96;
             while (JsonSerializer.SerializeToUtf8Bytes(events).Length > 1250 && summaryLimit > 0)
             {
@@ -256,20 +255,8 @@ public sealed record TaskCoreTimeline(string State, IReadOnlyList<TaskCoreEvent>
                 events = events.Select(evt => evt with
                 { Summary = TaskCoreRecord.Limit(evt.Summary, summaryLimit)! }).ToArray();
             }
-            if (JsonSerializer.SerializeToUtf8Bytes(events).Length > 1250)
-                events = events.Select(evt => evt with
-                {
-                    Kind = TaskCoreRecord.Limit(evt.Kind, 8)!,
-                    Actor = TaskCoreRecord.Limit(evt.Actor, 8)!,
-                    RunId = TaskCoreRecord.Limit(evt.RunId, 8),
-                }).ToArray();
-            if (JsonSerializer.SerializeToUtf8Bytes(events).Length > 1250)
-                events = events.Select(evt => evt with
-                {
-                    Kind = TaskCoreRecord.Limit(evt.Kind, 4)!,
-                    Actor = TaskCoreRecord.Limit(evt.Actor, 4)!,
-                    RunId = null,
-                }).ToArray();
+            while (events.Length > 0 && JsonSerializer.SerializeToUtf8Bytes(events).Length > 1250)
+                events = events[1..];
             return new TaskCoreTimeline("ready", events, originalBytes, hash,
                 events.Length > 0 && events[0].Sequence > 1 ? (events[0].Sequence - 1).ToString() : null);
         }
