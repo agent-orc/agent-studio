@@ -5,9 +5,9 @@
   "title": "Orchestrator decisions between steps",
   "summary": "A strong model chooses typed actions from bounded decision grounds at every transition and periodic intervention; guard rails signal, while mechanical checks preserve authority and finite execution. Replaces the deterministic AGT-3010 salvage framing.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
-  "updatedAt": "2026-10-11T12:00:00Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-3018"
   ],

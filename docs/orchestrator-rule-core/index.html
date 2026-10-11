@@ -327,7 +327,7 @@
     <p class="kicker">Concept Dossier · AGT-W73 · ORCH-3</p>
     <h1>Orchestrator decisions between steps</h1>
     <p class="lede">A strong model chooses the next typed action from clean, bounded grounds at each transition. Guard rails provide signals. Mechanical boundaries preserve authority, safety, and finite execution.</p>
-    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Status note</b> 11 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
+    <div class="meta"><span><b>Status</b> Decided 11 October 2026</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Status note</b> 11 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
   </header>
   <nav class="contents" aria-label="Dossier sections"><a href="#decision-model">Decision model</a><a href="#grounds">Grounds</a><a href="#signals">Signals</a><a href="#actions">Actions</a><a href="#limit">Hard limit</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#today">Today</a><a href="#adr">ADR</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a></nav>
 
@@ -466,15 +466,17 @@
   </section>
 
   <section id="open-decisions" data-concept-section="open-decisions">
-    <h2>Open decisions</h2>
-    <div class="decision" id="o1-actor-model" data-decision-id="o1-actor-model" data-decision-kind="single" data-decision-label="O1. Actor model: operators and steps"><h3>O1. Actor model: operators and steps</h3>
+    <h2>Decisions</h2>
+    <p><b>Decided on 11 October 2026.</b> The operator followed the recommendations: O1 A below, and every working recommendation in the table that follows. Implementation: AGT-3063 to AGT-3068, after the engine decides as its own process (AGT-3059).</p>
+    <div class="decision" id="o1-actor-model" data-decision-id="o1-actor-model" data-decision-kind="single" data-decision-status="decided" data-selected-option-id="four-levels" data-decision-label="O1. Actor model: operators and steps"><h3>O1. Actor model: operators and steps</h3>
       <p><b>Context.</b> On 11 October 2026 the operator asked whether the AI Operator is something other than the Orchestrator Engine, or whether there are only smart steps in the pipeline that look like decisions. AGT-W65 D14 placed every decision in the engine. This Dossier defines decision steps at transitions and periodic occurrences without card, but names no standing actor. Today the operator work (watching, steering, healing, triage) is done largely by operating Claude sessions and partly by AGT-3011 sweeps in the monolith.</p>
       <label data-option-id="four-levels" data-option-label="A. Two operators, two kinds of steps (recommended)"><input type="radio" name="o1-actor-model" value="four-levels" checked><b>A. Two operators, two kinds of steps (recommended)</b><br>Human Operator and AI Operator are actors with the same intent interface and different rights (autonomy classes). Decision steps answer one bounded question per card or plan; execution steps do the work on runner hosts. The engine runs the AI Operator and the decision steps. Escalation: step to AI Operator to human.</label>
       <label data-option-id="steps-only" data-option-label="B. Only steps"><input type="radio" name="o1-actor-model" value="steps-only"><b>B. Only steps</b><br>No AI Operator: every intelligent function is a decision step, card-scoped or periodic; the human is the only operator. Simpler, but nothing takes initiative across cards or holds a conversation with the human; whatever no step was asked stays unnoticed.</label>
       <label data-option-id="separate-ai-operator" data-option-label="C. AI Operator as its own service"><input type="radio" name="o1-actor-model" value="separate-ai-operator"><b>C. AI Operator as its own service</b><br>The AI Operator runs as a process of its own beside the engine. Separates the stateful, conversational role from the high-volume decision steps, at the cost of a further control-plane process; its actions still go through intents.</label>
       <p><b>Recommendation: A.</b> It gives the operator's request of 4 October 2026 for a smart instance a defined place without turning every step into an agent, and keeps one runtime for all decisions (AGT-W65 D14).</p>
+      <p><b>Decision, 11 October 2026, operator: A</b> (following the recommendation). The North star states the actor model in its section 'Who decides'.</p>
       <div data-comment="Operator note"><label>Operator note<textarea aria-label="O1. Actor model operator note"></textarea></label></div></div>
-    <table><thead><tr><th>Decision point</th><th>Working recommendation</th><th>Rejected option</th></tr></thead><tbody>
+    <table><thead><tr><th>Decision point</th><th>Decided (11 October 2026)</th><th>Rejected option</th></tr></thead><tbody>
       <tr><td>Authority</td><td>Strong model chooses; mechanical code checks floors and capability.</td><td>Pure decider selects ordinary action.</td></tr>
       <tr><td>Degraded mode</td><td>One bounded alternate-model transport retry, then <code>ask</code> and hold.</td><td>Silent deterministic continuation or repeated model calls.</td></tr>
       <tr><td>Emergency run limit</td><td>Configurable 24-hour default with existing salvage.</td><td>3,600-second shaping timeout or stepped run budgets.</td></tr>
@@ -489,14 +491,15 @@
   <section id="implementation" data-document-section="implementation">
     <h2>Implementation cards in order</h2>
     <ol><li><b>OD-S1 · Grounds and shadow receipt.</b> Smallest useful slice: freeze one post-core transition pack and record model choice, alternatives, content, tokens, price status, and outcome without dispatch change.</li><li><b>OD-S2 · Shared decision and authority adapter.</b> Activate one transition, fail closed, preserve exact fence/SHA and A0 to A3 limits.</li><li><b>OD-S3 · Artefact readers and loop signals.</b> Convert raw session/log readers and thirteen registered exhaustion actions to signals plus finite re-entry checks.</li><li><b>OD-S4 · Policy migration and wide timeout.</b> Convert eight policy roles, configure the 24-hour emergency ceiling and salvage path.</li><li><b>OD-S5 · Visibility and cost roll-ups.</b> Show inter-step chain, primary blocker, evidence path, model, and cost per occurrence/card/project in both themes.</li><li><b>OD-S6 · ORCH-3 administration and periodic seam.</b> Versioned rule editor, dry run, and non-card capacity occurrence for the Fluid capacity sibling.</li></ol>
-    <p>These are proposed implementation cards in <code>workbench.json</code>. No production behavior or operator approval is claimed.</p>
+    <p>Decided on 11 October 2026; cards: OD-S1 AGT-3063, OD-S2 AGT-3064, OD-S3 AGT-3065, OD-S4 AGT-3066, OD-S5 AGT-3067, OD-S6 AGT-3068, chained after AGT-3059. The surviving AGT-W68 slices are folded in: the per-card ledger and progress definition into OD-S1, checkpoint and salvage handoff into OD-S2, the operator controls as ask destination into OD-S5; the stepped budgets are superseded by the emergency limit of OD-S4.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+    <li><b>2026-10-11 · Decided and promoted.</b> The operator followed the recommendations, including actor model O1 A. Cards AGT-3063 to AGT-3068 wait for the engine (AGT-3059); ADR-0078 records the ADR-0032 amendment (AGT-3071).</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
   <!-- agent-studio:implementation-section:end -->
-  <footer>AGT-W73 · Source card AGT-3018 · Decision pending · 6 October 2026</footer>
+  <footer>AGT-W73 · Source card AGT-3018 · Decided 11 October 2026</footer>
 </main>
 </body>
 </html>
