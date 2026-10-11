@@ -23,6 +23,20 @@ public sealed class TestRunServiceTests : IDisposable
     }
 
     [Fact]
+    public void BuildLookup_DuplicateIdWithArchivedCard_UsesLiveCard()
+    {
+        var stack = BuildStack();
+        var commit = RevParse(stack.Repo, "HEAD");
+        var live = Task("duplicate", stack.Storage, commit);
+        var archived = live with { State = TaskStates.Archive, Title = "archived" };
+
+        var evidence = stack.Service.BuildLookup([archived, live]);
+
+        Assert.Single(evidence);
+        Assert.Equal(live.TaskKey, evidence.Keys.Single());
+    }
+
+    [Fact]
     public void CardEvidence_DistinguishesExactContainedEarlierAndMissingRuns()
     {
         var stack = BuildStack();

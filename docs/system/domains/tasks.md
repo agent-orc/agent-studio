@@ -1499,7 +1499,15 @@ their authoritative checks; display state never grants permission to mutate.
   for every other `git-info` request) retains a rolling per-label window so
   `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
   endpoint alongside each repository's index age, with a warning when
-  `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min.
+  `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min. Repository
+  entries also expose consecutive index failures, the last error, and when
+  the failure streak began, and a warning names each failing repository. The
+  same endpoint lists duplicate card ids across
+  live and archived tasks. Duplicate projection keys select a live task first,
+  then the newest `task.json` write; a failed card lookup is published as
+  unavailable while other cards retain their facts. Failed index runs keep
+  the previous snapshot and do not recompute unchanged failed input on each
+  task event.
 
 Task detail has a separate opt-in diagnostic trace. `X-Task-Switch-Trace: 1`
 enables bounded stage timing for `GET /api/tasks/{jobId}` only. Canonical UUID

@@ -589,6 +589,40 @@ public sealed class GitStateIndexServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DuplicateTaskId_LiveAndArchived_PublishesSnapshotAndSettles()
+    {
+        var jobsPath = NewRepoWatchPath("proj");
+        var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
+        // Legacy layout: the scanner takes the id from the folder name, so both
+        // folders must share it to produce one TaskKey twice.
+        foreach (var state in new[] { TaskStates.Progress, TaskStates.Archive })
+        {
+            var folder = Path.Combine(jobsPath, state, "dup");
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"),
+                $"{{\"id\":\"dup\",\"state\":\"{state}\",\"title\":\"Duplicate\"}}");
+        }
+        var scanner = BuildScanner("proj", jobsPath, repoPath);
+        var cache = new TaskListGitProjectionCache();
+        var builder = new FakeBuilder();
+        using var service = new GitStateIndexService(scanner, BuildWatcher(scanner), cache,
+            builder.BuildAsync, _ => { }, NullLogger.Instance, FastOptions(), TimeProvider.System);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            // Before the fix every run compared the de-duplicated input with a
+            // raw re-read, was marked superseded and re-ran forever without
+            // publishing a snapshot.
+            await WaitUntilAsync(() => !service.IsRunning("proj") && Volatile.Read(ref builder.Calls) > 0
+                && !cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
+            var settled = Volatile.Read(ref builder.Calls);
+            await Task.Delay(300);
+            Assert.Equal(settled, Volatile.Read(ref builder.Calls));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
     public async Task MissedReviewSubjectEvent_IsRecoveredBySafetySweep()
     {
         var jobsPath = NewRepoWatchPath("proj");
@@ -1010,7 +1044,11 @@ public sealed class GitStateIndexServiceTests : IDisposable
             Volatile.Write(ref fail, 1);
             service.RequestRefresh("proj", "transient-failure");
             await WaitUntilAsync(() => service.GetRepositoryStatuses().Single().ReasonCode == "refresh-failed");
-            Assert.Equal(original, service.GetRepositoryStatuses().Single().GitStateAt);
+            var failedStatus = service.GetRepositoryStatuses().Single();
+            Assert.Equal(original, failedStatus.GitStateAt);
+            Assert.True(failedStatus.ConsecutiveFailures >= 1);
+            Assert.Contains("transient Git failure", failedStatus.LastError);
+            Assert.NotNull(failedStatus.FailureSince);
             Assert.True(cache.ReadFreshness([new TaskInfo { WatchPath = jobsPath }]).Stale);
 
             Volatile.Write(ref fail, 0);

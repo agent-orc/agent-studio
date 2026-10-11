@@ -77,22 +77,33 @@ public sealed class GitStateIndexService : BackgroundService
             projectionCache,
             async tasks =>
             {
+                tasks = TaskProjectionCards.Select(tasks, logger);
                 var projection = await TaskListGitProjectionCache.BuildProjectionAsync(
                     tasks, mergeStatus.BuildLookup, integrationStatus.BuildLookup,
                     publishStatus.BuildLookup, testRuns.BuildLookup,
-                    reviewProjection.BuildLookup).ConfigureAwait(false);
+                    reviewProjection.BuildLookup, logger).ConfigureAwait(false);
                 var commits = new Dictionary<string, IReadOnlyList<TaskCommitInfo>>(StringComparer.Ordinal);
+                var unavailable = projection.UnavailableTasks.ToHashSet(StringComparer.Ordinal);
                 foreach (var task in tasks)
                 {
-                    if (task.State != TaskStates.Progress || task.Commits.Count > 1
-                        || !JobCommitsAggregation.HasPriorPostProcessingTransition(task)) continue;
-                    var enriched = JobCommitsAggregation.WithReconstructedInProgressCommits(
-                        new TaskDetail { Info = task }, sessions, task.WatchPath, git).Info;
-                    if (!ReferenceEquals(enriched, task)) commits[task.TaskKey] = enriched.Commits.ToArray();
+                    try
+                    {
+                        if (task.State != TaskStates.Progress || task.Commits.Count > 1
+                            || !JobCommitsAggregation.HasPriorPostProcessingTransition(task)) continue;
+                        var enriched = JobCommitsAggregation.WithReconstructedInProgressCommits(
+                            new TaskDetail { Info = task }, sessions, task.WatchPath, git).Info;
+                        if (!ReferenceEquals(enriched, task)) commits[task.TaskKey] = enriched.Commits.ToArray();
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        unavailable.Add(task.TaskKey);
+                        logger.LogWarning(ex, "git-index-card-unavailable taskKey={TaskKey}", task.TaskKey);
+                    }
                 }
                 return projection with
                 {
                     Commits = commits,
+                    Unavailable = unavailable,
                     Signatures = tasks.ToDictionary(task => task.TaskKey, TaskGitSignature.For, StringComparer.Ordinal),
                     SubjectVersions = tasks.ToDictionary(task => task.TaskKey,
                         task => projectionCache.SubjectVersion(task.FolderPath), StringComparer.Ordinal),
@@ -157,7 +168,10 @@ public sealed class GitStateIndexService : BackgroundService
                 state.LastIndexedAt,
                 Volatile.Read(ref state.Running) == 1,
                 state.LastIndexedAt is { } at ? (now - at).TotalSeconds : null,
-                state.LastErrorReason))
+                state.LastErrorReason,
+                state.Failures,
+                state.LastError,
+                state.FailureSince))
             .OrderBy(status => status.ProjectName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -438,6 +452,7 @@ public sealed class GitStateIndexService : BackgroundService
         var stopwatch = Stopwatch.StartNew();
         var spawns = 0;
         (string Command, int Count, long Ms)? slowest = null;
+        RepoInput? attemptedInput = null;
         try
         {
             using (GitProcessTelemetry.BeginRequest("git-index-run", _logger, includeNested: true, _timeProvider))
@@ -449,13 +464,14 @@ public sealed class GitStateIndexService : BackgroundService
                     state.ActiveDeadline = deadline;
                 }
                 using var budget = GitProcessBudget.Begin(deadline.Token);
-                var tasksForRepo = ReadTasks(state);
+                var tasksForRepo = TaskProjectionCards.Select(ReadTasks(state), _logger);
                 var effectiveConfig = GitConfigSignature.Capture(state.RepositoryPath);
                 using var configScope = GitConfigScope.Begin(state.RepositoryPath, effectiveConfig.OriginUrl);
                 var input = CaptureInput(state, tasksForRepo, effectiveConfig.Signature);
-                if (Volatile.Read(ref state.LastErrorReason) is null
-                    && (trigger is "task-event" or "fs-watch" or "sweep")
-                    && input == state.LastPublishedInput)
+                attemptedInput = input;
+                if ((trigger is "task-event" or "fs-watch" or "sweep")
+                    && (Volatile.Read(ref state.LastErrorReason) is null && input == state.LastPublishedInput
+                        || trigger == "task-event" && input == state.LastFailedInput))
                     return;
                 if (trigger is "task-event" or "fs-watch" or "sweep")
                     _projectionCache.MarkRefreshing(state.WatchPath);
@@ -463,7 +479,10 @@ public sealed class GitStateIndexService : BackgroundService
                 lock (state.Gate) invalidation = state.InvalidationVersion;
                 var projection = await _buildProjection(tasksForRepo)
                     .WaitAsync(deadline.Token).ConfigureAwait(false);
-                var after = CaptureInput(state, ReadTasks(state), effectiveConfig.Signature);
+                // Compare like with like: the input was captured from the
+                // de-duplicated cards, so a raw re-read would differ whenever a
+                // duplicate id exists and mark every run superseded forever.
+                var after = CaptureInput(state, TaskProjectionCards.Select(ReadTasks(state)), effectiveConfig.Signature);
                 bool superseded;
                 DateTimeOffset gitStateAt;
                 lock (state.Gate)
@@ -482,6 +501,9 @@ public sealed class GitStateIndexService : BackgroundService
                         state.LastSettingsVersion = input.SettingsVersion;
                         state.Failures = 0;
                         state.LastErrorReason = null;
+                        state.LastError = null;
+                        state.FailureSince = null;
+                        state.LastFailedInput = null;
                     }
                 }
                 if (superseded)
@@ -519,6 +541,9 @@ public sealed class GitStateIndexService : BackgroundService
                         : ex is DirectoryNotFoundException ? "repository-unavailable"
                         : "refresh-failed";
                     state.LastErrorReason = reason;
+                    state.LastError = ex.ToString();
+                    state.FailureSince ??= _timeProvider.GetUtcNow();
+                    state.LastFailedInput = attemptedInput;
                     _projectionCache.MarkFailed(state.WatchPath, reason);
                     if (++state.Failures <= _options.MaxRetries) retry = state.Failures;
                 }
@@ -636,6 +661,9 @@ public sealed class GitStateIndexService : BackgroundService
         public long InvalidationVersion;
         public int Failures;
         public string? LastErrorReason;
+        public string? LastError;
+        public DateTimeOffset? FailureSince;
+        public RepoInput? LastFailedInput;
         public CancellationTokenSource? ActiveDeadline;
     }
 
@@ -653,7 +681,10 @@ public sealed record GitStateRepositoryStatus(
     DateTimeOffset? GitStateAt,
     bool Refreshing,
     double? AgeSeconds,
-    string? ReasonCode = null);
+    string? ReasonCode = null,
+    int ConsecutiveFailures = 0,
+    string? LastError = null,
+    DateTimeOffset? FailureSince = null);
 
 /// <summary>Tunable knobs for <see cref="GitStateIndexService"/>, all with safe defaults.</summary>
 public sealed record GitStateIndexOptions(
