@@ -87,7 +87,8 @@ public sealed class RemoteReviewPlanBuilder
             var options = projectSettings!.BatchGate;
             var selectionRepo = repositoryPath ?? string.Empty;
             // Selection reads the project inventory from the existing checkout.
-            // A delivery that changes that inventory needs its own full gate;
+            // The built-in Agent Studio verifier reads these fixed command
+            // inventory files. A delivery that changes that inventory needs its own full gate;
             // materializing a 7,000-file result worktree for every queued plan
             // would hold review admission behind filesystem work.
             if (changedPaths!.Any(path => path is ".agent-studio/project.yml"

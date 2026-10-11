@@ -127,6 +127,10 @@ only a tested fast-forward candidate; it does not synthesize a merge commit
 after the gate. A dirty or stale local checkout cannot hold the verified remote
 publication in `Publishing`; local sync is best effort. Ejected and unresolved
 members start per-card fallbacks after the project batch reservation is released.
+Publication recovery isolates errors by manifest so damaged evidence in one
+batch cannot stop formation or release for other batches. A deferred review
+whose outcome is `IntegrationBranchDefect` can release on the same verified
+batch evidence as a passing review.
 Each admitted member receives an
 append-only batch-gate record. The card-local ownership marker makes both
 Human Review entry and Completed acceptance fail closed on missing or stale
@@ -147,6 +151,11 @@ infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
 batch as `Abandoned` with a `paused-to-per-task-gate` reason.
+The `integration-branch-red` pause is different: a matching red base means the
+candidate suite stopped early, so the batch remains unpublished with members
+pending. It is reconstructed only after the base SHA moves; a red run never
+validates the build profile. Code integrations also keep batches waiting from
+the local merge until their queued origin push succeeds.
 
 The default local store is scoped by the backend content root and task data
 root under `<LocalApplicationData>/agentstudio/instances/`: `pending/` holds durable
