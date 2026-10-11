@@ -593,9 +593,11 @@ public sealed class GitStateIndexServiceTests : IDisposable
     {
         var jobsPath = NewRepoWatchPath("proj");
         var repoPath = Path.Combine(Path.GetDirectoryName(jobsPath)!, "repo");
-        foreach (var (state, folderName) in new[] { (TaskStates.Progress, "dup-live"), (TaskStates.Archive, "dup-archived") })
+        // Legacy layout: the scanner takes the id from the folder name, so both
+        // folders must share it to produce one TaskKey twice.
+        foreach (var state in new[] { TaskStates.Progress, TaskStates.Archive })
         {
-            var folder = Path.Combine(jobsPath, state, folderName);
+            var folder = Path.Combine(jobsPath, state, "dup");
             Directory.CreateDirectory(folder);
             File.WriteAllText(Path.Combine(folder, "task.json"),
                 $"{{\"id\":\"dup\",\"state\":\"{state}\",\"title\":\"Duplicate\"}}");
