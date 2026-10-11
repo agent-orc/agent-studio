@@ -6,6 +6,18 @@ namespace AgentStudio.Tests;
 public sealed class BoardReadConcurrencyGateTests
 {
     [Fact]
+    public void Visibility_digest_distinguishes_same_count_boards_and_ignores_order()
+    {
+        var first = new[] { new TaskInfo { TaskKey = "project-a::one" },
+            new TaskInfo { TaskKey = "project-a::two" } };
+        var other = new[] { first[0], new TaskInfo { TaskKey = "project-b::two" } };
+        Assert.NotEqual(BoardReadSignatureSource.VisibleSetDigest(first),
+            BoardReadSignatureSource.VisibleSetDigest(other));
+        Assert.Equal(BoardReadSignatureSource.VisibleSetDigest(first),
+            BoardReadSignatureSource.VisibleSetDigest(first.Reverse().ToArray()));
+    }
+
+    [Fact]
     public async Task Concurrent_readers_share_one_serialized_body()
     {
         var cache = new BoardReadConcurrencyGate();

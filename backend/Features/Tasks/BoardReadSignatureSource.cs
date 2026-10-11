@@ -124,7 +124,7 @@ public sealed class BoardReadSignatureSource(
     private static string Part(string name, long value)
         => name + "=" + value.ToString(CultureInfo.InvariantCulture);
 
-    private static string VisibleSetDigest(IReadOnlyList<TaskInfo> jobs)
+    internal static string VisibleSetDigest(IReadOnlyList<TaskInfo> jobs)
     {
         var keys = jobs.Select(job => job.TaskKey).OrderBy(key => key, StringComparer.Ordinal);
         var bytes = Encoding.UTF8.GetBytes(string.Join('\n', keys));
