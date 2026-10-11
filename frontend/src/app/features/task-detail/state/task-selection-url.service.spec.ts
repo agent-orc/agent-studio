@@ -133,6 +133,11 @@ describe('TaskSelectionService · stable task URLs', () => {
   };
 
   afterEach(() => {
+    // Opening a task also loads the overview and review resources (slim board
+    // cards, AGT-3043). These URL tests do not assert on them; answer them as
+    // unavailable so verify() only reports requests the tests own.
+    for (const request of http.match(req => /\/details\/(overview|review)$/.test(req.url)))
+      request.flush({ error: 'not under test' }, { status: 503, statusText: 'Unavailable' });
     http.verify();
     history.replaceState(null, '', '/');
     TestBed.resetTestingModule();

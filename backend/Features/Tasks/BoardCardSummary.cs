@@ -243,6 +243,7 @@ internal static class BoardCardSummary
                     {
                         item.Key, item.Resolved, item.PendingDecision, item.Fulfilled,
                         item.WaitingForRelease, item.Unsatisfiable, item.TargetJobId,
+                        item.TargetState,
                         targetTitle = Short(item.TargetTitle, 40), item.TargetWatchPath,
                     }).ToArray(),
             };
