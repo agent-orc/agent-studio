@@ -879,3 +879,12 @@ dependency preparation so the test assembly exists.
   `task-server.Tests/RemoteReviewAuthorityTests.cs`: a lint gate red on the merge
   base settles as `IntegrationBranchDefect`; red only on the delivery still
   settles as `ProductFailure`.
+- Isolated baseline worktrees and clean-repeat clones replay the frozen build
+  before a `--no-build` test. A compiler error is recorded under the build
+  step with its output. A red baseline build blocks the dependent test's
+  comparison and retains `IntegrationBranchDefect`; a red clean-repeat build
+  preserves the build fingerprint, so a delivery compile error remains
+  `ProductFailure`. Missing build steps, toolchains, or interrupted processes
+  remain review infrastructure failures. The shared report diagnosis policy
+  and standalone Task Server accept a failed prerequisite build only when it
+  matches the planned preceding step and baseline SHA.
