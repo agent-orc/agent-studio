@@ -78,6 +78,21 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Pending_code_push_survives_restart_until_verified()
+    {
+        var root = Path.Combine(_tempDir, "pending-code-pushes");
+        var first = new BatchIntegrationReservationService(root);
+        first.MarkPushPending("Fixture", "card-1");
+
+        var restarted = new BatchIntegrationReservationService(root);
+        var batch = restarted.AcquireBatchAsync("Fixture", CancellationToken.None);
+        Assert.False(batch.IsCompleted);
+
+        restarted.MarkPushVerified("Fixture", "card-1");
+        using var grant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
     public void Run_MergesTaskBranch_AndRecordsStepPassed()
     {
         var repo = SeedRepo("runner-merge");

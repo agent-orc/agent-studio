@@ -40,7 +40,8 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
   A queued code push keeps its project batch reservation pending until origin
-  verifies the merged SHA.
+  verifies the merged SHA. The pending marker survives a backend restart for
+  the push backstop to clear after it publishes.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 
