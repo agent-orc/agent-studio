@@ -742,7 +742,10 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseServi
 builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
-builder.Services.AddSingleton<AgentStudio.Pipeline.BatchIntegrationReservationService>();
+builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
+    AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
+        builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"],
+        "batch-push-reservations")));
 builder.Services.AddSingleton<AgentStudio.GeneratedFiles.FileGenerationIndex>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ProjectPipelineCostService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.ILintScssRunner,

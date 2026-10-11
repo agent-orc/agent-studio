@@ -551,7 +551,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     public async Task Base_red_with_matching_failure_pauses_without_publication_or_validation()
     {
         using var factory = BuildFactory();
-        _ = factory.CreateClient();
+        using var client = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 1);
         var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>();
         settings.SetBuildProfile(ProjectName, new BuildProfile { BuildCmds = ["cd ."] });
@@ -568,7 +568,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         };
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
-        var validatedBefore = settings.Get(ProjectName).BuildProfile.LastValidatedAt;
+        var validatedBefore = settings.Get(ProjectName).BuildProfile!.LastValidatedAt;
 
         await pilot.TickAsync(CancellationToken.None);
 
@@ -583,7 +583,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal("pre-existing-base-red",
             store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Classification);
         Assert.Equal("fail", store.ReadVerdict(manifest.BatchId, run.BatchRunId)!.Outcome);
-        Assert.Equal(validatedBefore, settings.Get(ProjectName).BuildProfile.LastValidatedAt);
+        Assert.Equal(validatedBefore, settings.Get(ProjectName).BuildProfile!.LastValidatedAt);
         Assert.NotNull(store.ReadBaseVerdict(ProjectName, manifest.BaseSha,
             manifest.Scope.GateProfileDigest));
 
@@ -594,6 +594,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Single(store.ListManifests());
         Assert.Contains("integration-branch-red", JsonSerializer.Serialize(pilot.State(ProjectName)));
         Assert.Equal(1, pilot.Report(ProjectName).IntegrationBranchRedBatches);
+        using var report = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/report"));
+        Assert.Equal(1, report.RootElement.GetProperty("integrationBranchRedBatches").GetInt32());
 
         var previousBase = RemoteTip();
         Git(_repo, "checkout", "-q", "--detach", previousBase);
