@@ -30,7 +30,7 @@ namespace AgentStudio.TaskServer.Contracts;
 /// <para>
 /// AGT-2851: <c>dotnet test</c> also gets a normal-verbosity console logger. The
 /// default console logger prints nothing between test classes, and a suite run
-/// with <c>ParallelizeTestCollections=false</c> can sit quiet for the whole
+/// with only a few active xUnit collections can sit quiet for the whole
 /// length of one long integration class; the review host's silence watchdog
 /// then has no output to reset its clock against. Per-test progress lines give
 /// the watchdog something real to watch, so it only fires on genuine silence.
@@ -134,6 +134,13 @@ public static partial class ReviewPlanResourcePolicy
                 index++;
                 continue;
             }
+            if (argument.StartsWith("--blame-hang-timeout=", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (argument == "--blame-hang-timeout" && index + 1 < source.Count)
+            {
+                index++;
+                continue;
+            }
             filtered.Add(argument);
         }
         filtered.InsertRange(1, LimitArguments(maxCpuCount, isTest));
@@ -147,6 +154,7 @@ public static partial class ReviewPlanResourcePolicy
         limited = NodeReuseShellArgument().Replace(limited, string.Empty);
         limited = TestCollectionParallelismShellArgument().Replace(limited, string.Empty);
         limited = LoggerShellArgument().Replace(limited, string.Empty);
+        limited = BlameHangTimeoutShellArgument().Replace(limited, string.Empty);
         limited = CollapseUnquotedHorizontalWhitespace(limited);
         return DotNetBuildOrTest().Replace(
             limited,
@@ -160,21 +168,22 @@ public static partial class ReviewPlanResourcePolicy
 
     /// <summary>
     /// The bounds, in one place so the shell form and the argv form cannot
-    /// drift. Collection parallelism and the verbose logger are test-only
+    /// drift. The verbose logger is test-only;
     /// knobs; the CPU cap and the node-reuse switch apply to every MSBuild
     /// invocation a review makes.
     /// </summary>
     private static string[] LimitArguments(int maxCpuCount, bool isTest)
         => isTest
             ? [
-                $"-maxcpucount:{maxCpuCount}", "-nodeReuse:false", "-p:ParallelizeTestCollections=false",
+                $"-maxcpucount:{maxCpuCount}", "-nodeReuse:false",
                 .. VerboseTestLoggerArguments,
+                "--blame-hang-timeout", "10m",
               ]
             : [$"-maxcpucount:{maxCpuCount}", "-nodeReuse:false"];
 
     /// <summary>
     /// AGT-2851: gives the review host's silence watchdog real per-test output to
-    /// watch through a long <c>ParallelizeTestCollections=false</c> run. The
+    /// watch through a long integration test run. The
     /// value contains a semicolon, so the shell form must quote it; the direct
     /// argv form passes it as one untouched array element either way.
     /// </summary>
@@ -261,5 +270,8 @@ public static partial class ReviewPlanResourcePolicy
 
     [GeneratedRegex(@"(?<!\S)(?:--logger|-logger)\s+(?:""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase)]
     private static partial Regex LoggerShellArgument();
+
+    [GeneratedRegex(@"(?<!\S)--blame-hang-timeout(?:\s+|=)\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex BlameHangTimeoutShellArgument();
 
 }

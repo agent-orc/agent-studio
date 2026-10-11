@@ -745,13 +745,19 @@ The filter is the one the backend gate already uses, so the machine-bound
 topology and daemon-recovery suites stay off the review host. On a 12 core host
 the two add roughly one and two minutes to a review, measured in the exact form
 `ReviewPlanResourcePolicy` produces (`-maxcpucount:2 -nodeReuse:false
--p:ParallelizeTestCollections=false --logger console;verbosity=normal`): 691
+--logger console;verbosity=normal --blame-hang-timeout 10m`): historically 691
 runner cases in 62 s, the same wall time as the bare command. xUnit collection
 parallelism therefore stays on for these gates, which is what makes them able to
-see a race like AGT-2864 at all. `-p:` sets an MSBuild property, and none of
-this repository's test projects turn it into an xUnit setting (no
-`xunit.runner.json`, no assembly-level `CollectionBehavior`), so it is inert
-here; the MSBuild CPU cap and the node-reuse switch beside it are not.
+see a race like AGT-2864 at all. The backend test project now copies
+`xunit.runner.json` with two collection threads into its output. Six simultaneous
+backend suites at two threads each fit the 12-core review host budget; other
+coding and gate test processes can still contend with that budget. A two-thread
+runner-suite sample was 100 seconds slower than a twelve-thread sample under
+ten concurrent test processes, so that cap was not retained for runner tests.
+Task Server test parallelism still needs its own measurement. The former
+`-p:ParallelizeTestCollections=false` MSBuild property was inert and has been
+removed. A test that makes no progress for ten minutes now triggers VSTest's
+hang diagnostics.
 
 Both gates run for every review of this repository, not only for deliveries that
 touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
@@ -761,6 +767,12 @@ The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
 to the local build and test gate. Making the review plan path-scoped would mean
 resolving the delivery diff at plan-build time, which is a separate change to
 the plan contract rather than a configuration entry.
+
+When a .NET review test step is red, the clean repeat now keeps the original
+category filter and reruns only the classes that reported failures, up to five
+classes and ten failed tests. An unparseable failure or a chained command keeps
+the full clean repeat. The original full-suite failure remains in the review
+evidence and the baseline comparison still determines attribution.
 
 ## Key code and tests
 

@@ -236,8 +236,8 @@ public sealed partial class RemoteReviewAuthorityTests
         var subject = await SeedReviewSubjectAsync(store, plan: plan);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --blame-hang-timeout 10m",
             Assert.Single(subject.Plan.Commands).Arguments[1]);
     }
 
