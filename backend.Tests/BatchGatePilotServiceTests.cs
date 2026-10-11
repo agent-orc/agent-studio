@@ -75,6 +75,38 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Batch_gate_settings_and_state_api_follow_the_shared_shape()
+    {
+        using var factory = BuildFactory();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var invalid = await client.PutAsJsonAsync($"/api/projects/{ProjectName}/batch-gate",
+            new BatchGateFormationOptions(Planner: "look-ahead", MaximumSize: 9));
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, invalid.StatusCode);
+        using (var body = JsonDocument.Parse(await invalid.Content.ReadAsStringAsync()))
+            Assert.Equal("maximumSize", body.RootElement.GetProperty("field").GetString());
+
+        var valid = await client.PutAsJsonAsync($"/api/projects/{ProjectName}/batch-gate",
+            new BatchGateFormationOptions(Enabled: true, Scope: "code",
+                Planner: "look-ahead", MinimumSize: 2, MaximumSize: 6,
+                DeadlineMinutes: 20, LookAheadMinutes: 45,
+                Advisor: new BatchGateAdvisorOptions(Mode: "advise")));
+        Assert.Equal(System.Net.HttpStatusCode.OK, valid.StatusCode);
+        using (var body = JsonDocument.Parse(await valid.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal("code", body.RootElement.GetProperty("settings").GetProperty("scope").GetString());
+            Assert.Equal(8, body.RootElement.GetProperty("limits").GetProperty("hardMaximumSize").GetInt32());
+        }
+
+        using var state = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/projects/{ProjectName}/batch-gate/state?history=10"));
+        Assert.True(state.RootElement.TryGetProperty("plan", out _));
+        Assert.True(state.RootElement.TryGetProperty("pending", out _));
+        Assert.True(state.RootElement.TryGetProperty("batches", out _));
+        Assert.True(state.RootElement.TryGetProperty("members", out _));
+    }
+
+    [Fact]
     public async Task Pending_member_uses_current_gate_profile_when_the_project_profile_changes()
     {
         using var factory = BuildFactory();
@@ -205,6 +237,38 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Null(Ownership(member.Key));
         Assert.Empty(store.ListPending());
         Assert.Empty(store.ListPausedManifests());
+    }
+
+    [Fact]
+    public async Task Running_batch_does_not_block_next_formation_tick()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        pilot.WaitForFlightsInTick = false;
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _gate.BatchAsync = async (request, ct) =>
+        {
+            await release.Task.WaitAsync(ct);
+            return Green(request.ExpectedSha);
+        };
+        try
+        {
+            SeedMember(factory, "DOC-ASYNC-1", "docs/async-1.md");
+            SeedMember(factory, "DOC-ASYNC-2", "docs/async-2.md");
+            await pilot.TickAsync(CancellationToken.None);
+            await WaitForAsync(() => _gate.BatchRuns == 1);
+
+            SeedMember(factory, "DOC-ASYNC-3", "docs/async-3.md");
+            SeedMember(factory, "DOC-ASYNC-4", "docs/async-4.md");
+            await pilot.TickAsync(CancellationToken.None);
+
+            Assert.Equal(2, store.ListManifests().Count);
+            Assert.Equal(1, _gate.BatchRuns);
+        }
+        finally { release.TrySetResult(); }
     }
 
     [Fact]
@@ -952,7 +1016,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory()
-        => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+    {
+        var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
@@ -986,6 +1051,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                 services.Remove(tick);
             });
         });
+        factory.Services.GetRequiredService<BatchGatePilotService>().WaitForFlightsInTick = true;
+        return factory;
+    }
 
     private sealed class PilotTimeProvider(Func<DateTimeOffset> now) : TimeProvider
     {

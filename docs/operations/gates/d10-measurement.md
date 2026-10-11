@@ -7,3 +7,13 @@ Among attempts whose `post-orchestrator-review` verdict is `complete`, 670 `post
 The existing exact-SHA gate-result cache statistics contain seven execution SHA entries in two project buckets, zero repeated SHA entries and zero cache hits: **same-SHA re-test rate 0/7 = 0%**. This is a very small post-cache measurement window, not a long-run estimate. The pipeline snapshot lacks a reliable SHA on every historical gate execution, so it cannot improve that denominator.
 
 No staging lane decision follows from this proxy. D10 option A remains measure-first. This file supplies the measurement prerequisite for the batch pilot, with explicit uncertainty and source counts.
+
+## Operator decision, 2026-10-11
+
+Robert authorized per-project code-card batching with look-ahead sizing and an
+advisory model. D1 option A is implemented: per-card model review plus affected
+verification, followed by one complete suite on the combined candidate. This
+supersedes the earlier documentation-only pilot restriction for an explicitly
+enabled project. The 57.9% individual green rate and 32.4% four-card proxy above
+remain historical estimates, not observed combined-tree results. The batch
+report's observed green rate is the replacement measurement for rollout decisions.
