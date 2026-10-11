@@ -7,7 +7,7 @@ import type { RemoteHost } from '../../models/remote-host.model';
 import type { StableReleaseIdentity } from '../../models/host-release-drift';
 import {
   type FullBackupSummary, type InstallationIdentity, type ProjectRepositoryRead,
-  type ProjectPlacement, type RegisteredProject, type RepositoryStatus, hostForProbe, latestRepositoryProbes,
+  type ProjectPlacement, type ProjectRegistryEntry, type RepositoryStatus, activeRegisteredProjects, hostForProbe, latestRepositoryProbes,
   repositoryProofLabel,
 } from '../../models/deployment-checkpoints';
 
@@ -37,6 +37,8 @@ export class DeploymentCheckpointsComponent implements OnInit {
   readonly origin = typeof window === 'undefined' ? 'Unknown browser origin' : window.location.origin;
   readonly latestBackup = computed(() => [...this.backups()]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null);
+  readonly missingRepositories = computed(() => this.projects().filter(row => !row.status && row.error?.startsWith('No canonical repository')));
+  readonly visibleProjects = computed(() => this.projects().filter(row => !this.missingRepositories().includes(row)));
 
   ngOnInit(): void { this.reload(); }
 
@@ -49,7 +51,8 @@ export class DeploymentCheckpointsComponent implements OnInit {
         return of(null);
       }),
     );
-    const projectsRead = this.http.get<RegisteredProject[]>('/api/v1/projects').pipe(
+    const projectsRead = this.http.get<ProjectRegistryEntry[]>('/api/v1/projects').pipe(
+      map(activeRegisteredProjects),
       switchMap(projects => projects.length ? forkJoin(projects.map(project => {
         const prefix = `/api/v1/projects/${encodeURIComponent(project.projectId)}`;
         return forkJoin({

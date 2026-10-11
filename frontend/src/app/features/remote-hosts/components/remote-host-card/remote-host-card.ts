@@ -98,6 +98,15 @@ export class RemoteHostCardComponent {
   private readonly claudeSignIn = inject(ClaudeSignInDialogService);
   readonly host = input.required<RemoteHost>();
   readonly roles = input<readonly RemoteHost[]>([]);
+  readonly rolesShareRelease = computed(() => {
+    const roles = this.roles();
+    const key = (role: RemoteHost) => JSON.stringify([
+      role.release?.releaseId ?? role.releaseId ?? null,
+      role.release?.version ?? null,
+      role.release?.commit ?? null,
+    ]);
+    return roles.length <= 1 || roles.every(role => key(role) === key(roles[0]));
+  });
   readonly roleActiveSlots = input<Readonly<Record<string, number>>>({});
   /** Board-local process runs or remote leased runs attributed to this host. */
   readonly boardActiveSlots = input(0);
