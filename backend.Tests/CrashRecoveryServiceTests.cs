@@ -247,8 +247,9 @@ public sealed class CrashRecoveryServiceTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_repoRoot, "orphan.txt"), "uncommitted\n");
         var lockPath = Path.Combine(_repoRoot, ".git", "index.lock");
+        // A fresh lock file reports "0 seconds old"; the scan formats the age in
+        // seconds against the file system clock, so no wall-clock read is needed.
         File.WriteAllText(lockPath, "stale");
-        File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.AddMinutes(-2));
         var (recovery, _) = BuildRecovery();
         await recovery.RecoverAsync();
         var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());

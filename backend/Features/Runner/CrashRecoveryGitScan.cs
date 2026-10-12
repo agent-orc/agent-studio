@@ -218,7 +218,11 @@ internal static class CrashRecoveryGitScan
 
     private static (string Output, int Code) GitWithIndex(string root, string? index, params string[] args)
     {
-        var psi = new ProcessStartInfo("git") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true };
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        };
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         if (index != null) psi.Environment["GIT_INDEX_FILE"] = index;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
@@ -235,6 +239,7 @@ internal static class CrashRecoveryGitScan
         {
             WorkingDirectory = root, RedirectStandardInput = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
         };
         psi.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         foreach (var arg in args) psi.ArgumentList.Add(arg);

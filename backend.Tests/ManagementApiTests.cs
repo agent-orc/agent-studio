@@ -23,6 +23,10 @@ namespace AgentStudio.Tests;
 [Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ManagementApiTests : IDisposable
 {
+    // The delivery-bounce repair compares no timestamps with now; the fixture
+    // only needs a stable instant for its commit and pipeline records.
+    private static readonly DateTime RepairFixtureTime = new(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc);
+
     private static readonly DateTimeOffset HostReleaseNow = new(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
     private readonly string _root = CreateServerDataDirectory();
     private readonly string _backups;
@@ -829,7 +833,7 @@ public sealed class ManagementApiTests : IDisposable
             id = "incident-card", key = "REP-1", title = "Incident card",
             state = TaskStates.HumanReview, projectName = "Management Test",
             mode = TaskModes.Coding, requiresIntegration = true,
-            commits = new[] { new { sha, filesChanged = 1, at = DateTime.UtcNow } },
+            commits = new[] { new { sha, filesChanged = 1, at = RepairFixtureTime } },
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         File.WriteAllText(Path.Combine(folder, "status.md"), "Result: accepted.\n");
         var overrideFolder = Path.Combine(_root, TaskStates.HumanReview, "override-card");
@@ -867,8 +871,8 @@ public sealed class ManagementApiTests : IDisposable
             StepId = PipelineCatalogue.MergeIntoDevelopStepId,
             Kind = StepKind.Tool,
             Status = PipelineStepStatus.Skipped,
-            StartedAt = DateTime.UtcNow,
-            CompletedAt = DateTime.UtcNow,
+            StartedAt = RepairFixtureTime,
+            CompletedAt = RepairFixtureTime,
             Verdict = "operator-override",
             Reason = "Operator accepted the delivery despite missing integration.",
         });
