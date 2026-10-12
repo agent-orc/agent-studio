@@ -290,26 +290,40 @@ the orchestrator waits for the frontend dev server's port
 the run is allowed to reach `phase=done`. A run that leaves the backend up
 and the frontend down is never reported as `done`.
 
-**One loopback truth.** The frontend probe has to reach the dev server the way
-a user does, and "loopback" is three spellings, not one. `ng serve` binds a
-single address: with no `--host` it binds `localhost`, which resolves to `::1`
-on the Windows Stable host, so a probe pinned to `127.0.0.1` could never
-succeed there. The v0.6.0 rollout failed on exactly that while
-`curl http://localhost:4011/` answered 200 and `netstat` showed
-`TCP [::1]:4011 LISTENING` (run `1027d2e7`, 17.09.2026); the same mismatch had
-already produced the v0.2.0 and v0.5.0 "frontend did not start" reports. The
-rule now has two halves and both are required:
+**One loopback truth.** The frontend probe has to reach the frontend server the
+way a user does, and "loopback" is three spellings, not one. A server that
+binds a single address misses the others: with no `--host`, `ng serve` binds
+`localhost`, which resolves to `::1` on the Windows Stable host, so a probe
+pinned to `127.0.0.1` could never succeed there. The v0.6.0 rollout failed on
+exactly that while `curl http://localhost:4011/` answered 200 and `netstat`
+showed `TCP [::1]:4011 LISTENING` (run `1027d2e7`, 17.09.2026); the same
+mismatch had already produced the v0.2.0 and v0.5.0 "frontend did not start"
+reports. The reverse costs time instead of correctness: a server on
+`127.0.0.1` only makes every new browser connection to `localhost` wait for the
+`::1` attempt to fail first, 0.2 s in curl and up to 2 s in Windows PowerShell
+([localhost-ipv6-connect-delay](common-problems/localhost-ipv6-connect-delay/README.md)).
+The rule:
 
-- **Bind explicitly.** The dev server binds the IPv4 loopback:
-  `host: 127.0.0.1` in [`frontend/angular.json`](../../frontend/angular.json)'s
-  `serve` options, so every launcher gets it - `npm start`, a bare `ng serve`,
-  and the outer `start-stable.sh` wrapper that delegates to them. An outer
-  wrapper must not override it with `--host localhost`. `FrontendUrl` and
-  `scripts/update-stable.sh`'s `ATP_STABLE_FRONTEND_URL` name the same
-  address, so the configuration and the bind agree by construction.
+- **Serve both loopbacks where browsers connect.** `start-stable.sh` runs the
+  prebuilt frontend server
+  ([`frontend/scripts/serve-prebuilt-frontend.mjs`](../../frontend/scripts/serve-prebuilt-frontend.mjs)),
+  which binds `127.0.0.1` and then `[::1]` on the same port, never a wildcard.
+  Browsers keep opening `http://localhost:<port>`; that is the only Studio
+  origin both the connector and the Studio BFF accept. A host without an IPv6
+  loopback logs one warning and serves IPv4; a taken `[::1]` port fails the
+  start. `FrontendUrl` and `scripts/update-stable.sh`'s
+  `ATP_STABLE_FRONTEND_URL` name `127.0.0.1`, which the server always binds.
+- **`ng serve` stays on IPv4.** The dev server keeps `host: 127.0.0.1` in
+  [`frontend/angular.json`](../../frontend/angular.json)'s `serve` options
+  (AGT-2862), so `npm start` and a bare `ng serve` agree with `FrontendUrl`.
+  A wrapper must not override it with `--host localhost`.
+- **The backend stays on `127.0.0.1`.** `api.sh` binds 5030/5031 on the IPv4
+  loopback only, because the connector owns `[::1]:5031`
+  (`backend/Features/Connector/ConnectorHost.cs`). API clients spell
+  `127.0.0.1`, not `localhost`.
 - **Probe all three anyway.** Before the frontend is called down, the probe
-  tries `localhost`, `127.0.0.1` and `[::1]` on the configured port. The bind
-  above is the intent; the probe does not depend on it, because an
+  tries `localhost`, `127.0.0.1` and `[::1]` on the configured port. The binds
+  above are the intent; the probe does not depend on them, because an
   operator-started `ng serve` or a wrapper that predates this rule can still
   land on the other family. The same widening applies to
   `scripts/stable-frontend-boot-probe.mjs`. A non-loopback `FrontendUrl` is
