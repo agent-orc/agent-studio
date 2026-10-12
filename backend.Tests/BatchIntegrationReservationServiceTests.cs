@@ -87,8 +87,11 @@ public sealed class BatchIntegrationReservationServiceTests
     }
 
     [Fact]
-    public void Each_reconciliation_pass_fetches_a_branch_once()
+    public async Task Batch_wait_reconciliation_fetches_a_branch_once_per_pass()
     {
+        var reservation = new BatchIntegrationReservationService();
+        reservation.MarkPushPending("project", "AGT-1", "sha-1");
+        reservation.MarkPushPending("project", "AGT-2", "sha-2");
         var cache = new Dictionary<(string Repo, string Branch), string?>();
         var fetches = 0;
         string? Fetch(string repo, string branch, CancellationToken ct)
@@ -97,14 +100,13 @@ public sealed class BatchIntegrationReservationServiceTests
             return "tip-" + fetches;
         }
 
-        Assert.Equal("tip-1", BatchGatePilotService.FetchBaseOnce(
-            cache, "repo", "develop", Fetch, CancellationToken.None));
-        Assert.Equal("tip-1", BatchGatePilotService.FetchBaseOnce(
-            cache, "repo", "develop", Fetch, CancellationToken.None));
+        using var grant = await reservation.AcquireBatchAsync("project", marker =>
+        {
+            Assert.Equal("tip-1", BatchGatePilotService.FetchBaseOnce(
+                cache, "repo", "develop", Fetch, CancellationToken.None));
+            return true;
+        }, CancellationToken.None, cache.Clear);
         Assert.Equal(1, fetches);
-        cache.Clear();
-        Assert.Equal("tip-2", BatchGatePilotService.FetchBaseOnce(
-            cache, "repo", "develop", Fetch, CancellationToken.None));
-        Assert.Equal(2, fetches);
+        Assert.Null(reservation.GetWait("project"));
     }
 }
