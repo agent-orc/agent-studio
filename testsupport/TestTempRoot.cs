@@ -22,6 +22,9 @@ namespace AgentStudio.TestSupport;
 /// process to start sweeps it away once it is older than
 /// <see cref="StaleSuiteRootRetention"/>.
 ///
+/// The same call installs <see cref="TestCliGuard"/>, which puts a stub for
+/// the provider CLIs first on the <c>PATH</c> below the suite root.
+///
 /// The root also stays <em>short</em>: which base directory it is created in and
 /// how much of the path budget it may spend is
 /// <see cref="TempRootLengthPolicy"/>, because a long redirected root breaks
@@ -140,6 +143,9 @@ public static class TestTempRoot
 
             SweepStaleSuiteRoots(choice.BaseDirectory, DateTime.UtcNow);
             var suite = CreateSuiteRoot(choice.BaseDirectory);
+            // Bare-name provider CLI calls resolve to a stub from here on, so no
+            // test can start the real CLI against the host's login (AGT-3087).
+            TestCliGuard.Install(suite);
 
             // Linux reads TMPDIR, Windows reads TMP then TEMP. Setting all three
             // keeps Path.GetTempPath() and every child process consistent.
