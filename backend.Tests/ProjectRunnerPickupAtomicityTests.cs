@@ -59,7 +59,9 @@ public sealed class ProjectRunnerPickupAtomicityTests : IDisposable
                 && item.Value?.ToString()?.Contains("auto-pickup-rejected", StringComparison.Ordinal) == true)));
 
             var reentered = System.Text.Json.Nodes.JsonNode.Parse(originalTask)!;
-            reentered["enteredLaneAt"] = DateTime.UtcNow.AddMinutes(1).ToString("O");
+            // Derived from the scanned lane entry so the re-entry stays clock-independent.
+            var firstEntry = scanner!.FindJob("remote-only")!.EnteredLaneAt;
+            reentered["enteredLaneAt"] = firstEntry.ToUniversalTime().AddMinutes(1).ToString("O");
             originalTask = reentered.ToJsonString();
             File.WriteAllText(taskPath, originalTask);
             scanner!.InvalidateCache();

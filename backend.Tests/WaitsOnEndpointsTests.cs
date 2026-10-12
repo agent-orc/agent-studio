@@ -719,6 +719,8 @@ public sealed class WaitsOnEndpointsTests : IDisposable
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");
+                b.ConfigureServices(services =>
+                    services.AddSingleton<ILocalCodingAdmissionPolicy>(AllowLocalCodingForTests.Instance));
                 b.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>

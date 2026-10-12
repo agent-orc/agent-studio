@@ -1411,6 +1411,7 @@ public class ProjectRunner
         IReadOnlySet<string> excludedJobIds)
     {
         RelocateStrayHumanDecisionCards();
+        PrunePlacementWarnings();
         var skippedForConflict = new List<string>();
 
         foreach (var candidate in ListPickupCandidatesInDisplayedOrder())
@@ -8744,18 +8745,26 @@ public class ProjectRunner
     // Deduped separately from the cycle set so a card can move between the two
     // classifications without losing either report.
     private readonly HashSet<string> _waitsOnUnsatisfiableWarned = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (string Reason, DateTime EnteredLaneAt)> _placementWarnings =
-        new(StringComparer.OrdinalIgnoreCase);
+    // Written and pruned only on the picker path; concurrent because status
+    // reads can overlap a tick.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Reason, DateTime EnteredLaneAt)>
+        _placementWarnings = new(StringComparer.OrdinalIgnoreCase);
+
+    private void PrunePlacementWarnings()
+    {
+        if (_placementWarnings.IsEmpty) return;
+        var readyIds = _scanner.ScanAllAutomationJobs()
+            .Where(job => job.ProjectName == ProjectName && job.State == TaskStates.Ready)
+            .Select(job => job.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in _placementWarnings.Keys)
+            if (!readyIds.Contains(id)) _placementWarnings.TryRemove(id, out _);
+    }
 
     private List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
     {
         var settings = _projectSettings.Get(ProjectName);
         var intakeEnabled = settings.IntakeEnabled == true;
         var all = _scanner.ScanAllAutomationJobs();
-        var readyIds = all.Where(job => job.ProjectName == ProjectName && job.State == TaskStates.Ready)
-            .Select(job => job.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var id in _placementWarnings.Keys.Where(id => !readyIds.Contains(id)).ToArray())
-            _placementWarnings.Remove(id);
         // AGT-2029 waits-on gate: resolve dependency fulfillment across ALL
         // projects and lanes. A dependency is satisfied once its target reaches
         // 6-completed OR 7-archive, and ScanAllJobs omits the archive lane, so
