@@ -82,7 +82,7 @@ The `ATP_ALLOW_DEV_BACKEND=1` flag is required. `api.sh` refuses to boot a check
 ./api.sh status     # confirm "running and healthy"
 ```
 
-Other commands: `./api.sh stop`, `./api.sh restart`. Backend listens on `http://localhost:5030` by default (`PORT` env var overrides it; `api.sh` pins the default to 5031 automatically if your folder name ends in `-stable`, and refuses a mismatched inherited `PORT` unless you set `API_PORT_OVERRIDE=1`).
+Other commands: `./api.sh stop`, `./api.sh restart`. Backend listens on `http://127.0.0.1:5030` by default (IPv4 loopback only; spell API URLs `127.0.0.1`, see [localhost-ipv6-connect-delay](../common-problems/localhost-ipv6-connect-delay/README.md)) (`PORT` env var overrides it; `api.sh` pins the default to 5031 automatically if your folder name ends in `-stable`, and refuses a mismatched inherited `PORT` unless you set `API_PORT_OVERRIDE=1`).
 
 Each of those commands verifies its own outcome rather than reporting one, because a health check on its own cannot tell a new backend from an old one that never died (AGT-2678):
 

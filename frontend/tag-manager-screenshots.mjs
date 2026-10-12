@@ -7,7 +7,7 @@ import * as path from 'node:path';
 
 const OUT_DIR = 'C:/Projects/agent-taskboard-workspace/projects/agent-taskboard/3-progress/tag-manager-dialog-under-devtools/results';
 const BASE_URL = 'http://localhost:4021';
-const BACKEND = 'http://localhost:5031';
+const BACKEND = 'http://127.0.0.1:5031';
 
 async function api(path, init = {}) {
   const res = await fetch(`${BACKEND}${path}`, {
