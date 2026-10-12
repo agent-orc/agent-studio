@@ -13,6 +13,8 @@ import type {
   TaskFileHistoryEntry,
   ResultHistoryDocument,
   ResultHistoryEntry,
+  ResultHistoryLegacyState,
+  ResultHistoryList,
   TaskFileSourceScope,
   TaskDetail,
   TaskInfo,
@@ -1531,11 +1533,21 @@ export class TaskService {
     );
   }
 
-  /** Previous generated Results, including workspace-git backfill for legacy cards. */
-  getResultHistory(jobId: string, watchPath?: string) {
+  /**
+   * Previous generated Results. Older cards gain their pre-snapshot Results
+   * from a background workspace-git backfill; the `X-Result-History-Legacy`
+   * header says whether that backfill is still pending, complete, or failed.
+   * A response without the header is treated as complete.
+   */
+  getResultHistory(jobId: string, watchPath?: string): Observable<ResultHistoryList> {
     return this.http.get<ResultHistoryEntry[]>(
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/result-history`,
-      this.withWatchPath(watchPath),
+      { ...this.withWatchPath(watchPath), observe: 'response' },
+    ).pipe(
+      map(response => ({
+        entries: response.body ?? [],
+        legacy: parseResultHistoryLegacyState(response.headers.get('X-Result-History-Legacy')),
+      })),
     );
   }
 
@@ -3225,4 +3237,8 @@ export class TaskService {
   setGitHubToken(token: string) {
     return this.http.put<CliSettings>(`${this.baseUrl}/settings/cli/token`, { token });
   }
+}
+
+function parseResultHistoryLegacyState(value: string | null): ResultHistoryLegacyState {
+  return value === 'pending' || value === 'failed' ? value : 'complete';
 }

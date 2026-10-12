@@ -448,7 +448,6 @@ fixed-date backend.Tests/TaskCleanContextStoreTests.cs
 fixed-date backend.Tests/TaskCommitBindingTests.cs
 fixed-date backend.Tests/TaskCommitsEndpointIntegrationTests.cs
 fixed-date backend.Tests/TaskDetailHygieneScopeTests.cs
-fixed-date backend.Tests/TaskFileHistoryEndpointsTests.cs
 fixed-date backend.Tests/TaskIndexCacheTests.cs
 fixed-date backend.Tests/TaskIndexInvalidationGuardTests.cs
 fixed-date backend.Tests/TaskIntegrationRecordEndpointTests.cs

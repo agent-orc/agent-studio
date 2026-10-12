@@ -445,8 +445,11 @@ store. Before replacement it preserves the previous version in
 `deliverables.md`, and readable `result.json` provenance. The replacement also
 adds one `result_replaced` row to `logs/timeline.jsonl`. Studio lists these
 snapshots beside the current Result. For older cards, the same API supplements
-the list from workspace Git history at read time, without migrating the task
-folder. The storage decision and producer taxonomy are in
+the list from workspace Git history without migrating the task folder. That Git
+walk runs in the background, never on the request: the first list request
+schedules it, its outcome is kept in `results/history/legacy-git.json`, and the
+`X-Result-History-Legacy` response header reports `pending`, `complete`, or
+`failed` (retried at most every 6 hours). The storage decision and producer taxonomy are in
 [ADR-0070](../architecture/decisions/adr-archive.md#adr-0070---result-versions-live-in-readable-task-folder-snapshots-with-git-backfill-2026-09-11).
 
 ## Project onboarding contract

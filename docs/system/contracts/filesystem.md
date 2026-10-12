@@ -563,8 +563,14 @@ Result preserves the prior file under
 `result.json` and the prior `deliverables.md` when present. The JSON records the
 production timestamp, producer, and lane, keeping the folder understandable
 without Studio. `.metadata/current-result.json` carries the same provenance for
-the current file. Existing cards gain previous versions from workspace Git at
-read time and are not migrated. See
+the current file. Existing cards gain previous versions from workspace Git and
+are not migrated. A background backfill reads that Git history once per card
+and stores the outcome in `results/history/legacy-git.json` (schema version,
+`computedAt`, `complete` or `failed` with a reason, and the versions with
+commit, timestamp, producer, lane, content hash, and markdown). The file stays
+under 1 MiB by dropping the markdown of the oldest versions first and marking
+them truncated. It lives under `results/` because the workspace repository
+ignores that folder. See
 [ADR-0070](../architecture/decisions/adr-archive.md#adr-0070---result-versions-live-in-readable-task-folder-snapshots-with-git-backfill-2026-09-11).
 
 ```markdown

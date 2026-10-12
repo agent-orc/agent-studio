@@ -124,6 +124,29 @@ public sealed class ResultVersionStore
         return result.OrderByDescending(item => item.Number).ToList();
     }
 
+    /// <summary>
+    /// Every local version with its markdown, from one pass over the history
+    /// tree. Versions whose status.md vanished between listing and reading are
+    /// left out.
+    /// </summary>
+    public IReadOnlyList<(ResultHistoryVersion Version, string Markdown)> ReadLocalVersions(string folderPath)
+    {
+        var result = new List<(ResultHistoryVersion, string)>();
+        foreach (var version in ReadLocalHistory(folderPath))
+        {
+            var full = Path.GetFullPath(Path.Combine(folderPath, version.StatusPath.Replace('/', Path.DirectorySeparatorChar)));
+            try
+            {
+                if (File.Exists(full)) result.Add((version, File.ReadAllText(full)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogDebug(ex, "result-history: ignored unreadable version {Path}", full);
+            }
+        }
+        return result;
+    }
+
     public string? ReadLocalVersion(string folderPath, int number)
     {
         var match = ReadLocalHistory(folderPath).SingleOrDefault(item => item.Number == number);
@@ -229,12 +252,15 @@ public sealed class ResultVersionStore
         => ReadLocalHistory(folderPath).Select(item => item.Number).DefaultIfEmpty(0).Max() + 1;
 
     private static void WriteAtomic(string path, string content)
+        => WriteAtomic(path, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(content));
+
+    internal static void WriteAtomic(string path, byte[] content)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temp, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.WriteAllBytes(temp, content);
             MoveWithRetry(temp, path);
         }
         finally

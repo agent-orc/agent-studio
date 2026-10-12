@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.TestHost;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
@@ -281,6 +283,312 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
     [Fact]
     public async Task ResultHistory_BackfillsPreviousStatusFromWorkspaceGitWithoutMigration()
     {
+        var (id, _, previousSha) = ArrangeLegacyCard();
+
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using (var firstOpen = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}"))
+        {
+            firstOpen.EnsureSuccessStatusCode();
+            Assert.Equal(LegacyResultHistoryStates.Pending, LegacyHeader(firstOpen));
+        }
+
+        await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>()
+            .RunBackfillAsync(id, _workspaceProjectRoot);
+
+        using var listResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Complete, LegacyHeader(listResponse));
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var entry = Assert.Single(list.RootElement.EnumerateArray());
+        Assert.Equal("git-" + previousSha, entry.GetProperty("id").GetString());
+        Assert.Equal("workspace-history", entry.GetProperty("source").GetString());
+        Assert.Equal("Partial", entry.GetProperty("result").GetString());
+        Assert.Equal(TaskStates.Escalated, entry.GetProperty("lane").GetString());
+
+        using var readResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
+        readResponse.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await readResponse.Content.ReadAsStringAsync());
+        Assert.Contains("Case: blocked", document.RootElement.GetProperty("markdown").GetString());
+    }
+
+    [Fact]
+    public async Task ResultHistory_AfterACompleteBackfill_ListAndReadStartNoGitProcess()
+    {
+        var (id, job, previousSha) = ArrangeLegacyCard();
+        var git = new RecordingGitRunner();
+
+        using var factory = CreateFactory(runner: git);
+        var backfill = factory.Services.GetRequiredService<LegacyResultHistoryBackfill>();
+        await backfill.RunBackfillAsync(id, _workspaceProjectRoot);
+
+        var persisted = LegacyResultHistoryFile.Read(job);
+        Assert.Equal(LegacyResultHistoryStates.Complete, persisted.State);
+        Assert.Equal(2, persisted.Record!.Entries.Count);
+        // The commit metadata rides along with the walk: one log, no `show -s`.
+        Assert.Single(git.Calls, call => call.StartsWith("log ", StringComparison.Ordinal));
+        Assert.DoesNotContain(git.Calls, call => call.StartsWith("show -s", StringComparison.Ordinal));
+        // Other lane paths are absent from each commit; that is an answer, not a failure.
+        Assert.Contains(git.Calls, call => call.StartsWith("cat-file -e", StringComparison.Ordinal));
+
+        var spawnsAfterBackfill = git.Calls.Count;
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Complete, LegacyHeader(listResponse));
+        using var readResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
+        readResponse.EnsureSuccessStatusCode();
+
+        Assert.Equal(spawnsAfterBackfill, git.Calls.Count);
+        Assert.Equal(1, backfill.StartedRuns);
+    }
+
+    [Fact]
+    public async Task ResultHistory_WhenTheBackfillBudgetIsSpent_PersistsFailedAndStillListsLocalVersions()
+    {
+        const string id = "ASS-RESULT-HISTORY-SPENT";
+        var job = WriteJob(id);
+        using var factory = CreateFactory(gitCallBudget: TimeSpan.Zero);
+        ReplaceResultTwice(factory, job);
+
+        await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>()
+            .RunBackfillAsync(id, _workspaceProjectRoot);
+
+        var persisted = LegacyResultHistoryFile.Read(job);
+        Assert.Equal(LegacyResultHistoryStates.Failed, persisted.State);
+        Assert.Equal(TaskFileHistoryService.GitBudgetExhausted, persisted.Reason);
+
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Failed, LegacyHeader(listResponse));
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        Assert.Equal(
+            new[] { "local-0001", "local-0002" },
+            list.RootElement.EnumerateArray().Select(entry => entry.GetProperty("id").GetString()).Order().ToArray());
+
+        using var readResponse = await client.GetAsync(
+            $"/api/tasks/{id}/result-history/git-0123456789abcdef?watchPath={watchPath}");
+        Assert.Equal(HttpStatusCode.NotFound, readResponse.StatusCode);
+        Assert.Contains("could not be loaded", await readResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ResultHistory_WhenOnePerCommitReadFails_PersistsFailedNotComplete()
+    {
+        var (id, job, _) = ArrangeLegacyCard();
+        var git = new RecordingGitRunner
+        {
+            // The walk itself succeeds; reading one historical status.md does not.
+            Override = args => args[0] == "show" && args[^1].EndsWith("/status.md", StringComparison.Ordinal)
+                ? TaskHistoryGitResult.Failed(TaskHistoryGitResult.TimedOut)
+                : null,
+        };
+
+        using var factory = CreateFactory(runner: git);
+        await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>()
+            .RunBackfillAsync(id, _workspaceProjectRoot);
+
+        var persisted = LegacyResultHistoryFile.Read(job);
+        Assert.Equal(LegacyResultHistoryStates.Failed, persisted.State);
+        Assert.Equal(TaskHistoryGitResult.TimedOut, persisted.Reason);
+        Assert.Empty(persisted.Record!.Entries);
+
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Failed, LegacyHeader(listResponse));
+    }
+
+    [Fact]
+    public async Task ResultHistory_WithoutAnOutcome_AnswersPendingAtOnceAndSchedulesOneBackfill()
+    {
+        var (id, job, previousSha) = ArrangeLegacyCard();
+        var git = new RecordingGitRunner { Hold = new ManualResetEventSlim(false) };
+
+        using var factory = CreateFactory(runner: git);
+        var backfill = factory.Services.GetRequiredService<LegacyResultHistoryBackfill>();
+        factory.Services.GetRequiredService<ResultVersionStore>().Replace(
+            job,
+            "# Status\n\n- Result: Success\n- Case: rework\n",
+            ResultProducer.ReviewAttempt("2"),
+            TaskStates.AutoReview,
+            new DateTime(2026, 10, 1, 9, 0, 0, DateTimeKind.Utc));
+        try
+        {
+            using var client = CreateClient(factory);
+            var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+            var listUrl = $"/api/tasks/{id}/result-history?watchPath={watchPath}";
+            // Both answer while the scheduled backfill is still held inside git.
+            var responses = await Task.WhenAll(client.GetAsync(listUrl), client.GetAsync(listUrl));
+            foreach (var response in responses)
+            {
+                using (response)
+                {
+                    response.EnsureSuccessStatusCode();
+                    Assert.Equal(LegacyResultHistoryStates.Pending, LegacyHeader(response));
+                    using var list = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                    Assert.Equal("local-0001", Assert.Single(list.RootElement.EnumerateArray()).GetProperty("id").GetString());
+                }
+            }
+            Assert.True(git.Entered.Wait(ClientTimeout), "The scheduled backfill never started git.");
+            Assert.Equal(1, backfill.StartedRuns);
+
+            using var local = await client.GetAsync($"/api/tasks/{id}/result-history/local-0001?watchPath={watchPath}");
+            local.EnsureSuccessStatusCode();
+            using var legacy = await client.GetAsync($"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
+            Assert.Equal(HttpStatusCode.NotFound, legacy.StatusCode);
+            Assert.Contains("Legacy history not loaded yet.", await legacy.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            // Only the held rev-parse of the one scheduled backfill ever ran.
+            Assert.Equal(new[] { "rev-parse --show-toplevel" }, git.Calls.ToArray());
+        }
+        finally
+        {
+            git.Hold.Set();
+        }
+
+        await backfill.WhenIdleAsync();
+        Assert.Equal(1, backfill.StartedRuns);
+        Assert.Equal(LegacyResultHistoryStates.Complete, LegacyResultHistoryFile.Read(job).State);
+    }
+
+    [Fact]
+    public async Task ResultHistory_FailedOutcome_IsRetriedOnceAfterTheRetryInterval()
+    {
+        const string id = "ASS-RESULT-HISTORY-RETRY";
+        var job = WriteJob(id);
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-12T08:00:00Z"));
+        using var factory = CreateFactory(gitCallBudget: TimeSpan.Zero, clock: clock);
+        var backfill = factory.Services.GetRequiredService<LegacyResultHistoryBackfill>();
+        await backfill.RunBackfillAsync(id, _workspaceProjectRoot);
+        Assert.Equal(clock.GetUtcNow(), LegacyResultHistoryFile.Read(job).Record!.ComputedAt);
+
+        using var client = CreateClient(factory);
+        var listUrl = $"/api/tasks/{id}/result-history?watchPath={Uri.EscapeDataString(_workspaceProjectRoot)}";
+        async Task<string?> OpenAsync()
+        {
+            using var response = await client.GetAsync(listUrl);
+            response.EnsureSuccessStatusCode();
+            return LegacyHeader(response);
+        }
+
+        clock.Advance(LegacyResultHistoryPolicy.RetryInterval - TimeSpan.FromMinutes(1));
+        Assert.Equal(LegacyResultHistoryStates.Failed, await OpenAsync());
+        Assert.Equal(1, backfill.StartedRuns);
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(LegacyResultHistoryStates.Failed, await OpenAsync());
+        Assert.Equal(2, backfill.StartedRuns);
+        await backfill.WhenIdleAsync();
+        Assert.Equal(LegacyResultHistoryStates.Failed, await OpenAsync());
+        Assert.Equal(2, backfill.StartedRuns);
+        Assert.Equal(clock.GetUtcNow(), LegacyResultHistoryFile.Read(job).Record!.ComputedAt);
+    }
+
+    [Fact]
+    public async Task ResultHistory_TruncatedLegacyEntry_IsListedExcludedByStoredHashAndNotReadable()
+    {
+        const string id = "ASS-RESULT-HISTORY-TRUNCATED";
+        var job = WriteJob(id);
+        const string current = "# Status\n\n- Result: Success\n- Case: feature\n";
+        File.WriteAllText(Path.Combine(job, "status.md"), current, Encoding.UTF8);
+        LegacyResultHistoryFile.Write(job, new LegacyResultHistoryRecord(
+            LegacyResultHistoryFile.SchemaVersion,
+            DateTimeOffset.Parse("2026-10-12T08:00:00Z"),
+            LegacyResultHistoryStates.Complete,
+            null,
+            ElapsedMs: 0,
+            [
+                LegacyEntry("aaaa1111", "Partial", ResultHistoryContent.Hash("# Status\n\n- Result: Partial\n")),
+                LegacyEntry("bbbb2222", "Success", ResultHistoryContent.Hash(current.Replace("\n", "\r\n"))),
+            ]));
+
+        var git = new RecordingGitRunner();
+        using var factory = CreateFactory(runner: git);
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Complete, LegacyHeader(listResponse));
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        Assert.Equal("git-aaaa1111", Assert.Single(list.RootElement.EnumerateArray()).GetProperty("id").GetString());
+
+        using var readResponse = await client.GetAsync($"/api/tasks/{id}/result-history/git-aaaa1111?watchPath={watchPath}");
+        Assert.Equal(HttpStatusCode.NotFound, readResponse.StatusCode);
+        Assert.Contains("too large", await readResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Empty(git.Calls);
+    }
+
+    [Fact]
+    public async Task ResultHistory_CorruptLegacyFile_ReadsAsFailedNotAsMissing()
+    {
+        const string id = "ASS-RESULT-HISTORY-CORRUPT";
+        var job = WriteJob(id);
+        var legacyPath = LegacyResultHistoryFile.PathFor(job);
+        Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+        File.WriteAllText(legacyPath, "{ not json", Encoding.UTF8);
+
+        using var factory = CreateFactory(gitCallBudget: TimeSpan.Zero);
+        using var client = CreateClient(factory);
+        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
+        using var listResponse = await client.GetAsync($"/api/tasks/{id}/result-history?watchPath={watchPath}");
+        listResponse.EnsureSuccessStatusCode();
+        Assert.Equal(LegacyResultHistoryStates.Failed, LegacyHeader(listResponse));
+
+        using var readResponse = await client.GetAsync($"/api/tasks/{id}/result-history/git-aaaa1111?watchPath={watchPath}");
+        Assert.Equal(HttpStatusCode.NotFound, readResponse.StatusCode);
+        Assert.Contains("could not be loaded", await readResponse.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        await factory.Services.GetRequiredService<LegacyResultHistoryBackfill>().WhenIdleAsync();
+    }
+
+    private static LegacyResultHistoryEntry LegacyEntry(string sha, string result, string hash) => new(
+        sha,
+        new DateTime(2026, 9, 1, 8, 0, 0, DateTimeKind.Utc),
+        "run attempt",
+        ResultProducerKinds.RunAttempt,
+        TaskStates.Escalated,
+        result,
+        "generic",
+        hash,
+        Markdown: null,
+        Truncated: true);
+
+    private static string? LegacyHeader(HttpResponseMessage response)
+        => response.Headers.TryGetValues(LegacyResultHistoryStates.HeaderName, out var values)
+            ? values.SingleOrDefault()
+            : null;
+
+    private static void ReplaceResultTwice(WebApplicationFactory<Program> factory, string job)
+    {
+        var versions = factory.Services.GetRequiredService<ResultVersionStore>();
+        versions.Replace(
+            job,
+            "# Status\n\n- Result: Partial\n- Case: blocked\n",
+            ResultProducer.RunAttempt("1"),
+            TaskStates.AutoReview,
+            new DateTime(2026, 9, 7, 6, 0, 0, DateTimeKind.Utc));
+        versions.Replace(
+            job,
+            "# Status\n\n- Result: Success\n- Case: feature\n",
+            ResultProducer.ReviewAttempt("2"),
+            TaskStates.HumanReview,
+            new DateTime(2026, 9, 11, 8, 21, 0, DateTimeKind.Utc));
+    }
+
+    /// <summary>
+    /// A card whose previous Result exists only in workspace git: committed in
+    /// the escalated lane, then moved to auto-review with a new Result.
+    /// </summary>
+    private (string Id, string Job, string PreviousSha) ArrangeLegacyCard()
+    {
         const string id = "ASS-LEGACY-RESULT-HISTORY";
         var job = Path.Combine(_workspaceProjectRoot, TaskStates.Escalated, id);
         Directory.CreateDirectory(job);
@@ -316,29 +624,29 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         File.WriteAllText(status, "# Status\n\n- Result: Success\n- Case: feature\n", Encoding.UTF8);
         RunGit(_workspaceRoot, "add", "-A");
         RunGit(_workspaceRoot, "commit", "-q", "-m", "chore(workspace): record current result");
+        return (id, job, previousSha);
+    }
 
-        using var factory = CreateFactory();
-        var rawHistory = factory.Services.GetRequiredService<TaskFileHistoryService>()
-            .GetWorkspaceResultHistory(id, _workspaceProjectRoot);
-        Assert.True(rawHistory.Success, rawHistory.Error);
-        Assert.Equal(2, rawHistory.Value?.Count);
-        using var client = CreateClient(factory);
-        var watchPath = Uri.EscapeDataString(_workspaceProjectRoot);
-        using var listResponse = await client.GetAsync(
-            $"/api/tasks/{id}/result-history?watchPath={watchPath}");
-        listResponse.EnsureSuccessStatusCode();
-        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
-        var entry = Assert.Single(list.RootElement.EnumerateArray());
-        Assert.Equal("git-" + previousSha, entry.GetProperty("id").GetString());
-        Assert.Equal("workspace-history", entry.GetProperty("source").GetString());
-        Assert.Equal("Partial", entry.GetProperty("result").GetString());
-        Assert.Equal(TaskStates.Escalated, entry.GetProperty("lane").GetString());
+    /// <summary>
+    /// Records every git call the history services make and runs it for real,
+    /// unless <see cref="Override"/> answers instead or <see cref="Hold"/>
+    /// keeps the call waiting.
+    /// </summary>
+    private sealed class RecordingGitRunner : ITaskHistoryGitRunner
+    {
+        private readonly ProcessTaskHistoryGitRunner _git = new();
+        public ConcurrentQueue<string> Calls { get; } = new();
+        public ManualResetEventSlim Entered { get; } = new(false);
+        public ManualResetEventSlim? Hold { get; init; }
+        public Func<IReadOnlyList<string>, TaskHistoryGitResult?>? Override { get; init; }
 
-        using var readResponse = await client.GetAsync(
-            $"/api/tasks/{id}/result-history/git-{previousSha}?watchPath={watchPath}");
-        readResponse.EnsureSuccessStatusCode();
-        using var document = JsonDocument.Parse(await readResponse.Content.ReadAsStringAsync());
-        Assert.Contains("Case: blocked", document.RootElement.GetProperty("markdown").GetString());
+        public TaskHistoryGitResult Run(string cwd, IReadOnlyList<string> args, TimeSpan timeout)
+        {
+            Calls.Enqueue(string.Join(' ', args));
+            Entered.Set();
+            Hold?.Wait(ClientTimeout);
+            return Override?.Invoke(args) ?? _git.Run(cwd, args, timeout);
+        }
     }
 
     [Fact]
@@ -398,21 +706,40 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         return client;
     }
 
-    private WebApplicationFactory<Program> CreateFactory(TimeSpan? gitCallBudget = null)
+    private WebApplicationFactory<Program> CreateFactory(
+        TimeSpan? gitCallBudget = null,
+        ITaskHistoryGitRunner? runner = null,
+        TimeProvider? clock = null)
     {
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
-                if (gitCallBudget is { } budget)
+                builder.ConfigureTestServices(services =>
                 {
-                    builder.ConfigureTestServices(services =>
+                    if (runner is not null)
+                        services.AddSingleton(runner);
+                    if (gitCallBudget is { } budget)
+                    {
                         services.AddSingleton(sp => new TaskFileHistoryService(
                             sp.GetRequiredService<TaskScannerService>(),
                             sp.GetRequiredService<GitService>(),
                             sp.GetRequiredService<ILogger<TaskFileHistoryService>>(),
-                            budget)));
-                }
+                            budget,
+                            sp.GetRequiredService<ITaskHistoryGitRunner>()));
+                    }
+                    if (gitCallBudget is not null || clock is not null)
+                    {
+                        // Only the backfill gets the test clock; the rest of
+                        // the host keeps its own.
+                        services.AddSingleton(sp => new LegacyResultHistoryBackfill(
+                            sp.GetRequiredService<TaskScannerService>(),
+                            sp.GetRequiredService<TaskFileHistoryService>(),
+                            clock ?? sp.GetRequiredService<TimeProvider>(),
+                            sp.GetRequiredService<ILogger<LegacyResultHistoryBackfill>>(),
+                            gitCallBudget));
+                    }
+                });
                 builder.ConfigureAppConfiguration((_, cfg) =>
                 {
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>

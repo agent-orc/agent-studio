@@ -345,8 +345,10 @@ builder.Services.AddSingleton<LaneMutexRegistry>();
 builder.Services.AddSingleton<TaskChangeNotifier>();
 builder.Services.AddSingleton<TaskStateMachine>();
 builder.Services.AddSingleton<TaskMutationService>();
+builder.Services.AddSingleton<ITaskHistoryGitRunner, ProcessTaskHistoryGitRunner>();
 builder.Services.AddSingleton<TaskFileHistoryService>();
 builder.Services.AddSingleton<ResultVersionStore>();
+builder.Services.AddSingleton<LegacyResultHistoryBackfill>();
 builder.Services.AddSingleton<ResultHistoryQueryService>();
 // Consolidation/merge API + completed-lane audit (Part 1+2 of the
 // api-consolidationmerge-api task). All mutations route through

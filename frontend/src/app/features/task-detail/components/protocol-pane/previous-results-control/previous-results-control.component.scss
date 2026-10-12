@@ -110,10 +110,15 @@
     color: var(--studio-fg-muted);
   }
 
-  &__empty {
+  &__empty,
+  &__hint {
     margin: 0;
     border-radius: var(--studio-card-compact-radius);
     padding: var(--studio-spacing-2);
+  }
+
+  &__hint {
+    color: var(--studio-fg-muted);
   }
 
   &__banner,

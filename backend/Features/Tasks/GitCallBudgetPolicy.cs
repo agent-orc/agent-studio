@@ -36,6 +36,21 @@ internal static class GitCallBudgetPolicy
     internal static readonly TimeSpan DefaultPerCallCap = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// Ceiling for one call of the background legacy Result backfill
+    /// (<see cref="LegacyResultHistoryBackfill"/>). Its <c>git log --all</c>
+    /// walk took 7-8 s warm and 21 s cold on the 16,895-commit workspace
+    /// repository, so the request-path cap of 10 s cut it off every time
+    /// (AGT-3086). No HTTP client waits on this call.
+    /// </summary>
+    internal static readonly TimeSpan BackfillPerCallCap = TimeSpan.FromSeconds(120);
+
+    /// <summary>
+    /// How long all git calls of one legacy Result backfill may take together:
+    /// the walk plus a few reads per commit that touched the card's Result.
+    /// </summary>
+    internal static readonly TimeSpan BackfillTotalBudget = TimeSpan.FromSeconds(300);
+
+    /// <summary>
     /// The timeout the next call gets: whatever is left of the total budget,
     /// never more than the per-call cap. <see cref="TimeSpan.Zero"/> means the
     /// budget is spent and the call must not be started at all, which keeps an
