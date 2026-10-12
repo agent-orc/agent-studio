@@ -1573,7 +1573,13 @@ public sealed class TaskTransitionService
         if (ownership is null) return null;
         if (_attemptAuthority is null || _batchGateStore is null)
             return "batch-gate-evidence-missing";
-        var projection = _attemptAuthority.GetTaskProjection(task.Key ?? task.Id);
+        // Same identity rule as the batch gate: the first key the authority knows.
+        var authorityKey = new[] { task.Key, task.TaskKey, task.Id }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask)
+            ?? task.Key ?? task.Id;
+        var projection = _attemptAuthority.GetTaskProjection(authorityKey);
         return AgentStudio.Pipeline.BatchGateOwnershipStore.ReleaseFailure(
             ownership, projection, _batchGateStore, task.FolderPath);
     }

@@ -133,11 +133,9 @@ public sealed class BatchGatePilotService
             ? _git.ChangedPathsAgainstMergeBase(repo, branch, resultRef)
             : null;
         var profile = GateProfile(project.BuildProfile, repo);
-        var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
-        // The attempt authority and the batch store are keyed by the reference
-        // key (AGT-3048); task.Id is the slug of the flat task layout.
+        var projection = _authority.GetTaskProjection(AuthorityKey(task));
         var subject = new BatchGateSubject(
-            task.Key ?? task.Id, task.ProjectName, review.RepositoryId, branch,
+            AuthorityKey(task), task.ProjectName, review.RepositoryId, branch,
             "complete-suite", profile, PlatformVersion(),
             envelope?.ImmutableRemoteRef ?? string.Empty,
             envelope?.ResultSha ?? string.Empty,
@@ -160,6 +158,16 @@ public sealed class BatchGatePilotService
             project.IntegrationStrategy, PipelineTypes.Resolve(task), _time.GetUtcNow());
     }
 
+    // The attempt authority keys a card by its reference key in the flat task
+    // layout (AGT-3048) and by its folder id in the legacy lane layout. Use the
+    // first identity the authority knows, as ReviewDecisionOrchestrator does.
+    private string AuthorityKey(TaskInfo task)
+        => new[] { task.Key, task.TaskKey, task.Id }
+               .Where(value => !string.IsNullOrWhiteSpace(value))
+               .Distinct(StringComparer.OrdinalIgnoreCase)
+               .FirstOrDefault(value => !_authority.GetTaskProjection(value!).LegacyTask)
+           ?? task.Key ?? task.Id;
+
     public BatchGatePilotSnapshot Report(string project)
     {
         var falseCompleted = 0;
@@ -171,7 +179,7 @@ public sealed class BatchGatePilotService
         {
             var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
             if (task?.State is not (TaskStates.HumanReview or TaskStates.Completed)) continue;
-            var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
+            var projection = _authority.GetTaskProjection(AuthorityKey(task));
             if (projection.CurrentReviewAttempt?.AttemptId != pending.ReviewAttemptId)
                 continue;
             try
@@ -851,7 +859,7 @@ public sealed class BatchGatePilotService
                 if (task?.State == TaskStates.HumanReview)
                 {
                     var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
-                    var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
+                    var projection = _authority.GetTaskProjection(AuthorityKey(task));
                     if (ownership is not null && BatchGateOwnershipStore.ReleaseFailure(
                             ownership, projection, _store, task.FolderPath) is null)
                     {
