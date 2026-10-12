@@ -10,6 +10,7 @@ import {
   type ParkedBlockerView,
 } from '../../../../models/parked-blocker-presentation';
 import { formatDateTimeUtc } from '../../../../services/format.util';
+import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
 import { DisclosureMarkerComponent } from '../../../../components/disclosure-marker/disclosure-marker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
@@ -140,7 +141,8 @@ export class ParkedBlockerComponent {
   });
 
   /** Null when the card is not parked; the template renders nothing then. */
-  readonly view = computed<ParkedBlockerView | null>(() => buildParkedBlockerView(this.info()));
+  private readonly now = inject(NowTickService).now;
+  readonly view = computed<ParkedBlockerView | null>(() => buildParkedBlockerView(this.info(), this.now()));
 
   readonly parkedAtLabel = computed(() => {
     const view = this.view();

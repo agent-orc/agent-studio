@@ -1,8 +1,9 @@
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { of } from 'rxjs';
 import type { PickupHoldStatus, TaskInfo } from '../../models/task.model';
+import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import {
   PICKUP_HOLD_RESOLUTION_ACTIONABILITY,
@@ -35,13 +36,16 @@ function task(pickupHold: PickupHoldStatus | null): TaskInfo {
   } as unknown as TaskInfo;
 }
 
+/** Board cards carry only sinceUtc; every age below is read at this clock. */
+const NOW = Date.parse('2026-09-14T09:00:00Z');
+const now = signal(NOW);
+
 /** The reported AGT-2373 shape: an archived release gate, held for a month. */
 const ARCHIVED_GATE: PickupHoldStatus = {
   classification: 'unsatisfiable',
   mechanism: 'dependency-gate',
   reason: 'AGT-2372 is archived and was never released, so no run is left that could open this gate.',
   sinceUtc: '2026-08-11T09:00:00Z',
-  heldForSeconds: 34 * 86400,
   unsatisfiable: true,
   resolutions: [
     {
@@ -71,7 +75,6 @@ const REFUSED_DISPATCH: PickupHoldStatus = {
   reason: "Runner agent-runner-01 refused this card (capability-mismatch): "
     + "Required capability 'task-server:connectivity' is advertised as unavailable.",
   sinceUtc: '2026-09-06T19:47:45Z',
-  heldForSeconds: 7 * 86400,
   unsatisfiable: false,
   resolutions: [
     {
@@ -101,8 +104,10 @@ describe('PickupHoldComponent', () => {
       providers: [
         provideZonelessChangeDetection(),
         { provide: TaskService, useValue: taskService },
+        { provide: NowTickService, useValue: { now } },
       ],
     }).compileComponents();
+    now.set(NOW);
     fixture = TestBed.createComponent(PickupHoldComponent);
   });
 
@@ -129,6 +134,18 @@ describe('PickupHoldComponent', () => {
       .toContain('Dependency gate');
     expect(root.querySelector('[data-testid="pickup-hold-reason"]')?.textContent)
       .toContain('AGT-2372 is archived and was never released');
+    expect(root.querySelector('[data-testid="pickup-hold-age"]')?.textContent)
+      .toContain('held for 34d');
+  });
+
+  it('ages the hold from sinceUtc on the shared clock, without a read-time counter', () => {
+    now.set(Date.parse('2026-08-11T11:05:00Z'));
+    const root = render(ARCHIVED_GATE);
+    expect(root.querySelector('[data-testid="pickup-hold-age"]')?.textContent)
+      .toContain('held for 2h05m');
+
+    now.set(NOW);
+    fixture.detectChanges();
     expect(root.querySelector('[data-testid="pickup-hold-age"]')?.textContent)
       .toContain('held for 34d');
   });

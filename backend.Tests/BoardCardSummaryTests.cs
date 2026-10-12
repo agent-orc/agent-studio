@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Diagnostics;
 using AgentStudio.Tasks;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,6 +23,50 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.False(root.TryGetProperty("reviewProjection", out _));
         Assert.False(root.TryGetProperty("tokenSummary", out var token)
             && token.TryGetProperty("entries", out _));
+    }
+
+    [Fact]
+    public void A_parked_and_held_card_read_later_serializes_to_the_same_bytes()
+    {
+        // The two read-time counters (parked age, pickup-hold age) changed
+        // every card on every read, so an unchanged board never matched its
+        // cached body. The card carries the start instants instead.
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-12T22:20:00Z"));
+        var parkedAt = clock.GetUtcNow().UtcDateTime.AddDays(-3);
+        var marker = new ParkedBlockerRecord
+        {
+            BlockerType = "operator-decision", Lane = TaskStates.HumanReview, ParkedAt = parkedAt,
+            Reason = "Integrate the current delivery and repeat review.",
+            Condition = new ParkedBlockerCondition { Kind = "manual", Description = "Only a person can clear this park." },
+        };
+        var waitsOn = new WaitsOnStatus
+        {
+            Blocked = true,
+            Items = [new WaitsOnItem { Key = "AGT-1", Resolved = true, TargetState = TaskStates.HumanReview }],
+        };
+        TaskInfo ReadAt(DateTime now)
+        {
+            var ready = Fixture() with { State = TaskStates.Ready, EnteredLaneAt = parkedAt, WaitsOn = waitsOn };
+            return Fixture() with
+            {
+                ParkedBlocker = ParkedBlockerMarker.ToStatus(marker, now),
+                PickupHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(ready, waitsOn,
+                    IntakeEnabled: false, CrashBackoffUntilUtc: null, Rejection: null, NowUtc: now)),
+            };
+        }
+
+        var first = ReadAt(clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromMinutes(7));
+        var later = ReadAt(clock.GetUtcNow().UtcDateTime);
+
+        Assert.NotEqual(first.ParkedBlocker!.ParkedForSeconds, later.ParkedBlocker!.ParkedForSeconds);
+        Assert.NotEqual(first.PickupHold!.HeldForSeconds, later.PickupHold!.HeldForSeconds);
+        Assert.Equal(BoardCardSummary.Serialize(first), BoardCardSummary.Serialize(later));
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(later));
+        Assert.False(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedForSeconds", out _));
+        Assert.True(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedAt", out _));
+        Assert.False(document.RootElement.GetProperty("pickupHold").TryGetProperty("heldForSeconds", out _));
+        Assert.True(document.RootElement.GetProperty("pickupHold").TryGetProperty("sinceUtc", out _));
     }
 
     [Fact]
