@@ -2457,9 +2457,16 @@ export interface CrashRecoveryPending {
   jobId: string | null;
   repoRoot: string;
   files: string[];
+  unknownBlobs?: string[];
+  branch?: string;
+  behindCommits?: number;
+  insertions?: number;
+  deletions?: number;
+  indexLock?: string | null;
+  requiresSecondConfirmation?: boolean;
   message: string;
   reason: string;
-  classification: 'trivial' | 'review-required';
+  classification: 'trivial' | 'review-required' | 'ref-drift';
 }
 
 export interface CrashRecoveryActionResult {

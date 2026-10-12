@@ -28,7 +28,7 @@
                 [disabled]="busyId() !== null || busyAll()"
                 (click)="dismissAll()">
           <app-studio-icon name="archive" [size]="14"></app-studio-icon>
-          <span>{{ busyAll() ? 'Leaving all...' : 'Leave all uncommitted' }}</span>
+          <span>{{ busyAll() ? 'Leaving all...' : 'Leave all as is' }}</span>
         </button>
       </div>
 
@@ -47,7 +47,7 @@
               @if (item.detectedAt) {
                 <time class="crp__time" [dateTime]="item.detectedAt">Found {{ item.detectedAt | date: 'short' }}</time>
               }
-              <time class="crp__time" [dateTime]="item.createdAt">Oldest change {{ item.createdAt | date: 'short' }}</time>
+              <time class="crp__time" [dateTime]="item.createdAt">Oldest file change {{ item.createdAt | date: 'short' }}</time>
               @if (item.bootId) {
                 <span class="crp__time" [title]="item.bootId">Boot {{ item.bootId.slice(0, 8) }}</span>
               }
@@ -55,16 +55,29 @@
           </header>
 
           <p class="crp__reason">{{ item.reason }}</p>
+          <p class="crp__reason">{{ item.files.length }} files, {{ item.insertions ?? 0 }} insertions, {{ item.deletions ?? 0 }} deletions</p>
+          @if (item.indexLock) {
+            <p class="crp__reason">Index lock found: {{ item.indexLock }}</p>
+          }
+          @if (item.classification === 'ref-drift') {
+            <p class="crp__reason">Ref drift. Leave this checkout as is until Sync checkout is available. Any unique content needs an explicit backup or stash.</p>
+            <details class="crp__files" open>
+              <summary>{{ item.unknownBlobs?.length ?? 0 }} {{ (item.unknownBlobs?.length ?? 0) === 1 ? 'file' : 'files' }} with content absent from Git objects</summary>
+              <ul>
+                @for (file of item.unknownBlobs ?? []; track file) { <li>{{ file }}</li> }
+              </ul>
+            </details>
+          }
 
           <dl class="crp__meta">
             <div>
               <dt>Repository</dt>
               <dd>{{ item.repoRoot }}</dd>
             </div>
-            <div>
+            @if (item.classification !== 'ref-drift') { <div>
               <dt>Commit message</dt>
               <dd><code>{{ item.message.split('\n')[0] }}</code></dd>
-            </div>
+            </div> }
           </dl>
 
           <details class="crp__files" open>
@@ -87,17 +100,22 @@
                     [disabled]="busyId() !== null"
                     (click)="dismiss(item)">
               <app-studio-icon name="archive" [size]="14"></app-studio-icon>
-              <span>{{ busyId() === item.id ? 'Leaving...' : 'Leave uncommitted' }}</span>
+              <span>{{ busyId() === item.id ? 'Leaving...' : 'Leave as is' }}</span>
             </button>
+            @if (item.classification !== 'ref-drift') {
             <button type="button"
                     class="crp__button crp__button--primary"
                     data-testid="crash-recovery-commit"
                     [disabled]="busyId() !== null"
                     (click)="commit(item)">
               <app-studio-icon name="check" [size]="14"></app-studio-icon>
-              <span>{{ busyId() === item.id ? 'Committing...' : 'Commit recovery' }}</span>
+              <span>{{ busyId() === item.id ? 'Committing...' : largeConfirmationId() === item.id ? 'Confirm commit again' : 'Commit recovery' }}</span>
             </button>
+            }
           </div>
+          @if (item.requiresSecondConfirmation && largeConfirmationId() === item.id) {
+            <p class="crp__reason">Confirm again to commit {{ item.files.length }} files with {{ item.insertions ?? 0 }} insertions and {{ item.deletions ?? 0 }} deletions.</p>
+          }
         </article>
       }
     </div>
