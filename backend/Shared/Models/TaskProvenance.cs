@@ -262,7 +262,7 @@ public record TaskIntegrationStatus
 
     /// <summary>Integration branch the verdict was computed against (usually "develop").</summary>
     public string IntegrationBranch { get; init; } = "develop";
-    /// <summary>Current published target-ref fingerprint used to stale accepted verdicts.</summary>
+    /// <summary>Current published target-ref fingerprint for reachability cache and diagnostics.</summary>
     public string? TargetRefFingerprint { get; init; }
 
     /// <summary>
