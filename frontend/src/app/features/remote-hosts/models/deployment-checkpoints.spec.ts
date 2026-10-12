@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RemoteHost, RemoteHostCapabilityHealth } from './remote-host.model';
-import { latestRepositoryProbes, repositoryProofLabel, type RepositoryStatus } from './deployment-checkpoints';
+import { activeRegisteredProjects, latestRepositoryProbes, repositoryProofLabel, type RepositoryStatus } from './deployment-checkpoints';
 import { hostReadiness } from './host-readiness';
 
 const NOW = Date.parse('2026-10-07T10:00:00Z');
@@ -26,6 +26,14 @@ function host(overrides: Partial<RemoteHost> = {}): RemoteHost {
 }
 
 describe('deployment checkpoint projections', () => {
+  it('maps the project registry wire shape and skips archived projects', () => {
+    expect(activeRegisteredProjects([
+      { id: 'PROJ-002', displayName: 'Agent Taskboard', shortCode: 'AGT',
+        workspaceId: 'workspace-1', archived: false, storageLocation: '/projects/agent-taskboard' },
+      { id: 'PROJ-OLD', displayName: 'Old project', shortCode: 'OLD',
+        workspaceId: 'workspace-1', archived: true, storageLocation: '/projects/old' },
+    ])).toEqual([{ projectId: 'PROJ-002', name: 'Agent Taskboard', workspaceId: 'workspace-1' }]);
+  });
   it('separates enrollment, connection and role readiness without awarding project eligibility', () => {
     expect(hostReadiness(host(), NOW).state).toBe('capability-ready');
     expect(hostReadiness(host({ runnerInstanceId: null }), NOW).state).toBe('not-enrolled');
