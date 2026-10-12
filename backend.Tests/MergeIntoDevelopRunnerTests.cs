@@ -1143,9 +1143,15 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "32");
-        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+        var reservations = new BatchIntegrationReservationService();
+        var approvedSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        reservations.MarkPushPending("Fixture", "32", approvedSha);
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: reservations);
 
-        var result = await runner.PushIntegrationBranchAsync("Fixture", "32", jobFolder, repo, "develop");
+        var result = await runner.PushIntegrationBranchAsync("Fixture", "32", jobFolder, repo,
+            "develop", approvedSha: approvedSha);
 
         Assert.True(result.Success);
         Assert.Equal("no-remote", result.Status);
@@ -1153,6 +1159,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Skipped, step!.Status);
         Assert.Equal("no-remote", step.Verdict);
+        Assert.Null(reservations.GetWait("Fixture"));
     }
 
     [Fact]
