@@ -1679,6 +1679,108 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal(1, captures());
     }
 
+    /// <summary>
+    /// AGT-2817 rework - a verdict proven by the current result must still
+    /// carry per-commit membership. The delivery-claim answer and the release
+    /// rollup read containment from <see cref="TaskIntegrationStatus.Repositories"/>;
+    /// an empty list made an integrated card read as "not on develop" and
+    /// "release unknown" (AGT-2822 on Stable).
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildLookup_CurrentResultAncestor_CarriesPerCommitMembershipAndRelease(bool released)
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "shortcut.txt"), "delivered");
+        Commit(repo, "feat: delivered through the current result");
+        var delivered = RunGit(repo, "rev-parse develop").Out.Trim();
+        if (released)
+        {
+            RunGit(repo, "checkout -q main");
+            RunGit(repo, "merge -q --ff-only develop");
+        }
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("shortcut", "AGT-2822", project, repo, log,
+            commits: [Commit(delivered) with { RunAttemptId = "run-agt-2822" }]);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-agt-2822",
+            Project = project,
+            Repository = repo,
+            ResultSha = delivered,
+            AttemptChainId = "attempt-agt-2822",
+            CompletedAtUtc = NewClock().GetUtcNow(),
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal("current-result-ancestor", status.Detail);
+        var repository = Assert.Single(status.Repositories);
+        Assert.True(repository.OnIntegrationBranch);
+        var commit = Assert.Single(repository.Commits);
+        Assert.Equal(delivered, commit.Sha);
+        Assert.True(commit.OnIntegrationBranch);
+        Assert.Equal(released, commit.OnReleaseBranch);
+        Assert.Equal(released, status.Released);
+    }
+
+    [Fact]
+    public void BuildLookup_CurrentResultCuratedMapping_CarriesTheMappedCommitAsContained()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/curated");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work");
+        Commit(repo, "feat: reviewed work");
+        var source = RunGit(repo, "rev-parse task/curated").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work, curated");
+        Commit(repo, "merge(AGT-2920): curated integration");
+        var integrated = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("curated", "AGT-2920", project, repo, log,
+            commits: [Commit(source) with { RunAttemptId = "run-curated" }]) with
+        {
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = "curated-mapping",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    IntegrationBranch = "develop",
+                    SourceSha = source,
+                    IntegrationSha = integrated,
+                    DeliveryEpoch = "run-curated",
+                },
+            ],
+        };
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-curated",
+            Project = project,
+            Repository = repo,
+            ResultSha = source,
+            AttemptChainId = "attempt-curated",
+            CompletedAtUtc = NewClock().GetUtcNow(),
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal("current-result-curated-mapping", status.Detail);
+        var commit = Assert.Single(Assert.Single(status.Repositories).Commits);
+        Assert.Equal(source, commit.Sha);
+        Assert.Equal(CommitIntegrationRules.IntegratedByContent, commit.IntegrationRule);
+        Assert.True(commit.OnIntegrationBranch);
+    }
+
     // --- helpers -----------------------------------------------------------
 
     private static (GitOriginStore Store, Func<int> Captures) CountingOriginStore()
