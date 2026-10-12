@@ -854,8 +854,9 @@ builder.Services.AddSingleton<ArchivedResultRefPruner>();
 builder.Services.AddSingleton<BranchSweepReportStore>();
 builder.Services.AddSingleton<BranchSweepService>();
 // Event-driven counterpart to the periodic sweep above: fired from the
-// integration, archive, and promotion transitions (AcceptedIntegrationWorker,
-// TaskTransitionService, and the /api/git/branch-reclaim/promotion endpoint).
+// integration, archive, and promotion transitions (RemoteDeliveryIntegrationCoordinator
+// for live deliveries plus the legacy AcceptedIntegrationWorker, TaskTransitionService,
+// and the /api/git/branch-reclaim/promotion endpoint).
 // Same GitRetention:Enabled settings gate as GitBranchRetentionHostedService.
 builder.Services.AddSingleton<BranchReclaimTriggerService>();
 if (!publicDemoExecutionProfile)
