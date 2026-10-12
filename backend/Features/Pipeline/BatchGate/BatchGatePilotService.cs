@@ -75,7 +75,7 @@ public sealed class BatchGatePilotService
         _logger = logger;
         _load = load;
         _time = timeProvider ?? TimeProvider.System;
-        _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git);
+        _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git, logger);
         _advisor = advisor;
         _reservations = reservations;
         _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
@@ -129,9 +129,10 @@ public sealed class BatchGatePilotService
             ?? throw new InvalidDataException("Batch repository is unavailable.");
         var branch = TaskIntegrationBranch.Resolve(task, project.IntegrationBranch);
         var envelope = sourceRun.ResultEnvelope;
-        var changed = envelope?.ImmutableRemoteRef is { } resultRef
-            ? _git.ChangedPathsAgainstMergeBase(repo, branch, resultRef)
-            : null;
+        // The result SHA against the fetched integration line: the Studio
+        // checkout has neither the local result ref nor a current local branch.
+        var changed = BatchGateDeliveryDiff.ChangedPaths(_git, repo, branch,
+            envelope?.ResultSha);
         var profile = GateProfile(project.BuildProfile, repo);
         var projection = _authority.GetTaskProjection(task.Id);
         var subject = new BatchGateSubject(
