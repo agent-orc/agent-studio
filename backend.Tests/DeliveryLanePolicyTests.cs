@@ -72,13 +72,12 @@ public sealed class DeliveryLanePolicyTests
     }
 
     [Theory]
-    [InlineData(null, TaskStates.AutoReview)]
-    [InlineData("", TaskStates.AutoReview)]
-    [InlineData("   ", TaskStates.AutoReview)]
-    [InlineData("old-ref", TaskStates.AutoReview)]
-    [InlineData("current-ref", null)]
-    public void Reconciliation_RequiresNonblankMatchingAcceptedFingerprint(
-        string? fingerprint, string? expectedTarget)
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("old-ref")]
+    [InlineData("current-ref")]
+    public void Reconciliation_TargetHeadChangeDoesNotStaleContainedDelivery(string? fingerprint)
     {
         var sha = new string('a', 40);
         var card = new TaskInfo
@@ -99,7 +98,52 @@ public sealed class DeliveryLanePolicyTests
             TargetRefFingerprint = "current-ref",
         };
 
-        Assert.Equal(expectedTarget, DeliveryLanePolicy.ReconciliationTarget(card, status));
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card, status));
+    }
+
+    [Fact]
+    public void Reconciliation_LegacyClaimRemainsAcceptedWhenDeliveryIsIntegrated()
+    {
+        var card = new TaskInfo
+        {
+            State = TaskStates.Completed,
+            CompletionClaim = new TaskCompletionClaim
+            {
+                Basis = CompletionClaimBases.IntegratedDelivery,
+                IntegrationBranch = "develop",
+            },
+        };
+        var integrated = new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated };
+
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card, integrated));
+        Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+            card, integrated with { Status = IntegrationStatuses.Pending }));
+    }
+
+    [Fact]
+    public void Reconciliation_OperatorOverrideRemainsAccepted()
+    {
+        var card = new TaskInfo
+        {
+            State = TaskStates.Completed,
+            Commits = [new TaskCommitInfo { Sha = new string('a', 40), RunAttemptId = "accepted-epoch" }],
+            CompletionClaim = new TaskCompletionClaim
+            {
+                Basis = CompletionClaimBases.OperatorOverride,
+                Reason = "Accepted by the operator after review.",
+                ResultSha = new string('a', 40),
+                DeliveryEpoch = "accepted-epoch",
+            },
+        };
+
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card,
+            new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated }));
+        Assert.Null(DeliveryLanePolicy.ReconciliationTarget(card,
+            new TaskIntegrationStatus { Status = IntegrationStatuses.Pending }));
+        Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+            card with { Commits = [new TaskCommitInfo
+                { Sha = new string('b', 40), RunAttemptId = "new-epoch" }] },
+            new TaskIntegrationStatus { Status = IntegrationStatuses.Integrated }));
     }
 
     [Fact]
@@ -132,7 +176,7 @@ public sealed class DeliveryLanePolicyTests
                 IntegrationBranch = "develop", TargetRefFingerprint = "ref-1",
             };
             Assert.Null(DeliveryLanePolicy.ReconciliationTarget(accepted, integrated));
-            Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
+            Assert.Null(DeliveryLanePolicy.ReconciliationTarget(
                 accepted, integrated with { TargetRefFingerprint = "ref-2" }));
             Assert.Equal(TaskStates.AutoReview, DeliveryLanePolicy.ReconciliationTarget(
                 accepted with { CompletionClaim = accepted.CompletionClaim with { DeliveryEpoch = "epoch-0" } }, integrated));

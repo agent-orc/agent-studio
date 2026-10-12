@@ -380,6 +380,7 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
     <tr><td><b>B8</b></td><td>Replace real process spawns in tests with in-process fakes where the process is not the subject</td><td>Medium</td><td>medium</td><td>Backend</td></tr>
     <tr><td><b>B9</b></td><td>Endpoint budgets: slow endpoint tests lead to fixes in the endpoint (see §3)</td><td>Product speed</td><td>medium</td><td>Backend</td></tr>
     <tr><td><b>B10</b></td><td>Build once per review, run all test projects with <code>--no-build</code>; check the review plan does not rebuild</td><td>Small to medium</td><td>low</td><td>Backend</td></tr>
+    <tr><td><b>B11</b></td><td>No coverage collector in review and integration gates; coverage in a scheduled or release run. Since 07.10. <code>.agent-studio/project.yml</code> ran all three .NET suites with <code>--collect "Code Coverage;Format=Cobertura"</code>. Measured 12.10. on agent-runner-01, same 79 backend tests: 211 s with coverage vs 83 s without; 195 s vs 115 s at comparable load (about 40). Applied on develop 12.10.</td><td>Large (1.7–2.5× on the backend suite)</td><td>low</td><td>Backend</td></tr>
     <tr><td><b>F1</b></td><td>Measure: full Playwright baseline (JSON reporter, per spec, flaky status) and Vitest baseline (JUnit reporter)</td><td>Enables everything else</td><td>none</td><td>Frontend</td></tr>
     <tr><td><b>F2</b></td><td>Compile-free servers: prebuilt frontend served statically (port <code>serve-prebuilt-frontend.mjs</code> into the repo), published backend (<code>API_PREBUILT_DIR</code>, <code>API_REQUIRE_PREBUILT=1</code>), wired as <code>globalSetup</code>/<code>webServer</code> with <code>reuseExistingServer</code>; agent guidance updated</td><td>Minutes per spec run</td><td>low to medium</td><td>Frontend</td></tr>
     <tr><td><b>F3</b></td><td>Parallel workers (2 to 4) and sharding; serial project only for shared-state specs</td><td>High: 1 worker today</td><td>medium</td><td>Frontend</td></tr>
@@ -444,6 +445,8 @@ The top 25 tests are 15 to 16 % of the summed time.</p>
 
 <section id="backend-track">
 <h2><span class="no">§8</span>Backend track report</h2>
+<p>AGT-3052 round 4 reconciles stale pending code pushes before batch admission, exposes the push wait and age alert, pauses every red-base batch without halving, and allows held-member eject. This is a correctness fix; no new suite-time measurement is claimed.</p>
+<p>AGT-3052 round 5 confines push reconciliation to enabled code batching, shares each integration-tip fetch per pass, clears successful local-only pushes and stale completed push rows, protects new merges from old blocked rows, and loads persisted markers at startup.</p>
 <p class="stx stx-part"><b>Owner:</b> AGT-3049. <b>Status 2026-10-11:</b> measured baseline and implementing the backend levers. This section is written by the backend track only.</p>
 <div class="table-wrap">
 <table>

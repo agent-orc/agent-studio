@@ -789,7 +789,8 @@ public sealed class WorkspaceArtifactCommitService
         return status switch
         {
             PipelineStepStatus.Passed or PipelineStepStatus.Failed or PipelineStepStatus.Skipped
-                or PipelineStepStatus.NotApplicable => status.Value.ToString(),
+                or PipelineStepStatus.NotApplicable
+                or PipelineStepStatus.NeedsDecision => status.Value.ToString(),
             null when !string.IsNullOrWhiteSpace(raw) => raw,
             _ => null,
         };

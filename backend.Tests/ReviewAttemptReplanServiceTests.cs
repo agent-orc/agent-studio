@@ -12,6 +12,7 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class ReviewAttemptReplanServiceTests : IDisposable
 {
+    private static readonly DateTime FixedUtc = new(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc);
     private readonly TaskLanePipelineFixture _fixture = new();
 
     public void Dispose() => _fixture.Dispose();
@@ -22,7 +23,7 @@ public sealed class ReviewAttemptReplanServiceTests : IDisposable
         const string id = "replan-queued";
         const string key = "AGT-REPLAN-QUEUED";
         _fixture.SeedTask(TaskStates.AutoReview, id, key: key);
-        var authority = _fixture.CreateAttemptAuthority(() => DateTime.UtcNow);
+        var authority = _fixture.CreateAttemptAuthority(() => FixedUtc);
         var review = CreateOpenReviewAttempt(authority, key, "queued");
         var lifecycle = _fixture.CreateReviewAttemptLifecycle(authority);
 
@@ -53,7 +54,7 @@ public sealed class ReviewAttemptReplanServiceTests : IDisposable
         const string id = "replan-claimed";
         const string key = "AGT-REPLAN-CLAIMED";
         _fixture.SeedTask(TaskStates.AutoReview, id, key: key);
-        var authority = _fixture.CreateAttemptAuthority(() => DateTime.UtcNow);
+        var authority = _fixture.CreateAttemptAuthority(() => FixedUtc);
         var review = CreateOpenReviewAttempt(authority, key, "claimed");
         var lifecycle = _fixture.CreateReviewAttemptLifecycle(authority);
         var claimed = authority.ClaimReview(review.AttemptId, "reviewer", "review-host", 60, "review-claim").ReviewAttempt!;
@@ -79,7 +80,7 @@ public sealed class ReviewAttemptReplanServiceTests : IDisposable
         const string id = "replan-other-project";
         const string key = "AGT-REPLAN-OTHER-PROJECT";
         _fixture.SeedTask(TaskStates.AutoReview, id, key: key);
-        var authority = _fixture.CreateAttemptAuthority(() => DateTime.UtcNow);
+        var authority = _fixture.CreateAttemptAuthority(() => FixedUtc);
         CreateOpenReviewAttempt(authority, key, "other-project");
         var lifecycle = _fixture.CreateReviewAttemptLifecycle(authority);
 
@@ -88,6 +89,38 @@ public sealed class ReviewAttemptReplanServiceTests : IDisposable
             _ => throw new InvalidOperationException("must not build a plan for a task outside the project"));
 
         Assert.Empty(replanned);
+    }
+
+    [Fact]
+    public async Task Slow_plan_build_does_not_hold_the_review_claim_lock()
+    {
+        const string id = "replan-concurrent";
+        const string key = "AGT-REPLAN-CONCURRENT";
+        _fixture.SeedTask(TaskStates.AutoReview, id, key: key);
+        var authority = _fixture.CreateAttemptAuthority(() => FixedUtc);
+        var review = CreateOpenReviewAttempt(authority, key, "concurrent");
+        var lifecycle = _fixture.CreateReviewAttemptLifecycle(authority);
+        var original = review.Subject.Plan;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim(false);
+        var replan = Task.Run(() => lifecycle.ReplanQueuedReviewAttempts(
+            TaskLanePipelineFixture.Project, (_, _) =>
+            {
+                entered.TrySetResult();
+                release.Wait();
+                return new AgentStudio.TaskServer.Contracts.ReviewPlanDto(
+                    [], [], BuildProfileFingerprint: "late-profile");
+            }));
+        try
+        {
+            await entered.Task;
+            var claimed = await Task.Run(() => lifecycle.ClaimReview(
+                review.AttemptId, "reviewer", "review-host", 60, "concurrent-claim"));
+            Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        }
+        finally { release.Set(); }
+        Assert.Empty(await replan);
+        Assert.Same(original, authority.GetReview(review.AttemptId)!.Subject.Plan);
     }
 
     private static ReviewAttemptDto CreateOpenReviewAttempt(

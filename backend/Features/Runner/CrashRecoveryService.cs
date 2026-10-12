@@ -243,7 +243,11 @@ public sealed class CrashRecoveryService
     {
         var repoRoot = _git.ResolveRepoRootForProject(entry.Name);
         if (string.IsNullOrWhiteSpace(repoRoot)) return;
-        if (!_git.RepoHasUncommittedChanges(repoRoot)) return;
+        // Status must stay readable even when a stale index.lock is present.
+        // GitService's status reader disables optional index refresh locks.
+        if (_git.GetStatusForRepoRoot(repoRoot).Files.Count == 0) return;
+        var initialFiles = ReadPendingFiles(repoRoot, null);
+        var refDrift = CrashRecoveryGitScan.Inspect(repoRoot, initialFiles, includeBlobs: false).RefDrift;
 
         // Attribute orphan changes to the most-recently-active job in
         // 3-progress by lastProgressAt. We deliberately read task.json
@@ -267,7 +271,7 @@ public sealed class CrashRecoveryService
               $"3-progress job in project {entry.Name} (by lastProgressAt) was {jobId}.";
 
         var scope = PlanCrashRecoveryCommitScope(entry, jobId, jobFolder, repoRoot);
-        if (scope.Scope == CrashRecoveryCommitScope.None)
+        if (scope.Scope == CrashRecoveryCommitScope.None && !refDrift)
         {
             var skipped = new RecoveryDecision
             {
@@ -288,7 +292,7 @@ public sealed class CrashRecoveryService
         // Bind operator confirmation to the exact paths visible when recovery
         // was queued. Legacy/unknown recovery must never widen to a later dirty
         // tree merely because it lacks a session window.
-        var pathspecs = scope.Paths;
+        var pathspecs = refDrift ? initialFiles : CrashRecoveryGitScan.ExpandUntrackedDirectories(repoRoot, scope.Paths);
         if (pathspecs is { Count: > 0 })
         {
             _logger.LogInformation(
@@ -296,16 +300,18 @@ public sealed class CrashRecoveryService
                 entry.Name, jobId, pathspecs.Count);
         }
 
-        var pending = QueuePendingOrphanRecovery(entry, jobId, jobFolder, repoRoot, message, pathspecs);
+        var pending = QueuePendingOrphanRecovery(entry, jobId, jobFolder, repoRoot, message, pathspecs, refDrift);
         var decision = new RecoveryDecision
         {
             At = DateTime.UtcNow,
             Kind = RecoveryDecisionKinds.OrphanPending,
             ProjectName = entry.Name,
             JobId = jobId,
-            Reason = jobId == null
-                ? $"operator confirmation required before committing orphan changes; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}; no active 3-progress job to attribute to"
-                : $"operator confirmation required before committing orphan changes for {jobId}; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}"
+            Reason = pending.Classification == CrashRecoveryClassifications.RefDrift
+                ? $"checkout ref drift detected; commit disabled; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}"
+                : jobId == null
+                    ? $"operator confirmation required before committing orphan changes; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}; no active 3-progress job to attribute to"
+                    : $"operator confirmation required before committing orphan changes for {jobId}; pendingId={pending.Id}; bootId={pending.BootId}; detectedAt={pending.DetectedAt:O}"
         };
         decisions.Add(decision);
         AppendRecoveryEntry(decision);
@@ -325,11 +331,28 @@ public sealed class CrashRecoveryService
         }
     }
 
-    public CrashRecoveryActionResult CommitPendingOrphanRecovery(string id)
+    public CrashRecoveryActionResult CommitPendingOrphanRecovery(string id, bool confirmLarge = false)
     {
         var pending = TakePendingOrphanRecovery(id);
         if (pending == null)
             return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.NotFound, Error: "Pending crash recovery item not found.");
+
+        var current = CrashRecoveryGitScan.Inspect(pending.RepoRoot, pending.Files, includeBlobs: false);
+        if (pending.Classification == CrashRecoveryClassifications.RefDrift || current.RefDrift
+            || current.HeadSha != pending.HeadSha)
+        {
+            PutPendingOrphanRecoveryBack(pending);
+            return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.Failed, pending,
+                Error: "Checkout lags behind the branch ref. Crash recovery cannot commit a reverse diff; leave it as is until the checkout can be synced.");
+        }
+        if (pending.RequiresSecondConfirmation && !confirmLarge)
+        {
+            // This method is the legacy single-confirmation entry point. The
+            // explicit confirmation route passes the guard flag below.
+            PutPendingOrphanRecoveryBack(pending);
+            return new CrashRecoveryActionResult(CrashRecoveryActionStatuses.Failed, pending,
+                Error: "Large unattributed recovery requires a second confirmation.");
+        }
 
         var commit = _git.CrashRecoveryCommit(
             pending.ProjectName, pending.RepoRoot, pending.Message, pending.Pathspecs,
@@ -413,10 +436,13 @@ public sealed class CrashRecoveryService
         string? jobFolder,
         string repoRoot,
         string message,
-        IReadOnlyList<string>? pathspecs)
+        IReadOnlyList<string>? pathspecs,
+        bool refDriftAtStart)
     {
         var files = ReadPendingFiles(repoRoot, pathspecs);
-        var classification = CrashRecoveryClassifications.Classify(jobId, files);
+        var scan = CrashRecoveryGitScan.Inspect(repoRoot, files);
+        var isRefDrift = scan.RefDrift || refDriftAtStart;
+        var classification = isRefDrift ? CrashRecoveryClassifications.RefDrift : CrashRecoveryClassifications.Classify(jobId, files);
         var firstObservedAt = ResolveFirstObservedAt(jobFolder, repoRoot, files);
         var id = CrashRecoveryPendingId.Create(entry.Name, repoRoot, classification, firstObservedAt);
         var pending = new PendingCrashRecovery
@@ -429,10 +455,20 @@ public sealed class CrashRecoveryService
             JobId = jobId,
             RepoRoot = repoRoot,
             Files = files,
+            RecoveryClassification = classification,
+            Branch = scan.Branch,
+            HeadSha = scan.HeadSha,
+            BehindCommits = scan.BehindCommits,
+            UnknownBlobs = scan.UnknownBlobs,
+            Insertions = scan.Insertions,
+            Deletions = scan.Deletions,
+            IndexLock = scan.IndexLock,
             Message = message,
-            Reason = jobId == null
-                ? "Uncommitted changes were found at startup with no active job attribution."
-                : $"Uncommitted changes were found at startup and attributed to {jobId}.",
+            Reason = isRefDrift
+                ? $"Checkout lags behind {scan.Branch} by {scan.BehindCommits} {(scan.BehindCommits == 1 ? "commit" : "commits")} (ref moved under the checkout)."
+                : jobId == null
+                    ? "Uncommitted changes were found at startup with no active job attribution."
+                    : $"Uncommitted changes were found at startup and attributed to {jobId}.",
             JobFolder = jobFolder,
             Pathspecs = pathspecs?.ToArray()
         };
@@ -545,16 +581,17 @@ public sealed class CrashRecoveryService
     private IReadOnlyList<string> ReadPendingFiles(string repoRoot, IReadOnlyList<string>? pathspecs)
     {
         if (pathspecs is { Count: > 0 })
-            return pathspecs.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+            return CrashRecoveryGitScan.ExpandUntrackedDirectories(repoRoot, pathspecs);
 
         var status = _git.GetStatusForRepoRoot(repoRoot);
         if (!status.IsRepo || status.Files.Count == 0) return [];
-        return status.Files
+        var files = status.Files
             .Select(f => f.Path)
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        return CrashRecoveryGitScan.ExpandUntrackedDirectories(repoRoot, files);
     }
 
     private void AttachCommitToJob(PendingCrashRecovery pending, string? sha)
@@ -1020,10 +1057,21 @@ public sealed record PendingCrashRecovery
     [JsonPropertyName("jobId")] public string? JobId { get; init; }
     [JsonPropertyName("repoRoot")] public string RepoRoot { get; init; } = "";
     [JsonPropertyName("files")] public IReadOnlyList<string> Files { get; init; } = [];
+    [JsonPropertyName("unknownBlobs")] public IReadOnlyList<string> UnknownBlobs { get; init; } = [];
+    [JsonPropertyName("branch")] public string Branch { get; init; } = "";
+    [JsonIgnore] public string HeadSha { get; init; } = "";
+    [JsonPropertyName("behindCommits")] public int BehindCommits { get; init; }
+    [JsonPropertyName("insertions")] public int Insertions { get; init; }
+    [JsonPropertyName("deletions")] public int Deletions { get; init; }
+    [JsonPropertyName("indexLock")] public string? IndexLock { get; init; }
+    [JsonPropertyName("requiresSecondConfirmation")]
+    public bool RequiresSecondConfirmation => JobId == null && (Files.Count > 200 || Deletions > Math.Max(100, Insertions * 3));
     [JsonPropertyName("message")] public string Message { get; init; } = "";
     [JsonPropertyName("reason")] public string Reason { get; init; } = "";
     [JsonPropertyName("classification")]
-    public string Classification => CrashRecoveryClassifications.Classify(JobId, Files);
+    public string Classification => RecoveryClassification ?? CrashRecoveryClassifications.Classify(JobId, Files);
+
+    [JsonIgnore] public string? RecoveryClassification { get; init; }
 
     [JsonIgnore] public string? JobFolder { get; init; }
     [JsonIgnore] public IReadOnlyList<string>? Pathspecs { get; init; }
@@ -1031,6 +1079,7 @@ public sealed record PendingCrashRecovery
 
 public static class CrashRecoveryClassifications
 {
+    public const string RefDrift = "ref-drift";
     public const string Trivial = "trivial";
     public const string ReviewRequired = "review-required";
 

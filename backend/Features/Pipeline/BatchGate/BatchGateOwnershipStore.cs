@@ -67,7 +67,8 @@ public static class BatchGateOwnershipStore
         {
             CurrentGeneration = projection.CurrentRunAttempt?.AttemptId == ownership.Subject.RunAttempt
                 && projection.CurrentReviewAttempt?.AttemptId == ownership.ReviewAttemptId
-                && projection.CurrentReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
+                && projection.CurrentReviewAttempt.Outcome is
+                    (ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect)
                 && projection.CurrentRunAttempt.LastFence == ownership.Subject.FencingToken
                 && projection.CurrentRunAttempt.AuthorityEpoch == ownership.Subject.DeliveryEpoch
                 && string.Equals(projection.CurrentRunAttempt.ResultEnvelope?.ResultSha,

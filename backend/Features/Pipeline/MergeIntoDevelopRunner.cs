@@ -44,6 +44,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly IConfiguration? _configuration;
     private readonly AgentStudio.Tasks.TimelineLog? _timeline;
     private readonly RefMutationLeaseService? _refMutationLeases;
+    private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -86,7 +87,8 @@ public sealed partial class MergeIntoDevelopRunner
         IntegrationWorktreeProvider? integrationWorktrees = null,
         IConfiguration? configuration = null,
         AgentStudio.Tasks.TimelineLog? timeline = null,
-        RefMutationLeaseService? refMutationLeases = null)
+        RefMutationLeaseService? refMutationLeases = null,
+        BatchIntegrationReservationService? batchReservations = null)
     {
         _git = git;
         _pipelineLog = pipelineLog;
@@ -108,6 +110,7 @@ public sealed partial class MergeIntoDevelopRunner
         _configuration = configuration;
         _timeline = timeline;
         _refMutationLeases = refMutationLeases;
+        _batchReservations = batchReservations;
         // No hard-coded fallback here (AGT-2843): an unset explicit timeout is
         // resolved per call, per project, by ResolveGateTimeout.
         _preMainTimeout = preMainTimeout is { } configured && configured > TimeSpan.Zero
@@ -169,6 +172,14 @@ public sealed partial class MergeIntoDevelopRunner
         Interlocked.Increment(ref _mergeGateUsers);
         try
         {
+            var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+                ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+            using var batchReservation = _batchReservations is null
+                || string.IsNullOrWhiteSpace(reservationRepo)
+                || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                    ReviewSubjectStore.Read(jobFolderPath))
+                ? null
+                : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
             // Deliberately NOT the caller's token. Merge + gate + rollback form
             // one consistency boundary after acceptance is already durable.
             await _mergeGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -194,6 +205,18 @@ public sealed partial class MergeIntoDevelopRunner
     /// serialized merge + build-gate + rollback consistency boundary.
     /// </summary>
     public bool IsMergeGateBusy => Volatile.Read(ref _mergeGateUsers) > 0;
+
+    private bool IsDocumentationDelivery(string repo, string branch,
+        ReviewSubjectRecord? subject)
+    {
+        if (subject is null) return false;
+        try
+        {
+            return DocsOnlyDeliveryPolicy.IsDocsOnly(_git.ChangedPathsAgainstMergeBase(
+                repo, branch, subject.ImmutableResultRef ?? subject.ResultSha));
+        }
+        catch (Exception) { return false; }
+    }
 
     private async Task<MergeIntoIntegrationResult> RunSerializedAsync(
         string project,
@@ -222,6 +245,8 @@ public sealed partial class MergeIntoDevelopRunner
                     null, null, startedAt, ct).ConfigureAwait(false);
             }
 
+            var reviewSubject = ReviewSubjectStore.Read(jobFolderPath);
+
             // The direct merge may advance a ref before its in-process gate
             // decides whether to keep it. Hold the shared publish boundary for
             // that complete transaction so a batch cannot race its rollback.
@@ -230,7 +255,6 @@ public sealed partial class MergeIntoDevelopRunner
                 : await _refMutationLeases.AcquireAsync(
                     project, developerRoot, integrationBranch, ct).ConfigureAwait(false);
 
-            var reviewSubject = ReviewSubjectStore.Read(jobFolderPath);
             if (reviewSubject is not null
                 && _attemptAuthority is not null
                 && !ReviewSubjectStore.TryValidateCurrentAttempt(
@@ -1497,6 +1521,14 @@ public sealed partial class MergeIntoDevelopRunner
         string pipelineType)
     {
         if (_pushQueue == null) return;
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
+            && !IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath)))
+            _batchReservations.MarkPushPending(project, jobId, approvedSha,
+                jobFolderPath, reservationRepo, integrationBranch, watchPath);
+
         if (!IntegrationPushEnabled(project, pipelineType))
         {
             _logger.LogInformation(
@@ -1563,6 +1595,14 @@ public sealed partial class MergeIntoDevelopRunner
         CancellationToken ct = default,
         string? approvedSha = null)
     {
+        var reservationRepo = _git.ResolveRepoRootForWatchPath(watchPath)
+            ?? (string.IsNullOrWhiteSpace(watchPath) ? null : watchPath);
+        using var batchReservation = _batchReservations is null
+            || string.IsNullOrWhiteSpace(reservationRepo)
+            || IsDocumentationDelivery(reservationRepo, integrationBranch,
+                ReviewSubjectStore.Read(jobFolderPath))
+            ? null
+            : await _batchReservations.AcquireAsync(project, ct).ConfigureAwait(false);
         await _pushGate.WaitAsync(ct);
         try
         {
@@ -1617,7 +1657,7 @@ public sealed partial class MergeIntoDevelopRunner
                 }
             }
 
-            return await PushIntegrationBranchSerializedAsync(
+            var pushed = await PushIntegrationBranchSerializedAsync(
                 project,
                 jobId,
                 jobFolderPath,
@@ -1625,6 +1665,9 @@ public sealed partial class MergeIntoDevelopRunner
                 integrationBranch,
                 approvedSha,
                 ct);
+            if (pushed.Success && pushed.Status is ("pushed" or "already-remote" or "no-remote"))
+                _batchReservations?.MarkPushVerified(project, jobId, approvedSha);
+            return pushed;
         }
         finally
         {

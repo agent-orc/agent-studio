@@ -1,7 +1,9 @@
 # Distributed Agent Studio target architecture
 
-Status: canonical target picture, amended by ADR-0076 on 2026-09-25. This page defines the intended
-separation of Agent Studio, Task Server, Agent Runner, and Operations Server. It is a product
+Status: canonical target picture, amended by ADR-0078 on 2026-10-11. Start with the
+[North star](../operations/nordstern/index.html) for the complete target and delivery map.
+This page defines the intended separation of Studio, Task Server, Orchestrator Engine,
+Runner hosts, and Operations Server. It is a product
 and architecture target, not a claim that every boundary already ships.
 
 This page is the coordinating source for the implementation tasks listed in
@@ -11,32 +13,38 @@ security, or workspace-organization decisions here.
 
 ## 1. Decision summary
 
-Agent Studio for Software is one product made from four independently
-deployable runtime components:
+Agent Studio for Software is one product made from five runtime roles:
 
 1. **Agent Studio** is the replaceable human surface. It is primarily the
    Angular application and, where needed, a thin surface-specific BFF. Closing
    it must not stop work.
-2. **Task Server** is the always-on control plane and durable system of record.
+2. **Task Server** is the always-on authority and durable system of record.
    It owns users, workspaces and project identity, tasks, orchestration
-   state, leases, events, artifacts, audit, and management APIs.
-3. **Agent Runner** is the execution plane. It owns host capabilities, code
+   state, leases, events, artifacts, audit, and management APIs. It validates
+   versioned engine intents and grants fenced claims; it does not choose the next step.
+3. **Orchestrator Engine** is the only decider for transitions between steps,
+   planners and advisors. It reads bounded facts, chooses typed actions, and
+   submits versioned intents and decision receipts to the Task Server. It does
+   not hold task truth or command a runner directly.
+4. **Agent Runner** is the execution plane. It owns host capabilities, code
    checkouts, coding-agent processes, tool processes, containment, and bounded
    delivery of typed events and artifacts to the Task Server.
-
-4. **Operations Server** brokers bounded executable host and developer-seat
+5. **Operations Server** brokers bounded executable host and developer-seat
    operations through outbound Operations Agents. It accepts service principals,
    not browser sessions. Task Server remains the authority for task-linked permits
    and all orchestration sessions. Studio edges hold independent upstream credentials.
+   Documentation and UI call this role the **Operations Broker**: it brokers
+   host operations and is not a message broker. Code identifiers, images,
+   routes, and contracts retain **Operations Server**.
 
 Shared contracts and orchestration libraries remain modules, not runtime roles.
-[ADR-0076](../system/architecture/decisions/adr-archive.md#adr-0076---operations-server-brokers-host-execution-beside-task-server-authority-2026-09-25)
-amends the original three-component decision. The selected standard is one-box
+[ADR-0078](../system/architecture/decisions/adr-archive.md#adr-0078---engine-placement-and-execution-rule-2026-10-11)
+amends the earlier role and decision placement. The selected standard is one-box
 Docker after full route and security parity. The initial service and read-only
 agent do not yet establish that parity. See the
 [Operations contract and remaining gates](../system/contracts/operations-backchannel.md).
 
-The task/run topology below remains valid. The additional operations path is
+The task/run topology below shows the authority and claim path. The separate operations path is
 `frontend backend -> Operations Server <- outbound Operations Agent`, with
 Task Server permit introspection on admission, dispatch, renewal and results.
 
@@ -53,9 +61,9 @@ must not claim new work, mint authority, or become a second task truth while the
 Task Server is unavailable. The isomorphic multi-writer/offline-store direction
 explored by AGT-2122 is therefore deferred and is not part of this target.
 
-This also corrects the phrase "everything moves to the Runner". Execution moves
-to the Runner. Durable orchestration authority moves out of the desktop process
-and into the independently hosted Task Server control plane.
+Claimable execution moves to runner hosts, decisions to the Orchestrator Engine,
+and durable authority to the Task Server. The monolith retains none of these
+decisions in the finished target.
 
 ## 2. One word, four different failure cases
 
@@ -75,43 +83,23 @@ autonomous project continues" is a separate future research question.
 ## 3. Target topology
 
 ```text
-                         HTTPS, one Task Server origin
-                                      |
-                 +--------------------+--------------------+
-                 |                                         |
-        Agent Studio clients                    Task Server management
-      Angular SPA, optional BFF                 bootstrap/recovery console
-                 |                                         |
-                 +--------------------+--------------------+
-                                      |
-                         +------------+-------------+
-                         |      TASK SERVER         |
-                         | control plane and truth  |
-                         |                          |
-                         | users and authorization  |
-                         | workspaces and projects  |
-                         | tasks and initiatives    |
-                         | orchestration state      |
-                         | leases and fencing       |
-                         | events and artifacts     |
-                         | audit and management API |
-                         +------------+-------------+
-                                      |
-                     outbound authenticated runner channel
-                                      |
-              +-----------------------+-----------------------+
-              |                                               |
-      +-------+--------+                              +-------+--------+
-      | AGENT RUNNER A |                              | AGENT RUNNER B |
-      | execution plane|                              | execution plane|
-      | CAR adapters   |                              | CAR adapters   |
-      | repo/worktrees |                              | repo/worktrees |
-      | CLI/tools      |                              | CLI/tools      |
-      | local spool    |                              | local spool    |
-      +-------+--------+                              +-------+--------+
-              |                                               |
-              +---------------- Git remotes ------------------+
-                         code channel, not task truth
+ Studio and browser edges ---> Task Server <--- Orchestrator Engine
+      human interaction          authority       only decider
+      stateless BFF              intents          planners and advisors
+                                 leases
+                                 fences
+                                 permits
+                                    ^
+                                    | claims, renewals, evidence
+                          +---------+---------+
+                          |                   |
+                     Runner host A       Runner host B
+                     coding/review       gate/batch/chat
+                          |
+                          +--- Git remotes (code, not task truth)
+
+ Studio/BFF ---> Operations Server <--- outbound Operations Agents
+                 non-claimable host operations only
 ```
 
 Browsers never connect directly to a Runner for task mutations. Runners initiate
@@ -123,9 +111,10 @@ carries task authority, events, evidence metadata, and commands.
 | Component | Owns | Must not own |
 |---|---|---|
 | **Agent Studio** | Human interaction, board and project views, task authoring, orchestration observation, admin UI, explicit operator commands, local UI preferences | Durable task state, lease authority, CLI process handles, hidden filesystem writes, long-running service liveness |
-| **Task Server** | Canonical resources and IDs, Task API, orchestration state machine, scheduling/admission, users and authorization, service identities, durable leases/fences, event and artifact ingestion, audit, backup/restore metadata, management API | Coding-agent processes, host toolchains, repository worktrees, Angular component state |
-| **Agent Runner** | Host registration, capability probes, project workspaces, CodingAgentRunner integration, process containment, execution of an admitted run plan, typed output, artifact upload, bounded local spool | Global task namespace, user passwords, arbitrary lane changes, autonomous claims, policy changes, release authority |
-| **Operations Server** | Versioned catalogue, scoped commands, bounded attempts, agent capabilities and operational evidence | Task mutation, workspace identity, orchestration sessions, permit minting, browser cookies, native execution |
+| **Task Server** | Canonical resources and IDs, Task API, state and accepted transitions, scheduling/admission, users and authorization, service identities, durable leases/fences, permits, event and artifact ingestion, audit, backup/restore metadata, management API | Choosing the next step, starting processes, host toolchains, repository worktrees, Angular component state |
+| **Orchestrator Engine** | All transition decisions, planners and advisors, bounded model-backed decisions, versioned intents and decision receipts | Task truth, direct runner commands, host files, self-issued authority |
+| **Agent Runner** | Host registration, capability probes, project workspaces, CodingAgentRunner integration, process containment, execution of admitted claimable work, typed output, artifact upload, bounded local spool | Global task namespace, user passwords, arbitrary lane changes, autonomous claims, policy changes, release authority |
+| **Operations Server** | Versioned catalogue, scoped commands, bounded attempts, agent capabilities and operational evidence for non-claimable host operations | Pipeline step execution, task mutation, workspace identity, orchestration sessions, permit minting, browser cookies, native execution |
 | **Shared contracts** | Versioned resource DTOs, event envelopes, command/result schemas, compatibility rules, deterministic policy primitives | Network hosting, persistence technology, UI projections, OS process ownership |
 
 **Implementation status (2026-09-24).** Local Studio runs and detached Agent
@@ -135,17 +124,48 @@ and process containment, but no longer own a second CLI argv or raw-spawn path.
 
 ### Where orchestration runs
 
-The Task Server owns the durable orchestration state machine. It may send an
-immutable run plan to a Runner and accept typed results, but the Runner cannot
-extend budgets or decide that another global task is available. Deterministic
-policy code may be packaged as a shared library and executed near the work for
-efficiency. Its decisions become authoritative only through a fenced Task
-Server transition.
+The Orchestrator Engine is the only decider for transitions and planners,
+including the batch advisor, capacity checks and improvement scouting. A strong
+model chooses a typed action from bounded, versioned grounds. Deterministic code
+validates authority and safety, enforces finite execution, dispatches the
+action through the Task Server and records a receipt. The Task Server owns the
+durable orchestration state machine and applies only valid, fenced intents.
+The Runner cannot extend budgets or choose another global task. Orchestration
+libraries may be shared, but decision ownership stays in the Engine.
+
+A unit admitted by the Task Server as claimable work runs on the runner host
+holding its lease. This includes coding, review, gate and batch attempts and
+orchestrator chat turns, with their model calls, preparation, builds, tests,
+commits and pushes. The Operations Server runs only non-claimable host operations:
+developer-seat files and Git actions, lifecycle control, diagnostics and
+person- or frontend-requested rendering and capture. Its result never changes
+task state by itself. No pipeline step executes through the Operations Server.
+
+Fix rounds continue on the reviewed delivery. One per-card budget counts every
+automatic round. At budget end, non-test blocks become concerns with a linked
+follow-up card; `build-tests` and `tests-and-evidence` blocks escalate. Review
+prefers an eligible executor on another host but never waits for that preference.
+Engine instances are interchangeable under per-occurrence leases, with one in
+workstation and one-box profiles and two in the distributed profile.
 
 This split lets post-processing and reissue continue when Agent Studio is
 closed without turning every Runner into an independent Task Server.
 
 ## 5. Independent lifecycles
+
+### Process forms by deployment profile
+
+The Engine and Operations Server are separate processes in every profile. They
+may share a deployment unit but do not share decision or execution authority.
+
+| Profile | Process placement |
+|---|---|
+| Workstation | All five roles on one developer machine, with a Connector browser edge, one Engine instance and the workstation as an ordinary runner host; loopback transport and a native host manager. |
+| One-box Docker | HTTPS edge and BFF, Task Server, one Engine instance, Operations Server and first runner host in one Compose installation; separate Engine and Operations Server containers, an enrolled agent for native host operations, no Docker socket, only the HTTPS edge published. This is the standard after route and security parity. |
+| Distributed | Task Server, two interchangeable Engine instances and Operations Server in separate containers, optionally on one control-plane host; Linux, Windows and workstation runner hosts join over private HTTPS on WireGuard. |
+
+When the Engine is unavailable, transitions wait visibly. Neither the Task
+Server nor the Operations Server becomes a fallback decider.
 
 ### Agent Studio lifecycle
 
