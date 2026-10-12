@@ -262,7 +262,6 @@ export class TriageController {
         if (ev.targetState === '6-completed'
             && err?.status === 409
             && (err?.error?.code === 'integration-dead-end'
-              || err?.error?.code === 'run-attempt-missing'
               || (typeof err?.error?.error === 'string'
                 && /integrat|delivery|containment/i.test(err.error.error)))) {
           this.jobService.refresh(true);
