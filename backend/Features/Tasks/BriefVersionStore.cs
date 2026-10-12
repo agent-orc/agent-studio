@@ -31,6 +31,10 @@ public static class BriefVersionStore
     {
         var version = AgentStudio.Runner.RunDispositionPolicy.BriefVersion(authoredBrief);
         var path = Path.Combine(folder, RelativePath);
+        // Create only the metadata folder: re-creating a task folder that moved
+        // away would leave a duplicate shell in the old lane (AGT-2867).
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException($"Task folder '{folder}' no longer exists.");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try

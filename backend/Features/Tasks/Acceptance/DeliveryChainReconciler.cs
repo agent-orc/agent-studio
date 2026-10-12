@@ -3,6 +3,7 @@ namespace AgentStudio.Tasks;
 /// <summary>Rechecks integration when the target ref or delivery changes.</summary>
 public sealed class DeliveryChainReconciler : BackgroundService
 {
+    internal const int MaxCompletedReopensPerPass = 20;
     private readonly TaskScannerService _scanner;
     private readonly TaskIntegrationStatusService _statuses;
     private readonly TaskTransitionService _transitions;
@@ -30,15 +31,28 @@ public sealed class DeliveryChainReconciler : BackgroundService
             .Where(card => card.State is TaskStates.AutoReview or TaskStates.HumanReview or TaskStates.Completed)
             .ToArray();
         var statuses = _statuses.BuildLookup(cards);
+        var planned = cards
+            .Where(AcceptanceIntegrationPolicy.IsIntegrationRequired)
+            .Select(card =>
+            {
+                statuses.TryGetValue(card.TaskKey, out var status);
+                return (Card: card, Status: status,
+                    Target: DeliveryLanePolicy.ReconciliationTarget(card, status));
+            })
+            .Where(item => item.Target is not null)
+            .ToArray();
+        var completedReopens = planned.Count(item => item.Card.State == TaskStates.Completed);
+        // Stop the entire Delivered reopen batch when the bound is crossed.
+        // Taking only the first N would drain the lane over successive passes.
+        var completedAlarm = completedReopens > MaxCompletedReopensPerPass;
         var moved = 0;
-        foreach (var card in cards)
+        var failed = 0;
+        foreach (var (card, status, plannedTarget) in planned)
         {
             ct.ThrowIfCancellationRequested();
-            if (!AcceptanceIntegrationPolicy.IsIntegrationRequired(card)) continue;
-            statuses.TryGetValue(card.TaskKey, out var status);
+            if (completedAlarm && card.State == TaskStates.Completed) continue;
             var fatal = DeliveryLanePolicy.RequiresEscalation(status);
-            var target = DeliveryLanePolicy.ReconciliationTarget(card, status);
-            if (target is null) continue;
+            var target = plannedTarget!;
             string? gateParkReason = null;
             string? gateParkCategory = null;
             // AGT-3009: a red merge gate is classified and routed before it may
@@ -87,8 +101,24 @@ public sealed class DeliveryChainReconciler : BackgroundService
                 }
             }
             else if (outcome.Status != MoveJobStatus.SourceStateMismatch)
+            {
+                failed++;
                 _logger.LogWarning("delivery-chain-reconcile-failed task={TaskKey} target={Target} status={Status} message={Message}",
                     card.TaskKey, target, outcome.Status, outcome.Message);
+            }
+        }
+        if (planned.Length > 0)
+        {
+            if (completedAlarm)
+                _logger.LogWarning(
+                    "delivery-chain-reconcile-summary planned={Planned} completedReopens={CompletedReopens} completedReopenLimit={CompletedReopenLimit} completedBlocked={CompletedBlocked} moved={Moved} failed={Failed} alarm=completed-reopen-limit",
+                    planned.Length, completedReopens, MaxCompletedReopensPerPass,
+                    completedReopens, moved, failed);
+            else
+                _logger.LogInformation(
+                    "delivery-chain-reconcile-summary planned={Planned} completedReopens={CompletedReopens} completedReopenLimit={CompletedReopenLimit} completedBlocked={CompletedBlocked} moved={Moved} failed={Failed} alarm=none",
+                    planned.Length, completedReopens, MaxCompletedReopensPerPass,
+                    0, moved, failed);
         }
         return moved;
     }

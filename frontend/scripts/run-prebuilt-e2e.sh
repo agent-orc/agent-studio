@@ -6,18 +6,20 @@ FRONTEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "${FRONTEND_ROOT}/.." && pwd)"
 if [[ "${PW_E2E_SINGLE_RUN:-0}" != "1" && "$#" -eq 0 ]]; then
   result=0
-  for profile in standard recovery demo; do
+  for profile in standard recovery ref-drift demo; do
     PW_E2E_SINGLE_RUN=1 PW_E2E_PROFILE="${profile}" bash "$0" || result=1
   done
   exit "${result}"
 fi
-PW_E2E_PROFILE="${PW_E2E_PROFILE:-standard}"
-for arg in "$@"; do
-  case "${arg}" in
-    *crash-recovery-prompt.spec.ts*) PW_E2E_PROFILE=recovery ;;
-    *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
-  esac
-done
+if [[ -z "${PW_E2E_PROFILE:-}" ]]; then
+  PW_E2E_PROFILE=standard
+  for arg in "$@"; do
+    case "${arg}" in
+      *crash-recovery-prompt.spec.ts*) PW_E2E_PROFILE=recovery ;;
+      *cockpit-integration-matrix.spec.ts*) PW_E2E_PROFILE=demo ;;
+    esac
+  done
+fi
 PUBLISH_DIR="${REPO_ROOT}/backend/bin/e2e-publish"
 CHECKOUT_SHA="$(bash "${REPO_ROOT}/scripts/e2e-source-fingerprint.sh")"
 

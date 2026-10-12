@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Git;
 using Contract = AgentStudio.TaskServer.Contracts;
@@ -54,34 +56,91 @@ public sealed class RemoteReviewPlanBuilder
         ProjectSettings? projectSettings,
         string? integrationRef,
         string? expectedResultSha = null,
-        IReadOnlyList<string>? changedFiles = null)
+        IReadOnlyList<string>? changedFiles = null,
+        string? immutableResultRef = null)
     {
         var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
             repositoryPath,
             projectSettings?.BuildProfile,
             integrationRef,
-            changedFiles);
+            changedFiles) with
+        {
+            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
+        };
         var ordinaryToolPlan = toolPlan;
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
+        var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
+        var resultSha = expectedResultSha ?? subject?.ResultSha;
         var changedPaths = changedFiles ?? (_git is null || string.IsNullOrWhiteSpace(repositoryPath)
-            || string.IsNullOrWhiteSpace(integrationRef) || subject is null
+            || string.IsNullOrWhiteSpace(integrationRef) || string.IsNullOrWhiteSpace(resultRef)
             ? null
             : _git.ChangedPathsAgainstMergeBase(
-                repositoryPath, integrationRef,
-                subject.ImmutableResultRef ?? subject.ResultSha));
+                repositoryPath, integrationRef, resultRef));
         var deferBuildTest = projectSettings?.BatchGate.Enabled == true
             && task is not null && !TaskModes.IsReportOnly(task.Mode)
-            && DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
-            && subject is { ImmutableResultRef: not null }
-            && ReviewSubjectStore.IsValidResultSha(subject.ResultSha);
+            && (projectSettings.BatchGate.EffectiveScope == "code"
+                || DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths))
+            && changedPaths is { Count: > 0 }
+            && !string.IsNullOrWhiteSpace(resultRef)
+            && ReviewSubjectStore.IsValidResultSha(resultSha);
+        string? testLevel = null;
+        string? selectionDigest = null;
         if (deferBuildTest)
-            toolPlan = toolPlan with
+        {
+            var options = projectSettings!.BatchGate;
+            var selectionRepo = repositoryPath ?? string.Empty;
+            // Selection reads the project inventory from the existing checkout.
+            // The built-in Agent Studio verifier reads these fixed command
+            // inventory files. A delivery that changes that inventory needs its own full gate;
+            // materializing a 7,000-file result worktree for every queued plan
+            // would hold review admission behind filesystem work.
+            if (changedPaths!.Any(path => path is ".agent-studio/project.yml"
+                    or "frontend/package.json" or "frontend/angular.json"
+                    or "backend/OrchestratorApi.csproj"
+                    or "backend.Tests/OrchestratorApi.Tests.csproj"))
+                deferBuildTest = false;
+            if (deferBuildTest)
             {
-                Commands = toolPlan.Commands.Where(command =>
-                    !string.Equals(command.Aspect, "build-tests", StringComparison.OrdinalIgnoreCase)).ToArray(),
-                Preparation = [],
-                BuildTestDeferredToBatch = true,
-            };
+                    var verify = VerifyCommandPlanner.Plan(selectionRepo, projectSettings.BuildProfile);
+                    var level = DocsOnlyDeliveryPolicy.IsDocsOnly(changedPaths)
+                        || options.ReviewTestLevel == "build-only"
+                            ? TestExecutionLevels.BuildOnly : TestExecutionLevels.WorkPackage;
+                    var selection = TestSelectionPlanner.Plan(selectionRepo,
+                        verify, changedPaths, projectSettings.TestExecution, "remote-review", level);
+                    var selected = selection.Commands.Where(command =>
+                        command.Kind != VerifyCommandKind.Test || command.BlocksWorkPackage).ToArray();
+                    if (selection.Audit.Level == TestExecutionLevels.Full
+                        || selection.Audit.FullSuiteRequired
+                        || selection.Audit.UnmappedSourceDirectories.Count > 0
+                        || (level == TestExecutionLevels.WorkPackage
+                            && !selected.Any(command => command.Kind == VerifyCommandKind.Test)))
+                    {
+                        deferBuildTest = false;
+                    }
+                    else
+                    {
+                        toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(selectionRepo,
+                            projectSettings.BuildProfile, integrationRef, changedPaths,
+                            verify with { Commands = selected }) with
+                        {
+                            BuildTestDeferredToBatch = true,
+                        };
+                        toolPlan = toolPlan with
+                        {
+                            Commands = toolPlan.Commands.Select(command =>
+                                command.Aspect == "build-tests"
+                                    ? command with { Aspect = "review-verification" }
+                                    : command).ToArray(),
+                        };
+                        testLevel = level;
+                        selectionDigest = Convert.ToHexStringLower(SHA256.HashData(
+                            Encoding.UTF8.GetBytes(string.Join("\n", level,
+                                string.Join("\n", changedPaths ?? []),
+                                string.Join("\n", selected.Select(command =>
+                                    $"{command.Kind}:{command.WorkingSubdir}:{command.Command}"))))));
+                    }
+            }
+        }
         if (task is null || TaskModes.IsReportOnly(task.Mode))
             return toolPlan;
 
@@ -183,6 +242,8 @@ public sealed class RemoteReviewPlanBuilder
             Preparation = deferBuildTest && !hasModelReview
                 ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
             BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
+            TestLevel = deferBuildTest && hasModelReview ? testLevel : null,
+            TestSelectionDigest = deferBuildTest && hasModelReview ? selectionDigest : null,
             RequiredAspects = commands
                 .Select(command => command.Aspect)
                 .Distinct(StringComparer.OrdinalIgnoreCase)

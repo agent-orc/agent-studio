@@ -21,6 +21,7 @@ public static class TaskIntegrationRecordEndpoints
             TaskScannerService scanner,
             TaskMutationService mutations,
             ProjectSettingsService settings,
+            AgentStudio.Git.GitService git,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
@@ -70,11 +71,37 @@ public static class TaskIntegrationRecordEndpoints
                     statusCode: StatusCodes.Status500InternalServerError);
             }
 
+            // AGT-3045: an operator card-scoped merge attributes its commit(s),
+            // so the card shows the delivery instead of an empty chain.
+            var attributed = OperatorMergeCommitAttribution.CommitsToAttribute(
+                record,
+                task.Commits ?? [],
+                sha => ResolveMergeCommit(git, task.Id, watchPath, sha));
+            foreach (var commit in attributed)
+                mutations.AppendJobCommitOnFolder(task.FolderPath, commit);
+
             var persisted = TaskIntegrationRecordAddressResolver.RefreshFolder(scanner, task)?.IntegrationRecords
                 .FirstOrDefault(item => string.Equals(item.Id, record.Id, StringComparison.OrdinalIgnoreCase))
                 ?? record;
             return Results.Ok(new { appended = write.Appended, record = persisted });
         });
+    }
+
+    private static ResolvedMergeCommit? ResolveMergeCommit(
+        AgentStudio.Git.GitService git, string jobId, string? watchPath, string sha)
+    {
+        try
+        {
+            var meta = git.GetCommitMeta(jobId, watchPath, [sha]).FirstOrDefault();
+            if (meta.Key is null) return null;
+            var files = git.GetCommitFiles(jobId, watchPath, meta.Key).Select(file => file.Path).ToList();
+            return new ResolvedMergeCommit(meta.Key, meta.Value.Body, files, meta.Value.AuthorDateUtc);
+        }
+        catch (Exception ex)
+        {
+            SilentCatch.Note(ex, "operator merge commit resolution");
+            return null;
+        }
     }
 
     private static DateTime? NormalizeUtc(DateTime? value)

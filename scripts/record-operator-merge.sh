@@ -75,7 +75,9 @@ else
 fi
 [ -n "$delivery_shas" ] || die "the merge $merge_sha introduced no commits"
 
-sha_json="$(printf '%s\n' $delivery_shas | awk 'NF {printf "%s\"%s\"", sep, $0; sep=","}')"
+# AGT-3045: the merge commit leads the list so the card attributes it; the
+# delivery commits follow for containment.
+sha_json="$(printf '%s\n' "$merge_sha" $delivery_shas | awk 'NF && !seen[$0]++ {printf "%s\"%s\"", sep, $0; sep=","}')"
 key_lower="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]')"
 evidence="Operator card-scoped merge $merge_sha ($merge_subject) by $actor at $merged_at."
 

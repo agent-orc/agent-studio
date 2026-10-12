@@ -85,7 +85,10 @@ internal static class TaskEndpointHelpers
         {
             error = outcome.Message,
             code = outcome.Message?.StartsWith("Completion refused:", StringComparison.Ordinal) == true
-                ? "completion-content-gap" : "integration-dead-end",
+                ? "completion-content-gap"
+                : outcome.Message?.StartsWith(
+                    AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal, StringComparison.Ordinal) == true
+                    ? "run-attempt-missing" : "integration-dead-end",
         }),
         MoveJobStatus.PendingIntentSupersedeFailed => Results.Json(
             new

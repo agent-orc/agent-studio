@@ -5344,6 +5344,47 @@ public class GitService
         return new GitWorktreeResult(true, repoRoot, null);
     }
 
+    /// <summary>Synchronize a published batch through a checked-out branch, never a ref-only advance.</summary>
+    public GitWorktreeResult FastForwardPublishedBatchCheckout(
+        string repoRoot, string integrationBranch, string testedCandidateSha)
+    {
+        if (!IsLikelyBranchName(integrationBranch)
+            || !ReviewSubjectStore.IsValidResultSha(testedCandidateSha))
+            return new GitWorktreeResult(false, repoRoot, "Invalid published batch subject.");
+        var before = GetBranchTip(repoRoot, integrationBranch);
+        if (before is null || !IsAncestor(repoRoot, before, testedCandidateSha))
+            return new GitWorktreeResult(false, repoRoot, "Published batch is not a local fast-forward.");
+        if (string.Equals(before, testedCandidateSha, StringComparison.OrdinalIgnoreCase))
+            return new GitWorktreeResult(true, repoRoot, null);
+        var holder = WorktreeHolding(repoRoot, integrationBranch);
+        var temporary = holder is null
+            ? Path.Combine(Path.GetTempPath(), "agentstudio-batch-checkout-" + Guid.NewGuid().ToString("N"))
+            : null;
+        if (temporary is not null)
+        {
+            var added = WorktreeAddExisting(repoRoot, temporary, integrationBranch);
+            if (!added.Success)
+                return new GitWorktreeResult(false, repoRoot,
+                    added.Error ?? "Published batch checkout could not be opened.");
+            holder = temporary;
+        }
+        try
+        {
+            var (_, error, code) = RunGitArgs(holder!, "merge", "--ff-only", testedCandidateSha);
+            if (code != 0)
+                return new GitWorktreeResult(false, holder, error.Trim());
+            return string.Equals(GetBranchTip(repoRoot, integrationBranch), testedCandidateSha,
+                    StringComparison.OrdinalIgnoreCase)
+                ? new GitWorktreeResult(true, holder, null)
+                : new GitWorktreeResult(false, holder,
+                    "Checkout did not advance to the verified remote candidate.");
+        }
+        finally
+        {
+            if (temporary is not null) WorktreeRemove(repoRoot, temporary);
+        }
+    }
+
     /// <summary>
     /// Compare-and-swap on a local branch ref. <c>git update-ref</c> with an old
     /// value fails instead of overwriting when the branch moved since it was

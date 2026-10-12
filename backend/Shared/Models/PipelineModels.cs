@@ -402,4 +402,9 @@ public enum PipelineStepStatus
     /// interrupted or unexecuted required check.
     /// </summary>
     NotApplicable,
+    /// <summary>
+    /// AGT-3045: the step parked on open operator decisions (a remote run that
+    /// ended with NeedsInput). Terminal for this attempt, but not a failure.
+    /// </summary>
+    NeedsDecision,
 }
