@@ -33,6 +33,7 @@ export class RemoteHostRoleRowComponent {
   readonly now = input(Date.now());
   /** The release this role is measured against; null until it is loaded. */
   readonly stableRelease = input<StableReleaseIdentity | null>(null);
+  readonly showRelease = input(true);
   readonly action = output<{ kind: HostActionKind; id: string }>();
 
   readonly retired = computed(() => this.host().status === 'retired');
@@ -53,7 +54,7 @@ export class RemoteHostRoleRowComponent {
   readonly reviewQuotaLabel = computed(() => {
     const plane = this.host().reviewPlane;
     if (!plane) return null;
-    return plane.cpuQuotaPercent === null ? 'quota max' : `quota ${plane.cpuQuotaPercent.toFixed(0)}%`;
+    return plane.cpuQuotaPercent === null ? 'CPU quota unlimited' : `CPU quota ${+(plane.cpuQuotaPercent / 100).toFixed(2)} cores`;
   });
   readonly throttledShareLabel = computed(() => {
     const share = this.host().reviewPlane?.throttledShare;

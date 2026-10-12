@@ -134,7 +134,7 @@ describe('RemoteHostRoleRowComponent', () => {
     fixture.detectChanges();
 
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-review-plane"]')?.textContent)
-      .toContain('quota 400% · ceiling 2 · throttled 34%');
+      .toContain('CPU quota 4 cores · 2 slot ceiling · throttled 34%');
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-review-plane-alarm"]')?.textContent)
       .toContain('Raise the review role quota or lower the review ceiling.');
   });

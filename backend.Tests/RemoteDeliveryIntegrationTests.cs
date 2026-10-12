@@ -141,6 +141,27 @@ public sealed class RemoteDeliveryIntegrationPolicyTests
         => new(
             [new Contract.ReviewCommandDto("verify", aspect, "git", ["status", "--short"])],
             [aspect]);
+
+    [Theory]
+    [InlineData("Pass")]
+    [InlineData("IntegrationBranchDefect")]
+    public void Deferred_full_suite_cannot_be_integrated_per_card(string outcome)
+    {
+        var plan = Plan("review-verification") with { BuildTestDeferredToBatch = true };
+        var decision = RemoteDeliveryIntegrationPolicy.Decide(true, outcome, plan,
+            [new Contract.ReviewVerdictDto("review-verification", "pass", "Verified", "Selected tests passed.")]);
+        Assert.False(decision.ShouldIntegrate);
+        Assert.Equal(RemoteBuildTestGateClass.Failed, decision.BuildTestGate);
+    }
+
+    [Fact]
+    public void Planned_review_verification_without_verdict_fails_closed()
+    {
+        var decision = RemoteDeliveryIntegrationPolicy.Decide(true, "Pass",
+            Plan("review-verification"), []);
+        Assert.False(decision.ShouldIntegrate);
+        Assert.Equal(RemoteBuildTestGateClass.Failed, decision.BuildTestGate);
+    }
 }
 
 public sealed class RemoteDeliveryIntegrationCoordinatorTests
