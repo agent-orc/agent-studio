@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of, Subject } from 'rxjs';
 
 import {
@@ -10,6 +10,7 @@ import {
   resolveRunPrompt,
 } from './parked-blocker.component';
 import { StudioTabStateService } from '../../../studio-shell/services/studio-tab-state.service';
+import { NowTickService } from '../../../../services/now-tick.service';
 import { TaskService } from '../../../../services/task.service';
 import type { CliOutputLine, ParkedBlockerStatus, TaskDetail, TaskInfo } from '../../../../models/task.model';
 import type { RunRecord, RunTimeline } from '../../../../features/run-timeline';
@@ -41,7 +42,6 @@ describe('ParkedBlockerComponent', () => {
       conditionKind: 'manual',
       conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
       parkedAt: '2026-09-11T14:44:00.000Z',
-      parkedForSeconds: 3 * 24 * 60 * 60,
       reason: '[agent-needs-input] The remote agent requires operator input: choose-connector-vs-lan',
       recallStatus: 'blocked',
       lastEvaluatedAt: '2026-09-14T11:50:00.000Z',
@@ -145,6 +145,8 @@ describe('ParkedBlockerComponent', () => {
         provideZonelessChangeDetection(),
         { provide: StudioTabStateService, useClass: TabsStub },
         { provide: TaskService, useValue: taskService },
+        // Three days after the fixture's parkedAt; the age is derived from it.
+        { provide: NowTickService, useValue: { now: signal(Date.parse('2026-09-14T14:44:00.000Z')) } },
       ],
     });
   });
