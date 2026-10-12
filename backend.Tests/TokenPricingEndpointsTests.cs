@@ -1,5 +1,6 @@
 using Xunit;
 
+// clock-independent: catalog prices at an explicit recordedAt.
 namespace AgentStudio.Tests;
 
 /// <summary>
