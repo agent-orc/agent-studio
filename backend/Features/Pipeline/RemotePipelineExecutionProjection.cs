@@ -178,6 +178,8 @@ internal static class RemotePipelineExecutionProjection
     {
         var statusToken = Detail(completion, "status")?.Trim().ToLowerInvariant();
         var passed = statusToken is "done" or "noop" or "completed" or "pass";
+        // AGT-3045: a run that parked on operator decisions is not a failure.
+        var needsDecision = statusToken is "needsinput" or "needs-input" or "needs-decision";
         var completedAt = completion.Ts;
         return WithLedgerUsage(
             new PipelineStepExecution
@@ -187,13 +189,17 @@ internal static class RemotePipelineExecutionProjection
                 Attempt = attempt,
                 Model = task.Model,
                 ThinkingLevel = task.ThinkingLevel,
-                Status = passed ? PipelineStepStatus.Passed : PipelineStepStatus.Failed,
+                Status = passed ? PipelineStepStatus.Passed
+                    : needsDecision ? PipelineStepStatus.NeedsDecision
+                    : PipelineStepStatus.Failed,
                 StartedAt = startedAt,
                 CompletedAt = completedAt,
                 DurationMs = DurationMs(startedAt, completedAt),
                 Reason = passed
                     ? "Remote runner completed the fenced coding run."
-                    : completion.Summary,
+                    : needsDecision
+                        ? "Remote run parked on open operator decisions (NeedsInput)."
+                        : completion.Summary,
                 Verdict = statusToken,
             },
             calls,

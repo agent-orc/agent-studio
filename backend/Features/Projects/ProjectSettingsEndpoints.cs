@@ -71,6 +71,11 @@ public record SetReviewFollowUpRequest
     public int ScopedReviewMaximumDeltaFiles { get; init; } = 20;
 }
 
+public record SetRequireDifferentReviewHostRequest
+{
+    public bool Required { get; init; }
+}
+
 /// <summary>AGT-W57 cause breaker parameters for one project.</summary>
 public record SetCauseBreakerRequest
 {
@@ -281,6 +286,7 @@ public static class ProjectSettingsEndpoints
                     integrationGateReviewReuse = kv.Value.IntegrationGateReviewReuse,
                     integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(kv.Value),
                     maxReviewConcernRounds = kv.Value.MaxReviewConcernRounds,
+                    requireDifferentReviewHost = kv.Value.RequireDifferentReviewHost,
                     maxDeliveredReviewRounds = kv.Value.MaxDeliveredReviewRounds,
                     maxAutoReissueAttempts = kv.Value.MaxAutoReissueAttempts
                         ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2),
@@ -742,6 +748,19 @@ public static class ProjectSettingsEndpoints
                 req.ScopedReviewAfterFinding,
                 req.ScopedReviewMaximumDeltaFiles);
             return Results.Ok(settings.Get(projectName));
+        });
+
+        app.MapPut("/api/projects/{projectName}/review-host-requirement", (
+            string projectName,
+            SetRequireDifferentReviewHostRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry =>
+                    string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            settings.SetRequireDifferentReviewHost(projectName, req.Required);
+            return Results.Ok(new { requireDifferentReviewHost = settings.Get(projectName).RequireDifferentReviewHost });
         });
 
         app.MapPut("/api/projects/{projectName}/cause-breaker", (

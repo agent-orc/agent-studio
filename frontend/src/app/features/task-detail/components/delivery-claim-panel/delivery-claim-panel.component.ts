@@ -16,6 +16,7 @@ import {
 } from '../../../../models/task.model';
 import { TaskService } from '../../../../services/task.service';
 import { IntegrationDeadEndComponent } from '../integration-dead-end/integration-dead-end.component';
+import { AcceptanceAttemptGapNoticeComponent } from '../acceptance-attempt-gap-notice/acceptance-attempt-gap-notice.component';
 
 /** Tri-state containment answer. `unknown` is a question, never a negative. */
 export type DeliveryIntegrationState =
@@ -56,7 +57,7 @@ const DELIVERED_LANES: readonly string[] = [
   selector: 'app-delivery-claim-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TooltipDirective, IntegrationDeadEndComponent],
+  imports: [TooltipDirective, IntegrationDeadEndComponent, AcceptanceAttemptGapNoticeComponent],
   templateUrl: './delivery-claim-panel.component.html',
   styleUrl: './delivery-claim-panel.component.scss',
 })
@@ -249,6 +250,7 @@ export class DeliveryClaimPanelComponent {
 
   readonly show = computed(() => this.inDeliveredLane()
     && (!!this.answer() || !!this.job().integration || !!this.job().completionClaim
+      || !!this.job().acceptanceAttemptGap
       || !!this.job().reviewProjection?.blockingAspects?.length
       || this.job().reviewProjection?.delivery.status === 'gate-failed'));
 
