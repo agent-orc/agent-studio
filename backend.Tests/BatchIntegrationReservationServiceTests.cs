@@ -9,6 +9,16 @@ namespace AgentStudio.Tests;
 public sealed class BatchIntegrationReservationServiceTests
 {
     [Fact]
+    public async Task Reconciliation_skips_a_merge_that_still_owns_the_project()
+    {
+        var reservation = new BatchIntegrationReservationService();
+        using (await reservation.AcquireAsync("project", CancellationToken.None))
+            Assert.Null(reservation.TryAcquire("project"));
+        using var grant = reservation.TryAcquire("project");
+        Assert.NotNull(grant);
+    }
+
+    [Fact]
     public async Task Crash_window_marker_is_reconciled_before_batch_wait()
     {
         var root = Path.Combine(Path.GetTempPath(), "batch-push-" + Guid.NewGuid().ToString("N"));

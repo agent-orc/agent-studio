@@ -87,6 +87,12 @@ public sealed class BatchIntegrationReservationService
         return new Grant(semaphore);
     }
 
+    public IDisposable? TryAcquire(string project)
+    {
+        var semaphore = _projects.GetOrAdd(project, _ => new SemaphoreSlim(1, 1));
+        return semaphore.Wait(0) ? new Grant(semaphore) : null;
+    }
+
     public Task<IDisposable> AcquireBatchAsync(string project, CancellationToken ct)
         => AcquireBatchAsync(project, null, ct);
 
@@ -123,10 +129,14 @@ public sealed class BatchIntegrationReservationService
     {
         if (isStale is null) return;
         var pending = ForProject(project);
-        lock (pending)
+        KeyValuePair<string, PendingIntegrationPush>[] snapshot;
+        lock (pending) snapshot = pending.Jobs.ToArray();
+        foreach (var (key, marker) in snapshot)
         {
-            foreach (var (key, marker) in pending.Jobs.ToArray())
-                if (isStale(marker)) Remove(project, pending, key, marker);
+            if (!isStale(marker)) continue;
+            lock (pending)
+                if (pending.Jobs.TryGetValue(key, out var current) && current == marker)
+                    Remove(project, pending, key, marker);
         }
     }
 

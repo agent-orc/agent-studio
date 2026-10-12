@@ -242,8 +242,18 @@ public sealed class BatchGatePilotService
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
                 {
-                    _reservations.Reconcile(project,
-                        marker => IsStalePush(project, marker, ct));
+                    try
+                    {
+                        using var grant = _reservations.TryAcquire(project);
+                        if (grant is null) continue;
+                        _reservations.Reconcile(project,
+                            marker => IsStalePush(project, marker, ct));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex,
+                            "batch-gate push reconciliation failed project={Project}", project);
+                    }
                     var wait = _reservations.GetWait(project);
                     if (wait is { AgeAlert: true }
                         && _pushAgeAlerts.TryAdd(project + "\n" + wait.JobId
@@ -645,8 +655,9 @@ public sealed class BatchGatePilotService
         if (task is null || task.State is not (TaskStates.AutoReview
                 or TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive))
             return true;
-        var folder = marker.JobFolderPath ?? task.FolderPath;
-        var merge = _pipelineLog.Read(folder)?.Steps.LastOrDefault(step =>
+        var merge = (_pipelineLog.Read(task.FolderPath)
+                     ?? (marker.JobFolderPath is null ? null
+                         : _pipelineLog.Read(marker.JobFolderPath)))?.Steps.LastOrDefault(step =>
             step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
         return merge?.Status != PipelineStepStatus.Passed
             || !string.Equals(merge.ApprovedIntegrationSha, marker.ApprovedSha,
