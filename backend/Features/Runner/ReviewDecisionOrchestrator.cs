@@ -4890,6 +4890,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// returned as unavailable evidence, so it never invents a work deficiency.
     /// An unavailable service, explicit disable, or condition
     /// mismatch records an honest skipped row rather than remaining Pending.
+    /// Within one open attempt, unchanged grade inputs reuse the earlier graded
+    /// report without side effects (<see cref="AgentStudio.Review.CodeReviewGradeReuse"/>).
     /// </summary>
     private async Task<AgentStudio.Review.CodeReviewStepReport?> RunCodeReviewGradePostStepAsync(
         WatchPathEntry entry,
@@ -4965,19 +4967,6 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             selectedThinkingLevel = thinkingLevel;
             selectedModelSource = modelResolution?.Source ?? PipelineStepConfigResolver.ModelSourceRuntime;
 
-            // Persist dispatch before the one-shot begins. A slow or interrupted
-            // reviewer now reads Running instead of the misleading Pending state.
-            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
-            {
-                StepId = stepId,
-                Kind = StepKind.Orchestrator,
-                Status = PipelineStepStatus.Running,
-                StartedAt = startedAt,
-                Model = selectedModel,
-                ThinkingLevel = selectedThinkingLevel,
-                ModelSource = selectedModelSource,
-            });
-
             var (diff, commitLabel) = BuildGradeDiff(entry, job, buildGateResult);
 
             var request = new AgentStudio.Review.CodeReviewStepRequest(
@@ -4996,6 +4985,37 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 ResultsInventory = ResultsInventory.Render(job.FolderPath),
                 CardMode = ReviewCardMode.Describe(job.Mode),
             };
+            var inputKey = AgentStudio.Review.CodeReviewGradeReuse.ComputeInputKey(request);
+            request = request with { InputKey = inputKey };
+
+            // A deferred review re-drives the same open attempt on every tick.
+            // Unchanged inputs reuse that attempt's graded report with no side
+            // effects. Decided before the Running row, which would otherwise
+            // move the terminal row into earlierRuns.
+            var reused = TryReuseCodeReviewGrade(job.FolderPath, inputKey);
+            if (reused is not null)
+            {
+                _logger.LogInformation(
+                    "code-review-grade: reused project={Project} job={JobId} grade={Grade} inputKey={InputKey} file={File}",
+                    entry.Name, job.Id,
+                    AgentStudio.Review.CodeReviewGradeParsing.GradeToken(reused.Grade!.Value),
+                    AgentStudio.Review.CodeReviewGradeReuse.ShortKey(inputKey),
+                    reused.FileName);
+                return reused;
+            }
+
+            // Persist dispatch before the one-shot begins. A slow or interrupted
+            // reviewer now reads Running instead of the misleading Pending state.
+            _pipelineLog?.RecordStep(job.FolderPath, new PipelineStepExecution
+            {
+                StepId = stepId,
+                Kind = StepKind.Orchestrator,
+                Status = PipelineStepStatus.Running,
+                StartedAt = startedAt,
+                Model = selectedModel,
+                ThinkingLevel = selectedThinkingLevel,
+                ModelSource = selectedModelSource,
+            });
 
             var report = await _codeReviewStep.RunAsync(request, ct);
             if (!string.IsNullOrWhiteSpace(report.ExecutionError))
@@ -5080,6 +5100,31 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 selectedModelSource);
             return null;
         }
+    }
+
+    private AgentStudio.Review.CodeReviewStepReport? TryReuseCodeReviewGrade(
+        string jobFolderPath,
+        string inputKey)
+    {
+        var checkpoint = _pipelineLog?.ReadRestartCheckpoint(
+            jobFolderPath, PipelineCatalogue.CodeReviewGradeStepId);
+        if (checkpoint is null || string.IsNullOrWhiteSpace(checkpoint.EvidenceRef)) return null;
+
+        string? reportMarkdown = null;
+        try
+        {
+            var reportPath = Path.Combine(jobFolderPath, Path.GetFileName(checkpoint.EvidenceRef));
+            if (File.Exists(reportPath)) reportMarkdown = File.ReadAllText(reportPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex,
+                "code-review-grade: earlier report {File} is unreadable; grading afresh",
+                checkpoint.EvidenceRef);
+        }
+
+        return AgentStudio.Review.CodeReviewGradeReuse.TryReuse(
+            checkpoint, inputKey, reportMarkdown, jobFolderPath);
     }
 
     private void RecordCodeReviewGradeTerminal(

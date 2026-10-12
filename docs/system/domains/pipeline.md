@@ -1659,6 +1659,16 @@ operator changes cause the step to fail before its writer runs.
   escalation branch. A grade transport/runtime failure records `Failed` with its
   error and clears stale `code-review:grade-*` tags, but never changes the lane
   decision.
+- A deferred review re-drives the same open attempt, so the orchestrator grade
+  reuses an unchanged result (AGT-3081). Each grade report carries
+  `inputKey: sha256:<hex>` in its frontmatter: a length-prefixed hash over the
+  diff, commit label, task body, `results/` inventory, card mode, CLI, model and
+  thinking level. When the open attempt's terminal grade row has an A-D verdict
+  and its `EvidenceRef` report carries the same key, the orchestrator rebuilds
+  that report for the council and lane decision. It makes no model call and
+  writes no file, row, tag or outcome line. Any input change, a new attempt, a
+  row without a verdict, or a missing or keyless report grades afresh. The
+  operator-triggered grade always runs fresh.
 - Completing a pipeline terminalizes every known, non-deferred, non-stub row:
   an unreached `Pending` row becomes `Skipped` with the branch's causal reason,
   while an interrupted `Running` row becomes `Failed`. Deferred merge/push rows
