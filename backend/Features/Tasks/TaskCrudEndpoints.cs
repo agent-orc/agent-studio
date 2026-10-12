@@ -108,17 +108,18 @@ public static class TaskCrudEndpoints
             // AGT-2703: everything above is a cache read over an already
             // scanned task set. Everything below - the token / verdict /
             // dependency / Git / live-status lookups, the per-card overlay and
-            // the serialisation of the result - only runs when the client does
-            // not already hold this exact list. The query string is part of the
-            // variant because it selects both the filter and the response shape.
-            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+            // the serialisation of the result - only runs once per signature;
+            // concurrent and later readers of that signature share the body,
+            // whose tag is derived from its bytes. The query string is part of
+            // the variant because it selects both the filter and the response shape.
+            var variant = ctx.Request.QueryString.Value ?? string.Empty;
+            var signature = BoardReadValidator.FormatETag(boardSignature.Compose(
                 "tasks/list",
-                ctx.Request.QueryString.Value ?? string.Empty,
+                variant,
                 raw,
                 freshness,
                 router,
                 runners));
-            if (BoardReadValidator.NotModified(ctx, etag) is { } notModified) return notModified;
 
             List<TaskInfo> BuildJobs()
             {
@@ -141,6 +142,8 @@ public static class TaskCrudEndpoints
             }
             if (TaskQueryRequest.FromQuery(ctx.Request.Query) is { IsActive: true } query)
             {
+                // A query answer is not cached, so it keeps the signature tag.
+                if (BoardReadValidator.NotModified(ctx, signature) is { } queryNotModified) return queryNotModified;
                 var jobs = BuildJobs();
                 // The endpoint already resolved the path-free project handle and
                 // scoped the source set. Do not compare a registry id/short code
@@ -151,11 +154,12 @@ public static class TaskCrudEndpoints
                 // must not be published under the board's validator.
                 if (response.Error is { Length: > 0 })
                     return Results.BadRequest(new { error = response.Error });
-                return BoardReadValidator.Ok(ctx, etag, response);
+                return BoardReadValidator.Ok(ctx, signature, response);
             }
-            return BoardReadValidator.Bytes(ctx, etag,
-                await boardReads.GetOrBuildAsync(etag,
-                    () => BoardCardSummary.SerializeList(BuildJobs()), ctx.RequestAborted));
+            var body = await boardReads.GetOrBuildAsync(signature, "tasks/list" + variant,
+                () => BoardCardSummary.SerializeList(BuildJobs()), ctx.RequestAborted);
+            return BoardReadValidator.NotModified(ctx, body.ETag)
+                ?? BoardReadValidator.Bytes(ctx, body.ETag, body.Bytes);
         });
 
         group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
@@ -173,17 +177,18 @@ public static class TaskCrudEndpoints
             // produced (8.5 MB measured on Stable), and on an unchanged board every byte
             // of it is a byte the client already has. Everything up to here is a
             // cache read over an already scanned task set; the enrichment
-            // lookups, the per-lane sort and the serialisation below only run
-            // once the validator says the client's copy is out of date.
+            // lookups, the per-lane sort and the serialisation below run once
+            // per signature, and a rebuilt body that matches the client's copy
+            // still answers 304 because its tag is derived from its bytes.
             var legacyReviewLane = includeLegacyReviewLane != false;
-            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+            var variant = $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}";
+            var signature = BoardReadValidator.FormatETag(boardSignature.Compose(
                 "tasks/grouped",
-                $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}",
+                variant,
                 raw,
                 gitFreshness,
                 router,
                 runners));
-            if (BoardReadValidator.NotModified(context, etag) is { } notModified) return notModified;
 
             byte[] BuildPayload()
             {
@@ -305,8 +310,10 @@ public static class TaskCrudEndpoints
                 };
                 return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale);
             }
-            return BoardReadValidator.Bytes(context, etag,
-                await boardReads.GetOrBuildAsync(etag, BuildPayload, context.RequestAborted));
+            var body = await boardReads.GetOrBuildAsync(signature, "tasks/grouped?" + variant,
+                BuildPayload, context.RequestAborted);
+            return BoardReadValidator.NotModified(context, body.ETag)
+                ?? BoardReadValidator.Bytes(context, body.ETag, body.Bytes);
         });
 
         // ASS-1727: dedicated paged read for the terminal 7-archive lane. The
