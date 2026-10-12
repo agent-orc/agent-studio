@@ -14,13 +14,13 @@ test('prebuilt fingerprint changes for tracked edits and untracked files', () =>
     mkdirSync(join(root, 'frontend', 'results'), { recursive: true });
     writeFileSync(join(root, 'frontend', 'src', 'source.ts'), 'before\n');
     writeFileSync(join(root, 'frontend', 'results', 'generated.png'), 'before\n');
-    const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+    const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
     git('init', '-q');
     git('config', 'user.name', 'Fingerprint Test');
     git('config', 'user.email', 'fingerprint@example.invalid');
     git('add', '.');
     git('commit', '-qm', 'baseline');
-    const fingerprint = () => execFileSync('bash', ['scripts/e2e-source-fingerprint.sh'], { cwd: root, encoding: 'utf8' }).trim();
+    const fingerprint = () => execFileSync('bash', ['scripts/e2e-source-fingerprint.sh'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
     const baseline = fingerprint();
     writeFileSync(join(root, 'frontend', 'src', 'source.ts'), 'after\n');
     const edited = fingerprint();
