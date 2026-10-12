@@ -583,6 +583,7 @@ public sealed class BatchGatePilotService
     // interruption in between only repeats an idempotent release.
     private async Task ResolvePausedAsync(CancellationToken ct)
     {
+        var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
         foreach (var manifest in _store.ListPausedManifests())
         {
             ct.ThrowIfCancellationRequested();
@@ -591,6 +592,7 @@ public sealed class BatchGatePilotService
             catch (IOException) { continue; }
             if (lease is null) continue;
             IReadOnlyList<BatchGatePendingRecord> released;
+            var ejectedOnly = false;
             try
             {
                 var paused = _store.LatestState(manifest.BatchId);
@@ -599,29 +601,49 @@ public sealed class BatchGatePilotService
                     && (options.EffectiveScope == "code"
                         || manifest.Members.All(member => member.DocumentationOnly)))
                 {
-                    var pending = _store.ListPending().FirstOrDefault(item =>
-                        manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
-                            && member.RunAttempt == item.Subject.RunAttempt));
-                    if (pending is null) continue;
-                    var currentBase = _git.FetchBatchIntegrationTip(pending.RepositoryPath,
-                        manifest.Scope.IntegrationBranch, ct);
-                    if (currentBase is null || string.Equals(currentBase, manifest.BaseSha,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (manifest.Members.Any(member =>
+                            _store.HasEject(manifest.Scope.Project, member.TaskKey)))
+                    {
+                        released = ReturnToPending(manifest);
+                        State(manifest, BatchPhase.Abandoned, paused.CandidateSha,
+                            lease.Fence, "operator eject from held batch");
+                        ejectedOnly = true;
+                    }
+                    else
+                    {
+                        var pending = _store.ListPending().FirstOrDefault(item =>
+                            manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
+                                && member.RunAttempt == item.Subject.RunAttempt));
+                        if (pending is null) continue;
+                        var baseKey = (pending.RepositoryPath, manifest.Scope.IntegrationBranch);
+                        if (!fetchedBases.TryGetValue(baseKey, out var currentBase))
+                        {
+                            currentBase = _git.FetchBatchIntegrationTip(baseKey.RepositoryPath,
+                                baseKey.IntegrationBranch, ct);
+                            fetchedBases[baseKey] = currentBase;
+                        }
+                        if (currentBase is null || string.Equals(currentBase, manifest.BaseSha,
+                                StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        ReturnToPending(manifest);
+                        State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                            "integration base changed; reconstruct batch");
                         continue;
-                    ReturnToPending(manifest);
-                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
-                        "integration base changed; reconstruct batch");
-                    continue;
+                    }
                 }
-                _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
-                    manifest.BatchId, paused.Reason);
-                released = ReturnToPending(manifest);
-                State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
-                    "paused-to-per-task-gate: " + paused.Reason);
+                else
+                {
+                    _logger.LogWarning("batch-gate-paused batch={BatchId} reason={Reason}",
+                        manifest.BatchId, paused.Reason);
+                    released = ReturnToPending(manifest);
+                    State(manifest, BatchPhase.Abandoned, paused.CandidateSha, lease.Fence,
+                        "paused-to-per-task-gate: " + paused.Reason);
+                }
             }
             finally { _leases.Release(lease); }
             foreach (var item in released)
-                ScheduleFallback(item, ct);
+                if (!ejectedOnly || _store.HasEject(item.Subject.Project, item.Subject.TaskKey))
+                    ScheduleFallback(item, ct, clearEject: ejectedOnly);
         }
     }
 

@@ -151,12 +151,17 @@ infrastructure red, flaky red, an unresolved cohort, a failed publication or an
 unexpected fault) keeps `Paused` in its state history; on the next tick the
 worker returns every member it still owns to that per-card gate and records the
 batch as `Abandoned` with a `paused-to-per-task-gate` reason.
-The `integration-branch-red` pause is different: a matching red base means the
+The `integration-branch-red` pause is different: any red base means the
 candidate suite stopped early, so the batch remains unpublished with members
 pending. It is reconstructed only after the base SHA moves; a red run never
-validates the build profile. Code integrations also keep batches waiting from
-the local merge until their queued origin push succeeds. A durable pending-push
-marker preserves that wait across backend restarts.
+validates the build profile. An operator eject reconstructs a held batch and
+sends only the requested member to per-card fallback. Code integrations also
+keep batches waiting from the local merge until their queued origin push
+succeeds. A durable pending-push marker preserves that wait across backend
+restarts. Batch acquisition and the planning tick reconcile markers already
+published on origin, superseded or rolled-back merges, and cards that left
+the integration path. State and report expose the oldest wait and an age alert,
+defaulting to 15 minutes.
 
 The default local store is scoped by the backend content root and task data
 root under `<LocalApplicationData>/agentstudio/instances/`: `pending/` holds durable
