@@ -69,4 +69,42 @@ public sealed class BatchIntegrationReservationServiceTests
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public void Persisted_markers_are_visible_to_the_tick_after_restart()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-push-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            new BatchIntegrationReservationService(root).MarkPushPending(
+                "project", "AGT-42", "approved-sha");
+            var restarted = new BatchIntegrationReservationService(root);
+
+            Assert.Contains("project", restarted.ProjectsWithPending());
+            Assert.NotNull(restarted.GetWait("project"));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Each_reconciliation_pass_fetches_a_branch_once()
+    {
+        var cache = new Dictionary<(string Repo, string Branch), string?>();
+        var fetches = 0;
+        string? Fetch(string repo, string branch, CancellationToken ct)
+        {
+            fetches++;
+            return "tip-" + fetches;
+        }
+
+        Assert.Equal("tip-1", BatchGatePilotService.FetchBaseOnce(
+            cache, "repo", "develop", Fetch, CancellationToken.None));
+        Assert.Equal("tip-1", BatchGatePilotService.FetchBaseOnce(
+            cache, "repo", "develop", Fetch, CancellationToken.None));
+        Assert.Equal(1, fetches);
+        cache.Clear();
+        Assert.Equal("tip-2", BatchGatePilotService.FetchBaseOnce(
+            cache, "repo", "develop", Fetch, CancellationToken.None));
+        Assert.Equal(2, fetches);
+    }
 }

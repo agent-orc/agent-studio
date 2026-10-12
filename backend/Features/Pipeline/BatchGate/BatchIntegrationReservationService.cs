@@ -7,7 +7,7 @@ namespace AgentStudio.Pipeline;
 
 public sealed record PendingIntegrationPush(string JobId, string? ApprovedSha,
     string? JobFolderPath, string? RepositoryPath, string? IntegrationBranch,
-    string? WatchPath, DateTimeOffset SinceUtc);
+    string? WatchPath, DateTimeOffset SinceUtc, string? Project = null);
 
 public sealed record PendingIntegrationPushWait(string Reason, string JobId,
     string? ApprovedSha, DateTimeOffset SinceUtc, bool AgeAlert);
@@ -29,6 +29,21 @@ public sealed class BatchIntegrationReservationService
         _root = root;
         _time = timeProvider ?? TimeProvider.System;
         _alertAfter = alertAfter ?? TimeSpan.FromMinutes(15);
+        LoadPersistedProjects();
+    }
+
+    private void LoadPersistedProjects()
+    {
+        if (_root is null || !Directory.Exists(_root)) return;
+        foreach (var folder in Directory.EnumerateDirectories(_root))
+        foreach (var path in Directory.EnumerateFiles(folder, "*.pending"))
+        {
+            var marker = ReadMarker(path);
+            if (!string.IsNullOrWhiteSpace(marker?.Project)
+                && string.Equals(folder, ProjectDirectory(marker.Project),
+                    StringComparison.OrdinalIgnoreCase))
+                _ = ForProject(marker.Project);
+        }
     }
 
     private sealed class PendingPushes(IEnumerable<KeyValuePair<string, PendingIntegrationPush>> jobs)
@@ -97,7 +112,8 @@ public sealed class BatchIntegrationReservationService
         => AcquireBatchAsync(project, null, ct);
 
     public async Task<IDisposable> AcquireBatchAsync(string project,
-        Func<PendingIntegrationPush, bool>? isStale, CancellationToken ct)
+        Func<PendingIntegrationPush, bool>? isStale, CancellationToken ct,
+        Action? beginPass = null)
     {
         while (true)
         {
@@ -105,6 +121,7 @@ public sealed class BatchIntegrationReservationService
             Task wait;
             try
             {
+                beginPass?.Invoke();
                 Reconcile(project, isStale);
                 var pending = ForProject(project);
                 lock (pending)
@@ -174,7 +191,7 @@ public sealed class BatchIntegrationReservationService
             if (pending.Jobs.ContainsKey(key)) return;
             var marker = new PendingIntegrationPush(jobId, approvedSha,
                 jobFolderPath, repositoryPath, integrationBranch, watchPath,
-                _time.GetUtcNow());
+                _time.GetUtcNow(), project);
             if (_root is not null)
             {
                 var path = PendingPath(project, pushKey);
