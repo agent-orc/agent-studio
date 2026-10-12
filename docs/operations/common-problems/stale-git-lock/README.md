@@ -3,7 +3,7 @@ id: stale-git-lock
 title: "Evidence flushes or integrations fail for hours on a git lock left by a dead git process"
 status: fixed
 first-seen: 2026-09-27T15:32:00Z
-last-seen: 2026-09-29T04:15:00Z
+last-seen: 2026-10-10T22:16:00Z
 severity: blocker
 category: runtime
 tags: [git, index-lock, workspace, evidence, integration-worktree, pipeline-health, windows]
@@ -15,7 +15,7 @@ affects:
   - backend/Features/Pipeline/PipelineHealthService.cs
   - backend/Features/Git/IntegrationWorktreeProvider.cs
   - backend/Features/Pipeline/BuildTestGateRunner.cs
-related-tasks: [AGT-3000]
+related-tasks: [AGT-3000, AGT-3035]
 related-adrs: []
 ---
 
@@ -59,7 +59,12 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
 
 1. **Younger than the threshold** (default 10 minutes): a live writer is
    plausible. Keep it.
-2. **Older, and a git process holds the repository**: keep it. Holding means a
+2. **Older, and a git process may hold the lock**: keep it. First exclude
+   processes started after the lock's last write time and
+   `git fsmonitor--daemon` processes, which do not take this lock. Start times come
+   from `Win32_Process.CreationDate` on Windows and `/proc/<pid>/stat` on Linux.
+   A missing start time cannot rule out a process. For the remaining processes,
+   holding means a
    running git child of this server whose working directory is inside the
    repository, or an OS process: on Linux any `git*` process whose
    `/proc/<pid>/cwd` or command line points into the repository, on Windows any
@@ -72,7 +77,8 @@ For each lock it decides (pure policy, `GitStaleLockPolicy`):
    git process's working directory, or a linked worktree registration cannot
    be read**: keep it. An external
    Windows `git.exe add` may hold the lock without naming the repository in
-   its command line; unresolved ownership is never guessed. The Windows
+   its command line; unresolved ownership is never guessed for a possible
+   owner. The Windows
    process query also returns unknown after 15
    seconds, including when its output pipe stays open. An entry proven to have
    exited during the Linux scan is skipped.

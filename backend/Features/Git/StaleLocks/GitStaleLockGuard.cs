@@ -97,7 +97,7 @@ public sealed class GitStaleLockGuard
             var observed = LockIdentity.Read(path);
             var age = _time.GetUtcNow().UtcDateTime - observed.LastWriteTimeUtc;
             if (observed.Length != 0 || age <= GitNetworkProcessRunner.DefaultTimeout
-                || _probe.Probe(scope) != GitLockOwnership.None
+                || _probe.Probe(scope, observed.LastWriteTimeUtc) != GitLockOwnership.None
                 || LockIdentity.Read(path) != observed)
                 return false;
             File.Delete(path);
@@ -162,19 +162,29 @@ public sealed class GitStaleLockGuard
             if (locks.Count == 0) return GitLockGuardResult.Clean;
 
             var now = _time.GetUtcNow().UtcDateTime;
-            GitLockOwnership? ownership = null;
-            var cleared = new List<GitLockFinding>();
-            var remaining = new List<GitLockFinding>();
+            var observedLocks = new List<(string Path, LockIdentity Identity, TimeSpan Age)>();
             foreach (var lockPath in locks)
             {
-                LockIdentity observed;
-                try { observed = LockIdentity.Read(lockPath); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
-
-                var age = now - observed.LastWriteTimeUtc;
-                if (GitStaleLockPolicy.NeedsOwnershipProbe(age, _threshold))
-                    ownership ??= _probe.Probe(scope);
-                var verdict = GitStaleLockPolicy.Decide(age, _threshold, ownership ?? GitLockOwnership.Unknown);
+                try
+                {
+                    var identity = LockIdentity.Read(lockPath);
+                    observedLocks.Add((lockPath, identity, now - identity.LastWriteTimeUtc));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    SilentCatch.Note(ex, "GitStaleLockGuard: lock vanished during inspection");
+                }
+            }
+            var agedLocks = observedLocks.Where(item => GitStaleLockPolicy.NeedsOwnershipProbe(item.Age, _threshold)).ToList();
+            var ownerships = _probe.ProbeMany(scope, agedLocks.Select(item => item.Identity.LastWriteTimeUtc).ToArray());
+            var ownershipByPath = agedLocks.Select((item, index) => (item.Path, Ownership: ownerships[index]))
+                .ToDictionary(item => item.Path, item => item.Ownership);
+            var cleared = new List<GitLockFinding>();
+            var remaining = new List<GitLockFinding>();
+            foreach (var (lockPath, observed, age) in observedLocks)
+            {
+                var ownership = ownershipByPath.GetValueOrDefault(lockPath, GitLockOwnership.Unknown);
+                var verdict = GitStaleLockPolicy.Decide(age, _threshold, ownership);
                 var finding = new GitLockFinding(lockPath, age, verdict);
                 if (verdict != GitLockVerdict.Clear)
                 {

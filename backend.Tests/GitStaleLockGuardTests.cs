@@ -369,7 +369,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         var scope = new GitLockScope("/srv/workspace", "/srv/workspace/.git", "/srv/workspace/.git");
         var probe = new GitProcessLockOwnerProbe(() => ["/srv/workspace/projects"], () => []);
 
-        Assert.Equal(GitLockOwnership.Owned, probe.Probe(scope));
+        Assert.Equal(GitLockOwnership.Owned, probe.Probe(scope, DateTime.MaxValue));
     }
 
     [Fact]
@@ -381,8 +381,8 @@ public sealed class GitStaleLockGuardTests : IDisposable
             () => [new GitProcessObservation(7, "git", "/srv/workspace-other", "git status")]);
         var unreadable = new GitProcessLockOwnerProbe(() => [], () => null);
 
-        Assert.Equal(GitLockOwnership.None, elsewhere.Probe(scope));
-        Assert.Equal(GitLockOwnership.Unknown, unreadable.Probe(scope));
+        Assert.Equal(GitLockOwnership.None, elsewhere.Probe(scope, DateTime.MaxValue));
+        Assert.Equal(GitLockOwnership.Unknown, unreadable.Probe(scope, DateTime.MaxValue));
     }
 
     [Theory]
@@ -407,7 +407,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
                     ? throw new IOException("proc symlink unreadable")
                     : repo));
 
-        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!));
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!, File.GetLastWriteTimeUtc(lockPath)));
         var result = Guard(probe).EnsureWritable(repo);
 
         Assert.True(File.Exists(lockPath));
@@ -436,6 +436,27 @@ public sealed class GitStaleLockGuardTests : IDisposable
     }
 
     [Fact]
+    public void Linux_inventory_retains_command_when_cwd_is_unreadable()
+    {
+        var procRoot = Path.Combine(_root, "fsmonitor-proc");
+        Directory.CreateDirectory(Path.Combine(procRoot, "424242"));
+        var inventory = GitProcessLockOwnerProbe.ReadLinuxInventory(
+            procRoot,
+            path => Path.GetFileName(path) switch
+            {
+                "comm" => "git",
+                "cmdline" => "git\0fsmonitor--daemon\0run\0--detach\0",
+                _ => "unavailable",
+            },
+            _ => throw new UnauthorizedAccessException("cwd unreadable"));
+        var scope = new GitLockScope("/srv/workspace", "/srv/workspace/.git", "/srv/workspace/.git");
+
+        Assert.NotNull(inventory);
+        Assert.Equal(GitLockOwnership.None,
+            new GitProcessLockOwnerProbe(() => [], () => inventory).Probe(scope, DateTime.UtcNow));
+    }
+
+    [Fact]
     public void Probe_matches_a_windows_git_command_line_and_keeps_unresolved_processes()
     {
         var inventory = GitProcessLockOwnerProbe.ParseWindowsInventory(
@@ -447,7 +468,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         Assert.True(GitProcessLockOwnerProbe.IsTiedTo(inventory[0], paths));
         var scope = new GitLockScope(paths[0], paths[0] + "/.git", paths[0] + "/.git");
         Assert.Equal(GitLockOwnership.Unknown,
-            new GitProcessLockOwnerProbe(() => [], () => [inventory[1]]).Probe(scope));
+            new GitProcessLockOwnerProbe(() => [], () => [inventory[1]]).Probe(scope, DateTime.MaxValue));
     }
 
     [Fact]
@@ -527,7 +548,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
         var result = Guard(probe).EnsureWritable(gate, GitLockSurface.SharedRefs);
 
         Assert.False(scope.SharedWorkTreesComplete);
-        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(scope));
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(scope, DateTime.MaxValue));
         Assert.True(File.Exists(refLock));
         Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
     }
@@ -560,12 +581,109 @@ public sealed class GitStaleLockGuardTests : IDisposable
             "{\"ProcessId\":4243,\"Name\":\"git.exe\",\"CommandLine\":\"git.exe add -A\"}");
         var probe = new GitProcessLockOwnerProbe(() => [], () => inventory);
 
-        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!));
+        Assert.Equal(GitLockOwnership.Unknown, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!, File.GetLastWriteTimeUtc(lockPath)));
         var result = Guard(probe).EnsureWritable(repo);
 
         Assert.True(File.Exists(lockPath));
         Assert.Empty(result.Cleared);
         Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
+    }
+
+    [Theory]
+    [InlineData("git.exe fsmonitor--daemon run --detach", -120, GitLockOwnership.None, false)]
+    [InlineData("git.exe rev-list --all", 1, GitLockOwnership.None, false)]
+    [InlineData("git.exe add -A", -1, GitLockOwnership.Unknown, true)]
+    public void Probe_excludes_processes_that_cannot_hold_the_stale_index_lock(
+        string commandLine, int startedMinutesFromLock, GitLockOwnership expected, bool kept)
+    {
+        var repo = SeedRepo("process-age-" + startedMinutesFromLock);
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        PlantLock(lockPath, TimeSpan.FromHours(1));
+        var lockTime = File.GetLastWriteTimeUtc(lockPath);
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () => [new GitProcessObservation(4243, "git.exe", null, commandLine,
+                lockTime.AddMinutes(startedMinutesFromLock))]);
+
+        Assert.Equal(expected, probe.Probe(GitStaleLockGuard.ResolveScope(repo)!, lockTime));
+        var result = Guard(probe).EnsureWritable(repo);
+
+        Assert.Equal(kept, File.Exists(lockPath));
+        if (kept)
+        {
+            Assert.Empty(result.Cleared);
+            Assert.Equal(GitLockVerdict.KeepOwnerUnknown, Assert.Single(result.Remaining).Verdict);
+        }
+        else
+        {
+            Assert.Empty(result.Remaining);
+            Assert.Equal(GitLockVerdict.Clear, Assert.Single(result.Cleared).Verdict);
+        }
+    }
+
+    [Fact]
+    public void Windows_inventory_reads_creation_date_for_process_age()
+    {
+        var inventory = GitProcessLockOwnerProbe.ParseWindowsInventory(
+            "{\"ProcessId\":4243,\"Name\":\"git.exe\",\"CommandLine\":\"git.exe add -A\"," +
+            "\"CreationDate\":\"2026-10-10T22:05:00+00:00\"}");
+
+        Assert.Equal(new DateTime(2026, 10, 10, 22, 5, 0, DateTimeKind.Utc), Assert.Single(inventory).StartedAtUtc);
+    }
+
+    [Fact]
+    public void Windows_inventory_accepts_powershell_51_creation_date()
+    {
+        var lockTime = new DateTime(2026, 10, 10, 22, 4, 6, DateTimeKind.Utc);
+        var json = "{\"ProcessId\":4243,\"Name\":\"git.exe\",\"CommandLine\":\"git.exe rev-list --all\"," +
+            "\"CreationDate\":\"/Date(1791669900000)/\"}";
+        var inventory = GitProcessLockOwnerProbe.ParseWindowsInventory(json);
+        var scope = new GitLockScope("C:/Projects/workspace", "C:/Projects/workspace/.git", "C:/Projects/workspace/.git");
+
+        Assert.Equal(new DateTime(2026, 10, 10, 22, 5, 0, DateTimeKind.Utc), Assert.Single(inventory).StartedAtUtc);
+        Assert.Equal(GitLockOwnership.None,
+            new GitProcessLockOwnerProbe(() => [], () => inventory).Probe(scope, lockTime));
+    }
+
+    [Fact]
+    public void One_inventory_distinguishes_locks_by_their_write_time()
+    {
+        var repo = SeedRepo("one-inventory");
+        var indexLock = Path.Combine(repo, ".git", "index.lock");
+        var packedLock = Path.Combine(repo, ".git", "packed-refs.lock");
+        PlantLock(indexLock, TimeSpan.FromHours(2));
+        PlantLock(packedLock, TimeSpan.FromHours(1));
+        var processStart = _time.GetUtcNow().UtcDateTime - TimeSpan.FromMinutes(90);
+        var scans = 0;
+        var probe = new GitProcessLockOwnerProbe(
+            () => [],
+            () =>
+            {
+                scans++;
+                return [new GitProcessObservation(4243, "git.exe", null, "git.exe add -A", processStart)];
+            });
+
+        var result = Guard(probe).Sweep(repo);
+
+        Assert.Equal(1, scans);
+        Assert.False(File.Exists(indexLock));
+        Assert.True(File.Exists(packedLock));
+        Assert.Equal(indexLock, Assert.Single(result.Cleared).Path);
+        Assert.Equal(packedLock, Assert.Single(result.Remaining).Path);
+    }
+
+    [SkippableFact]
+    public void Linux_inventory_reads_process_start_from_proc_stat()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "Linux process times use /proc/stat ticks");
+        var fields = Enumerable.Repeat("0", 20).ToArray();
+        fields[0] = "S";
+        var now = new DateTime(2026, 10, 10, 22, 0, 0, DateTimeKind.Utc);
+
+        var started = GitProcessLockOwnerProbe.ParseLinuxStartTime(
+            "4243 (git worker) " + string.Join(' ', fields), "3600.00 100.00", now);
+
+        Assert.Equal(now.AddHours(-1), started);
     }
 
     [Fact]
@@ -640,11 +758,11 @@ public sealed class GitStaleLockGuardTests : IDisposable
             // it - the path for an external or orphaned git process.
             var probe = new GitProcessLockOwnerProbe();
             var clock = Stopwatch.StartNew();
-            var ownership = probe.Probe(scope);
+            var ownership = probe.Probe(scope, DateTime.MaxValue);
             while (ownership != GitLockOwnership.Owned && clock.Elapsed < TimeSpan.FromSeconds(5))
             {
                 Thread.Sleep(50);
-                ownership = probe.Probe(scope);
+                ownership = probe.Probe(scope, DateTime.MaxValue);
             }
             Assert.Equal(GitLockOwnership.Owned, ownership);
         }
@@ -716,7 +834,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
     {
         public int Calls { get; private set; }
 
-        public GitLockOwnership Probe(GitLockScope scope)
+        public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
         {
             Calls++;
             return ownership;
@@ -727,7 +845,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
     {
         public int Calls { get; private set; }
 
-        public GitLockOwnership Probe(GitLockScope scope)
+        public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc)
         {
             Calls++;
             callback();

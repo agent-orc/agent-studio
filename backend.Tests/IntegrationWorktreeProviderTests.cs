@@ -239,7 +239,7 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
 
     private sealed class NoGitOwnerProbe : IGitLockOwnerProbe
     {
-        public GitLockOwnership Probe(GitLockScope scope) => GitLockOwnership.None;
+        public GitLockOwnership Probe(GitLockScope scope, DateTime lockLastWriteTimeUtc) => GitLockOwnership.None;
     }
 
     private string SeedRepo(string name)
