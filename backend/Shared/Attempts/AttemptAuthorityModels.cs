@@ -55,7 +55,8 @@ public sealed record ReviewSubjectDto(
     DateTime CreatedAt,
     string? RepositoryUrl = null,
     string? ResultRef = null,
-    AgentStudio.TaskServer.Contracts.ReviewPlanDto? Plan = null);
+    AgentStudio.TaskServer.Contracts.ReviewPlanDto? Plan = null,
+    string? CodingHostId = null);
 
 public sealed record RunAttemptDto(
     string AttemptId,
