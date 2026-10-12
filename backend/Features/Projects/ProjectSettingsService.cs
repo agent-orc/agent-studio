@@ -462,6 +462,18 @@ public class ProjectSettingsService
         }
     }
 
+    public void SetRequireDifferentReviewHost(string projectName, bool required)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var value) ? value : new ProjectSettings();
+            _cache[key] = current with { RequireDifferentReviewHost = required };
+            Persist();
+        }
+    }
+
     /// <summary>
     /// AGT-W57: the cause breaker parameters. They are configuration so an
     /// operator can coarsen or loosen the breaker per project without a deploy.

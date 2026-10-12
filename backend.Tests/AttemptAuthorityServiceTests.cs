@@ -78,6 +78,7 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal("runner-a", projection.CurrentRunAttempt.Lease!.ExecutorId);
         Assert.Equal("host-a", projection.CurrentRunAttempt.Lease.HostId);
         Assert.Equal("589c462f", projection.CurrentReviewSubject!.ExpectedResultSha);
+        Assert.Equal("host-a", projection.CurrentReviewSubject.CodingHostId);
         Assert.Equal(review.ReviewAttempt!.AttemptId, projection.CurrentReviewAttempt!.AttemptId);
         Assert.Equal(reviewLease.LastFence, projection.CurrentReviewAttempt.LastFence);
         Assert.Equal(reviewLease.Lease!.ExpiresAt, projection.CurrentReviewAttempt.Lease!.ExpiresAt);
