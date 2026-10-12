@@ -76,6 +76,37 @@ describe('projectStructuredActivityContent', () => {
     expect(JSON.stringify(result.events)).not.toContain('[runner-log-delivery:');
   });
 
+  it('names each runner fact by what it states instead of the bare Runner fallback', () => {
+    const at = (index: number) => `2026-10-12T06:12:${String(index).padStart(2, '0')}.000Z`;
+    const bodies = [
+      'server-composed mode framing + results-dir context + remote-completion-protocol appended to task prompt',
+      'engine=car cli=claude model=claude-sonnet-5 thinking=medium permission=yolo context=clean',
+      "clean-context seeded task home '/home/agent/x'",
+      'Started claude CLI (PID 870444), model=claude-sonnet-5, thinking=medium',
+      'project-prepare restored dependencies from cache',
+      'project preparation ready; manifest=prepare.json',
+      'runner transport reconnected; replay acknowledged',
+    ];
+    const lines: CliOutputLine[] = bodies.map((body, index) => ({
+      timestamp: at(index),
+      stream: 'system',
+      text: `[runner] ${body}`,
+    }));
+
+    const labels = projectStructuredActivityContent(lines, 'AGT-2814').events
+      .map((event) => (event as SystemStatusEvent).label);
+
+    expect(labels).toEqual([
+      'Framing',
+      'Engine',
+      'Clean context',
+      'CLI started',
+      'Prepare',
+      'Prepare',
+      'Transport',
+    ]);
+  });
+
   it('projects aspect and terminal sentinels as status rows without raw marker text', () => {
     const lines: CliOutputLine[] = [
       { timestamp: '2026-09-18T10:00:00Z', stream: 'stderr', text: 'OpenAI Codex v0.144.1' },

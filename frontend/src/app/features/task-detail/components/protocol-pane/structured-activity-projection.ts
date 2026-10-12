@@ -37,6 +37,19 @@ const RUNNER_LINE = /^\[runner\]\s*(?<body>.*)$/i;
 const RUNNER_DELIVERY = /^\[runner-log-delivery:[^\]]+\]$/i;
 const TOOL_RESULT = /^\s*(?<status>succeeded|failed)\s+in\s+.+:$/i;
 
+/**
+ * Runner facts that would otherwise share the bare "Runner" label. Each row
+ * is named by what it states; "Runner" stays the group heading only.
+ */
+const RUNNER_FACT_LABELS: readonly (readonly [RegExp, string])[] = [
+  [/^server-composed mode framing\b/i, 'Framing'],
+  [/^engine=/i, 'Engine'],
+  [/^clean-context seeded\b/i, 'Clean context'],
+  [/^started\s+\S+\s+CLI\s+\(PID\b/i, 'CLI started'],
+  [/^project(?:-prepare\b|\s+preparation\s+ready\b)/i, 'Prepare'],
+  [/^runner transport\b/i, 'Transport'],
+];
+
 type TranscriptMode = 'outside' | 'metadata' | 'agent' | 'user' | 'tool';
 
 interface TranscriptBlock {
@@ -225,7 +238,8 @@ function runnerPresentation(body: string): {
   if (/^CLI exited\b/i.test(body) || /\bfailed\b/i.test(body)) {
     return { label: 'Runner stopped', explanation: sentence(body), severity: 'error' };
   }
-  return { label: 'Runner', explanation: sentence(body), severity: 'info' };
+  const fact = RUNNER_FACT_LABELS.find(([pattern]) => pattern.test(body));
+  return { label: fact?.[1] ?? 'Runner', explanation: sentence(body), severity: 'info' };
 }
 
 function toolEvent(block: TranscriptBlock, source: string): ToolBurstEvent {
