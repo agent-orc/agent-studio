@@ -26,6 +26,10 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     private readonly ConcurrentDictionary<string, string> _settledArchive = new(StringComparer.OrdinalIgnoreCase);
     // A repair is logged once per task and review generation, not on every tick.
     private readonly ConcurrentDictionary<string, string> _reportedRepairs = new(StringComparer.OrdinalIgnoreCase);
+    // At most one Auto Review resume pass runs at a time, beside the ticks
+    // rather than inside them (AGT-3091): a pass can await a whole merge gate.
+    private readonly object _resumeGate = new();
+    private Task _resumePass = Task.CompletedTask;
 
     public RemoteReviewSettlementReconciler(
         TaskScannerService scanner,
@@ -53,6 +57,13 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
             try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
+        await ResumePass.ConfigureAwait(false);
+    }
+
+    /// <summary>The resume pass the latest tick started or found running; completed when none is.</summary>
+    internal Task ResumePass
+    {
+        get { lock (_resumeGate) return _resumePass; }
     }
 
     public async Task RunOnceAsync(CancellationToken ct = default)
@@ -82,7 +93,29 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
                     "remote-review-settlement-repair-required task={TaskKey} attempt={AttemptId}", taskKey, generation);
             }
         }
-        await _resume.RunOnceAsync("review-settlement-reconcile", ct).ConfigureAwait(false);
+        // AGT-3091: on 12.10.2026 the inline pass held every tick for 20.3
+        // minutes behind two gates. A tick now starts a pass only when none is
+        // running and never waits for it.
+        StartResumePass(ct);
+    }
+
+    private void StartResumePass(CancellationToken ct)
+    {
+        lock (_resumeGate)
+        {
+            if (!_resumePass.IsCompleted) return;
+            _resumePass = Task.Run(() => RunResumePassAsync(ct), CancellationToken.None);
+        }
+    }
+
+    private async Task RunResumePassAsync(CancellationToken ct)
+    {
+        try { await _resume.RunOnceAsync("review-settlement-reconcile", ct).ConfigureAwait(false); }
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
+        {
+            SilentCatch.Note(ex, "RemoteReviewSettlementReconciler: host shutdown ends the resume pass");
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "remote-review-settlement-resume-failed"); }
     }
 
     private static string? TaskKeyOf(TaskInfo task)
@@ -128,7 +161,14 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
                 task, entry, _mutations, _scanner)))
             return RemoteReviewSettlementReconcileStatus.Repair;
 
-        RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry);
+        // The scan behind this tick can be older than the lane: a concern or
+        // finding reissue may have moved the card since (AGT-3091). Re-read it
+        // only when the restore would write, so a settled card costs nothing.
+        if (RemoteReviewSettlementPolicy.WouldRestoreDeliverySidecar(task, entry))
+        {
+            task = _scanner.FindJob(task.Id, task.WatchPath) ?? task with { State = string.Empty };
+            RemoteReviewSettlementPolicy.RestoreDeliverySidecar(task, entry);
+        }
         if (entry.Delivery is null
             && !RemoteReviewSettlementPolicy.IsBatchDeferredPass(entry)
             && AutoReviewResumePolicy.IsAdmissibleOutcome(review.Outcome)

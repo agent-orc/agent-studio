@@ -1717,7 +1717,8 @@ public static class V1ReviewPlaneEndpoints
                             ?? (sourceRun?.TerminalAt is { } terminalAt
                                 ? new DateTimeOffset(DateTime.SpecifyKind(terminalAt, DateTimeKind.Utc))
                                 : DateTimeOffset.UtcNow),
-                        attemptId);
+                        attemptId,
+                        settled.ReviewAttempt.Subject.ExpectedResultSha);
                     // AGT-2860: the durable resume point. Everything from here
                     // to the lane move lives in this request and dies with the
                     // process; the aspect verdicts that decided the gate live
