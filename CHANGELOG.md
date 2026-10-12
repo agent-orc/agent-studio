@@ -16,6 +16,7 @@ release yet.
 
 - The runner's slot attempt id is the lease's attempt id, so no consumer of the slot can drift from the attempt the server fenced; on the legacy runner plane it was the lease id (AGT-2985).
 - On a fresh runner host the project delivery preflight makes a full clone; its `--no-checkout` clone made the first claim of every project fail environment preparation three times with "Stable checkout has local changes" (AGT-2985).
+- The delivery-claim answer agrees with git for cards integrated through their current review result: such a card now reads `integrated-delivery` with its commits on the integration branch and the release answered against `main`, instead of `unintegrated-delivery` with `released: null`; reconcile clears a stale `next-attempt` placeholder on them (AGT-2817).
 
 ### Added
 
