@@ -648,6 +648,32 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Eject_from_red_base_hold_releases_only_requested_member()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var ejected = SeedMember(factory, "DOC-HELD-EJECT", "docs/held-eject.md");
+        var retained = SeedMember(factory, "DOC-HELD-KEEP", "docs/held-keep.md");
+        _gate.Batch = request => Red(request.ExpectedSha);
+        _gate.Base = request => Red(request.ExpectedSha);
+        _gate.Fallback = request => Red(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        await pilot.TickAsync(CancellationToken.None);
+        var manifest = Assert.Single(store.ListManifests());
+        AssertPhase(store, manifest.BatchId, BatchPhase.Paused);
+
+        Assert.True(pilot.RequestEject(ProjectName, ejected.Key));
+        await pilot.TickAsync(CancellationToken.None);
+
+        AssertPhase(store, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Equal(1, _gate.FallbackRuns);
+        AssertLane(retained.Key, TaskStates.AutoReview);
+        Assert.Equal(1, _gate.BatchRuns);
+    }
+
+    [Fact]
     public async Task Superseded_push_marker_uses_current_card_folder_and_does_not_hold_batch()
     {
         using var factory = BuildFactory();
