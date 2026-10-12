@@ -677,13 +677,19 @@ public sealed class BatchGatePilotService
         if (task is null || task.State is not (TaskStates.AutoReview
                 or TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive))
             return true;
-        var merge = (_pipelineLog.Read(task.FolderPath)
-                     ?? (marker.JobFolderPath is null ? null
-                         : _pipelineLog.Read(marker.JobFolderPath)))?.Steps.LastOrDefault(step =>
+        var record = _pipelineLog.Read(task.FolderPath)
+            ?? (marker.JobFolderPath is null ? null
+                : _pipelineLog.Read(marker.JobFolderPath));
+        var merge = record?.Steps.LastOrDefault(step =>
             step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
-        return merge?.Status != PipelineStepStatus.Passed
+        if (merge?.Status != PipelineStepStatus.Passed
             || !string.Equals(merge.ApprovedIntegrationSha, marker.ApprovedSha,
-                StringComparison.OrdinalIgnoreCase);
+                StringComparison.OrdinalIgnoreCase))
+            return true;
+        var push = record?.Steps.LastOrDefault(step =>
+            step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
+        return push?.Status == PipelineStepStatus.Failed
+            && push.Verdict is ("push-blocked" or "lineage-blocked");
     }
 
     private async Task RecoverPublishedAsync(CancellationToken ct)

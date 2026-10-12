@@ -708,6 +708,49 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Terminal_non_fast_forward_push_does_not_hold_other_batches()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PUSH-BLOCKED", "docs/push-blocked.md");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureRun(folder, PipelineCatalogue.Standard, ProjectName, member.Key);
+        pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Passed,
+            ApprovedIntegrationSha = member.ResultSha,
+            StartedAt = _clock.UtcDateTime,
+            CompletedAt = _clock.UtcDateTime,
+        });
+        pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopPushStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "push-blocked",
+            StartedAt = _clock.UtcDateTime,
+            CompletedAt = _clock.UtcDateTime,
+        });
+        var reservations = factory.Services
+            .GetRequiredService<BatchIntegrationReservationService>();
+        reservations.MarkPushPending(ProjectName, member.Key, member.ResultSha,
+            folder, _repo, "develop", _watchPath);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Null(reservations.GetWait(ProjectName));
+        AssertPhase(factory.Services.GetRequiredService<BatchGateStore>(),
+            Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+                .ListManifests()).BatchId, BatchPhase.Published);
+    }
+
+    [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
         using var factory = BuildFactory();

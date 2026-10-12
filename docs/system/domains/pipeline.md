@@ -159,8 +159,8 @@ sends only the requested member to per-card fallback. Code integrations also
 keep batches waiting from the local merge until their queued origin push
 succeeds. A durable pending-push marker preserves that wait across backend
 restarts. Batch acquisition and the planning tick reconcile markers already
-published on origin, superseded or rolled-back merges, and cards that left
-the integration path. State and report expose the oldest wait and an age alert,
+published on origin, superseded or rolled-back merges, terminal blocked pushes,
+and cards that left the integration path. State and report expose the oldest wait and an age alert,
 defaulting to 15 minutes.
 
 The default local store is scoped by the backend content root and task data
