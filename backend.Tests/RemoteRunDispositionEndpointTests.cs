@@ -109,10 +109,20 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
         using var client = Client(factory);
         var (taskKey, attempt) = Claim(factory, "AGT-OLDER-BRIEF");
         var original = attempt.BriefVersion;
-        var promptEdit = await client.PutAsJsonAsync(
-            $"/api/tasks/AGT-OLDER-BRIEF/files/prompt.md?watchPath={Uri.EscapeDataString(WatchPath)}",
-            new { content = "Sharpened brief" });
-        Assert.Equal(HttpStatusCode.OK, promptEdit.StatusCode);
+        // The endpoint answers 503 "try saving again in a moment" while the
+        // prompt file is briefly unavailable; a client retries, so does the test.
+        HttpResponseMessage promptEdit;
+        var editAttempt = 0;
+        do
+        {
+            if (editAttempt++ > 0) await Task.Delay(250);
+            promptEdit = await client.PutAsJsonAsync(
+                $"/api/tasks/AGT-OLDER-BRIEF/files/prompt.md?watchPath={Uri.EscapeDataString(WatchPath)}",
+                new { content = "Sharpened brief" });
+        }
+        while (promptEdit.StatusCode == HttpStatusCode.ServiceUnavailable && editAttempt < 8);
+        Assert.True(promptEdit.StatusCode == HttpStatusCode.OK,
+            await promptEdit.Content.ReadAsStringAsync());
         Assert.NotEqual(original, BriefVersionStore.ReadOrCreate(Current(factory, "AGT-OLDER-BRIEF").FolderPath));
 
         var completion = await client.PostAsJsonAsync("/api/runner/completion", DeliveredCompletion(taskKey, attempt));
