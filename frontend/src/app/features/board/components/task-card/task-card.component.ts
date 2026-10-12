@@ -3,6 +3,7 @@ import { TaskState, isTerminalTaskState, type AutoLoopSnapshot, type TaskExecuti
 import { RemoteDispatchRejectionComponent } from '../../../../components/remote-dispatch-rejection/remote-dispatch-rejection.component';
 import { GitSummaryService } from '../../../../services/git-summary.service';
 import { TaskService } from '../../../../services/task.service';
+import { BoardMutationsService } from '../../state/board-mutations.service';
 import { ClientService } from '../../../../services/client.service';
 import { CodeReviewActivityStore } from '../../../../services/code-review-activity.store';
 import { cliTypeIcon } from '../../../../services/format.util';
@@ -11,6 +12,7 @@ import { TagRegistryStore } from '../../../../services/tag-registry.store';
 import { TagProposalsComponent } from '../../../../components/tag-proposals/tag-proposals.component';
 import {
   buildCardCtxMenuItems,
+  cardMoveTarget,
   buildCodeReviewGradeBadge,
   buildVisibleDependencyChip,
   buildCommitChainTooltip,
@@ -98,6 +100,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   readonly epicSubTasks = input<readonly TaskInfo[]>([]);
   readonly compact = input<boolean>(false);
   readonly mutationsBlocked = input<boolean>(false);
+  readonly visibleLanes = input<readonly string[]>([]);
   /**
    * F2: when set and matches this card's job id, the card renders the
    * "just created" pulse highlight and scrolls itself into view on the
@@ -443,6 +446,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   // Context menu: copy actions + epic assignment (way 2).
   private readonly notifications = inject(NotificationService);
   private readonly jobs = inject(TaskService);
+  private readonly boardMutations = inject(BoardMutationsService);
   private readonly selection = inject(TaskSelectionService);
   private readonly boardFilters = inject(BoardFiltersService);
   readonly cardContextMenu = signal<{ x: number; y: number } | null>(null);
@@ -450,7 +454,7 @@ export class TaskCardComponent implements OnInit, OnDestroy {
   private readonly epicsForMenu = signal<EpicRollup[]>([]);
 
   readonly cardCtxMenuItems = computed(() => buildCardCtxMenuItems(
-    this.job(), this.isEpic(), this.epicsForMenu(), this.subTaskEpicId(), this.mutationsBlocked()));
+    this.job(), this.isEpic(), this.epicsForMenu(), this.subTaskEpicId(), this.mutationsBlocked(), this.visibleLanes()));
 
   /** AGT-2029: open the dependency this card is waiting on (see resolveDependencyTarget). */
   navigateToDependency(chip: DependencyChip, event: MouseEvent): void {
@@ -511,6 +515,14 @@ export class TaskCardComponent implements OnInit, OnDestroy {
     const job = this.job();
 
     if (handleReviewPriorityAction(ev.id, job, this.mutationsBlocked(), this.jobs, this.notifications)) return;
+    const moveTarget = cardMoveTarget(ev.id);
+    if (moveTarget) {
+      if (this.mutationsBlocked() || !this.cardCtxMenuItems().some(
+        (item) => item.kind === 'row' && item.id === ev.id && !item.disabled,
+      )) return;
+      this.boardMutations.changeStateFromDetail(job, moveTarget, false);
+      return;
+    }
 
     if (ev.id === DELETE_ID) {
       if (this.mutationsBlocked()) return;

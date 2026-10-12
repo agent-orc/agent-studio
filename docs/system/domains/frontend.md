@@ -616,6 +616,11 @@ occur. It is not a claim about tunnel transfer time.
   local runner may pick up work.
 - `frontend/src/app/services/task.service.ts`: task API integration, optimistic
   lane moves, reorder, and rollback.
+- Board card context menus offer neighbouring visible manual lanes plus
+  Delivered and Archive shortcuts. The target list comes from
+  `MANUAL_MOVE_LANES`, ordered by `LANE_PRESENTATIONS`; moves use
+  `BoardMutationsService.changeStateFromDetail` for optimistic paint, Undo,
+  and refusal rollback. Runner and exception lanes are never menu targets.
 - `frontend/src/app/services/cli-catalog.store.ts`: boot-hydrated CLI model
   catalog cache.
 - `frontend/src/app/features/orchestrator/state/orchestrator-composer-model.service.ts`:
