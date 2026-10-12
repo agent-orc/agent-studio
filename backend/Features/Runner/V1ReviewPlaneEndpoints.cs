@@ -806,7 +806,11 @@ public static class V1ReviewPlaneEndpoints
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
             var batchDeferredAccepted = batchDeferred
                 && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
-            if (batchDeferredAccepted)
+            // A replay restores the journaled report, which already carries the
+            // deferred verdict; appending it again would change the payload hash.
+            if (batchDeferredAccepted && !request.Verdicts.Any(verdict =>
+                    string.Equals(verdict.Aspect, "build-tests", StringComparison.Ordinal)
+                    && string.Equals(verdict.Classification, "DeferredToBatch", StringComparison.Ordinal)))
             {
                 request = request with
                 {
@@ -967,6 +971,12 @@ public static class V1ReviewPlaneEndpoints
                 return Results.Json(
                     new Contract.ApiError("task-not-found", "Review task was not found in the monolith store."),
                     statusCode: StatusCodes.Status404NotFound);
+
+            // Count the review-side build and test minutes before batch
+            // admission, so a failed admission still reports them. Replays
+            // find the fact written by the first settlement.
+            batchPilot.RecordReviewVerification(task.ProjectName, settled.ReviewAttempt,
+                request.Commands);
 
             // Record only accepted deliveries, keyed by the fenced attempt id.
             // A report replay repairs this projection without charging twice.
