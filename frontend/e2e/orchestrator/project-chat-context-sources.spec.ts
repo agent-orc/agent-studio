@@ -35,6 +35,7 @@ async function installContextFixtures(page: Page) {
       model: 'gpt-5.4-mini', cumulativeInputTokens: 840, cumulativeOutputTokens: 120,
       cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
       summary: 'Review the context workspace sources', runtimeStatus: 'idle', queuePosition: 0,
+      turnCount: 2,
     }],
   }));
   // Scoped to the single-response route: `**/api/search**` would also swallow
@@ -167,8 +168,8 @@ test('project chat attaches known sources, inspects the persisted receipt, and k
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('orch-side-sheet-toggle').click();
   await expect(page.getByTestId('orch-context-inspect-toggle')).toBeVisible();
-  await page.getByTestId('orch-context-badge').click();
-  await expect(page.getByRole('heading', { name: 'Chat history' })).toBeVisible();
-  await expect(page.getByTestId(`chat-switcher-row-project:${PROJECT}`)).toHaveCount(1);
-  await expect(page.getByTestId(`chat-switcher-row-project:${PROJECT}`)).toContainText('Review the context workspace sources');
+  await page.getByTestId('orch-open-chats-panel').click();
+  await expect(page.getByTestId('chat-sessions-panel')).toBeVisible();
+  await expect(page.getByTestId(`chat-session-row-project:${PROJECT}`)).toHaveCount(1);
+  await expect(page.getByTestId(`chat-session-row-project:${PROJECT}`)).toContainText('Review the context workspace sources');
 });

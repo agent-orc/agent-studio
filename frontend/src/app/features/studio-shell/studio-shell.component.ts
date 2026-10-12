@@ -67,7 +67,7 @@ import { StudioTab, studioTabKey } from './studio-shell.types';
 import { titleFromDocumentPath, truncateTabTitle } from './studio-shell.tab-labels';
 import { ALL_PROJECTS_BOARD_NAME, taskTabProjectScope } from './services/task-tab-scope';
 import { GlobalSearchComponent } from './components/global-search/global-search.component';
-import { OrchestratorFeedStore } from '../orchestrator';
+import { ChatSessionsPanelComponent, OrchestratorFeedStore } from '../orchestrator';
 import { UsageDetailSurfaceComponent } from '../usage-cockpit';
 /** Canonicalise project storage paths so titlebar workspace lookup survives
  * slash style, trailing separator, and case differences. */
@@ -103,7 +103,7 @@ function cliColorFor(cli: string): string {
 @Component({
   selector: 'app-studio-shell',
   standalone: true,
-  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent],
+  imports: [FormsModule, StudioIconComponent, StudioSidebarHeaderComponent, EmptyStateComponent, StudioWelcomeComponent, SectionHeaderComponent, CountBadgeComponent, ListRowComponent, StudioActivityBarComponent, MenuComponent, TooltipDirective, AppTooltipDirective, TaskStatusPopoverDirective, ExplorerWorkspaceTreeComponent, ProjectDetailComponent, GlobalSearchComponent, UsageCockpitHeaderComponent, UsageDetailSurfaceComponent, ChatSessionsPanelComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   encapsulation: ViewEncapsulation.None,
   templateUrl: './studio-shell.component.html',
@@ -654,9 +654,6 @@ export class StudioShellComponent {
     this.tabState.open({ kind: 'feed' });
   }
 
-  openChatHistory(): void {
-    this.tabState.open({ kind: 'chat-history' });
-  }
 
   /**
    * Activity-bar Epics button click. Opens or focuses the workspace-wide
@@ -1013,7 +1010,7 @@ export class StudioShellComponent {
     this.pickProject(ev.id === '__all__' ? null : ev.id);
   }
 
-  togglePanel(panel: StudioActivityPanelKey | 'settings'): void {
+  togglePanel(panel: StudioActivityPanelKey | 'settings' | 'chats'): void {
     // The gear ('settings') no longer toggles a sidebar panel — it opens the
     // one consolidated Settings view as an editor tab (AGT-2035).
     if (panel === 'settings') {
@@ -1134,8 +1131,6 @@ export class StudioShellComponent {
         return tab.projectName === '__all__' ? 'All projects · Board' : `${this.projectShortLabel(tab.projectName)} · Board`;
       case 'feed':
         return 'Activity across projects';
-      case 'chat-history':
-        return 'Chat History';
       case 'epics':
         return tab.projectName === null ? 'All projects · Epics' : `${this.projectShortLabel(tab.projectName)} · Epics`;
       case 'workbenches':
@@ -1232,7 +1227,6 @@ export class StudioShellComponent {
       return this.railItemForSection(tab.section).railIcon ?? null;
     }
     if (tab.kind === 'url-preview') return 'link';
-    if (tab.kind === 'chat-history') return 'bot';
     if (tab.kind === 'workbenches') return 'eye';
     if (tab.kind === 'workbench') return 'eye';
     return null;

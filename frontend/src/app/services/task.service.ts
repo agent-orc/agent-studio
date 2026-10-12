@@ -2652,6 +2652,17 @@ export class TaskService {
   }
 
   /**
+   * Operator archive for one chat session. The Task Server persists
+   * `archivedAt`; a later turn in the same context clears it again.
+   */
+  setOrchestratorContextArchived(contextKey: string, archived: boolean) {
+    return this.http.post<import('../features/orchestrator').OrchestratorContextSession>(
+      '/api/v1/studio/orchestrator/sessions/archive',
+      { contextKey, archived },
+    );
+  }
+
+  /**
    * Read the compact ORCH-1 application digest for one multichat context.
    * Every context shape has its own literal route (AGT-2983): the Task Server
    * serves `global`, `project:{projectId}` and `task:{projectId}/{taskKey}`,

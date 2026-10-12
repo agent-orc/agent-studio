@@ -21,10 +21,10 @@
     [pageContext]="pageContext()"
     [contextKey]="contextKey()"
     [executionContext]="executionContext()"
-    [contextCount]="contextCount()"
-    [chatsOpen]="contextMenuOpen()"
+    [actionsOpen]="contextActionsOpen()"
     [active]="sending() || activeRun() !== null"
-    (chatsToggle)="toggleContextMenu()" />
+    (actionsToggle)="toggleContextActions()"
+    (chatsPanelRequest)="openChatsPanel()" />
 
   @if (contextKind() === 'task' && effectiveJobKey(); as taskKey) {
     <div class="sheet__task-context-note"
@@ -55,14 +55,19 @@
   }
 
   <main class="sheet__workspace">
-    @if (contextMenuOpen()) {
-      <section id="orch-context-menu"
+    <!-- Context actions popover. The session list moved to the left sidebar
+         Chats panel; pin, debug, settings, refresh, and the context include
+         toggle stay reachable here without replacing the conversation. -->
+    @if (contextActionsOpen()) {
+      <section id="orch-context-actions"
                class="sheet__context-menu"
-               aria-label="Chat contexts"
-               data-testid="orch-context-menu">
+               role="dialog"
+               aria-label="Context actions"
+               data-testid="orch-context-menu"
+               (keydown.escape)="closeContextActions()">
         <header class="sheet__context-menu-head">
           <div class="sheet__context-menu-title">
-            <h3>Chat history</h3>
+            <h3>Context</h3>
             @if (contextChipText(); as contextLabel) {
               <p data-testid="orch-context-current">{{ contextLabel }}</p>
             }
@@ -121,103 +126,91 @@
                   data-testid="orch-context-freshness">{{ contextDigestState.statusText() }}</span>
           </nav>
         </div>
-
-        <app-chat-switcher-rail
-          [sessions]="contextSessions()"
-          [projects]="projects()"
-          [tasks]="jobService.jobs()"
-          [workbenchTitles]="workbenchTitles()"
-          [activeContextKey]="contextKey()"
-          [unreadContextKeys]="unreadContextKeys()"
-          [pendingContextKeys]="chatActivity.pendingContextKeys()"
-          (contextSelected)="selectChatContext($event)"
-          (locationRequested)="onNavigateToContext($event)" />
       </section>
-    } @else {
-      <div class="sheet__content">
-        @if (errorMsg(); as err) {
-          <div class="sheet__error">{{ err }}</div>
-        }
-
-        @if (selectedContextKey() === 'global') {
-          <section class="sheet__no-project" data-testid="orchestrator-global-chat-empty">
-            Global orchestrator selected. This workspace has no global transcript yet.
-          </section>
-        } @else if (effectiveProject()) {
-          <section class="sheet__chat">
-            <app-orchestrator-chat-usage-header [turns]="turns()" [project]="effectiveProject()" />
-            <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
-              <cac-conversation-view
-                variant="embedded"
-                [events]="conversationEvents()"
-                [isRunning]="sending() || loading()"
-                [showHeader]="false"
-                (openVerboseDebug)="onOpenVerboseDebug()" />
-            </div>
-
-            <app-orchestrator-chat-waiting
-              [project]="effectiveProject()" [contextKey]="contextKey()" [sending]="sending()" />
-
-            @if (latestContextReceipt(); as receipt) {
-              <app-orchestrator-context-receipt [receipt]="receipt" />
-            }
-
-            @for (event of events(); track event.id) {
-              @if (event.actionLabel && hasChatEventAction(event.id)) {
-                <button type="button"
-                        class="sheet__event-action"
-                        (click)="onChatEventAction({ eventId: event.id })"
-                        [attr.data-testid]="'orch-conversation-event-action-' + event.id">
-                  {{ event.actionLabel }}
-                </button>
-              }
-            }
-
-            <!-- Popover-only: the chips the picker used to own now render
-                 inside the composer via the library's `contextAttachments`. -->
-            <app-orchestrator-context-picker
-              #contextPicker
-              [project]="effectiveProject()!"
-              [automaticLabel]="automaticContextPresentation().label"
-              [automaticIncluded]="automaticContextIncluded()"
-              [currentSource]="currentTabSource()"
-              [selectedIds]="selectedContextAttachmentIds()"
-              [disabled]="sending()"
-              (automaticIncludedChange)="setNextMessageContextIncluded($event)"
-              (attachmentAdded)="addContextAttachment($event)" />
-
-            <app-orchestrator-jump-latest [conversationHost]="conversationHost" />
-
-            <!-- `cac-chat` is deliberately composer-only here. With no
-                 messages/events and an empty state, the library suppresses
-                 its legacy transcript body while retaining its composer.
-                 Three rows at most: context chips when present, the textarea,
-                 and the footer. No toolbar row (no `toolbarStart` /
-                 `routingLabel` / `contextLabel`) and no `composerContext`
-                 breadcrumb - the sheet header and the automatic chip already
-                 say where the operator is. -->
-            <cac-chat
-              class="sheet__composer"
-              variant="embedded"
-              emptyState=""
-              [pending]="sending()"
-              [disabled]="sending()"
-              [allowAttachments]="false"
-              [contextAttachments]="cacContextAttachments()"
-              [placeholder]="composerPlaceholder()"
-              [modelControl]="composerModel.control()"
-              (contextAttachmentAddRequested)="requestContextAttachment()"
-              (contextAttachmentRemoved)="onContextAttachmentRemoved($event)"
-              (submitMessage)="onSubmit($event)"
-              (modelCommit)="onModelCommit($event)"
-              (modelCatalogRequested)="composerModel.requestCatalog()"
-              (modelRefreshRequested)="composerModel.requestCatalog(true)">
-            </cac-chat>
-          </section>
-        } @else {
-          <div class="sheet__no-project">No watched projects yet.</div>
-        }
-      </div>
     }
+    <div class="sheet__content">
+      @if (errorMsg(); as err) {
+        <div class="sheet__error">{{ err }}</div>
+      }
+
+      @if (selectedContextKey() === 'global') {
+        <section class="sheet__no-project" data-testid="orchestrator-global-chat-empty">
+          Global orchestrator selected. This workspace has no global transcript yet.
+        </section>
+      } @else if (effectiveProject()) {
+        <section class="sheet__chat">
+          <app-orchestrator-chat-usage-header [turns]="turns()" [project]="effectiveProject()" />
+          <div #conversationHost class="sheet__conversation" data-testid="orchestrator-conversation">
+            <cac-conversation-view
+              variant="embedded"
+              [events]="conversationEvents()"
+              [isRunning]="sending() || loading()"
+              [showHeader]="false"
+              (openVerboseDebug)="onOpenVerboseDebug()" />
+          </div>
+
+          <app-orchestrator-chat-waiting
+            [project]="effectiveProject()" [contextKey]="contextKey()" [sending]="sending()" />
+
+          @if (latestContextReceipt(); as receipt) {
+            <app-orchestrator-context-receipt [receipt]="receipt" />
+          }
+
+          @for (event of events(); track event.id) {
+            @if (event.actionLabel && hasChatEventAction(event.id)) {
+              <button type="button"
+                      class="sheet__event-action"
+                      (click)="onChatEventAction({ eventId: event.id })"
+                      [attr.data-testid]="'orch-conversation-event-action-' + event.id">
+                {{ event.actionLabel }}
+              </button>
+            }
+          }
+
+          <!-- Popover-only: the chips the picker used to own now render
+               inside the composer via the library's `contextAttachments`. -->
+          <app-orchestrator-context-picker
+            #contextPicker
+            [project]="effectiveProject()!"
+            [automaticLabel]="automaticContextPresentation().label"
+            [automaticIncluded]="automaticContextIncluded()"
+            [currentSource]="currentTabSource()"
+            [selectedIds]="selectedContextAttachmentIds()"
+            [disabled]="sending()"
+            (automaticIncludedChange)="setNextMessageContextIncluded($event)"
+            (attachmentAdded)="addContextAttachment($event)" />
+
+          <app-orchestrator-jump-latest [conversationHost]="conversationHost" />
+
+          <!-- `cac-chat` is deliberately composer-only here. With no
+               messages/events and an empty state, the library suppresses
+               its legacy transcript body while retaining its composer.
+               Three rows at most: context chips when present, the textarea,
+               and the footer. No toolbar row (no `toolbarStart` /
+               `routingLabel` / `contextLabel`) and no `composerContext`
+               breadcrumb - the sheet header and the automatic chip already
+               say where the operator is. -->
+          <cac-chat
+            class="sheet__composer"
+            variant="embedded"
+            emptyState=""
+            [pending]="sending()"
+            [disabled]="sending()"
+            [allowAttachments]="false"
+            [contextAttachments]="cacContextAttachments()"
+            [placeholder]="composerPlaceholder()"
+            [modelControl]="composerModel.control()"
+            (contextAttachmentAddRequested)="requestContextAttachment()"
+            (contextAttachmentRemoved)="onContextAttachmentRemoved($event)"
+            (submitMessage)="onSubmit($event)"
+            (modelCommit)="onModelCommit($event)"
+            (modelCatalogRequested)="composerModel.requestCatalog()"
+            (modelRefreshRequested)="composerModel.requestCatalog(true)">
+          </cac-chat>
+        </section>
+      } @else {
+        <div class="sheet__no-project">No watched projects yet.</div>
+      }
+    </div>
   </main>
 </app-sidesheet>

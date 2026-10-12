@@ -829,11 +829,15 @@ header chip, and Result header agree on word and resolved colour, both themes).
   upload, and no host-owned context picker row above `<cac-chat>`; context
   chips and the add affordance belong to the library (`contextAttachments`,
   coding-agent-chat 0.4.1) and the source picker is popover-only.
-- Chat History is the workspace-level projection of the central Task Server
-  context store. It lists permanent project contexts and non-archived task
-  contexts with the store-owned short summary and latest activity. Opening a
-  row selects that stable context in Orchestrator Chat. The view owns no second
-  transcript, summary, or visibility state and refreshes from TaskHub hints.
+- The left sidebar Chats panel (`<app-chat-sessions-panel>`, AGT-3032) is the
+  only list of orchestrator chat sessions; the side-sheet list and the Chat
+  History tab are retired and `#/chat-history` redirects to the panel. It
+  projects the central Task Server context store through
+  `OrchestratorChatSessionsStore` (shared with the side sheet), lists only
+  sessions with persisted turns, groups them into Active, Recent, and a
+  collapsed Archived group, and opens a row in Orchestrator Chat. It owns no
+  second transcript or summary state and refreshes from TaskHub hints plus a
+  bounded poll.
 - Project Overview remains operator-first. Do not add watch paths, repository
   paths, working directories, CLI health, clean-context controls, or session
   administration back to the Overview; those facts belong to Project Settings.

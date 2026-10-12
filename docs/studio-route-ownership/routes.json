@@ -23,17 +23,17 @@
     ]
   },
   "counts": {
-    "frontendOperations": 433,
-    "frontendApiOperations": 432,
+    "frontendOperations": 434,
+    "frontendApiOperations": 433,
     "frontendHubOperations": 1,
     "byClassification": {
-      "task-server": 325,
+      "task-server": 326,
       "dev-seat": 108,
       "retired": 0
     },
     "orchestratorApiMapGroups": 31,
-    "frontendV1Operations": 64,
-    "frontendV1OperationsExistingInStandaloneTaskServer": 64,
+    "frontendV1Operations": 65,
+    "frontendV1OperationsExistingInStandaloneTaskServer": 65,
     "d4bRoutesToAdd": 261
   },
   "d4bEstimate": {
@@ -13048,6 +13048,33 @@
       "targetRoute": "/api/v1/studio/orchestrator/sessions",
       "frontendEvidence": [
         "frontend/src/app/services/task.service.ts:2517"
+      ],
+      "decisionEvidence": [
+        "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",
+        "docs/concepts/distributed-agent-studio-target-architecture.md:110-115"
+      ],
+      "classificationReason": "The route exposes durable task, orchestration, identity, event, policy, artifact, or management state assigned to the Task Server by the target architecture.",
+      "ownershipCaveat": null,
+      "d4bPriority": null,
+      "estimate": null
+    },
+    {
+      "id": "fe-434",
+      "method": "POST",
+      "path": "/api/v1/studio/orchestrator/sessions/archive",
+      "queryVariants": [
+        {
+          "kind": "none",
+          "query": ""
+        }
+      ],
+      "classification": "task-server",
+      "owningComponent": "Remote Task Server",
+      "frontendOwner": "Shared frontend services",
+      "v1Status": "exists",
+      "targetRoute": "/api/v1/studio/orchestrator/sessions/archive",
+      "frontendEvidence": [
+        "frontend/src/app/services/task.service.ts:2646"
       ],
       "decisionEvidence": [
         "docs/concepts/distributed-agent-studio-target-architecture.md:17-23",

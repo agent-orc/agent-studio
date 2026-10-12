@@ -111,6 +111,13 @@ public static class StudioEndpoints
 
         orchestrator.MapGet("/sessions", async (TaskServerStore store, CancellationToken ct)
             => await TaskServerEndpoints.InvokeAsync(() => store.ListStudioOrchestratorSessionsAsync(ct)));
+        orchestrator.MapPost("/sessions/archive", async (
+            HttpContext context, SetOrchestratorContextArchivedRequest request,
+            StudioLifecycleCoordinator coordinator, CancellationToken ct)
+            => await TaskServerEndpoints.InvokeAsync(
+                () => coordinator.SetOrchestratorSessionArchivedAsync(
+                    request, TaskServerEndpoints.Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestrator.MapPost("/sessions/workbench:{projectIdentity}/{workbenchIdentity}/turns", async (
             string projectIdentity, string workbenchIdentity, HttpContext context, StudioOrchestratorTurnRequest request,
             StudioLifecycleCoordinator coordinator, CancellationToken ct)

@@ -1,5 +1,10 @@
 [
   {
+    "file": "src/app/features/orchestrator/components/chat-sessions-panel/chat-sessions-panel.component.html",
+    "literal": "Archive",
+    "reason": "Row action verb for archiving a chat session in the sidebar Chats panel. Not the 7-archive lane."
+  },
+  {
     "file": "src/app/features/board/components/board-lane-layout.util.ts",
     "literal": "Backlog",
     "reason": "Lane-GROUP container label, not a lane. The 'backlog' group holds the Ready, Preparation, and Backlog lanes; it is a different axis that happens to share a word with one of them."

@@ -8,8 +8,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ChatComponent } from 'coding-agent-chat/composer';
 import type { OrchestratorContextSession } from '../../models/orchestrator.model';
 import { OrchestratorSideSheetComponent } from './orchestrator-side-sheet.component';
+import { OrchestratorChatSessionsStore } from '../../state/orchestrator-chat-sessions.store';
+import { StudioPanelStateService } from '../../../studio-shell/services/studio-panel-state.service';
 
-describe('OrchestratorSideSheetComponent context badge and menu', () => {
+describe('OrchestratorSideSheetComponent context actions and Chats panel bridge', () => {
   beforeEach(() => sessionStorage.removeItem('atp.studio.orchestratorOpen.v1'));
 
   async function makeFixture() {
@@ -28,45 +30,21 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     return fixture;
   }
 
-  it('counts every distinct global, project and task context', async () => {
-    const fixture = await makeFixture();
-    const session = (contextKey: string, kind: OrchestratorContextSession['kind']): OrchestratorContextSession => ({
-      contextKey,
-      kind,
-      projectId: kind === 'global' ? null : 'demo-project',
-      taskKey: kind === 'task' ? 'AGT-2087' : null,
-      updatedAt: '2026-07-11T10:00:00Z',
-      model: null,
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
-      cumulativeCacheReadTokens: 0,
-      cumulativeCacheCreationTokens: 0,
-      runtimeStatus: 'idle',
-      queuePosition: 0,
-    });
-
-    fixture.componentInstance.contextSessions.set([
-      session('project:demo-project', 'project'),
-      session('task:demo-project/AGT-2087', 'task'),
-    ]);
-
-    expect(fixture.componentInstance.contextCount()).toBe(3);
-  });
-
-  it('keeps only picker and count badge in the collapsed header', async () => {
+  it('keeps the context actions out of the collapsed header and lists no sessions', async () => {
     const fixture = await makeFixture();
     fixture.detectChanges();
 
     const root = fixture.nativeElement as HTMLElement;
     expect(root.querySelector('[data-testid="orch-context-badge"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="orch-context-count"]')?.textContent?.trim()).toBe('2');
+    expect(root.querySelector('[data-testid="orch-open-chats-panel"]')).not.toBeNull();
+    expect(root.querySelector('[data-testid="orch-context-count"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-context-menu"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-pin"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-settings"]')).toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-refresh"]')).toBeNull();
   });
 
-  it('opens the full context menu and moves header actions into it', async () => {
+  it('opens the context actions as an overlay without replacing the conversation', async () => {
     const fixture = await makeFixture();
     fixture.detectChanges();
     const root = fixture.nativeElement as HTMLElement;
@@ -75,11 +53,56 @@ describe('OrchestratorSideSheetComponent context badge and menu', () => {
     fixture.detectChanges();
 
     expect(root.querySelector('[data-testid="orch-context-menu"]')).not.toBeNull();
-    expect(root.querySelector('[data-testid="chat-context-list"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-pin"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-settings"]')).not.toBeNull();
     expect(root.querySelector('[data-testid="orch-side-sheet-refresh"]')).not.toBeNull();
-    expect(root.textContent).toContain('Chat history');
+    expect(root.querySelector('[data-testid="orch-context-send-toggle"]')).not.toBeNull();
+    // The removed side-sheet list must not come back, and the chat stays mounted.
+    expect(root.querySelector('[data-testid="chat-context-list"]')).toBeNull();
+    expect(root.querySelector('[data-testid="orchestrator-conversation"]')).not.toBeNull();
+  });
+
+  it('opens the sidebar Chats panel from the header affordance', async () => {
+    const fixture = await makeFixture();
+    fixture.detectChanges();
+    const panels = TestBed.inject(StudioPanelStateService);
+    panels.open('explorer');
+
+    (fixture.nativeElement as HTMLElement)
+      .querySelector<HTMLButtonElement>('[data-testid="orch-open-chats-panel"]')!.click();
+
+    expect(panels.active()).toBe('chats');
+    expect(panels.visible()).toBe(true);
+  });
+
+  it('opens a session requested by the Chats panel and publishes it as the open session', async () => {
+    const fixture = await makeFixture();
+    const store = TestBed.inject(OrchestratorChatSessionsStore);
+    const session: OrchestratorContextSession = {
+      contextKey: 'task:demo-project/AGT-2087',
+      kind: 'task',
+      projectId: 'demo-project',
+      taskKey: 'AGT-2087',
+      updatedAt: '2026-07-11T10:00:00Z',
+      model: null,
+      cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0,
+      cumulativeCacheReadTokens: 0,
+      cumulativeCacheCreationTokens: 0,
+      runtimeStatus: 'idle',
+      queuePosition: 0,
+      turnCount: 2,
+    };
+    fixture.componentInstance.contextSessions.set([session]);
+    fixture.detectChanges();
+
+    store.requestOpen(session.contextKey);
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.open()).toBe(true);
+    expect(fixture.componentInstance.contextKey()).toBe(session.contextKey);
+    expect(store.openContextKey()).toBe(session.contextKey);
+    expect(store.unreadContextKeys().has(session.contextKey)).toBe(false);
   });
 
   it('offers a repository page as the first stable current-tab source', async () => {

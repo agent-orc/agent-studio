@@ -323,22 +323,44 @@ identifiers, mapping evidence, confidence, and mapping version only. It does
 not include filesystem paths or secrets. A low-confidence or conflicting route
 instructs the orchestrator to ask before proposing or creating a task.
 
-## Chat Switcher Rail
+## Chats Sidebar Panel
 
-The side sheet includes an optional, collapsed-by-default chat switcher. Its
-chip reports the number of active or queued contexts; expanding it groups the
-registry into Global, Projects, Dossiers, and Tasks (AGT-2725 added the
-Dossiers group between Projects and Tasks). Rows expose the central short
-summary, runtime state, local unread state, and cumulative token usage. Clicking a row name changes the chat
-context without moving the workspace. The separate arrow navigates to that
-context's all-project board, project board, Dossier tab, or task tab.
+Chat sessions are listed in exactly one place: the **Chats** panel in the left
+Studio sidebar (AGT-3032, modelled on the Claude Code session manager). It
+replaced the side-sheet chat switcher list and the Chat History editor tab;
+`#/chat-history` and any persisted `chat-history` tab redirect to the open
+panel. The side-sheet header keeps a compact "Chats" button that opens the
+panel, and its context actions (pin, debug, settings, refresh, context include
+toggle) live in a header popover instead of the old list.
 
-Active and queued contexts are acute current state. They use a visible status
-dot and label in both the side-sheet list and the central Chat History view.
-The status-bar Chat entry also shows a pulsing active count while any reply
-remains outstanding, including when the side sheet is closed.
+- Top: "New chat" (current task or Dossier, or any watched project; Global has
+  no transcript store and is not offered), a search field, and a scope filter
+  (all, projects, Dossiers, tasks).
+- **Active**: sessions that are running, queued, waiting for a reply, or
+  parked, with an animated dot for running and waiting and a short state word.
+  Rows leave the group once the session is idle again.
+- **Recent**: one flat recency list ordered by `lastUsedAt ?? updatedAt`. The
+  scope sits on the second line, so per-scope groups were dropped as noise.
+- **Archived**: collapsed; operator-archived sessions (`archivedAt`) and task
+  contexts hidden because their task sits in `7-archive` (`hiddenAt`).
+- Rows have two fixed lines: title and relative time; scope, model catalogue
+  display name, and plain token total. Unread is a small dot before the title,
+  counted only for activity after this browser first saw the session.
+- A session is listed only once it has a persisted turn (`turnCount > 0`), so
+  the `Project chat for <name>` seed of a new project never appears.
+- Archive is a row action (never offered while a turn runs or is queued);
+  Unarchive restores it. The Task Server persists `archived_at` on the context;
+  `POST /api/v1/studio/orchestrator/sessions/archive` (`{ contextKey, archived }`)
+  is the mutation, and a new turn in an archived session clears it.
 
-The rail reads `GET /api/orchestrator/sessions`. The context row, summary, and
+Clicking a row opens that context in the side sheet without moving the
+workspace. The separate arrow navigates to that context's board or task tab.
+
+Active and queued contexts are acute current state. The status-bar Chat entry
+also shows a pulsing active count while any reply remains outstanding,
+including when the side sheet is closed.
+
+The panel reads `GET /api/v1/studio/orchestrator/sessions` (legacy `GET /api/orchestrator/sessions`). The context row, summary, and
 durable usage come from the selected context store; its runtime badge is a snapshot of the
 in-memory turn dispatcher (`active`, `queued`, or `parked`). Unread state is intentionally local to the
 browser because the registry does not own per-user read receipts. Global is

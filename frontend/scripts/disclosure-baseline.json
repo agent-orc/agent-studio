@@ -74,13 +74,17 @@
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
+    "src/app/features/orchestrator/components/chat-sessions-panel/chat-sessions-panel.component.html": {
+      "kind": "popup-trigger",
+      "reason": "Chats panel New chat trigger; opens the scope menu as an overlay. The Archived group uses the shared section header disclosure."
+    },
     "src/app/features/orchestrator/components/orchestrator-context-receipt/orchestrator-context-receipt.component.html": {
       "kind": "staged-adoption",
       "reason": "In-place disclosure that ADM-17 covers. AGT-2813 converted the reported surfaces only; adoption stays incremental per the chapter 05 contract. Adopt <app-disclosure-marker> and move this file to \"enforced\" the next time the surface is touched."
     },
     "src/app/features/orchestrator/components/orchestrator-panel-header/orchestrator-panel-header.component.html": {
       "kind": "popup-trigger",
-      "reason": "Panel-header chats trigger; opens the orchestrator context menu as an overlay."
+      "reason": "Panel-header context actions trigger; opens the pin, debug, settings, and refresh popover as an overlay."
     },
     "src/app/features/project-cycle-time/components/project-cycle-time-panel/project-cycle-time-panel.component.html": {
       "kind": "staged-adoption",

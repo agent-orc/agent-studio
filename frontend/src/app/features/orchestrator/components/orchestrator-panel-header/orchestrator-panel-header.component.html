@@ -20,10 +20,12 @@
   <button
     class="panel-head__chats"
     type="button"
-    aria-controls="orch-context-menu"
-    [attr.aria-expanded]="chatsOpen()"
-    [class.panel-head__chats--open]="chatsOpen()"
-    (click)="chatsToggle.emit()"
+    aria-haspopup="dialog"
+    aria-controls="orch-context-actions"
+    aria-label="Context actions"
+    [attr.aria-expanded]="actionsOpen()"
+    [class.panel-head__chats--open]="actionsOpen()"
+    (click)="actionsToggle.emit()"
     data-testid="orch-context-badge"
   >
     <span
@@ -47,13 +49,24 @@
         </small>
       </span>
     </span>
-    <span class="panel-head__divider" aria-hidden="true"></span>
-    <span>Chats</span>
-    <strong class="panel-head__count" data-testid="orch-context-count">{{ contextCount() }}</strong>
     <app-studio-icon
       class="panel-head__caret"
-      [name]="chatsOpen() ? 'chevronDown' : 'chevronRight'"
+      [name]="actionsOpen() ? 'chevronDown' : 'chevronRight'"
       [size]="12"
     />
+  </button>
+
+  <!-- The session list lives in the left sidebar Chats panel; this only
+       opens or focuses it. -->
+  <button
+    class="panel-head__open-chats"
+    type="button"
+    aria-label="Show all chats in the sidebar"
+    title="Show all chats in the sidebar"
+    (click)="chatsPanelRequest.emit()"
+    data-testid="orch-open-chats-panel"
+  >
+    <app-studio-icon name="bot" [size]="14" />
+    <span>Chats</span>
   </button>
 </div>

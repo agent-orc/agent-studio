@@ -221,14 +221,14 @@ test.describe('F14: context badge, menu and per-message sending', () => {
     await expect(current).toContainText(next);
   });
 
-  test('collapsed badge shows the total and expands into the board context', async ({ page }) => {
+  test('collapsed badge expands into the board context actions', async ({ page }) => {
     await stubProjectsAndJobs(page);
     await stubChatAndCapture(page);
 
     await openSideSheet(page);
     const badge = page.getByTestId('orch-context-badge');
     await expect(badge).toBeVisible();
-    await expect(page.getByTestId('orch-context-count')).toHaveText('3');
+    await expect(page.getByTestId('orch-context-count')).toHaveCount(0);
     await expect(page.getByTestId('orch-context-menu')).toHaveCount(0);
 
     await badge.click();

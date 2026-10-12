@@ -20,6 +20,48 @@ public static class OrchestratorContextVisibilityPolicy
            && string.Equals(taskState, "7-archive", StringComparison.Ordinal);
 }
 
+/// <summary>
+/// Operator archive decisions for an orchestrator chat context. Archiving is a
+/// display marker only: it never deletes turns, and a new turn clears it. It is
+/// independent of <see cref="OrchestratorContextVisibilityPolicy"/>, which
+/// hides task contexts whose task reached <c>7-archive</c>.
+/// </summary>
+public static class OrchestratorContextArchivePolicy
+{
+    public const string RuntimeActive = "active";
+    public const string RuntimeQueued = "queued";
+
+    /// <summary>
+    /// Only project, task, and workbench contexts are archivable. The global
+    /// context is a singleton surface, so it has nothing to archive.
+    /// </summary>
+    public static bool IsArchivableKind(string? kind)
+        => kind is OrchestratorContextKinds.Project
+            or OrchestratorContextKinds.Task
+            or OrchestratorContextKinds.Workbench;
+
+    /// <summary>
+    /// A context with a running or queued turn cannot be archived: the turn
+    /// would immediately unarchive it again and the operator would lose sight
+    /// of live work. Idle, parked, completed, and failed contexts are archivable.
+    /// </summary>
+    public static bool CanArchive(string? runtimeStatus)
+        => !string.Equals(runtimeStatus, RuntimeActive, StringComparison.Ordinal)
+           && !string.Equals(runtimeStatus, RuntimeQueued, StringComparison.Ordinal);
+
+    /// <summary>Unarchiving is always allowed; archiving follows <see cref="CanArchive"/>.</summary>
+    public static bool CanSetArchived(bool archived, string? runtimeStatus)
+        => !archived || CanArchive(runtimeStatus);
+
+    /// <summary>
+    /// The archive marker after an archive-state request: keep an existing
+    /// marker when archiving again (idempotent), stamp <paramref name="now"/>
+    /// on a fresh archive, and clear it on unarchive.
+    /// </summary>
+    public static DateTime? NextArchivedAt(DateTime? current, bool archived, DateTime now)
+        => archived ? current ?? now : null;
+}
+
 public sealed record OrchestratorContextDto(
     string ContextKey,
     string Kind,
@@ -37,7 +79,8 @@ public sealed record OrchestratorContextDto(
     long CumulativeOutputTokens = 0,
     long CumulativeCacheReadTokens = 0,
     long CumulativeCacheCreationTokens = 0,
-    string? WorkbenchKey = null);
+    string? WorkbenchKey = null,
+    DateTime? ArchivedAt = null);
 
 public sealed record OrchestratorContextListResponse(
     IReadOnlyList<OrchestratorContextDto> Contexts);
@@ -110,6 +153,15 @@ public sealed record OrchestratorContextTurnDto(
 public sealed record OrchestratorContextTranscriptResponse(
     OrchestratorContextDto Context,
     IReadOnlyList<OrchestratorContextTurnDto> Turns);
+
+/// <summary>
+/// Operator archive toggle for one orchestrator context, addressed by its
+/// canonical key (<c>project:{name}</c>, <c>task:{name}/{key}</c>, or
+/// <c>workbench:{name}/{key}</c>).
+/// </summary>
+public sealed record SetOrchestratorContextArchivedRequest(
+    string ContextKey,
+    bool Archived);
 
 public sealed record AppendOrchestratorContextTurnRequest(
     OrchestratorContextTurnDto Turn);

@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { StudioTabStateService } from './studio-tab-state.service';
+import { StudioPanelStateService } from './studio-panel-state.service';
 import type { StudioTab } from '../studio-shell.types';
 import { studioTabKey } from '../studio-shell.types';
 import { ensureBrowserStorage } from '../../../../testing/browser-storage';
@@ -92,13 +93,21 @@ describe('StudioTabStateService', () => {
     expect(TestBed.inject(StudioTabStateService).activeTab()).toEqual(tab);
   });
 
-  it('keeps Chat History as one persistent workspace tab', () => {
-    const tab: StudioTab = { kind: 'chat-history' };
-    svc.open(tab);
-    svc.open(tab);
+  it('redirects a persisted retired Chat History tab to the sidebar Chats panel', () => {
+    TestBed.resetTestingModule();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      v: 1,
+      tabs: [{ kind: 'feed' }, { kind: 'chat-history' }],
+      activeKey: 'chat-history',
+    }));
+    TestBed.configureTestingModule({ providers: [StudioTabStateService] });
+    const restored = TestBed.inject(StudioTabStateService);
+    const panels = TestBed.inject(StudioPanelStateService);
 
-    expect(svc.tabs().filter(item => item.kind === 'chat-history')).toEqual([tab]);
-    expect(svc.activeKey()).toBe('chat-history');
+    expect(restored.tabs()).toEqual([{ kind: 'feed' }]);
+    expect(restored.activeKey()).toBe('feed');
+    expect(panels.active()).toBe('chats');
+    expect(panels.visible()).toBe(true);
   });
 
   it('retargets open project tabs and preserves the active settings tab after rename', () => {
