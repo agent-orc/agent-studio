@@ -351,14 +351,20 @@ one host's declared capacity is never exceeded (AGT-2848). The advisor's input
 also includes the freshest review-role plane budget: role `cpu.max`, host cores,
 the unchanged per-worker envelope, rolling review duration, and role
 `throttled_usec` share. The ceiling never exceeds one worker per documented
-2-core minimum. A greater-than-25% rolling duration regression after a raise,
-combined with at least 10% throttled share, withdraws that raise. The runner
+2-core minimum. Adaptive raises require a fresh plane budget, queue depth at
+or above `RaiseQueueDepthThreshold`, elapsed raise cooldown, and host headroom.
+At least 10% throttled share or a greater-than-25% rolling duration regression
+after a raise indicates saturation. Saturation holds at baseline and lowers an
+above-baseline recommendation one step per lower cooldown, even with a backlog.
+`RaiseOnStagnation: false` holds while the queue is stagnant, even if depth
+reaches the threshold. The runner
 applies the same role-quota clamp locally before claiming. Queue input is the
 combined backlog of the legacy post-processing queue and current
 attempt-authority ReviewAttempts in state Pending (`GET
 /api/runner/auto-review-queue`), and a raised
 `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` is adopted on the next
-refresh once the queue is non-empty, without a backend restart. The
+refresh once the queue is non-empty and a fresh plane budget shows headroom,
+without a backend restart. The
 operator-facing form of this is in
 [docs/operations/remote-hosts.md](../../operations/remote-hosts.md) and
 [docs/operations/setup/linux-runner-host.md](../../operations/setup/linux-runner-host.md#how-the-review-ceiling-is-derived).

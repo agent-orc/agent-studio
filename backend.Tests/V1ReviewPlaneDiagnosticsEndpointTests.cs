@@ -656,14 +656,12 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     }
 
     /// <summary>
-    /// AGT-2848: on a remote-review fleet, cards queue in attempt-authority as
-    /// canonical, unclaimed ReviewAttempts (state Pending) - the legacy local
-    /// post-processing queue the advisor used to read stays at zero the whole
-    /// time. Five pending attempts at or above the default raise threshold must
-    /// move the recommendation the same way five legacy-queued cards already did.
+    /// Canonical pending attempts count toward queue depth. With no fresh
+    /// review-plane budget, the advisor holds and exposes that reason through
+    /// the recommendation endpoint.
     /// </summary>
     [Fact]
-    public async Task Pending_canonical_review_attempts_drive_a_raise()
+    public async Task Pending_canonical_review_attempts_wait_for_fresh_host_budget()
     {
         using var factory = BuildFactory();
         var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
@@ -678,21 +676,22 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
 
         var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
 
-        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
-        Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(2, decision.RecommendedParallelism);
+        Assert.Contains("budget", decision.Reason);
+
+        using var http = factory.CreateClient();
+        using var response = JsonDocument.Parse(await http.GetStringAsync(
+            "/api/runner/auto-review-parallelism-recommendation"));
+        Assert.Contains("budget", response.RootElement.GetProperty("reason").GetString());
     }
 
     /// <summary>
-    /// AGT-2848: <c>_current</c> used to be seeded from the configured baseline
-    /// once, at construction. Raising
-    /// <c>AutoReviewQueueAdaptiveParallelism:BaselineParallelism</c> in
-    /// configuration afterward only reached the running recommendation once an
-    /// unrelated raise or lower crossed it in passing - in practice, only after
-    /// a backend restart. A non-empty queue is evidence the new floor is needed
-    /// now, so a raised baseline must be adopted on the very next refresh.
+    /// A baseline change is visible without restart, but a raise waits until
+    /// fresh review-plane telemetry confirms host headroom.
     /// </summary>
     [Fact]
-    public async Task A_raised_baseline_is_adopted_at_runtime_without_a_restart()
+    public async Task A_raised_baseline_waits_for_fresh_host_budget()
     {
         using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
         {
@@ -714,8 +713,8 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         watchdog.Refresh();
         var afterConfigChange = advisor.Refresh();
 
-        Assert.Equal(ReviewParallelismAction.Raise, afterConfigChange.Action);
-        Assert.Equal(3, afterConfigChange.RecommendedParallelism);
+        Assert.Equal(ReviewParallelismAction.Hold, afterConfigChange.Action);
+        Assert.Equal(2, afterConfigChange.RecommendedParallelism);
         Assert.Contains("baseline", afterConfigChange.Reason);
     }
 
@@ -730,7 +729,10 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
     [Fact]
     public async Task Capability_advertisement_never_exceeds_the_executors_own_bootstrap()
     {
-        using var factory = BuildFactory();
+        using var factory = BuildFactory(extraConfiguration: new Dictionary<string, string?>
+        {
+            ["AutoReviewQueueAdaptiveParallelism:BaselineParallelism"] = "3",
+        });
         using var http = factory.CreateClient();
         var registration = await http.PutAsJsonAsync(
             $"/api/v1/runners/{RunnerId}",

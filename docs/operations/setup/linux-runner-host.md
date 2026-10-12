@@ -977,13 +977,13 @@ attempt-authority held several pending attempts and host load had headroom.
 
 Two follow-on effects of feeding the advisor the right number:
 
-- **A raised baseline takes effect without a backend restart.** The running
+- **A raised baseline takes effect without a backend restart when the host has headroom.** The running
   recommendation used to be seeded once at startup; raising
   `AutoReviewQueueAdaptiveParallelism:BaselineParallelism` in configuration only
   reached it once an unrelated raise or lower crossed the new value in
   passing. The advisor now adopts a higher configured baseline on its next
-  refresh whenever the combined queue is non-empty, ahead of and unblocked by
-  the raise cooldown.
+  refresh whenever the combined queue is non-empty and a fresh review-plane
+  budget shows headroom, ahead of and unblocked by the raise cooldown.
 - **The recommendation never exceeds a host's own bootstrap.** The
   capability-advertisement endpoint (`PUT /api/v1/runners/{runnerId}/capabilities`)
   clamps the advisor's one global recommendation to the specific executor's
@@ -1001,10 +1001,15 @@ so the recommendation cannot exceed
 `cpu.max`, not the per-worker child cgroup, and reports the raw value, effective
 plane cores, host cores, per-worker envelope, current ceiling, rolling duration
 of the last 20 completed reviews, and `throttled_usec` delta divided by wall
-time. If duration grows by more than 25% after a raise while throttled share is
-at least 10%, the advisor withdraws the raise. The runner repeats the role-quota
-clamp before every claim, so a stale or mis-set central ceiling cannot overbook
-the unit.
+time. Adaptive raises require queue depth at or above
+`AutoReviewQueueAdaptiveParallelism:RaiseQueueDepthThreshold`, elapsed raise
+cooldown, and a fresh plane budget without high throttling or a duration
+regression after the last raise. `RaiseOnStagnation: false` holds a stagnant
+queue even when it reaches the depth threshold. Startup starts the
+raise cooldown. Sustained pressure lowers an above-baseline recommendation one
+step per lower cooldown even with a backlog. The recommendation endpoint returns
+the current decision reason. The runner repeats the role-quota clamp before
+every claim, so a stale or mis-set central ceiling cannot overbook the unit.
 
 Execution Hosts shows the review role's quota, adopted ceiling, and throttled
 share. Two consecutive samples at or above 10% raise the existing degraded-host

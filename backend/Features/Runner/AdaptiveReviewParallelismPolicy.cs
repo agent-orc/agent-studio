@@ -27,6 +27,9 @@ public sealed record AdaptiveReviewParallelismOptions
     /// <summary>Queue depth that triggers a raise, even without stagnation.</summary>
     public int RaiseQueueDepthThreshold { get; init; } = 5;
 
+    /// <summary>Whether stagnation may contribute to a raise once the queue depth threshold is met.</summary>
+    public bool RaiseOnStagnation { get; init; } = true;
+
     /// <summary>Minimum time between two raises (and between a raise and a subsequent lower), so a single burst cannot ratchet parallelism up in lockstep with every poll tick.</summary>
     public TimeSpan RaiseCooldown { get; init; } = TimeSpan.FromMinutes(5);
 
@@ -47,9 +50,8 @@ public sealed record AdaptiveReviewParallelismOptions
 
 /// <summary>
 /// Pure raise/hold/lower decision for the review plane's parallelism ceiling.
-/// Two-sided hysteresis (distinct raise vs. lower cooldowns, plus a sustained-empty
-/// requirement before lowering) keeps a queue oscillating around the raise threshold
-/// from ratcheting parallelism up and down every poll tick.
+/// Distinct raise and lower cooldowns prevent rapid changes. A drained queue
+/// must stay empty before lowering; host saturation can lower a busy plane.
 /// </summary>
 public static class AdaptiveReviewParallelismPolicy
 {
@@ -73,7 +75,7 @@ public static class AdaptiveReviewParallelismPolicy
             currentRecommendation,
             planeBudget is null ? SanctionedMin : 0,
             SanctionedMax);
-        var sinceLastChange = lastChangeAtUtc is { } last ? nowUtc - last : TimeSpan.MaxValue;
+        var sinceLastChange = lastChangeAtUtc is { } last ? nowUtc - last : TimeSpan.Zero;
         var planeCeiling = planeBudget is null
             ? SanctionedMax
             : Math.Clamp(
@@ -89,32 +91,49 @@ public static class AdaptiveReviewParallelismPolicy
                 PlaneReason("ceiling reduced", planeBudget!, planeCeiling));
         }
 
-        if (durationBeforeLastRaiseSeconds is > 0
+        var throttled = planeBudget?.ThrottledShare >= opts.HighThrottledShareThreshold;
+        var slowed = durationBeforeLastRaiseSeconds is > 0
             && planeBudget?.RollingReviewDurationSeconds is > 0
             && planeBudget.RollingReviewDurationSeconds
-                > durationBeforeLastRaiseSeconds.Value * (1 + opts.SlowdownThreshold)
-            && planeBudget.ThrottledShare >= opts.HighThrottledShareThreshold
-            && current > opts.BaselineParallelism)
+                > durationBeforeLastRaiseSeconds.Value * (1 + opts.SlowdownThreshold);
+        var saturated = throttled || slowed;
+        var pressureReason = throttled && slowed
+            ? $"role throttled share {planeBudget!.ThrottledShare:P0} and rolling review duration grew "
+              + $"{(planeBudget.RollingReviewDurationSeconds!.Value / durationBeforeLastRaiseSeconds!.Value - 1) * 100:F0}%"
+            : throttled
+                ? $"role throttled share {planeBudget!.ThrottledShare:P0}"
+                : "rolling review duration regressed after the last raise";
+
+        if (saturated && current > opts.BaselineParallelism)
         {
-            var growth = (planeBudget.RollingReviewDurationSeconds.Value
-                          / durationBeforeLastRaiseSeconds.Value - 1) * 100;
+            if (sinceLastChange < opts.LowerCooldown)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current,
+                    $"host saturated ({pressureReason}); lower cooldown active");
             return new AdaptiveReviewParallelismDecision(
                 ReviewParallelismAction.Lower,
                 Math.Max(opts.BaselineParallelism, current - 1),
-                $"raise withdrawn: rolling review duration grew {growth:F0}% while role throttled share "
-                + $"was {planeBudget.ThrottledShare:P0}");
+                $"host saturated ({pressureReason}); returning toward the baseline ({opts.BaselineParallelism})");
         }
 
         // AGT-2848: an operator-raised baseline (AutoReviewQueueAdaptiveParallelism:
         // BaselineParallelism) used to only reach a running recommendation seeded
         // below it once a raise/lower crossed it in passing - a backend restart was
         // the only reliable way to pick up the new floor. A non-empty queue is
-        // evidence the raised floor is actually needed right now, so it is adopted
-        // on this refresh, ahead of and unblocked by the raise cooldown below.
+        // evidence the raised floor is needed. It is adopted with fresh host
+        // headroom, ahead of and unblocked by the adaptive raise cooldown.
         if (queueDepth > 0 && opts.BaselineParallelism > current)
         {
+            if (saturated)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current,
+                    $"configured baseline raised, but host saturated ({pressureReason})");
+            if (planeBudget is null)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current,
+                    "configured baseline raised, but no fresh review plane budget");
             var adopted = Math.Min(planeCeiling, Math.Min(SanctionedMax, opts.BaselineParallelism));
-            if (adopted <= current && planeBudget is not null)
+            if (adopted <= current)
                 return new AdaptiveReviewParallelismDecision(
                     ReviewParallelismAction.Hold,
                     current,
@@ -125,10 +144,26 @@ public static class AdaptiveReviewParallelismPolicy
                 $"configured baseline raised to {opts.BaselineParallelism}; adopted at runtime without a backend restart");
         }
 
-        if ((queueDepth >= opts.RaiseQueueDepthThreshold || isStagnant)
-            && current < Math.Min(SanctionedMax, planeCeiling)
-            && sinceLastChange >= opts.RaiseCooldown)
+        var depthWarrantsRaise = queueDepth >= opts.RaiseQueueDepthThreshold;
+        if (depthWarrantsRaise && current < SanctionedMax)
         {
+            if (saturated)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current,
+                    $"{(isStagnant ? "stagnant but " : "")}host saturated ({pressureReason})");
+            if (isStagnant && !opts.RaiseOnStagnation)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current, "stagnation raises disabled by configuration");
+            if (planeBudget is null)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current, "raise refused: no fresh review plane budget");
+            if (current >= planeCeiling)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current,
+                    PlaneReason("raise refused", planeBudget, planeCeiling));
+            if (sinceLastChange < opts.RaiseCooldown)
+                return new AdaptiveReviewParallelismDecision(
+                    ReviewParallelismAction.Hold, current, "raise cooldown active");
             var target = Math.Min(SanctionedMax, current + 1);
             var reason = isStagnant
                 ? $"queue stagnant at depth {queueDepth}"
@@ -136,14 +171,12 @@ public static class AdaptiveReviewParallelismPolicy
             return new AdaptiveReviewParallelismDecision(ReviewParallelismAction.Raise, target, reason);
         }
 
-        if (planeBudget is not null
-            && (queueDepth >= opts.RaiseQueueDepthThreshold || isStagnant)
-            && current >= planeCeiling)
+        if (isStagnant && !depthWarrantsRaise)
         {
             return new AdaptiveReviewParallelismDecision(
                 ReviewParallelismAction.Hold,
                 current,
-                PlaneReason("raise refused", planeBudget!, planeCeiling));
+                $"stagnant queue depth {queueDepth} below raise threshold ({opts.RaiseQueueDepthThreshold})");
         }
 
         if (queueDepth == 0
@@ -211,6 +244,7 @@ public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
         _registry = registry;
         var baseline = ReadOptions(configuration).BaselineParallelism;
         _current = new AdaptiveReviewParallelismDecision(ReviewParallelismAction.Hold, baseline, "startup baseline");
+        _lastChangeAtUtc = DateTime.UtcNow;
     }
 
     public AdaptiveReviewParallelismDecision Current
@@ -248,10 +282,6 @@ public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
                 {
                     _durationBeforeLastRaiseSeconds =
                         _registry.LatestReviewPlaneBudget(now)?.RollingReviewDurationSeconds;
-                }
-                else if (decision.Action == ReviewParallelismAction.Lower)
-                {
-                    _durationBeforeLastRaiseSeconds = null;
                 }
                 _lastChangeAtUtc = now;
                 _logger.LogInformation(
@@ -320,6 +350,7 @@ public sealed class AdaptiveReviewParallelismAdvisor : BackgroundService
                 AdaptiveReviewParallelismPolicy.SanctionedMin, AdaptiveReviewParallelismPolicy.SanctionedMax),
             RaiseQueueDepthThreshold = Math.Max(1,
                 section.GetValue<int?>("RaiseQueueDepthThreshold") ?? defaults.RaiseQueueDepthThreshold),
+            RaiseOnStagnation = section.GetValue<bool?>("RaiseOnStagnation") ?? defaults.RaiseOnStagnation,
             RaiseCooldown = TimeSpan.FromMinutes(Math.Max(1,
                 section.GetValue<double?>("RaiseCooldownMinutes") ?? defaults.RaiseCooldown.TotalMinutes)),
             LowerCooldown = TimeSpan.FromMinutes(Math.Max(1,
