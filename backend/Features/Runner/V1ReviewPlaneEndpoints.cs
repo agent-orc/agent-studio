@@ -412,15 +412,63 @@ public static class V1ReviewPlaneEndpoints
             // AGT-W57: park pending reviews that would run into an open cause
             // before they spend an attempt, and skip every parked card.
             var heldByCauseBreaker = causeBreakers.HoldPendingReviews();
+            var activeByRunner = authority.ListActiveReviewAttempts()
+                .Where(review => review.Lease is not null)
+                .GroupBy(review => review.Lease!.ExecutorId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var now = DateTime.UtcNow;
+            var alternativeHosts = registry.ListCapabilitySnapshots()
+                .Where(snapshot => !string.Equals(snapshot.RunnerId, runnerId, StringComparison.Ordinal)
+                    && now - snapshot.LastSeenAt <= V1ReviewExecutorRegistry.ReviewExecutorHeartbeatStaleAfter
+                    && snapshot.HostAdmission.AdmissionState == "open"
+                    && activeByRunner.GetValueOrDefault(snapshot.RunnerId)
+                        < (snapshot.EffectiveMaxParallelism ?? snapshot.RoleMaxParallelism ?? 1))
+                .Select(snapshot => (snapshot.HostId,
+                    Capabilities: registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)))
+                .Where(item => item.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .ToArray();
+            string? hostWaitReason = null;
+            bool AdmitHost(ReviewAttemptDto candidate)
+            {
+                var codingHost = candidate.Subject.CodingHostId
+                    ?? authority.GetRun(candidate.SourceRunAttemptId)?.Lease?.HostId;
+                if (string.IsNullOrWhiteSpace(codingHost)
+                    || !string.Equals(codingHost, executor.HostId, StringComparison.Ordinal)) return true;
+                var task = FindTask(scanner, candidate.TaskKey);
+                var required = task is not null && settings.Get(task.ProjectName).RequireDifferentReviewHost;
+                var otherIdle = alternativeHosts.Any(other =>
+                    !string.Equals(other.HostId, codingHost, StringComparison.Ordinal)
+                    && CanServeReviewPlanOnHost(candidate.Subject.Plan, other.Capabilities));
+                var placement = Contract.ReviewHostPlacementPolicy.Decide(
+                    codingHost, executor.HostId,
+                    required || candidate.Subject.Plan?.RequireDifferentHostFailureDomain == true,
+                    otherIdle);
+                hostWaitReason = placement switch
+                {
+                    Contract.ReviewHostPlacementDecision.WaitForRequiredHost =>
+                        Contract.ReviewClaimEmptyReasons.DifferentHostRequired,
+                    Contract.ReviewHostPlacementDecision.YieldToOtherHost =>
+                        hostWaitReason ?? Contract.ReviewClaimEmptyReasons.DifferentHostPreferred,
+                    _ => hostWaitReason,
+                };
+                return placement == Contract.ReviewHostPlacementDecision.Admit;
+            }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
-                heldByCauseBreaker);
+                heldByCauseBreaker,
+                AdmitHost);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
+                if (hostWaitReason is not null)
+                    return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                        hostWaitReason,
+                        hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
+                            ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
+                            : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
@@ -442,7 +490,8 @@ public static class V1ReviewPlaneEndpoints
                 settings,
                 remoteReviewPlans,
                 out var subjectTask,
-                out var baseline);
+                out var baseline,
+                authority);
             if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
             {
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
@@ -804,13 +853,15 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            if (batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+            var batchDeferredAccepted = batchDeferred
+                && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
+            if (batchDeferredAccepted)
             {
                 request = request with
                 {
                     Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
                         "build-tests", "deferred-to-batch", "DeferredToBatch",
-                        "The complete suite is owned by the documentation-only batch gate.")).ToArray(),
+                        "The complete suite is owned by the batch gate; per-card verification ran separately.")).ToArray(),
                 };
             }
 
@@ -868,7 +919,7 @@ public static class V1ReviewPlaneEndpoints
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
             if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
-                && !(batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+                && !batchDeferredAccepted
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -1012,8 +1063,7 @@ public static class V1ReviewPlaneEndpoints
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
             string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
-                && task.State == TaskStates.AutoReview)
+            if (batchDeferredAccepted && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -1135,7 +1185,7 @@ public static class V1ReviewPlaneEndpoints
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
 
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (batchDeferredAccepted)
             {
                 EnqueueEvidenceProjection();
                 return Results.Ok(new Contract.ReviewReportDto(
@@ -2067,6 +2117,25 @@ public static class V1ReviewPlaneEndpoints
             });
     }
 
+    private static bool CanServeReviewPlanOnHost(
+        Contract.ReviewPlanDto? plan,
+        IReadOnlySet<string> capabilities)
+    {
+        if (!capabilities.Contains(Contract.ReviewCapabilities.GitMaterialization)
+            || !capabilities.Contains(Contract.ReviewCapabilities.BaselineComparison)
+            || !capabilities.Contains(Contract.ReviewCapabilities.DependencyPreparation))
+            return false;
+        if (plan is null) return true;
+        if (plan.RequiresVisualReview
+            && !capabilities.Contains(Contract.ReviewCapabilities.VisionReview))
+            return false;
+        if (plan.RequiredAspects.Any(aspect =>
+                aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
+            && !capabilities.Contains(Contract.ReviewCapabilities.SemanticReview))
+            return false;
+        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities);
+    }
+
     private static Contract.ReviewSubjectDto ToSubject(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -2074,7 +2143,8 @@ public static class V1ReviewPlaneEndpoints
         AgentStudio.Projects.ProjectSettingsService settings,
         RemoteReviewPlanBuilder remoteReviewPlans,
         out TaskInfo? subjectTask,
-        out ReviewBaselineBranchDecision? baseline)
+        out ReviewBaselineBranchDecision? baseline,
+        AttemptAuthorityService? authority = null)
     {
         var materializableRepository = MaterializableRepository(
             review, scanner, projects, settings);
@@ -2115,7 +2185,8 @@ public static class V1ReviewPlaneEndpoints
             review.Subject.ResultRef ?? review.Subject.ExpectedResultSha,
             null,
             null,
-            null,
+            review.Subject.CodingHostId
+                ?? authority?.GetRun(review.SourceRunAttemptId)?.Lease?.HostId,
             review.Subject.ReviewPolicyHash,
             plan,
             review.Subject.CreatedAt);
@@ -2263,9 +2334,10 @@ public static class V1ReviewPlaneEndpoints
         string? repositoryPath,
         BuildProfile? profile,
         string? integrationRef,
-        IReadOnlyList<string>? changedFiles = null)
+        IReadOnlyList<string>? changedFiles = null,
+        VerifyPlan? verifyOverride = null)
     {
-        var verify = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var verify = verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var preparation = GatePreparationPlanner.Plan(
                 repositoryPath ?? string.Empty,
                 profile,

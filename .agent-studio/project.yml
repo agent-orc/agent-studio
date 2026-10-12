@@ -9,9 +9,9 @@ commands:
     - dotnet build agent-taskboard.sln --no-restore
     - npm --prefix frontend run build
   test:
-    - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/backend
-    - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/runner
-    - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/task-server
+    - dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
+    - dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
     - npm --prefix frontend run test:ci
   lint:
     - npm --prefix frontend run lint
@@ -19,14 +19,28 @@ testSuites:
   - id: backend-routine
     category: routine
     expectedDurationSeconds: 1440
-    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/backend
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound
   - id: runner-routine
     category: routine
     expectedDurationSeconds: 90
-    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/runner
+    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound
   - id: task-server-routine
     category: routine
     expectedDurationSeconds: 150
+    command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound
+  # Coverage runs outside review gates (Dossier test-acceleration B11): the
+  # collector made the same backend tests 1.7-2.5x slower on agent-runner-01.
+  - id: backend-coverage
+    category: release
+    expectedDurationSeconds: 3600
+    command: dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/backend
+  - id: runner-coverage
+    category: release
+    expectedDurationSeconds: 180
+    command: dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/runner
+  - id: task-server-coverage
+    category: release
+    expectedDurationSeconds: 300
     command: dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound --collect "Code Coverage;Format=Cobertura" --results-directory coverage/dotnet/task-server
   - id: frontend-unit
     category: routine

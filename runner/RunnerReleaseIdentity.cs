@@ -121,8 +121,9 @@ internal static class RunnerReleaseIdentity
         var version = Trim(informationalVersion?.Split('+', 2)[0])
                       ?? Trim(assemblyVersion)
                       ?? "unknown";
-        var commit = Trim(configuredCommit)
-                     ?? Trim(informationalVersion?.Split('+', 2).ElementAtOrDefault(1)?.Split('.', 2)[0]);
+        var commit = ValidCommit(configuredCommit)
+                     ?? ValidCommit(informationalVersion?.Split('+', 2).ElementAtOrDefault(1)?.Replace("sha.", "", StringComparison.OrdinalIgnoreCase))
+                     ?? ValidCommit(releaseId.Split('-').LastOrDefault());
         var builtAt = ParseInstant(configuredBuiltAt) ?? ParseReleaseStamp(releaseId);
 
         return new Contract.RunnerReleaseIdentityDto(
@@ -160,4 +161,11 @@ internal static class RunnerReleaseIdentity
 
     private static string? Trim(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? ValidCommit(string? value)
+    {
+        var candidate = Trim(value);
+        return candidate is not null && Regex.IsMatch(candidate, @"\A[0-9a-fA-F]{7,40}\z")
+            ? candidate : null;
+    }
 }

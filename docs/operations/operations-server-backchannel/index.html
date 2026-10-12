@@ -656,6 +656,10 @@
       <li><b>2026-09-26, AGT-2907: foundation stage delivered.</b> The operator resolved D3: AGT-2736 ships its bounded Option C baseline; AGT-2907 owns the Operations Server expansion above it. The Task Server permit contract and outbound Operations Agent channel are the accepted scope of this delivery. Separate scoped principals, live permit checks, bounded fenced attempts, cancellation and durable replay are implemented. Full catalogue, Connector/BFF migration with review permits, and full deployment parity are <a href="../../system/contracts/operations-backchannel.md#typed-follow-up-stages">typed follow-up stages</a>. The private source-built Compose rehearsal does not claim full one-box parity.</li>
       <li><b>2026-10-11, status check.</b> AGT-2907 is integrated in <code>develop</code> and waits in Human Review. The shipped catalogue holds <code>host.inspect</code> only; no product component calls the Operations Server; permits are issued only in tests. Production runs the monolith and none of the new services. This Dossier's status, decision receipts and &sect;02 clarification were updated; follow-up decisions moved to AGT-W65 D15, D16 and D21.</li>
       <li><b>2026-10-11, operator decisions in AGT-W65.</b> D14 A (engine decides, out of the monolith), D15 A (separate processes, shared deployment allowed) and D16 A (claimable work on runner hosts) settle the follow-up questions of this Dossier; ADR-0078 records them (AGT-3062). D21, the name, is open.</li>
+<li data-implementation-entry="" data-task-key="AGT-3062" data-delivered-at="2026-10-12" data-slice="Operations execution boundary">
+  <strong>AGT-3062 · Operations execution boundary</strong>
+  <span>Delivered: ADR-0078 and the canonical contracts record separate Engine and Operations Server processes and reserve claimable pipeline work for runner hosts; this Dossier remains the source for the host-operation backchannel.</span>
+</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>

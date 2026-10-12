@@ -101,6 +101,21 @@ public sealed class ReviewRoundBudgetTests
     }
 
     [Fact]
+    public void ReviewVerificationBlock_IsNeverDegraded()
+    {
+        var history = new ReviewRoundBudgetLedger([
+            new DeliveredReviewRound("r1", ["review-verification"], []),
+            new DeliveredReviewRound("r2", ["review-verification"], []),
+        ]);
+
+        var decision = ReviewRoundBudgetPolicy.Decide(history, "r3",
+            ["review-verification"], 3, 2);
+
+        Assert.False(decision.Degrade);
+        Assert.Equal("review-verification", decision.SpentBy);
+    }
+
+    [Fact]
     public void ZeroAutomaticReissueAllowance_KeepsFirstBlockForEscalation()
     {
         var decision = ReviewRoundBudgetPolicy.Decide(

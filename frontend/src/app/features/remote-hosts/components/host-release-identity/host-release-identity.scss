@@ -33,7 +33,9 @@
 
 .release__detail {
   display: block;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--studio-fg-muted);
   font-family: var(--font-mono, monospace);
   font-size: 10px;

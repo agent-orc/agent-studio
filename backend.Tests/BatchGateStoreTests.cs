@@ -6,6 +6,44 @@ namespace AgentStudio.Tests;
 
 public sealed class BatchGateStoreTests : IDisposable
 {
+    [Fact]
+    public void Base_verdict_is_reused_by_exact_sha_and_profile()
+    {
+        var verdict = new BatchGateBaseVerdict("project", Base, "profile-a",
+            "fail", "fingerprint", "base red", "evidence.json",
+            Now);
+        _store.RecordBaseVerdict(verdict);
+
+        Assert.Equal(verdict, new BatchGateStore(_root)
+            .ReadBaseVerdict("project", Base, "profile-a"));
+        Assert.Null(_store.ReadBaseVerdict("project", Base, "profile-b"));
+    }
+
+    [Fact]
+    public async Task Readers_never_observe_a_partially_written_state()
+    {
+        var manifest = Close();
+        var writer = Task.Run(async () =>
+        {
+            for (var index = 0; index < 80; index++)
+            {
+                _store.AppendState(new BatchGateState(manifest.BatchId,
+                    manifest.MembershipDigest, BatchPhase.Assembling, null,
+                    1, Now.AddSeconds(index)));
+                await Task.Yield();
+            }
+        });
+        var reader = Task.Run(async () =>
+        {
+            while (!writer.IsCompleted)
+            {
+                Assert.Equal(manifest.BatchId, _store.LatestState(manifest.BatchId).BatchId);
+                await Task.Yield();
+            }
+        });
+
+        await Task.WhenAll(writer, reader);
+    }
     private const string Base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Next = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static readonly DateTimeOffset Now = new(2026, 9, 27, 10, 0, 0, TimeSpan.Zero);

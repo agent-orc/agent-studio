@@ -143,6 +143,7 @@ public static class ProjectSnapshotEndpoints
                     integrationGateReviewReuse = settings.IntegrationGateReviewReuse,
                     integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(settings),
                     maxReviewConcernRounds = settings.MaxReviewConcernRounds,
+                    requireDifferentReviewHost = settings.RequireDifferentReviewHost,
                     scopedReviewAfterFinding = settings.ScopedReviewAfterFinding,
                     scopedReviewMaximumDeltaFiles = settings.ScopedReviewMaximumDeltaFiles,
                     // F35: every lane resolved to its effective strategy.

@@ -40,6 +40,88 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task Reserved_project_does_not_hold_the_global_merge_gate_for_another_project()
+    {
+        var repo = SeedRepo("runner-reserved-project");
+        RunGit(repo, "checkout -q -b develop");
+        var (git, log) = Build(repo);
+        var jobFolder = BeginRun(log, repo, jobId: "reserved");
+        var reservations = new BatchIntegrationReservationService();
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: reservations);
+        using var held = await reservations.AcquireAsync("batch-project", CancellationToken.None);
+        var blocked = runner.RunAsync("batch-project", "reserved", jobFolder,
+            repo, "develop", CancellationToken.None);
+        Task? blockedPush = null;
+        try
+        {
+            Assert.False(blocked.IsCompleted);
+            var other = await runner.RunAsync("other-project", "reserved", jobFolder,
+                repo, "develop", CancellationToken.None);
+            Assert.NotNull(other);
+            Assert.False(blocked.IsCompleted);
+            blockedPush = runner.PushIntegrationBranchAsync("batch-project", "reserved",
+                jobFolder, repo, "develop");
+            Assert.False(blockedPush.IsCompleted);
+            var otherPush = await runner.PushIntegrationBranchAsync("other-project", "reserved",
+                jobFolder, repo, "develop");
+            Assert.NotNull(otherPush);
+            Assert.False(blockedPush.IsCompleted);
+        }
+        finally
+        {
+            held.Dispose();
+            await blocked;
+            if (blockedPush is not null) await blockedPush;
+        }
+    }
+
+    [Fact]
+    public async Task Pending_code_push_survives_restart_until_verified()
+    {
+        var root = Path.Combine(_tempDir, "pending-code-pushes");
+        var first = new BatchIntegrationReservationService(root);
+        first.MarkPushPending("Fixture", "card-1", "sha-1");
+        first.MarkPushPending("Fixture", "card-1", "sha-2");
+
+        var restarted = new BatchIntegrationReservationService(root);
+        var batch = restarted.AcquireBatchAsync("fixture", CancellationToken.None);
+        Assert.False(batch.IsCompleted);
+
+        // A re-integration supersedes the old approval, including its durable
+        // marker. Verifying the old SHA cannot release the new one.
+        restarted.MarkPushVerified("Fixture", "card-1", "sha-1");
+        Assert.False(batch.IsCompleted);
+        Assert.Equal("sha-2", restarted.GetWait("Fixture")!.ApprovedSha);
+        restarted.MarkPushVerified("Fixture", "card-1", "sha-2");
+        using var grant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Reconciliation_releases_marker_after_origin_contains_approved_merge()
+    {
+        var (repo, _) = SeedRepoWithOrigin("pending-origin-ancestor");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        var approved = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var root = Path.Combine(_tempDir, "pending-origin-marker");
+        new BatchIntegrationReservationService(root).MarkPushPending(
+            "Fixture", "card-remote", approved, repositoryPath: repo,
+            integrationBranch: "develop");
+        var (git, _) = Build(repo);
+        var restarted = new BatchIntegrationReservationService(root);
+
+        using var grant = await restarted.AcquireBatchAsync("Fixture", marker =>
+        {
+            var remote = git.FetchBatchIntegrationTip(repo, "develop", CancellationToken.None);
+            return remote is not null && git.IsAncestor(repo, marker.ApprovedSha!, remote);
+        }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Null(restarted.GetWait("Fixture"));
+    }
+
+    [Fact]
     public void Run_MergesTaskBranch_AndRecordsStepPassed()
     {
         var repo = SeedRepo("runner-merge");
@@ -1061,9 +1143,15 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
 
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "32");
-        var runner = new MergeIntoDevelopRunner(git, log, NullLogger<MergeIntoDevelopRunner>.Instance);
+        var reservations = new BatchIntegrationReservationService();
+        var approvedSha = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        reservations.MarkPushPending("Fixture", "32", approvedSha);
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            batchReservations: reservations);
 
-        var result = await runner.PushIntegrationBranchAsync("Fixture", "32", jobFolder, repo, "develop");
+        var result = await runner.PushIntegrationBranchAsync("Fixture", "32", jobFolder, repo,
+            "develop", approvedSha: approvedSha);
 
         Assert.True(result.Success);
         Assert.Equal("no-remote", result.Status);
@@ -1071,6 +1159,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Skipped, step!.Status);
         Assert.Equal("no-remote", step.Verdict);
+        Assert.Null(reservations.GetWait("Fixture"));
     }
 
     [Fact]
@@ -1523,6 +1612,44 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         // The object the push may publish is pinned at release time, not read
         // from the branch when the queued item finally runs.
         Assert.Equal(outcome.MergedSha, queued.ApprovedSha);
+    }
+
+    [Fact]
+    public async Task Code_merge_keeps_batch_reserved_until_queued_push_is_verified()
+    {
+        var (repo, remote) = SeedRepoWithOrigin("batch-merge-push-window");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        RunGit(repo, "checkout -q -b task/merge-push-window");
+        File.WriteAllText(Path.Combine(repo, "code.cs"), "code change");
+        Commit(repo, "feat: code change");
+        RunGit(repo, "checkout -q develop");
+        var (git, log, settings) = BuildWithSettings(repo);
+        settings.SetBuildProfile("Fixture", new BuildProfile { BuildCmds = ["cd ."] });
+        var gateRunner = new CapturingBuildTestGateRunner(new BuildTestGateResult(
+            BuildTestGateVerdict.Ok, 0, 10, "", "green", true, false));
+        var queue = new IntegrationPushQueue();
+        var reservations = new BatchIntegrationReservationService();
+        var jobFolder = BeginRun(log, repo, jobId: "merge-push-window");
+        var runner = new MergeIntoDevelopRunner(git, log,
+            NullLogger<MergeIntoDevelopRunner>.Instance,
+            pushQueue: queue, projectSettings: settings,
+            batchReservations: reservations,
+            preDevelopBuildGate: new PreDevelopBuildGate(gateRunner));
+
+        var merged = await runner.RunAsync("Fixture", "merge-push-window", jobFolder,
+            repo, "develop", CancellationToken.None);
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, merged.Outcome);
+        Assert.True(queue.Reader.TryRead(out var queued));
+        var batch = reservations.AcquireBatchAsync("Fixture", CancellationToken.None);
+        Assert.False(batch.IsCompleted);
+
+        await new IntegrationPushWorker(queue, runner,
+            NullLogger<IntegrationPushWorker>.Instance)
+            .ProcessAsync(queued!, CancellationToken.None);
+
+        Assert.Equal(merged.MergedSha, RemoteSha(remote, "develop"));
+        using var batchGrant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     /// <summary>
@@ -2118,7 +2245,7 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     }
 
     [Fact]
-    public void Run_MergedButPushDisabled_DoesNotEnqueue()
+    public async Task Run_MergedButPushDisabled_KeepsTheBatchWaiting()
     {
         var repo = SeedRepo("run-disabled");
         RunGit(repo, "checkout -q -b develop");
@@ -2130,14 +2257,22 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var (git, log, settings) = BuildWithSettings(repo);
         settings.SetPipelineStep("Fixture", PipelineCatalogue.MergeIntoDevelopPushStepId, new PipelineStepSetting { Enabled = false });
         var queue = new IntegrationPushQueue();
+        var reservations = new BatchIntegrationReservationService();
         var jobFolder = BeginRun(log, repo, jobId: "41");
         var runner = new MergeIntoDevelopRunner(
-            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue, projectSettings: settings);
+            git, log, NullLogger<MergeIntoDevelopRunner>.Instance, pushQueue: queue,
+            projectSettings: settings, batchReservations: reservations);
 
-        var outcome = runner.Run("Fixture", "41", jobFolder, repo, "develop");
+        var outcome = await runner.RunAsync("Fixture", "41", jobFolder,
+            repo, "develop", CancellationToken.None);
 
         Assert.Equal(MergeIntoIntegrationOutcome.Merged, outcome.Outcome);
         Assert.False(queue.Reader.TryRead(out _), "no push must be enqueued when the push step is disabled");
+        using var cancellation = new CancellationTokenSource();
+        var batch = reservations.AcquireBatchAsync("Fixture", cancellation.Token);
+        Assert.False(batch.IsCompleted);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await batch);
     }
 
     /// <summary>

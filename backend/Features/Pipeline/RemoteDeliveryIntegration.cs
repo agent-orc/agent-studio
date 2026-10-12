@@ -38,6 +38,11 @@ public static class RemoteDeliveryIntegrationPolicy
                 "The source run has no settled immutable Result-Envelope.");
         }
 
+        if (reviewPlan?.BuildTestDeferredToBatch == true)
+            return new RemoteDeliveryIntegrationDecision(false,
+                RemoteBuildTestGateClass.Failed,
+                "The full build/test gate is deferred to a batch and has no per-card verdict.");
+
         // AGT-2819: a gate that was already red on the merge base is a defect of
         // the integration branch, not of this delivery. Refusing the card for it
         // stalled the whole board in Human Review for weeks while the deliveries
@@ -56,22 +61,17 @@ public static class RemoteDeliveryIntegrationPolicy
                 $"Remote Review ended with '{reviewOutcome ?? "unknown"}', not Pass.");
         }
 
+        static bool IsBuildTestAspect(string aspect) =>
+            string.Equals(aspect, "build-tests", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(aspect, "review-verification", StringComparison.OrdinalIgnoreCase);
         var buildTests = verdicts
-            .Where(verdict => string.Equals(
-                verdict.Aspect,
-                "build-tests",
-                StringComparison.OrdinalIgnoreCase))
+            .Where(verdict => IsBuildTestAspect(verdict.Aspect))
             .ToList();
         if (buildTests.Count == 0)
         {
-            var buildTestWasPlanned = reviewPlan?.Commands.Any(command => string.Equals(
-                                          command.Aspect,
-                                          "build-tests",
-                                          StringComparison.OrdinalIgnoreCase)) == true
-                                      || reviewPlan?.RequiredAspects.Any(aspect => string.Equals(
-                                          aspect,
-                                          "build-tests",
-                                          StringComparison.OrdinalIgnoreCase)) == true;
+            var buildTestWasPlanned = reviewPlan?.Commands.Any(command =>
+                                          IsBuildTestAspect(command.Aspect)) == true
+                                      || reviewPlan?.RequiredAspects.Any(IsBuildTestAspect) == true;
             if (reviewPlan is null || buildTestWasPlanned)
             {
                 return new RemoteDeliveryIntegrationDecision(

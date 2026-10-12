@@ -112,7 +112,8 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
         var promptEdit = await client.PutAsJsonAsync(
             $"/api/tasks/AGT-OLDER-BRIEF/files/prompt.md?watchPath={Uri.EscapeDataString(WatchPath)}",
             new { content = "Sharpened brief" });
-        Assert.Equal(HttpStatusCode.OK, promptEdit.StatusCode);
+        Assert.True(promptEdit.StatusCode == HttpStatusCode.OK,
+            await promptEdit.Content.ReadAsStringAsync());
         Assert.NotEqual(original, BriefVersionStore.ReadOrCreate(Current(factory, "AGT-OLDER-BRIEF").FolderPath));
 
         var completion = await client.PostAsJsonAsync("/api/runner/completion", DeliveredCompletion(taskKey, attempt));
@@ -127,6 +128,29 @@ public sealed class RemoteRunDispositionEndpointTests : IDisposable
             new { decision = "discard" });
         Assert.Equal(HttpStatusCode.OK, decision.StatusCode);
         Assert.Equal(TaskStates.Ready, Current(factory, "AGT-OLDER-BRIEF").State);
+    }
+
+    [Fact]
+    public async Task Liveness_sweep_keeps_a_claimed_keyless_card_in_progress_for_the_prompt_save()
+    {
+        // AGT-3075: the uptime liveness sweep looked the lease up under the
+        // task.json id while the claim holds it under the scanner key, demoted
+        // the live claim to 2-ready, and the concurrent prompt save hit the
+        // moved folder as a "locked" 503.
+        await using var factory = BuildFactory();
+        using var client = Client(factory);
+        var (taskKey, _) = Claim(factory, "AGT-SWEPT-CLAIM");
+        Assert.NotEqual("AGT-SWEPT-CLAIM", taskKey);
+
+        var outcomes = await factory.Services.GetRequiredService<AgentStudio.Runner.RunLivenessMonitor>().SweepAsync();
+
+        Assert.Empty(outcomes);
+        Assert.Equal(TaskStates.Progress, Current(factory, "AGT-SWEPT-CLAIM").State);
+        var promptEdit = await client.PutAsJsonAsync(
+            $"/api/tasks/AGT-SWEPT-CLAIM/files/prompt.md?watchPath={Uri.EscapeDataString(WatchPath)}",
+            new { content = "Sharpened brief" });
+        Assert.True(promptEdit.StatusCode == HttpStatusCode.OK,
+            await promptEdit.Content.ReadAsStringAsync());
     }
 
     [Fact]
