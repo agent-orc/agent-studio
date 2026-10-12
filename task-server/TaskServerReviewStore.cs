@@ -249,8 +249,13 @@ public sealed partial class TaskServerStore
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            var executor = await ReadReviewExecutorAsync(
-                connection, transaction, request.ExecutorId, request.InstanceId, ct);
+            var executor = await WithProvenRepositoryReadAsync(
+                connection,
+                transaction,
+                await ReadReviewExecutorAsync(connection, transaction, request.ExecutorId, request.InstanceId, ct),
+                request.ExecutorId,
+                request.InstanceId,
+                ct);
             await SupersedeUnclaimableReviewAttemptsAsync(
                 connection,
                 transaction,
@@ -1625,6 +1630,44 @@ public sealed partial class TaskServerStore
             reader.GetString(0),
             capabilities.ToHashSet(StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// AGT-3077: a registered <c>review:repository-read</c> key names a
+    /// configured credential, not a working one. Keep it only while this
+    /// instance's current advertisement reports a fresh, ready read proof.
+    /// </summary>
+    private async Task<ReviewExecutorRow> WithProvenRepositoryReadAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ReviewExecutorRow executor,
+        string executorId,
+        string instanceId,
+        CancellationToken ct)
+    {
+        if (!executor.Capabilities.Any(IsRepositoryReadKey)) return executor;
+        var proven = new HashSet<string>(StringComparer.Ordinal);
+        var now = UtcNow;
+        await using (var command = Command(connection, """
+            SELECT capability_key, fresh_until FROM runner_capabilities
+             WHERE runner_id = $id AND advertised_instance_id = $instance
+               AND advertised_status = 'ready';
+            """, transaction, ("$id", executorId), ("$instance", instanceId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+                if (IsRepositoryReadKey(reader.GetString(0)) && Parse(reader.GetString(1)) > now)
+                    proven.Add(reader.GetString(0));
+        }
+        return executor with
+        {
+            Capabilities = executor.Capabilities
+                .Where(key => !IsRepositoryReadKey(key) || proven.Contains(key))
+                .ToHashSet(StringComparer.Ordinal),
+        };
+    }
+
+    private static bool IsRepositoryReadKey(string key)
+        => key.StartsWith(ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
 
     private static async Task<ReviewAuthorityRow> ReadReviewAuthorityAsync(
         SqliteConnection connection,

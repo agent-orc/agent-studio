@@ -2492,7 +2492,9 @@ public sealed class RemoteReviewWorkspace
 
     private ReviewRepositoryCredential? RepositoryCredential()
     {
-        if (string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
+        // A public subject never reads the credentials file, so a file that
+        // turns unreadable or malformed later cannot fail public reviews.
+        if (!_subject.Plan.PrivateRepository || string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
         try
         {
             return ReviewRepositoryCredentials.Load(_options.ReviewGitCredentialsFile).Find(_subject.RepositoryUrl);
@@ -2567,8 +2569,17 @@ public sealed class RemoteReviewWorkspace
     /// written by review commands, so the global config is ignored here.
     /// </summary>
     internal IReadOnlyDictionary<string, string?> CredentialedGitEnvironment(ReviewRepositoryCredential credential)
+        => CredentialedGitEnvironment(credential, ProcessEnvironment());
+
+    /// <summary>
+    /// <paramref name="baseEnvironment"/> plus the credential and the switches
+    /// that keep every global and system git config out of the child process.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string?> CredentialedGitEnvironment(
+        ReviewRepositoryCredential credential,
+        IReadOnlyDictionary<string, string?> baseEnvironment)
     {
-        var environment = new Dictionary<string, string?>(ProcessEnvironment(), StringComparer.Ordinal)
+        var environment = new Dictionary<string, string?>(baseEnvironment, StringComparer.Ordinal)
         {
             ["GIT_CONFIG_GLOBAL"] = NullDevice,
             ["GIT_CONFIG_NOSYSTEM"] = "1",
@@ -2630,7 +2641,8 @@ public sealed class RemoteReviewWorkspace
         }
         finally
         {
-            if (Directory.Exists(side)) ResilientDirectory.Delete(side);
+            // Teardown must not replace the fetch result with a delete error.
+            ResilientDirectory.TryDelete(side);
         }
     }
 

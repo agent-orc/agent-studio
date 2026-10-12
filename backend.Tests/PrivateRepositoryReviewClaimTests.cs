@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -159,6 +160,186 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
                 .Get(ProjectName).RepositoryVisibility);
     }
 
+    [Fact]
+    public void Plan_less_private_attempt_is_skipped_without_a_lease_and_the_queue_moves_on()
+    {
+        // A lease-expiry successor or a settled-run recovery attempt carries no
+        // plan; its visibility comes from the project at claim time. It used to
+        // pass the queue filter, get leased and deferred, and hold the head of
+        // the queue for every project on each poll.
+        var now = new DateTime(2026, 10, 13, 9, 0, 0, DateTimeKind.Utc);
+        var authority = NewAuthority(() => now);
+        var website = CreatePendingReviewAttempt(authority, "WEB-28", new string('2', 40), plan: null);
+        now = now.AddMinutes(1);
+        CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+        var facts = new Dictionary<string, ReviewClaimRepositoryFact>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["WEB-28"] = new(ProjectPrivate: true, RepositoryUrl: null),
+            ["AGT-1"] = new(ProjectPrivate: false, RepositoryUrl: null),
+        };
+        var anonymous = Registration(credentialsFile: null);
+
+        var claimed = authority.ClaimNextReview(
+            RunnerId, "review-host", Instance, 60, anonymous, repositoryFacts: facts);
+        var second = authority.ClaimNextReview(
+            RunnerId, "review-host", Instance, 60, anonymous, repositoryFacts: facts);
+
+        Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        Assert.Equal("AGT-1", claimed.ReviewAttempt!.TaskKey);
+        Assert.Equal(AttemptWriteStatus.NotFound, second.Status);
+        var skipped = authority.GetReview(website)!;
+        Assert.Equal(AttemptLifecycleState.Pending, skipped.State);
+        Assert.Null(skipped.Lease);
+        Assert.Equal(0, skipped.LastFence);
+        var unclaimable = Assert.Single(authority.ListUnclaimableReviews(anonymous, facts));
+        Assert.Equal(website, unclaimable.AttemptId);
+        Assert.Equal([WebsiteKey], unclaimable.MissingCapabilities);
+    }
+
+    [Fact]
+    public void Plan_less_private_attempt_is_claimed_by_an_executor_with_the_read_key()
+    {
+        var now = new DateTime(2026, 10, 13, 9, 0, 0, DateTimeKind.Utc);
+        var authority = NewAuthority(() => now);
+        var website = CreatePendingReviewAttempt(authority, "WEB-28", new string('2', 40), plan: null);
+        var facts = new Dictionary<string, ReviewClaimRepositoryFact>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["WEB-28"] = new(ProjectPrivate: true, RepositoryUrl: null),
+        };
+
+        var claimed = authority.ClaimNextReview(
+            RunnerId, "review-host", Instance, 60, Registration(WriteCredentials()), repositoryFacts: facts);
+
+        Assert.Equal(AttemptWriteStatus.Accepted, claimed.Status);
+        Assert.Equal(website, claimed.ReviewAttempt!.AttemptId);
+    }
+
+    [Theory]
+    // sealed plan visibility, stored URL, project private, project URL, expected missing
+    [InlineData(null, true, true, false, true)]
+    [InlineData(null, false, true, true, true)]
+    [InlineData(null, true, false, false, false)]
+    [InlineData(null, false, true, false, false)]
+    [InlineData(false, true, true, false, false)]
+    [InlineData(true, true, false, false, true)]
+    [InlineData(true, false, false, false, false)]
+    public void Claim_time_access_follows_the_subject_the_executor_will_receive(
+        bool? sealedPrivate, bool storedUrl, bool projectPrivate, bool projectUrl, bool missing)
+    {
+        var plan = sealedPrivate is { } value ? Plan(value) : null;
+        var fact = new ReviewClaimRepositoryFact(projectPrivate, projectUrl ? Website : null);
+
+        var result = ReviewClaimRepositoryAccessPolicy.MissingCapabilities(
+            plan, storedUrl ? Website : null, fact, new HashSet<string>(StringComparer.Ordinal));
+
+        Assert.Equal(missing ? [WebsiteKey] : Array.Empty<string>(), result);
+        Assert.Empty(ReviewClaimRepositoryAccessPolicy.MissingCapabilities(
+            plan, storedUrl ? Website : null, fact, new HashSet<string>(StringComparer.Ordinal) { WebsiteKey }));
+    }
+
+    [Fact]
+    public async Task Plan_less_private_attempt_does_not_hold_the_claim_queue()
+    {
+        SeedTask("WEB-28");
+        SeedTask("AGT-1");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        await RegisterAsync(http, Registration(credentialsFile: null));
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetRepositoryVisibility(ProjectName, Contract.ReviewRepositoryAccessPolicy.PrivateVisibility);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var website = CreatePendingReviewAttempt(authority, "WEB-28", new string('2', 40), plan: null);
+        CreatePendingReviewAttempt(authority, "AGT-1", new string('1', 40), Plan(privateRepository: false));
+
+        var first = await ClaimAsync(http);
+        var second = await ClaimAsync(http);
+
+        // The older private attempt is skipped, not leased: the public review
+        // behind it is handed out on the same poll.
+        Assert.Equal("claimed", first.Status);
+        Assert.Equal("AGT-1", first.Attempt!.TaskId);
+        Assert.Equal("empty", second.Status);
+        Assert.Equal(Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements, second.Reason);
+        Assert.Equal([WebsiteKey], second.MissingCapabilities);
+        var skipped = authority.GetReview(website)!;
+        Assert.Equal(AttemptLifecycleState.Pending, skipped.State);
+        Assert.Equal(0, skipped.LastFence);
+    }
+
+    [Fact]
+    public async Task Repository_visibility_change_replans_queued_review_attempts()
+    {
+        SeedTask("WEB-23");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var queued = CreatePendingReviewAttempt(
+            authority, "WEB-23", new string('3', 40), Plan(privateRepository: false));
+
+        var flipped = await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/repository-visibility", new { visibility = "private" });
+        var replanned = authority.GetReview(queued)!.Subject.Plan!;
+        var reverted = await http.PutAsJsonAsync(
+            $"/api/projects/{ProjectName}/repository-visibility", new { visibility = "public" });
+
+        Assert.Equal(HttpStatusCode.OK, flipped.StatusCode);
+        Assert.True(replanned.PrivateRepository);
+        Assert.Equal(HttpStatusCode.OK, reverted.StatusCode);
+        Assert.False(authority.GetReview(queued)!.Subject.Plan!.PrivateRepository);
+    }
+
+    [Fact]
+    public void Registered_read_key_is_admitted_only_with_a_fresh_ready_proof()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 13, 9, 0, 0, TimeSpan.Zero));
+        var registry = new V1ReviewExecutorRegistry(clock);
+        registry.Register(RunnerId, new Contract.RegisterRunnerRequest(
+            RunnerId, "review-host", Instance, "1", Contract.TaskServerProtocol.Current,
+            [Contract.ReviewCapabilities.ReviewExecutor, WebsiteKey]));
+        void Advertise(string status, int generation) => registry.AdvertiseCapabilities(
+            RunnerId,
+            new Contract.CapabilityAdvertisementRequest(
+                RunnerId, Instance, 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                [
+                    new Contract.AdvertisedCapabilityDto(Contract.CapabilityProtocol.ReviewExecutor, "executor"),
+                    new Contract.AdvertisedCapabilityDto(WebsiteKey, "source", status),
+                ]));
+
+        var unadvertised = registry.AdmittedReviewCapabilities(RunnerId, Instance);
+        Advertise("ready", 1);
+        var proven = registry.AdmittedReviewCapabilities(RunnerId, Instance);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        var stale = registry.AdmittedReviewCapabilities(RunnerId, Instance);
+        Advertise("unavailable", 2);
+        var revoked = registry.AdmittedReviewCapabilities(RunnerId, Instance);
+
+        Assert.DoesNotContain(WebsiteKey, unadvertised);
+        Assert.Contains(WebsiteKey, proven);
+        Assert.DoesNotContain(WebsiteKey, stale);
+        Assert.DoesNotContain(WebsiteKey, revoked);
+        Assert.Contains(Contract.ReviewCapabilities.ReviewExecutor, revoked);
+    }
+
+    private static async Task RegisterAsync(HttpClient http, IReadOnlyCollection<string> capabilities)
+    {
+        var registration = await http.PutAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}",
+            new Contract.RegisterRunnerRequest(
+                RunnerId, "review-host", Instance, "1.0.0", Contract.TaskServerProtocol.Current,
+                [.. capabilities]));
+        registration.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<Contract.ReviewClaimResponse> ClaimAsync(HttpClient http)
+    {
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{RunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(RunnerId, Instance, 120, 1));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+    }
+
     private static Contract.ReviewPlanDto Plan(bool privateRepository)
         => new(
             [new Contract.ReviewCommandDto("verify-1", "build-tests", "git", ["status"], TimeoutSeconds: 120)],
@@ -194,18 +375,19 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         return path;
     }
 
-    private AttemptAuthorityService NewAuthority()
+    private AttemptAuthorityService NewAuthority(Func<DateTime>? utcNow = null)
     {
         Directory.CreateDirectory(_workspace);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["TaskRepository"] = _workspace,
         }).Build();
-        return new AttemptAuthorityService(config, NullLogger<AttemptAuthorityService>.Instance);
+        return new AttemptAuthorityService(config, NullLogger<AttemptAuthorityService>.Instance, utcNow);
     }
 
-    private static void CreatePendingReviewAttempt(
-        AttemptAuthorityService authority, string taskKey, string sha, Contract.ReviewPlanDto plan)
+    private static string CreatePendingReviewAttempt(
+        AttemptAuthorityService authority, string taskKey, string sha, Contract.ReviewPlanDto? plan,
+        string? repositoryUrl = Website)
     {
         var run = authority.AcquireRun(
             taskKey, ProjectName, null, "coding-runner", "coding-host", 60, "acquire-" + taskKey).RunAttempt!;
@@ -222,8 +404,9 @@ public sealed class PrivateRepositoryReviewClaimTests : IDisposable
         });
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             taskKey, ProjectName, sha, run.AttemptId, "requirements-hash", "policy-hash", [],
-            "review-create-" + taskKey, RepositoryUrl: Website, Plan: plan));
+            "review-create-" + taskKey, RepositoryUrl: repositoryUrl, Plan: plan));
         Assert.True(created.Accepted, created.Message);
+        return created.ReviewAttempt!.AttemptId;
     }
 
     private void SeedTask(string taskKey)

@@ -138,11 +138,22 @@ therefore needs two steps before any of its cards can be reviewed remotely
 The daemon refuses to start when the file is readable by group or others or
 when a line is not a repository-scoped `https://` entry. For every line it
 registers `review:repository-read:<host>/<owner>/<repo>` (lower case, no
-`.git`). A private plan is claimable only by an executor that registered that
-key; every other executor receives the empty claim
-`unclaimable-plan-requirements` naming the key, so the attempt waits for a
-credentialed host instead of failing its clone and spending the infrastructure
-retry budget.
+`.git`) and proves the token with a credentialed `git ls-remote` before each
+capability advertisement (every 10 minutes while it works, every 2 minutes
+while it does not). A private plan is claimable only by an executor whose
+latest advertisement reports that key `ready`; every other executor receives
+the empty claim `unclaimable-plan-requirements` naming the key, so the attempt
+waits for a credentialed host instead of failing its clone and spending the
+infrastructure retry budget. Reviews of other projects keep flowing to every
+executor meanwhile, also between step 1 and step 2 and while a fine-grained
+token waits for organization approval. An approved or renewed token is picked
+up by the next proof without a restart; the journal logs each status change
+as `review-repository-read-probe repository=... status=...`. If the key never
+turns `ready`, compare the line's `<host>/<owner>/<repo>` with the project's
+repository URL: both must name the same repository.
+
+Marking a project private also re-plans the reviews already queued for it, so
+cards that waited before the flip (for example WEB-23) need no reissue.
 
 The credential reaches only the clone and fetch child processes. They clear
 every inherited credential helper, ignore the attempt's global Git config,

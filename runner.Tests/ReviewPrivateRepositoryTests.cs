@@ -190,20 +190,61 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
         Assert.DoesNotContain(_token, result.StdOut, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Read_probe_proves_a_working_token_and_rejects_a_revoked_one()
+    {
+        var working = new ReviewRepositoryReadProbe();
+        var revoked = new ReviewRepositoryReadProbe();
+        var key = ReviewRepositoryAccessPolicy.ReadCapability(RepositoryUrl)!;
+        var log = new List<string>();
+
+        await working.RefreshDueAsync(WriteCredentials(RepositoryUrl), log.Add, default);
+        await revoked.RefreshDueAsync(WriteCredentials(RepositoryUrl, "revoked-" + _token), log.Add, default);
+
+        Assert.Equal(ReviewRepositoryReadProbe.Ready, working.Proofs[key].Status);
+        Assert.Equal(ReviewRepositoryReadProbe.Unavailable, revoked.Proofs[key].Status);
+        Assert.DoesNotContain(log, line => line.Contains(_token, StringComparison.Ordinal));
+        Assert.DoesNotContain(_token, revoked.Proofs[key].Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Public_review_never_reads_the_private_credentials_file()
+    {
+        // A credentials file that turned malformed after start-up used to fail
+        // every review, public ones included, with SnapshotUnavailable.
+        var broken = Path.Combine(_root, "broken-review-git-credentials");
+        await File.WriteAllTextAsync(broken, "not a credential line\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(broken, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        var origin = Path.Combine(_root, "served", RepositoryPath);
+        var workspace = Workspace("attempt-public", broken, privateRepository: false, repositoryUrl: origin);
+
+        var prepared = await workspace.PrepareAsync(null!, default);
+
+        Assert.Equal(_subjectSha, prepared.ActualHead);
+        Assert.Equal(0, _server.AuthorizedRequests);
+        Assert.True(await workspace.CleanupAsync());
+    }
+
     private string CommandEnvironmentPath(string attemptId) => Path.Combine(_root, attemptId + "-command-env.txt");
 
-    private string WriteCredentials(string repositoryUrl)
+    private string WriteCredentials(string repositoryUrl, string? token = null)
     {
         var uri = new Uri(repositoryUrl);
         var path = Path.Combine(_root, "review-git-credentials-" + Guid.NewGuid().ToString("N"));
-        File.WriteAllText(path, $"{uri.Scheme}://reviewer:{_token}@{uri.Authority}{uri.AbsolutePath}\n");
+        File.WriteAllText(path, $"{uri.Scheme}://reviewer:{token ?? _token}@{uri.Authority}{uri.AbsolutePath}\n");
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         return path;
     }
 
-    private RemoteReviewWorkspace Workspace(string attemptId, string? credentialsFile)
+    private RemoteReviewWorkspace Workspace(
+        string attemptId,
+        string? credentialsFile,
+        bool privateRepository = true,
+        string? repositoryUrl = null)
     {
+        repositoryUrl ??= RepositoryUrl;
         IReadOnlyList<ReviewCommandDto> commands =
         [
             new("verify", "build-tests", "sh", ["-c", $"env > '{CommandEnvironmentPath(attemptId)}'"]),
@@ -212,8 +253,8 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
             "subject-" + attemptId,
             "task-" + attemptId,
             "run-" + attemptId,
-            RepositoryIdentityContract.FromUrl(RepositoryUrl)!,
-            RepositoryUrl,
+            RepositoryIdentityContract.FromUrl(repositoryUrl) ?? "local-origin",
+            repositoryUrl,
             _subjectSha,
             "refs/heads/task/private-change",
             null,
@@ -224,7 +265,7 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
                 commands,
                 ["build-tests"],
                 IntegrationRef: "refs/heads/main",
-                PrivateRepository: true),
+                PrivateRepository: privateRepository),
             DateTime.UnixEpoch);
         var lease = new ReviewLeaseDto(
             "lease-" + attemptId,
@@ -350,6 +391,7 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             };
             start.Environment["GIT_PROJECT_ROOT"] = _projectRoot;
             start.Environment["GIT_HTTP_EXPORT_ALL"] = "1";

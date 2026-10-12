@@ -75,13 +75,26 @@ public static class ReviewRepositoryAccessPolicy
     /// URL is resolved).
     /// </summary>
     public static string? RequiredCapability(ReviewPlanDto plan, string? repositoryUrl)
-        => plan.PrivateRepository ? ReadCapability(repositoryUrl) : null;
+        => RequiredCapability(plan.PrivateRepository, repositoryUrl);
+
+    public static string? RequiredCapability(bool privateRepository, string? repositoryUrl)
+        => privateRepository ? ReadCapability(repositoryUrl) : null;
 
     public static IReadOnlyList<string> MissingCapabilities(
         ReviewPlanDto plan,
         string? repositoryUrl,
         IReadOnlySet<string> capabilities)
-        => RequiredCapability(plan, repositoryUrl) is { } key && !capabilities.Contains(key) ? [key] : [];
+        => MissingCapabilities(plan.PrivateRepository, repositoryUrl, capabilities);
+
+    /// <summary>
+    /// The visibility-level form, for a subject whose plan is built only at
+    /// claim time: the caller supplies the project's visibility instead.
+    /// </summary>
+    public static IReadOnlyList<string> MissingCapabilities(
+        bool privateRepository,
+        string? repositoryUrl,
+        IReadOnlySet<string> capabilities)
+        => RequiredCapability(privateRepository, repositoryUrl) is { } key && !capabilities.Contains(key) ? [key] : [];
 
     public static bool Supports(ReviewPlanDto plan, string? repositoryUrl, IReadOnlySet<string> capabilities)
         => MissingCapabilities(plan, repositoryUrl, capabilities).Count == 0;

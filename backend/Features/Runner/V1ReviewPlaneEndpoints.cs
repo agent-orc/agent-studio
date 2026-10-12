@@ -412,19 +412,25 @@ public static class V1ReviewPlaneEndpoints
             // AGT-W57: park pending reviews that would run into an open cause
             // before they spend an attempt, and skip every parked card.
             var heldByCauseBreaker = causeBreakers.HoldPendingReviews();
+            // AGT-3077: resolve visibility and repository URL before selection,
+            // so a private attempt this host cannot clone is skipped, not
+            // leased, even when its plan or URL is only built at hand-out.
+            var repositoryFacts = ClaimRepositoryFacts(
+                authority.ListOpenReviewTaskKeys(), scanner, projects, settings);
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
-                heldByCauseBreaker);
+                heldByCauseBreaker,
+                repositoryFacts);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
-                var unclaimable = authority.ListUnclaimableReviews(executor.Capabilities);
+                var unclaimable = authority.ListUnclaimableReviews(executor.Capabilities, repositoryFacts);
                 unclaimableLog.Record(runnerId, unclaimable);
                 return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(
                     unclaimable,
@@ -443,9 +449,10 @@ public static class V1ReviewPlaneEndpoints
                 remoteReviewPlans,
                 out var subjectTask,
                 out var baseline);
-            // AGT-3077: the queue filter can only judge a subject that already
-            // carries its repository URL. Recheck once the URL is resolved, so a
-            // private repository never reaches a host that cannot clone it.
+            // AGT-3077: the queue filter judged this attempt from the same
+            // project facts. Only a visibility or URL change between that
+            // selection and this hand-out lands here; the deferred attempt is
+            // skipped by the next poll's filter, so it cannot hold the queue.
             var missingRepositoryAccess = Contract.ReviewRepositoryAccessPolicy.MissingCapabilities(
                 subject.Plan, subject.RepositoryUrl, executor.Capabilities);
             if (missingRepositoryAccess.Count > 0)
@@ -2233,6 +2240,35 @@ public static class V1ReviewPlaneEndpoints
         return subject with { Plan = subject.Plan with { Commands = resolvedCommands } };
     }
 
+    /// <summary>
+    /// AGT-3077: per open review task, the project visibility and the
+    /// repository URL <see cref="ToSubject"/> would hand out. A task the scanner
+    /// cannot find gets no fact; its subject then has no project either.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, ReviewClaimRepositoryFact> ClaimRepositoryFacts(
+        IReadOnlyList<string> taskKeys,
+        TaskScannerService scanner,
+        AgentStudio.Registry.ProjectRegistry projects,
+        AgentStudio.Projects.ProjectSettingsService settings)
+    {
+        var facts = new Dictionary<string, ReviewClaimRepositoryFact>(StringComparer.OrdinalIgnoreCase);
+        if (taskKeys.Count == 0) return facts;
+        var wanted = taskKeys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var task in scanner.ScanAllJobsWithArchive())
+        {
+            var key = new[] { task.TaskKey, task.Key, task.Id }
+                .FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(candidate)
+                                             && wanted.Contains(candidate) && !facts.ContainsKey(candidate));
+            if (key is null) continue;
+            var project = projects.FindByStorageLocation(task.WatchPath)
+                          ?? projects.FindByIdOrDisplayName(task.ProjectName);
+            facts[key] = new ReviewClaimRepositoryFact(
+                Contract.ReviewRepositoryAccessPolicy.IsPrivate(settings.Get(task.ProjectName).RepositoryVisibility),
+                RemoteProjectRepositoryResolver.ResolveRepositoryUrl(project));
+        }
+        return facts;
+    }
+
     private static (string RepositoryId, string? RepositoryUrl) MaterializableRepository(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -3667,6 +3703,9 @@ public sealed class V1ReviewExecutorRegistry
         return false;
     }
 
+    private static bool IsRepositoryReadKey(string key)
+        => key.StartsWith(Contract.ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
+
     public IReadOnlySet<string> AdmittedReviewCapabilities(string runnerId, string instanceId)
     {
         lock (_gate)
@@ -3675,7 +3714,12 @@ public sealed class V1ReviewExecutorRegistry
                 || registration.InstanceId != instanceId) return new HashSet<string>(StringComparer.Ordinal);
             var admitted = registration.Capabilities.ToHashSet(StringComparer.Ordinal);
             if (!_capabilityStates.TryGetValue(runnerId, out var state)
-                || state.InstanceId != instanceId) return admitted;
+                || state.InstanceId != instanceId)
+            {
+                // AGT-3077: no read proof advertised yet for this instance.
+                admitted.RemoveWhere(IsRepositoryReadKey);
+                return admitted;
+            }
             var now = _time.GetUtcNow().UtcDateTime;
             foreach (var capability in state.Capabilities.Where(item =>
                          item.Key.StartsWith("provider-auth:", StringComparison.Ordinal)))
@@ -3685,6 +3729,15 @@ public sealed class V1ReviewExecutorRegistry
                     || (capability.HealthOutcome ?? capability.Signal) is
                         "credential_invalid" or "provider_incident" or "indeterminate";
                 if (unavailable) admitted.Remove(capability.Key);
+            }
+            // AGT-3077: a registered repository-read key names a configured
+            // credential, not a working one. Admit it only while the current
+            // advertisement reports a fresh read proof for it.
+            foreach (var key in admitted.Where(IsRepositoryReadKey).ToArray())
+            {
+                var advertised = state.Capabilities.FirstOrDefault(item => item.Key == key);
+                if (advertised is null || advertised.FreshUntil <= now || !Claimable(advertised.AdvertisedStatus))
+                    admitted.Remove(key);
             }
             return admitted;
         }

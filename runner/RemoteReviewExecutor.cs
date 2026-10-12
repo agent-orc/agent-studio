@@ -474,7 +474,13 @@ public sealed class RemoteReviewExecutor
             _log(
                 $"review infrastructure outcome attempt={attempt.AttemptId} " +
                 $"classification={failureClassification}: {summary}");
-            var failedCapability = CapabilityFor(failureClassification);
+            var failedCapability = FailedCapability(
+                failureClassification, slot.Claim.Subject, out var repositoryReadKey);
+            if (repositoryReadKey is not null)
+            {
+                ReviewRepositoryReadProbe.Shared.Invalidate(repositoryReadKey);
+                _log($"review repository-read reprobe attempt={attempt.AttemptId} key={repositoryReadKey}");
+            }
             if (failedCapability is not null)
             {
                 await CapabilityFailureReporter.TryReportAsync(
@@ -1317,6 +1323,24 @@ public sealed class RemoteReviewExecutor
                 System.Text.Encoding.UTF8.GetBytes(workspace.AttemptRoot))).ToLowerInvariant(),
             workspaceNamespace);
         return new ReviewExecutionEvidence("ReviewInfra", proof, [], [], []);
+    }
+
+    /// <summary>
+    /// The capability a failure drains. AGT-3077: a private subject whose
+    /// snapshot could not be fetched points at its scoped read credential,
+    /// not at this host's repository access, so it re-proves that one key
+    /// (<paramref name="repositoryReadKey"/>) instead of pausing the executor
+    /// for every project.
+    /// </summary>
+    internal static string? FailedCapability(
+        string classification,
+        ReviewSubjectDto? subject,
+        out string? repositoryReadKey)
+    {
+        repositoryReadKey = classification == "SnapshotUnavailable" && subject is not null
+            ? ReviewRepositoryAccessPolicy.RequiredCapability(subject.Plan, subject.RepositoryUrl)
+            : null;
+        return repositoryReadKey is null ? CapabilityFor(classification) : null;
     }
 
     private static string? CapabilityFor(string classification)

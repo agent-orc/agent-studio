@@ -243,11 +243,20 @@ registration), not on a 409 that no longer occurs.
 
 A plan sealed with `PrivateRepository = true` requires the executor
 registration key `review:repository-read:<host>/<owner>/<repo>` derived from
-the subject's repository URL by `ReviewRepositoryAccessPolicy`. Both Task
-Server implementations apply it in the claim filter; an executor without the
-key receives `status=empty`, `reason=unclaimable-plan-requirements`, the key in
-`missingCapabilities`, and a message naming `RUNNER_REVIEW_GIT_CREDENTIALS_FILE`.
-The attempt is not leased and stays queued. See
+the subject's repository URL by `ReviewRepositoryAccessPolicy`. An attempt
+without a sealed plan or URL (a lease-expiry successor, a settled-run recovery
+attempt) is judged from its project's visibility and repository URL, the same
+facts the hand-out builds its subject from. The registered key counts only
+while the executor's current capability advertisement reports a fresh `ready`
+read proof for it. Both Task Server implementations apply this in the claim
+filter; an executor without the key receives `status=empty`,
+`reason=unclaimable-plan-requirements`, the key in `missingCapabilities`, and a
+message naming `RUNNER_REVIEW_GIT_CREDENTIALS_FILE`. The filter skips the
+attempt before selection, so it is not leased (no fence, no claim event) and
+the next claimable attempt of any project is handed out on the same poll.
+Only a visibility or URL change between selection and hand-out reaches the
+backend's post-selection recheck, which leases and then defers that one
+attempt; the next poll's filter skips it. See
 [review.md](../domains/review.md#private-repository-access-agt-3077).
 
 ## Runner-side changes

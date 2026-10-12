@@ -946,7 +946,8 @@ public sealed class AttemptAuthorityService
         string instanceId,
         int? requestedTtlSeconds,
         IReadOnlySet<string>? capabilities = null,
-        IReadOnlySet<string>? heldTaskKeys = null)
+        IReadOnlySet<string>? heldTaskKeys = null,
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null)
     {
         if (Blank(executorId) || Blank(hostId) || Blank(instanceId))
             return new AttemptWriteResult(
@@ -978,13 +979,15 @@ public sealed class AttemptAuthorityService
                     // AGT-W57: a card parked behind an open cause breaker keeps
                     // its pending attempt but is not handed out until released.
                     .Where(review => heldTaskKeys is null || !heldTaskKeys.Contains(review.TaskKey))
-                    .Where(review => review.Subject.Plan is null
-                        || capabilities is null
-                        || (AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
-                                review.Subject.Plan, capabilities)
-                            // AGT-3077: a private repository needs this host's read credential.
-                            && AgentStudio.TaskServer.Contracts.ReviewRepositoryAccessPolicy.Supports(
-                                review.Subject.Plan, review.Subject.RepositoryUrl, capabilities)))
+                    .Where(review => capabilities is null
+                        || ((review.Subject.Plan is null
+                                || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
+                                    review.Subject.Plan, capabilities))
+                            // AGT-3077: a private repository needs this host's read
+                            // credential. A plan-less attempt is judged from its
+                            // project, so it is skipped here instead of being
+                            // leased and deferred at the head of the queue.
+                            && MissingRepositoryAccess(review, repositoryFacts, capabilities).Count == 0))
                     .OrderByDescending(review => review.Priority == "urgent")
                     .ThenBy(review => review.CreatedAt)
                     .ThenBy(review => review.AttemptId)
@@ -1029,7 +1032,8 @@ public sealed class AttemptAuthorityService
     /// instead of a silent "nothing queued".
     /// </summary>
     public IReadOnlyList<AgentStudio.TaskServer.Contracts.ReviewUnclaimableAttemptDto> ListUnclaimableReviews(
-        IReadOnlySet<string> capabilities)
+        IReadOnlySet<string> capabilities,
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null)
     {
         lock (_gate)
         {
@@ -1038,11 +1042,11 @@ public sealed class AttemptAuthorityService
                 .Where(review => IsCurrentReview(review) && !Terminal(review.State))
                 .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
                 .Where(review => !IsUnmaterializableWithinGrace(review, now))
-                .Where(review => review.Subject.Plan is not null)
-                .Select(review => (Review: review, Missing: (IReadOnlyList<string>)AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
-                    .MissingCapabilities(review.Subject.Plan!, capabilities)
-                    .Concat(AgentStudio.TaskServer.Contracts.ReviewRepositoryAccessPolicy.MissingCapabilities(
-                        review.Subject.Plan!, review.Subject.RepositoryUrl, capabilities))
+                .Select(review => (Review: review, Missing: (IReadOnlyList<string>)(review.Subject.Plan is null
+                        ? []
+                        : AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
+                            .MissingCapabilities(review.Subject.Plan, capabilities))
+                    .Concat(MissingRepositoryAccess(review, repositoryFacts, capabilities))
                     .ToArray()))
                 .Where(item => item.Missing.Count > 0)
                 .OrderByDescending(item => item.Review.Priority == "urgent")
@@ -1053,6 +1057,33 @@ public sealed class AttemptAuthorityService
                     item.Review.TaskKey,
                     item.Review.CreatedAt,
                     item.Missing))
+                .ToArray();
+        }
+    }
+
+    private static IReadOnlyList<string> MissingRepositoryAccess(
+        ReviewAttemptRecord review,
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts,
+        IReadOnlySet<string> capabilities)
+        => ReviewClaimRepositoryAccessPolicy.MissingCapabilities(
+            review.Subject.Plan,
+            review.Subject.RepositoryUrl,
+            repositoryFacts is not null && repositoryFacts.TryGetValue(review.TaskKey, out var fact) ? fact : null,
+            capabilities);
+
+    /// <summary>
+    /// AGT-3077: task keys of every current, non-terminal ReviewAttempt - the
+    /// tasks whose repository facts the claim endpoint resolves before it asks
+    /// <see cref="ClaimNextReview"/> to select.
+    /// </summary>
+    public IReadOnlyList<string> ListOpenReviewTaskKeys()
+    {
+        lock (_gate)
+        {
+            return _state.ReviewAttempts
+                .Where(review => IsCurrentReview(review) && !Terminal(review.State))
+                .Select(review => review.TaskKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
     }

@@ -43,7 +43,8 @@ internal static class RunnerCapabilityProbe
         bool gitWorkflowPushReady = true,
         string? gitDetail = null,
         ProviderAuthProbe? providerAuth = null,
-        TaskServerConnectivitySnapshot? connectivity = null)
+        TaskServerConnectivitySnapshot? connectivity = null,
+        ReviewRepositoryReadProbe? repositoryRead = null)
     {
         var list = new List<AdvertisedCapabilityDto>
         {
@@ -142,8 +143,11 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
             list.Add(Capability(ReviewCapabilities.LibraryStepV1, "review", "1", "review-library"));
-            foreach (var key in ReviewRepositoryReadCapabilities(options))
-                list.Add(Capability(key, "source", null, "review-git-credentials"));
+            // AGT-3077: the status is the last credentialed ls-remote, not the
+            // presence of a line in the credentials file.
+            foreach (var (key, proof) in (repositoryRead ?? ReviewRepositoryReadProbe.Shared).Proofs
+                         .OrderBy(item => item.Key, StringComparer.Ordinal))
+                list.Add(Capability(key, "source", null, "review-git-credentials", proof.Status, proof.Detail));
         }
         else
         {
@@ -253,6 +257,8 @@ internal static class RunnerCapabilityProbe
     /// private repository the executor profile holds a scoped read credential
     /// for. A file that became unreadable after start-up registers none, so
     /// the claim filter names the missing key instead of a clone failing.
+    /// Registration names the configured key; claim admission additionally
+    /// requires the advertised <see cref="ReviewRepositoryReadProbe"/> proof.
     /// </summary>
     public static IReadOnlyList<string> ReviewRepositoryReadCapabilities(RunnerOptions options)
     {

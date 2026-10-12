@@ -343,16 +343,40 @@ budget.
 - **Plan.** The project setting `repositoryVisibility` (`public` by default,
   `PUT /api/projects/{project}/repository-visibility`) is sealed into every
   review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
+  Changing it re-plans every ReviewAttempt still queued for the project, like a
+  build-profile or pipeline-step edit, so an attempt queued before the flip
+  carries the new visibility.
 - **Claim filter.** `ReviewRepositoryAccessPolicy` (shared contract) turns a
   private plan plus the subject's repository URL into the required key
   `review:repository-read:<host>/<owner>/<repo>` (lower case, no `.git`, same
   key for https, ssh and scp spellings). The backend queue filter
-  (`ClaimNextReview`, `ListUnclaimableReviews`), its post-resolution recheck in
+  (`ClaimNextReview`, `ListUnclaimableReviews`), its post-selection recheck in
   the claim endpoint, and the standalone Task Server
   (`MissingSubjectCapabilities`) all refuse an executor that did not register
   the key. The empty claim carries `unclaimable-plan-requirements`, names the
   key, and tells the operator which setting is missing. The attempt stays
   queued and no retry budget is spent.
+- **Plan-less attempts.** A lease-expiry successor and a settled-run recovery
+  attempt carry no plan, and an attempt may carry no repository URL; the
+  claim endpoint builds both at hand-out. Before selection it therefore
+  resolves, per open review task, the project visibility and repository URL
+  (`ReviewClaimRepositoryFact`), and `ReviewClaimRepositoryAccessPolicy` judges
+  the attempt as the executor would receive it (a sealed plan and a stored URL
+  outrank the project). Such an attempt is skipped, not leased and deferred,
+  so an executor without the key keeps claiming every other project's reviews.
+- **Read proof.** A line in the credentials file is not a working token. The
+  review daemon proves each credential with a credentialed `git ls-remote`
+  (`runner/ReviewRepositoryReadProbe.cs`, re-proved every 10 minutes when
+  ready, every 2 minutes when not) before each capability advertisement and
+  advertises the key `ready` or `unavailable` with the git error. Registration
+  names the configured key; both Task Server implementations admit it only
+  while the current advertisement reports a fresh `ready` proof. An expired,
+  revoked, unapproved or under-scoped token therefore refuses the claim with
+  the named key instead of failing the clone.
+- **Failed private clone.** A `SnapshotUnavailable` failure of a private
+  subject re-proves that repository's read key on the next advertisement
+  instead of reporting a `repository-access` failure, so a bad token pauses
+  only that repository, not the executor for every project.
 - **Executor profile.** `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` holds one
   read-only, repository-scoped `https://` credential per line
   (`runner/ReviewRepositoryCredentials.cs`). The review daemon registers and
@@ -370,9 +394,10 @@ budget.
   repository and the workspace copies the objects over the local transport,
   so configuration written by review commands never meets the credential.
 - **Public repositories** keep the credential-free, blob-filtered clone
-  unchanged. A credential-free clone that fails with an authentication
-  signature names the missing read access in its `SnapshotUnavailable`
-  detail.
+  unchanged and never read the credentials file, so a file that turns
+  unreadable or malformed after start-up affects only private reviews. A
+  credential-free clone that fails with an authentication signature names the
+  missing read access in its `SnapshotUnavailable` detail.
 
 Operator setup: [linux-runner-host.md](../../operations/setup/linux-runner-host.md#private-repositories).
 Tests: `runner.Tests/ReviewPrivateRepositoryTests.cs` (clone through a local

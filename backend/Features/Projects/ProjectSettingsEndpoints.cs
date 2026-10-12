@@ -697,7 +697,11 @@ public static class ProjectSettingsEndpoints
             string projectName,
             SetRepositoryVisibilityRequest req,
             ProjectSettingsService settings,
-            TaskScannerService scanner) =>
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
         {
             var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
             if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
@@ -708,6 +712,9 @@ public static class ProjectSettingsEndpoints
                 return Results.BadRequest(new { error = $"Unsupported repository visibility '{req.Visibility}'" });
 
             settings.SetRepositoryVisibility(projectName, normalized);
+            // Attempts queued before the flip (WEB-23) must carry the new
+            // visibility, or they still reach a host without the credential.
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
             return Results.Ok(new { repositoryVisibility = settings.Get(projectName).RepositoryVisibility });
         });
 
