@@ -1702,9 +1702,18 @@ operator changes cause the step to fail before its writer runs.
   key, delivery date, slice name, and compact shipped summary. Auto Review
   compares the first touching commit's parent with the delivered revision. The
   bytes outside the bounded implementation log and the complete prior log must
-  remain unchanged. A missing or non-append-only update fails the visible row
-  and follows the existing completion-gate reissue or escalation budget before
-  build and aspect review continue.
+  remain unchanged. When the attributed revision only lacks the entry (no
+  file, section markers, append log, or card entry), the gate checks one newer
+  revision: the review-subject run result, else the integration branch tip at
+  `refs/remotes/origin/<branch>`, else `refs/heads/<branch>`, without a fetch.
+  Exactly one well-formed entry there passes as idempotent and the row names
+  that revision. Cards with no attributed Dossier commit are read at that
+  revision, not from the working tree. A newer revision never clears an
+  append-only violation. Every finding names the inspected revision. A missing
+  or non-append-only update fails the visible row and follows the existing
+  completion-gate reissue or escalation budget before build and aspect review
+  continue. The reissue follow-up is worded as a Dossier gap and tells the
+  agent to report, not re-add, an entry already on the integration branch.
 - Dossier implementation work is cut one card per slice. Each
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended

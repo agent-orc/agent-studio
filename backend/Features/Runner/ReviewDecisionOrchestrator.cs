@@ -2384,6 +2384,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     : CompletionGate.CompletionGateAction.Reissue,
                 Findings = dossierReview.Findings.ToList(),
                 Reason = "The referenced Dossier was not updated through its append-only implementation log.",
+                Source = CompletionGate.CompletionGateSource.DossierMaintenance,
             };
             await HandleCompletionGateAsync(workspace, entry, pending, current, dossierGate, ct);
             return;
@@ -4804,7 +4805,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         // Reissue: foreground the gate's findings so the next run finishes the
         // open work instead of restarting blind.
-        var followUp = CompletionGate.BuildFollowUp(gate.Findings);
+        var followUp = CompletionGate.BuildFollowUp(gate.Findings, source: gate.Source);
         var moved = MoveReissueToReadyTop(current, entry, "completion-gate", workspace);
         if (moved == null)
         {
@@ -5741,7 +5742,16 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             var repositoryRoot = string.IsNullOrWhiteSpace(entry.RepositoryPath)
                 ? entry.RootPath
                 : entry.RepositoryPath;
-            review = _dossierMaintenance.Review(entry.Name, repositoryRoot, current);
+            // A pure absence on the attributed range is re-checked on the run
+            // result or the integration tip: AGT-3049 was reopened because its
+            // attributed commits were superseded by unattributed fix rounds
+            // that had already landed the entry on develop.
+            var candidates = _dossierMaintenance.ResolveRevisionCandidates(
+                repositoryRoot,
+                current,
+                ReviewSubjectStore.Read(current.FolderPath)?.ResultSha,
+                _projectSettings?.Get(entry.Name)?.IntegrationBranch);
+            review = _dossierMaintenance.Review(entry.Name, repositoryRoot, current, candidates);
         }
         catch (Exception ex)
         {
