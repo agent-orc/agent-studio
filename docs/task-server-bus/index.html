@@ -605,6 +605,10 @@
   <strong>AGT-3062 · Engine and execution decisions</strong>
   <span>Delivered: ADR-0078 records D14 to D21 and the decided actor and typed-action model; the target architecture and contracts align on engine placement, runner claims, fix rounds, per-card budget, review host preference and process profiles.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3054" data-delivered-at="2026-10-12" data-slice="Per-card round budget and finding recovery">
+  <strong>AGT-3054 · Per-card round budget and finding recovery</strong>
+  <span>Delivered: D18 A applies the lifetime card budget before Remote Review finding and concern rounds; spent non-test findings become linked follow-ups, spent test blocks escalate with a budget receipt, and journaled finding continuations replay one Ready move and one prompt note after restart. The shared budget decision and receipt fields also cover local review and sweep evidence; backend build and focused restart and policy tests verify the slice.</span>
+</li>
 <!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
 <section id="sources"><h2>Code index</h2><p>Every reference resolves to an inspected writer, reader or wire contract. Line numbers and SHA-256 file hashes are pinned in <a href="evidence.json">evidence.json</a>. Revalidate them if develop advances.</p><table><thead><tr><th>Ref</th><th>File, location and purpose</th></tr></thead><tbody>
 <tr id="src-A"><td>A</td><td class="source-path"><a href="../../backend/Features/Runner/AttemptAuthorityService.cs">backend/Features/Runner/AttemptAuthorityService.cs</a>, line 45: <code>public const string RelativePath</code>. File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.</td></tr>

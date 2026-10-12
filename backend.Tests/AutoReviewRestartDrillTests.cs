@@ -123,6 +123,120 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     }
 
     [Fact]
+    public void Settled_finding_round_reopens_once_after_restart()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "finding-crash-window",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        var original = JournalEntry(card, seeded);
+        var report = original.Report with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                "code-quality", "block", "ProductFailure", "A concrete defect remains.")],
+        };
+        var entry = original with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Continuation = new RemoteReviewContinuation(
+                RemoteReviewContinuationKind.FindingRound,
+                "Fix the concrete code-quality defect.", ["code-quality"], 1,
+                new CardRoundBudgetState(1, 4),
+                new DeliveredReviewRound(card.ReviewAttemptId, ["code-quality"], []),
+                ReviewRoundBudgetLedger.Empty),
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+
+        var restarted = Build();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(),
+            restarted.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
+            restarted.Mutations, restarted.Transitions, restarted.Timeline);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence,
+            reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!));
+        var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, moved.State);
+        var promptPath = Path.Combine(moved.FolderPath, "prompt.md");
+        var oldWrite = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(promptPath, oldWrite);
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(moved));
+        Assert.Equal(oldWrite, File.GetLastWriteTimeUtc(promptPath));
+        var prompt = File.ReadAllText(promptPath);
+        Assert.Equal(1, prompt.Split($"<!-- review-finding-round:{card.ReviewAttemptId} -->").Length - 1);
+        Assert.Equal(card.ReviewAttemptId,
+            ReviewConcernRoundStore.Read(moved.FolderPath)!.ReviewAttemptId);
+        Assert.Equal(card.ReviewAttemptId,
+            Assert.Single(ReviewRoundBudgetStore.Read(moved.FolderPath).Rounds).AttemptId);
+        Assert.Single(Directory.GetFiles(Path.Combine(moved.FolderPath,
+            "orchestrator-follow-up-history"), $"*{card.ReviewAttemptId}*"));
+        Assert.Single(restarted.Timeline.ReadAll(moved.FolderPath), item =>
+            item.Kind == TimelineEventKinds.QualityLoopReopened
+            && item.Details?.GetValueOrDefault("reviewAttemptId") == card.ReviewAttemptId);
+    }
+
+    [Fact]
+    public void Spent_test_budget_escalates_with_one_receipt_after_restart()
+    {
+        var seeded = Build();
+        var card = SeedPassedDelivery(seeded, "test-budget-crash-window",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        var original = JournalEntry(card, seeded);
+        var report = original.Report with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                "build-tests", "block", "ProductFailure", "The test suite failed.")],
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, original with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Continuation = new RemoteReviewContinuation(
+                RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
+                ["build-tests"], 1, new CardRoundBudgetState(4, 4)),
+        });
+
+        var restarted = Build();
+        var reconciler = new RemoteReviewSettlementReconciler(
+            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(),
+            restarted.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
+            restarted.Mutations, restarted.Transitions, restarted.Timeline);
+        reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!);
+        var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.Escalated, moved.State);
+        reconciler.Reconcile(moved);
+        var receipt = Assert.Single(restarted.Timeline.ReadAll(moved.FolderPath), item =>
+            item.Kind == TimelineEventKinds.OrchestratorEscalated
+            && item.Details?.GetValueOrDefault("reviewAttemptId") == card.ReviewAttemptId);
+        Assert.Equal("4", receipt.Details!["roundsUsed"]);
+        Assert.Equal("4", receipt.Details["roundsAllowed"]);
+        Assert.Equal("build-tests", receipt.Details["blockingAspects"]);
+    }
+
+    [Fact]
+    public void Settlement_journal_detects_a_changed_card_budget_receipt()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "budget-receipt-hash");
+        var entry = JournalEntry(card, stack) with
+        {
+            ReviewBudgetDecision = new ReviewRoundBudgetDecision(4, 4, ["code-quality"],
+                "card-round-budget"),
+            ReviewBudgetOriginalVerdicts = [],
+            CardBudget = new CardRoundBudgetState(4, 4),
+        };
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        Assert.Equal(RemoteReviewSettlementReadStatus.Ready,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+        var path = RemoteReviewSettlementJournal.PathFor(card.FolderPath, card.ReviewAttemptId);
+        File.WriteAllText(path, File.ReadAllText(path).Replace(
+            "\"used\": 4", "\"used\": 9", StringComparison.Ordinal));
+        Assert.Equal(RemoteReviewSettlementReadStatus.Repair,
+            RemoteReviewSettlementJournal.Read(card.FolderPath, card.ReviewAttemptId).Status);
+    }
+
+    [Fact]
     public void Corrupt_or_missing_journal_reports_repair_without_integrating()
     {
         var seeded = Build();
@@ -1077,7 +1191,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Stack stack,
         string id,
         bool settleReview = true,
-        string lane = TaskStates.AutoReview)
+        string lane = TaskStates.AutoReview,
+        ReviewTerminalOutcome reviewOutcome = ReviewTerminalOutcome.Pass)
     {
         Git(_repo, "checkout", "-q", "-b", "task/" + id, "develop");
         File.WriteAllText(Path.Combine(_repo, id + ".txt"), id + "\n");
@@ -1133,10 +1248,10 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                 new AttemptWriteReference(
                     claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "review-settle-" + id),
                 deliverySha,
-                ReviewTerminalOutcome.Pass,
+                reviewOutcome,
                 Reason: "All aspects passed."));
             Assert.True(settled.Accepted);
-            Assert.Equal(ReviewTerminalOutcome.Pass, settled.ReviewAttempt!.Outcome);
+            Assert.Equal(reviewOutcome, settled.ReviewAttempt!.Outcome);
         }
 
         return new SeededCard(id, taskKey, folder, deliverySha, review.AttemptId);
@@ -1269,7 +1384,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             reviewExecutorRegistry: null,
             deliveryResume: resume);
 
-        return new Stack(scanner, authority, integration, pipeline, timeline, resume, orchestrator, worker, transitions);
+        return new Stack(scanner, authority, integration, pipeline, timeline, resume, orchestrator, worker,
+            transitions, mutations);
     }
 
     private static object CommitRecord(string sha) => new
@@ -1315,7 +1431,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         AutoReviewDeliveryResumeService Resume,
         ReviewDecisionOrchestrator Orchestrator,
         AutoReviewPostProcessingWorker Worker,
-        TaskTransitionService Transitions);
+        TaskTransitionService Transitions,
+        TaskMutationService Mutations);
 
     private static string Git(string cwd, params string[] args)
     {

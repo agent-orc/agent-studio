@@ -344,7 +344,8 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
                 if (result.Started)
                 {
                     actedThisTick = true;
-                    WriteReceipts(workspace!, job, sweep, trigger!.SubjectKey, decision.Reason, budget, result.Detail);
+                    WriteReceipts(workspace!, job, sweep, trigger!.SubjectKey, decision.Reason,
+                        budget, result.Detail, latestReview?.AttemptId);
                     budget = budget with { Used = budget.Used + 1 };
                 }
                 else
@@ -410,7 +411,8 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         string subjectKey,
         string reason,
         CardRoundBudgetState budget,
-        string detail)
+        string detail,
+        string? reviewAttemptId)
     {
         var current = _scanner.FindJob(job.Id, job.WatchPath) ?? job;
         var now = Now();
@@ -428,19 +430,21 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
             AttemptEpoch = OperatorReviewRequeueService.ReadEpoch(current.FolderPath),
             FailureKind = $"operator-sweep:{sweep}",
         });
+        string[] openAspects = reviewAttemptId is null ? []
+            : RemoteReviewSettlementJournal.Read(current.FolderPath, reviewAttemptId).Entry?.Report.Verdicts
+                .Where(verdict => AgentStudio.TaskServer.Contracts.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                .Select(verdict => verdict.Aspect).ToArray() ?? [];
+        var receipt = CardRoundBudgetReceipt.Details(
+            budget with { Used = round }, openAspects, $"operator-sweep:{sweep}");
+        receipt[OperatorSweepTriggers.ReceiptSweepKey] = sweep;
+        receipt[OperatorSweepTriggers.ReceiptSubjectKey] = subjectKey;
+        receipt["reason"] = reason;
         _timeline.Append(
             current.FolderPath,
             TimelineEventKinds.OperatorSweepRoundStarted,
             TimelineActors.System,
             $"Operator sweep {sweep} opened round {round} of {budget.Allowed}: {detail}",
-            details: new Dictionary<string, string>
-            {
-                [OperatorSweepTriggers.ReceiptSweepKey] = sweep,
-                [OperatorSweepTriggers.ReceiptSubjectKey] = subjectKey,
-                ["reason"] = reason,
-                ["roundsUsed"] = round.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["roundsAllowed"] = budget.Allowed.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            });
+            details: receipt);
     }
 
     /// <summary>Pause or resume one sweep for one project. Persisted in project settings.</summary>

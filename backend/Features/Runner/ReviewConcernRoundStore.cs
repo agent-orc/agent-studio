@@ -79,6 +79,9 @@ public static class ReviewConcernRoundStore
         lock (Gates.GetOrAdd(Path.GetFullPath(folderPath), _ => new object()))
         {
             var existing = Read(folderPath);
+            if (existing?.ReviewAttemptId == reviewAttemptId
+                && existing.RoundKind == RunTriggers.ReviewFinding)
+                return existing;
             var ledger = new ReviewConcernRoundLedger(
                 existing?.Used ?? 0,
                 Math.Max(0, existing?.Maximum ?? maximumConcernRounds),

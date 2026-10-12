@@ -839,12 +839,73 @@ public static class V1ReviewPlaneEndpoints
                     configuration["TaskRepository"], preparedTask.ProjectName, preparedTask.Id),
                 settings.Get(preparedTask.ProjectName).MaxAutoReissueAttempts
                     ?? configuration.GetValue("ReviewDecisionOrchestrator:MaxAutoReissueAttempts", 2));
-            var shouldDegrade = outcome == ReviewTerminalOutcome.ProductFailure && roundBudget.Degrade;
+            var blockingAspects = originalVerdicts
+                .Where(verdict => Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
+                .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var cardBudget = CardRoundBudget.Evaluate(
+                ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, preparedTask.ProjectName),
+                timeline.ReadAll(preparedTask.FolderPath), preparedTask.Id,
+                CardRoundBudget.ResolveAllowed(configuration));
+            var cardAction = CardRoundBudget.Decide(cardBudget, blockingAspects);
+            if (!acceptedReplay && outcome == ReviewTerminalOutcome.ProductFailure
+                && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
+                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
+                    roundBudget.MaximumRounds, blockingAspects, "card-round-budget");
+            var spentConcernRound = !acceptedReplay && cardBudget.Exhausted
+                && outcome == ReviewTerminalOutcome.Pass
+                && Contract.ReviewFollowUpPolicy.Decide(
+                    originalVerdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                        verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
+                        verdict.Missing, verdict.Classification)),
+                    ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
+                    settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds).Action
+                    == Contract.ReviewFollowUpAction.ReviewConcernRound;
+            if (spentConcernRound)
+                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
+                    roundBudget.MaximumRounds,
+                    originalVerdicts.Where(verdict => !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+                        .Select(verdict => verdict.Aspect).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    "card-round-budget");
+            var shouldDegrade = (!acceptedReplay
+                                 && outcome == ReviewTerminalOutcome.ProductFailure && roundBudget.Degrade)
+                                || spentConcernRound;
             if (shouldDegrade)
             {
                 request = ReviewRoundBudgetPolicy.ApplyRemoteReport(request, roundBudget);
                 if (string.Equals(request.Outcome, "Pass", StringComparison.OrdinalIgnoreCase))
                     outcome = ReviewTerminalOutcome.Pass;
+            }
+            var preparedConcernLedger = ReviewConcernRoundStore.Read(preparedTask.FolderPath);
+            reviewFollowUp = Contract.ReviewFollowUpPolicy.Decide(
+                request.Verdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
+                    verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
+                    verdict.Missing, verdict.Classification)),
+                preparedConcernLedger?.Used ?? 0,
+                settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds);
+            if (shouldDegrade && outcome == ReviewTerminalOutcome.Pass)
+                reviewFollowUp = ReviewRoundBudgetPolicy.ApplyFollowUp(reviewFollowUp, roundBudget);
+            var deliveredRound = outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
+                or ReviewTerminalOutcome.IntegrationBranchDefect
+                ? new DeliveredReviewRound(
+                    attemptId, blockingAspects, shouldDegrade ? roundBudget.DegradedAspects : [],
+                    SpentBy: roundBudget.SpentBy)
+                : null;
+            RemoteReviewContinuation? continuation = null;
+            if (!acceptedReplay && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
+            {
+                if (outcome == ReviewTerminalOutcome.ProductFailure
+                    && cardAction == CardRoundBudgetAction.Escalate)
+                    continuation = new RemoteReviewContinuation(
+                        RemoteReviewContinuationKind.BudgetEscalation, string.Empty,
+                        blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                        cardBudget, deliveredRound, roundSeed);
+                else if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewFindingRound)
+                    continuation = new RemoteReviewContinuation(
+                        RemoteReviewContinuationKind.FindingRound,
+                        BuildRemoteFindingFollowUp(reviewFollowUp.Findings, attemptId),
+                        reviewFollowUp.Findings.Select(item => item.Aspect).ToArray(),
+                        settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
+                        cardBudget with { Used = cardBudget.Used + 1 }, deliveredRound, roundSeed);
             }
             var preparedHash = RemoteReviewSettlementJournal.Hash(request);
             // Only an accepted report owns a journal; a replayed rejected key is
@@ -869,7 +930,7 @@ public static class V1ReviewPlaneEndpoints
             // A batch-deferred pass owes no per-card integration: the batch gate
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
-            if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
+            if (!replay && continuation is null && outcome != ReviewTerminalOutcome.InfrastructureFailure
                 && !batchDeferredAccepted
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
@@ -930,6 +991,9 @@ public static class V1ReviewPlaneEndpoints
                             Delivery = preparedDelivery,
                             ReviewBudgetDecision = shouldDegrade ? roundBudget : null,
                             ReviewBudgetOriginalVerdicts = shouldDegrade ? originalVerdicts : null,
+                            CardBudget = shouldDegrade && cardAction == CardRoundBudgetAction.DegradeToFollowUp
+                                ? cardBudget : null,
+                            Continuation = continuation,
                             ReceivedAtUtc = DateTime.UtcNow,
                         },
                         () => authority.GetReview(attemptId)?.Reports
@@ -974,22 +1038,18 @@ public static class V1ReviewPlaneEndpoints
             // above: the batch-gate fallback below can move it to another lane.
             try
             {
-                if (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.ProductFailure
-                    or ReviewTerminalOutcome.IntegrationBranchDefect)
-                    ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed,
-                        new DeliveredReviewRound(
-                            attemptId,
-                            originalVerdicts.Where(verdict =>
-                                    Contract.ReviewGradingPolicy.IsBlockingToken(verdict.Status))
-                                .Select(verdict => verdict.Aspect).ToArray(),
-                            shouldDegrade ? roundBudget.DegradedAspects : [],
-                            SpentBy: roundBudget.SpentBy));
+                if (deliveredRound is not null)
+                    ReviewRoundBudgetStore.Record(task.FolderPath, roundSeed, deliveredRound);
                 if (shouldDegrade && CreateReviewBudgetFollowUpCard(
                         task, attemptId, originalVerdicts, roundBudget, mutations, scanner) is null)
                     return Results.Json(new Contract.ApiError(
                         "review-budget-follow-up-create-failed",
                         "The review report was recorded, but its budget follow-up card could not be created."),
                         statusCode: StatusCodes.Status503ServiceUnavailable);
+                if (shouldDegrade && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
+                    CardRoundBudgetReceipt.RecordDispositionOnce(
+                        timeline, task.FolderPath, attemptId, cardBudget,
+                        roundBudget.DegradedAspects, CardRoundBudgetAction.DegradeToFollowUp);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -1135,6 +1195,28 @@ public static class V1ReviewPlaneEndpoints
                 reportHash,
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
+
+            if (continuation is not null)
+            {
+                var journaled = RemoteReviewSettlementJournal.Read(task.FolderPath, attemptId).Entry;
+                if (journaled is null || !await RemoteReviewContinuationProjection.ApplyAsync(
+                        task, journaled, scanner, transitions, mutations, timeline, logger, ct))
+                {
+                    EnqueueEvidenceProjection();
+                    return Results.Json(new Contract.ApiError("review-continuation-write-failed",
+                        "The review report was recorded, but its journaled continuation is still pending."),
+                        statusCode: StatusCodes.Status503ServiceUnavailable);
+                }
+                EnqueueEvidenceProjection();
+                return Results.Ok(new Contract.ReviewReportDto(
+                    "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
+                    attemptId, settled.ReviewAttempt.Subject.SubjectId,
+                    request.Outcome, request.FailureClassification, request.Summary,
+                    reportHash, receivedAt, RetryScheduled: false,
+                    continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                        ? TaskStates.Ready : TaskStates.Escalated,
+                    EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
+            }
 
             if (batchDeferredAccepted)
             {
@@ -1297,91 +1379,6 @@ public static class V1ReviewPlaneEndpoints
                         sessions.ReadSessionEvents(task.Id, task.WatchPath).Count,
                         stillOpen);
                 }
-                if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewFindingRound
-                    && string.Equals(task.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
-                {
-                    var followUp = BuildRemoteFindingFollowUp(
-                        reviewFollowUp.Findings,
-                        settled.ReviewAttempt.AttemptId);
-                    var moved = await transitions.MoveAsync(
-                        task.Id,
-                        TaskStates.Ready,
-                        task.WatchPath,
-                        ct,
-                        cause: $"remote-review-finding:{attemptId}",
-                        reason: $"Blocking review finding from {settled.ReviewAttempt.AttemptId}.",
-                        authorityWrite: new AttemptWriteReference(
-                            attemptId,
-                            request.Fence,
-                            request.AuthorityEpoch,
-                            $"finding-round:{request.IdempotencyKey}"),
-                        suppressProductExecution: true,
-                        expectedSourceState: TaskStates.AutoReview,
-                        transitionCause: LaneChangeCauses.QualityLoop,
-                        transitionDetail: "multi-aspect-block");
-                    if (moved.Status == MoveJobStatus.Success)
-                    {
-                        var movedPath = moved.NewFolderPath ?? task.FolderPath;
-                        TaskJsonFile.UpdateOrder(movedPath, 0, logger);
-                        ReviewConcernRoundStore.RecordFinding(
-                            movedPath,
-                            projectSettingsForFollowUp.MaxReviewConcernRounds,
-                            settled.ReviewAttempt.AttemptId,
-                            reviewFollowUp.Findings.Select(item => item.Aspect),
-                            request.Workspace.ExpectedResultSha,
-                            request.Workspace.IntegrationTipSha,
-                            request.Verdicts);
-                        mutations.AppendContinuationNote(task.Id, followUp, task.WatchPath);
-                        await ReviewDecisionOrchestrator.WriteFollowUpFilesAsync(
-                            movedPath,
-                            followUp,
-                            new ReviewDecisionOrchestrator.SteeringContext(
-                                "multi-aspect-block",
-                                "block",
-                                0,
-                                Reason: $"Remote Review {settled.ReviewAttempt.AttemptId}"),
-                            task.Id,
-                            logger,
-                            ct);
-                        ConcernTagWriter.MergeConcernTags(
-                            movedPath,
-                            [ReviewDecisionOrchestrator.ReissueTagId],
-                            logger);
-                        timeline.Append(
-                            movedPath,
-                            TimelineEventKinds.QualityLoopReopened,
-                            TimelineActors.QualityLoop,
-                            $"Blocking findings from review {settled.ReviewAttempt.AttemptId} reopened the card.",
-                            runId: settled.ReviewAttempt.AttemptId,
-                            details: new Dictionary<string, string>
-                            {
-                                ["cause"] = "multi-aspect-block",
-                                ["reviewAttemptId"] = settled.ReviewAttempt.AttemptId,
-                                ["aspects"] = string.Join(",", reviewFollowUp.Findings.Select(item => item.Aspect)),
-                                ["followUpPrompt"] = RunTriggerMetadata.PromptPreview(followUp),
-                            });
-                        EnqueueEvidenceProjection();
-                        return Results.Ok(new Contract.ReviewReportDto(
-                            "rrpt_" + HashId($"{attemptId}:{request.IdempotencyKey}"),
-                            attemptId,
-                            settled.ReviewAttempt.Subject.SubjectId,
-                            request.Outcome,
-                            request.FailureClassification,
-                            request.Summary,
-                            reportHash,
-                            receivedAt,
-                            RetryScheduled: false,
-                            TaskStates.Ready,
-                            EvidenceProjection: Contract.ReviewEvidenceProjectionStatus.Queued));
-                    }
-                    EnqueueEvidenceProjection();
-                    return Results.Json(
-                        new Contract.ApiError(
-                            "review-finding-round-write-failed",
-                            $"The review report was recorded, but its finding round could not move to Ready: {moved.Status} {moved.Message}"),
-                        statusCode: StatusCodes.Status503ServiceUnavailable);
-                }
-
                 if (reviewFollowUp.Action == Contract.ReviewFollowUpAction.ReviewConcernRound
                     && ReviewConcernRoundStore.TryConsume(
                         task.FolderPath,

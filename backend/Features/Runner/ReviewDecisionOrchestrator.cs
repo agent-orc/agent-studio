@@ -2681,6 +2681,18 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ConfiguredIdenticalBlockRounds(),
             CountPriorReissues(workspace, entry.Name, current.Id),
             ConfiguredMaxReissues(entry.Name));
+        var cardBudget = CardRoundBudget.Evaluate(
+            ReviewDecisionLog.ReadAll(workspace, entry.Name),
+            _timeline?.ReadAll(current.FolderPath) ?? [], current.Id,
+            CardRoundBudget.ResolveAllowed(_configuration));
+        var cardAction = CardRoundBudget.Decide(cardBudget, blockedAspects);
+        if (cardAction == CardRoundBudgetAction.DegradeToFollowUp)
+            roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
+                roundBudget.MaximumRounds,
+                blockedAspects.Length > 0 ? blockedAspects : report.Verdicts
+                    .Where(verdict => verdict.Status == AspectStatus.Concerns)
+                    .Select(verdict => verdict.Aspect).ToArray(),
+                "card-round-budget");
         ReviewRoundBudgetStore.Record(current.FolderPath, roundSeed,
             new DeliveredReviewRound(localAttemptId, blockedAspects, roundBudget.DegradedAspects,
                 SpentBy: roundBudget.SpentBy));
@@ -2692,6 +2704,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         if (roundBudget.Degrade)
         {
             if (!CreateReviewBudgetFollowUp(current, localAttemptId, report, roundBudget)) return;
+            if (_timeline is not null && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
+                CardRoundBudgetReceipt.RecordDispositionOnce(
+                    _timeline, current.FolderPath, localAttemptId, cardBudget,
+                    roundBudget.DegradedAspects, CardRoundBudgetAction.DegradeToFollowUp);
             report = AspectRunReport.From(report.Verdicts.Select(verdict =>
                 verdict.Status == AspectStatus.Block
                 && roundBudget.DegradedAspects.Contains(verdict.Aspect, StringComparer.OrdinalIgnoreCase)
@@ -8133,8 +8149,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             CardRoundBudget.ResolveAllowed(_configuration));
         if (!budget.Exhausted) return false;
 
-        var reason = $"Automatic round budget spent ({budget.Used} of {budget.Allowed}); " +
-                     $"{reopenCause} needs a person to decide the next step.";
+        var openAspects = ReviewRoundBudgetStore.Read(current.FolderPath).Rounds
+            .LastOrDefault()?.BlockingAspects ?? [];
+        if (openAspects.Count == 0 && reopenCause == BuildTestGateReopenCause)
+            openAspects = ["build-tests"];
+        var reason = $"Automatic round budget spent ({budget.Used} of {budget.Allowed}); "
+                     + $"open blocking aspects: {string.Join(", ", openAspects)}. "
+                     + $"{reopenCause} needs a person to decide the next step.";
         var move = GuardedMoveJob(
             current.Id, TaskStates.Escalated, entry.Path,
             transitionCause: LaneChangeCauses.Escalated,
@@ -8150,10 +8171,13 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var folder = move.NewFolderPath ?? current.FolderPath;
         var moved = current with { FolderPath = folder, State = TaskStates.Escalated };
         _chatLog.AppendSupervisor(moved, "escalate", reason);
+        var receipt = BuildEscalateDetails(entry.Name, "card-round-budget", reason,
+            CountPriorReissues(workspace, entry.Name, current.Id));
+        foreach (var pair in CardRoundBudgetReceipt.Details(
+                     budget, openAspects, "card-round-budget", CardRoundBudgetAction.Escalate))
+            receipt[pair.Key] = pair.Value;
         EmitVerdictTimeline(folder, TimelineEventKinds.OrchestratorEscalated,
-            TimelineActors.Orchestrator, reason,
-            BuildEscalateDetails(entry.Name, "card-round-budget", reason,
-                CountPriorReissues(workspace, entry.Name, current.Id)));
+            TimelineActors.Orchestrator, reason, receipt);
         AppendReviewDecision(workspace, new ReviewDecisionRecord(
             CreatedAt: DateTime.UtcNow,
             JobId: current.Id,

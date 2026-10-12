@@ -88,6 +88,24 @@ public sealed class OperatorSweepPolicyTests
     }
 
     [Theory]
+    [InlineData("build-tests", CardRoundBudgetAction.Escalate)]
+    [InlineData("tests-and-evidence", CardRoundBudgetAction.Escalate)]
+    [InlineData("review-verification", CardRoundBudgetAction.Escalate)]
+    [InlineData("code-quality", CardRoundBudgetAction.DegradeToFollowUp)]
+    public void SpentCardBudget_UsesOneDispositionForEveryRoundOwner(
+        string aspect, CardRoundBudgetAction expected)
+    {
+        var budget = new CardRoundBudgetState(4, 4);
+        Assert.Equal(CardRoundBudgetAction.OpenRound,
+            CardRoundBudget.Decide(new CardRoundBudgetState(3, 4), [aspect]));
+        Assert.Equal(expected, CardRoundBudget.Decide(budget, [aspect]));
+        var receipt = CardRoundBudgetReceipt.Details(budget, [aspect], "card-round-budget");
+        Assert.Equal("4", receipt["roundsUsed"]);
+        Assert.Equal("4", receipt["roundsAllowed"]);
+        Assert.Equal(aspect, receipt["blockingAspects"]);
+    }
+
+    [Theory]
     [InlineData(FailureDomains.Product, OperatorSweepAction.Act, OperatorSweepReasons.ProductGateFailure)]
     [InlineData(FailureDomains.Infrastructure, OperatorSweepAction.Hold, OperatorSweepReasons.EnvironmentFailure)]
     [InlineData(null, OperatorSweepAction.WaitForPerson, OperatorSweepReasons.UnclassifiedFailure)]
