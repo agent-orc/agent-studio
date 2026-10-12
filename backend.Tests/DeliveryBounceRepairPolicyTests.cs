@@ -4,6 +4,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the selector matches the fixed 2026-10-11 incident date and never reads the clock.
+
 public sealed class DeliveryBounceRepairPolicyTests
 {
     [Fact]
