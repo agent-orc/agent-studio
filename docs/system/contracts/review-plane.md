@@ -8,6 +8,21 @@ is today's production implementation, and `task-server/TaskServerEndpoints.cs` +
 `TaskServerReviewStore.cs` is the standalone reference implementation for the
 target Server/Runner split. Both serve the same contract described here.
 
+In the [five-role target](../../concepts/distributed-agent-studio-target-architecture.md),
+the Orchestrator Engine decides when to request review and what follows its
+settled evidence. The Task Server admits and fences the claim; a review-capable
+runner host executes the attempt at the exact result SHA. The Operations Server
+does not execute review or another pipeline step. An eligible executor on a
+different host from coding wins when idle, but review never waits for that
+preference; a project may opt into a hard separation requirement (AGT-W65
+D19 A). This is a target scheduling rule, not a claim about the current monolith.
+
+A blocking review opens a fix round on the reviewed delivery. Every automatic
+round counts against one per-card budget. At budget end, non-test blocks become
+concerns with a linked follow-up card; `build-tests` and `tests-and-evidence`
+blocks escalate. The Engine chooses the typed next action from bounded grounds,
+and the Task Server validates and records the resulting intent and receipt.
+
 ## Endpoints
 
 | Endpoint | Purpose |

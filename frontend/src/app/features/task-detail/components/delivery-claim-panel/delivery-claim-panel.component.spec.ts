@@ -212,6 +212,27 @@ describe('DeliveryClaimPanelComponent', () => {
       .toContain('Release not checked');
   });
 
+  /**
+   * AGT-3076: AGT-3042 was integrated, but the rebuilt authority store lost
+   * its run attempt. The delivery panel says why acceptance needs an override.
+   */
+  it('explains that acceptance needs an override when the run attempt is gone', async () => {
+    const fixture = await mount(job({
+      state: TaskState.HumanReview,
+      acceptanceAttemptGap: {
+        authorityEpoch: 2,
+        subjectRunAttemptId: 'run-3042',
+        resultSha: 'abcdef0123456789abcdef0123456789abcdef01',
+        reason: "Acceptance refused: no run attempt in the current authority epoch (2) for 'AGT-3042'.",
+      },
+    }), vi.fn(() => throwError(() => new Error('offline'))));
+    const host = fixture.nativeElement as HTMLElement;
+
+    const notice = host.querySelector('[data-testid="acceptance-attempt-gap"]');
+    expect(notice?.textContent).toContain('Acceptance needs an operator override');
+    expect(notice?.textContent).toContain('no run attempt in the current authority epoch (2)');
+  });
+
   it('renders nothing before a card reaches a delivered lane', async () => {
     const fixture = await mount(job({ state: TaskState.Progress }));
 

@@ -16,9 +16,9 @@ public static class CrashRecoveryEndpoints
             return Results.Ok(new { pending = recovery.GetPendingOrphanRecoveries() });
         });
 
-        group.MapPost("/pending/{id}/commit", (string id, CrashRecoveryService recovery) =>
+        group.MapPost("/pending/{id}/commit", (string id, bool? confirmLarge, CrashRecoveryService recovery) =>
         {
-            var result = recovery.CommitPendingOrphanRecovery(id);
+            var result = recovery.CommitPendingOrphanRecovery(id, confirmLarge == true);
             return result.Status switch
             {
                 CrashRecoveryActionStatuses.NotFound => Results.NotFound(result),

@@ -27,7 +27,12 @@ export class HostReleaseIdentityComponent {
   readonly releaseLabel = computed(() =>
     this.host().release?.version?.trim() || this.host().release?.releaseId?.trim() || this.host().releaseId?.trim() || null);
   readonly releaseId = computed(() => this.host().release?.releaseId?.trim() || null);
-  readonly commit = computed(() => this.host().release?.commit?.trim() || null);
+  readonly commit = computed(() => {
+    const reported = this.host().release?.commit?.trim();
+    if (reported && /^[0-9a-f]{7,40}$/i.test(reported)) return reported;
+    const releaseId = this.releaseId();
+    return releaseId?.match(/(?:^|-)([0-9a-f]{7,40})$/i)?.[1] ?? null;
+  });
   readonly driftLabel = computed(() => releaseDriftLabel(this.host().releaseDrift));
   readonly driftTone = computed(() => releaseDriftTone(this.host().releaseDrift));
   readonly tooltip = computed(() =>

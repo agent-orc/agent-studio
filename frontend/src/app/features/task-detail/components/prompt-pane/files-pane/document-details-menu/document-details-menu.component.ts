@@ -4,6 +4,7 @@ import type { TaskArtifact } from '../../../../../../models/task.model';
 import { NowTickService } from '../../../../../../services/now-tick.service';
 import { formatRelativeTime } from '../../../../../../services/format.util';
 import { generatedFileProvenance } from '../../../generated-file-provenance.util';
+import { ModelPriceStore } from '../../../../../tokens/model-prices';
 
 @Component({
   selector: 'app-document-details-menu',
@@ -15,6 +16,7 @@ import { generatedFileProvenance } from '../../../generated-file-provenance.util
 })
 export class DocumentDetailsMenuComponent {
   private readonly nowTick = inject(NowTickService);
+  private readonly modelPrices = inject(ModelPriceStore);
 
   readonly file = input.required<TaskArtifact>();
   readonly title = input.required<string>();
@@ -24,7 +26,10 @@ export class DocumentDetailsMenuComponent {
   readonly toggleHistory = output<void>();
 
   provenance() {
-    return generatedFileProvenance(this.file().generation);
+    return generatedFileProvenance(
+      this.file().generation,
+      this.modelPrices.priceFor(this.file().generation?.model),
+    );
   }
 
   formattedSize(): string {

@@ -5,6 +5,7 @@ using AgentStudio.Registry;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -42,6 +43,41 @@ public sealed class GateFailureRouterTests : IDisposable
         File.WriteAllText(Path.Combine(_repo, "base.txt"), "base\n");
         Git(_repo, "add", "-A");
         Git(_repo, "commit", "-q", "-m", "seed");
+    }
+
+    [Fact]
+    public async Task DeliveryReconciler_LeavesLegacyDeliveredLaneIntactAfterTargetHeadMoves()
+    {
+        var acceptedSha = Git(_repo, "rev-parse", "develop");
+        var ids = SeedCompletedCards(12, acceptedSha, withClaim: true);
+        Assert.True(ids.Length < DeliveryChainReconciler.MaxCompletedReopensPerPass);
+        var stack = Build();
+        var cards = ids.Select(id => Card(stack, id)).ToArray();
+        var before = stack.Integration.BuildLookup(cards);
+
+        Git(_repo, "commit", "-q", "--allow-empty", "-m", "advance target");
+        var after = stack.Integration.BuildLookup(cards);
+        Assert.NotEqual(before[cards[0].TaskKey].TargetRefFingerprint,
+            after[cards[0].TaskKey].TargetRefFingerprint);
+        Assert.All(after.Values, status => Assert.Equal(IntegrationStatuses.Integrated, status.Status));
+
+        Assert.Equal(0, await stack.Reconciler.RunOnceAsync());
+        Assert.All(ids, id => Assert.Equal(TaskStates.Completed, Card(stack, id).State));
+    }
+
+    [Fact]
+    public async Task DeliveryReconciler_BlocksAnOversizedDeliveredReopenBatch()
+    {
+        var sha = Git(_repo, "rev-parse", "develop");
+        var ids = SeedCompletedCards(DeliveryChainReconciler.MaxCompletedReopensPerPass + 1,
+            sha, withClaim: false);
+        var summaries = new List<string>();
+        var stack = Build(reconcileLogger: new CollectingReconcileLogger(summaries));
+
+        Assert.Equal(0, await stack.Reconciler.RunOnceAsync());
+        Assert.All(ids, id => Assert.Equal(TaskStates.Completed, Card(stack, id).State));
+        Assert.Single(summaries);
+        Assert.Contains("alarm=completed-reopen-limit", summaries[0]);
     }
 
     [Theory]
@@ -302,6 +338,30 @@ public sealed class GateFailureRouterTests : IDisposable
     /// gate log, and the failed merge step. The returned id doubles as the
     /// card key the assertions use.
     /// </summary>
+    private string[] SeedCompletedCards(int count, string sha, bool withClaim)
+    {
+        var ids = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            var id = $"accepted-{i}";
+            ids[i] = id;
+            var folder = Path.Combine(_watchPath, TaskStates.Completed, id);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+            {
+                id, key = $"FIX-{i}", title = id, state = TaskStates.Completed,
+                projectName = Project, mode = TaskModes.Coding, requiresIntegration = true,
+                commits = new[] { Commit(sha) },
+                completionClaim = withClaim ? new TaskCompletionClaim
+                {
+                    Basis = CompletionClaimBases.IntegratedDelivery,
+                    IntegrationBranch = "develop",
+                } : null,
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        }
+        return ids;
+    }
+
     private string SeedRedGate(
         Stack stack, string label, string fixture, string lane,
         string failureCode = AcceptedIntegrationFailureCodes.BuildGateFailed)
@@ -379,7 +439,8 @@ public sealed class GateFailureRouterTests : IDisposable
 
     private Stack Build(
         Func<TaskInfo, string, CancellationToken, Task>? fixRoundStarter = null,
-        bool withoutInterventions = false)
+        bool withoutInterventions = false,
+        ILogger<DeliveryChainReconciler>? reconcileLogger = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -420,7 +481,7 @@ public sealed class GateFailureRouterTests : IDisposable
             NullLogger<GateFailureRouter>.Instance, counter,
             withoutInterventions ? null : interventions, fixRoundStarter: fixRoundStarter);
         var reconciler = new DeliveryChainReconciler(scanner, integration, transitions, configuration,
-            NullLogger<DeliveryChainReconciler>.Instance, router);
+            reconcileLogger ?? NullLogger<DeliveryChainReconciler>.Instance, router);
         return new Stack(scanner, mutations, timeline, pipeline, integration, interventions, counter, reconciler);
     }
 
@@ -472,6 +533,20 @@ public sealed class GateFailureRouterTests : IDisposable
         FailureInterventionService Interventions,
         InMemoryFingerprintCounter Counter,
         DeliveryChainReconciler Reconciler);
+
+    private sealed class CollectingReconcileLogger(List<string> summaries)
+        : ILogger<DeliveryChainReconciler>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (message.StartsWith("delivery-chain-reconcile-summary", StringComparison.Ordinal))
+                summaries.Add(message);
+        }
+    }
 
     /// <summary>The Task Server store's contract: idempotent per report key, distinct cards per fingerprint.</summary>
     private sealed class InMemoryFingerprintCounter : IGateFailureFingerprintCounter
