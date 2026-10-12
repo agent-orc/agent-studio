@@ -67,6 +67,41 @@ public sealed class RemotePipelineExecutionProjectionTests
     }
 
     [Fact]
+    public void Project_RemoteNeedsInput_RecordsCoreRunAsNeedsDecisionNotFailed()
+    {
+        // AGT-3045 regression (AGT-2798): a remote run that parked on two open
+        // operator decisions must not read as "Pipeline failure".
+        var folder = Path.Combine(Path.GetTempPath(), "remote-needsinput-projection-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var pipeline = PipelineCatalogue.Standard;
+            var projected = RemotePipelineExecutionProjection.Project(
+                null,
+                pipeline,
+                new TaskInfo { Id = "AGT-2798", FolderPath = folder, CreatedAt = Utc(8, 0), State = TaskStates.Completed },
+                [new SessionEvent { Ts = Utc(8, 0), Kind = "start", Cli = "remote-runner" }],
+                [new TimelineEvent
+                {
+                    Ts = Utc(8, 8),
+                    Kind = TimelineEventKinds.AgentRunFinished,
+                    Summary = "remote run needsinput on agent-runner-01",
+                    Details = new Dictionary<string, string> { ["cli"] = "remote-runner", ["status"] = "needsinput" },
+                }],
+                null);
+
+            var core = Step(projected.Execution!, PipelineCatalogue.CoreAgentRunStepId);
+            Assert.Equal(PipelineStepStatus.NeedsDecision, core.Status);
+            Assert.Equal("needsinput", core.Verdict);
+            Assert.DoesNotContain("remote run needsinput", core.Reason);
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
     public void Project_RemoteLifecycle_MapsCoreReviewSkipsAndLedgerWithoutWritingParallelState()
     {
         var folder = Path.Combine(

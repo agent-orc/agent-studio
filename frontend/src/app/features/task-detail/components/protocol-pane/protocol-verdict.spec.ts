@@ -88,6 +88,20 @@ describe('deriveProtocolVerdict', () => {
     });
   });
 
+  it('AGT-3045: a core run parked on NeedsInput reads needs-decision, never Pipeline failure', () => {
+    const v = deriveProtocolVerdict(baseInputs({
+      laneState: '6-completed',
+      pipelineExecution: {
+        pipelineId: 'standard', pipelineVersion: 1, jobId: 'AGT-2798', project: 'agt',
+        startedAt: '2026-09-15T10:00:00Z', completedAt: '2026-09-15T10:08:00Z',
+        steps: [{ stepId: 'core-agent-run', status: 'needsDecision' }],
+      } as never,
+    }));
+    expect(v.label).not.toBe('Pipeline failure');
+    expect(v.signals?.find(signal => signal.label === 'Pipeline failure')).toBeUndefined();
+    expect(v.signals?.find(signal => signal.label === 'Needs decision')?.status).toBe('needs-decision');
+  });
+
   it('is unclear (running) when isRunning beats every other signal', () => {
     const v = deriveProtocolVerdict(baseInputs({
       isRunning: true,

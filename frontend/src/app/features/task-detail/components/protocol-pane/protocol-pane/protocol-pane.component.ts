@@ -65,6 +65,7 @@ import {
   rateLimitTooltip,
 } from './protocol-pane-view-model';
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
+import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { presentActivityEvents, stripLegacyCompletionLines } from '../activity-event-presentation';
 import { ActivityEventPresentationDirective } from '../activity-event-presentation.directive';
 import { mergeReplayEvents, projectRunnerReplay } from '../runner-event-replay';
@@ -199,6 +200,7 @@ export class ProtocolPaneComponent implements OnDestroy {
   private readonly planPoll = inject(PlanPollService);
   private readonly nowTick = inject(NowTickService).now;
   private readonly jobs = inject(TaskService);
+  private readonly modelPrices = inject(ModelPriceStore);
   private readonly overlayPortal = inject(OverlayPortalService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly layout = inject(LayoutPanesService);
@@ -521,7 +523,10 @@ export class ProtocolPaneComponent implements OnDestroy {
     stripStatusHeader(this.detail().statusMarkdown),
   );
   readonly statusProvenance = computed(() =>
-    generatedFileProvenance(this.detail().statusGeneration),
+    generatedFileProvenance(
+      this.detail().statusGeneration,
+      this.modelPrices.priceFor(this.detail().statusGeneration?.model),
+    ),
   );
   /**
    * Same header strip the rendered/raw views apply, handed to the file-history

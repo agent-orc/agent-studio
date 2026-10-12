@@ -19,6 +19,7 @@ import { TooltipDirective } from 'coding-agent-chat/shared';
 import { cleanStepResultMarkdown } from '../../prompt-pane/pipeline-step-result/pipeline-step-result.util';
 import { CLAUDE_FALLBACK_MODEL_ID } from '../../../../cli';
 import { generatedFileProvenance } from '../../generated-file-provenance.util';
+import { ModelPriceStore } from '../../../../tokens/model-prices';
 import { codeReviewVerdictTone, type CodeReviewVerdictTone } from '../../code-review-verdict.util';
 import { describeDiffSize, isLargeDiff } from '../../../../../utils/large-diff-gate';
 import { formatDateTimeUtc } from '../../../../../services/format.util';
@@ -89,6 +90,7 @@ export class CodeReviewPanelComponent implements OnInit {
   readonly selectedCli = signal<CliType>('claude');
 
   private readonly jobs = inject(TaskService);
+  private readonly modelPrices = inject(ModelPriceStore);
   private readonly activity = inject(CodeReviewActivityStore);
 
   /** True when there is at least one MD listed and the user can drill in. */
@@ -338,6 +340,6 @@ export class CodeReviewPanelComponent implements OnInit {
   }
 
   provenanceFor(entry: CodeReviewListEntry) {
-    return generatedFileProvenance(entry.generation);
+    return generatedFileProvenance(entry.generation, this.modelPrices.priceFor(entry.generation?.model));
   }
 }
