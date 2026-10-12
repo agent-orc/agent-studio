@@ -110,7 +110,7 @@ internal static class GitConfigScope
         return false;
     }
 
-    private static string NormalizeRoot(string root)
+    internal static string NormalizeRoot(string root)
         => Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     private sealed class Scope(Action dispose) : IDisposable

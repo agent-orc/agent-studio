@@ -91,14 +91,17 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<bool?> _contentCache;
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
     private int _computationCount;
+    private int _lookupCount;
 
     public TaskIntegrationStatusService(
         GitService git,
         ProjectSettingsService settings,
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
-        ProjectRegistry? registry = null)
-        : this(git, settings, pipelineLog, logger, TimeProvider.System, registry)
+        ProjectRegistry? registry = null,
+        GitOriginStore? originStore = null)
+        : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
+            originStore: originStore)
     {
     }
 
@@ -109,14 +112,17 @@ public sealed class TaskIntegrationStatusService
         ILogger<TaskIntegrationStatusService> logger,
         TimeProvider timeProvider,
         ProjectRegistry? registry = null,
-        Func<string, string?>? readOriginUrl = null)
+        Func<string, string?>? readOriginUrl = null,
+        GitOriginStore? originStore = null)
     {
         _git = git;
         _settings = settings;
         _pipelineLog = pipelineLog;
         _logger = logger;
         _registry = registry;
-        _readOriginUrl = readOriginUrl ?? _git.ReadOriginUrlAt;
+        // AGT-3083: the host shares one origin store with the Git state index.
+        // A service built without one keeps a private store, so tests stay isolated.
+        _readOriginUrl = readOriginUrl ?? (originStore ?? new GitOriginStore()).ReadOrigin;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -130,6 +136,7 @@ public sealed class TaskIntegrationStatusService
     /// </summary>
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
     {
+        Interlocked.Increment(ref _lookupCount);
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
         if (jobs.Count == 0) return result;
 
@@ -137,10 +144,11 @@ public sealed class TaskIntegrationStatusService
 
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
-        // One Git-config resolution per primary repository in this computation.
-        // Git itself interprets includes, conditional includes and worktree config.
-        // A new background generation resolves it again, so external config edits
-        // cannot be hidden behind a partial filesystem parser or a long TTL.
+        // One origin read per primary repository in this computation. The read
+        // answers from the process-wide GitOriginStore while every config file
+        // Git said contributed is unchanged, and resolves through Git again
+        // otherwise. Git itself interprets includes, conditional includes and
+        // worktree config, so there is no partial filesystem parser or TTL.
         var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
@@ -1352,6 +1360,8 @@ public sealed class TaskIntegrationStatusService
         _pathCache.Invalidate();
     }
     internal int ComputationCount => Volatile.Read(ref _computationCount);
+    /// <summary>Test hook: how many <see cref="BuildLookup"/> calls this service answered.</summary>
+    internal int LookupCount => Volatile.Read(ref _lookupCount);
 
     private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
 
