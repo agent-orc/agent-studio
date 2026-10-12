@@ -560,6 +560,13 @@ and the salvage recipe) must write its integration record back to the card.
 the recorded step of that recipe: it derives the delivery commits from the merge,
 posts the record through `POST /api/tasks/{key}/integration-records`, and then
 reconciles the project so the placeholder the merge left standing is cleared.
+The record lists the merge commit first in `commitShas`. When the endpoint
+receives an `operator-merge-*` record classified `integrated-*`, it attributes
+the merge commit (the id's SHA suffix, else every recorded SHA) to the card's
+`commits[]` as a `manual` attribution, so the Result header shows `1 commit`
+instead of "no code change" (AGT-3045). A card that still has no attributed
+commit but carries an `integrated-*` record reads "integrated via operator
+merge", never "no code change".
 
 ```bash
 scripts/record-operator-merge.sh --task AGT-2706 --merge 9cfc0e074 --project PROJ-002
