@@ -229,7 +229,10 @@ internal static class TaskEndpointHelpers
                 IntakeEnabled: runners.IsIntakeEnabled(job.ProjectName),
                 CrashBackoffUntilUtc: runners.GetRunActivityForJob(job.Id, job.ProjectName).BackoffUntil,
                 Rejection: job.RemoteDispatchRejection,
-                NowUtc: DateTime.UtcNow))
+                NowUtc: DateTime.UtcNow,
+                ExecutionLocation: runners.ResolvePlacement(job.ProjectName),
+                AllowsLocalCoding: runners.AllowsLocalCoding,
+                SuggestedRemoteRunnerId: runners.SuggestedRemoteRunnerId))
             : null;
         return job with
         {

@@ -1,11 +1,16 @@
 # Frontend Domain Map
 
-Version: 2026-09-19
+Version: 2026-10-10
 Status: System-of-record map for frontend changes.
 
 Use this when a change touches Angular code, visual design, task-detail,
 kanban, project pages, frontend polling, model selectors, menus, or Playwright
 coverage.
+
+The project execution assignment card warns when automatic pickup is placed
+at `local` and the settings projection reports `localCodingAdmitted: false`.
+Ready cards show the corresponding `execution-placement` pickup hold and a
+copyable `PUT /api/projects/{projectName}/execution-runner` resolution.
 
 ## Global Search
 

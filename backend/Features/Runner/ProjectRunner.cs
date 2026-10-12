@@ -1423,6 +1423,30 @@ public class ProjectRunner
             // a visible-order deviation; the card is already running.
             if (_activeRuns.Contains(candidate.Info.Id)) continue;
 
+            if (candidate.Info.State == TaskStates.Ready)
+            {
+                var placementHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(
+                    candidate.Info, null, false, null, null, DateTime.UtcNow,
+                    ProjectExecutionPolicy.ResolveExecutionLocation(_projectSettings.Get(ProjectName)),
+                    _localCodingAdmission?.AllowsLocalCoding == true));
+                if (placementHold?.Mechanism == PickupHoldMechanisms.ExecutionPlacement)
+                {
+                    _lastPickReason = placementHold.Reason;
+                    if (!_placementWarnings.TryGetValue(candidate.Info.Id, out var logged)
+                        || !string.Equals(logged.Reason, placementHold.Reason, StringComparison.Ordinal)
+                        || logged.EnteredLaneAt != candidate.Info.EnteredLaneAt)
+                    {
+                        _logger.LogWarning(
+                            "auto-pickup-rejected code={Code} task={Task} project={Project} reason={Reason}",
+                            RemoteExecutionRequirement.Code, candidate.Info.Key ?? candidate.Info.Id,
+                            ProjectName, placementHold.Reason);
+                        _placementWarnings[candidate.Info.Id] =
+                            (placementHold.Reason, candidate.Info.EnteredLaneAt);
+                    }
+                    continue;
+                }
+            }
+
             // CPU-Lastwaechter: do not add another build/install workload while
             // the host has been saturated for a full minute. Existing runs are
             // left alone; the next scheduler tick naturally retries admission.
@@ -8720,12 +8744,18 @@ public class ProjectRunner
     // Deduped separately from the cycle set so a card can move between the two
     // classifications without losing either report.
     private readonly HashSet<string> _waitsOnUnsatisfiableWarned = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (string Reason, DateTime EnteredLaneAt)> _placementWarnings =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private List<TaskInfo> ListReadyPickupCandidatesInDisplayedOrder()
     {
         var settings = _projectSettings.Get(ProjectName);
         var intakeEnabled = settings.IntakeEnabled == true;
         var all = _scanner.ScanAllAutomationJobs();
+        var readyIds = all.Where(job => job.ProjectName == ProjectName && job.State == TaskStates.Ready)
+            .Select(job => job.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in _placementWarnings.Keys.Where(id => !readyIds.Contains(id)).ToArray())
+            _placementWarnings.Remove(id);
         // AGT-2029 waits-on gate: resolve dependency fulfillment across ALL
         // projects and lanes. A dependency is satisfied once its target reaches
         // 6-completed OR 7-archive, and ScanAllJobs omits the archive lane, so

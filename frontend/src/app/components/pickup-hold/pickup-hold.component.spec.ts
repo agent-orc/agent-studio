@@ -117,6 +117,28 @@ describe('PickupHoldComponent', () => {
     expect(render(null).querySelector('[data-testid="pickup-hold"]')).toBeNull();
   });
 
+  it('names a local execution placement hold and its remote routing resolution', () => {
+    const root = render({
+      classification: 'unsatisfiable',
+      mechanism: 'execution-placement',
+      reason: 'Project demo is placed at local execution, but local coding is disabled on this orchestrator.',
+      sinceUtc: '2026-08-11T09:00:00Z',
+      heldForSeconds: 60,
+      unsatisfiable: true,
+      resolutions: [{
+        kind: 'route-to-remote-runner',
+        label: 'Route to a remote runner',
+        detail: 'PUT /api/projects/demo/execution-runner {"executionLocation":"runner-01"}',
+      }],
+    }, 'detail');
+
+    expect(root.querySelector('[data-testid="pickup-hold-mechanism"]')?.textContent)
+      .toContain('Execution placement');
+    expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"]')?.textContent)
+      .toContain('PUT /api/projects/demo/execution-runner');
+    expect(root.querySelector('[data-resolution-kind="route-to-remote-runner"] button')).toBeNull();
+  });
+
   it('says an archived gate cannot clear by itself, and how long it has been held', () => {
     const root = render(ARCHIVED_GATE);
     const block = root.querySelector('[data-testid="pickup-hold"]') as HTMLElement;

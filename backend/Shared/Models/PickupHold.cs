@@ -7,6 +7,7 @@ namespace AgentStudio.Shared;
 /// </summary>
 public static class PickupHoldMechanisms
 {
+    public const string ExecutionPlacement = "execution-placement";
     /// <summary>A <c>dependsOn</c> edge is unfulfilled, unsatisfiable, or cyclic.</summary>
     public const string DependencyGate = "dependency-gate";
 
@@ -33,6 +34,7 @@ public static class PickupHoldMechanisms
 /// </summary>
 public static class PickupHoldResolutionKinds
 {
+    public const string RouteToRemoteRunner = "route-to-remote-runner";
     public const string DropDependency = "drop-dependency";
     public const string RepointDependency = "repoint-dependency";
     public const string ArchiveWaitingCard = "archive-waiting-card";
@@ -168,7 +170,10 @@ public readonly record struct PickupHoldFacts(
     bool IntakeEnabled,
     DateTime? CrashBackoffUntilUtc,
     RemoteDispatchRejection? Rejection,
-    DateTime NowUtc);
+    DateTime NowUtc,
+    string? ExecutionLocation = null,
+    bool AllowsLocalCoding = false,
+    string? SuggestedRemoteRunnerId = null);
 
 /// <summary>
 /// Pure policy: is this card held in its pickup lane, and by what.
@@ -259,6 +264,23 @@ public static class PickupHoldPolicy
 
         var dependency = DependencyHold(facts, laneEntry);
         if (dependency != null) return dependency;
+
+        if (string.Equals(facts.ExecutionLocation, ExecutionLocations.Local, StringComparison.OrdinalIgnoreCase)
+            && !facts.AllowsLocalCoding
+            && AgentStudio.Runner.WorktreeRunPolicy.RequiresWorktree(task.Mode, isEpicPlanningRun: false))
+        {
+            var destination = string.IsNullOrWhiteSpace(facts.SuggestedRemoteRunnerId)
+                ? "<runner-id>"
+                : facts.SuggestedRemoteRunnerId;
+            return Hold(
+                PickupHoldMechanisms.ExecutionPlacement,
+                $"Project {task.ProjectName} is placed at local execution, but local coding is disabled on this orchestrator.",
+                laneEntry, facts.NowUtc, unsatisfiable: true,
+                new PickupHoldResolution(
+                    PickupHoldResolutionKinds.RouteToRemoteRunner,
+                    "Route to a remote runner",
+                    $"PUT /api/projects/{Uri.EscapeDataString(task.ProjectName)}/execution-runner {{\"executionLocation\":\"{destination}\"}}"));
+        }
 
         // Dated from the refusal, not from the lane entry: that is the moment the
         // card stopped being pickable, and it is the number the operator needs.

@@ -41,8 +41,9 @@ test('keeps pickup mode and execution location as independent controls', async (
       contentType: 'application/json',
       body: JSON.stringify({
         [projectName]: {
-          pickupMode: 'manual',
+          pickupMode: 'auto',
           executionLocation: 'local',
+          localCodingAdmitted: false,
           integrationBranch: 'develop',
           maxParallelism: 1,
         },
@@ -98,14 +99,22 @@ test('keeps pickup mode and execution location as independent controls', async (
   await page.goto(`/#/projects/${slugFor(projectName)}/settings`, { waitUntil: 'domcontentloaded' });
   const card = page.getByTestId('project-execution-card');
   await expect(card).toBeVisible({ timeout: 10_000 });
-  await expect(card.getByTestId('project-pickup-mode-manual')).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.getByTestId('project-pickup-mode-auto')).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByTestId('project-pickup-mode-auto')).toBeVisible();
   await expect(card.getByTestId('project-pickup-mode-paused')).toBeVisible();
 
   const hostSelect = card.getByTestId('project-execution-host-select');
   await expect(hostSelect).toHaveValue('local');
+  await expect(card.getByTestId('local-coding-disabled-warning')).toContainText('Local coding is disabled');
+  for (const theme of ['light', 'dark'] as const) {
+    await setTheme(page, theme);
+    const resultDir = process.env.JOB_RESULTS_DIR ?? SCREENSHOT_DIR;
+    fs.mkdirSync(resultDir, { recursive: true });
+    await card.screenshot({ path: path.join(resultDir, `local-coding-disabled--${theme}--mocked.png`) });
+  }
   await hostSelect.selectOption('agent-runner-01');
   await expect(hostSelect).toHaveValue('agent-runner-01');
+  await expect(card.getByTestId('local-coding-disabled-warning')).toHaveCount(0);
   await expect(card.getByTestId('project-execution-selected-host')).toContainText('agent-runner');
 
   await card.getByTestId('project-pickup-mode-paused').click();

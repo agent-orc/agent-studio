@@ -264,6 +264,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
     private readonly ConcurrentDictionary<string, PipelineHealthAlert> _currentAlerts =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AutoReviewQueueStagnationWatchdog? _reviewQueue;
+    private readonly RemoteQueueStarvationWatchdog? _queueStarvation;
 
     /// <summary>Alert identity of the review-claim stall, separate from the file-based lane drain.</summary>
     internal const string ReviewClaimStallIdentity = "review-claims:" + TaskStates.AutoReview;
@@ -274,7 +275,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         TimelineLog timeline,
         OrchestratorLog orchestratorLog,
         ILogger<PipelineHealthService> logger,
-        AutoReviewQueueStagnationWatchdog? reviewQueue = null)
+        AutoReviewQueueStagnationWatchdog? reviewQueue = null,
+        RemoteQueueStarvationWatchdog? queueStarvation = null)
     {
         _detector = detector;
         _scanner = scanner;
@@ -282,6 +284,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         _orchestratorLog = orchestratorLog;
         _logger = logger;
         _reviewQueue = reviewQueue;
+        _queueStarvation = queueStarvation;
     }
 
     public void GateAcquired(PipelineGateContext gate) => _detector.GateAcquired(gate);
@@ -408,6 +411,7 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
             EmitAlert(gate.Project, gate.WatchPath, alert, $"gate:{gate.GateRunId}");
         }
 
+        var queueStarvation = _queueStarvation?.Refresh(nowUtc);
         foreach (var entry in _scanner.GetWatchPaths())
         {
             ct.ThrowIfCancellationRequested();
@@ -416,12 +420,20 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
                 var oldest = lane.OldestQueuedAtUtc is null
                     ? "unknown"
                     : $"{Math.Max(0, (int)(nowUtc - lane.OldestQueuedAtUtc.Value).TotalMinutes)} min";
+                var placementCauses = lane.Lane == TaskStates.Ready
+                    ? queueStarvation?.Items.Where(item => item.ProjectName == entry.Name
+                        && item.BlockReasonCode == RemoteExecutionRequirement.Code)
+                        .Select(item => item.BlockReason).Distinct().ToArray() ?? []
+                    : [];
+                var cause = placementCauses.Length > 0
+                    ? $" Waiting {queueStarvation!.Items.Count(item => item.ProjectName == entry.Name && item.BlockReasonCode == RemoteExecutionRequirement.Code)}: {string.Join("; ", placementCauses)}"
+                    : "";
                 var alert = new PipelineHealthAlert(
                     "lane-drain-stalled",
                     "high",
                     $"{lane.Lane} drain rate is 0/h with {lane.QueueCount} queued",
                     $"No task left {lane.Lane} in the last hour while the queue remained filled. " +
-                    $"Oldest queued age: {oldest}.",
+                    $"Oldest queued age: {oldest}.{cause}",
                     nowUtc);
                 EmitAlert(entry.Name, entry.Path, alert, $"lane:{lane.Lane}");
             }

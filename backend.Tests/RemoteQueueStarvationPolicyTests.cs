@@ -7,6 +7,21 @@ public sealed class RemoteQueueStarvationPolicyTests
 {
     private static readonly DateTime Now = new(2026, 8, 8, 12, 0, 0, DateTimeKind.Utc);
 
+    [Fact]
+    public void LocalCodingDenial_IsImmediatelyVisibleWithoutRemoteCapacity()
+    {
+        var task = ReadyTask(1) with { Mode = TaskModes.Coding };
+        var settings = RemoteSettings() with { ExecutionLocation = ExecutionLocations.Local };
+        var snapshot = RemoteQueueStarvationPolicy.Evaluate(
+            Now, TimeSpan.FromMinutes(30), [task], _ => settings,
+            TaskReferenceIndex.Build([task]), []);
+
+        Assert.True(snapshot.Active);
+        Assert.Equal(1, snapshot.WaitingTaskCount);
+        Assert.Equal(RemoteExecutionRequirement.Code, Assert.Single(snapshot.Items).BlockReasonCode);
+        Assert.Contains("local coding is disabled", snapshot.Items[0].BlockReason);
+    }
+
     [Theory]
     [InlineData(31, 2, 0, 2, true)]
     [InlineData(30, 2, 0, 2, true)]
