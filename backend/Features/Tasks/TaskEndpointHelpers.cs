@@ -381,12 +381,24 @@ internal static class TaskEndpointHelpers
     /// 7-archive, and the board snapshot omits archive), so the key index is
     /// read from the archive-inclusive snapshot's published reference index.
     /// Cards without dependencies are skipped, keeping the common case free.
+    /// A board read passes the graph of its pinned generation as
+    /// <paramref name="references"/> (AGT-3088), so building the body never
+    /// re-enters the index.
     /// </summary>
+    /// <summary>
+    /// The registered client a board read is made for, or null for an
+    /// anonymous or unregistered caller (which keeps the global
+    /// read-after-write target).
+    /// </summary>
+    internal static string? BoardReadClientId(HttpContext context)
+        => context.Items.TryGetValue("ClientId", out var clientId) ? clientId as string : null;
+
     internal static DependencyGraphLookups BuildDependencyGraphLookups(
         IEnumerable<TaskInfo> jobs,
         TaskScannerService scanner,
         IEnumerable<TaskInfo>? eligibleWaiters = null,
-        AttemptAuthorityService? attemptAuthority = null)
+        AttemptAuthorityService? attemptAuthority = null,
+        TaskReferenceIndex? references = null)
     {
         var snapshot = jobs as IReadOnlyCollection<TaskInfo> ?? jobs.ToList();
         var withDeps = snapshot.Where(j => j.References?.DependsOn.Count > 0).ToList();
@@ -396,7 +408,7 @@ internal static class TaskEndpointHelpers
         // The archive-inclusive index is built once per snapshot generation
         // (AGT-2342 reference-index cache); keys are globally unique across
         // projects, so this resolves cross-project targets too.
-        var index = scanner.GetReferenceIndex();
+        var index = references ?? scanner.GetReferenceIndex();
         var eligibleKeys = (eligibleWaiters ?? snapshot)
             .Where(j => !string.IsNullOrWhiteSpace(j.Key))
             .Select(j => j.Key!)

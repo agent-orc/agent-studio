@@ -9,17 +9,37 @@ namespace AgentStudio.Tasks;
 /// enforced by perf benchmarks; this filter makes production regressions
 /// visible through Server-Timing and structured logs without changing the
 /// endpoint contracts.
+///
+/// <para>Board reads (<c>GET /api/tasks/grouped</c> and <c>GET /api/tasks/</c>)
+/// also get a stage trace (AGT-3088): on request with
+/// <c>X-Task-Switch-Trace: 1</c>, and otherwise for one read in
+/// <c>BoardReadTrace:SampleEvery</c> (default every read; 0 turns sampling
+/// off). Each traced read logs one <c>board-read-trace</c> line with the
+/// snapshot, filter, git-freshness, compose and body stages and the index
+/// spans nested in them.</para>
 /// </summary>
 internal sealed class TaskOperationTimingFilter : IEndpointFilter
 {
     public const double BudgetMs = 30.0;
 
     private readonly ILogger<TaskOperationTimingFilter> _logger;
+    private readonly int _boardTraceSampleEvery;
+    private long _boardReads;
 
-    public TaskOperationTimingFilter(ILogger<TaskOperationTimingFilter> logger)
+    public TaskOperationTimingFilter(ILogger<TaskOperationTimingFilter> logger, IConfiguration? configuration = null)
     {
         _logger = logger;
+        _boardTraceSampleEvery = int.TryParse(configuration?["BoardReadTrace:SampleEvery"], out var every)
+            ? Math.Max(0, every)
+            : 1;
     }
+
+    internal static bool IsBoardRead(string? route, string method)
+        => method == "GET" && route is "/api/tasks/grouped" or "/api/tasks/";
+
+    private bool SampleBoardRead()
+        => _boardTraceSampleEvery > 0
+           && Interlocked.Increment(ref _boardReads) % _boardTraceSampleEvery == 0;
 
     public async ValueTask<object?> InvokeAsync(
         EndpointFilterInvocationContext context,
@@ -30,9 +50,14 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         var route = (http.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)
             ?.RoutePattern.RawText;
         var coreRequest = route?.EndsWith("/{jobId}/core", StringComparison.Ordinal) == true;
-        var traceEnabled = http.Request.Headers["X-Task-Switch-Trace"] == "1"
-            && http.Request.Method == "GET"
-            && (coreRequest || route?.EndsWith("/{jobId}", StringComparison.Ordinal) == true);
+        var traceRequested = http.Request.Headers["X-Task-Switch-Trace"] == "1";
+        var boardRead = IsBoardRead(route, http.Request.Method);
+        var traceEnabled = boardRead
+            ? traceRequested || SampleBoardRead()
+            : traceRequested
+              && http.Request.Method == "GET"
+              && (coreRequest || route?.EndsWith("/{jobId}", StringComparison.Ordinal) == true);
+        var traceLabel = boardRead ? "board-read-trace" : "task-switch-trace";
         var trace = traceEnabled ? TaskSwitchTrace.Begin(
             http.Request.Headers["X-Task-Request-Id"],
             http.Request.Headers["X-Task-Switch-Id"]) : null;
@@ -41,12 +66,15 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
         {
             http.Response.Headers["X-Task-Request-Id"] = trace.RequestId;
             http.Response.Headers["X-Task-Switch-Id"] = trace.SwitchId;
-            gitScope = GitProcessTelemetry.BeginRequest(coreRequest ? "tasks/core" : "tasks/detail",
-                _logger, includeNested: true);
+            // Board reads open their own Git telemetry scope in the endpoint.
+            if (!boardRead)
+                gitScope = GitProcessTelemetry.BeginRequest(coreRequest ? "tasks/core" : "tasks/detail",
+                    _logger, includeNested: true);
         }
+        object? result = null;
         try
         {
-            var result = await next(context);
+            result = await next(context);
             if (trace != null && coreRequest)
             {
                 var tally = GitProcessTelemetry.CurrentTally();
@@ -56,12 +84,12 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             }
             return trace != null && result is IResult inner
                 ? new TaskSwitchTracedResult(inner, trace, GitProcessTelemetry.CurrentTally(),
-                    GitProcessTelemetry.CurrentTimeouts(), _logger)
+                    GitProcessTelemetry.CurrentTimeouts(), _logger, traceLabel)
                 : result;
         }
         catch (Exception ex) when (trace != null)
         {
-            _logger.LogInformation("task-switch-trace {Trace}",
+            _logger.LogInformation(traceLabel + " {Trace}",
                 trace.Summary(ex is OperationCanceledException
                         ? (http.RequestAborted.IsCancellationRequested ? "aborted" : "timeout")
                         : "error",
@@ -76,6 +104,9 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
             sw.Stop();
             var operation = OperationName(http);
             var elapsedMs = sw.Elapsed.TotalMilliseconds;
+            // The returned IResult has not executed yet, so the response still
+            // carries its default 200; a 304 or an error result names its own.
+            var statusCode = StatusCodeOf(result) ?? http.Response.StatusCode;
 
             if (!http.Response.HasStarted)
             {
@@ -94,7 +125,7 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
                     http.Request.Path.Value,
                     elapsedMs,
                     BudgetMs,
-                    http.Response.StatusCode);
+                    statusCode);
             }
             else
             {
@@ -105,10 +136,13 @@ internal sealed class TaskOperationTimingFilter : IEndpointFilter
                     http.Request.Path.Value,
                     elapsedMs,
                     BudgetMs,
-                    http.Response.StatusCode);
+                    statusCode);
             }
         }
     }
+
+    internal static int? StatusCodeOf(object? result)
+        => result is IStatusCodeHttpResult { StatusCode: { } statusCode } ? statusCode : null;
 
     private static string OperationName(HttpContext http)
     {

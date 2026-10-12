@@ -76,6 +76,95 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         Assert.DoesNotContain("consumer", queued);
     }
 
+    /// <summary>
+    /// AGT-3088: a board read pins one index generation, and every runner's
+    /// status under it reads that snapshot. No runner probes a quota-wait
+    /// marker on disk, builds its own reference graph, or enters the index
+    /// refresh path.
+    /// </summary>
+    [Fact]
+    public async Task RunnerStatus_UnderABoardReadPin_ProbesNoMarkerAndBuildsNoReferenceIndex()
+    {
+        WriteJob(_libWatch, TaskStates.Ready, "dep", "LIB-1", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "consumer", "APP-1", order: 1, dependsOn: new[] { "LIB-1" });
+        WriteJob(_appWatch, TaskStates.Ready, "first", "APP-2", order: 2);
+        var (app, scanner, cache) = BuildRunnerWithStack(App, _appWatch, stack: null);
+        var lib = BuildRunner(Lib, _libWatch, (scanner, cache));
+
+        var publication = await scanner.AcquireBoardReadAsync("client-x", CancellationToken.None);
+        using var pin = scanner.PinBoardRead(publication);
+        using var markerReads = QuotaWaitMarker.Reads.Observe();
+        using var indexBuilds = TaskReferenceIndex.Builds.Observe();
+        var hits = cache.Hits;
+        var misses = cache.Misses;
+
+        var appStatus = app.GetStatus();
+        var libStatus = lib.GetStatus();
+        _ = app.GetStatus();
+
+        Assert.Equal(new[] { "first" }, appStatus.QueuedJobIds);
+        Assert.Equal(new[] { "dep" }, libStatus.QueuedJobIds);
+        Assert.Equal(0, markerReads.Count);
+        Assert.Equal(0, indexBuilds.Count);
+        Assert.Equal(hits, cache.Hits);
+        Assert.Equal(misses, cache.Misses);
+    }
+
+    /// <summary>
+    /// The displayed queue is derived once per generation for all runners; it
+    /// must name the same cards in the same order as the pickup candidate list
+    /// the runner actually picks from.
+    /// </summary>
+    [Fact]
+    public void DisplayedQueue_MatchesThePickupCandidateOrder_OnAMixedLane()
+    {
+        WriteJob(_libWatch, TaskStates.Ready, "open-dep", "LIB-1", order: 1);
+        WriteJob(_libWatch, TaskStates.Completed, "done-dep", "LIB-2", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "z-late", "APP-1", order: 9);
+        WriteJob(_appWatch, TaskStates.Ready, "a-early", "APP-2", order: 1);
+        WriteJob(_appWatch, TaskStates.Ready, "blocked", "APP-3", order: 2, dependsOn: new[] { "LIB-1" });
+        WriteJob(_appWatch, TaskStates.Ready, "fulfilled", "APP-4", order: 3, dependsOn: new[] { "LIB-2" });
+        WriteJob(_appWatch, TaskStates.Ready, "epic-card", "APP-5", order: 4, extraJson: ",\"kind\":\"epic\"");
+        WriteJob(_appWatch, TaskStates.Ready, "fixture-card", "APP-6", order: 0, extraJson: ",\"fixture\":true");
+        WriteJob(_appWatch, TaskStates.Ready, "gated", "APP-7", order: 5, dependsOn: new[] { "LIB-2" }, releaseGate: true);
+
+        var runner = BuildAppRunner();
+        var queued = runner.GetStatus().QueuedJobIds;
+
+        Assert.Equal(new[] { "a-early", "fulfilled", "z-late" }, queued);
+        Assert.Equal(runner.ListReadyPickupCandidatesInDisplayedOrder().Select(job => job.Id), queued);
+    }
+
+    [Fact]
+    public void ProviderLimit_IsReadFromThePublishedSnapshot_NotFromDisk()
+    {
+        WriteJob(_appWatch, TaskStates.Progress, "job-a", "APP-9", order: 1);
+        var (runner, scanner, _) = BuildRunnerWithStack(App, _appWatch, stack: null);
+        Assert.Empty(runner.GetStatus().ProviderLimits);
+
+        var marker = new QuotaWaitRecord
+        {
+            CliType = "claude",
+            ThresholdMinutes = 30,
+            Reason = "claude: limited until reset",
+            Scope = "provider",
+        };
+        marker = marker with { ResetAt = marker.StartedAt.AddHours(2) };
+        QuotaWaitMarker.Write(Path.Combine(_appWatch, TaskStates.Progress, "job-a"), marker);
+
+        // Not published yet, and status never looks at the file itself.
+        using (var reads = QuotaWaitMarker.Reads.Observe())
+        {
+            Assert.Empty(runner.GetStatus().ProviderLimits);
+            Assert.Equal(0, reads.Count);
+        }
+
+        scanner.InvalidateCache();
+        var limit = Assert.Single(runner.GetStatus().ProviderLimits);
+        Assert.Equal("claude", limit.CliType);
+        Assert.Equal(marker.ResetAt, limit.LimitedUntil);
+    }
+
     [Fact]
     public void FulfilledDependency_CrossProject_AllowsPickup()
     {
@@ -217,7 +306,8 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         int order,
         string[]? dependsOn = null,
         bool releaseGate = false,
-        bool released = false)
+        bool released = false,
+        string extraJson = "")
     {
         var dir = Path.Combine(watchPath, state, slug);
         Directory.CreateDirectory(dir);
@@ -227,11 +317,31 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         var release = released ? ",\"released\":true" : "";
         var json =
             $"{{\"id\":\"{slug}\",\"key\":\"{key}\",\"title\":\"{slug}\",\"state\":\"{state}\"," +
-            $"\"order\":{order},\"agent\":\"claude\",\"cliType\":\"claude\",\"ownerClientId\":\"local-default\"{release}{refs}}}";
+            $"\"order\":{order},\"agent\":\"claude\",\"cliType\":\"claude\",\"ownerClientId\":\"local-default\"{release}{extraJson}{refs}}}";
         File.WriteAllText(Path.Combine(dir, "task.json"), json);
     }
 
     private ProjectRunner BuildAppRunner(ILogger<ProjectRunner>? logger = null)
+        => BuildRunner(App, _appWatch, stack: null, logger);
+
+    /// <summary>
+    /// Builds a runner for <paramref name="project"/>. Passing the
+    /// <paramref name="stack"/> of an earlier runner shares its scanner and
+    /// index cache, the production shape where every project runner reads one
+    /// index.
+    /// </summary>
+    private ProjectRunner BuildRunner(
+        string project,
+        string watchPath,
+        (TaskScannerService Scanner, TaskIndexCache Cache)? stack,
+        ILogger<ProjectRunner>? logger = null)
+        => BuildRunnerWithStack(project, watchPath, stack, logger).Runner;
+
+    private (ProjectRunner Runner, TaskScannerService Scanner, TaskIndexCache Cache) BuildRunnerWithStack(
+        string project,
+        string watchPath,
+        (TaskScannerService Scanner, TaskIndexCache Cache)? stack,
+        ILogger<ProjectRunner>? logger = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -250,14 +360,14 @@ public sealed class WaitsOnPickupGateTests : IDisposable
 
         var entry = new WatchPathEntry
         {
-            Name = App,
-            Path = _appWatch,
-            RootPath = _appWatch,
-            RepositoryPath = _appWatch
+            Name = project,
+            Path = watchPath,
+            RootPath = watchPath,
+            RepositoryPath = watchPath
         };
 
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
-        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
+        var scanner = stack?.Scanner ?? new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
         var clients = new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance);
         var mutations = new TaskMutationService(scanner, clients, new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance), new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance), NullLogger<TaskMutationService>.Instance);
@@ -268,7 +378,7 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         var transitions = new TaskTransitionService(scanner, states, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var orchestratorLog = new OrchestratorLog(NullLogger<OrchestratorLog>.Instance);
-        var indexCache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        var indexCache = stack?.Cache ?? new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
         scanner.SetIndexCache(indexCache);
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, states, transitions, indexCache,
@@ -291,14 +401,15 @@ public sealed class WaitsOnPickupGateTests : IDisposable
         var infraHaltLog = new InfraHaltLog(config, NullLogger<InfraHaltLog>.Instance);
         var infraBreaker = new CrossSlugInfraCircuitBreaker(config, NullLogger<CrossSlugInfraCircuitBreaker>.Instance, infraHaltLog);
 
-        return new ProjectRunner(
-            App, entry,
+        var runner = new ProjectRunner(
+            project, entry,
             logger ?? NullLogger<ProjectRunner>.Instance,
             scanner, states, sessions, router,
             summary, prompts, transitions, chatLog, mutations,
             orchestratorLog, orchestratorRunner, orchestratorSessions,
             settings, quotaService, quotaCaps, git, pickupFailures, infraBreaker, taskAccess, bus: null,
             localCodingAdmission: AllowLocalCodingForTests.Instance);
+        return (runner, scanner, indexCache);
     }
 
     /// <summary>

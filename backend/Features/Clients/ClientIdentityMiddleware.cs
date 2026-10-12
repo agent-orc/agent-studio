@@ -110,7 +110,16 @@ public class ClientIdentityMiddleware
         // Known identity: stamp lastSeenAt so the GET listing has fresh data.
         _store.RecordSeen(clientId);
         context.Items["ClientId"] = clientId;
-        await _next(context);
+        if (!isWrite)
+        {
+            await _next(context);
+            return;
+        }
+
+        // AGT-3088: the task index attributes this request's mutations to the
+        // client, so only that client's board reads wait for them.
+        using (AmbientClient.Enter(clientId))
+            await _next(context);
     }
 
     private bool OwnsFencedAttribution(string path)

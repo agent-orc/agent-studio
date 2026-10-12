@@ -2150,6 +2150,8 @@ public sealed class TaskTransitionService
         var runner = _driftRunner;
         if (runner == null) return;
 
+        // Detached work: its writes are not the requesting client's own.
+        using var detached = AgentStudio.Clients.AmbientClient.Detach();
         _ = Task.Run(async () =>
         {
             try

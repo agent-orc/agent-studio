@@ -98,11 +98,24 @@ public static class TaskCrudEndpoints
             if (projectRequested && string.IsNullOrWhiteSpace(projectWatchPath))
                 return Results.NotFound(new { error = $"Unknown project '{project}'" });
 
-            var raw = ProjectAccessAuthorization.FilterTasks(ctx, scanner.ScanAllJobs(), projects).ToList();
-            if (projectRequested)
-                raw = raw.Where(job => WatchPathComparison.PathsEqual(job.WatchPath, projectWatchPath)).ToList();
-            if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
-            var freshness = gitProjection.ReadFreshness(raw);
+            // AGT-3088: one published index generation serves the whole read,
+            // including the runner status the validator folds; see /grouped.
+            TaskIndexPublication? publication;
+            using (TaskSwitchTrace.Span("snapshot"))
+                publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(ctx), ctx.RequestAborted);
+            using var pin = scanner.PinBoardRead(publication);
+
+            List<TaskInfo> raw;
+            using (TaskSwitchTrace.Span("filter"))
+            {
+                raw = ProjectAccessAuthorization.FilterTasks(ctx, scanner.ScanAllJobs(), projects).ToList();
+                if (projectRequested)
+                    raw = raw.Where(job => WatchPathComparison.PathsEqual(job.WatchPath, projectWatchPath)).ToList();
+                if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
+            }
+            GitProjectionFreshness freshness;
+            using (TaskSwitchTrace.Span("git-freshness"))
+                freshness = gitProjection.ReadFreshness(raw);
             ApplyGitStateHeaders(ctx, freshness);
 
             // AGT-2703: everything above is a cache read over an already
@@ -111,20 +124,23 @@ public static class TaskCrudEndpoints
             // the serialisation of the result - only runs when the client does
             // not already hold this exact list. The query string is part of the
             // variant because it selects both the filter and the response shape.
-            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
-                "tasks/list",
-                ctx.Request.QueryString.Value ?? string.Empty,
-                raw,
-                freshness,
-                router,
-                runners));
+            string etag;
+            using (TaskSwitchTrace.Span("compose"))
+                etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+                    "tasks/list",
+                    ctx.Request.QueryString.Value ?? string.Empty,
+                    raw,
+                    freshness,
+                    router,
+                    runners));
             if (BoardReadValidator.NotModified(ctx, etag) is { } notModified) return notModified;
 
             List<TaskInfo> BuildJobs()
             {
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
+                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
+                    attemptAuthority: attemptAuthority, references: publication?.References);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -141,7 +157,9 @@ public static class TaskCrudEndpoints
             }
             if (TaskQueryRequest.FromQuery(ctx.Request.Query) is { IsActive: true } query)
             {
-                var jobs = BuildJobs();
+                List<TaskInfo> jobs;
+                using (TaskSwitchTrace.Span("body"))
+                    jobs = BuildJobs();
                 // The endpoint already resolved the path-free project handle and
                 // scoped the source set. Do not compare a registry id/short code
                 // with TaskInfo.ProjectName inside the analysis engine.
@@ -153,9 +171,16 @@ public static class TaskCrudEndpoints
                     return Results.BadRequest(new { error = response.Error });
                 return BoardReadValidator.Ok(ctx, etag, response);
             }
-            return BoardReadValidator.Bytes(ctx, etag,
-                await boardReads.GetOrBuildAsync(etag,
-                    () => BoardCardSummary.SerializeList(BuildJobs()), ctx.RequestAborted));
+            byte[] body;
+            using (TaskSwitchTrace.Span("body"))
+                body = await boardReads.GetOrBuildAsync(etag, () =>
+                {
+                    // The shared build may outlive this request; it pins its
+                    // own generation rather than relying on the request scope.
+                    using var buildPin = scanner.PinBoardRead(publication);
+                    return BoardCardSummary.SerializeList(BuildJobs());
+                }, ctx.RequestAborted);
+            return BoardReadValidator.Bytes(ctx, etag, body);
         });
 
         group.MapGet("/grouped", async (bool? includeFixtures, bool? includeLegacyReviewLane, HttpContext context, TaskScannerService scanner, CliRouter router, TaskRunnerService runners, AttemptAuthorityService attemptAuthority, ITokenAggregator tokens, IConfiguration configuration, ProjectSettingsService projectSettings, BetterCandidateService betterCandidates, TaskListGitProjectionCache gitProjection, TaskLiveStatusProjection liveStatus, AgentStudio.Registry.ProjectRegistry projects, BoardReadSignatureSource boardSignature, BoardReadConcurrencyGate boardReads, ILoggerFactory loggerFactory) =>
@@ -164,9 +189,28 @@ public static class TaskCrudEndpoints
                 "tasks/grouped",
                 loggerFactory.CreateLogger("TaskListProjection"),
                 includeNested: true);
-            var raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
-            if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
-            var gitFreshness = gitProjection.ReadFreshness(raw);
+
+            // AGT-3088: the read takes one already published index generation
+            // and pins it, so every nested index read below - the reference
+            // graph, the runner status the validator and the live-status strip
+            // read, the generation folded into the tag - answers from that one
+            // generation and none of them refreshes on this thread. A dirty
+            // index starts a background refresh; only a cold start or this
+            // client's own pending write waits.
+            TaskIndexPublication? publication;
+            using (TaskSwitchTrace.Span("snapshot"))
+                publication = await scanner.AcquireBoardReadAsync(BoardReadClientId(context), context.RequestAborted);
+            using var pin = scanner.PinBoardRead(publication);
+
+            List<TaskInfo> raw;
+            using (TaskSwitchTrace.Span("filter"))
+            {
+                raw = ProjectAccessAuthorization.FilterTasks(context, scanner.ScanAllJobs(), projects).ToList();
+                if (includeFixtures != true) raw = raw.Where(j => !j.Fixture).ToList();
+            }
+            GitProjectionFreshness gitFreshness;
+            using (TaskSwitchTrace.Span("git-freshness"))
+                gitFreshness = gitProjection.ReadFreshness(raw);
             ApplyGitStateHeaders(context, gitFreshness);
 
             // The board poll was the single biggest response this API
@@ -176,20 +220,23 @@ public static class TaskCrudEndpoints
             // lookups, the per-lane sort and the serialisation below only run
             // once the validator says the client's copy is out of date.
             var legacyReviewLane = includeLegacyReviewLane != false;
-            var etag = BoardReadValidator.FormatETag(boardSignature.Compose(
-                "tasks/grouped",
-                $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}",
-                raw,
-                gitFreshness,
-                router,
-                runners));
+            string etag;
+            using (TaskSwitchTrace.Span("compose"))
+                etag = BoardReadValidator.FormatETag(boardSignature.Compose(
+                    "tasks/grouped",
+                    $"fixtures={includeFixtures == true}&legacyReviewLane={legacyReviewLane}",
+                    raw,
+                    gitFreshness,
+                    router,
+                    runners));
             if (BoardReadValidator.NotModified(context, etag) is { } notModified) return notModified;
 
             byte[] BuildPayload()
             {
                 var tokenLookup = BuildTokenLookup(raw, tokens);
                 var verdictLookup = BuildOrchestratorVerdictLookup(raw, configuration);
-                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner, attemptAuthority: attemptAuthority);
+                var dependencyLookups = BuildDependencyGraphLookups(raw, scanner,
+                    attemptAuthority: attemptAuthority, references: publication?.References);
                 var gitLookup = gitProjection.ReadCacheOnly(raw);
                 var liveLookup = liveStatus.BuildLookup(raw);
                 var reviewQueue = attemptAuthority.ReadReviewQueue();
@@ -305,8 +352,16 @@ public static class TaskCrudEndpoints
                 };
                 return BoardCardSummary.SerializeGrouped(lanes, gitFreshness.GitStateAt, gitFreshness.Stale);
             }
-            return BoardReadValidator.Bytes(context, etag,
-                await boardReads.GetOrBuildAsync(etag, BuildPayload, context.RequestAborted));
+            byte[] body;
+            using (TaskSwitchTrace.Span("body"))
+                body = await boardReads.GetOrBuildAsync(etag, () =>
+                {
+                    // The shared build may outlive this request; it pins its
+                    // own generation rather than relying on the request scope.
+                    using var buildPin = scanner.PinBoardRead(publication);
+                    return BuildPayload();
+                }, context.RequestAborted);
+            return BoardReadValidator.Bytes(context, etag, body);
         });
 
         // ASS-1727: dedicated paged read for the terminal 7-archive lane. The

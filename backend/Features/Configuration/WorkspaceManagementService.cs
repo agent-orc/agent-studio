@@ -153,7 +153,7 @@ public sealed class WorkspaceManagementService
             ReloadConfiguration();
         }
 
-        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: AgentStudio.Clients.AmbientClient.Id);
         _logger.LogInformation(
             "Created workspace '{Name}' at {Path}", trimmed, resolvedPath);
 
@@ -215,7 +215,7 @@ public sealed class WorkspaceManagementService
             }
         }
 
-        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: AgentStudio.Clients.AmbientClient.Id);
         _logger.LogInformation(
             "Deleted workspace '{Name}' (path {Path} left on disk)",
             existing.Name, existing.Path);
@@ -308,7 +308,7 @@ public sealed class WorkspaceManagementService
             }
         }
 
-        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: AgentStudio.Clients.AmbientClient.Id);
         _logger.LogInformation(
             "project-storage-deleted path={Path} folderRemoved={Removed} watchPathRemoved={WatchPath}",
             target, folderRemoved, match?.Name ?? "(none)");
@@ -362,7 +362,7 @@ public sealed class WorkspaceManagementService
             RepositoryPath = "",
         };
 
-        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _indexCache?.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: AgentStudio.Clients.AmbientClient.Id);
         _logger.LogInformation(
             "project-storage-created id={Id} displayName={DisplayName} path={Path}",
             id, name, resolvedPath);

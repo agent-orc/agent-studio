@@ -1667,6 +1667,11 @@ var taskScanner = app.Services.GetRequiredService<TaskScannerService>();
 taskScanner.SetIndexCache(jobIndexCache);
 taskScanner.SetStatsMetadataCache(jobStatsMetadataCache);
 watcher.OnJobChanged += _ => jobIndexCache.Invalidate(TaskIndexCache.InvalidationSource.External);
+// AGT-3088: board reads serve the last published snapshot and refresh it in
+// the background; once that refresh catches up with an invalidation a board
+// read was served stale against, one debounced jobsBulkChanged tells every
+// client to revalidate (a conditional read, so an unmoved board costs a 304).
+jobIndexCache.AttachBulkChangedPublisher(app.Services.GetRequiredService<TaskChangeNotifier>().PublishBulkChanged);
 watcher.OnPathChanged += jobIndexCache.NotifyCoreFileChanged;
 watcher.OnJobChanged += _ => jobStatsMetadataCache.Invalidate();
 // AGT-2703: the board ETag needs the events the line above filters out. The
