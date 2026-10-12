@@ -702,6 +702,35 @@ public class CompletionGateTests
         Assert.Contains("[[TASK_BLOCKED", followUp);
     }
 
+    [Fact]
+    public void BuildFollowUp_WithDossierSource_NamesTheDossierGapAndTheAlreadyIntegratedPath()
+    {
+        var followUp = CompletionGate.BuildFollowUp(
+            new[] { "docs/x/index.html at attributed commit 2b5d24568: no markers" },
+            source: CompletionGate.CompletionGateSource.DossierMaintenance);
+
+        Assert.Contains("Dossier implementation log for this card is missing or invalid", followUp);
+        Assert.Contains("\"Dossier implementation update\"", followUp);
+        Assert.Contains("already on the integration branch", followUp);
+        Assert.Contains("do not add it again", followUp);
+        Assert.Contains("- [ ] docs/x/index.html at attributed commit 2b5d24568: no markers", followUp);
+        Assert.DoesNotContain("unfinished work in the previous run's own result/status evidence", followUp);
+    }
+
+    [Fact]
+    public void BuildFollowUp_WithoutSource_KeepsTheRunEvidenceWording()
+    {
+        var findings = new[] { "wire the route" };
+
+        var followUp = CompletionGate.BuildFollowUp(findings);
+
+        Assert.Equal(
+            CompletionGate.BuildFollowUp(findings, source: CompletionGate.CompletionGateSource.RunEvidence),
+            followUp);
+        Assert.Contains("unfinished work in the previous run's own result/status evidence", followUp);
+        Assert.DoesNotContain("Dossier", followUp);
+    }
+
     /// <summary>
     /// ASS-734: the completion-gate follow-up must also lead with the diff-only
     /// steering rule and list the already-made commits when supplied, so the
