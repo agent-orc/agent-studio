@@ -1077,19 +1077,85 @@ public static class ProjectSettingsEndpoints
             return Results.Ok(new { cleared = true });
         });
 
-        app.MapPut("/api/projects/{projectName}/batch-gate", (string projectName, BatchGateFormationOptions options, ProjectSettingsService settings, TaskScannerService scanner) =>
+        app.MapGet("/api/projects/{projectName}/batch-gate", (string projectName,
+            ProjectSettingsService settings, TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapPut("/api/projects/{projectName}/batch-gate", async (string projectName,
+            HttpContext context, ProjectSettingsService settings, TaskScannerService scanner,
+            ProjectRegistry projects, GitService git, RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle,
+            ILogger<ProjectSettingsService> logger) =>
         {
             if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
                 return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
-            if (!options.IsValid || !options.DocumentationOnly)
-                return Results.BadRequest(new { error = "The pilot requires valid documentation-only thresholds." });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            BatchGateFormationOptions options;
+            try
+            {
+                options = await System.Text.Json.JsonSerializer.DeserializeAsync<BatchGateFormationOptions>(
+                    context.Request.Body,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web),
+                    context.RequestAborted) ?? new BatchGateFormationOptions();
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                var invalidField = ex.Path?.TrimStart('$', '.')
+                    .Split(['.', '['], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()
+                    ?? "body";
+                return Results.BadRequest(new { error = "Invalid batch gate setting.", field = invalidField });
+            }
+            if (options.InvalidField is { } field)
+                return Results.BadRequest(new { error = $"Invalid batch gate setting: {field}.", field });
             settings.SetBatchGate(projectName, options);
-            return Results.Ok(settings.Get(projectName).BatchGate);
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    ReplanQueuedReviewAttempts(projectName, settings, projects, git,
+                        remoteReviewPlans, reviewLifecycle);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "batch-gate-replan-failed project={Project}", projectName);
+                }
+            });
+            return Results.Ok(BatchGateSettingsResponse(settings.Get(projectName).BatchGate));
         });
         app.MapGet("/api/projects/{projectName}/batch-gate/report", (string projectName, BatchGatePilotService pilot, TaskScannerService scanner) =>
             scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
                 ? Results.Ok(pilot.Report(projectName))
                 : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapGet("/api/projects/{projectName}/batch-gate/state", (string projectName,
+            int? history, BatchGatePilotService pilot,
+            TaskScannerService scanner) =>
+            scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase))
+                ? Results.Ok(pilot.State(projectName, history ?? 10))
+                : Results.NotFound(new { error = $"Unknown project '{projectName}'" }));
+        app.MapPost("/api/projects/{projectName}/batch-gate/close-now", (string projectName,
+            HttpContext context, BatchGatePilotService pilot, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            pilot.RequestCloseNow(projectName);
+            return Results.Accepted(value: new { accepted = true });
+        });
+        app.MapPost("/api/projects/{projectName}/batch-gate/members/{taskKey}/eject", (
+            string projectName, string taskKey, HttpContext context,
+            BatchGatePilotService pilot, TaskScannerService scanner) =>
+        {
+            if (!scanner.GetWatchPaths().Any(entry => string.Equals(entry.Name, projectName, StringComparison.OrdinalIgnoreCase)))
+                return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+            if (string.IsNullOrWhiteSpace(context.Request.Headers["X-Client-Id"]))
+                return Results.BadRequest(new { error = "X-Client-Id is required.", field = "X-Client-Id" });
+            if (!pilot.RequestEject(projectName, taskKey))
+                return Results.NotFound(new { error = $"Batch member '{taskKey}' was not found." });
+            return Results.Accepted(value: new { accepted = true });
+        });
 
         app.MapGet("/api/projects/{projectName}/gate-result-cache", (
             string projectName, TaskScannerService scanner) =>
@@ -1335,7 +1401,7 @@ public static class ProjectSettingsEndpoints
         RemoteReviewPlanBuilder remoteReviewPlans,
         ReviewAttemptTaskLifecycleService reviewLifecycle)
     {
-        reviewLifecycle.ReplanQueuedReviewAttempts(projectName, task =>
+        reviewLifecycle.ReplanQueuedReviewAttempts(projectName, (task, review) =>
         {
             var repositoryPath = git.ResolveRepoRootForWatchPath(task.WatchPath);
             var project = projects.FindByStorageLocation(task.WatchPath)
@@ -1345,9 +1411,38 @@ public static class ProjectSettingsEndpoints
                 task.IntegrationBranch,
                 taskSettings.IntegrationBranch,
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
-            return remoteReviewPlans.Build(task, repositoryPath, taskSettings, integrationRef);
+            var resultSha = review.Subject.ExpectedResultSha;
+            var resultRef = review.Subject.ResultRef;
+            var changedFiles = !string.IsNullOrWhiteSpace(repositoryPath)
+                && !string.IsNullOrWhiteSpace(resultRef)
+                ? RemoteReviewPlanBuilder.DeliveryChangedFiles(
+                    git, repositoryPath, integrationRef, resultRef)
+                : null;
+            return remoteReviewPlans.Build(task, repositoryPath, taskSettings,
+                integrationRef, resultSha, changedFiles, resultRef);
         });
     }
+
+    private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
+    {
+        settings = new
+        {
+            value.Enabled,
+            scope = value.EffectiveScope,
+            value.Planner,
+            value.MinimumSize,
+            value.MaximumSize,
+            value.DeadlineMinutes,
+            value.LookAheadMinutes,
+            urgentTags = value.EffectiveUrgentTags,
+            value.RiskPolicy,
+            value.Overlap,
+            value.ReviewTestLevel,
+            value.GateTimeoutMinutes,
+            advisor = value.Advisor ?? new BatchGateAdvisorOptions(),
+        },
+        limits = new { hardMaximumSize = 8 },
+    };
 
     private static bool IsKnownPipelineStep(string? stepId, string pipelineType = PipelineTypes.Task)
     {

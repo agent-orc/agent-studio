@@ -804,13 +804,15 @@ public static class V1ReviewPlaneEndpoints
                     + "Inconclusive, or Cancellation."));
 
             var batchDeferred = currentReview.Subject.Plan?.BuildTestDeferredToBatch == true;
-            if (batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+            var batchDeferredAccepted = batchDeferred
+                && (outcome is ReviewTerminalOutcome.Pass or ReviewTerminalOutcome.IntegrationBranchDefect);
+            if (batchDeferredAccepted)
             {
                 request = request with
                 {
                     Verdicts = request.Verdicts.Append(new Contract.ReviewVerdictDto(
                         "build-tests", "deferred-to-batch", "DeferredToBatch",
-                        "The complete suite is owned by the documentation-only batch gate.")).ToArray(),
+                        "The complete suite is owned by the batch gate; per-card verification ran separately.")).ToArray(),
                 };
             }
 
@@ -868,7 +870,7 @@ public static class V1ReviewPlaneEndpoints
             // publishes it, so no delivery record may tell recovery to integrate
             // or to settle it as a failed gate.
             if (!replay && outcome != ReviewTerminalOutcome.InfrastructureFailure
-                && !(batchDeferred && outcome == ReviewTerminalOutcome.Pass)
+                && !batchDeferredAccepted
                 && string.Equals(preparedTask.State, TaskStates.AutoReview, StringComparison.OrdinalIgnoreCase))
             {
                 var sourceRun = authority.GetRun(currentReview.SourceRunAttemptId);
@@ -1012,8 +1014,7 @@ public static class V1ReviewPlaneEndpoints
                 ?.ReceivedAt
                 ?? DateTime.UtcNow;
             string? emergencyBatchState = task.State == TaskStates.AutoReview ? null : task.State;
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass
-                && task.State == TaskStates.AutoReview)
+            if (batchDeferredAccepted && task.State == TaskStates.AutoReview)
             {
                 var batchSource = authority.GetRun(settled.ReviewAttempt.SourceRunAttemptId);
                 if (batchSource is null)
@@ -1135,7 +1136,7 @@ public static class V1ReviewPlaneEndpoints
                 receivedAt,
                 EnqueuedAtUtc: DateTime.UtcNow));
 
-            if (batchDeferred && settled.ReviewAttempt.Outcome == ReviewTerminalOutcome.Pass)
+            if (batchDeferredAccepted)
             {
                 EnqueueEvidenceProjection();
                 return Results.Ok(new Contract.ReviewReportDto(
@@ -2263,9 +2264,10 @@ public static class V1ReviewPlaneEndpoints
         string? repositoryPath,
         BuildProfile? profile,
         string? integrationRef,
-        IReadOnlyList<string>? changedFiles = null)
+        IReadOnlyList<string>? changedFiles = null,
+        VerifyPlan? verifyOverride = null)
     {
-        var verify = VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
+        var verify = verifyOverride ?? VerifyCommandPlanner.Plan(repositoryPath ?? string.Empty, profile);
         var preparation = GatePreparationPlanner.Plan(
                 repositoryPath ?? string.Empty,
                 profile,

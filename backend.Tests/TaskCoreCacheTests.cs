@@ -203,6 +203,7 @@ public sealed class TaskCoreCacheTests : IDisposable
     [Fact]
     public void Timeline_PreservesEventIdentifiers()
     {
+        // clock-independent: the timestamp is fixture data for timeline parsing.
         var task = MakeTask("AGT-timeline-identifiers", TaskStates.Ready);
         var actor = new string('a', 140);
         var runId = new string('r', 200);
