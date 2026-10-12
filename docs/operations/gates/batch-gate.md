@@ -40,9 +40,15 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   A deferred `IntegrationBranchDefect` review releases on verified batch evidence.
   Recovery failures are logged per manifest, allowing later batches to proceed.
   A queued code push keeps its project batch reservation pending until origin
-  verifies the merged SHA. The pending marker survives a backend restart for
-  the push backstop to clear after it publishes. Disabling the push step also
-  keeps code batching on hold while that local merge remains unpublished.
+  verifies the merged SHA. The pending marker survives a backend restart.
+  Before waiting and on each planning tick, the batch gate clears markers
+  whose approved SHA is already on origin or whose merge was superseded,
+  rolled back, or left the integration path. A failed push can therefore
+  remain visible without blocking later batches forever. State and report
+  expose the oldest push wait and an age alert after 15 minutes by default;
+  `BatchGate:PendingPushAlertMinutes` configures that limit.
+  Disabling the push step keeps code batching on hold while the local merge
+  is still unpublished.
 - `GET /api/projects/{project}/batch-gate/state` exposes plan, pending, batches,
   and member state. The existing report includes observed batch green rate.
 

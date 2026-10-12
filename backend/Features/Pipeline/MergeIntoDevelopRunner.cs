@@ -1526,7 +1526,8 @@ public sealed partial class MergeIntoDevelopRunner
         if (_batchReservations is not null && !string.IsNullOrWhiteSpace(reservationRepo)
             && !IsDocumentationDelivery(reservationRepo, integrationBranch,
                 ReviewSubjectStore.Read(jobFolderPath)))
-            _batchReservations.MarkPushPending(project, jobId, approvedSha);
+            _batchReservations.MarkPushPending(project, jobId, approvedSha,
+                jobFolderPath, reservationRepo, integrationBranch, watchPath);
 
         if (!IntegrationPushEnabled(project, pipelineType))
         {

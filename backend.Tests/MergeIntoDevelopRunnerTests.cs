@@ -89,10 +89,36 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         var batch = restarted.AcquireBatchAsync("fixture", CancellationToken.None);
         Assert.False(batch.IsCompleted);
 
+        // A re-integration supersedes the old approval, including its durable
+        // marker. Verifying the old SHA cannot release the new one.
         restarted.MarkPushVerified("Fixture", "card-1", "sha-1");
         Assert.False(batch.IsCompleted);
+        Assert.Equal("sha-2", restarted.GetWait("Fixture")!.ApprovedSha);
         restarted.MarkPushVerified("Fixture", "card-1", "sha-2");
         using var grant = await batch.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task Reconciliation_releases_marker_after_origin_contains_approved_merge()
+    {
+        var (repo, _) = SeedRepoWithOrigin("pending-origin-ancestor");
+        RunGit(repo, "checkout -q -b develop");
+        RunGit(repo, "push -q -u origin develop");
+        var approved = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var root = Path.Combine(_tempDir, "pending-origin-marker");
+        new BatchIntegrationReservationService(root).MarkPushPending(
+            "Fixture", "card-remote", approved, repositoryPath: repo,
+            integrationBranch: "develop");
+        var (git, _) = Build(repo);
+        var restarted = new BatchIntegrationReservationService(root);
+
+        using var grant = await restarted.AcquireBatchAsync("Fixture", marker =>
+        {
+            var remote = git.FetchBatchIntegrationTip(repo, "develop", CancellationToken.None);
+            return remote is not null && git.IsAncestor(repo, marker.ApprovedSha!, remote);
+        }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Null(restarted.GetWait("Fixture"));
     }
 
     [Fact]
