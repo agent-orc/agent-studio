@@ -1078,6 +1078,23 @@ claim and a `completion_content_overridden` timeline entry. The Human Review
 delivery panel displays these grounds, the content citations, and ran/skipped
 aspects before acceptance.
 
+Human Review acceptance also matches the card's review subject against the
+attempt authority store (`AcceptanceAttemptLineagePolicy`, pure, matrix-tested;
+AGT-3076). A lineage mismatch is a refusal (HTTP 409), never a server error. When
+the store no longer holds the RunAttempt the subject names, for example after
+the store was rebuilt into a new authority epoch, the refusal is checked before
+the content gate, because the content verdict was lost with the run. It names
+the cause with code `run-attempt-missing` ("no run attempt in the current
+authority epoch"). A written `operatorOverride` accepts such a card against its
+remaining delivery evidence. The completion claim evidence states that no run
+attempt was available. An `accepted_without_run_attempt` timeline entry records
+the authority epoch, the subject's run attempt, integration status, branch and
+SHA, delivery ref, result SHA, and `task.json` commits. The integration check
+still applies, so an override does not accept an unintegrated delivery. A stale
+or mismatched subject stays refused even with an override, because a different
+delivery is current. The task detail projects `acceptanceAttemptGap`, and the
+delivery panel explains why acceptance needs an override.
+
 `GET /api/projects/{id}/completed-lane/content-review-gaps` is a read-only
 inventory of completed and archived cards whose accepted claim lacks a passed
 content verdict for the brief recorded at completion. Historical claims

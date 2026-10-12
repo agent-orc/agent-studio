@@ -248,6 +248,20 @@ public sealed class TaskTransitionService
         }
 
         var fromState = info.State;
+        var acceptsIntegratedDelivery = (_guardedDelivery || !suppressIntegrationTrigger
+                && !suppressProductExecution && !operatorOverride)
+            && integrationRequired
+            && fromState == TaskStates.HumanReview
+            && targetState == TaskStates.Completed;
+        var acceptanceLineage = acceptsIntegratedDelivery
+            ? DecideAcceptanceLineage(info, operatorOverride)
+            : null;
+        // AGT-3076: the content verdict lives in the same authority store as
+        // the lost RunAttempt, so the content gaps would only be symptoms.
+        // Name the cause instead.
+        if (acceptanceLineage is
+            { Admission: AcceptanceLineageAdmission.Refuse, Check: AgentStudio.Pipeline.ReviewSubjectAttemptCheck.NoCurrentRunAttempt })
+            return new MoveJobOutcome(MoveJobStatus.IntegrationFailed, acceptanceLineage.Message, info.FolderPath);
         CompletionContentFacts? contentEvidence = null;
         CompletionContentDecision? contentDecision = null;
         if (targetState == TaskStates.Completed && fromState != TaskStates.Completed)
@@ -271,13 +285,10 @@ public sealed class TaskTransitionService
         // Coding deliveries must already be present in the effective integration
         // branch. This check retains current-attempt lineage validation and
         // refuses a stale, failed, or pending delivery without invoking Git.
-        if ((_guardedDelivery || !suppressIntegrationTrigger
-                && !suppressProductExecution && !operatorOverride)
-            && integrationRequired
-            && fromState == TaskStates.HumanReview
-            && targetState == TaskStates.Completed)
+        if (acceptsIntegratedDelivery)
         {
-            var integrationAdmission = ValidateIntegratedAcceptance(info, settings, operatorOverride);
+            var integrationAdmission = ValidateIntegratedAcceptance(
+                info, settings, operatorOverride, acceptanceLineage);
             if (integrationAdmission is not null) return integrationAdmission;
         }
 
@@ -330,8 +341,9 @@ public sealed class TaskTransitionService
             {
                 Basis = contentDecision?.Overridden == true
                     ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
-                Evidence = contentDecision?.Overridden == true
-                    ? contentDecision.Message : contentClaim.Evidence,
+                Evidence = AppendLineageEvidence(
+                    contentDecision?.Overridden == true ? contentDecision.Message : contentClaim.Evidence,
+                    acceptanceLineage),
                 Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
                 CurrentBriefVersion = contentEvidence.CurrentBriefVersion,
                 DeliveryBriefVersion = contentEvidence.DeliveryBriefVersion,
@@ -649,6 +661,9 @@ public sealed class TaskTransitionService
                         RecordOperatorIntegrationOverride(accepted, cause, reason);
                     else
                         ClearAcceptanceIntegrationMarkers(accepted);
+                    if (acceptanceLineage?.Admission == AcceptanceLineageAdmission.AcceptOnDeliveryEvidence)
+                        RecordAcceptanceWithoutRunAttempt(
+                            accepted, cause, reason, acceptanceLineage, completionIntegrationStatus);
                 }
             }
 
@@ -1518,23 +1533,42 @@ public sealed class TaskTransitionService
             .Replace('\n', ' ')
             .Trim();
 
+    /// <summary>
+    /// Matches the card's review subject against the attempt authority store.
+    /// Null when there is no subject or no authority to match against.
+    /// </summary>
+    private AcceptanceLineageDecision? DecideAcceptanceLineage(TaskInfo reviewed, bool operatorOverride)
+    {
+        var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
+        if (reviewSubject is null || _attemptAuthority is null) return null;
+        var check = AgentStudio.Pipeline.ReviewSubjectStore.CheckCurrentAttempt(
+            reviewed.FolderPath,
+            reviewSubject,
+            _attemptAuthority,
+            out var subjectError);
+        return AcceptanceAttemptLineagePolicy.Decide(
+            check,
+            operatorOverride,
+            reviewed.TaskKey,
+            reviewSubject.RunAttemptId,
+            _attemptAuthority.AuthorityEpoch,
+            subjectError);
+    }
+
     private MoveJobOutcome? ValidateIntegratedAcceptance(
         TaskInfo reviewed,
         ProjectSettings settings,
-        bool operatorOverride = false)
+        bool operatorOverride,
+        AcceptanceLineageDecision? lineage)
     {
-        var reviewSubject = TaskIntegrationStatusService.CurrentReviewSubject(reviewed);
-        if (reviewSubject is not null
-            && _attemptAuthority is not null
-            && !AgentStudio.Pipeline.ReviewSubjectStore.TryValidateCurrentAttempt(
-                reviewed.FolderPath,
-                reviewSubject,
-                _attemptAuthority,
-                out var subjectError))
+        // A lineage refusal is a decision about this card, never a server
+        // fault: it answers 409 with the reason.
+        if (lineage?.Admission == AcceptanceLineageAdmission.Refuse)
         {
             return new MoveJobOutcome(
-                MoveJobStatus.Failure,
-                subjectError ?? "The review subject does not belong to the current run attempt.");
+                MoveJobStatus.IntegrationFailed,
+                lineage.Message,
+                reviewed.FolderPath);
         }
 
         if (IsAlreadyIntegrated(reviewed, out var verification))
@@ -1797,6 +1831,51 @@ public sealed class TaskTransitionService
         return string.IsNullOrWhiteSpace(repoRoot)
             ? candidate
             : _git.ResolveIntegrationBranch(repoRoot, candidate);
+    }
+
+    private static string? AppendLineageEvidence(string? evidence, AcceptanceLineageDecision? lineage)
+    {
+        if (lineage?.Admission != AcceptanceLineageAdmission.AcceptOnDeliveryEvidence) return evidence;
+        return string.IsNullOrWhiteSpace(evidence) ? lineage.Message : $"{evidence} {lineage.Message}";
+    }
+
+    /// <summary>
+    /// AGT-3076 - the override accepted a card whose RunAttempt the authority
+    /// store no longer holds. The timeline names that and the delivery
+    /// evidence the acceptance rests on instead.
+    /// </summary>
+    private void RecordAcceptanceWithoutRunAttempt(
+        TaskInfo accepted,
+        string? actor,
+        string? reason,
+        AcceptanceLineageDecision lineage,
+        TaskIntegrationStatus? integration)
+    {
+        var subject = AgentStudio.Pipeline.ReviewSubjectStore.Read(accepted.FolderPath);
+        var commits = (accepted.Commits ?? [])
+            .Where(TaskCommitSupersession.IsEffectiveDelivery)
+            .Select(commit => commit.Sha)
+            .Where(sha => !string.IsNullOrWhiteSpace(sha))
+            .ToArray();
+        _timeline?.Append(
+            accepted.FolderPath,
+            TimelineEventKinds.AcceptedWithoutRunAttempt,
+            actor ?? "operator:unspecified",
+            lineage.Message ?? "Accepted without a run attempt in the current authority epoch.",
+            details: new Dictionary<string, string>
+            {
+                ["reason"] = reason?.Trim() ?? "",
+                ["authorityEpoch"] = _attemptAuthority?.AuthorityEpoch.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture) ?? "unknown",
+                ["subjectRunAttemptId"] = subject?.RunAttemptId ?? "unknown",
+                ["integrationStatus"] = integration?.Status ?? "unknown",
+                ["integrationBranch"] = integration?.IntegrationBranch ?? "unknown",
+                ["integrationSha"] = integration?.Sha ?? "unknown",
+                ["deliveryRef"] = integration?.DeliveryRef
+                    ?? subject?.ImmutableResultRef ?? subject?.ResultRef ?? "unknown",
+                ["resultSha"] = subject?.ResultSha ?? "unknown",
+                ["commits"] = commits.Length == 0 ? "none" : string.Join(",", commits),
+            });
     }
 
     private void RecordOperatorIntegrationOverride(

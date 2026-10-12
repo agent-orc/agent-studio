@@ -80,4 +80,6 @@
     [containmentUnknown]="answer()?.containmentStatus === 'unknown'"
     [escalated]="escalated()"
     (recheckRequested)="recheckIntegration()" />
+  <!-- AGT-3076: a lost run attempt makes acceptance an explicit override. -->
+  <app-acceptance-attempt-gap-notice [job]="job()" />
 }

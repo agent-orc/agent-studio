@@ -42,6 +42,24 @@ public sealed record ReviewSubjectRecord
     public DateTimeOffset CompletedAtUtc { get; init; }
 }
 
+/// <summary>Outcome of matching a review subject against the attempt authority store.</summary>
+public enum ReviewSubjectAttemptCheck
+{
+    Current,
+    NoTaskKey,
+    WrongTask,
+    NoRunAttemptId,
+    /// <summary>
+    /// The authority store holds no run attempt for the task, typically
+    /// because it was rebuilt into a new authority epoch after a crash.
+    /// </summary>
+    NoCurrentRunAttempt,
+    Stale,
+    NotSettled,
+    ResultShaMismatch,
+    ResultRefMismatch,
+}
+
 public static class ReviewSubjectStore
 {
     public const string FileName = "review-subject.json";
@@ -116,6 +134,19 @@ public static class ReviewSubjectStore
         ReviewSubjectRecord subject,
         AttemptAuthorityService authority,
         out string? error)
+        => CheckCurrentAttempt(taskFolder, subject, authority, out error) == ReviewSubjectAttemptCheck.Current;
+
+    /// <summary>
+    /// Same validation as <see cref="TryValidateCurrentAttempt"/>, but names
+    /// which lineage fact failed so acceptance can tell a run attempt the
+    /// authority store no longer holds (store rebuilt, new authority epoch)
+    /// apart from a stale or mismatched subject.
+    /// </summary>
+    public static ReviewSubjectAttemptCheck CheckCurrentAttempt(
+        string taskFolder,
+        ReviewSubjectRecord subject,
+        AttemptAuthorityService authority,
+        out string? error)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(taskFolder);
         ArgumentNullException.ThrowIfNull(subject);
@@ -125,49 +156,50 @@ public static class ReviewSubjectStore
         if (string.IsNullOrWhiteSpace(taskKey))
         {
             error = "The accepted task has no stable key for review-subject validation.";
-            return false;
+            return ReviewSubjectAttemptCheck.NoTaskKey;
         }
         if (!string.Equals(subject.TaskKey, taskKey, StringComparison.OrdinalIgnoreCase))
         {
             error = $"Review subject belongs to '{subject.TaskKey}', but the accepted task is '{taskKey}'.";
-            return false;
+            return ReviewSubjectAttemptCheck.WrongTask;
         }
         if (string.IsNullOrWhiteSpace(subject.RunAttemptId))
         {
             error = $"Review subject for '{taskKey}' has no RunAttemptId and cannot be accepted.";
-            return false;
+            return ReviewSubjectAttemptCheck.NoRunAttemptId;
         }
 
         var current = authority.GetTaskProjection(taskKey).CurrentRunAttempt;
         if (current is null)
         {
-            error = $"Review subject for '{taskKey}' has no current RunAttempt in the authority store.";
-            return false;
+            error = $"Review subject for '{taskKey}' names RunAttempt '{subject.RunAttemptId}', but there is "
+                + $"no run attempt in the current authority epoch ({authority.AuthorityEpoch}).";
+            return ReviewSubjectAttemptCheck.NoCurrentRunAttempt;
         }
         if (!string.Equals(subject.RunAttemptId, current.AttemptId, StringComparison.OrdinalIgnoreCase))
         {
             error = $"Review subject RunAttempt '{subject.RunAttemptId}' is stale; current RunAttempt is '{current.AttemptId}'.";
-            return false;
+            return ReviewSubjectAttemptCheck.Stale;
         }
         if (current.State != AttemptLifecycleState.Completed)
         {
             error = $"Review subject RunAttempt '{subject.RunAttemptId}' is not the current settled delivery.";
-            return false;
+            return ReviewSubjectAttemptCheck.NotSettled;
         }
         if (!string.Equals(subject.ResultSha, current.ResultSha, StringComparison.OrdinalIgnoreCase))
         {
             error = $"Review subject ResultSha does not match current RunAttempt '{current.AttemptId}'.";
-            return false;
+            return ReviewSubjectAttemptCheck.ResultShaMismatch;
         }
         if (current.ResultEnvelope?.ImmutableRemoteRef is { } expectedRef
             && !string.Equals(subject.ImmutableResultRef, expectedRef, StringComparison.Ordinal))
         {
             error = $"Review subject result ref does not match current RunAttempt '{current.AttemptId}'.";
-            return false;
+            return ReviewSubjectAttemptCheck.ResultRefMismatch;
         }
 
         error = null;
-        return true;
+        return ReviewSubjectAttemptCheck.Current;
     }
 
     public static ReviewSubjectRecord? Read(string taskFolder)
