@@ -6104,6 +6104,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
     [InlineData("AspectTimeout")]
     [InlineData("PreparationFailed")]
     [InlineData("BaselineUnavailable")]
+    [InlineData("CommandStalled")]
     public async Task Monolith_v1_review_plane_rebuilds_the_retry_plan_from_current_settings(
         string classification)
     {
@@ -6934,8 +6935,17 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             card.Title.StartsWith("Intervention:", StringComparison.Ordinal));
     }
 
-    [Fact]
-    public async Task Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_escalated()
+    /// <summary>
+    /// The bounded chain: three infrastructure retries, then Escalated. The
+    /// AGT-3089 row sends the AGT-3033 report of a worker that predates the
+    /// diagnosis contract once. A retry on the unchanged SHA would give the
+    /// same report, so it escalates at once and names the worker release.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Monolith_v1_review_plane_exhausts_three_infrastructure_retries_to_escalated(
+        bool preDiagnosisWorker)
     {
         const string reviewRunnerId = "review-runner-budget";
         const string reviewInstance = "review-budget-host:4243";
@@ -6950,9 +6960,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         using var reviewClient = new RClient(http, reviewRunnerId, usesDurableTaskServer: true);
 
         Contract.ReviewReportDto? terminal = null;
-        for (var attemptNumber = 1;
-             attemptNumber <= AttemptAuthorityService.ReviewInfrastructureRetryBudget + 1;
-             attemptNumber++)
+        var reports = preDiagnosisWorker ? 1 : AttemptAuthorityService.ReviewInfrastructureRetryBudget + 1;
+        for (var attemptNumber = 1; attemptNumber <= reports; attemptNumber++)
         {
             var claim = await reviewClient.ClaimReviewAsync(
                 new Contract.ReviewClaimRequest(reviewRunnerId, reviewInstance, 120),
@@ -6961,13 +6970,15 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
             var report = await reviewClient.ReportReviewAsync(
                 claim.Attempt!.AttemptId,
-                InfrastructureReport(
-                    claim,
-                    reviewRunnerId,
-                    reviewInstance,
-                    $"review-infra-{attemptNumber}"),
+                preDiagnosisWorker
+                    ? PreDiagnosisWorkerReport(claim, reviewRunnerId, reviewInstance, $"review-infra-{attemptNumber}")
+                    : InfrastructureReport(
+                        claim,
+                        reviewRunnerId,
+                        reviewInstance,
+                        $"review-infra-{attemptNumber}"),
                 CancellationToken.None);
-            if (attemptNumber <= AttemptAuthorityService.ReviewInfrastructureRetryBudget)
+            if (attemptNumber < reports)
             {
                 Assert.True(report.RetryScheduled);
                 Assert.Equal(TaskStates.AutoReview, report.TaskState);
@@ -6994,9 +7005,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         var projection = factory.Services
             .GetRequiredService<AttemptAuthorityService>()
             .GetTaskProjection(TaskKey);
-        Assert.Equal(
-            AttemptAuthorityService.ReviewInfrastructureRetryBudget + 1,
-            projection.ReviewAttempts.Count);
+        Assert.Equal(reports, projection.ReviewAttempts.Count);
         Assert.All(
             projection.ReviewAttempts,
             attempt => Assert.Equal(
@@ -7005,6 +7014,98 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.DoesNotContain(
             projection.ReviewAttempts,
             attempt => attempt.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased);
+        if (!preDiagnosisWorker) return;
+
+        Assert.Equal("ReviewInfra", terminal.Outcome);
+        Assert.Equal(
+            Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported,
+            terminal.FailureClassification);
+        Assert.Equal(0, scheduler.RunOnce());
+        Assert.DoesNotContain(
+            ReadTimeline(TaskStates.Escalated),
+            entry => entry.GetProperty("kind").GetString() == "review_infrastructure_retry_scheduled");
+        var status = await File.ReadAllTextAsync(
+            Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md"));
+        var category = status
+            .Split('\n')
+            .First(line => line.StartsWith("- Category: ", StringComparison.Ordinal));
+        Assert.Contains(HumanReviewEscalationCategories.Environmental, category, StringComparison.Ordinal);
+        var reason = status
+            .Split('\n')
+            .First(line => line.StartsWith("- Reason: ", StringComparison.Ordinal));
+        Assert.Contains(
+            $"Review worker {PreDiagnosisWorkerRelease} on {reviewRunnerId} predates the diagnosis contract",
+            reason,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("exhausted its budget", reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>Release the AGT-3033 review host reported (commit of 27.09.).</summary>
+    private const string PreDiagnosisWorkerRelease = "20260928T1211Z-v0.9.4-6759fe303";
+
+    /// <summary>
+    /// The AGT-3033 report of a worker that predates the AGT-2916 diagnosis
+    /// contract: ProductFailure, one failed candidate verify command without a
+    /// diagnosis, no clean repeat, and the worker release in the environment.
+    /// </summary>
+    private static Contract.ReviewReportRequest PreDiagnosisWorkerReport(
+        Contract.ReviewClaimResponse claim,
+        string runnerId,
+        string instanceId,
+        string idempotencyKey)
+    {
+        var report = InfrastructureReport(claim, runnerId, instanceId, idempotencyKey);
+        var ranAt = claim.Lease!.AcquiredAt;
+        string[] failures =
+        [
+            "TestClockGuardTests.Test_files_do_not_read_the_wall_clock_or_date_data_without_a_clock",
+            "WaitsOnEndpointsTests.PutWaitsOn_DropsUnsatisfiableDependency_AndReleasesReadyCard",
+        ];
+        return report with
+        {
+            Outcome = "ProductFailure",
+            FailureClassification = "NewTestFailures",
+            Summary = "2 new failures; Step verify-3 is already exiting 1 on the merge base.",
+            Environment = report.Environment with
+            {
+                Worker = new Contract.ReviewWorkerProvenanceDto(
+                    PreDiagnosisWorkerRelease,
+                    "/opt/agent-runner/AgentRunner",
+                    PreDiagnosisWorkerRelease),
+            },
+            Commands =
+            [
+                new Contract.ReviewCommandEvidenceDto(
+                    "verify-3",
+                    "build-tests",
+                    "dotnet",
+                    ["test", "backend.Tests", "--no-build"],
+                    claim.Subject!.ExpectedResultSha,
+                    claim.Subject.ExpectedResultSha,
+                    report.Workspace.TreeHash,
+                    ranAt,
+                    ranAt,
+                    1,
+                    null,
+                    new string('d', 64),
+                    new string('e', 64),
+                    BaselineSha: "13dfb3cc813dfb3cc813dfb3cc813dfb3cc813df",
+                    NewFailures: failures,
+                    PreExistingFailures: [],
+                    RetryPerformed: true,
+                    BaselineExitCode: 1),
+            ],
+            Verdicts =
+            [
+                new Contract.ReviewVerdictDto(
+                    "build-tests",
+                    "block",
+                    "NewTestFailures",
+                    "2 new failures; 0 pre-existing failures. Step verify-3 is already exiting 1 on the merge base.",
+                    "command:verify-3",
+                    string.Join(", ", failures)),
+            ],
+        };
     }
 
     /// <summary>
