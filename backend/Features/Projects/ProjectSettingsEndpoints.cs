@@ -1413,15 +1413,26 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             var resultSha = review.Subject.ExpectedResultSha;
             var resultRef = review.Subject.ResultRef;
-            var changedFiles = !string.IsNullOrWhiteSpace(repositoryPath)
-                && !string.IsNullOrWhiteSpace(resultRef)
-                ? RemoteReviewPlanBuilder.DeliveryChangedFiles(
-                    git, repositoryPath, integrationRef, resultRef)
-                : null;
+            var changedFiles = ReplanChangedFiles(git, repositoryPath, integrationRef, review.Subject);
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings,
                 integrationRef, resultSha, changedFiles, resultRef);
         });
     }
+
+    /// <summary>
+    /// AGT-3079: the replan diffs against the immutable result SHA, as the
+    /// creation path does. The Studio checkout usually holds the result ref
+    /// only under <c>refs/remotes/origin</c>, so a diff against
+    /// <see cref="ReviewSubjectDto.ResultRef"/> failed and turned a pending
+    /// no-change plan back into the full plan.
+    /// </summary>
+    internal static IReadOnlyList<string>? ReplanChangedFiles(
+        GitService git,
+        string? repositoryPath,
+        string? integrationRef,
+        ReviewSubjectDto subject)
+        => RemoteReviewPlanBuilder.DeliveryChangedFiles(
+            git, repositoryPath, integrationRef, subject.ExpectedResultSha);
 
     private static object BatchGateSettingsResponse(BatchGateFormationOptions value) => new
     {

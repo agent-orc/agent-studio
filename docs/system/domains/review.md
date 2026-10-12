@@ -786,6 +786,25 @@ determines attribution. For a planned `--no-build` test, fresh baseline
 worktrees and clean-repeat clones replay the preceding frozen build after
 dependency preparation so the test assembly exists.
 
+## No-change results skip the tool gates (AGT-3079)
+
+A result that changes no path against its merge base with the integration ref
+(for example a `noop` or a commit-less `done` whose Result-SHA is already on
+`develop`) would only compare that SHA with itself in build, test and lint.
+`RemoteReviewPlanBuilder.IsNoChangeResult` decides this from a computed, empty
+changed-path list, a valid Result-SHA and a present result ref. A null list
+(the diff could not be computed) keeps the full plan. Such a plan then keeps
+its agent aspects, drops every `build-tests`, `lint`, `review-verification`
+and compose-render command and all dependency preparation, and records each
+dropped tool aspect under `SkippedAspects` with a reason that names the
+integration ref. A plan without agent aspects keeps the `verify-subject`
+completion command, so the frozen plan is never empty. The batch deferral does
+not apply, and delivery admission reads the plan as having no applicable
+build/test gate. The integration lane still verifies the contained tree before
+completion (AGT-3002). A settings-edit replan diffs against the Result-SHA, as
+the creation path does. The result ref usually exists only under
+`refs/remotes/origin` in the Studio checkout.
+
 ## Key code and tests
 
 - `runner/RemoteReviewWorkspace.cs`: exact checkout, integration-ref fetch,

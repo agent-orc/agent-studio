@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AgentStudio.Pipeline;
 using AgentStudio.Git;
+using Microsoft.Extensions.Logging;
 using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Runner;
@@ -30,19 +31,49 @@ public sealed class RemoteReviewPlanBuilder
         Title: "Concept fit",
         FallbackSystem: "Compare the delivered Dossier with the current prompt.md. Block a missing required section, contradicted operator direction, open decision without a recommendation, or absent implementation cards. Cite the exact brief direction and Dossier location.");
 
+    // The deterministic tool aspects a no-change result skips (AGT-3079).
+    private static readonly string[] NoChangeSkippedToolAspects =
+    [
+        "build-tests",
+        "lint",
+        "review-verification",
+    ];
+
     private readonly AspectRunnerService _aspects;
     private readonly IConfiguration _configuration;
     private readonly GitService? _git;
+    private readonly ILogger<RemoteReviewPlanBuilder>? _logger;
 
     public RemoteReviewPlanBuilder(
         AspectRunnerService aspects,
         IConfiguration configuration,
-        GitService? git = null)
+        GitService? git = null,
+        ILogger<RemoteReviewPlanBuilder>? logger = null)
     {
         _aspects = aspects;
         _configuration = configuration;
         _git = git;
+        _logger = logger;
     }
+
+    /// <summary>
+    /// AGT-3079: a valid result that changes no path against its merge base is
+    /// already contained in the integration line, so build, test and lint would
+    /// only compare that SHA with itself. Null paths mean the diff could not be
+    /// computed and never count as no change.
+    /// </summary>
+    internal static bool IsNoChangeResult(
+        IReadOnlyList<string>? changedPaths,
+        string? resultSha,
+        string? resultRef)
+        => changedPaths is { Count: 0 }
+           && ReviewSubjectStore.IsValidResultSha(resultSha)
+           && !string.IsNullOrWhiteSpace(resultRef);
+
+    internal static string NoChangeSkipReason(string? integrationRef)
+        => $"Result has no changed path against its merge base with {integrationRef}; "
+           + "build, test and lint would compare this SHA with itself. "
+           + "The integration lane verifies the contained tree before completion (AGT-3002).";
 
     /// <param name="changedFiles">
     /// The delivery's paths against its merge base, when known. A diff that
@@ -80,6 +111,7 @@ public sealed class RemoteReviewPlanBuilder
             && changedPaths is { Count: > 0 }
             && !string.IsNullOrWhiteSpace(resultRef)
             && ReviewSubjectStore.IsValidResultSha(resultSha);
+        var noChange = IsNoChangeResult(changedPaths, resultSha, resultRef);
         string? testLevel = null;
         string? selectionDigest = null;
         if (deferBuildTest)
@@ -161,6 +193,17 @@ public sealed class RemoteReviewPlanBuilder
 
         var commands = toolPlan.Commands.ToList();
         var skipped = new List<Contract.ReviewSkippedAspectDto>();
+        if (noChange)
+        {
+            static bool Skipped(Contract.ReviewCommandDto command)
+                => NoChangeSkippedToolAspects.Contains(command.Aspect, StringComparer.OrdinalIgnoreCase);
+            skipped.AddRange(commands.Where(Skipped)
+                .Select(command => command.Aspect)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(aspect => new Contract.ReviewSkippedAspectDto(
+                    aspect, NoChangeSkipReason(integrationRef))));
+            commands.RemoveAll(Skipped);
+        }
         var isConcept = TaskModes.IsConcept(task.Mode);
         PipelineStep[] aspectSteps = isConcept
             ? [PipelineCatalogue.RemoteConceptFitStep]
@@ -232,12 +275,22 @@ public sealed class RemoteReviewPlanBuilder
             Contract.ReviewCommandKinds.IsAgent(command.ExecutionKind));
         if (deferBuildTest && !hasModelReview)
             commands = ordinaryToolPlan.Commands.ToList();
+        if (noChange)
+        {
+            if (commands.Count == 0)
+                commands.Add(V1ReviewPlaneEndpoints.CompletionOnlyCommand());
+            _logger?.LogInformation(
+                "remote-review-plan-no-change task={TaskKey} resultSha={ResultSha} integrationRef={IntegrationRef}",
+                string.IsNullOrWhiteSpace(task.TaskKey) ? task.Id : task.TaskKey, resultSha, integrationRef);
+        }
 
         var plan = toolPlan with
         {
             Commands = commands,
-            Preparation = deferBuildTest && !hasModelReview
-                ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
+            Preparation = noChange
+                ? []
+                : deferBuildTest && !hasModelReview
+                    ? ordinaryToolPlan.Preparation : toolPlan.Preparation,
             BuildTestDeferredToBatch = deferBuildTest && hasModelReview,
             TestLevel = deferBuildTest && hasModelReview ? testLevel : null,
             TestSelectionDigest = deferBuildTest && hasModelReview ? selectionDigest : null,
@@ -250,13 +303,26 @@ public sealed class RemoteReviewPlanBuilder
             TaskMode = isConcept ? TaskModes.Concept : null,
         };
         if (isConcept) return plan;
-        return ApplyScopedReview(
+        plan = ApplyScopedReview(
             plan,
             task,
             repositoryPath,
             projectSettings,
             integrationRef,
             expectedResultSha);
+        // A scoped review drops carried-over agent commands. A no-change plan
+        // has no tool command left to keep it non-empty, so it falls back to
+        // the completion-only command the Task Server can admit.
+        return noChange && plan.Commands.Count == 0
+            ? plan with
+            {
+                Commands = [V1ReviewPlaneEndpoints.CompletionOnlyCommand()],
+                RequiredAspects = plan.RequiredAspects
+                    .Append("completion")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+            }
+            : plan;
     }
 
     private static string? BriefHash(string folder)
