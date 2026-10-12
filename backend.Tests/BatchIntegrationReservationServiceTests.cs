@@ -87,6 +87,27 @@ public sealed class BatchIntegrationReservationServiceTests
     }
 
     [Fact]
+    public void Legacy_persisted_markers_load_from_configured_projects()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-push-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            new BatchIntegrationReservationService(root).MarkPushPending(
+                "project", "AGT-42", "approved-sha");
+            var path = Assert.Single(Directory.GetFiles(root, "*.pending",
+                SearchOption.AllDirectories));
+            var marker = JsonSerializer.Deserialize<PendingIntegrationPush>(File.ReadAllText(path))!;
+            File.WriteAllText(path, JsonSerializer.Serialize(marker with { Project = null }));
+            var restarted = new BatchIntegrationReservationService(root);
+
+            restarted.LoadPersistedProjects(["project"]);
+
+            Assert.Contains("project", restarted.ProjectsWithPending());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
     public async Task Batch_wait_reconciliation_fetches_a_branch_once_per_pass()
     {
         var reservation = new BatchIntegrationReservationService();

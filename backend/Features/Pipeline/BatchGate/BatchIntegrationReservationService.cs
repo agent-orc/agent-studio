@@ -46,6 +46,12 @@ public sealed class BatchIntegrationReservationService
         }
     }
 
+    public void LoadPersistedProjects(IEnumerable<string> projects)
+    {
+        foreach (var project in projects)
+            _ = ForProject(project);
+    }
+
     private sealed class PendingPushes(IEnumerable<KeyValuePair<string, PendingIntegrationPush>> jobs)
     {
         public Dictionary<string, PendingIntegrationPush> Jobs { get; } =

@@ -78,6 +78,7 @@ public sealed class BatchGatePilotService
         _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git);
         _advisor = advisor;
         _reservations = reservations;
+        _reservations?.LoadPersistedProjects(_settings.GetAll().Keys);
         _pipelineLog = pipelineLog ?? new PipelineExecutionLog(
             NullLogger<PipelineExecutionLog>.Instance);
     }
