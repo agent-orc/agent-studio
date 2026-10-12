@@ -676,7 +676,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         Assert.Equal(5, queue.PendingReviewAttempts);
         Assert.Equal(5, queue.QueueDepth);
 
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh(DateTime.MaxValue);
 
         Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
         Assert.Equal(3, decision.RecommendedParallelism);
@@ -741,7 +741,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         for (var i = 0; i < 5; i++)
             CreatePendingReviewAttempt(authority, $"AGT-{i}", $"sha-{i}");
         factory.Services.GetRequiredService<AutoReviewQueueStagnationWatchdog>().Refresh();
-        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh();
+        var decision = factory.Services.GetRequiredService<AdaptiveReviewParallelismAdvisor>().Refresh(DateTime.MaxValue);
         Assert.Equal(3, decision.RecommendedParallelism);
 
         var advertisement = await http.PostAsJsonAsync(

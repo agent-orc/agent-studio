@@ -351,8 +351,13 @@ one host's declared capacity is never exceeded (AGT-2848). The advisor's input
 also includes the freshest review-role plane budget: role `cpu.max`, host cores,
 the unchanged per-worker envelope, rolling review duration, and role
 `throttled_usec` share. The ceiling never exceeds one worker per documented
-2-core minimum. A greater-than-25% rolling duration regression after a raise,
-combined with at least 10% throttled share, withdraws that raise. The runner
+2-core minimum. A rolling duration regression after a raise or high role
+throttling holds further raises and lowers a recommendation above the configured
+baseline one step per lower cooldown. Queue stagnation can request a raise only
+when `RaiseOnStagnation` is enabled; the depth threshold remains an independent
+trigger. Startup queue-driven raises respect the raise cooldown. The decision reason, including
+host saturation, is returned by
+`GET /api/runner/auto-review-parallelism-recommendation`. The runner
 applies the same role-quota clamp locally before claiming. Queue input is the
 combined backlog of the legacy post-processing queue and current
 attempt-authority ReviewAttempts in state Pending (`GET

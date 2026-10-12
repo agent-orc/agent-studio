@@ -11,7 +11,7 @@ public sealed class AdaptiveReviewParallelismPolicyTests
 
     [Theory]
     // depth, current, lastChangeMinutesAgo, expectedAction, expectedTarget
-    [InlineData(5, 2, null, ReviewParallelismAction.Raise, 3)]
+    [InlineData(5, 2, null, ReviewParallelismAction.Hold, 2)]
     [InlineData(4, 2, null, ReviewParallelismAction.Hold, 2)]
     [InlineData(10, 6, null, ReviewParallelismAction.Hold, 6)]
     [InlineData(5, 2, 2d, ReviewParallelismAction.Hold, 2)]
@@ -40,7 +40,7 @@ public sealed class AdaptiveReviewParallelismPolicyTests
             queueDepth: 1,
             isStagnant: true,
             Now,
-            lastChangeAtUtc: null,
+            lastChangeAtUtc: Now.AddMinutes(-5),
             queueEmptySinceUtc: null,
             Options);
 
@@ -175,7 +175,7 @@ public sealed class AdaptiveReviewParallelismPolicyTests
             queueDepth: 8,
             isStagnant: false,
             Now,
-            lastChangeAtUtc: Now.AddMinutes(-2),
+            lastChangeAtUtc: Now.AddMinutes(-20),
             queueEmptySinceUtc: null,
             Options,
             Plane(planeCores: 8, durationSeconds: 1_200, throttledShare: 0.35),
@@ -183,8 +183,110 @@ public sealed class AdaptiveReviewParallelismPolicyTests
 
         Assert.Equal(ReviewParallelismAction.Lower, decision.Action);
         Assert.Equal(2, decision.RecommendedParallelism);
-        Assert.Contains("raise withdrawn", decision.Reason);
+        Assert.Contains("host saturated", decision.Reason);
         Assert.Contains("throttled share", decision.Reason);
+    }
+
+    [Theory]
+    [InlineData(0.35, 900, 900, "throttled share")]
+    [InlineData(0.02, 1_200, 900, "duration grew")]
+    public void Evaluate_StagnantQueueHoldsWhenHostIsSaturated(
+        double throttledShare,
+        double durationSeconds,
+        double beforeRaiseSeconds,
+        string expectedSignal)
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 2, true, Now, Now.AddMinutes(-20), null,
+            Options with { BaselineParallelism = 3, RaiseQueueDepthThreshold = 1_000 },
+            Plane(8, durationSeconds, throttledShare), beforeRaiseSeconds);
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Contains("stagnant but host saturated", decision.Reason);
+        Assert.Contains(expectedSignal, decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_StagnantQueueRaisesWithHeadroom()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 2, true, Now, Now.AddMinutes(-20), null,
+            Options with { BaselineParallelism = 3, RaiseQueueDepthThreshold = 1_000 },
+            Plane(8, 900, 0.02), 900);
+
+        Assert.Equal(ReviewParallelismAction.Raise, decision.Action);
+        Assert.Equal(4, decision.RecommendedParallelism);
+    }
+
+    [Fact]
+    public void Evaluate_DepthRaiseHoldsWhenHostIsSaturated()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 5, false, Now, Now.AddMinutes(-20), null,
+            Options with { BaselineParallelism = 3, RaiseOnStagnation = false },
+            Plane(8, 900, 0.35));
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
+        Assert.Contains("host saturated", decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_OperatorBaselineRaiseWaitsForHostHeadroom()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            2, 1, false, Now, Now.AddMinutes(-20), null,
+            Options with { BaselineParallelism = 3 }, Plane(8, 900, 0.35));
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(2, decision.RecommendedParallelism);
+        Assert.Contains("host saturated", decision.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_SaturationLowersOneStepPerLowerCooldownUntilBaseline()
+    {
+        var options = Options with { BaselineParallelism = 3 };
+        var budget = Plane(12, 1_200, 0.35);
+        var first = AdaptiveReviewParallelismPolicy.Evaluate(
+            5, 3, true, Now, Now.AddMinutes(-20), null, options, budget, 900);
+        var insideCooldown = AdaptiveReviewParallelismPolicy.Evaluate(
+            4, 3, true, Now.AddMinutes(1), Now, null, options, budget, null);
+        var next = AdaptiveReviewParallelismPolicy.Evaluate(
+            4, 3, true, Now.AddMinutes(15), Now, null, options, budget, null);
+        var baseline = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 3, true, Now.AddMinutes(30), Now.AddMinutes(15), null, options, budget, null);
+
+        Assert.Equal((ReviewParallelismAction.Lower, 4), (first.Action, first.RecommendedParallelism));
+        Assert.Equal((ReviewParallelismAction.Hold, 4), (insideCooldown.Action, insideCooldown.RecommendedParallelism));
+        Assert.Equal((ReviewParallelismAction.Lower, 3), (next.Action, next.RecommendedParallelism));
+        Assert.Equal((ReviewParallelismAction.Hold, 3), (baseline.Action, baseline.RecommendedParallelism));
+    }
+
+    [Fact]
+    public void Evaluate_StartupRefreshRespectsRaiseCooldown()
+    {
+        var startup = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 5, false, Now, null, null, Options with { BaselineParallelism = 3 }, Plane(8, 900, 0.02));
+        var afterCooldown = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 5, false, Now.AddMinutes(5), Now, null,
+            Options with { BaselineParallelism = 3 }, Plane(8, 900, 0.02));
+
+        Assert.Equal(ReviewParallelismAction.Hold, startup.Action);
+        Assert.Equal(ReviewParallelismAction.Raise, afterCooldown.Action);
+    }
+
+    [Fact]
+    public void Evaluate_StagnationRaiseCanBeDisabled()
+    {
+        var decision = AdaptiveReviewParallelismPolicy.Evaluate(
+            3, 2, true, Now, Now.AddMinutes(-20), null,
+            Options with { BaselineParallelism = 3, RaiseQueueDepthThreshold = 1_000, RaiseOnStagnation = false },
+            Plane(8, 900, 0.02));
+
+        Assert.Equal(ReviewParallelismAction.Hold, decision.Action);
+        Assert.Equal(3, decision.RecommendedParallelism);
     }
 
     [Fact]

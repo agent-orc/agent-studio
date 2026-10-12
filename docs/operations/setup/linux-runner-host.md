@@ -1001,8 +1001,13 @@ so the recommendation cannot exceed
 `cpu.max`, not the per-worker child cgroup, and reports the raw value, effective
 plane cores, host cores, per-worker envelope, current ceiling, rolling duration
 of the last 20 completed reviews, and `throttled_usec` delta divided by wall
-time. If duration grows by more than 25% after a raise while throttled share is
-at least 10%, the advisor withdraws the raise. The runner repeats the role-quota
+time. High throttling or a duration increase of more than 25% after a raise
+blocks further raises. Above baseline, the advisor lowers one step per
+`LowerCooldownMinutes` while pressure persists. It clears the prior raise's
+duration reference after each lower, so a stale slowdown measurement cannot
+hold the recommendation at baseline. `RaiseOnStagnation: false` disables
+stagnation-triggered raises; `RaiseQueueDepthThreshold` still controls depth
+raises. The first queue-driven refresh waits for `RaiseCooldownMinutes`. The runner repeats the role-quota
 clamp before every claim, so a stale or mis-set central ceiling cannot overbook
 the unit.
 
