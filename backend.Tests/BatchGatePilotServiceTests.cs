@@ -615,6 +615,39 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Base_red_with_different_failure_does_not_halve_members()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var first = SeedMember(factory, "DOC-BASE-RED-A", "docs/base-a.md");
+        var second = SeedMember(factory, "DOC-BASE-RED-B", "docs/base-b.md");
+        _gate.Batch = request => Red(request.ExpectedSha) with
+        {
+            Reason = "candidate failed at an earlier step",
+        };
+        _gate.Base = request => Red(request.ExpectedSha) with
+        {
+            Reason = "base failed at another step",
+        };
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var manifest = Assert.Single(store.ListManifests());
+        Assert.Equal("integration-branch-red",
+            AssertPhase(store, manifest.BatchId, BatchPhase.Paused).Reason);
+        Assert.Null(store.ReadPublication(manifest.BatchId));
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(1, _gate.BaseRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Equal(2, store.ListPending().Count);
+        AssertLane(first.Key, TaskStates.AutoReview);
+        AssertLane(second.Key, TaskStates.AutoReview);
+    }
+
+    [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
         using var factory = BuildFactory();
