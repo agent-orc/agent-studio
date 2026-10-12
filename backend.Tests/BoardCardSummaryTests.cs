@@ -188,16 +188,16 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         clock.Stop();
         var groupedBuildMs = clock.Elapsed.TotalMilliseconds;
         var cache = new BoardReadConcurrencyGate();
-        await cache.GetOrBuildAsync("list-generation-1", () => list, CancellationToken.None);
+        await cache.GetOrBuildAsync("list-generation-1", "tasks/list", () => list, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            await cache.GetOrBuildAsync("list-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
+            await cache.GetOrBuildAsync("list-generation-1", "tasks/list", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         var listLookupMs = clock.Elapsed.TotalMilliseconds / 1000;
-        await cache.GetOrBuildAsync("grouped-generation-1", () => grouped, CancellationToken.None);
+        await cache.GetOrBuildAsync("grouped-generation-1", "tasks/grouped", () => grouped, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            await cache.GetOrBuildAsync("grouped-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
+            await cache.GetOrBuildAsync("grouped-generation-1", "tasks/grouped", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         output.WriteLine($"235-card synthetic list: {list.Length} bytes; build {listBuildMs:F1} ms; cached lookup {listLookupMs:F4} ms");
         output.WriteLine($"235-card synthetic grouped: {grouped.Length} bytes; build {groupedBuildMs:F1} ms; cached lookup {clock.Elapsed.TotalMilliseconds / 1000:F4} ms");

@@ -2,32 +2,46 @@ using System.Collections.Concurrent;
 
 namespace AgentStudio.Tasks;
 
+/// <summary>A built board body and the strong validator derived from its bytes.</summary>
+public sealed record BoardReadBody(byte[] Bytes, string ETag);
+
 /// <summary>
-/// Shares one serialized body build among readers of the same board generation.
+/// Shares one serialized body build among readers of the same board signature.
+/// The signature only decides whether a body must be rebuilt; the entity tag is
+/// derived from the built bytes, so a signature that moved without changing the
+/// board (an index rescan that found nothing, a runtime fact the card does not
+/// show) still validates the client's copy.
 /// </summary>
 public sealed class BoardReadConcurrencyGate
 {
-    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _bodies = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<BoardReadBody>>> _bodies = new();
     private readonly Lock _trimLock = new();
     private long _builds;
 
     /// <summary>Body builds started so far (diagnostics and tests).</summary>
     internal long Builds => Interlocked.Read(ref _builds);
 
-    public async Task<byte[]> GetOrBuildAsync(string key, Func<byte[]> build, CancellationToken cancellationToken)
+    /// <param name="signature">Cache key: everything that can change the body.</param>
+    /// <param name="scope">Route and request variant, so two variants never share a tag.</param>
+    public async Task<BoardReadBody> GetOrBuildAsync(string signature, string scope,
+        Func<byte[]> build, CancellationToken cancellationToken)
     {
-        var entry = _bodies.GetOrAdd(key, _ => new Lazy<Task<byte[]>>(
+        var entry = _bodies.GetOrAdd(signature, _ => new Lazy<Task<BoardReadBody>>(
             () =>
             {
                 Interlocked.Increment(ref _builds);
-                return Task.Run(build);
+                return Task.Run(() =>
+                {
+                    var bytes = build();
+                    return new BoardReadBody(bytes, BoardReadValidator.ContentETag(scope, bytes));
+                });
             },
             LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
             // Disconnecting one waiter does not cancel the shared build.
             var body = await entry.Value.WaitAsync(cancellationToken);
-            if (_bodies.Count > 24) Trim(key);
+            if (_bodies.Count > 24) Trim(signature);
             return body;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -36,7 +50,7 @@ public sealed class BoardReadConcurrencyGate
         }
         catch
         {
-            _bodies.TryRemove(new KeyValuePair<string, Lazy<Task<byte[]>>>(key, entry));
+            _bodies.TryRemove(new KeyValuePair<string, Lazy<Task<BoardReadBody>>>(signature, entry));
             throw;
         }
     }
