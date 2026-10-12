@@ -491,8 +491,11 @@ export interface PickupHoldStatus {
   reason: string;
   /** When the hold started (ISO 8601 UTC). */
   sinceUtc: string;
-  /** Age of the hold at read time. */
-  heldForSeconds: number;
+  /**
+   * Age of the hold at read time. Absent on board cards, which derive the age
+   * from `sinceUtc` so an unchanged card keeps the same bytes and ETag.
+   */
+  heldForSeconds?: number;
   /** True when nothing the system does on its own will ever clear the hold. */
   unsatisfiable: boolean;
   /** The ways out, in the order they should be offered. */
@@ -2523,7 +2526,8 @@ export interface ParkedBlockerStatus {
   conditionKind: string;
   conditionDescription: string;
   parkedAt: string;
-  parkedForSeconds: number;
+  /** Read-time age; absent on board cards, which derive it from `parkedAt`. */
+  parkedForSeconds?: number;
   /** The original freetext park reason, verbatim. */
   reason: string;
   /** Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`. */

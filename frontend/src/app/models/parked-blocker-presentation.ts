@@ -155,13 +155,27 @@ export function parkedOpenItems(park: ParkedBlockerStatus): string[] {
   return items;
 }
 
+/**
+ * Seconds the card has been parked at `nowMs`. The board card carries only
+ * `parkedAt` (a read-time counter would change the card bytes on every read);
+ * a payload that still carries the counter is used when `parkedAt` is absent.
+ */
+export function parkedSecondsAt(park: ParkedBlockerStatus, nowMs: number): number {
+  const parkedAtMs = Date.parse(park.parkedAt);
+  if (!Number.isNaN(parkedAtMs)) return Math.max(0, (nowMs - parkedAtMs) / 1000);
+  return park.parkedForSeconds ?? 0;
+}
+
 /** Build the full view, or null when the card is not parked. */
-export function buildParkedBlockerView(info: Pick<TaskInfo, 'parkedBlocker'>): ParkedBlockerView | null {
+export function buildParkedBlockerView(
+  info: Pick<TaskInfo, 'parkedBlocker'>,
+  nowMs = Date.now(),
+): ParkedBlockerView | null {
   const park = info.parkedBlocker;
   if (!park) return null;
 
   const blockerLabel = parkedBlockerLabel(park.blockerType);
-  const parkedFor = parkedForLabel(park.parkedForSeconds);
+  const parkedFor = parkedForLabel(parkedSecondsAt(park, nowMs));
   const question = park.decision?.question?.trim() || null;
   const questionId = park.decision?.questionId?.trim() || null;
 
@@ -201,8 +215,11 @@ export interface ParkedBoardBadge {
 }
 
 /** The board badge for a parked card, or null when the card is not parked. */
-export function buildParkedBadge(info: Pick<TaskInfo, 'parkedBlocker'>): ParkedBoardBadge | null {
-  const view = buildParkedBlockerView(info);
+export function buildParkedBadge(
+  info: Pick<TaskInfo, 'parkedBlocker'>,
+  nowMs = Date.now(),
+): ParkedBoardBadge | null {
+  const view = buildParkedBlockerView(info, nowMs);
   if (!view) return null;
   return {
     label: view.chipLabel,
