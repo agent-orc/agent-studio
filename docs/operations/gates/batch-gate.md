@@ -42,8 +42,9 @@ of 2026-10-11. The project setting defaults off and to documentation scope.
   A queued code push keeps its project batch reservation pending until origin
   verifies the merged SHA. The pending marker survives a backend restart.
   Before waiting and on each planning tick, the batch gate clears markers
-  whose approved SHA is already on origin or whose merge was superseded,
-  rolled back, or left the integration path. A failed push can therefore
+  whose approved SHA is already on origin, whose merge was superseded,
+  rolled back, or left the integration path, or whose push ended with a
+  permanent branch divergence. A failed push can therefore
   remain visible without blocking later batches forever. State and report
   expose the oldest push wait and an age alert after 15 minutes by default;
   `BatchGate:PendingPushAlertMinutes` configures that limit.
