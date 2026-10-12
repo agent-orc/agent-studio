@@ -448,7 +448,15 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             // The grant expires and another coordinator takes the scope while
             // the suite still runs; only the heartbeat can notice.
             _clock = _clock.AddMinutes(3);
-            intruder = leases.TryAcquire(Assert.Single(store.ListManifests()).Scope, "intruder");
+            var scope = Assert.Single(store.ListManifests()).Scope;
+            // The 50 ms heartbeat briefly holds the scope's lock file, and
+            // contention throws IOException; callers retry. The pause ignores
+            // ct because the heartbeat cancels it once it sees the lost lease.
+            for (var attempt = 0; intruder is null && attempt < 200; attempt++)
+            {
+                try { intruder = leases.TryAcquire(scope, "intruder"); }
+                catch (IOException) { await Task.Delay(10, CancellationToken.None); }
+            }
             await Task.Delay(Timeout.Infinite, ct);
             throw new InvalidOperationException("The lost lease did not stop the gate.");
         };
