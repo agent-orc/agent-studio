@@ -62,15 +62,27 @@ export interface HostReleaseDriftSnapshot {
  * round up to one hour so the marker never reads "0h behind".
  */
 export function releaseAgeLabel(hours: number | null | undefined): string | null {
-  if (hours === null || hours === undefined || !Number.isFinite(hours) || hours <= 0) return null;
-  if (hours < 24) return `${Math.max(1, Math.round(hours))}h behind`;
-  return `${Math.round(hours / 24)}d behind`;
+  const span = compactHours(hours);
+  return span ? `${span} behind` : null;
 }
 
-/** Short marker next to the release label, or null when there is nothing to mark. */
+/**
+ * Short marker next to the release label, or null when there is nothing to mark.
+ * Without two build stamps there is no release-age gap; the marker then shows
+ * how long the server has observed the host behind Stable, worded so it is not
+ * read as the gap itself.
+ */
 export function releaseDriftLabel(drift: HostReleaseDrift | null | undefined): string | null {
   if (!drift || drift.state !== 'behind') return null;
-  return releaseAgeLabel(drift.behindByHours) ?? 'behind Stable';
+  const observed = compactHours(drift.behindForHours);
+  return releaseAgeLabel(drift.behindByHours)
+    ?? (observed ? `behind Stable for ${observed}` : 'behind Stable');
+}
+
+function compactHours(hours: number | null | undefined): string | null {
+  if (hours === null || hours === undefined || !Number.isFinite(hours) || hours <= 0) return null;
+  if (hours < 24) return `${Math.max(1, Math.round(hours))}h`;
+  return `${Math.round(hours / 24)}d`;
 }
 
 /**

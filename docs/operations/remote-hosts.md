@@ -121,7 +121,17 @@ The comparison is server-owned and exposed at
 disagree. It uses the strongest evidence available: an identical commit means
 identical code; two build instants give both an order and an age; otherwise the
 product versions decide the order without an age. When nothing is comparable the
-row stays unmarked rather than accusing a host.
+row stays unmarked rather than accusing a host. Without an age the marker reads
+`behind Stable for 3h`: how long this server has observed the host behind, not
+the build gap.
+
+The runner reads its commit from the assembly's `+sha.<revision>` metadata, or
+from the trailing sha of a stamped release id such as
+`20260928T1211Z-v0.9.4-6759fe303`, and reports only 7 to 40 hex characters; a
+build without a revision (`+sha.unknown`) reports no commit. The build instant
+comes from `RUNNER_RELEASE_BUILT_AT` or from the release id stamp, in second
+(`T064049Z`) or minute (`T1211Z`) precision. The Stable side only has a build
+instant when the server runs from a release `build-manifest.json`.
 
 A host that is more than 24 hours older than Stable produces one operator-feed
 `host_release_drift` alarm, and one only - the alarm re-arms after the host
