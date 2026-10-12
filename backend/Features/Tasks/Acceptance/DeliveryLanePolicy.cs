@@ -20,6 +20,7 @@ public static class DeliveryLanePolicy
     public static bool IsAcceptedDeliveryStale(TaskInfo card, TaskIntegrationStatus? status)
     {
         var claim = card.CompletionClaim;
+        if (claim is null) return true;
         var subject = TaskIntegrationStatusService.CurrentReviewSubject(card);
         var latestCommit = card.Commits.Where(TaskCommitSupersession.IsEffectiveDelivery)
             .OrderBy(commit => commit.DeliveryGeneration ?? 0)
@@ -28,17 +29,22 @@ public static class DeliveryLanePolicy
         var currentResult = subject?.ResultSha ?? latestCommit?.ResultSha ?? latestCommit?.Sha;
         var currentEpoch = subject?.RunAttemptId ?? latestCommit?.RunAttemptId
             ?? latestCommit?.DeliveryGeneration?.ToString() ?? latestCommit?.Sha;
-        return status?.Status != IntegrationStatuses.Integrated
-            || claim?.Basis != CompletionClaimBases.IntegratedDelivery
-            || string.IsNullOrWhiteSpace(claim.ResultSha)
-            || string.IsNullOrWhiteSpace(claim.DeliveryEpoch)
-            || !string.Equals(claim.ResultSha, currentResult, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(claim.DeliveryEpoch, currentEpoch, StringComparison.Ordinal)
-            || !string.Equals(claim.IntegrationBranch,
-                status?.IntegrationBranch, StringComparison.OrdinalIgnoreCase)
-            || string.IsNullOrWhiteSpace(claim.TargetRefFingerprint)
-            || !string.Equals(claim.TargetRefFingerprint,
-                status?.TargetRefFingerprint, StringComparison.Ordinal);
+        // A target HEAD is a cache key for the Git reachability calculation,
+        // not part of the accepted delivery. Legacy claims have no result or
+        // epoch, so Git's current integrated verdict is their available proof.
+        // Operator overrides are an explicit acceptance ground; they can also
+        // cover a delivery that was not integrated when the operator accepted it.
+        if (claim.Basis is not (CompletionClaimBases.IntegratedDelivery
+            or CompletionClaimBases.OperatorOverride)) return true;
+        if (claim.Basis == CompletionClaimBases.IntegratedDelivery
+            && status?.Status != IntegrationStatuses.Integrated) return true;
+        var resultChanged = !string.IsNullOrWhiteSpace(claim.ResultSha)
+            && !string.IsNullOrWhiteSpace(currentResult)
+            && !string.Equals(claim.ResultSha, currentResult, StringComparison.OrdinalIgnoreCase);
+        var epochChanged = !string.IsNullOrWhiteSpace(claim.DeliveryEpoch)
+            && !string.IsNullOrWhiteSpace(currentEpoch)
+            && !string.Equals(claim.DeliveryEpoch, currentEpoch, StringComparison.Ordinal);
+        return resultChanged || epochChanged;
     }
 
     public static bool RequiresEscalation(TaskIntegrationStatus? status)

@@ -2,6 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Diagnostics;
+using AgentStudio.Shared;
+using AgentStudio.Tasks;
+using AgentStudio.Pipeline;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -805,6 +809,135 @@ public sealed class ManagementApiTests : IDisposable
         Assert.Contains(blocked, key => key?.EndsWith("blocked-two", StringComparison.Ordinal) == true);
         Assert.All(new[] { "blocked-one", "blocked-two" }, id =>
             Assert.True(Directory.Exists(Path.Combine(_root, TaskStates.Completed, id))));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task DeliveryBounceRepair_DryRunThenRestoresIntegratedAndOverrideIncidentCards()
+    {
+        RunGit(_root, "init", "-q", "-b", "develop");
+        RunGit(_root, "config", "user.email", "repair-test@example.invalid");
+        RunGit(_root, "config", "user.name", "Delivery Repair Test");
+        File.WriteAllText(Path.Combine(_root, "delivery.txt"), "accepted delivery\n");
+        RunGit(_root, "add", "delivery.txt");
+        RunGit(_root, "commit", "-q", "-m", "accepted delivery");
+        var sha = RunGit(_root, "rev-parse", "HEAD");
+        var folder = Path.Combine(_root, TaskStates.HumanReview, "incident-card");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "incident-card", key = "REP-1", title = "Incident card",
+            state = TaskStates.HumanReview, projectName = "Management Test",
+            mode = TaskModes.Coding, requiresIntegration = true,
+            commits = new[] { new { sha, filesChanged = 1, at = DateTime.UtcNow } },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        File.WriteAllText(Path.Combine(folder, "status.md"), "Result: accepted.\n");
+        var overrideFolder = Path.Combine(_root, TaskStates.HumanReview, "override-card");
+        Directory.CreateDirectory(overrideFolder);
+        File.WriteAllText(Path.Combine(overrideFolder, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "override-card", key = "REP-2", title = "Override card",
+            state = TaskStates.HumanReview, projectName = "Management Test",
+            mode = TaskModes.Coding, requiresIntegration = true,
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        File.WriteAllText(Path.Combine(overrideFolder, "status.md"), "Result: accepted by operator.\n");
+
+        await using var factory = BuildFactory();
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        void Append(string targetFolder, string from, string to, int minute) => timeline.Append(targetFolder, new TimelineEvent
+        {
+            Ts = new DateTime(2026, 10, 11, 7, minute, 0, DateTimeKind.Utc),
+            Kind = TimelineEventKinds.LaneChanged,
+            Details = new Dictionary<string, string>
+            {
+                ["from"] = from, ["to"] = to,
+                [LaneChangeCauses.DetailKey] = LaneChangeCauses.AcceptanceIntegrationFailed,
+                [LaneChangeCauses.DetailQualifierKey] = "delivery-verdict-stale",
+            },
+        });
+        foreach (var targetFolder in new[] { folder, overrideFolder })
+        {
+            Append(targetFolder, TaskStates.Completed, TaskStates.AutoReview, 40);
+            Append(targetFolder, TaskStates.AutoReview, TaskStates.HumanReview, 41);
+        }
+        var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.Begin(overrideFolder, PipelineCatalogue.Standard, "Management Test", "override-card");
+        pipeline.RecordStep(overrideFolder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Skipped,
+            StartedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Verdict = "operator-override",
+            Reason = "Operator accepted the delivery despite missing integration.",
+        });
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var card = Assert.IsType<TaskInfo>(scanner.FindJob("incident-card", _root));
+        var integration = factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+            .BuildLookup([card])[card.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, integration.Status);
+        var overrideBefore = Assert.IsType<TaskInfo>(scanner.FindJob("override-card", _root));
+        var integrationService = factory.Services.GetRequiredService<TaskIntegrationStatusService>();
+        var overrideStep = integrationService.ReadLatestMergeStep(overrideBefore);
+        Assert.Equal("operator-override", overrideStep?.Verdict);
+        Assert.True(DeliveryBounceRepairPolicy.IsEligible(overrideBefore,
+            integrationService.BuildLookup([overrideBefore]).GetValueOrDefault(overrideBefore.TaskKey),
+            timeline.ReadAll(overrideBefore.FolderPath), hasOperatorOverride: true));
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", DefaultClientIdentity.Id);
+        var preview = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "delivery-stale-repair-2026-10-11", dryRun = true,
+            idempotencyKey = "incident-repair-preview",
+        });
+        preview.EnsureSuccessStatusCode();
+        Assert.Equal(2, (await preview.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("matched").GetInt32());
+        Assert.Equal(TaskStates.HumanReview,
+            scanner.FindJob("incident-card", _root)?.State);
+
+        var apply = await client.PostAsJsonAsync("/api/v1/management/commands", new
+        {
+            kind = "delivery-stale-repair-2026-10-11", dryRun = false,
+            confirmation = "delivery-stale-repair-2026-10-11",
+            idempotencyKey = "incident-repair-apply",
+        });
+        apply.EnsureSuccessStatusCode();
+        Assert.Equal(2, (await apply.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("affected").GetInt32());
+        scanner.InvalidateCache();
+        var restored = Assert.IsType<TaskInfo>(scanner.FindJob("incident-card", _root));
+        Assert.Equal(TaskStates.Completed, restored.State);
+        Assert.Equal(CompletionClaimBases.IntegratedDelivery, restored.CompletionClaim?.Basis);
+        Assert.False(DeliveryLanePolicy.IsAcceptedDeliveryStale(restored,
+            factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+                .BuildLookup([restored])[restored.TaskKey]));
+        var overrideCard = Assert.IsType<TaskInfo>(scanner.FindJob("override-card", _root));
+        Assert.Equal(TaskStates.Completed, overrideCard.State);
+        Assert.Equal(CompletionClaimBases.OperatorOverride, overrideCard.CompletionClaim?.Basis);
+        Assert.False(DeliveryLanePolicy.IsAcceptedDeliveryStale(overrideCard,
+            factory.Services.GetRequiredService<TaskIntegrationStatusService>()
+                .BuildLookup([overrideCard])[overrideCard.TaskKey]));
+    }
+
+    private static string RunGit(string path, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = path,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, error);
+        return output.Trim();
     }
 
     [Fact]

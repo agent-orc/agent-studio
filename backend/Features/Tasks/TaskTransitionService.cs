@@ -351,10 +351,9 @@ public sealed class TaskTransitionService
             && contentDecision?.Overridden != true
             && (boundCompletionClaim?.Basis != CompletionClaimBases.IntegratedDelivery
                 || string.IsNullOrWhiteSpace(boundCompletionClaim.ResultSha)
-                || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)
-                || string.IsNullOrWhiteSpace(boundCompletionClaim.TargetRefFingerprint)))
+                || string.IsNullOrWhiteSpace(boundCompletionClaim.DeliveryEpoch)))
             return new MoveJobOutcome(MoveJobStatus.IntegrationFailed,
-                "The integrated delivery cannot be bound to a result SHA, delivery epoch and target ref. Recover its delivery evidence before acceptance.");
+                "The integrated delivery cannot be bound to a result SHA and delivery epoch. Recover its delivery evidence before acceptance.");
 
         // Hide a queued follow-up while the terminal move is in flight. The
         // move can still be refused by the state machine, so do not record a
