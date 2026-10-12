@@ -75,8 +75,9 @@ public sealed class QuotaForecastPolicyTests
     }
 
     [Fact]
-    public void Forecast_UnknownReset_TreatsFullAsBeforeReset()
+    public void Forecast_UnknownReset_ReportsUnknownReset()
     {
+        // AGT-3080: an unparsed reset must not claim the window fills before it resets.
         var points = new List<QuotaHistoryPoint>
         {
             new(T0, Weekly, 50, null),
@@ -85,9 +86,10 @@ public sealed class QuotaForecastPolicyTests
 
         var forecast = QuotaForecastPolicy.Forecast(points, T0.AddHours(1));
 
-        Assert.Equal(QuotaForecastStatus.FullBeforeReset, forecast.Status);
+        Assert.Equal(QuotaForecastStatus.UnknownReset, forecast.Status);
         Assert.Null(forecast.ResetAt);
-        Assert.True(forecast.ReachesFullBeforeReset);
+        Assert.False(forecast.ReachesFullBeforeReset);
+        Assert.Equal(T0.AddHours(5), forecast.ForecastFullAt);
     }
 
     [Fact]
@@ -203,6 +205,7 @@ public sealed class QuotaForecastPolicyTests
     [InlineData(QuotaForecastStatus.Idle, "idle")]
     [InlineData(QuotaForecastStatus.FullBeforeReset, "full-before-reset")]
     [InlineData(QuotaForecastStatus.ResetsFirst, "resets-first")]
+    [InlineData(QuotaForecastStatus.UnknownReset, "unknown-reset")]
     public void StatusName_IsTheWireValue(QuotaForecastStatus status, string expected)
     {
         Assert.Equal(expected, QuotaForecastPolicy.StatusName(status));

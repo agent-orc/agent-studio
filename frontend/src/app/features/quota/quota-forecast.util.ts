@@ -220,5 +220,10 @@ export function forecastSentence(forecast: QuotaForecast, nowMs: number, when: (
         ? `100% at ${when(full)} (in ${inText}), before the reset.`
         : `Would reach 100% at ${when(full)}; the reset comes first.`;
     }
+    case 'unknown-reset': {
+      const full = forecast.forecastFullAt!;
+      const inText = formatDuration(Date.parse(full) - nowMs);
+      return `100% at ${when(full)} (in ${inText}) at this rate; the reset time is unknown.`;
+    }
   }
 }
