@@ -520,6 +520,7 @@ public sealed class OperatorSweepServiceTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = System.Diagnostics.Process.Start(start)!;
