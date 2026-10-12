@@ -372,6 +372,7 @@ public sealed class OrchestratorContextStoreTests
     [Fact]
     public void Archive_policy_next_marker_is_idempotent_and_clears_on_unarchive()
     {
+        // clock-independent: pure policy input; the marker never meets "now".
         var earlier = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var now = earlier.AddDays(1);
         Assert.Equal(now, OrchestratorContextArchivePolicy.NextArchivedAt(null, true, now));
@@ -384,7 +385,8 @@ public sealed class OrchestratorContextStoreTests
     public async Task Operator_archive_round_trips_survives_reopen_and_a_new_turn_unarchives()
     {
         using var temp = new TempDirectory();
-        var store = Store(temp.Path);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
         await store.InitializeAsync();
         var workspace = await store.CreateWorkspaceAsync(
             new CreateWorkspaceRequest("Workspace"), "test", default);
@@ -414,7 +416,7 @@ public sealed class OrchestratorContextStoreTests
         Assert.Equal(archived.ArchivedAt, Assert.Single(listed, item => item.ContextKey == taskContext.ContextKey).ArchivedAt);
         Assert.Null(Assert.Single(listed, item => item.Kind == OrchestratorContextKinds.Project).ArchivedAt);
 
-        var reopened = Store(temp.Path);
+        var reopened = Store(temp.Path, clock);
         await reopened.InitializeAsync();
         var afterReopen = Assert.Single(
             await reopened.ListOrchestratorContextsAsync(false, default),
@@ -428,7 +430,7 @@ public sealed class OrchestratorContextStoreTests
             project.ProjectId,
             task.TaskKey,
             new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
-                "arch_user", DateTime.UtcNow, "user", "Back to work")),
+                "arch_user", clock.GetUtcNow().UtcDateTime, "user", "Back to work")),
             "test",
             default);
         Assert.Null(Assert.Single(
@@ -502,7 +504,8 @@ public sealed class OrchestratorContextStoreTests
     public async Task Migration_adds_archived_at_to_a_pre_workbench_contexts_table()
     {
         using var temp = new TempDirectory();
-        var first = Store(temp.Path);
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 1, 9, 0, 0, TimeSpan.Zero));
+        var first = Store(temp.Path, clock);
         await first.InitializeAsync();
         var workspace = await first.CreateWorkspaceAsync(
             new CreateWorkspaceRequest("Workspace"), "test", default);
@@ -541,7 +544,7 @@ public sealed class OrchestratorContextStoreTests
             await command.ExecuteNonQueryAsync();
         }
 
-        var upgraded = Store(temp.Path);
+        var upgraded = Store(temp.Path, clock);
         await upgraded.InitializeAsync();
         await using (var connection = new SqliteConnection($"Data Source={upgraded.DatabasePath};Pooling=False"))
         {
@@ -563,7 +566,7 @@ public sealed class OrchestratorContextStoreTests
             project.ProjectId,
             null,
             new AppendOrchestratorContextTurnRequest(new OrchestratorContextTurnDto(
-                "migrated_user", DateTime.UtcNow, "user", "After the upgrade")),
+                "migrated_user", clock.GetUtcNow().UtcDateTime, "user", "After the upgrade")),
             "test",
             default);
         Assert.Null(Assert.Single(await upgraded.ListOrchestratorContextsAsync(false, default)).ArchivedAt);
@@ -625,10 +628,10 @@ public sealed class OrchestratorContextStoreTests
         Assert.Null(Assert.Single(sessions!.Sessions).ArchivedAt);
     }
 
-    private static TaskServerStore Store(string dataDirectory)
+    private static TaskServerStore Store(string dataDirectory, TimeProvider? clock = null)
         => new(
             Options.Create(new TaskServerOptions { DataDirectory = dataDirectory }),
-            TimeProvider.System);
+            clock ?? TimeProvider.System);
 
     private sealed class TaskServerFactory(string dataDirectory)
         : WebApplicationFactory<Program>

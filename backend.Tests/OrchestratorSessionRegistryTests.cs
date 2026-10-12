@@ -213,7 +213,7 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
         _central.SeedContext(
             "task:PROJ-001/AGT-1930",
             "Task context",
-            new OrchestratorChatTurn { Id = "t1", Ts = DateTime.UtcNow, Role = OrchestratorChatRoles.User, Text = "hi" });
+            new OrchestratorChatTurn { Id = "t1", Ts = new DateTime(2026, 1, 4, 3, 4, 5, DateTimeKind.Utc), Role = OrchestratorChatRoles.User, Text = "hi" });
 
         // Mutations without a client identity are rejected by the /api boundary.
         using (var anonymous = await client.PostAsJsonAsync(
@@ -342,7 +342,7 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
             "agent-taskboard",
             projectRoot,
             context: null,
-            new OrchestratorChatTurn { Id = "local-1", Ts = DateTime.UtcNow, Role = OrchestratorChatRoles.User, Text = "back" },
+            new OrchestratorChatTurn { Id = "local-1", Ts = new DateTime(2026, 1, 4, 3, 4, 5, DateTimeKind.Utc), Role = OrchestratorChatRoles.User, Text = "back" },
             default);
         Assert.Null(Assert.Single(
             await fresh.ListContextsAsync(includeHidden: true, default),

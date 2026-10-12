@@ -1,9 +1,12 @@
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AgentStudio.Tests;
 
-internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChatPersistence
+internal sealed class CentralOrchestratorChatPersistenceStub(TimeProvider? clock = null) : IOrchestratorChatPersistence
 {
+    private readonly TimeProvider _clock = clock
+        ?? new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     private readonly object _gate = new();
     private readonly Dictionary<string, List<OrchestratorChatTurn>> _turns =
         new(StringComparer.Ordinal);
@@ -107,7 +110,7 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
         {
             if (!_turns.ContainsKey(contextKey)) return null;
             if (!archived) _archived.Remove(contextKey);
-            else if (!_archived.ContainsKey(contextKey)) _archived[contextKey] = DateTime.UtcNow;
+            else if (!_archived.ContainsKey(contextKey)) _archived[contextKey] = _clock.GetUtcNow().UtcDateTime;
         }
         return (await ListContextsAsync(includeHidden: true, ct))
             .Single(item => item.ContextKey == contextKey);
