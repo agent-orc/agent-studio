@@ -453,7 +453,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
 
         Assert.NotNull(inventory);
         Assert.Equal(GitLockOwnership.None,
-            new GitProcessLockOwnerProbe(() => [], () => inventory).Probe(scope, DateTime.UtcNow));
+            new GitProcessLockOwnerProbe(() => [], () => inventory).Probe(scope, DateTime.MaxValue));
     }
 
     [Fact]
@@ -747,6 +747,7 @@ public sealed class GitStaleLockGuardTests : IDisposable
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         psi.ArgumentList.Add("hash-object");
         psi.ArgumentList.Add("--stdin");
