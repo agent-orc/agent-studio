@@ -21,12 +21,12 @@ public sealed class TokenPricingDriftMonitor
     {
         foreach (var model in summary.ByModel.Where(IsActiveUnknownModel))
         {
-            var key = $"{summary.Project}\n{model.Model}";
+            var key = $"{summary.Project}\n{model.ModelId}";
             if (!_reported.TryAdd(key, 0)) continue;
 
             _logger.LogWarning(
                 "Token price catalog drift: active model {Model} in project {Project} is absent from the pinned TokenEconomy catalog; {Calls} recorded calls have no catalog price",
-                model.Model,
+                model.ModelId,
                 summary.Project,
                 model.Calls);
         }

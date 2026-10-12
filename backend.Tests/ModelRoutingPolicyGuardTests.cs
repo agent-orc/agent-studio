@@ -112,7 +112,7 @@ public sealed class ModelRoutingPolicyGuardTests
         var registry = new ModelRoutingPolicyRegistry();
         string ModelOf(string tier) => registry.Policy.Tiers.Single(t => t.Id == tier).Model;
 
-        Assert.Equal("2026-10-04", registry.Policy.Version);
+        Assert.Equal("2026-10-11", registry.Policy.Version);
         Assert.Equal(5, registry.Policy.Tiers.Count);
         Assert.Equal(ModelIds.Gpt6Luna, ModelOf("luna-medium"));
         Assert.Equal(ModelIds.Gpt6Sol, ModelOf("sonnet-low"));
@@ -135,7 +135,7 @@ public sealed class ModelRoutingPolicyGuardTests
         Assert.Equal("sol-medium", codex.Tier);
         Assert.Equal(ModelIds.Gpt6Sol, codex.Model);
         Assert.Equal("medium", codex.ThinkingLevel);
-        Assert.Equal("2026-10-04", codex.PolicyVersion);
+        Assert.Equal("2026-10-11", codex.PolicyVersion);
         // The Anthropic override for Sol/medium is the same Sonnet 5/medium route Terra used.
         Assert.Equal("sol-medium", claude.Tier);
         Assert.Equal(ModelIds.ClaudeSonnet5, claude.Model);

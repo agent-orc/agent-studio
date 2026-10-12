@@ -76,7 +76,7 @@ describe('TokenSummaryBlockComponent (smoke)', () => {
         allModelsPriced: false,
         unknownModelCount: 1,
         byModel: [{
-          model: 'future-model', calls: 1, inputTokens: 1_000, outputTokens: 100,
+          model: 'future-model', modelId: 'future-model', cli: null, calls: 1, inputTokens: 1_000, outputTokens: 100,
           cacheReadTokens: 0, cacheCreationTokens: 0, estimatedApiCostUsd: 0,
           modelPriced: false, modelInCatalog: false,
         }],

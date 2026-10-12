@@ -3,6 +3,7 @@ import { CostBreakdownService } from '../services/cost-breakdown.service';
 
 interface CostRowLike {
   model?: string | null;
+  modelId?: string | null;
   label?: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -23,9 +24,9 @@ export class CostBreakdownTriggerDirective {
   @HostListener('click')
   open(): void {
     const items = this.appCostBreakdownTrigger()
-      .filter(row => row.model && (row.totalTokens ?? 1) > 0)
+      .filter(row => (row.modelId || row.model) && (row.totalTokens ?? 1) > 0)
       .map(row => ({
-        model: row.model!,
+        model: (row.modelId || row.model)!,
         label: row.label,
         inputTokens: row.inputTokens,
         outputTokens: row.outputTokens,

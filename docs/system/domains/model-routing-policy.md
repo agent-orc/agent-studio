@@ -1,6 +1,6 @@
 # Model Routing Policy
 
-Version: 2026-10-04
+Version: 2026-10-11
 
 Status: Canonical policy, initial hypothesis based on the 2026-07-23 historical benchmark
 
@@ -80,6 +80,11 @@ refresh, TE policy `2026-09-25`):
   about eight runs on 2026-09-18 keep it explicit-pin only. `gpt-6.1-sol`
   is priced and selectable with TokenEconomy `0.3.7` when the installed CLI
   offers it. It is not a default route.
+
+**Unpriced legacy pins (2026-10-11).** GPT-4.1 and GPT-4o are absent from
+TokenEconomy 0.3.7. Studio no longer includes them in the curated CLI registry
+or explicit pin policy, so every curated Claude and Codex model id has a
+catalog listing. Historical usage for those ids remains explicitly unpriced.
 
 **Codex default.** `ModelMetadataRegistry.DefaultForCli(codex)` prefers
 `gpt-6-sol` when live discovery offers it, then `gpt-5.6-sol`, then the static

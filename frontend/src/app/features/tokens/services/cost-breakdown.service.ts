@@ -9,6 +9,8 @@ export interface CostBreakdownRequestItem {
   cacheWriteTokens: number;
   recordedAt?: string | null;
   label?: string | null;
+  recordedCostUsd?: number | null;
+  recordedModelPriced?: boolean | null;
 }
 
 export interface TokenPriceBasis {

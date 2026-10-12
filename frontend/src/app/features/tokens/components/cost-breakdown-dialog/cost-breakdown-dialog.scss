@@ -40,6 +40,8 @@
 }
 
 .cost-breakdown__model-id { color: var(--studio-fg-strong); }
+.cost-breakdown__amounts { display: grid; gap: var(--studio-spacing-1); justify-items: end; text-align: right; }
+.cost-breakdown__recorded { color: var(--studio-fg-dim); font-size: 12px; }
 .cost-breakdown__model-total { color: var(--studio-accent-success-strong); font-size: 18px; }
 
 .cost-breakdown__rates,

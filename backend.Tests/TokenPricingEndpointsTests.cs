@@ -14,6 +14,24 @@ public class TokenPricingEndpointsTests
         => new(label, calls, input, output, 0, 0, inCatalog ? 1.23m : 0m, inCatalog, inCatalog);
 
     [Fact]
+    public void CalculateItems_LabelsIdsAndBareAliasesUseTheSameCatalogPrices()
+    {
+        var at = new DateTime(2026, 10, 11, 0, 0, 0, DateTimeKind.Utc);
+        var rows = TokenPricingEndpoints.CalculateItems(new TokenPriceCalculationRequest([
+            new("GPT-6 Sol", 1_000_000, 100_000, 0, 0, at, RecordedCostUsd: 2.5m, RecordedModelPriced: true),
+            new("gpt-6-sol", 1_000_000, 100_000, 0, 0, at),
+            new("Claude Opus 5.5", 1_000_000, 100_000, 0, 0, at),
+            new("sonnet", 1_000_000, 100_000, 0, 0, at),
+        ]));
+        Assert.All(rows, row => Assert.Equal(TokenEconomy.PriceStatus.Resolved, row.Estimate.Status));
+        Assert.Equal(rows[0].Estimate.Total, rows[1].Estimate.Total);
+        Assert.Equal(ModelIds.Gpt6Sol, rows[0].Estimate.ModelId);
+        Assert.Equal(ModelIds.ClaudeOpus55, rows[2].Estimate.ModelId);
+        Assert.Equal(ModelIds.ClaudeSonnet5, rows[3].Estimate.ModelId);
+        Assert.Equal(2.5m, rows[0].RecordedCostUsd);
+    }
+
+    [Fact]
     public void SelectUnpricedModels_ReturnsOnlyRowsAbsentFromCatalog()
     {
         var aggregate = TokenSummaryService.AggregateSummaries([
@@ -21,7 +39,8 @@ public class TokenPricingEndpointsTests
                 "proj-a", 2, 2, 1_100, 100, 0, 0, 1.23m, AllModelsPriced: false, UnknownModelCount: 1,
                 ByModel: [
                     Model("claude-opus-4-7", calls: 1, input: 1_000, output: 100, inCatalog: true),
-                    Model("some-future-model", calls: 1, input: 100, output: 10, inCatalog: false),
+                    Model("Future Model", calls: 1, input: 100, output: 10, inCatalog: false)
+                        with { ModelId = "some-future-model" },
                 ],
                 FirstActivity: null, LastActivity: null, Disclaimer: TokenSummaryService.DefaultDisclaimer)),
         ]);

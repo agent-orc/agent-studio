@@ -12,6 +12,8 @@ import { RecordedModelUsageGroupingStore } from '../../services/recorded-model-u
 
 interface ModelUsageRow {
   model: string;
+  modelId: string;
+  cli: string | null;
   source: string;
   /** OpenAI reports cached input as a subset of input, while Anthropic
    *  reports cache-read tokens as a separate category. */
@@ -212,12 +214,12 @@ export class CliUsageModalComponent {
     const cli = this.cliType();
     const rows: ModelUsageRow[] = [];
     for (const m of this.tokens()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cli)) continue;
+      if (m.cli !== cli) continue;
       const row = { ...m, source: 'project runtime', cacheIncludedInInput: cli === 'codex' };
       if (this.totalTokens(row) > 0) rows.push(row);
     }
     for (const m of this.adhoc()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cli)) continue;
+      if (m.cli !== cli) continue;
       const row = { ...m, source: 'ad-hoc', cacheIncludedInInput: cli === 'codex' };
       if (this.totalTokens(row) > 0) rows.push(row);
     }
@@ -255,6 +257,8 @@ export class CliUsageModalComponent {
 
   private otherSummaryRow(minor: ModelUsageRow[]): ModelUsageRow {
     return {
+      modelId: '',
+      cli: this.cliType(),
       model: `Other (${minor.length} model${minor.length === 1 ? '' : 's'})`,
       source: '',
       cacheIncludedInInput: minor[0]?.cacheIncludedInInput ?? false,
@@ -307,7 +311,7 @@ export class CliUsageModalComponent {
     // Every underlying model, not the display-grouped rows: the synthetic
     // "Other" row has no real model id the pricing dialog could look up.
     this.costBreakdown.show(this.allModelRows().map(row => this.priceItem(row)),
-      `${this.title()} recorded usage cost`);
+      `${this.title()} usage cost at today's price`);
   }
 
   showModelCalculation(row: ModelUsageRow): void {
@@ -315,13 +319,15 @@ export class CliUsageModalComponent {
       this.toggleOther();
       return;
     }
-    this.costBreakdown.show([this.priceItem(row)], `${row.model} cost calculation`);
+    this.costBreakdown.show([this.priceItem(row)], `${row.model} cost at today's price`);
   }
 
   private priceItem(row: ModelUsageRow) {
     return {
-      model: row.model,
-      label: row.source,
+      model: row.modelId,
+      recordedCostUsd: row.estimatedApiCostUsd,
+      recordedModelPriced: row.modelPriced,
+      label: row.model,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       cacheReadTokens: row.cacheReadTokens,
@@ -342,20 +348,6 @@ export class CliUsageModalComponent {
 
   formatUsd(n: number): string {
     return formatCompactUsd(n);
-  }
-
-  private modelBelongsToCli(model: string, cliType: CliType): boolean {
-    const m = (model ?? '').toLowerCase();
-    switch (cliType) {
-      case 'claude':
-        return m.includes('claude') || m.includes('haiku') || m.includes('sonnet') || m.includes('opus');
-      case 'codex':
-        return m.includes('codex') || m.startsWith('gpt') || /^o\d/.test(m);
-      case 'gemini':
-        return m.includes('gemini');
-      default:
-        return false;
-    }
   }
 
   private cliLabel(cli: CliType): string {

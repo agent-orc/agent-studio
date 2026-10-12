@@ -120,6 +120,19 @@ test.describe('Status bar usage modal', () => {
   });
 
   test('Codex distinguishes used quota from lifetime usage without double-counting cache', async ({ page }) => {
+    await page.route('**/api/v1/studio/runner/status', route => route.fulfill({ json: { projects: {} } }));
+    await page.route('**/api/watch-paths', route => route.fulfill({ json: [] }));
+    await page.route('**/api/v1/studio/board**', route => route.fulfill({ json: {
+      backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
+      codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [],
+      completed: [], archive: [], gitStateAt: null, stale: false,
+    } }));
+
+    await page.route('**/api/v1/studio/auth/status', route => route.fulfill({ json: {
+      profile: 'local', bootstrapRequired: false, authenticated: true,
+      user: { id: 'fixture', username: 'fixture', displayName: 'Fixture', role: 'owner',
+        projects: [], disabled: false, mustChangePassword: false },
+    } }));
     await page.route('**/api/cli/quota**', async route => {
       if (route.request().method() !== 'GET') return route.continue();
       await route.fulfill({
@@ -149,17 +162,17 @@ test.describe('Status bar usage modal', () => {
         totalOutputTokens: 164_172,
         totalCacheReadTokens: 48_503_936,
         totalCacheCreationTokens: 0,
-        estimatedApiCostUsd: 0,
+        estimatedApiCostUsd: 10,
         allModelsPriced: false,
         byModel: [
           {
-            model: 'gpt-5.6-sol', calls: 5,
+            model: 'gpt-5.6-sol', modelId: 'gpt-5.6-sol', cli: 'codex', calls: 5,
             inputTokens: 39_646_031, outputTokens: 97_412,
             cacheReadTokens: 38_481_408, cacheCreationTokens: 0,
-            estimatedApiCostUsd: 0, modelPriced: false,
+            estimatedApiCostUsd: 10, modelPriced: true,
           },
           {
-            model: 'GPT-5.5', calls: 8,
+            model: 'GPT-5.5', modelId: 'gpt-5.5', cli: 'codex', calls: 8,
             inputTokens: 10_782_081, outputTokens: 66_760,
             cacheReadTokens: 10_022_528, cacheCreationTokens: 0,
             estimatedApiCostUsd: 0, modelPriced: false,
@@ -183,12 +196,12 @@ test.describe('Status bar usage modal', () => {
         byDay: [],
         byModel: [
           {
-            model: 'gpt-5-codex', calls: 4,
+            model: 'gpt-5-codex', modelId: 'gpt-5-codex', cli: 'codex', calls: 4,
             inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
             estimatedApiCostUsd: 0, modelPriced: true,
           },
           {
-            model: 'gpt-5.6-sol', calls: 7,
+            model: 'gpt-5.6-sol', modelId: 'gpt-5.6-sol', cli: 'codex', calls: 7,
             inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
             estimatedApiCostUsd: 0, modelPriced: false,
           },
@@ -199,6 +212,32 @@ test.describe('Status bar usage modal', () => {
         disclaimer: '',
       },
     }));
+
+    await page.route('**/api/token-pricing/calculate', async route => {
+      const request = route.request().postDataJSON() as { items: Array<Record<string, unknown>> };
+      await route.fulfill({ json: {
+        provider: 'TokenEconomy',
+        items: request.items.map(item => {
+          const inputUsd = Number(item.inputTokens) / 1_000_000 * 2;
+          const outputUsd = Number(item.outputTokens) / 1_000_000 * 10;
+          const cacheReadUsd = Number(item.cacheReadTokens) / 1_000_000 * 0.2;
+          const cacheWriteUsd = Number(item.cacheWriteTokens) / 1_000_000 * 2;
+          return {
+            ...item, calculatedAt: new Date().toISOString(),
+            estimate: {
+              inputUsd, outputUsd, cacheReadUsd, cacheWriteUsd,
+              total: inputUsd + outputUsd + cacheReadUsd + cacheWriteUsd,
+              modelId: item.model, modelKnown: true, status: 'Resolved',
+              priceBasis: {
+                inputPerMillion: 2, outputPerMillion: 10, cacheReadPerMillion: 0.2,
+                cacheWritePerMillion: 2, currency: 'USD', validFrom: '2026-01-01T00:00:00Z',
+                source: 'Fixture price', note: null, unconfirmed: false,
+              },
+            },
+          };
+        }),
+      } });
+    });
 
     await page.reload();
     await page.getByTestId('hquota-card-codex').click();
@@ -217,5 +256,24 @@ test.describe('Status bar usage modal', () => {
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-light.png` });
     await setTheme(page, 'dark');
     await modal.screenshot({ path: `${SCREENSHOT_DIR}/status-bar-cli-modal-codex-corrected-dark.png` });
+    await modal.getByTestId('cli-usage-modal-total-cost').click();
+    const costDialog = page.getByTestId('cost-breakdown-dialog');
+    await expect(costDialog).toBeVisible();
+    await expect(costDialog).toContainText("today's price");
+    await expect(costDialog.getByTestId('cost-breakdown-model').first()).toContainText('gpt-5.6-sol');
+    await setTheme(page, 'light');
+    await costDialog.screenshot({ path: `${SCREENSHOT_DIR}/cli-recorded-cost-dialog-light.png` });
+    await setTheme(page, 'dark');
+    await costDialog.screenshot({ path: `${SCREENSHOT_DIR}/cli-recorded-cost-dialog-dark.png` });
+    const recordedTotal = costDialog.getByTestId('cost-breakdown-recorded-total');
+    await expect(recordedTotal).toContainText('$10.00');
+    await expect(costDialog.getByTestId('cost-breakdown-total')).toContainText('$112.20');
+    await recordedTotal.scrollIntoViewIfNeeded();
+    await setTheme(page, 'light');
+    await costDialog.screenshot({ path: `${SCREENSHOT_DIR}/cli-recorded-cost-total-light.png` });
+    await setTheme(page, 'dark');
+    await costDialog.screenshot({ path: `${SCREENSHOT_DIR}/cli-recorded-cost-total-dark.png` });
+
+
   });
 });

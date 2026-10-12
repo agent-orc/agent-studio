@@ -15,6 +15,13 @@ export class CostBreakdownDialogComponent {
   readonly grandTotal = computed(() => this.breakdown.items()
     .filter(item => item.estimate.modelKnown)
     .reduce((sum, item) => sum + item.estimate.total, 0));
+  readonly recordedTotal = computed(() => this.breakdown.items()
+    .filter(item => item.recordedModelPriced)
+    .reduce((sum, item) => sum + (item.recordedCostUsd ?? 0), 0));
+  readonly hasRecordedCost = computed(() => this.breakdown.items()
+    .some(item => item.recordedCostUsd != null));
+  readonly allRecordedPriced = computed(() => this.breakdown.items()
+    .every(item => item.recordedModelPriced));
   readonly allPriced = computed(() => this.breakdown.items().every(item => item.estimate.modelKnown));
 
   formatNumber(value: number): string {
@@ -38,7 +45,9 @@ export class CostBreakdownDialogComponent {
 
   formula(item: CostBreakdownResultItem): string {
     const price = item.estimate.priceBasis;
-    if (!price) return 'No price was available for this model and calculation date.';
+    if (!price) return item.recordedModelPriced
+      ? 'No current price is available for this model. Its recorded cost is shown above.'
+      : 'No price was available for this model and calculation date.';
     return `(${this.formatNumber(item.inputTokens)} / 1M × ${this.formatRate(price.inputPerMillion)}) + `
       + `(${this.formatNumber(item.outputTokens)} / 1M × ${this.formatRate(price.outputPerMillion)}) + `
       + `(${this.formatNumber(item.cacheReadTokens)} / 1M × ${this.formatRate(price.cacheReadPerMillion)}) + `

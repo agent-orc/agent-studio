@@ -354,16 +354,14 @@ public static class ModelMetadataRegistry
         // gpt-5.5 is the current Codex/OpenAI default. codex-cli 0.143 on a
         // ChatGPT account rejects gpt-5-codex with a 400 invalid_request, so
         // the default must be the account-valid model (AGT-1941). Pricing is
-        // left null until authoritative numbers are confirmed (same posture as
-        // the GPT-4.1 / GPT-4o entries) so no invented cost is asserted.
+        // supplied only by TokenEconomy; Studio stores no independent rate.
         new(ModelIds.Gpt55, "GPT-5.5", "openai", IsDefault: true, Deprecated: false, Available: true,
             ContextWindow: 400_000),
         // gpt-6-astra is onboarded as a known model so the picker can show it
         // disabled-with-a-reason on a codex-cli that does not offer it yet
         // (AGT-2707). Its reasoning ladder and default level are deliberately
         // absent here: they come from live discovery, which is the only source
-        // that stays correct across CLI releases. Pricing is left null (no
-        // invented rates), same posture as the GPT-4.1 / GPT-4o entries.
+        // that stays correct across CLI releases. Pricing comes from TokenEconomy.
         new(ModelIds.Gpt6Astra, "GPT-6 Astra", "openai", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 272_000, MinimumCliVersion: "0.153.0"),
         new(ModelIds.Gpt6Sol, "GPT-6 Sol", "openai", IsDefault: false, Deprecated: false, Available: false,
@@ -402,10 +400,6 @@ public static class ModelMetadataRegistry
         // Keep the identity for historical receipts, but never offer or route it.
         new(ModelIds.Gpt54Mini, "GPT-5.4 Mini", "openai", IsDefault: false, Deprecated: true, Available: false,
             ContextWindow: 272_000),
-        new(ModelIds.Gpt41, "GPT-4.1", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 1_000_000),
-        new(ModelIds.Gpt4o, "GPT-4o", "openai", IsDefault: false, Deprecated: false, Available: true,
-            ContextWindow: 128_000),
         new(ModelIds.Gemini25Pro, "Gemini 2.5 Pro", "google", IsDefault: false, Deprecated: false, Available: true,
             ContextWindow: 2_000_000),
         new(ModelIds.Gemini25Flash, "Gemini 2.5 Flash", "google", IsDefault: false, Deprecated: false, Available: true,

@@ -45,7 +45,11 @@ public sealed record TokenSummaryByModel(
     long CacheCreationTokens,
     decimal EstimatedApiCostUsd,
     bool ModelPriced,
-    bool ModelInCatalog);
+    bool ModelInCatalog)
+{
+    public string ModelId { get; init; } = AgentStudio.Tokens.ModelIdentity.Resolve(Model)?.ModelId ?? Model;
+    public string? Cli { get; init; } = AgentStudio.Tokens.ModelIdentity.Resolve(Model)?.Cli;
+}
 
 public class TokenSummaryService
 {
@@ -332,25 +336,11 @@ public class TokenSummaryService
 
             foreach (var m in summary.ByModel)
             {
-                // A project's per-model label already went through
-                // TokenModelDisplay.Label once, but that only normalizes
-                // against Studio's own small registry. A receipt that
-                // persisted a raw catalog display name or a dated alias
-                // (e.g. "GPT-5.5" or "gpt-5.5-2026-04-23") instead of the
-                // canonical id would otherwise key its own row here,
-                // splitting one model's usage across the workspace fold.
-                // Re-resolve through the pricing catalog so every label
-                // variant of the same model folds into one row.
-                var canonicalId = TokenPricing.CanonicalModelId(m.Model);
-                var key = canonicalId ?? m.Model;
+                var identity = AgentStudio.Tokens.ModelIdentity.Resolve(m.ModelId);
+                var key = identity?.ModelId ?? m.ModelId;
                 if (!perModel.TryGetValue(key, out var bucket))
                 {
-                    var label = canonicalId != null ? (TokenModelDisplay.Label(canonicalId) ?? m.Model) : m.Model;
-                    // AggregateSummaries reads ModelBucket.Model (not
-                    // .DisplayModel, unlike Summarize below) for the row it
-                    // emits, so both constructor args carry the label; only
-                    // the dictionary key uses the resolved canonical id.
-                    bucket = new ModelBucket(label, label);
+                    bucket = new ModelBucket(key, identity?.DisplayLabel ?? m.Model);
                     perModel[key] = bucket;
                 }
                 bucket.Calls += m.Calls;
@@ -367,7 +357,7 @@ public class TokenSummaryService
         var byModel = perModel.Values
             .OrderByDescending(b => b.Input + b.Output)
             .Select(b => new TokenSummaryByModel(
-                Model: b.Model,
+                Model: b.DisplayModel,
                 Calls: b.Calls,
                 InputTokens: b.Input,
                 OutputTokens: b.Output,
@@ -375,7 +365,8 @@ public class TokenSummaryService
                 CacheCreationTokens: b.CacheCreate,
                 EstimatedApiCostUsd: b.Cost,
                 ModelPriced: !b.AnyUnpriced,
-                ModelInCatalog: !b.AnyUnknownModel))
+                ModelInCatalog: !b.AnyUnknownModel)
+            { ModelId = b.Model, Cli = AgentStudio.Tokens.ModelIdentity.Resolve(b.Model)?.Cli })
             .ToList();
 
         // If we recorded zero LLM calls anywhere, "all priced" is meaningless.
@@ -458,14 +449,13 @@ public class TokenSummaryService
 
             // Rows key on the stored id so two model generations never share
             // one row. Pricing keeps the registry id it always used.
-            var canonicalModel = TokenModelDisplay.StoredId(u.Model);
-            var key = string.IsNullOrWhiteSpace(canonicalModel) ? "(unknown)" : canonicalModel;
-            var pricingModel = ModelMetadataRegistry.NormalizeId(u.Model);
+            var identity = AgentStudio.Tokens.ModelIdentity.Resolve(u.Model);
+            var key = identity?.ModelId ?? "(unknown)";
             if (!perModel.TryGetValue(key, out var bucket))
             {
                 bucket = new ModelBucket(
                     key,
-                    TokenModelDisplay.Label(u.Model) ?? "(unknown)");
+                    identity?.DisplayLabel ?? "(unknown)");
                 perModel[key] = bucket;
             }
             bucket.Calls++;
@@ -474,7 +464,7 @@ public class TokenSummaryService
             bucket.CacheRead += u.CacheReadTokens;
             bucket.CacheCreate += u.CacheCreationTokens;
             var entryCost = TokenPricing.Estimate(
-                string.IsNullOrWhiteSpace(pricingModel) ? key : pricingModel, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
+                key, u.InputTokens, u.OutputTokens, u.CacheReadTokens,
                 u.CacheCreationTokens, entry.Ts);
             bucket.Cost += entryCost.Total;
             if (!entryCost.ModelKnown) bucket.AnyUnpriced = true;
@@ -498,7 +488,8 @@ public class TokenSummaryService
                 CacheCreationTokens: bucket.CacheCreate,
                 EstimatedApiCostUsd: bucket.Cost,
                 ModelPriced: !bucket.AnyUnpriced,
-                ModelInCatalog: !bucket.AnyUnknownModel));
+                ModelInCatalog: !bucket.AnyUnknownModel)
+            { ModelId = bucket.Model, Cli = AgentStudio.Tokens.ModelIdentity.Resolve(bucket.Model)?.Cli });
         }
 
         return new TokenSummary(
