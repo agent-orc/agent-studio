@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND } from '../helpers/api';
 import { apiRoundtrip, clickToVisible, startLongTaskRecorder } from '../helpers/timing';
 
 /**
@@ -57,11 +58,13 @@ test.describe('Frontend perceived latency', () => {
     const ms = await apiRoundtrip(
       page,
       /\/api\/tasks\/grouped(\?|$)/,
-      () => page.evaluate(() =>
-        // Trigger a fresh fetch from the page context so timing reflects
-        // browser-side overhead (HttpClient interceptors, parsing) and
-        // not just curl wall time.
-        fetch('http://localhost:5030/api/tasks/grouped').then(r => r.text())
+      () => page.evaluate(
+        (backend) =>
+          // Trigger a fresh fetch from the page context so timing reflects
+          // browser-side overhead (HttpClient interceptors, parsing) and
+          // not just curl wall time.
+          fetch(`${backend}/api/tasks/grouped`).then(r => r.text()),
+        BACKEND
       )
     );
 

@@ -39,7 +39,7 @@
         <strong>{{ evidence.summary }}</strong>
         @if (evidence.runId) {
           <small>{{ evidence.runId }} · {{ evidence.runState }}{{ evidence.runResult ? ' · ' + evidence.runResult : '' }}</small>
-        } @else if (evidence.sources?.length) {
+        } @else if (evidence.sources?.length || evidence.sourceCount) {
           <small>{{ sourceDetail() }}</small>
         } @else {
           <small>No SHA-linked project run, build gate, or review grade is recorded.</small>

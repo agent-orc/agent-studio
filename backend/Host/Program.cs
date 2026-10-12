@@ -1318,6 +1318,10 @@ catch (Exception ex)
     if (dedupCount > 0)
         app.Services.GetRequiredService<ILogger<Program>>()
             .LogWarning("Resolved duplicate task keys by re-keying {Count} task(s)", dedupCount);
+
+    TaskProjectionCards.WarnDuplicateIds(
+        app.Services.GetRequiredService<TaskScannerService>().ScanAllJobsWithArchive(),
+        app.Services.GetRequiredService<ILogger<Program>>());
 }
 
 // ReviewAttempts are claimable only while their owning task remains in Auto

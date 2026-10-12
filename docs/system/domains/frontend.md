@@ -77,6 +77,18 @@ the suite is independent of the workstation's operating-system locale.
 - [docs/quality/frontend/audits/architecture-review-2026-05-09.md](../../quality/frontend/audits/architecture-review-2026-05-09.md)
   is the maintainability map for large components and service extraction.
 
+### Batch verification
+
+Project settings expose the batch gate's scope, planner, bounds, risk policy,
+review test level, timeout, and advisor mode. Review lane headers summarize
+waiting and running batches; card badges and task detail read membership from
+`GET /api/projects/{project}/batch-gate/state?history=10`, not from board cards.
+The project batch panel shows the planner, look ahead, advisor verdict, pending
+members, batch phases, test runs, candidate and publication evidence. It also
+offers confirmed close and eject actions. `BatchGateService` owns all calls and
+shares one 15-second state poll per visible project. Unsupported or malformed
+responses hide the feature and back off to a five-minute retry while visible.
+
 ## Studio route restoration
 
 The active Studio surface is described by one canonical hash path. Board and
@@ -103,6 +115,11 @@ surface while in-flight turns retain their captured context key. The full
 schema, transient-state boundary,
 route map, and visual ownership diagram are in
 [Studio Route Restoration](../../concepts/studio-route-restoration.md).
+
+The status-bar Feed and left-rail Activity controls focus the same workspace
+feed tab at `#/feed`. Its active state follows the selected tab, and opening it
+marks workspace alerts seen. Project Hub feed entries and
+`#/project/<slug>/feed` retain their project-scoped overlay behavior.
 
 ### Editor tab reuse policy
 

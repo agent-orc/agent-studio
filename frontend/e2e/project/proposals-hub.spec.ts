@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 const projectName = 'Proposal Demo';
 const results = process.env.RESULTS_DIR ?? path.join(process.cwd(), 'test-results');
-const evidence = fs.readFileSync(path.join(process.cwd(), '..', 'docs', 'proposals', '2026-07-11', 'assets', '001-crash-recovery-modal-with-49-files.png'));
+const evidence = fs.readFileSync(path.join(process.cwd(), '..', 'docs', 'concepts', 'proposals', '2026-07-11', 'assets', '001-crash-recovery-modal-with-49-files.png'));
 
 async function routes(page: Page, evidenceDelayMs = 0): Promise<void> {
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }).catch(() => undefined));

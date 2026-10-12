@@ -667,6 +667,9 @@ export interface TaskIntegrationStatus {
   failure?: TaskIntegrationFailure | null;
   /** Repository-scoped commit membership, including multi-repository deliveries. */
   repositories?: TaskRepositoryIntegrationStatus[];
+  /** Compact board labels when repository commit arrays are loaded only in detail. */
+  repositoryLabel?: string | null;
+  repositoryDetail?: string | null;
   /**
    * AGT-2817 - the deployment half of the answer: is the delivery also
    * contained in the released line? `null` means there is no repository

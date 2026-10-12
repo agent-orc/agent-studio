@@ -75,6 +75,7 @@ public sealed record TimelineEvent
 /// </summary>
 public static class TimelineEventKinds
 {
+    public const string ReviewPriorityChanged = "review_priority_changed";
     /// <summary>Task prompt was created on disk.</summary>
     public const string PromptCreated = "prompt_created";
     /// <summary>One CLI invocation started (start / continue / recovery).</summary>

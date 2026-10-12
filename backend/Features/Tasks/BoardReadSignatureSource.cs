@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 using AgentStudio.Cli;
 using AgentStudio.Projects;
@@ -38,6 +40,8 @@ namespace AgentStudio.Tasks;
 /// <item><description><b>Review decision journals</b> - the per-project
 /// <c>logs/decisions/{project}.jsonl</c> stamp. These live outside every watch
 /// path, so no watcher event covers them.</description></item>
+/// <item><description><b>Review queue</b> - the durable attempt authority's
+/// ordered priority and claimable position snapshot.</description></item>
 /// <item><description><b>In-memory runtime state</b> - the runtime fold below.
 /// CLI executions, run-activity facts, auto-loop snapshots, summariser state,
 /// runner badges, quota fallbacks, queue positions and execution locations
@@ -71,6 +75,7 @@ public sealed class BoardReadSignatureSource(
     TaskListGitProjectionCache gitProjection,
     ProjectSettingsService projectSettings,
     AutoReviewPostProcessingQueue reviewQueue,
+    AttemptAuthorityService attemptAuthority,
     IConfiguration configuration,
     TimeProvider? timeProvider = null)
 {
@@ -111,8 +116,12 @@ public sealed class BoardReadSignatureSource(
             Part("gitStateAt", freshness.GitStateAt?.UtcDateTime.Ticks ?? -1),
             Part("gitStale", freshness.Stale ? 1 : 0),
             Part("settings", projectSettings.Version),
+            "reviewQueue=" + BoardReadValidator.FormatETag(string.Join(';', attemptAuthority.ReadReviewQueue()
+                .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(entry => $"{Uri.EscapeDataString(entry.Key)}:{entry.Value.Priority}:{entry.Value.Position}"))),
             Part("decisions", DecisionJournalFold(jobs)),
             Part("runtime", RuntimeFold(jobs, router, runners)),
+            "visible=" + VisibleSetDigest(jobs),
             Part("day", DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime).DayNumber),
             Part("tick", anyProgress ? ProgressTick() : -1),
             Part("count", jobs.Count));
@@ -120,6 +129,13 @@ public sealed class BoardReadSignatureSource(
 
     private static string Part(string name, long value)
         => name + "=" + value.ToString(CultureInfo.InvariantCulture);
+
+    internal static string VisibleSetDigest(IReadOnlyList<TaskInfo> jobs)
+    {
+        var keys = jobs.Select(job => job.TaskKey).OrderBy(key => key, StringComparer.Ordinal);
+        var bytes = Encoding.UTF8.GetBytes(string.Join('\n', keys));
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
 
     private long ProgressTick()
         => _time.GetUtcNow().UtcDateTime.Ticks / ProgressClockTick.Ticks;

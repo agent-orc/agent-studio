@@ -33,8 +33,8 @@ public static class TaskCoreEndpoints
             {
                 context.Response.Headers.CacheControl = "no-store";
                 return lookup.Warming
-                    ? Results.Json(new { state = "warming", jobId = TaskCoreRecord.Limit(jobId, 128), projectId = projectRecord.Id }, statusCode: 202)
-                    : Results.NotFound(new { state = "missing", jobId = TaskCoreRecord.Limit(jobId, 128), projectId = projectRecord.Id });
+                    ? Results.Json(new { state = "warming", jobId, projectId = projectRecord.Id }, statusCode: 202)
+                    : Results.NotFound(new { state = "missing", jobId, projectId = projectRecord.Id });
             }
 
             var core = lookup.Record;

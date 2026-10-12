@@ -594,7 +594,9 @@ fingerprinted and counted. Review report admission uses
 `ReviewFlakeEvidencePolicy` through the shared diagnosis policy on both the
 Task Server and monolith paths. A retry flag or an item disappearing from
 failed retry output is insufficient: the evidence must include a successful
-clean repeat of the same command and arguments, commit, and tree. Unsupported
+clean repeat on the same commit and tree. Its evidence retains the frozen plan
+arguments. A class-only repeat declares the added filter and the original
+failed test names observed passing; both report authorities check them. Unsupported
 command or reviewer flake claims become `unclassified-first-occurrence`
 (the diagnosis contract's undecidable result), with the missing proof stated.
 Named items from unsupported command claims enter the existing fingerprint
@@ -743,15 +745,26 @@ now runs both suites as well:
 
 The filter is the one the backend gate already uses, so the machine-bound
 topology and daemon-recovery suites stay off the review host. On a 12 core host
-the two add roughly one and two minutes to a review, measured in the exact form
-`ReviewPlanResourcePolicy` produces (`-maxcpucount:2 -nodeReuse:false
--p:ParallelizeTestCollections=false --logger console;verbosity=normal`): 691
-runner cases in 62 s, the same wall time as the bare command. xUnit collection
+the two add roughly one and two minutes to a review. The historical 691-case
+Runner sample completed in 62 s with an older command line; it is not a timing
+measurement for the current `ReviewPlanResourcePolicy` command, which includes
+TRX logging, a 10-minute hang timeout and no hang dump. xUnit collection
 parallelism therefore stays on for these gates, which is what makes them able to
-see a race like AGT-2864 at all. `-p:` sets an MSBuild property, and none of
-this repository's test projects turn it into an xUnit setting (no
-`xunit.runner.json`, no assembly-level `CollectionBehavior`), so it is inert
-here; the MSBuild CPU cap and the node-reuse switch beside it are not.
+see a race like AGT-2864 at all. A fixed two-thread xUnit cap was measured and
+removed: under ten concurrent test processes it made the 1,298-test Runner
+suite 100 seconds slower, and under six concurrent test processes it made four
+backend endpoint tests 8.5 seconds slower. No xUnit config is retained until
+per-suite and admission measurements justify one. The former
+`-p:ParallelizeTestCollections=false` MSBuild property was inert and has been
+removed. A test that makes no progress for ten minutes now triggers VSTest's
+hang diagnostics.
+
+Every planned .NET review test command now writes both verbose console output
+and TRX. The review runner retains a compressed TRX and a compact JSON timing
+summary as review artifacts. The summary records test count, summed and wall
+time, per-class totals, the slowest 50 tests, retry status, and host load and
+active test-process count sampled when the report is captured. A missing or
+malformed TRX is logged and does not change the test verdict.
 
 Both gates run for every review of this repository, not only for deliveries that
 touch `runner/` or `task-server/`. A review plan is frozen before the attempt is
@@ -761,6 +774,17 @@ The diff-scoped selector (`TestSelectionPlanner` with its impact rules) belongs
 to the local build and test gate. Making the review plan path-scoped would mean
 resolving the delivery diff at plan-build time, which is a separate change to
 the plan contract rather than a configuration entry.
+
+When a .NET review test step is red, the clean repeat now keeps the original
+category filter and reruns only the classes that reported failures, up to five
+classes and ten failed tests. An aborted or crashed run, an unparseable failure,
+or a chained command keeps the full clean repeat. A successful class subset
+that does not report every previously failed test triggers a full repeat; a
+green exit without those tests is not flake proof. The original full-suite
+failure remains in the review evidence and the baseline comparison still
+determines attribution. For a planned `--no-build` test, fresh baseline
+worktrees and clean-repeat clones replay the preceding frozen build after
+dependency preparation so the test assembly exists.
 
 ## Key code and tests
 
@@ -855,3 +879,12 @@ the plan contract rather than a configuration entry.
   `task-server.Tests/RemoteReviewAuthorityTests.cs`: a lint gate red on the merge
   base settles as `IntegrationBranchDefect`; red only on the delivery still
   settles as `ProductFailure`.
+- Isolated baseline worktrees and clean-repeat clones replay the frozen build
+  before a `--no-build` test. A compiler error is recorded under the build
+  step with its output. A red baseline build blocks the dependent test's
+  comparison and retains `IntegrationBranchDefect`; a red clean-repeat build
+  preserves the build fingerprint, so a delivery compile error remains
+  `ProductFailure`. Missing build steps, toolchains, or interrupted processes
+  remain review infrastructure failures. The shared report diagnosis policy
+  and standalone Task Server accept a failed prerequisite build only when it
+  matches the planned preceding step and baseline SHA.

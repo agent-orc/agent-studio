@@ -26,11 +26,12 @@ export function buildProjectTokenChip(
     if (!summary || summary.totalTokens <= 0) continue;
 
     jobsWithTokens++;
+    // Slim board cards omit zero-valued token fields.
     totalTokens += summary.totalTokens;
-    inputTokens += summary.inputTokens;
-    outputTokens += summary.outputTokens;
-    cacheReadTokens += summary.cacheReadTokens;
-    cacheCreationTokens += summary.cacheCreationTokens;
+    inputTokens += summary.inputTokens ?? 0;
+    outputTokens += summary.outputTokens ?? 0;
+    cacheReadTokens += summary.cacheReadTokens ?? 0;
+    cacheCreationTokens += summary.cacheCreationTokens ?? 0;
     estimatedApiCostUsd += summary.estimatedApiCostUsd ?? 0;
     allModelsPriced = allModelsPriced && summary.allModelsPriced === true;
 

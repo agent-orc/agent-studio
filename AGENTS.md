@@ -103,6 +103,10 @@ apply only under `frontend/`.
 
 ## Runtime And Stable
 
+- Playwright specs in a task worktree use `npm --prefix frontend run e2e`.
+  It publishes the backend and builds the frontend once on the runner, then
+  serves those assets on isolated ports. Reuse the prebuilt assets for focused
+  specs; do not start `ng serve` or `dotnet run` for routine Playwright checks.
 - Dev backend port 5030 is offline by default. Agents may bring it up only via a
   Playwright spec from stable that uses
   [frontend/e2e/fixtures/dev-backend.ts](frontend/e2e/fixtures/dev-backend.ts).

@@ -158,6 +158,7 @@
     .callout[data-tone="bad"] { border-color: color-mix(in srgb, var(--article-bad) 30%, var(--article-line)); background: var(--article-bad-soft); }
     figure { margin: 30px 0; }
     figure > img,
+    .label-bg { fill: var(--article-paper); stroke: none; }
     figure > svg {
       display: block;
       width: 100%;
@@ -340,9 +341,11 @@
     <p class="kicker">AGT-2994 · Concept Dossier · Integration lane</p>
     <h1>Integration lane throughput</h1>
     <p class="lede">Only the publication of a merge must be serial per project. Preparing the next deliveries, gating them and running agent rounds can run in parallel, bounded by cores. A speculative merge train with ordered publication doubles one busy project's modelled merge rate on the 12-core host. Gating the train tip while the queue is deep roughly quadruples it.</p>
-    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 29 September 2026</span><span><b>Source revision</b> <code>742936e0</code></span></div>
+    <div class="meta"><span><b>Pattern</b> concept</span><span><b>Status</b> Decided 11 October 2026</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 29 September 2026</span><span><b>Source revision</b> <code>742936e0</code></span></div>
     <nav class="toc" aria-label="Contents"><a href="#problem">Problem</a> · <a href="#alternatives">Alternatives</a> · <a href="#recommendation">Recommendation</a> · <a href="#throughput">Throughput model</a> · <a href="#failure-modes">Failure modes</a> · <a href="#evidence">Evidence</a> · <a href="#open-decisions">Open decisions</a> · <a href="#implementation">Implementation</a> · <a href="#sources">Code index</a></nav>
   </header>
+<div class="callout" data-tone="accent"><p><b>Status 11 October 2026.</b> The operator follows the recommendations of this Dossier, after the batch gate is live and measured. The measurement slice runs as AGT-3070 together with the first slice of AGT-W69; the remaining slices are promoted only when those numbers show the need. Train ordering and admission are decisions of the Orchestrator Engine (AGT-W65 D14).</p></div>
+
 
   <section id="problem">
     <h2>Problem</h2>
@@ -512,7 +515,7 @@
 <line class="tick" x1="1033.0" y1="88" x2="1033.0" y2="102"/>
 <text class="tiny" x="12" y="100">Lands</text>
 <line class="grid" x1="12" y1="120" x2="1048" y2="120"/>
-<text x="12" y="144" class="small">Train: prepare-ahead, two gate slots, ordered publication</text>
+
 <text x="12" y="182">Slot 1</text>
 <rect class="box-good" x="180.6" y="160" width="199.6" height="34" rx="4"/>
 <text class="small" x="280.4" y="182" text-anchor="middle">C1 = tip+D1</text>
@@ -544,7 +547,7 @@
 <text class="tiny" x="987.8" y="252" text-anchor="end">D6</text>
 <line class="tick" x1="995.6" y1="258" x2="995.6" y2="282"/>
 <text class="tiny" x="998.6" y="300" text-anchor="start">D7</text>
-</svg>
+<rect class="label-bg" x="8.1" y="129.7" width="306.5" height="18.1"/><text x="12" y="144" class="small">Train: prepare-ahead, two gate slots, ordered publication</text></svg>
       </div>
       <figcaption><b>Figure 2.</b> Three illustrative hours of one busy project under the model parameters. This is a schedule sketch, not a log replay. Today four deliveries land in 180 minutes, assuming no red gate. The train lands six by minute 172. That includes one red candidate (C3), which cancels its chained successor (C4) and ejects D3 back to coding.</figcaption>
     </figure>

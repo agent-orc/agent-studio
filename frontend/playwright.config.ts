@@ -4,18 +4,15 @@ import { defineConfig, devices } from '@playwright/test';
  * Playwright configuration for Agent Software Studio frontend E2E tests.
  *
  * Conventions (read this before writing tests):
- * - Tests assume the target stack is already running:
- *     - DEV (default): backend 5030 / frontend 4010 (start with `.\api.ps1 start`)
- *     - STABLE: backend 5031 / frontend 4011 (start with `start-stable.sh`)
- *   We do NOT spawn them via `webServer` because the user keeps long-lived
- *   instances open during development. Tests fail fast if either is down.
+ * - The default `npm run e2e` prepares prebuilt assets once and starts an
+ *   isolated stack on dynamic ports. Direct `playwright test` retains the
+ *   existing externally managed target behavior for interactive use.
+ * - Externally managed targets: DEV at frontend 4010, STABLE at 4011.
  * - Choose target via env vars (in order of precedence):
  *     - PW_BASE_URL=http://...    explicit override
  *     - PW_TARGET=stable          http://localhost:4011
  *     - PW_TARGET=dev   (default) http://localhost:4010
- *   Agents driving Playwright as User should set `PW_TARGET=stable` so their
- *   tests never collide with `dotnet build` locks on the dev backend's bin
- *   folder while a feature is being developed.
+ *   Task verification should use the isolated prebuilt stack instead.
  * - Single-browser target (chromium headless-shell) to keep the install small.
  * - Use stable selectors: prefer `data-testid="..."`, then role/label, then text.
  *   Never select by CSS class — they change with styling work.
@@ -26,6 +23,13 @@ import { defineConfig, devices } from '@playwright/test';
  *   Not used during local development.
  */
 const pwTarget = (process.env.PW_TARGET ?? 'dev').toLowerCase();
+const prebuilt = process.env.PW_PREBUILT === '1';
+const profile = process.env.PW_E2E_PROFILE ?? 'standard';
+const backendPort = process.env.PW_E2E_BACKEND_PORT;
+const frontendPort = process.env.PW_E2E_FRONTEND_PORT;
+if (prebuilt && (!backendPort || !frontendPort || !process.env.PW_E2E_WORKSPACE)) {
+  throw new Error('PW_PREBUILT=1 requires ports and an isolated PW_E2E_WORKSPACE. Run npm run e2e.');
+}
 const resolvedBaseUrl =
   process.env.PW_BASE_URL?.trim()
   || (pwTarget === 'stable' ? 'http://localhost:4011' : 'http://localhost:4010');
@@ -42,19 +46,55 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  retries: process.env.CI ? 1 : 0,
+  failOnFlakyTests: !!process.env.CI,
   workers: 1,
   reporter: reporters,
+  ...(prebuilt ? {
+    globalSetup: './e2e/prebuilt-global-setup.ts',
+    webServer: [
+      {
+        command: 'bash ../scripts/serve-prebuilt-backend.sh',
+        url: `http://127.0.0.1:${backendPort}/healthz`,
+        timeout: 100_000,
+        reuseExistingServer: true,
+        gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 30_000 },
+      },
+      {
+        command: `node scripts/serve-prebuilt-frontend.mjs dist/frontend/browser ${frontendPort} http://127.0.0.1:${backendPort}`,
+        url: `http://127.0.0.1:${frontendPort}/`,
+        timeout: 15_000,
+        reuseExistingServer: true,
+        gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 },
+      },
+    ],
+  } : {}),
   use: {
     baseURL: resolvedBaseUrl,
-    trace: 'retain-on-failure',
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: 'off',
     actionTimeout: 10_000,
-    navigationTimeout: 15_000
+    navigationTimeout: 15_000,
+    serviceWorkers: 'block',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: undefined } }
+    {
+      name: 'chromium',
+      ...(prebuilt ? {
+        testMatch: profile === 'recovery' ? '**/system/crash-recovery-prompt.spec.ts'
+          : profile === 'demo' ? '**/usage-cockpit/cockpit-integration-matrix.spec.ts' : '**/*.spec.ts',
+        testIgnore: profile === 'standard'
+          ? /visual-evidence\/|system\/crash-recovery-prompt\.spec\.ts|usage-cockpit\/cockpit-integration-matrix\.spec\.ts/
+          : /visual-evidence\//,
+      } : { testIgnore: /visual-evidence\// }),
+      use: { ...devices['Desktop Chrome'], channel: undefined },
+    },
+    {
+      name: 'visual-evidence',
+      testMatch: profile === 'standard' ? /visual-evidence\/.*\.spec\.ts/ : /$^/,
+      use: { ...devices['Desktop Chrome'], channel: undefined, video: 'retain-on-failure' },
+    },
   ],
   outputDir: 'test-results'
 });

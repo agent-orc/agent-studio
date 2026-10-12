@@ -43,7 +43,7 @@
   th { color: var(--ink-2); font-weight: 600; background: var(--surface-2); white-space: nowrap; }
   td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td .d { display: block; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; margin-top: 3px; }
-  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; }
+  code { font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
   .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
   .tag.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
   .tag.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
@@ -101,13 +101,15 @@
   <h1>Delivery chain: integration, recovery, robustness</h1>
   <p class="lede">One Dossier for the path a delivery takes from the agent's last commit to a published release, and for everything that goes wrong on it. It carries the Git policy per stage, the board status contract that policy depends on, the five structural patterns behind the incidents of the last thirty days, the eleven failure classes the fleet produced in live operation, and the measured cost of repeating work. Six Dossiers are merged into it; one rolling log is synthesised into its evidence.</p>
   <div class="meta">
-    <span><b>Status</b> 2026-09-14, decision-pending</span>
+    <span><b>Status</b> decided 2026-09-25; placement amended 2026-10-11</span>
     <span><b>Trigger</b> Consolidation card of AGT-W55 (operator decision D1 and D2, 2026-09-13)</span>
     <span><b>Absorbs</b> AGT-W37, AGT-W50, AGT-W42, AGT-W23, AGT-W44, AGT-W3; synthesises AGT-W39</span>
     <span><b>Neighbours</b> AGT-W51 isolated execution, AGT-W36 batch gate, AGT-W15 watcher, AGT-W49 operations server</span>
     <span><b>Concept card</b> see workbench.json</span>
   </div>
 </header>
+
+<p class="lede"><b>Status 11 October 2026.</b> The operator decided D1 to D7 on 25 September 2026. On 11 October 2026 AGT-W65 D14 placed every transition decision in the Orchestrator Engine: the deterministic first-bounce rule of D1 and the strong guardian of D2 keep their content and run in the engine, not in the monolith (programme AGT-3057 to AGT-3060).</p>
 
 <nav class="toc" aria-label="Contents">
   <a href="#s1">&sect;1 The chain and where it breaks</a>

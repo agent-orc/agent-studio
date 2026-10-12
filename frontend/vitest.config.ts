@@ -6,6 +6,10 @@ export default defineConfig({
   test: {
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    pool: 'threads',
+    maxWorkers: 4,
+    fileParallelism: true,
+    isolate: false,
     coverage: {
       provider: 'v8',
       reportsDirectory: '../coverage/frontend',

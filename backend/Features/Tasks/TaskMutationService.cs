@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using AgentStudio.Runner;
@@ -38,6 +39,8 @@ public class TaskMutationService
     // folders on the same slug. Optional so test fixtures that build the
     // service directly keep compiling; the NullSingleton still serialises.
     private readonly LaneMutexRegistry _laneMutex;
+    private readonly ConcurrentDictionary<string, HashSet<string>> _reservedJobIds =
+        new(FileSystemPathComparer.Instance);
 
     /// <summary>
     /// Atomic-write boundary for task-key sweeps and decision-content writes.
@@ -2120,15 +2123,25 @@ public class TaskMutationService
 
     private string EnsureUniqueJobId(string watchPath, string baseSlug)
     {
-        var used = _scanner.ScanAllJobs()
+        var used = _scanner.ScanAllJobsWithArchive()
             .Where(j => WatchPathComparison.PathsEqual(j.WatchPath, watchPath))
             .Select(j => j.Id)
             .ToHashSet(StringComparer.Ordinal);
-        if (!used.Contains(baseSlug)) return baseSlug;
+        var reserved = _reservedJobIds.GetOrAdd(watchPath, _ => new HashSet<string>(StringComparer.Ordinal));
+        used.UnionWith(reserved);
+        if (!used.Contains(baseSlug))
+        {
+            reserved.Add(baseSlug);
+            return baseSlug;
+        }
         for (var suffix = 2; ; suffix++)
         {
             var candidate = $"{baseSlug}-{suffix}";
-            if (!used.Contains(candidate)) return candidate;
+            if (!used.Contains(candidate))
+            {
+                reserved.Add(candidate);
+                return candidate;
+            }
         }
     }
 

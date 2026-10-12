@@ -4,10 +4,10 @@
   "title": "Gates: batch gate and remote gate",
   "summary": "Theme Dossier for deterministic validation, consolidating AGT-W36 batch gate, AGT-W18 remote gate target architecture and AGT-W2 async validation into one current record. Section 3 keeps the batch gate in full: closed manifest and typed eligibility, mechanical replay with conflict ejection and a cascade guard, one full suite on an exact combined candidate, fenced fast-forward publication, per-member gate and integration evidence under the AGT-2543 honest-completion invariant, red classification with bounded halving and its honest-bounds table, two-level fencing and a shared ref-mutation lease with the candidate-SHA promotion train, and the operator's review-first amendment of 2026-08-18. Section 4 keeps the remote gate target: requirements R1 to R6, the GateSubject, GateAttempt, GateLease, GatePlan and GateReport contract, the central state machine, the materialization sequence, the fail-closed timeout and fallback policy with no in-process backend fallback, and the open migration behind AGT-2262. Section 5 keeps the async-validation principles that survived measurement: model-based test selection rejected, per-SHA gate cache and deterministic diff-to-project scoping recommended, staging lane measure-first. Section 10 is an evidence appendix with the AGT-W28 847-task pipeline time economy baseline and the AGT-W29 reissue-convergence negative result in one paragraph each. 10 operator decisions recorded on 2026-09-25; option A selected for each. Sources recorded as superseded by this key; AGT-W28, AGT-W29 and AGT-W30 remain historical.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-25T12:40:00Z",
+  "updatedAt": "2026-10-11T13:30:00Z",
   "sourceTaskKeys": [
     "AGT-2801"
   ],

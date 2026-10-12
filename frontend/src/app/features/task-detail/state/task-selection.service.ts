@@ -19,7 +19,7 @@ import { ProjectLookupService } from '../../../services/project-lookup.service';
 import { parseStudioRoute } from '../../studio-shell/services/studio-route';
 import { taskCoreKey, type TaskCore, type TaskCoreResult, type TaskDocumentData, type TaskResource,
   type ResourceName, type TaskUsageData, type TaskReviewData, type TaskHistoryData,
-  type TaskGitData } from '../../../models/task-core.model';
+  type TaskGitData, type TaskOverviewData } from '../../../models/task-core.model';
 import { emptyDetail, idleResources, type ResourcePhase, type ResourceStates } from './task-resource-states';
 
 export interface TaskDetailLoadError {
@@ -48,6 +48,15 @@ function coreRejection(result: TaskCoreResult): { status: number } | null {
   if (result.state === 'missing') return { status: 404 };
   if (result.state === 'denied') return { status: 403 };
   return null;
+}
+
+const REVIEW_FACT_LANES: ReadonlySet<string> = new Set<string>([
+  TaskState.AutoReview, TaskState.HumanReview, TaskState.Escalated, TaskState.Completed,
+]);
+
+/** Whether the detail renders review facts before any tab opens. */
+function reviewFactsShownUpfront(info: TaskInfo, core: TaskCore): boolean {
+  return REVIEW_FACT_LANES.has(info.state) || !!core.blocking.needsInput;
 }
 
 /** The 202 body of a resource read while the task index re-hydrates. */
@@ -448,7 +457,7 @@ export class TaskSelectionService {
     return true;
   }
 
-  private coreInfo(core: TaskCore, board: TaskInfo | null): TaskInfo {
+  private coreInfo(core: TaskCore, board: TaskInfo | null, preserveDetails = false): TaskInfo {
     const base = board ?? {
       id: core.id, taskKey: core.taskKey,
       projectName: core.projectName, title: core.title, state: core.lane,
@@ -471,6 +480,14 @@ export class TaskSelectionService {
       useOwnSession: core.pins.useOwnSession ?? null,
       allowWebAccess: core.pins.allowWebAccess,
       noBranchExpected: core.pins.noBranchExpected,
+      // Detail-only facts must come from /details/overview, never from the
+      // clicked card or a previous list snapshot.
+      ...(preserveDetails ? {} : {
+        decision: null, planningSpawn: null, conceptDossier: null,
+        olderBriefDelivery: null, relatedWikiPages: [], creationSource: undefined,
+        completionClaim: null, parkedBlocker: null, needsInput: null,
+        reviewProjection: null, provenance: null, references: undefined, waitsOn: null,
+      }),
     };
   }
 
@@ -493,7 +510,8 @@ export class TaskSelectionService {
     this.resourceStates.set(idleResources());
     const accept = (core: TaskCore): boolean => {
       if (token !== this.openDetailToken || core.state === 'warming') return false;
-      if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)) return false;
+      if (!sameReference(core.id, info.id) && !sameReference(core.key, info.id)
+        && !sameReference(core.key, info.key)) return false;
       if (info.taskKey && core.taskKey !== info.taskKey) return false;
       this.acceptCore(core, info, project, token, opts);
       return true;
@@ -581,7 +599,7 @@ export class TaskSelectionService {
     this.detailLoading.set(false);
     this.clearDetailLoadFailure();
     const rich = this.selected();
-    if (rich) this.selected.set({ ...rich, info: this.coreInfo(core, rich.info) });
+    if (rich) this.selected.set({ ...rich, info: this.coreInfo(core, rich.info, !generationChanged) });
     else this.detailPreview.set(this.coreInfo(core, this.detailPreview() ?? info));
     if (!previous) {
       if (opts.replaceTab) this.pendingTaskTabReplacement = core.taskKey;
@@ -710,6 +728,12 @@ export class TaskSelectionService {
       afterNextPaint(() => {
         if (!current()) return;
         this.loadResource('usage');
+        this.loadResource('overview');
+        // Review facts feed the round-budget banner, the escalation summary
+        // and the delivery-claim panel, which show without opening a tab on
+        // cards in review, escalated, completed or waiting for input. Other
+        // lanes load review only when its tab opens.
+        if (reviewFactsShownUpfront(info, core)) this.loadResource('review');
         this.loadResourcesForTab(this.expandedTab);
       });
     };
@@ -763,7 +787,7 @@ export class TaskSelectionService {
     }
     const token = this.openDetailToken;
     this.setResourceState(name, 'loading', null);
-    const request = this.jobService.getDetailResource<TaskUsageData | TaskReviewData | TaskHistoryData | TaskGitData>(
+    const request = this.jobService.getDetailResource<TaskUsageData | TaskReviewData | TaskHistoryData | TaskGitData | TaskOverviewData>(
       core.id, project, core.coreVersion, name, undefined, evidence).pipe(
         timeout({ first: TaskSelectionService.DETAIL_TIMEOUT_MS }),
       ).subscribe({
@@ -783,6 +807,11 @@ export class TaskSelectionService {
           reply.reason);
         const detail = this.selected();
         if (!detail) return;
+        if (name === 'overview') {
+          if (reply.state === 'ready')
+            this.selected.set({ ...detail, info: { ...detail.info, ...reply.data as TaskOverviewData } });
+          return;
+        }
         if (name === 'review') {
           const data = reply.data as TaskReviewData;
           this.selected.set({ ...detail,

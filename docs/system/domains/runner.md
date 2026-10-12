@@ -409,6 +409,14 @@ rollout decision.
   and sends one fenced evidence report plus cleanup proof. The original `--task <key>`
   one-shot remains for diagnostics. It owns no task state. Its Git writes to
   origin are generation-scoped salvage and immutable result refs described below.
+  Review attempts are claimed by operator priority (`urgent` before `normal`),
+  then creation time within each priority. `POST /api/tasks/{jobId}/review-priority`
+  with `{"priority":"urgent"}` or `{"priority":"normal"}` and `X-Client-Id`
+  changes a card in `4-auto-review`; `move-to-top` sets `urgent` in that lane.
+  The authority persists the priority across infrastructure and lease-expiry
+  retries, then clears it on a final verdict or departure from AutoReview.
+  The board exposes the claimable queue position from a committed, lock-free
+  review snapshot.
   Every coding and review registration reports the exact fenced attempts whose
   detached process generation or durable terminal result is still positively
   present on the host. A restarted Task Server compares attempt, task, lease,

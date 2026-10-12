@@ -1,0 +1,28 @@
+@if (state(); as data) {
+  @if (data.plan.decision !== 'disabled') {
+    <section class="batch-detail" aria-labelledby="task-batch-title" data-testid="task-batch-verification">
+      <h2 id="task-batch-title">Batch verification</h2>
+      @if (member(); as item) {
+        <p><strong>{{ item.status }}</strong>
+          @if (item.batchId) { · Batch {{ item.batchId }} }
+          @if (item.position && item.size) { · {{ item.position }} of {{ item.size }} }
+          @if (item.phase) { · {{ item.phase }} }
+        </p>
+        @if (record(); as batch) {
+          <p>Phase: {{ batch.phase }} · Latest run: {{ batch.runs[batch.runs.length - 1]?.outcome ?? 'waiting' }}</p>
+          @if (publishedSha(batch.publication); as sha) { <p>Published candidate: <code>{{ sha }}</code></p> }
+        }
+      } @else {
+        <p>This card is not in a batch.</p>
+      }
+      <button type="button" (click)="panelOpen.set(true)">Open batch panel</button>
+    </section>
+  }
+} @else if (!unavailable()) {
+  <section class="batch-detail" aria-label="Batch verification" data-testid="task-batch-verification">
+    <p>Loading batch verification…</p>
+  </section>
+}
+@if (panelOpen()) {
+  <app-batch-panel [project]="project()" [closed]="closePanel" />
+}
