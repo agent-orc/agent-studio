@@ -104,6 +104,66 @@ artifact, or vision command. A missing ref reports
 `ReviewInfra/SnapshotUnavailable`; there is no coding-worktree or Task Server
 checkout fallback.
 
+#### Private repositories
+
+The review clone is credential-free on purpose, because review commands run
+candidate code. A private repository (GitHub answers 404 without credentials)
+therefore needs two steps before any of its cards can be reviewed remotely
+(AGT-3077):
+
+1. Mark the project private through the project settings API, with an
+   operator session, so its review plans require read access:
+
+   ```bash
+   curl -X PUT "$TASK_SERVER/api/projects/<project>/repository-visibility" \
+     -H 'Content-Type: application/json' -d '{"visibility":"private"}'
+   ```
+
+2. Give one review host a read-only credential scoped to exactly that
+   repository. Create a GitHub fine-grained token with *Only select
+   repositories* = that repository and *Contents: Read-only*, nothing else.
+   Store it in an owner-only file in the review unit's credential directory,
+   one `git credential-store` line per repository, and point the review unit
+   at it:
+
+   ```bash
+   install -m 600 -o agent-review /dev/null /etc/agent-runner/review-git-credentials
+   printf 'https://x-access-token:%s@github.com/<owner>/<repo>.git\n' "$TOKEN" \
+     >> /etc/agent-runner/review-git-credentials
+   echo 'RUNNER_REVIEW_GIT_CREDENTIALS_FILE=/etc/agent-runner/review-git-credentials' \
+     >> /etc/agent-runner/review.env
+   systemctl restart agent-runner-review.service
+   ```
+
+The daemon refuses to start when the file is readable by group or others or
+when a line is not a repository-scoped `https://` entry. For every line it
+registers `review:repository-read:<host>/<owner>/<repo>` (lower case, no
+`.git`). A private plan is claimable only by an executor that registered that
+key; every other executor receives the empty claim
+`unclaimable-plan-requirements` naming the key, so the attempt waits for a
+credentialed host instead of failing its clone and spending the infrastructure
+retry budget.
+
+The credential reaches only the clone and fetch child processes. They clear
+every inherited credential helper, ignore the attempt's global Git config,
+disable hooks, ask-pass programs, redirects and every transport except
+`https`, and use an inline helper that answers only for the scoped host and
+path. A private clone is complete rather than blob-filtered, so no later Git
+command needs the credential. The integration-ref fetch for baseline
+comparison runs after review commands, which may have rewritten the
+workspace's Git config, so it fetches into a fresh runner-owned repository and
+copies the objects into the workspace over the local transport. Build, test,
+preparation and aspect commands never receive the credential in their
+environment, and `remote.origin.url` stays credential-free.
+
+Review commands run as the review service account, so any file that account
+can read is reachable by candidate code. This is why the token must be
+read-only and scoped to one repository: a token leaked by a review of that
+repository grants nothing beyond the source the review already holds. Do not
+reuse the coding host's credential store or any write-capable token, and use
+a separate review service account for repositories whose candidates must not
+read each other's tokens.
+
 ### MVP boundaries (read before relying on it)
 
 - **Push capability is explicit.** Each host/repository assignment has its own
@@ -759,6 +819,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, or the separately registered `gate` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). |
 | `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved; see [Baseline verify result cache](#baseline-verify-result-cache). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
+| `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` | `--review-git-credentials-file` | (none) | Review role only. Owner-only `git credential-store` file with one read-only, repository-scoped `https://` credential per private repository. Registers `review:repository-read:<host>/<owner>/<repo>` and is used only by the review clone and fetch processes; see [Private repositories](#private-repositories). |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
 | `AGENT_STUDIO_CLEAN_CONTEXT_ROOT` | none | `$XDG_STATE_HOME/agent-studio/clean-context` or `~/.local/state/agent-studio/clean-context` | Persistent non-temporary root for task-isolated Claude and Codex homes. Keep it on host-local storage. The same task reuses its marker-validated home across attempts and daemon restarts; inactive homes expire after seven days. |

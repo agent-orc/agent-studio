@@ -91,6 +91,14 @@ public sealed class RunnerOptions
     public IReadOnlyList<string> ReviewCredentialEnvironment { get; init; } = [];
 
     /// <summary>
+    /// AGT-3077: owner-only <c>git credential-store</c> file holding read-only,
+    /// repository-scoped credentials for private repositories. Only the clone
+    /// and fetch child processes of a review workspace receive one; review
+    /// commands never do. Null keeps every clone credential-free.
+    /// </summary>
+    public string? ReviewGitCredentialsFile { get; init; }
+
+    /// <summary>
     /// Floor for how long a review verify command's process tree may run without
     /// clearing its CPU floor before the hang watchdog kills it and the attempt
     /// is classified <c>ReviewInfra/NoCpuProgress</c>
@@ -469,6 +477,12 @@ public sealed class RunnerOptions
                     "review-credential-env",
                 "RUNNER_REVIEW_CREDENTIAL_ENV")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            ReviewGitCredentialsFile = Val(
+                    "review-git-credentials-file",
+                    ReviewRepositoryCredentials.FileVariable)
+                .Trim() is { Length: > 0 } reviewGitCredentials
+                ? Path.GetFullPath(reviewGitCredentials)
+                : null,
             ReviewNoCpuProgressSeconds = overrides.TryGetValue("review-no-cpu-progress-seconds", out var noProgress)
                                          && int.TryParse(noProgress, out var noProgressValue)
                                          && noProgressValue >= 0
@@ -591,6 +605,10 @@ public sealed class RunnerOptions
         }
         if (options.ReviewCredentialEnvironment.Any(WorkerEdgeCredentialBoundary.IsProtectedName))
             throw new ArgumentException("RUNNER_REVIEW_CREDENTIAL_ENV cannot include Task Server or browser-edge credentials.");
+        // Fail at start-up, not on the first private clone. Other roles ignore
+        // the setting so a shared environment file cannot stop them.
+        if (options.Role == "review")
+            _ = ReviewRepositoryCredentials.Load(options.ReviewGitCredentialsFile);
         if (options.SalvageRetentionMode is not (SalvageRetentionSweeper.ModeApply
                 or SalvageRetentionSweeper.ModeReport
                 or SalvageRetentionSweeper.ModeOff))

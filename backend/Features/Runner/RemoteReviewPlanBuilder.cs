@@ -58,6 +58,24 @@ public sealed class RemoteReviewPlanBuilder
         string? expectedResultSha = null,
         IReadOnlyList<string>? changedFiles = null,
         string? immutableResultRef = null)
+        // AGT-3077: every plan shape carries the repository visibility, so a
+        // private repository is refused at claim time on any executor without
+        // a read credential for it.
+        => BuildPlan(task, repositoryPath, projectSettings, integrationRef,
+                expectedResultSha, changedFiles, immutableResultRef) with
+            {
+                PrivateRepository = Contract.ReviewRepositoryAccessPolicy.IsPrivate(
+                    projectSettings?.RepositoryVisibility),
+            };
+
+    private Contract.ReviewPlanDto BuildPlan(
+        TaskInfo? task,
+        string? repositoryPath,
+        ProjectSettings? projectSettings,
+        string? integrationRef,
+        string? expectedResultSha,
+        IReadOnlyList<string>? changedFiles,
+        string? immutableResultRef)
     {
         var toolPlan = V1ReviewPlaneEndpoints.FallbackPlan(
             repositoryPath,

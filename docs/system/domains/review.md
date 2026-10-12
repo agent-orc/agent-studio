@@ -332,6 +332,54 @@ instead of relying only on the default console logger's start/end output.
 Safe parallelism and the procedure for raising it live in
 [linux-runner-host.md](../../operations/setup/linux-runner-host.md#review-parallelism-and-build-server-isolation).
 
+## Private repository access (AGT-3077)
+
+The review clone carries no credential, because review commands execute
+candidate code. Before AGT-3077 that made every private repository
+unreviewable: WEB-26/27/28 failed their clone with `could not read Username`,
+classified `SnapshotUnavailable`, and escalated after the infrastructure retry
+budget.
+
+- **Plan.** The project setting `repositoryVisibility` (`public` by default,
+  `PUT /api/projects/{project}/repository-visibility`) is sealed into every
+  review plan as `ReviewPlanDto.PrivateRepository` by `RemoteReviewPlanBuilder`.
+- **Claim filter.** `ReviewRepositoryAccessPolicy` (shared contract) turns a
+  private plan plus the subject's repository URL into the required key
+  `review:repository-read:<host>/<owner>/<repo>` (lower case, no `.git`, same
+  key for https, ssh and scp spellings). The backend queue filter
+  (`ClaimNextReview`, `ListUnclaimableReviews`), its post-resolution recheck in
+  the claim endpoint, and the standalone Task Server
+  (`MissingSubjectCapabilities`) all refuse an executor that did not register
+  the key. The empty claim carries `unclaimable-plan-requirements`, names the
+  key, and tells the operator which setting is missing. The attempt stays
+  queued and no retry budget is spent.
+- **Executor profile.** `RUNNER_REVIEW_GIT_CREDENTIALS_FILE` holds one
+  read-only, repository-scoped `https://` credential per line
+  (`runner/ReviewRepositoryCredentials.cs`). The review daemon registers and
+  advertises one read key per line and passes only the file path to the
+  detached worker.
+- **Credential boundary.** `RemoteReviewWorkspace` hands the credential only to
+  the git clone and fetch child processes (`CredentialedGitArguments`,
+  `CredentialedGitEnvironment`). Inherited helpers, the attempt's global
+  config, hooks, ask-pass, redirects and foreign transports are switched off,
+  and the inline helper answers only for the scoped protocol, host and path.
+  `ProcessEnvironment()`, which every build, test, preparation and aspect
+  command uses, never contains it. A private clone is not blob-filtered, so no
+  later git command lazily fetches with missing credentials. The late
+  integration-ref fetch for baseline comparison runs in a fresh runner-owned
+  repository and the workspace copies the objects over the local transport,
+  so configuration written by review commands never meets the credential.
+- **Public repositories** keep the credential-free, blob-filtered clone
+  unchanged. A credential-free clone that fails with an authentication
+  signature names the missing read access in its `SnapshotUnavailable`
+  detail.
+
+Operator setup: [linux-runner-host.md](../../operations/setup/linux-runner-host.md#private-repositories).
+Tests: `runner.Tests/ReviewPrivateRepositoryTests.cs` (clone through a local
+Basic-auth smart-HTTP server), `runner.Tests/ReviewRepositoryAccessPolicyTests.cs`,
+`backend.Tests/PrivateRepositoryReviewClaimTests.cs`, and
+`task-server.Tests/RemoteReviewAuthorityTests.PrivateRepository.cs`.
+
 ## Review-plane parallelism
 
 `AdaptiveReviewParallelismAdvisor` owns the review plane's recommended

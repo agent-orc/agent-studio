@@ -239,6 +239,17 @@ A claim response can no longer carry `LeaseExpired`. On the runner,
 on `review-executor-not-registered` (this daemon identity itself lost
 registration), not on a 409 that no longer occurs.
 
+## Claim filter: private repository read access (AGT-3077)
+
+A plan sealed with `PrivateRepository = true` requires the executor
+registration key `review:repository-read:<host>/<owner>/<repo>` derived from
+the subject's repository URL by `ReviewRepositoryAccessPolicy`. Both Task
+Server implementations apply it in the claim filter; an executor without the
+key receives `status=empty`, `reason=unclaimable-plan-requirements`, the key in
+`missingCapabilities`, and a message naming `RUNNER_REVIEW_GIT_CREDENTIALS_FILE`.
+The attempt is not leased and stays queued. See
+[review.md](../domains/review.md#private-repository-access-agt-3077).
+
 ## Runner-side changes
 
 - `TaskServerClient.ReportReviewAsync` uses a fixed 10-second timeout

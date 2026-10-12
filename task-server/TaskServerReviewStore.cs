@@ -602,6 +602,8 @@ public sealed partial class TaskServerStore
         {
             requirements.Add(CapabilityProtocol.GitFetch);
             requirements.Add(ReviewCapabilities.GitMaterialization);
+            if (ReviewRepositoryAccessPolicy.RequiredCapability(subject.Plan, subject.RepositoryUrl) is { } read)
+                requirements.Add(read);
         }
         if (!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId))
             requirements.Add(ReviewCapabilities.SourceBundleMaterialization);
@@ -1974,6 +1976,10 @@ public sealed partial class TaskServerStore
             if (needed && !executor.Capabilities.Contains(key) && !missing.Contains(key)) missing.Add(key);
         }
         Require(!string.IsNullOrWhiteSpace(subject.RepositoryUrl), ReviewCapabilities.GitMaterialization);
+        // AGT-3077: a private repository is claimable only with a scoped read credential.
+        foreach (var key in ReviewRepositoryAccessPolicy.MissingCapabilities(
+                     subject.Plan, subject.RepositoryUrl, executor.Capabilities))
+            Require(true, key);
         Require(!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId),
             ReviewCapabilities.SourceBundleMaterialization);
         Require(subject.Plan.RequiresVisualReview, ReviewCapabilities.VisionReview);

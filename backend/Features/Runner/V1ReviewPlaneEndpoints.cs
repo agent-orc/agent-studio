@@ -443,6 +443,27 @@ public static class V1ReviewPlaneEndpoints
                 remoteReviewPlans,
                 out var subjectTask,
                 out var baseline);
+            // AGT-3077: the queue filter can only judge a subject that already
+            // carries its repository URL. Recheck once the URL is resolved, so a
+            // private repository never reaches a host that cannot clone it.
+            var missingRepositoryAccess = Contract.ReviewRepositoryAccessPolicy.MissingCapabilities(
+                subject.Plan, subject.RepositoryUrl, executor.Capabilities);
+            if (missingRepositoryAccess.Count > 0)
+            {
+                if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
+                    return Results.Conflict(new Contract.ApiError(
+                        "review-capability-defer-failed",
+                        "The claim could not be relinquished after repository access admission failed."));
+                Contract.ReviewUnclaimableAttemptDto[] unclaimable =
+                [
+                    new(review.AttemptId, review.TaskKey, review.CreatedAt, missingRepositoryAccess),
+                ];
+                unclaimableLog.Record(runnerId, unclaimable);
+                return Results.Ok(Contract.ReviewClaimEmptyResponses.ForQueue(
+                    unclaimable,
+                    Contract.ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
+                    Contract.ReviewRepositoryAccessPolicy.RefusalMessage(missingRepositoryAccess[0])));
+            }
             if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
             {
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))

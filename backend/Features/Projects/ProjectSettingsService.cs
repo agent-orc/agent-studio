@@ -194,6 +194,22 @@ public class ProjectSettingsService
     }
 
     /// <summary>
+    /// AGT-3077: records whether the project repository needs a credential to
+    /// clone. Null clears the override (public).
+    /// </summary>
+    public void SetRepositoryVisibility(string projectName, string? visibility)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            var key = ResolveAliasLocked(projectName);
+            var current = _cache.TryGetValue(key, out var s) ? s : new ProjectSettings();
+            _cache[key] = current with { RepositoryVisibility = visibility };
+            Persist();
+        }
+    }
+
+    /// <summary>
     /// AGT-2839: may the local integration gate stand on the Remote Review
     /// verdict with the same integration tip and tested tree? Null clears the override and falls
     /// back to <see cref="IntegrationGateReusePolicy.IsEnabled"/>.

@@ -142,6 +142,8 @@ internal static class RunnerCapabilityProbe
             list.Add(Capability(ReviewCapabilities.BaselineComparison, "review", null, "merge-base"));
             list.Add(Capability(ReviewCapabilities.DependencyPreparation, "review", null, "build-profile"));
             list.Add(Capability(ReviewCapabilities.LibraryStepV1, "review", "1", "review-library"));
+            foreach (var key in ReviewRepositoryReadCapabilities(options))
+                list.Add(Capability(key, "source", null, "review-git-credentials"));
         }
         else
         {
@@ -239,11 +241,29 @@ internal static class RunnerCapabilityProbe
                 CapabilityProtocol.ProviderAuthentication(item.CliType),
             }))
             .Concat(ReviewToolchainCapabilities(onPath ?? OnPath))
+            .Concat(ReviewRepositoryReadCapabilities(options))
             .Concat((composeRenderVersion ?? ComposeRenderVersion)() is not null
                 ? [CapabilityProtocol.ComposeRender]
                 : Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+
+    /// <summary>
+    /// AGT-3077: one <c>review:repository-read:&lt;host/path&gt;</c> key per
+    /// private repository the executor profile holds a scoped read credential
+    /// for. A file that became unreadable after start-up registers none, so
+    /// the claim filter names the missing key instead of a clone failing.
+    /// </summary>
+    public static IReadOnlyList<string> ReviewRepositoryReadCapabilities(RunnerOptions options)
+    {
+        if (options.Role != "review") return [];
+        try { return ReviewRepositoryCredentials.Load(options.ReviewGitCredentialsFile).CapabilityKeys; }
+        catch (Exception exception) when (exception is ArgumentException or IOException
+                                              or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
 
     /// <summary>Review-library toolchain keys whose probe executable is present on this host.</summary>
     public static IReadOnlyList<string> ReviewToolchainCapabilities(Func<string, bool> onPath)

@@ -980,8 +980,11 @@ public sealed class AttemptAuthorityService
                     .Where(review => heldTaskKeys is null || !heldTaskKeys.Contains(review.TaskKey))
                     .Where(review => review.Subject.Plan is null
                         || capabilities is null
-                        || AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
-                            review.Subject.Plan, capabilities))
+                        || (AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy.Supports(
+                                review.Subject.Plan, capabilities)
+                            // AGT-3077: a private repository needs this host's read credential.
+                            && AgentStudio.TaskServer.Contracts.ReviewRepositoryAccessPolicy.Supports(
+                                review.Subject.Plan, review.Subject.RepositoryUrl, capabilities)))
                     .OrderByDescending(review => review.Priority == "urgent")
                     .ThenBy(review => review.CreatedAt)
                     .ThenBy(review => review.AttemptId)
@@ -1036,8 +1039,11 @@ public sealed class AttemptAuthorityService
                 .Where(review => review.Lease is null || review.Lease.ExpiresAt <= now)
                 .Where(review => !IsUnmaterializableWithinGrace(review, now))
                 .Where(review => review.Subject.Plan is not null)
-                .Select(review => (Review: review, Missing: AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
-                    .MissingCapabilities(review.Subject.Plan!, capabilities)))
+                .Select(review => (Review: review, Missing: (IReadOnlyList<string>)AgentStudio.TaskServer.Contracts.ReviewLibraryStepPolicy
+                    .MissingCapabilities(review.Subject.Plan!, capabilities)
+                    .Concat(AgentStudio.TaskServer.Contracts.ReviewRepositoryAccessPolicy.MissingCapabilities(
+                        review.Subject.Plan!, review.Subject.RepositoryUrl, capabilities))
+                    .ToArray()))
                 .Where(item => item.Missing.Count > 0)
                 .OrderByDescending(item => item.Review.Priority == "urgent")
                 .ThenBy(item => item.Review.CreatedAt)

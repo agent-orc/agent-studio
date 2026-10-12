@@ -2143,13 +2143,16 @@ public sealed class RemoteReviewWorkspace
                 baselineSha: null,
                 command: null);
 
-        var fetch = await ProcessRunner.RunAsync(
-            "git",
-            ["-c", "credential.helper=", "fetch", "--no-tags", "origin", _subject.Plan.IntegrationRef!],
-            RepositoryPath,
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
+        var credential = RepositoryCredential();
+        var fetch = credential is null
+            ? await ProcessRunner.RunAsync(
+                "git",
+                ["-c", "credential.helper=", "fetch", "--no-tags", "origin", _subject.Plan.IntegrationRef!],
+                RepositoryPath,
+                environment: ProcessEnvironment(),
+                clearEnvironment: true,
+                ct: ct)
+            : await FetchPrivateRefAsync(credential, _subject.Plan.IntegrationRef!, ct);
         if (!fetch.Success)
             throw BaselineUnavailable(
                 $"Integration ref '{_subject.Plan.IntegrationRef}' could not be fetched: {fetch.StdErr.Trim()}",
@@ -2434,32 +2437,201 @@ public sealed class RemoteReviewWorkspace
 
     private async Task MaterializeGitAsync(string repositoryUrl, CancellationToken ct)
     {
-        var clone = await ProcessRunner.RunAsync(
-            "git",
-            ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", repositoryUrl, RepositoryPath],
-            AttemptRoot,
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
+        var credential = RepositoryCredential();
+        // A private clone is complete, not blob-filtered: a promisor remote would
+        // fetch missing blobs lazily from later git commands, which hold no
+        // credential. Nothing has run in the fresh clone yet, so its config and
+        // hooks are git's own while the credential is in use.
+        var clone = credential is null
+            ? await ProcessRunner.RunAsync(
+                "git",
+                ["-c", "credential.helper=", "clone", "--no-checkout", "--filter=blob:none", repositoryUrl, RepositoryPath],
+                AttemptRoot,
+                environment: ProcessEnvironment(),
+                clearEnvironment: true,
+                ct: ct)
+            : await ProcessRunner.RunAsync(
+                "git",
+                CredentialedGitArguments(credential, "clone", "--no-checkout", credential.CloneUrl, RepositoryPath),
+                AttemptRoot,
+                environment: CredentialedGitEnvironment(credential),
+                clearEnvironment: true,
+                ct: ct);
         if (!clone.Success)
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
-                $"Repository clone failed: {clone.StdErr.Trim()}");
+                credential is null && LooksLikeMissingReadAccess(clone.StdErr)
+                    ? $"Repository clone failed: the review host has no read access to '{repositoryUrl}'. "
+                      + "A private repository needs repository visibility 'private' on its project and a "
+                      + $"scoped read credential in {ReviewRepositoryCredentials.FileVariable}: {clone.StdErr.Trim()}"
+                    : $"Repository clone failed: {clone.StdErr.Trim()}");
         var resultRef = string.IsNullOrWhiteSpace(_subject.ResultRef)
             ? _subject.ExpectedResultSha
             : _subject.ResultRef!;
-        var fetch = await ProcessRunner.RunAsync(
-            "git",
-            ["-c", "credential.helper=", "fetch", "--no-tags", "origin", resultRef],
-            RepositoryPath,
-            environment: ProcessEnvironment(),
-            clearEnvironment: true,
-            ct: ct);
+        var fetch = credential is null
+            ? await ProcessRunner.RunAsync(
+                "git",
+                ["-c", "credential.helper=", "fetch", "--no-tags", "origin", resultRef],
+                RepositoryPath,
+                environment: ProcessEnvironment(),
+                clearEnvironment: true,
+                ct: ct)
+            : await ProcessRunner.RunAsync(
+                "git",
+                CredentialedGitArguments(credential, "fetch", "--no-tags", "origin", resultRef),
+                RepositoryPath,
+                environment: CredentialedGitEnvironment(credential),
+                clearEnvironment: true,
+                ct: ct);
         if (!fetch.Success)
             throw new ReviewInfrastructureException(
                 "SnapshotUnavailable",
                 $"Immutable result ref '{resultRef}' could not be fetched: {fetch.StdErr.Trim()}");
         await GitRequiredAsync(["checkout", "--detach", "FETCH_HEAD"], ct);
+    }
+
+    private ReviewRepositoryCredential? RepositoryCredential()
+    {
+        if (string.IsNullOrWhiteSpace(_subject.RepositoryUrl)) return null;
+        try
+        {
+            return ReviewRepositoryCredentials.Load(_options.ReviewGitCredentialsFile).Find(_subject.RepositoryUrl);
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException
+                                              or UnauthorizedAccessException)
+        {
+            throw new ReviewInfrastructureException(
+                "SnapshotUnavailable",
+                $"Review repository credentials are unreadable: {exception.Message}");
+        }
+    }
+
+    internal static bool LooksLikeMissingReadAccess(string stderr)
+        => stderr.Contains("could not read Username", StringComparison.OrdinalIgnoreCase)
+           || stderr.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase)
+           || stderr.Contains("Repository not found", StringComparison.OrdinalIgnoreCase)
+           || stderr.Contains("terminal prompts disabled", StringComparison.OrdinalIgnoreCase);
+
+    private const string CredentialProtocolVariable = "AGENT_REVIEW_GIT_PROTOCOL";
+    private const string CredentialHostVariable = "AGENT_REVIEW_GIT_HOST";
+    private const string CredentialPathVariable = "AGENT_REVIEW_GIT_PATH";
+    private const string CredentialUsernameVariable = "AGENT_REVIEW_GIT_USERNAME";
+    private const string CredentialPasswordVariable = "AGENT_REVIEW_GIT_PASSWORD";
+
+    /// <summary>
+    /// Inline credential helper. It answers only a <c>get</c> for exactly the
+    /// scoped protocol, host and repository path, so a rewritten URL or a
+    /// redirect to another repository never receives the token.
+    /// </summary>
+    private const string CredentialHelper =
+        "!f() { test \"$1\" = get || exit 0; p=; h=; r=; "
+        + "while IFS= read -r line && test -n \"$line\"; do case \"$line\" in "
+        + "protocol=*) p=${line#protocol=};; host=*) h=${line#host=};; path=*) r=${line#path=};; esac; done; "
+        + "r=${r%/}; r=${r%.git}; "
+        + "h=$(printf %s \"$h\" | tr '[:upper:]' '[:lower:]'); r=$(printf %s \"$r\" | tr '[:upper:]' '[:lower:]'); "
+        + "test \"$p\" = \"$" + CredentialProtocolVariable + "\" && test \"$h\" = \"$" + CredentialHostVariable + "\" "
+        + "&& test \"$r\" = \"$" + CredentialPathVariable + "\" || exit 0; "
+        + "printf 'username=%s\\npassword=%s\\n' \"$" + CredentialUsernameVariable + "\" \"$"
+        + CredentialPasswordVariable + "\"; }; f";
+
+    private static string NullDevice => OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+
+    /// <summary>
+    /// Git arguments for a child process that holds the scoped credential.
+    /// Every inherited helper is cleared, hooks, ask-pass programs, redirects,
+    /// automatic maintenance and every transport except the credential's own
+    /// are switched off.
+    /// </summary>
+    internal static IReadOnlyList<string> CredentialedGitArguments(
+        ReviewRepositoryCredential credential,
+        params string[] command)
+        =>
+        [
+            "-c", "credential.helper=",
+            "-c", "credential.helper=" + CredentialHelper,
+            "-c", "credential.useHttpPath=true",
+            "-c", "core.askPass=",
+            "-c", "core.hooksPath=" + NullDevice,
+            "-c", "protocol.allow=never",
+            "-c", $"protocol.{credential.Scheme}.allow=always",
+            "-c", "http.followRedirects=false",
+            "-c", "http.sslVerify=true",
+            "-c", "gc.auto=0",
+            "-c", "maintenance.auto=false",
+            .. command,
+        ];
+
+    /// <summary>
+    /// <see cref="ProcessEnvironment"/> plus the credential, for the clone and
+    /// fetch child processes only. The attempt HOME may hold a global config
+    /// written by review commands, so the global config is ignored here.
+    /// </summary>
+    internal IReadOnlyDictionary<string, string?> CredentialedGitEnvironment(ReviewRepositoryCredential credential)
+    {
+        var environment = new Dictionary<string, string?>(ProcessEnvironment(), StringComparer.Ordinal)
+        {
+            ["GIT_CONFIG_GLOBAL"] = NullDevice,
+            ["GIT_CONFIG_NOSYSTEM"] = "1",
+            ["GIT_TERMINAL_PROMPT"] = "0",
+            [CredentialProtocolVariable] = credential.Scheme,
+            [CredentialHostVariable] = credential.Authority,
+            [CredentialPathVariable] = credential.RepositoryPath,
+            [CredentialUsernameVariable] = credential.Username,
+            [CredentialPasswordVariable] = credential.Password,
+        };
+        return environment;
+    }
+
+    /// <summary>
+    /// Fetches <paramref name="reference"/> of a private repository after review
+    /// commands may have run. Those commands can rewrite the workspace's
+    /// <c>.git/config</c>, hooks and HOME, so the credentialed fetch runs in a
+    /// fresh runner-owned repository and the workspace then pulls the objects
+    /// from it over the local transport, without any credential. On success
+    /// the workspace's <c>FETCH_HEAD</c> names the fetched commit, exactly as a
+    /// direct fetch from origin would.
+    /// </summary>
+    private async Task<ProcessResult> FetchPrivateRefAsync(
+        ReviewRepositoryCredential credential,
+        string reference,
+        CancellationToken ct)
+    {
+        var side = Path.Combine(AttemptRoot, ".private-fetch-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            // No template and no attempt-global config: either could seed the
+            // side repository with a proxy or TLS setting written by a review
+            // command.
+            var initEnvironment = new Dictionary<string, string?>(ProcessEnvironment(), StringComparer.Ordinal)
+            {
+                ["GIT_CONFIG_GLOBAL"] = NullDevice,
+            };
+            var init = await ProcessRunner.RunAsync(
+                "git", ["init", "--bare", "--quiet", "--template=", side], AttemptRoot,
+                environment: initEnvironment, clearEnvironment: true, ct: ct);
+            if (!init.Success) return init;
+            var fetched = await ProcessRunner.RunAsync(
+                "git",
+                CredentialedGitArguments(
+                    credential, "fetch", "--no-tags", credential.CloneUrl, $"+{reference}:refs/agent-review/fetched"),
+                side,
+                environment: CredentialedGitEnvironment(credential),
+                clearEnvironment: true,
+                ct: ct);
+            if (!fetched.Success) return fetched;
+            return await ProcessRunner.RunAsync(
+                "git",
+                ["-c", "credential.helper=", "-c", "protocol.file.allow=always",
+                    "fetch", "--no-tags", side, "refs/agent-review/fetched"],
+                RepositoryPath,
+                environment: ProcessEnvironment(),
+                clearEnvironment: true,
+                ct: ct);
+        }
+        finally
+        {
+            if (Directory.Exists(side)) ResilientDirectory.Delete(side);
+        }
     }
 
     private async Task MaterializeBundleAsync(TaskServerClient client, CancellationToken ct)
