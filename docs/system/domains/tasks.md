@@ -1522,9 +1522,10 @@ their authoritative checks; display state never grants permission to mutate.
   state. A repository computation runs at most four Git children at once.
   One Git config command per index run supplies both the effective
   config signature and primary origin. The 45 s sweep checks effective config
-  separately. `TaskIntegrationStatusService` also memoizes origin once per
-  repository in authoritative action lookups, using Git's own config semantics.
-  Origin memoization and every path-keyed map in `TaskListGitProjectionCache`
+  separately. Both publish that capture into the process-wide `GitOriginStore`,
+  which `TaskIntegrationStatusService` reads the origin from, using Git's own
+  config semantics (AGT-3083).
+  The origin store and every path-keyed map in `TaskListGitProjectionCache`
   (repository snapshots, review-subject generations, sidecar stamps and read
   grouping) share `FileSystemPathComparer`: case-sensitive on Linux,
   case-insensitive on Windows and macOS. Case-distinct checkouts on Linux
@@ -1532,10 +1533,19 @@ their authoritative checks; display state never grants permission to mutate.
   board read that spans several repositories groups tasks by watch path and
   takes each task's facts only from its own repository's snapshot; a fact a
   snapshot carries for a task outside its group is never merged.
-- **Origin reads are bounded per integration lookup.** Delivered cards in one
-  lookup share one effective origin read per checkout root, including a missing
-  origin. The next lookup reads Git configuration again, so origin changes and
-  external includes remain visible without a persistent TTL cache.
+- **Origin reads come from one process-wide store (AGT-3083).** `GitOriginStore`
+  is a DI singleton keyed by the normalized checkout root. It holds the
+  `GitEffectiveConfig` Git resolved (`git config --includes --show-origin
+  --list`), and a lookup answers from it while every config file Git said
+  contributed is byte-identical. A changed or removed contributing file, an
+  unknown root, or a root the index does not cover resolves through Git once
+  and stores the result. A missing origin is stored like any other capture; a
+  failed capture (missing checkout, Git error) reads as no origin and is not
+  stored. A config source created after a capture, such as an include target
+  that did not exist yet, is not among the stamped files; the next index run or
+  45 s safety sweep publishes a fresh capture, so it becomes visible within one
+  sweep interval. Delivered cards in one lookup still share one origin read per
+  checkout root. There is no partial config parser and no TTL.
 - **`RequestRefresh(projectName, trigger)` primes a repository immediately.** A
   mutation path that already knows it just changed a repository's ref state
   does not have to wait for the debounced watcher or the periodic sweep;
@@ -1562,7 +1572,10 @@ their authoritative checks; display state never grants permission to mutate.
   logs the slowest subcommand. `GitProcessTelemetry` (the same accounting used
   for every other `git-info` request) retains a rolling per-label window so
   `GET /api/admin/git-telemetry` can report p50/p95 and spawns/minute per
-  endpoint alongside each repository's index age, with a warning when
+  endpoint. Call counts and spawn totals come from per-minute buckets and
+  count every call in the window; p50/p95 come from a bounded reservoir of the
+  newest 2,000 calls, and `percentileSampleCount` says how many calls they
+  were taken from (AGT-3083). These appear alongside each repository's index age, with a warning when
   `tasks/grouped` p95 exceeds 1 s or total spawns exceed 20/min. Repository
   entries also expose consecutive index failures, the last error, and when
   the failure streak began, and a warning names each failing repository. The

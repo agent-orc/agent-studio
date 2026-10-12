@@ -323,16 +323,57 @@ public sealed class OperatorSweepServiceTests : IDisposable
         Assert.Equal(OperatorSweepReasons.EnvironmentFailure, Assert.Single(held.Decisions).Reason);
     }
 
-    private Stack Build()
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public async Task Tick_OverManyHumanReviewCards_CapturesTheRepositoryConfigAtMostOnce()
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        // AGT-3083: gate triage reads the integration projection of every
+        // Human Review card, one lookup each. With the shared origin store a
+        // whole tick costs at most one Git configuration capture.
+        var repo = Path.Combine(_root, "repo");
+        Directory.CreateDirectory(repo);
+        RunGit(repo, "init", "-q", "-b", "develop");
+        RunGit(repo, "config", "user.email", "test@example.com");
+        RunGit(repo, "config", "user.name", "Operator Sweep Test");
+        RunGit(repo, "remote", "add", "origin", "https://example.invalid/sweep.git");
+        File.WriteAllText(Path.Combine(repo, "base.txt"), "base\n");
+        RunGit(repo, "add", "-A");
+        RunGit(repo, "commit", "-q", "-m", "seed");
+        var sha = RunGit(repo, "rev-parse", "HEAD");
+        var captures = 0;
+        var store = new GitOriginStore(root =>
+        {
+            Interlocked.Increment(ref captures);
+            return GitConfigSignature.Capture(root);
+        });
+        var stack = Build(repo, store);
+        for (var i = 0; i < 8; i++) SeedCard(stack, $"AGT-95{i:00}", sha, attributedCommit: sha);
+
+        var first = await stack.Service.RunOnceAsync();
+        var second = await stack.Service.RunOnceAsync();
+
+        Assert.Equal(8, first.Cards);
+        Assert.Equal(0, first.Failed);
+        Assert.Equal(0, second.Failed);
+        Assert.True(Volatile.Read(ref captures) <= 1, $"expected at most one capture, got {captures}");
+    }
+
+    private Stack Build(string? repository = null, GitOriginStore? originStore = null)
+    {
+        var values = new Dictionary<string, string?>
         {
             ["WatchPaths:0:Name"] = Project,
             ["WatchPaths:0:Path"] = _watchPath,
             ["WatchPaths:1:Name"] = OtherProject,
             ["WatchPaths:1:Path"] = _otherWatchPath,
             ["TaskRepository"] = _root,
-        }).Build();
+        };
+        if (repository is not null)
+        {
+            values["WatchPaths:0:RootPath"] = repository;
+            values["WatchPaths:0:RepositoryPath"] = repository;
+        }
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         var scanner = new TaskScannerService(
             configuration,
             NullLogger<TaskScannerService>.Instance,
@@ -342,15 +383,28 @@ public sealed class OperatorSweepServiceTests : IDisposable
         var authority = new AttemptAuthorityService(configuration, NullLogger<AttemptAuthorityService>.Instance);
         var actions = new FakeActions();
         var gateFacts = new FakeGateFacts();
+        IOperatorSweepGateFacts readGateFacts = gateFacts;
+        if (repository is not null)
+        {
+            settings.SetIntegrationBranch(Project, "develop");
+            var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+            readGateFacts = new OperatorSweepGateFacts(
+                new TaskIntegrationStatusService(
+                    new GitService(NullLogger<GitService>.Instance, scanner, configuration),
+                    settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
+                    originStore: originStore),
+                pipeline);
+        }
         var service = new OperatorSweepService(
-            scanner, authority, settings, timeline, gateFacts, actions, configuration,
+            scanner, authority, settings, timeline, readGateFacts, actions, configuration,
             NullLogger<OperatorSweepService>.Instance,
             _clock);
         return new Stack(scanner, timeline, authority, actions, gateFacts, service);
     }
 
     private string SeedCard(
-        Stack stack, string id, string deliverySha, string state = TaskStates.HumanReview, string project = Project)
+        Stack stack, string id, string deliverySha, string state = TaskStates.HumanReview, string project = Project,
+        string? attributedCommit = null)
     {
         var watchPath = project == OtherProject ? _otherWatchPath : _watchPath;
         var folder = Path.Combine(watchPath, state, id);
@@ -370,8 +424,26 @@ public sealed class OperatorSweepServiceTests : IDisposable
                     mode = TaskModes.Coding,
                     projectName = project,
                     ownerClientId = DefaultClientIdentity.Id,
+                    commits = attributedCommit is null ? null : new[]
+                    {
+                        new
+                        {
+                            sha = attributedCommit,
+                            shortSha = attributedCommit[..8],
+                            message = "delivery",
+                            filesChanged = 1,
+                            files = Array.Empty<object>(),
+                            at = _clock.GetUtcNow(),
+                            attribution = "automatic",
+                            confidence = 1,
+                        },
+                    },
                 },
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                {
+                    WriteIndented = true,
+                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                }));
         File.WriteAllText(Path.Combine(folder, "prompt.md"), $"Implement {id}.\n");
         ReviewSubjectStore.Write(folder, new ReviewSubjectRecord
         {
@@ -439,6 +511,24 @@ public sealed class OperatorSweepServiceTests : IDisposable
             .ToList();
 
     private static string Sha(char c) => new(c, 40);
+
+    private static string RunGit(string workingDirectory, params string[] args)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)} failed: {error}");
+        return output.Trim();
+    }
 
     private sealed record Stack(
         TaskScannerService Scanner,

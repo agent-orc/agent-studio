@@ -733,7 +733,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                 skipReason = reason;
         }
 
-        foreach (var pending in EnumeratePending(workspace, entry, NoteSkip))
+        // AGT-3083: classify only the requested card. Walking the whole lane
+        // cost one integration lookup per canonical card on every re-drive.
+        foreach (var pending in EnumeratePending(workspace, entry, NoteSkip, onlyJobId: jobId))
         {
             if (ct.IsCancellationRequested)
                 return PostProcessingCardResult.Deferred("cancelled");
@@ -7747,12 +7749,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     /// <param name="onSkipped">
     /// Optional probe invoked as <c>(jobId, reason)</c> whenever a card in the
     /// lane is passed over. The workspace sweep ignores it; the per-card path
-    /// uses it so a card that produced no decision can name why.
+    /// uses it so a card that produced no decision can name why. The
+    /// canonical-review wait is classified only when this probe is present:
+    /// without a listener the reason would reach nothing but a Debug line.
+    /// </param>
+    /// <param name="onlyJobId">
+    /// When set, every other card in the lane is passed over before any
+    /// classification, so the per-card path reads only its own card.
     /// </param>
     private IEnumerable<PendingDecision> EnumeratePending(
         string workspace,
         WatchPathEntry entry,
-        Action<string, string>? onSkipped = null)
+        Action<string, string>? onSkipped = null,
+        string? onlyJobId = null)
     {
         // ADR-0024: list 4-auto-review through the typed layer
         // instead of walking the lane directory by hand. The cache
@@ -7760,6 +7769,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // faster than the original folder-walk + ScanAllJobs FirstOrDefault.
         foreach (var info in _taskAccess.ListByLaneInWorkspace(entry.Path, TaskStates.AutoReview))
         {
+            if (onlyJobId is not null && !string.Equals(info.Id, onlyJobId, StringComparison.Ordinal))
+                continue;
             if (info.Fixture)
             {
                 onSkipped?.Invoke(info.Id, "fixture-card");
@@ -7786,12 +7797,19 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     .FirstOrDefault(value => !_attemptAuthority.GetTaskProjection(value!).LegacyTask);
             if (authorityKey is not null)
             {
+                if (onSkipped is null)
+                {
+                    _logger.LogDebug(
+                        "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}.",
+                        authorityKey);
+                    continue;
+                }
                 var canonicalWait = ClassifyCanonicalReviewWait(info, authorityKey);
                 _logger.LogDebug(
                     "ReviewDecisionOrchestrator skipped canonical remote review {TaskKey}; {Reason}.",
                     authorityKey,
                     canonicalWait);
-                onSkipped?.Invoke(info.Id, canonicalWait);
+                onSkipped(info.Id, canonicalWait);
                 continue;
             }
 
