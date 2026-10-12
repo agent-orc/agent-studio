@@ -230,6 +230,10 @@ public sealed class AttemptAuthorityService
         if (Blank(taskKey) || Blank(repositoryId) || Blank(executorId) || Blank(hostId) || Blank(idempotencyKey))
             return InvalidRun("TaskKey, RepositoryId, ExecutorId, HostId, and IdempotencyKey are required.");
 
+        // A new lease supersedes the reviewed delivery, so it is ordered against
+        // a review-driven publication the same way successor review creation is
+        // (AGT-3091): strictly before (the push is refused) or after.
+        lock (ContinuationGate(taskKey))
         lock (_gate)
         {
             var deliveryKey = DeliveryKey("acquire", idempotencyKey);
@@ -1267,6 +1271,21 @@ public sealed class AttemptAuthorityService
     /// replaces only a non-terminal review, which never has a continuation.
     /// </summary>
     public bool TryApplyForCurrentReview(string attemptId, Action apply)
+        => TryApplyForCurrentReview(attemptId, apply, requireReviewedDelivery: false);
+
+    /// <summary>
+    /// The publication fence of a review-driven integration (AGT-3091). Like
+    /// <see cref="TryApplyForCurrentReview(string, Action)"/>, and the reviewed
+    /// delivery must also still be the task's current settled RunAttempt
+    /// (<see cref="IsReviewedDeliveryCurrent"/>). A concern or finding reissue
+    /// creates no new review generation, only a new RunAttempt;
+    /// <see cref="AcquireRun"/> takes the same per-task gate, so a new lease is
+    /// ordered strictly before (the push is refused) or after the push enqueue.
+    /// </summary>
+    public bool TryApplyForCurrentReviewedDelivery(string attemptId, Action apply)
+        => TryApplyForCurrentReview(attemptId, apply, requireReviewedDelivery: true);
+
+    private bool TryApplyForCurrentReview(string attemptId, Action apply, bool requireReviewedDelivery)
     {
         string taskKey;
         lock (_gate)
@@ -1280,11 +1299,31 @@ public sealed class AttemptAuthorityService
             {
                 var review = FindReview(attemptId);
                 if (review is null || !IsCurrentReview(review) || !Terminal(review.State)) return false;
+                if (requireReviewedDelivery && !IsReviewedDeliveryCurrentLocked(review)) return false;
             }
             apply();
             return true;
         }
     }
+
+    /// <summary>
+    /// True while the delivery a ReviewAttempt reviewed is still the task's
+    /// current settled RunAttempt: the review's source RunAttempt is current,
+    /// <see cref="AttemptLifecycleState.Completed"/>, and its Result-SHA is the
+    /// reviewed one. A reissued card leases a new RunAttempt without creating a
+    /// new review generation, so only this tells the reviewed delivery from
+    /// the work that replaced it (AGT-3091).
+    /// </summary>
+    public bool IsReviewedDeliveryCurrent(string reviewAttemptId)
+    {
+        lock (_gate)
+            return FindReview(reviewAttemptId) is { } review && IsReviewedDeliveryCurrentLocked(review);
+    }
+
+    private bool IsReviewedDeliveryCurrentLocked(ReviewAttemptRecord review)
+        => CurrentRun(review.TaskKey) is { State: AttemptLifecycleState.Completed } run
+           && Same(run.AttemptId, review.SourceRunAttemptId)
+           && Same(run.ResultSha, review.Subject.ExpectedResultSha);
 
     private object ContinuationGate(string taskKey)
         => _continuationGates.GetOrAdd(Normalize(taskKey), _ => new object());
