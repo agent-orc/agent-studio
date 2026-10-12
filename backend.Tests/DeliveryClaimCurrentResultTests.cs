@@ -280,6 +280,7 @@ public sealed class DeliveryClaimCurrentResultTests : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             },
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
