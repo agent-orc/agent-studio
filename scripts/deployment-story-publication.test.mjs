@@ -187,8 +187,10 @@ test('the North star lists it once in §5, after AGT-W49 and before AGT-W51', ()
   const at = cards.indexOf('../deployment-story/index.html');
   assert.ok(at > 0, 'deployment story card missing from §5');
   assert.equal(cards[at - 1], '../operations-server-backchannel/index.html');
-  assert.equal(cards[at + 1], '../docker-ausfuehrungswelt-migration/index.html');
-  assert.equal(html.split('deployment-story/index.html').length - 1, 1, 'link-only: one North star mention');
+  assert.ok(cards.indexOf('../docker-ausfuehrungswelt-migration/index.html') > at,
+    'deployment story must precede AGT-W51');
+  assert.equal(cards.filter((card) => card === '../deployment-story/index.html').length, 1,
+    'one link-only entry in the current map');
   const history = between(html, '<h2 id="s6"', '<section id="s7"');
   assert.equal(history.includes('deployment-story'), false, 'a current journey must not sit in §6 history');
 });
@@ -210,9 +212,9 @@ test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4
   // The reconciliation defers to W49's own decision record instead of
   // restating a status that later implementation slices may change.
   assert.match(deployment, /does not change the recorded status of D1 to D4/);
-  assert.match(html, /<b>Status<\/b>\s*Decision pending/);
+  assert.match(html, /<b>Status<\/b>\s*Decided 25 September 2026/);
   for (const id of ['d1-architecture', 'd2-standard-deployment', 'd3-agt-2736', 'd4-orchestrator-sessions']) {
-    assert.match(html, new RegExp(`data-decision-id="${id}"`));
+    assert.match(html, new RegExp(`data-decision-id="${id}"[^>]*data-decision-status="decided"`));
   }
   // The develop-side D12 execution-role amendment survives the merge.
   assert.match(html, /D12 execution-role amendment \(2026-09-26\)/);
