@@ -76,13 +76,23 @@ public sealed class IntegrationWorktreeProvider
         if (cancellationToken.IsCancellationRequested)
             return IntegrationWorktreeResolution.Failed("Integration worktree preparation was cancelled.");
 
-        // The integration lane (AGT-2996) when one exists, else the branch.
+        // Prefer the Studio lane, then the published origin ref. A developer
+        // checkout may lag and must not seed the integration worktree.
         var line = string.IsNullOrWhiteSpace(integrationBranch)
             ? null
-            : _git.IntegrationLineRef(repoRoot!, integrationBranch!);
-        var baseRef = line is not null && _git.GetBranchTip(repoRoot!, line) is not null
-            ? line
-            : "HEAD";
+            : _git.IntegrationBaseRef(repoRoot!, integrationBranch!);
+        if (line is not null
+            && line.StartsWith("refs/remotes/origin/", StringComparison.Ordinal)
+            && _git.GetBranchTip(repoRoot, line) is null)
+        {
+            // A fresh checkout may not have fetched this branch yet. Fetching
+            // updates only origin's tracking ref, never the developer branch.
+            _git.RefreshIntegrationBranch(repoRoot, integrationBranch!, cancellationToken);
+        }
+        if (line is not null && _git.GetBranchTip(repoRoot, line) is null)
+            return IntegrationWorktreeResolution.Failed(
+                $"Integration worktree base '{line}' is unavailable after fetch; preparation cannot use the developer checkout's HEAD.");
+        var baseRef = line ?? "HEAD";
         var registered = _git.ListWorktrees(repoRoot)
             .Select(entry => Normalize(entry.Path))
             .Where(path => path is not null)

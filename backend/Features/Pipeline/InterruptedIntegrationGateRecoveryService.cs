@@ -127,7 +127,7 @@ public sealed class InterruptedIntegrationGateRecoveryService
 
         // The in-flight merge lives on the integration lane (AGT-2996); the
         // local branch never carried it.
-        var branchTip = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, integrationBranch));
+        var branchTip = _git.GetBranchTip(repoRoot, _git.IntegrationBaseRef(repoRoot, integrationBranch));
         var publishedTip = _git.GetBranchTip(repoRoot, "origin/" + integrationBranch);
         var entries = journals
             .Select(item => Facts(repoRoot, integrationBranch, branchTip, publishedTip, item))
