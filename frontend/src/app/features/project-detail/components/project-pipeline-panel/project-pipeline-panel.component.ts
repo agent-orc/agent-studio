@@ -28,13 +28,14 @@ import {
 } from './pipeline-config.util';
 import { PipelineStepFocusDirective } from './pipeline-step-focus.directive';
 import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-health-block';
+import { GateEconomicsBlockComponent } from '../gate-economics-block/gate-economics-block';
 import { PipelineStepExecutionComponent } from './pipeline-step-execution/pipeline-step-execution.component';
 import { PipelineTypePickerComponent } from './pipeline-type-picker/pipeline-type-picker.component';
 import { PipelineStepRowStateComponent } from './pipeline-step-row-state/pipeline-step-row-state.component';
 /** Per-type project pipeline editor for ordering, activation, agents, prompts, gates, and usage. */
 @Component({
   selector: 'app-project-pipeline-panel', standalone: true,
-  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, PipelineStepExecutionComponent,
+  imports: [FormsModule, CliModelSelectorComponent, TooltipDirective, PipelineHealthBlockComponent, GateEconomicsBlockComponent, PipelineStepExecutionComponent,
     PipelineTypePickerComponent, PipelineStepRowStateComponent, ModelMigrationBadgeComponent],
   hostDirectives: [{ directive: PipelineStepFocusDirective, inputs: ['focusStepId'] }],
   changeDetection: ChangeDetectionStrategy.OnPush,

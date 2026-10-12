@@ -10,6 +10,7 @@
     </p>
   </header>
   <app-pipeline-health-block [projectName]="projectName()" />
+  <app-gate-economics-block />
   @if (loadError(); as err) {
     <p class="pp__error" data-testid="pipeline-load-error">{{ err }}</p>
   }

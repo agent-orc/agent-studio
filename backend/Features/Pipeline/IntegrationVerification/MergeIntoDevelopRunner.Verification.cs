@@ -74,13 +74,20 @@ public sealed partial class MergeIntoDevelopRunner
             // The card says integrated-unverified while the gate runs, so a
             // crash mid-gate never leaves a completed-looking card behind.
             RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate: null);
+            if (!releaseGate)
+                IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-requested", level: "full");
             gate = await RunVerificationGateAsync(
                 project, jobId, jobFolderPath, repoRoot, branch, sha!, releaseGate).ConfigureAwait(false);
             IntegrationGateReceipts.Record(
                 jobFolderPath,
                 releaseGate ? PreMainTestGateStep : IntegrationGateJournal.PreDevelopBuildGateStep,
                 gate,
-                _timeline);
+                _timeline,
+                mergeLockWaitMs: releaseGate ? null : _mergeLockWaitMs.Value);
+            if (!releaseGate)
+                IntegrationLaneEvents.Append(jobFolderPath, project, jobId, "gate-finished",
+                    level: "full", durationMs: gate.DurationMs, queueWaitMs: gate.GateQueueWaitMs,
+                    outcome: gate.Verdict.ToString(), collisionDetected: gate.GateCollisionDetected);
             decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = gate });
         }
 
@@ -205,12 +212,18 @@ public sealed partial class MergeIntoDevelopRunner
             {
                 Project = project,
                 JobId = jobId,
+                WatchPath = repoRoot,
                 Lane = TaskStates.Completed,
                 TestExecution = TestExecutionFor(project),
                 JobFolderPath = jobFolderPath,
                 SubjectRef = branch,
                 TimeoutBudgetSource = preDevelopTimeoutSource,
                 InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
+                OnMachineGateWaiting = () => IntegrationLaneEvents.Append(
+                    jobFolderPath, project, jobId, "gate-token-waiting",
+                    holdingProject: _pipelineHealth?.HoldingProject()),
+                OnMachineGateAcquired = () => IntegrationLaneEvents.Append(
+                    jobFolderPath, project, jobId, "gate-token-acquired"),
             },
             changedPaths,
             profile,

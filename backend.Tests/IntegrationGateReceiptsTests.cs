@@ -37,6 +37,118 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
         Assert.Null(recovered.ToolchainIdentity);
     }
 
+    [Fact]
+    public void ReadExact_recovers_receipt_with_economics_headers()
+    {
+        const string sha = "0123456789abcdef0123456789abcdef01234567";
+        var postSteps = Path.Combine(_root, "post-steps");
+        Directory.CreateDirectory(postSteps);
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
+            "verdict=Ok exit=0 durationMs=60000 failureKind=None\n" +
+            $"expectedSha={sha} testedSha={sha}\n" +
+            "reason=Passed.\n" +
+            "verdictSource=Executed\n" +
+            "gateRung=full\n" +
+            "gateQueueWaitMs=500 mergeLockWaitMs=250\n");
+
+        var recovered = IntegrationGateReceipts.ReadExact(_root, "pre-develop-build-gate", sha);
+
+        Assert.NotNull(recovered);
+        Assert.Equal(BuildTestGateVerdict.Ok, recovered.Verdict);
+        Assert.Equal(60000, recovered.DurationMs);
+    }
+
+    [Fact]
+    public void Record_writes_wait_and_rung_after_durable_header()
+    {
+        const string sha = "0123456789abcdef0123456789abcdef01234567";
+        var result = new BuildTestGateResult(BuildTestGateVerdict.Ok, 0, 60000,
+            "", "Passed.", false, false)
+        {
+            ExpectedSha = sha,
+            TestedSha = sha,
+            GateQueueWaitMs = 800,
+        };
+
+        IntegrationGateReceipts.Record(_root, "pre-develop-build-gate", result,
+            mergeLockWaitMs: 400);
+
+        var lines = File.ReadAllLines(Path.Combine(_root, "post-steps", "pre-develop-build-gate-1.log"));
+        Assert.StartsWith("verdict=", lines[0]);
+        Assert.StartsWith("expectedSha=", lines[1]);
+        Assert.StartsWith("reason=", lines[2]);
+        Assert.Contains("gateRung=full", lines);
+        Assert.Contains(lines, line => line.StartsWith("gateQueueWaitMs=800 mergeLockWaitMs=400 gateCollisionDetected=false"));
+        Assert.NotNull(IntegrationGateReceipts.ReadExact(_root, "pre-develop-build-gate", sha));
+    }
+
+    [Fact]
+    public void Economics_counts_legacy_fields_as_unknown_and_uses_known_denominators()
+    {
+        var postSteps = Path.Combine(_root, "post-steps");
+        Directory.CreateDirectory(postSteps);
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-1.log"),
+            "verdict=Ok exit=0 durationMs=60000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=legacy\n" +
+            "--- test-selection.json ---\n{\"Level\":\"work-package\"}\n--- resource-evidence.json ---\n");
+        File.WriteAllText(Path.Combine(postSteps, "pre-develop-build-gate-2.log"),
+            "verdict=Ok exit=0 durationMs=180000 failureKind=None\nexpectedSha=n/a testedSha=n/a\nreason=new\n" +
+            "gateRung=exact\ntestLevel=full\ngateQueueWaitMs=1000 mergeLockWaitMs=200\n--- last-300-lines ---\n");
+
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow, null);
+
+        Assert.Equal(2, row.GatedMerges);
+        Assert.Equal(2, row.GateMinutesMedian);
+        Assert.Equal(1, row.ExactReuseRate);
+        Assert.Equal(0, row.DisjointReuseRate);
+        Assert.Equal(.5, row.FullSuiteShare);
+        Assert.Equal(1200, row.QueueWaitP90Ms);
+        Assert.Null(row.SameShaRetestRate);
+        var withRetests = GateEconomicsEndpoints.ProjectRow("fixture", [_root],
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow,
+            new GateRetestReport(4, 1, .25, 0, GateResultCache.RetestWindowSize));
+        Assert.Equal(.25, withRetests.SameShaRetestRate);
+    }
+
+    [Fact]
+    public void Economics_amortizes_one_batch_gate_across_its_visible_members()
+    {
+        var start = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var batch = new BatchGateExecutionFact("fixture", "batch-1", "run-1",
+            new string('a', 40), "Ok", "host", start, start.AddMinutes(4),
+            1200, 0, "evidence.jsonl", 240000);
+
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [],
+            start.AddDays(-1), DateTimeOffset.UtcNow, null,
+            [new BatchGateMetric("fixture", 2, batch)]);
+
+        Assert.Equal(2, row.GatedMerges);
+        Assert.Equal(2, row.GateMinutesMedian);
+        Assert.Equal(1, row.FullSuiteShare);
+        Assert.Equal(1200, row.QueueWaitP90Ms);
+    }
+
+    [Fact]
+    public void Economics_aggregate_count_equals_sum_of_project_counts()
+    {
+        var first = Path.Combine(_root, "first");
+        var second = Path.Combine(_root, "second");
+        Directory.CreateDirectory(Path.Combine(first, "post-steps"));
+        Directory.CreateDirectory(Path.Combine(second, "post-steps"));
+        File.WriteAllText(Path.Combine(first, "post-steps", "pre-develop-build-gate-1.log"),
+            "verdict=Ok durationMs=60000\nexpectedSha=n/a testedSha=n/a\nreason=old\n");
+        File.WriteAllText(Path.Combine(second, "post-steps", "pre-develop-build-gate-1.log"),
+            "verdict=Fail durationMs=120000\nexpectedSha=n/a testedSha=n/a\nreason=red\n");
+        var now = DateTimeOffset.UtcNow;
+        var a = GateEconomicsEndpoints.ProjectRow("A", [first], now.AddDays(-7), now, null);
+        var b = GateEconomicsEndpoints.ProjectRow("B", [second], now.AddDays(-7), now, null);
+        var all = GateEconomicsEndpoints.ProjectRow("All projects", [first, second], now.AddDays(-7), now, null);
+
+        Assert.Equal(a.GatedMerges + b.GatedMerges, all.GatedMerges);
+        Assert.Equal(1.5, all.GateMinutesMedian);
+        Assert.Null(all.QueueWaitP90Ms);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
