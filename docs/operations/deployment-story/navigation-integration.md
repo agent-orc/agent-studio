@@ -1,6 +1,6 @@
 # Navigation integration for AGT-2906
 
-Status: I10 publication is present in this delivery branch. Managed-repository integration and the AGT-2906 reference update follow delivery. The concept-only run was restricted to one Dossier directory.
+Status: I10 publication is present. Both AGT-2906 task files name the canonical path, as verified through the stable application API on 11 October 2026. The concept-only run was restricted to one Dossier directory.
 
 ## North star map
 
@@ -23,12 +23,11 @@ AGT-W49's deployment section links this journey and AGT-W65 (the AGT-2905 bus Do
 
 ## Card references
 
-The AGT-2906 task references must name `docs/operations/deployment-story/index.html` in both `results/deliverables.md` and `status.md` through the application concept-Dossier API. The API validates the path against the managed project repository. Its update must follow integration of this Dossier move; the pre-integration request returned HTTP 400 because that repository still lacks the new path. There is one canonical Dossier.
+The AGT-2906 task references name `docs/operations/deployment-story/index.html` in both `results/deliverables.md` and `status.md`. Both file reads returned HTTP 200 through the stable application API on 11 October 2026. The API validates a new write against its configured project repository. A repeat POST on that date returned HTTP 400 because that repository copy lacked the path; it did not change either task file. There is one canonical Dossier.
 
 
-Operator follow-up (26 September 2026 instruction): after the managed repository
-contains the canonical file, send the following request to the existing stable
-Studio API with `X-Client-Id: local-default` and `Content-Type: application/json`:
+The concept-Dossier write request uses the stable Studio API with
+`X-Client-Id: local-default` and `Content-Type: application/json`:
 
 ```http
 POST /api/tasks/AGT-2906/concept-dossier?project=PROJ-002
@@ -37,9 +36,9 @@ POST /api/tasks/AGT-2906/concept-dossier?project=PROJ-002
 ```
 
 This concept-Dossier operation writes both AGT-2906 `status.md` and
-`results/deliverables.md`. Read both back using
+`results/deliverables.md` when the configured repository contains the path. Read both using
 `GET /api/tasks/AGT-2906/files/status.md?project=PROJ-002` and
 `GET /api/tasks/AGT-2906/files/results/deliverables.md?project=PROJ-002`.
-The request has returned HTTP 400 while the managed repository lacks the
-published path. Retry it after integration and verify both task files. This is
-not a completed API update. Do not create a second Dossier or assign a new key.
+Those reads already return the exact canonical path in both files. A repeat
+write remains unavailable until the server's repository copy contains the
+published path. Do not create a second Dossier or assign a new key.
