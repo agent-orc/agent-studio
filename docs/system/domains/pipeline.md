@@ -537,9 +537,16 @@ collector: on agent-runner-01 the collector made the same backend tests 1.7 to
 2.5 times slower (test-acceleration Dossier, lever B11). The `release`-category
 suites `backend-coverage`, `runner-coverage` and `task-server-coverage` carry
 the coverage commands (`--collect "Code Coverage;Format=Cobertura"` with
-suite-specific results directories) for a scheduled or release run; the
-frontend release command writes `coverage/frontend/lcov.info` through Vitest. Register the Quality Studio
-coverage sensor with
+suite-specific results directories); `frontend-coverage` runs
+`npm --prefix frontend run test:release`, which writes
+`coverage/frontend/lcov.info` through Vitest. The scheduled
+`agent-host coverage-run` (AGT-3074) runs these suites on a runner host at
+night, one at a time under `nice`, against the integration branch tip in a
+dedicated checkout, skips while the host has claimed work or load, and then
+asks Quality Studio to ingest the reports, which tags them with the measured
+commit. Setup and logs:
+[Scheduled coverage run](../../operations/setup/linux-runner-host.md#scheduled-coverage-run).
+Register the Quality Studio coverage sensor with
 `reportPaths = coverage/dotnet/**/*.cobertura.xml;coverage/frontend/lcov.info`.
 The sensor ingests these reports after test execution; it does not run a second
 test suite. `scripts/register-quality-studio-coverage.mjs` updates an existing

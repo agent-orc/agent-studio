@@ -45,6 +45,16 @@ preview links are bounded result artifacts. The Connector remains the browser
 edge, and the native host manager owns installation and service lifecycle. The
 Task Server remains the sole claim, lease, and report authority.
 
+### Scheduled coverage run
+
+`agent-host coverage-run` (`runner/CoverageRunCommand.cs`, AGT-3074) is an
+offline subcommand started by `agent-coverage-run.timer`. It never claims work
+from the Task Server. `CoverageRunPlanner` turns `.agent-studio/project.yml`
+into prepare, build and the `release`-category suites; `CoverageRunAdmission`
+skips the run while the host holds coding, review or gate claims or load, and
+measures each integration-branch commit once. `--dry-run` prints the commands.
+Setup: [Scheduled coverage run](../../operations/setup/linux-runner-host.md#scheduled-coverage-run).
+
 ### Claimable gate host and Task API
 
 `RUNNER_ROLE=gate` starts `RemoteGateDaemon` as a polling Agent Host service.

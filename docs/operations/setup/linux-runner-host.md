@@ -1345,6 +1345,83 @@ there the Review executor refuses compose scenarios. At the alert, check that
 the timer ran and that `docker system df` shows no reclaimable scenario
 images, then look for other residue.
 
+### Scheduled coverage run
+
+Review and integration gates run the .NET suites without a coverage collector
+(test-acceleration Dossier, lever B11). Coverage for Quality Studio comes from
+`agent-host coverage-run`, started at night by `agent-coverage-run.timer`
+(AGT-3074). One run:
+
+1. **Yields to the host.** It skips, and logs `status=skipped-busy`, when any
+   coding (`*.slot.json`), review (`reviews/*.review-slot.json`) or gate
+   (`gate-claim.json`) claim exists under `COVERAGE_RUN_STATE_DIRS`, or when
+   the 1-minute load divided by the host's online CPUs is above
+   `COVERAGE_RUN_MAX_LOAD_PER_CORE` (default 0.5). A state directory the run
+   cannot read counts as busy. The timer fires at 01:15, 03:15 and 05:15, so
+   a skipped night still gets two more chances.
+2. **Measures each tip once.** It fetches `COVERAGE_RUN_BRANCH` (default
+   `develop`) and skips with `status=skipped-unchanged` when the history
+   already holds a completed run for that commit. `--force` measures again.
+3. **Runs outside the review queue at low priority.** In the dedicated
+   checkout `COVERAGE_RUN_CHECKOUT` it detaches HEAD at the fetched commit,
+   deletes `coverage/`, then runs the `prepare` and `build` commands and every
+   `release`-category suite from `.agent-studio/project.yml`, one at a time,
+   each as `nice -n 19 sh -c '<command>'`; the unit adds `Nice=19` and
+   `IOSchedulingClass=idle`. A suite gets twice its `expectedDurationSeconds`
+   (at least 10 minutes), prepare and build 45 minutes each. A red suite still
+   writes coverage, which is ingested; the unit then ends failed so the red
+   tip is visible. A red prepare or build ends the run as `setup-failed`. It
+   refuses a checkout with tracked changes.
+4. **Hands the reports to Quality Studio.** It calls
+   `POST <QUALITY_STUDIO_BASE_URL>/api/repos/<QUALITY_STUDIO_REPO_ID>/sensors/coverage/scan`.
+   The sensor reads `coverage/dotnet/**/*.cobertura.xml` and
+   `coverage/frontend/lcov.info` and records the checkout's HEAD as the
+   measured commit; HEAD is still the commit the suites ran against. The
+   Quality Studio token and client ID are removed from the environment of
+   every step, so test code never sees them.
+5. **Records the run.** The journal gets one summary line, and the same
+   record is appended to `COVERAGE_RUN_HISTORY` (JSON lines) and written to
+   `coverage/coverage-run.json` in the checkout:
+
+   ```text
+   coverage-run status=complete commit=<sha> branch=develop duration=5412s suites=4 failedSuites=0 reports=4 scan=ingested
+   ```
+
+One-time setup, as the runner user for the clone and from the trusted
+operator checkout for the units. The coverage checkout is a separate clone
+because the run moves its HEAD; register it in Quality Studio with this exact
+root path first, then add the coverage sensor:
+
+```bash
+git clone --branch develop https://github.com/agent-orc/agent-studio.git \
+  /var/lib/agent-runner/coverage/agent-studio
+cd /var/lib/agent-runner/coverage/agent-studio
+node scripts/register-quality-studio-coverage.mjs http://127.0.0.1:5127 agent-studio-coverage
+cd -
+sudo install -m 0640 -o root -g agent-runner deploy/systemd/agent-coverage-run.env.example \
+  /etc/agent-runner/coverage-run.env      # then edit the values
+sudo install -m 0644 deploy/systemd/agent-coverage-run.service \
+  deploy/systemd/agent-coverage-run.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-coverage-run.timer
+```
+
+The unit does not read `runner.env`, so the suites never see runner
+credentials. Check and run it by hand:
+
+```bash
+systemctl list-timers agent-coverage-run.timer
+journalctl -u agent-coverage-run.service -n 50 | grep 'coverage-run '
+tail -n 5 /var/lib/agent-runner/coverage-runs.jsonl
+sudo -u agent-runner /opt/agent-host/current/agent-host coverage-run --dry-run \
+  --checkout /var/lib/agent-runner/coverage/agent-studio     # commands only
+sudo systemctl start agent-coverage-run.service               # one run now
+```
+
+The Quality Studio project view of the `agent-studio-coverage` registration
+shows the measured commit and time from the coverage snapshot, and marks it
+stale once the checkout's HEAD moves past it.
+
 ### Salvage store retention
 
 The coding daemon owns the host salvage store and sweeps it on its own timer
