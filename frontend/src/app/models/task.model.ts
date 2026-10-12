@@ -599,6 +599,13 @@ export interface TaskInfo {
     status: 'pending' | 'accept' | 'starting-point' | 'discard';
     decidedAtUtc?: string | null;
   } | null;
+  /** AGT-3076: set when acceptance needs an override because the run attempt is gone from the authority store. */
+  acceptanceAttemptGap?: {
+    authorityEpoch: number;
+    subjectRunAttemptId: string;
+    resultSha: string;
+    reason: string;
+  } | null;
   key?: string | null;
   displayKey?: string | null;
   title: string;

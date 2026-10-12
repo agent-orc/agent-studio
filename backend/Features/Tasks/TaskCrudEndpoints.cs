@@ -421,6 +421,8 @@ public static class TaskCrudEndpoints
                     TestEvidence = gitFacts.TestEvidence,
                     ReviewProjection = gitFacts.ReviewProjection,
                 } };
+            if (AcceptanceAttemptLineagePolicy.ReadGap(withRuntime.Info, attemptAuthority) is { } attemptGap)
+                withRuntime = withRuntime with { Info = withRuntime.Info with { AcceptanceAttemptGap = attemptGap } };
             return Results.Ok(withRuntime);
         });
 
