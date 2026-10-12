@@ -648,6 +648,40 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Superseded_push_marker_uses_current_card_folder_and_does_not_hold_batch()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PUSH-SUPERSEDED", "docs/push-superseded.md");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureRun(folder, PipelineCatalogue.Standard, ProjectName, member.Key);
+        pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Passed,
+            ApprovedIntegrationSha = RemoteTip(),
+            StartedAt = _clock.UtcDateTime,
+            CompletedAt = _clock.UtcDateTime,
+        });
+        var reservations = factory.Services
+            .GetRequiredService<BatchIntegrationReservationService>();
+        reservations.MarkPushPending(ProjectName, member.Key, member.ResultSha,
+            Path.Combine(_workspace, "former-card-folder"), _repo, "develop", _watchPath);
+        _gate.Batch = request => Green(request.ExpectedSha);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Null(reservations.GetWait(ProjectName));
+        AssertPhase(factory.Services.GetRequiredService<BatchGateStore>(),
+            Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+                .ListManifests()).BatchId, BatchPhase.Published);
+    }
+
+    [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
         using var factory = BuildFactory();
