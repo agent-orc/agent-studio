@@ -124,6 +124,13 @@ public sealed class TestCliGuardTests
         using var workspace = new TempWorkspace("cli-guard-explicit");
         const string reply = "explicit stub reply";
         var stub = await StubCli.WriteAsync(workspace.Directory("bin"), "claude-explicit", reply);
+        // StubCli exits after printing. Keep this one alive until OneShot closes
+        // stdin, so the prompt write cannot race with process exit.
+        await File.AppendAllTextAsync(
+            stub,
+            OperatingSystem.IsWindows()
+                ? "if not \"%~1\"==\"--version\" more >nul\r\n"
+                : "if [ \"$1\" != \"--version\" ]; then cat >/dev/null; fi\n");
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaudeCli:Path"] = stub })
             .Build();
