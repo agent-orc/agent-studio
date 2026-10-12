@@ -9,7 +9,6 @@
       the workspace defaults it inherits.
     </p>
   </header>
-
   <section class="ps-settings__section" aria-label="Project basics">
     <app-project-basics-card [projectName]="projectName()" />
     @if (buildProfileGate(); as gate) {
@@ -21,9 +20,8 @@
       }
     }
   </section>
-
   <app-project-execution-definition [projectName]="projectName()" />
-
+  <app-batch-settings [project]="projectName()" />
   <section class="ps-settings__section ps-settings__section--preview"
            id="url-preview-quick-setup"
            aria-labelledby="ps-settings-url-preview"

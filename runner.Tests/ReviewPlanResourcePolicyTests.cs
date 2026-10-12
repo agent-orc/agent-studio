@@ -6,7 +6,7 @@ namespace AgentRunner.Tests;
 public sealed class ReviewPlanResourcePolicyTests
 {
     [Fact]
-    public void Shell_dotnet_tests_receive_cpu_and_collection_parallelism_limits()
+    public void Shell_dotnet_tests_receive_cpu_and_hang_limits()
     {
         var plan = new ReviewPlanDto(
             [new ReviewCommandDto(
@@ -20,8 +20,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "cd -- backend && dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\" --filter Category!=MachineBound",
+            "cd -- backend && dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none --filter Category!=MachineBound",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -38,12 +38,11 @@ public sealed class ReviewPlanResourcePolicyTests
 
         Assert.Equal(
             [
-                "test", "-maxcpucount:2", "-nodeReuse:false", "-p:ParallelizeTestCollections=false",
-                "--logger", "console;verbosity=normal", "runner.Tests",
+                "test", "-maxcpucount:2", "-nodeReuse:false", "--logger", "console;verbosity=normal", "--logger", "trx;LogFilePrefix=review-timing", "--blame-hang-timeout", "10m", "--blame-hang-dump-type", "none", "runner.Tests",
             ],
             limited.Commands[0].Arguments);
         // AGT-2820: the build is capped like the test step, but collection
-        // parallelism is a test-only knob and must not leak onto it.
+        // hang diagnostics are a test-only knob and must not leak onto it.
         Assert.Equal(
             ["build", "-maxcpucount:2", "-nodeReuse:false", "runner"],
             limited.Commands[1].Arguments);
@@ -124,9 +123,42 @@ public sealed class ReviewPlanResourcePolicyTests
 
         Assert.Equal(first, second);
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none",
             Assert.Single(first.Commands).Arguments[1]);
+    }
+
+    [Fact]
+    public void Existing_hang_timeout_is_replaced_idempotently()
+    {
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "sh",
+                ["-lc", "dotnet test --blame-hang-timeout=20m --filter Category!=MachineBound"])],
+            ["build-tests"]);
+
+        var first = ReviewPlanResourcePolicy.Apply(plan);
+        var second = ReviewPlanResourcePolicy.Apply(first);
+
+        Assert.Equal(first, second);
+        Assert.Equal(
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none --filter Category!=MachineBound",
+            Assert.Single(first.Commands).Arguments[1]);
+    }
+
+    [Fact]
+    public void Existing_full_hang_dump_setting_is_replaced_with_none()
+    {
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto("verify-2", "build-tests", "dotnet",
+                ["test", "--blame-hang-dump-type", "full", "runner.Tests"])],
+            ["build-tests"]);
+
+        var first = ReviewPlanResourcePolicy.Apply(plan);
+        Assert.Equal(first, ReviewPlanResourcePolicy.Apply(first));
+        Assert.Equal(1, first.Commands[0].Arguments.Count(argument => argument == "--blame-hang-dump-type"));
+        Assert.Contains("none", first.Commands[0].Arguments);
+        Assert.DoesNotContain("full", first.Commands[0].Arguments);
     }
 
     /// <summary>
@@ -151,8 +183,8 @@ public sealed class ReviewPlanResourcePolicyTests
 
         Assert.Equal(first, second);
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none",
             Assert.Single(first.Commands).Arguments[1]);
     }
 
@@ -171,8 +203,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\" --filter \"Name~two  spaces\"",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none --filter \"Name~two  spaces\"",
             Assert.Single(limited.Commands).Arguments[1]);
     }
 
@@ -193,8 +225,8 @@ public sealed class ReviewPlanResourcePolicyTests
         var limited = ReviewPlanResourcePolicy.Apply(plan, dotNetMaxCpuCount: 2);
 
         Assert.Equal(
-            "dotnet test -maxcpucount:2 -nodeReuse:false -p:ParallelizeTestCollections=false " +
-            "--logger \"console;verbosity=normal\" --filter Category!=MachineBound && npm ci",
+            "dotnet test -maxcpucount:2 -nodeReuse:false " +
+            "--logger \"console;verbosity=normal\" --logger \"trx;LogFilePrefix=review-timing\" --blame-hang-timeout 10m --blame-hang-dump-type none --filter Category!=MachineBound && npm ci",
             Assert.Single(limited.Preparation!).Arguments[1]);
     }
 }

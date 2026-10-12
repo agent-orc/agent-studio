@@ -22,6 +22,29 @@ public sealed class TaskCoreEndpointTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "task-core-http-" + Guid.NewGuid().ToString("N"));
     private string Jobs => Path.Combine(_root, "jobs");
 
+    [Theory]
+    [InlineData(200, "AGT-2993")]
+    [InlineData(252, "AGT-2929")]
+    public async Task LongIdentity_ResolvesByFullIdKeyAndLegacyPrefix(int length, string key)
+    {
+        var id = "long-task-" + new string('a', length - "long-task-".Length);
+        Seed(id, TaskStates.Ready, key: key);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        foreach (var reference in new[] { id, key, id[..128] })
+        {
+            using var response = await client.GetAsync($"/api/tasks/{reference}/core?project={project.Id}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(id, body.RootElement.GetProperty("id").GetString());
+            Assert.Equal(key, body.RootElement.GetProperty("key").GetString());
+        }
+    }
+
     [Fact]
     public async Task WarmCore_IsBoundedValidatedAndIndependentOfDirtyBoard()
     {
@@ -416,13 +439,13 @@ public sealed class TaskCoreEndpointTests : IDisposable
             }));
         });
 
-    private void Seed(string id, string state, string? gatedTarget = null)
+    private void Seed(string id, string state, string? gatedTarget = null, string? key = null)
     {
         var folder = Path.Combine(Jobs, state, id);
         Directory.CreateDirectory(Path.Combine(folder, "logs"));
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id, key = id, title = "Task core contract", state, order = 10,
+            id, key = key ?? id, title = "Task core contract", state, order = 10,
             enteredLaneAt = DateTime.UtcNow,
             mode = "coding", modelExplicit = true, thinkingLevelExplicit = true,
             references = new

@@ -34,6 +34,7 @@ import { deriveStalledTaskState } from '../../../../services/run-activity.util';
 import { PostProcessingSummaryComponent } from '../post-processing-summary/post-processing-summary.component';
 import { BoardDragStateService } from '../../state/board-drag-state.service';
 import { isUnpullableDependencyHold } from './pullable-task.util';
+import { BatchLaneIndicatorComponent } from '../../../batch-gate/batch-lane-indicator/batch-lane-indicator';
 /** ASS-1727: Archive pagination and typed-filter debounce. */
 const ARCHIVE_PAGE_SIZE = 50;
 const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
@@ -47,6 +48,7 @@ const ARCHIVE_SEARCH_DEBOUNCE_MS = 300;
     TooltipDirective,
     InfoButtonComponent,
     PostProcessingSummaryComponent,
+    BatchLaneIndicatorComponent,
   ],
   // Signal inputs let OnPush skip unchanged lanes during board polling.
   changeDetection: ChangeDetectionStrategy.OnPush,

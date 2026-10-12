@@ -1,31 +1,22 @@
 <div class="task-card"
      [class]="'task-card--' + job().state"
      [class.task-card--running]="isRunning()" [class.task-card--stalled]="stalledState()"
-     [class.task-card--attention]="needsAttention()"
-     [class.task-card--compact]="compact()"
-     [class.task-card--epic-expanded]="isEpic() && epicExpanded()"
-     [class.task-card--just-created]="isJustCreated()"
-     [style.--project-color]="identity().color"
-     [style.--project-border]="identity().border"
-     [style.--project-soft]="identity().soft"
-     [style.--project-on]="identity().onColor"
+     [class.task-card--attention]="needsAttention()" [class.task-card--compact]="compact()"
+     [class.task-card--epic-expanded]="isEpic() && epicExpanded()" [class.task-card--just-created]="isJustCreated()"
+     [style.--project-color]="identity().color" [style.--project-border]="identity().border"
+     [style.--project-soft]="identity().soft" [style.--project-on]="identity().onColor"
      [attr.data-task-type]="taskTypeChip().kind"
-     data-token-popover-anchor-card
-     data-testid="task-card"
-     [attr.data-project]="job().projectName"
-     [attr.data-running]="isRunning() ? 'true' : null"
-     [attr.data-stalled]="stalledState()?.reason ?? null"
-     [attr.data-compact]="compact() ? 'true' : null"
-     tabindex="0"
-     (contextmenu)="openCardContextMenu($event)"
+     data-token-popover-anchor-card data-testid="task-card"
+     [attr.data-project]="job().projectName" [attr.data-running]="isRunning() ? 'true' : null"
+     [attr.data-stalled]="stalledState()?.reason ?? null" [attr.data-compact]="compact() ? 'true' : null"
+     tabindex="0" (contextmenu)="openCardContextMenu($event)"
      (keydown)="onCardKeyDown($event)">
   <div class="task-card__header">
     <app-copyable-task-key variant="card" [key]="job().key" [label]="issueLabel()" testId="task-card-key" />
     <span class="task-card__header-signals">
       @if (codeReviewGradeBadge(); as grade) {
         <span class="task-card__grade-pill"
-              [class]="'task-card__grade-pill--' + grade.tone"
-              [cacTooltip]="grade.tooltip"
+              [class]="'task-card__grade-pill--' + grade.tone" [cacTooltip]="grade.tooltip"
               data-testid="task-card-grade"
               [attr.data-grade]="grade.grade">
           <span class="task-card__grade-letter" aria-hidden="true">{{ grade.grade }}</span>
@@ -102,8 +93,9 @@
         <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}</div>
       }
     </section>
-  }
-  <div class="task-card__badges">
+  }<div class="task-card__badges">
+    <app-batch-member [project]="job().projectName" [taskKey]="job().taskKey" [referenceKey]="job().key" [displayKey]="job().displayKey" [taskId]="job().id" />
+    <app-review-queue-pill [task]="job()" />
     @if (stalledState(); as stalled) {
       <span class="task-card__stalled-pill" data-testid="task-card-stalled" [attr.data-reason]="stalled.reason"
             [cacTooltip]="stalled.tooltip" role="status"><span aria-hidden="true">⚠</span> {{ stalled.label }}</span>

@@ -1,0 +1,61 @@
+<section class="batch-settings" aria-labelledby="batch-settings-title" data-testid="batch-settings">
+  <header><h3 id="batch-settings-title">Batch verification</h3>
+    <p>Cards keep their own model review. After review, eligible cards wait while a planner groups them. One full suite tests the combined candidate before publication.</p>
+  </header>
+  @if (loading()) { <p>Loading batch settings…</p> }
+  @if (error()) { <p role="alert" data-testid="batch-settings-error">{{ error() }} @if (fieldError()) { ({{ fieldError() }}) }</p> }
+  @if (settings(); as form) {
+    <form (ngSubmit)="save()">
+      <fieldset><legend>Enable and scope</legend>
+        <label><input type="checkbox" name="enabled" [ngModel]="form.enabled" (ngModelChange)="update('enabled', $event)"> Enable batch verification</label>
+        <label>Scope <select name="scope" [ngModel]="form.scope" (ngModelChange)="update('scope', $event)" [attr.aria-invalid]="invalid('scope')"><option value="documentation">Documentation</option><option value="code">Code</option></select></label>
+        @if (invalid('scope')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <fieldset><legend>Planner and bounds</legend>
+        <p>The planner waits for enough cards or a deadline. Look ahead also considers cards likely to finish soon.</p>
+        <label>Planner <select name="planner" [ngModel]="form.planner" (ngModelChange)="update('planner', $event)" [attr.aria-invalid]="invalid('planner')"><option value="threshold">Threshold</option><option value="look-ahead">Look ahead</option></select></label>
+        @if (invalid('planner')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Minimum size <input type="number" name="minimumSize" min="1" [max]="maximum()" [ngModel]="form.minimumSize" (ngModelChange)="update('minimumSize', +$event)" [attr.aria-invalid]="invalid('minimumSize')"></label>
+        @if (invalid('minimumSize')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Maximum size <input type="number" name="maximumSize" min="1" [max]="maximum()" [ngModel]="form.maximumSize" (ngModelChange)="update('maximumSize', +$event)" [attr.aria-invalid]="invalid('maximumSize')"></label>
+        @if (invalid('maximumSize')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <p>Hard limit: {{ maximum() }} cards.</p>
+        <label>Deadline (minutes) <input type="number" name="deadlineMinutes" min="1" [ngModel]="form.deadlineMinutes" (ngModelChange)="update('deadlineMinutes', +$event)" [attr.aria-invalid]="invalid('deadlineMinutes')"></label>
+        @if (invalid('deadlineMinutes')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Look ahead (minutes) <input type="number" name="lookAheadMinutes" min="0" [ngModel]="form.lookAheadMinutes" (ngModelChange)="update('lookAheadMinutes', +$event)" [attr.aria-invalid]="invalid('lookAheadMinutes')"></label>
+        @if (invalid('lookAheadMinutes')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Urgent tags <input type="text" name="urgentTags" [ngModel]="tagsDraft()" (ngModelChange)="tagsDraft.set($event)" [attr.aria-invalid]="invalid('urgentTags')" aria-describedby="batch-tags-help"></label>
+        @if (invalid('urgentTags')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <p id="batch-tags-help">Separate tags with commas. Urgent cards can close a batch sooner.</p>
+      </fieldset>
+      <fieldset><legend>Risk and overlap</legend>
+        <label>Risk policy <select name="riskPolicy" [ngModel]="form.riskPolicy" (ngModelChange)="update('riskPolicy', $event)" [attr.aria-invalid]="invalid('riskPolicy')"><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select></label>
+        @if (invalid('riskPolicy')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Overlapping work <select name="overlap" [ngModel]="form.overlap" (ngModelChange)="update('overlap', $event)" [attr.aria-invalid]="invalid('overlap')"><option value="adjacent">Keep adjacent</option><option value="separate">Separate</option></select></label>
+        @if (invalid('overlap')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <fieldset><legend>Review test level</legend>
+        <label>Before batch <select name="reviewTestLevel" [ngModel]="form.reviewTestLevel" (ngModelChange)="update('reviewTestLevel', $event)" [attr.aria-invalid]="invalid('reviewTestLevel')"><option value="work-package">Work package</option><option value="build-only">Build only</option></select></label>
+        @if (invalid('reviewTestLevel')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <fieldset><legend>Gate timeout</legend>
+        <label>Timeout (minutes) <input type="number" name="gateTimeoutMinutes" min="1" [ngModel]="form.gateTimeoutMinutes" (ngModelChange)="update('gateTimeoutMinutes', +$event)" [attr.aria-invalid]="invalid('gateTimeoutMinutes')"></label>
+        @if (invalid('gateTimeoutMinutes')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <fieldset><legend>LLM advisor</legend>
+        <p>Advise records a recommendation. Enforce lets the advisor veto a proposed batch.</p>
+        <label>Mode <select name="advisorMode" [ngModel]="form.advisor.mode" (ngModelChange)="advisor('mode', $event)" [attr.aria-invalid]="invalid('mode')"><option value="off">Off</option><option value="advise">Advise</option><option value="enforce">Enforce</option></select></label>
+        @if (invalid('mode')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>CLI type <input type="text" name="advisorCliType" [ngModel]="form.advisor.cliType" (ngModelChange)="advisor('cliType', $event)" [attr.aria-invalid]="invalid('cliType')"></label>
+        @if (invalid('cliType')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Model <input type="text" name="advisorModel" [ngModel]="form.advisor.model ?? ''" (ngModelChange)="advisor('model', $event)" [attr.aria-invalid]="invalid('model')"></label>
+        @if (invalid('model')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+        <label>Timeout (seconds) <input type="number" name="advisorTimeout" min="1" [ngModel]="form.advisor.timeoutSeconds" (ngModelChange)="advisor('timeoutSeconds', +$event)" [attr.aria-invalid]="invalid('timeoutSeconds')"></label>
+        @if (invalid('timeoutSeconds')) { <small class="batch-settings__field-error" role="alert">{{ error() }}</small> }
+      </fieldset>
+      <div class="batch-settings__footer"><button type="submit" data-testid="batch-settings-save" [disabled]="saving()">{{ saving() ? 'Saving…' : 'Save batch settings' }}</button>
+        @if (saved()) { <span role="status">Saved</span> }
+      </div>
+    </form>
+  } @else if (!loading()) { <button type="button" (click)="load(project())">Retry</button> }
+</section>

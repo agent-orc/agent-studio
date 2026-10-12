@@ -1,0 +1,14 @@
+.batch-settings { border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); background: var(--studio-bg-surface); padding: var(--studio-spacing-4); color: var(--studio-fg); }
+.batch-settings h3 { margin: 0 0 var(--studio-spacing-2); }
+.batch-settings p { color: var(--studio-fg-muted); margin: 0 0 var(--studio-spacing-3); }
+.batch-settings form { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: var(--studio-spacing-4); }
+.batch-settings fieldset { min-width: 0; border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); padding: var(--studio-spacing-3); display: grid; align-content: start; gap: var(--studio-spacing-2); }
+.batch-settings legend { font-weight: 700; }
+.batch-settings label { display: grid; gap: var(--studio-spacing-1); }
+.batch-settings label:has(input[type='checkbox']) { display: flex; align-items: center; }
+.batch-settings input:not([type='checkbox']), .batch-settings select { width: 100%; min-width: 0; color: inherit; background: var(--studio-bg-elevated); border: 1px solid var(--studio-border); border-radius: var(--studio-action-radius-sm); padding: var(--studio-spacing-2); }
+.batch-settings [aria-invalid='true'] { border-color: var(--studio-error) !important; }
+.batch-settings__field-error { color: var(--studio-error); }
+.batch-settings__footer { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--studio-spacing-3); }
+.batch-settings button { cursor: pointer; }
+.batch-settings :is(button, input, select):focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }

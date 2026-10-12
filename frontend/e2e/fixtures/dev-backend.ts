@@ -194,6 +194,21 @@ export const test = base.extend<{ devBackend: DevBackend; recoveryRepository: bo
   recoveryRepository: [false, { option: true }],
   demoWorkspace: [false, { option: true }],
   devBackend: async ({ recoveryRepository, demoWorkspace }, use, testInfo) => {
+    if (process.env.PW_PREBUILT === '1') {
+      const profile = process.env.PW_E2E_PROFILE ?? 'standard';
+      if ((recoveryRepository && profile !== 'recovery') || (demoWorkspace && profile !== 'demo')) {
+        throw new Error('This spec requires the matching isolated prebuilt recovery or demo profile.');
+      }
+      if (!await isHealthy() || !await hasWatchPath()) {
+        throw new Error('The prebuilt backend is unavailable or has no watch path; its webServer owns the lifecycle.');
+      }
+      await use({
+        port: DEV_PORT,
+        baseUrl: DEV_BASE_URL,
+        workspace: process.env.PW_E2E_CHECKOUT ?? await discoverWorkspace(),
+      });
+      return;
+    }
     const startedHealthy = await isHealthy();
     let weStartedIt = false;
     if (startedHealthy && demoWorkspace) {

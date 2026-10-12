@@ -828,6 +828,11 @@ export class TaskService {
       `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/details/${resource}`, { params });
   }
 
+  findCommitOwner(sha: string) {
+    return this.http.get<{ job: TaskInfo; commit: NonNullable<TaskInfo['commit']> }>(
+      `${this.baseUrl}/tasks/commit-owner/${encodeURIComponent(sha)}`);
+  }
+
   /**
    * Resolve a task through the registry-backed project handle. The watch-path
    * request is retained only as a compatibility fallback while callers migrate
@@ -1602,6 +1607,14 @@ export class TaskService {
     return this.http.post<{ position: number }>(
       `/api/v1/projects/${UNSCOPED_TASK_PROJECT}/tasks/${encodeURIComponent(jobId)}/move-to-top`,
       null,
+      this.withWatchPath(watchPath),
+    ).pipe(this.afterMutation(jobId, watchPath));
+  }
+
+  setReviewPriority(jobId: string, priority: 'urgent' | 'normal', watchPath?: string) {
+    return this.http.post<{ priority: 'urgent' | 'normal'; position: number | null }>(
+      `${this.baseUrl}/tasks/${encodeURIComponent(jobId)}/review-priority`,
+      { priority },
       this.withWatchPath(watchPath),
     ).pipe(this.afterMutation(jobId, watchPath));
   }

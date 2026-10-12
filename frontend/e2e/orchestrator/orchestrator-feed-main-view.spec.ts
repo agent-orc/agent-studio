@@ -115,6 +115,7 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
       return json({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null });
     }
     if (url.pathname === '/api/runner/orchestrator-feed') return json({ entries: currentEntries() });
+    if (url.pathname === '/api/usage/cockpit') return json({ workspaceId: 'workspace-1', clis: [], cost: null });
     if (url.pathname === '/api/runner/global/orchestrator-session') {
       return json({
         project: '(global)',
@@ -211,9 +212,39 @@ async function mockStudio(page: Page, currentEntries: () => readonly FeedEntry[]
     }
     if (url.pathname === '/api/crash-recovery/pending') return json({ pending: [] });
     if (url.pathname === '/api/v1/management/remote-hosts') return json([]);
+    if (url.pathname === '/api/v1/management/links') return json([]);
     return json({});
   });
 }
+
+test('status-bar Feed focuses the workspace tab and clears the Activity badge', async ({ page }, testInfo) => {
+  const entries = buildEntries().slice(0, 3);
+  await page.addInitScript(() => {
+    localStorage.setItem('atp.orchestrator-feed.alerts-seen-at', '2026-01-01T00:00:00Z');
+    localStorage.removeItem('atp.studio.tabs.v1');
+  });
+  await mockStudio(page, () => entries);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await dismissDevErrorDialog(page);
+
+  const statusFeed = page.getByTestId('status-bar-feed');
+  await expect(statusFeed).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('studio-ab-badge-activity')).toHaveText('3');
+  await statusFeed.click();
+
+  await expect(page).toHaveURL(/#\/feed$/);
+  await expect(page.getByTestId('studio-tab-feed')).toContainText('Activity across projects');
+  await expect(page.getByTestId('orchestrator-feed')).toHaveAttribute('data-mode', 'embedded');
+  await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
+  await expect(statusFeed).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('studio-ab-badge-activity')).toHaveCount(0);
+
+  await statusFeed.click();
+  await expect(page).toHaveURL(/#\/feed$/);
+  await expect(page.getByTestId('studio-tab-feed')).toHaveCount(1);
+  await expect(page.locator('app-project-overlays app-orchestrator-feed')).toHaveCount(0);
+  await page.screenshot({ path: join(evidenceDir(testInfo), 'status-bar-feed-tab.png'), fullPage: false });
+});
 
 test('Feed main view: route, Activity icon, fresh-alert badge, windowing, live stability, and responsive themes', async ({ page }, testInfo) => {
   test.setTimeout(90_000);

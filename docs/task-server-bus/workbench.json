@@ -2,18 +2,47 @@
   "schemaVersion": 1,
   "id": "task-server-bus",
   "title": "Task Server bus between the engine and runner hosts",
-  "summary": "AGT-W49 extension: code-pinned message ownership, authority and replay guarantees, coding/review/continue/outage sequences, many runner hosts, unified workstation identity and quality library steps. D5 to D13 remain recommended choices for operator sight review.",
+  "summary": "Task Server as the steering bus between the Orchestrator Engine and runner hosts. All decisions recorded: D5 to D13 on 26 September 2026 (delivered as AGT-2933 to AGT-2941), D14 to D21 by the operator on 11 October 2026: the engine is the only decider and everything moves out of the monolith, engine and Operations Server stay separate processes, claimable work stays on runner hosts, fix rounds continue on the reviewed delivery, one per-card round budget, review prefers another host, interchangeable engine instances, Operations Broker as documentation and UI term. Programme cards AGT-3054, AGT-3056 to AGT-3062, AGT-3069 and AGT-3071; AGT-3055 carries the batch part.",
   "entrypoint": "index.html",
-  "status": "decision-pending",
+  "status": "decided",
   "phase": "decision-ready",
   "pattern": "concept",
-  "updatedAt": "2026-09-25T15:16:18Z",
+  "updatedAt": "2026-10-11T14:30:00Z",
   "sourceTaskKeys": [
     "AGT-2905"
   ],
   "relatedTaskKeys": [
     "AGT-W49",
-    "AGT-W57"
+    "AGT-W57",
+    "AGT-W73",
+    "AGT-W63",
+    "AGT-W68",
+    "AGT-W74",
+    "AGT-W76",
+    "AGT-2933",
+    "AGT-2934",
+    "AGT-2935",
+    "AGT-2936",
+    "AGT-2937",
+    "AGT-2938",
+    "AGT-2939",
+    "AGT-2940",
+    "AGT-2941",
+    "AGT-2907",
+    "AGT-2737",
+    "AGT-3008",
+    "AGT-3011",
+    "AGT-3054",
+    "AGT-3055",
+    "AGT-3056",
+    "AGT-3057",
+    "AGT-3058",
+    "AGT-3059",
+    "AGT-3060",
+    "AGT-3061",
+    "AGT-3062",
+    "AGT-3069",
+    "AGT-3071"
   ],
   "implementationTasks": [
     {
@@ -130,6 +159,117 @@
           "The same review-library step runs on two eligible hosts and returns equivalent identity/evidence contracts.",
           "Missing capability prevents claim, review load cannot spend coding slots accidentally, and wrong SHA/fence/step digest is rejected.",
           "Report retry, supersession and cleanup preserve existing exact-subject/replay guarantees; diagrams/docs have no distinct Quality Host Agent."
+        ]
+      }
+    },
+    {
+      "title": "One transition-decision library for the monolith and the Task Server",
+      "promptMarkdown": "# One transition-decision library for the monolith and the Task Server\n\nSource: docs/task-server-bus/index.html (AGT-W65), D14, opened 11 October 2026 on develop 691c812ae. Follow the operator\u0027s recorded choice for D14; the pre-filled recommendation is not a decision receipt. Read \u0027Pipeline control today\u0027 and the cited findings in the Dossier before changing code.\n\nContext\nTransition decisions exist twice (finding F3): the monolith decides in V1ReviewPlaneEndpoints (report handler), LeaseEndpoints (completion), ReviewRoundBudget, the delivery-gate policy and the operator sweeps; the standalone path decides in OrchestrationSettlementPolicy, RepeatedReviewBlockPolicy and the engine stage handlers. Only ReviewFollowUpPolicy is shared through contracts/TaskServer.Contracts. The two disagree at budget end, on concerns and on whether findings reach the next prompt.\n\nDeliver\nExtract the decision rules for the transitions after coding completion and after a review report into one library consumed by backend/ and task-server/: follow-up action, round budget, rework base selection input, delivery-gate decision and escalation. Inputs are typed facts; outputs are typed actions with a reason. Keep persistence, lane writes and Git in the hosts. Replace the duplicated policies on both sides with calls into the library. Where the two sides disagree today, follow the operator\u0027s recorded choices for D17 and D18 and document the change.\n\nAcceptance\n- One scenario table (pass, concerns, blocking verdict, test block, budget spent, infrastructure failure, integration-branch defect) yields identical actions from the monolith adapter and the Task Server adapter.\n- No transition rule remains implemented in both backend/ and task-server/; a test fails if a second copy reappears.\n- Existing review-plane and orchestration tests stay green on both backends.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I10 One transition-decision library for the monolith and the Task Server",
+        "criteria": [
+          "One scenario table (pass, concerns, blocking verdict, test block, budget spent, infrastructure failure, integration-branch defect) yields identical actions from the monolith adapter and the Task Server adapter.",
+          "No transition rule remains implemented in both backend/ and task-server/; a test fails if a second copy reappears.",
+          "Existing review-plane and orchestration tests stay green on both backends."
+        ]
+      }
+    },
+    {
+      "title": "Complete the standalone review loop for cutover",
+      "promptMarkdown": "# Complete the standalone review loop for cutover\n\nSource: docs/task-server-bus/index.html (AGT-W65), D14, opened 11 October 2026 on develop 691c812ae. Follow the operator\u0027s recorded choice for D14; the pre-filled recommendation is not a decision receipt. Read \u0027Pipeline control today\u0027 and the cited findings in the Dossier before changing code.\n\nContext\nOn the standalone Task Server no product code creates review subjects (only tools and tests call POST /api/v1/reviews/subjects), the orchestration payload carries verdicts but no findings, Reissue moves the task to Ready without rework prompt or continuation base, no integration follows a pass (finding F4), and the host-permit path ignores pinned runners and project concurrency (finding F8). The engine runs five deterministic stage handlers.\n\nDeliver\nMake the standalone path reach parity with the monolith for the review loop: create the review subject on coding completion from the fenced result; carry findings in the orchestration payload; on Reissue write the rework prompt and the continuation base chosen under D17 through the library of I10; run integration after a pass through the existing integration command; apply pinned runners and project concurrency on the permit path. Add a cutover scenario that runs the full loop.\n\nAcceptance\n- Scenario on the standalone server: coding, rejected review, rework with findings and base, passed review, integration, Human Review, without operator calls.\n- The permit path refuses work that the claim path would refuse for pinned-runner and project-concurrency reasons.\n- The remote-task-server cutover gates list this scenario as a precondition.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I11 Complete the standalone review loop for cutover",
+        "criteria": [
+          "Scenario on the standalone server: coding, rejected review, rework with findings and base, passed review, integration, Human Review, without operator calls.",
+          "The permit path refuses work that the claim path would refuse for pinned-runner and project-concurrency reasons.",
+          "The remote-task-server cutover gates list this scenario as a precondition."
+        ]
+      }
+    },
+    {
+      "title": "Record placement, execution rule, instances and name in the canonical documents",
+      "promptMarkdown": "# Record placement, execution rule, instances and name in the canonical documents\n\nSource: docs/task-server-bus/index.html (AGT-W65), D15, D16, D20 and D21, opened 11 October 2026 on develop 691c812ae. Follow the operator\u0027s recorded choice for D15, D16, D20 and D21; the pre-filled recommendation is not a decision receipt. Read \u0027Pipeline control today\u0027 and the cited findings in the Dossier before changing code.\n\nContext\nThe canonical target architecture names four runtime roles and treats orchestration libraries as modules, without the Orchestrator Engine (finding F6). W49 section 02 says the Operations Server may broker build, lint, model, capture or inspection operations for runs and reviews, while the operations contract keeps runner protocols on the Task Server (finding F5). Compose profiles define one engine instance and no profile rule for co-location.\n\nDeliver\nUpdate docs/concepts/distributed-agent-studio-target-architecture.md, the ADR-0076 consequences in the ADR archive, docs/system/contracts/operations-backchannel.md, W49 section 02 and the Compose profile documentation to the recorded choices: where transition decisions and model-backed planners run (D14), the process form of engine and Operations Server (D15), which work uses the Operations Server (D16), the number of engine instances per profile (D20) and the user-facing name (D21, including a glossary line). Change Compose files only where D20 requires a different instance count.\n\nAcceptance\n- The target architecture, ADR text, operations contract and W49 state the same execution rule and process form.\n- No document describes a pipeline step as executed through the Operations Server unless D16 selected delegation for that step.\n- The Dossier link check of browser-qa passes for every edited Dossier page.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I12 Record placement, execution rule, instances and name in the canonical documents",
+        "criteria": [
+          "The target architecture, ADR text, operations contract and W49 state the same execution rule and process form.",
+          "No document describes a pipeline step as executed through the Operations Server unless D16 selected delegation for that step.",
+          "The Dossier link check of browser-qa passes for every edited Dossier page."
+        ]
+      }
+    },
+    {
+      "title": "Fix rounds continue on the reviewed delivery",
+      "promptMarkdown": "# Fix rounds continue on the reviewed delivery\n\nSource: docs/task-server-bus/index.html (AGT-W65), D17, opened 11 October 2026 on develop 691c812ae. Follow the operator\u0027s recorded choice for D17; the pre-filled recommendation is not a decision receipt. Read \u0027Pipeline control today\u0027 and the cited findings in the Dossier before changing code.\n\nContext\nA fix round after a ProductFailure prepares its worktree on the integration branch (runner/GitWorkspace.cs PrepareAsync skips the work branch for fenced attempts and uses a continuation base only when the claim carries one). The continuation-base store (backend/Features/Runner/LostWorkerContinuation.cs) has writers for lost-worker, timeout-salvage, sweep-salvage, older-brief and mechanical-fallback rounds, not for the direct finding round (V1ReviewPlaneEndpoints), the sweep fix round (OperatorSweepActions.OpenFixRoundAsync) or an operator continue after ProductFailure. Live: AGT-2974 fix rounds on 8 and 9 October 2026 started at develop 0e2a11d6 each time (finding F1).\n\nDeliver\nApply the recorded D17 choice. For option A: every fix round after a ProductFailure records the reviewed result ref and SHA as continuation base, consumed at claim; the runner prepares the worktree on it and keeps the integration branch as rebase target, as for AGT-2870 continuation rounds; a rebase conflict follows the existing integration dead-end exit. Make the fix-round prompt state the base it starts from. Record the base on the timeline.\n\nAcceptance\n- A finding round, a sweep fix round and an operator continue after ProductFailure each prepare the worktree on the reviewed result SHA, proven by tests and by the runner log line worktree-authoritative-base.\n- A conflicting rebase produces the dead-end exit, never a silent restart from the integration branch.\n- A round that is not a fix round keeps today\u0027s base selection.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I13 Fix rounds continue on the reviewed delivery",
+        "criteria": [
+          "A finding round, a sweep fix round and an operator continue after ProductFailure each prepare the worktree on the reviewed result SHA, proven by tests and by the runner log line worktree-authoritative-base.",
+          "A conflicting rebase produces the dead-end exit, never a silent restart from the integration branch.",
+          "A round that is not a fix round keeps today\u0027s base selection."
+        ]
+      }
+    },
+    {
+      "title": "Behaviour at the end of the card round budget",
+      "promptMarkdown": "# Behaviour at the end of the card round budget\n\nMerged into AGT-3054 on 11 October 2026 after the operator decided D18 A. AGT-3054 carries the full scope: one per-card budget for every automatic round; at budget end non-test blocks degrade to concerns with one linked follow-up card and build-tests or tests-and-evidence blocks escalate with a receipt. No separate card.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I14 Behaviour at the end of the card round budget",
+        "criteria": [
+          "With the per-card budget spent, a non-test block yields Pass plus exactly one follow-up card, and a test block yields Escalated with a receipt.",
+          "Sweep, local orchestrator and review plane produce the same outcome for the same facts.",
+          "Replaying the same report after a restart creates no second follow-up card and no second escalation."
+        ]
+      }
+    },
+    {
+      "title": "Prefer a review executor on a different host",
+      "promptMarkdown": "# Prefer a review executor on a different host\n\nSource: docs/task-server-bus/index.html (AGT-W65), D19, opened 11 October 2026 on develop 691c812ae. Follow the operator\u0027s recorded choice for D19; the pre-filled recommendation is not a decision receipt. Read \u0027Pipeline control today\u0027 and the cited findings in the Dossier before changing code.\n\nContext\nReview reads only Git (fresh clone at the exact SHA), so coding and review can run on different hosts. The monolith review plane never prefers a different host; the standalone claim has a requireDifferentHostFailureDomain flag that no plan sets (finding F7). One runner host serves both roles today; I7 (AGT-2939) routes work by capability classes.\n\nDeliver\nApply the recorded D19 choice. For option A: review-claim admission prefers an idle eligible executor on a host other than the coding host of the subject and never waits for one; a project setting can turn the preference into a requirement. Record the coding host on the subject and the chosen review host on the attempt.\n\nAcceptance\n- With two eligible hosts and both idle, the review is claimed on the host that did not code.\n- With one eligible host the review is claimed without delay.\n- With the project requirement set and one host, the review waits and the wait reason is visible.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "I15 Prefer a review executor on a different host",
+        "criteria": [
+          "With two eligible hosts and both idle, the review is claimed on the host that did not code.",
+          "With one eligible host the review is claimed without delay.",
+          "With the project requirement set and one host, the review waits and the wait reason is visible."
+        ]
+      }
+    },
+    {
+      "title": "The monolith serves the orchestration plane to the engine",
+      "promptMarkdown": "# The monolith serves the orchestration plane to the engine\n\nSource: docs/task-server-bus/index.html (AGT-W65), D14 decided by the operator on 11 October 2026 (A; everything goes into the engine, out of the monolith). Promoted as AGT-3058.\n\nUntil the Task Server cutover the monolith offers the engine\u0027s orchestration contract (claims, stage completion, renewal, release), applies engine decisions through the existing transition services with authority write keys, and switches each transition between local library decisions and engine decisions. The full prompt is on card AGT-3058.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "The monolith serves the orchestration plane to the engine",
+        "criteria": [
+          "See card AGT-3058."
+        ]
+      }
+    },
+    {
+      "title": "The engine decides every coding and review transition as a dedicated remote process",
+      "promptMarkdown": "# The engine decides every coding and review transition as a dedicated remote process\n\nSource: docs/task-server-bus/index.html (AGT-W65), D14 decided by the operator on 11 October 2026 (A; everything goes into the engine, out of the monolith). Promoted as AGT-3059.\n\nThe engine executes the decision library for every coding and review transition as its own service on agent-runner-01, in shadow mode with compared receipts first, then switched per transition with a rollback switch; after the switch the monolith never decides that transition. The full prompt is on card AGT-3059.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "The engine decides every coding and review transition as a dedicated remote process",
+        "criteria": [
+          "See card AGT-3059."
+        ]
+      }
+    },
+    {
+      "title": "Background deciders move into the engine; the monolith keeps no transition decision",
+      "promptMarkdown": "# Background deciders move into the engine; the monolith keeps no transition decision\n\nSource: docs/task-server-bus/index.html (AGT-W65), D14 decided by the operator on 11 October 2026 (A; everything goes into the engine, out of the monolith). Promoted as AGT-3060.\n\nInventory every hosted service of the monolith as decide or apply, move the deciders into the engine as periodic occurrences with receipts, delete the monolith decision paths and guard them with an architecture test. The batch planner and advisor move in AGT-3055. The full prompt is on card AGT-3060.\n",
+      "acceptanceScope": {
+        "deliveryMode": "bounded-slice",
+        "slice": "Background deciders move into the engine; the monolith keeps no transition decision",
+        "criteria": [
+          "See card AGT-3060."
         ]
       }
     }

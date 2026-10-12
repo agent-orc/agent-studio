@@ -178,6 +178,47 @@ public sealed class TaskCoreCacheTests : IDisposable
     }
 
     [Fact]
+    public void CoreProjection_PreservesEveryTaskReference()
+    {
+        var id = "task-" + new string('x', 195);
+        var key = "AGT-" + new string('k', 140);
+        var task = MakeTask(id, TaskStates.Ready) with
+        {
+            TaskKey = "task-key-" + new string('t', 290),
+            Key = key,
+            References = new TaskReferences
+            {
+                DependsOn = [new TaskDependencyReference(key)],
+                BlockedBy = [key],
+            },
+        };
+        var record = TaskCoreRecord.Create(task);
+        Assert.Equal(id, record.Id);
+        Assert.Equal(task.TaskKey, record.TaskKey);
+        Assert.Equal(key, record.Key);
+        Assert.Equal(key, Assert.Single(record.DependsOn));
+        Assert.Equal(key, Assert.Single(record.BlockedBy));
+    }
+
+    [Fact]
+    public void Timeline_PreservesEventIdentifiers()
+    {
+        var task = MakeTask("AGT-timeline-identifiers", TaskStates.Ready);
+        var actor = new string('a', 140);
+        var runId = new string('r', 200);
+        File.WriteAllText(TaskPaths.TimelineLog(task.FolderPath),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                // clock-independent: the event timestamp is only carried through, never compared with now
+                ts = new DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc), kind = "note", actor, runId, summary = "Event",
+            }) + "\n");
+
+        var evt = Assert.Single(TaskCoreRecord.Create(task).Timeline.Events);
+        Assert.Equal(actor, evt.Actor);
+        Assert.Equal(runId, evt.RunId);
+    }
+
+    [Fact]
     public void UnchangedDependencyProjection_ReusesPublishedCoreRecord()
     {
         var task = MakeTask("AGT-resident", TaskStates.Ready);

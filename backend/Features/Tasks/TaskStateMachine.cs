@@ -44,6 +44,7 @@ public class TaskStateMachine
         || (targetState is TaskStates.Ready or TaskStates.Progress
             && task.References?.DependsOn.Count is > 0);
     private readonly TaskIntegrationStatusService? _integrationStatus;
+    private readonly AgentStudio.Runner.AttemptAuthorityService? _attemptAuthority;
     private readonly bool _guardedDelivery;
 
     public TaskStateMachine(
@@ -55,7 +56,8 @@ public class TaskStateMachine
         TimelineLog? timeline = null,
         AgentStudio.Pipeline.WorkspaceEvidenceQueue? evidenceQueue = null,
         TaskIntegrationStatusService? integrationStatus = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        AgentStudio.Runner.AttemptAuthorityService? attemptAuthority = null)
     {
         _scanner = scanner;
         _logger = logger;
@@ -68,6 +70,7 @@ public class TaskStateMachine
         _timeline = timeline;
         _evidenceQueue = evidenceQueue;
         _integrationStatus = integrationStatus;
+        _attemptAuthority = attemptAuthority;
         _guardedDelivery = configuration?.GetValue("DeliveryChain:Guarded", true) ?? true;
     }
 
@@ -275,6 +278,7 @@ public class TaskStateMachine
                     _scanner.InvalidateCache();
                     _scanner.PublishCoreFromFolder(recheck.FolderPath, recheck.WatchPath, recheck.ProjectName, targetState);
                     EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, recheck.Id, recheck.State, targetState);
+                    ClearReviewPriorityOnExit(recheck, targetState);
                 }
                 return new MoveJobOutcome(MoveJobStatus.Success, NewFolderPath: recheck.FolderPath);
             }
@@ -352,6 +356,7 @@ public class TaskStateMachine
             _scanner.RemoveCore(recheck);
             _scanner.PublishCoreFromFolder(targetDir, recheck.WatchPath, recheck.ProjectName, targetState);
             EnqueueEvidence(recheck.WatchPath, recheck.ProjectName, targetSlug, recheck.State, targetState);
+            ClearReviewPriorityOnExit(recheck, targetState);
             // Hand the post-move path back to the caller so chat-log writes
             // and follow-up files cannot land in the now-vanished source
             // folder via a stale FindJob result (see MoveJobOutcome docs).
@@ -362,6 +367,12 @@ public class TaskStateMachine
             _logger.LogError(ex, "Failed to move job {JobId} to {State}", jobId, targetState);
             return new MoveJobOutcome(MoveJobStatus.Failure, ex.Message);
         }
+    }
+
+    private void ClearReviewPriorityOnExit(TaskInfo card, string targetState)
+    {
+        if (card.State == TaskStates.AutoReview && targetState != TaskStates.AutoReview)
+            _attemptAuthority?.ClearReviewPriority(card.Key ?? card.TaskKey ?? card.Id);
     }
 
     private TaskInfo? FindJobForLaneMutation(string jobId, string? watchPath)
@@ -735,6 +746,7 @@ public class TaskStateMachine
                 _scanner.InvalidateCache();
                 _scanner.RemoveCore(recheck);
                 _notifier?.PublishDeleted(recheck.ProjectName, recheck.Id, recheck.WatchPath);
+                ClearReviewPriorityOnExit(recheck, string.Empty);
                 return true;
             }
             catch (Exception ex)

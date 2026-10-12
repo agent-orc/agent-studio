@@ -17,11 +17,12 @@ public static class GitTelemetryAdminEndpoints
 
     public static void MapGitTelemetryAdminEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/admin/git-telemetry", (GitStateIndexService indexer) =>
-            Results.Ok(BuildSnapshot(indexer, TimeProvider.System)));
+        app.MapGet("/api/admin/git-telemetry", (GitStateIndexService indexer, TaskScannerService scanner) =>
+            Results.Ok(BuildSnapshot(indexer, TimeProvider.System, scanner)));
     }
 
-    internal static GitTelemetrySnapshot BuildSnapshot(GitStateIndexService indexer, TimeProvider timeProvider)
+    internal static GitTelemetrySnapshot BuildSnapshot(GitStateIndexService indexer, TimeProvider timeProvider,
+        TaskScannerService? scanner = null)
     {
         var endpoints = GitProcessTelemetry.GetStatsSnapshot(StatsWindow, timeProvider);
         var repositories = indexer.GetRepositoryStatuses(timeProvider);
@@ -37,6 +38,8 @@ public static class GitTelemetryAdminEndpoints
         {
             warnings.Add($"Git spawns are averaging {totalSpawnsPerMinute:F1}/min, over the {TotalSpawnsPerMinuteWarnThreshold:F0}/min target.");
         }
+        foreach (var repository in repositories.Where(repository => repository.ConsecutiveFailures > 0))
+            warnings.Add($"Git state index for {repository.ProjectName} has failed {repository.ConsecutiveFailures} consecutive time(s).");
 
         return new GitTelemetrySnapshot(
             timeProvider.GetUtcNow(),
@@ -44,7 +47,8 @@ public static class GitTelemetryAdminEndpoints
             endpoints,
             repositories,
             totalSpawnsPerMinute,
-            warnings);
+            warnings,
+            scanner is null ? [] : TaskProjectionCards.FindDuplicateIds(scanner.ScanAllJobsWithArchive()));
     }
 }
 
@@ -54,4 +58,5 @@ public sealed record GitTelemetrySnapshot(
     IReadOnlyList<EndpointStats> Endpoints,
     IReadOnlyList<GitStateRepositoryStatus> Repositories,
     double TotalSpawnsPerMinute,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<DuplicateTaskId> DuplicateTaskIds);

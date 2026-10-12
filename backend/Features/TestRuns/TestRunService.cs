@@ -113,7 +113,7 @@ public sealed class TestRunService
             .Where(job => SamePath(job.WatchPath, project.StorageLocation))
             .ToList();
         var evidence = BuildLookup(jobs);
-        var jobsByKey = jobs.ToDictionary(job => job.TaskKey, StringComparer.Ordinal);
+        var jobsByKey = TaskProjectionCards.Select(jobs).ToDictionary(job => job.TaskKey, StringComparer.Ordinal);
         var attachments = evidence
             .Where(pair => pair.Value.RunId is not null)
             .GroupBy(pair => pair.Value.RunId!, StringComparer.OrdinalIgnoreCase)
@@ -140,6 +140,7 @@ public sealed class TestRunService
 
     public Dictionary<string, TaskTestRunEvidence> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
     {
+        jobs = TaskProjectionCards.Select(jobs);
         var result = new Dictionary<string, TaskTestRunEvidence>(StringComparer.Ordinal);
         foreach (var projectJobs in jobs.GroupBy(job => job.WatchPath, StringComparer.OrdinalIgnoreCase))
         {

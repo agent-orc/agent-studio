@@ -314,7 +314,12 @@
     .mechanism-node small { display: block; margin-top: 4px; color: var(--article-muted); font-size: 0.72rem; line-height: 1.4; }
     .mechanism svg { display: block; width: 100%; height: 50px; }
     @media (max-width: 550px) { .mechanism-row { grid-template-columns: 1fr; gap: 8px; } .mechanism svg { height: 30px; } }
-</style>
+    .decision { margin: 28px 0; padding: 18px 22px; border: 1px solid var(--article-line); border-radius: 10px; font-family: var(--article-sans); font-size: .92rem; }
+    .decision h3 { margin-top: 0; }
+    .decision label { display: block; margin: 12px 0; }
+    .decision input { margin-right: 10px; accent-color: var(--article-link); }
+    .decision textarea { width: 100%; min-height: 64px; color: var(--article-ink); background: var(--article-paper); border: 1px solid var(--article-line); font: inherit; }
+  </style>
 </head>
 <body>
 <main class="article">
@@ -322,9 +327,9 @@
     <p class="kicker">Concept Dossier · AGT-W73 · ORCH-3</p>
     <h1>Orchestrator decisions between steps</h1>
     <p class="lede">A strong model chooses the next typed action from clean, bounded grounds at each transition. Guard rails provide signals. Mechanical boundaries preserve authority, safety, and finite execution.</p>
-    <div class="meta"><span><b>Status</b> Decision pending</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
+    <div class="meta"><span><b>Status</b> Decided 11 October 2026</span><span><b>Phase</b> Decision ready</span><span><b>As of</b> 6 October 2026</span><span><b>Status note</b> 11 October 2026</span><span><b>Source card</b> AGT-3018</span><span><b>Replaces</b> AGT-3010 salvage framing in this same Dossier</span></div>
   </header>
-  <nav class="contents" aria-label="Dossier sections"><a href="#decision-model">Decision model</a><a href="#grounds">Grounds</a><a href="#signals">Signals</a><a href="#actions">Actions</a><a href="#limit">Hard limit</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#adr">ADR</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a></nav>
+  <nav class="contents" aria-label="Dossier sections"><a href="#decision-model">Decision model</a><a href="#grounds">Grounds</a><a href="#signals">Signals</a><a href="#actions">Actions</a><a href="#limit">Hard limit</a><a href="#administration">Administration</a><a href="#visibility">Visibility</a><a href="#artefacts">Artefacts</a><a href="#migration">Migration</a><a href="#today">Today</a><a href="#adr">ADR</a><a href="#alternatives">Alternatives</a><a href="#recommendation">Recommendation</a><a href="#evidence">Evidence</a><a href="#open-decisions">Open decisions</a><a href="#implementation">Cards</a></nav>
 
   <section id="decision-model">
     <h2>Decision model</h2>
@@ -420,6 +425,18 @@
     <p>From the salvaged AGT-W73, keep the signal set, honest consumption normalization, action union, bounded artefact proposal, and receipt fields because they produce useful decision grounds. Invert the pure rule core's final authority, algorithmic pressure thresholds, pre-claim admission formula, measured coding budget as a shaping instrument, and counter-selected escalation because they contradict the operator's 4 October corrections. Reuse hard checks only as validity and emergency boundaries.</p>
   </section>
 
+  <section id="today">
+    <h2>Where transitions are decided on 11 October 2026</h2>
+    <p>This Dossier names <code>StepKind.Orchestrator</code> as the decider between steps but does not fix the process that runs it. A reconstruction on 11 October 2026 (<a href="../task-server-bus/index.html#pipeline-control">AGT-W65, Pipeline control today</a>) found the following deciders on the production path. None of them is a model choice.</p>
+    <table><thead><tr><th>Transition</th><th>Decider today</th><th>Rule</th></tr></thead><tbody>
+      <tr><td>Coding completion to review</td><td>Completion handler of the monolith</td><td>Done or NoOp with a fenced result creates a review subject and a server-built plan.</td></tr>
+      <tr><td>Review report to next step</td><td>Report handler of the monolith</td><td>Follow-up policy (finding round, concern round, accept); delivered-round budget that degrades after 4 rounds; delivery gate (integrate or Human Review); review infrastructure retry budget of 3.</td></tr>
+      <tr><td>ProductFailure in Human Review to fix round</td><td>Operator sweep (AGT-3011)</td><td>Per-card budget of 4 rounds, then Escalated.</td></tr>
+      <tr><td>Standalone path, not deployed</td><td>Five engine stage handlers and Task Server settlement</td><td>Reissue limit of 2 or the same block twice, then Escalated.</td></tr>
+    </tbody></table>
+    <p>Two consequences for this Dossier. First, the vocabulary table maps model escalation, supervision, telemetry and ADR-0051 actions; the review-report follow-up and the operator sweeps belong in the same profile list when OD-S1 freezes its first transition. Second, a <code>retry(reopen)</code> action needs a declared base: today a fix round starts from the integration branch, not from the reviewed result (<a href="../task-server-bus/index.html#f1-fix-round-base">AGT-W65 F1</a>, <a href="../task-server-bus/index.html#d17-fix-round-base">D17</a>). Where the decision step runs was decided on 11 October 2026 in <a href="../task-server-bus/index.html#d14-decision-placement">AGT-W65 D14</a>: in the Orchestrator Engine, and nothing of it stays in the monolith. The programme AGT-3057 (decision library), AGT-3058 (orchestration plane), AGT-3059 (engine decides as a dedicated remote process) and AGT-3060 (background deciders) gives this Dossier its execution home; the receipts of AGT-3059 use the shape of OrchestratorDecisionReceiptV1 so the model step of this Dossier can follow.</p>
+  </section>
+
   <section id="adr">
     <h2>Proposed ADR text</h2>
     <div class="callout" data-tone="accent"><h3>Amend ADR-0032</h3><p><b>One-sentence rule:</b> “For each orchestrator transition or periodic intervention, a strong model chooses a typed action from bounded, versioned decision grounds; deterministic code validates authority and safety, enforces finite execution, dispatches the admitted action, and records a complete receipt.”</p></div>
@@ -449,8 +466,17 @@
   </section>
 
   <section id="open-decisions" data-concept-section="open-decisions">
-    <h2>Open decisions</h2>
-    <table><thead><tr><th>Decision point</th><th>Working recommendation</th><th>Rejected option</th></tr></thead><tbody>
+    <h2>Decisions</h2>
+    <p><b>Decided on 11 October 2026.</b> The operator followed the recommendations: O1 A below, and every working recommendation in the table that follows. Implementation: AGT-3063 to AGT-3068, after the engine decides as its own process (AGT-3059).</p>
+    <div class="decision" id="o1-actor-model" data-decision-id="o1-actor-model" data-decision-kind="single" data-decision-status="decided" data-selected-option-id="four-levels" data-decision-label="O1. Actor model: operators and steps"><h3>O1. Actor model: operators and steps</h3>
+      <p><b>Context.</b> On 11 October 2026 the operator asked whether the AI Operator is something other than the Orchestrator Engine, or whether there are only smart steps in the pipeline that look like decisions. AGT-W65 D14 placed every decision in the engine. This Dossier defines decision steps at transitions and periodic occurrences without card, but names no standing actor. Today the operator work (watching, steering, healing, triage) is done largely by operating Claude sessions and partly by AGT-3011 sweeps in the monolith.</p>
+      <label data-option-id="four-levels" data-option-label="A. Two operators, two kinds of steps (recommended)"><input type="radio" name="o1-actor-model" value="four-levels" checked><b>A. Two operators, two kinds of steps (recommended)</b><br>Human Operator and AI Operator are actors with the same intent interface and different rights (autonomy classes). Decision steps answer one bounded question per card or plan; execution steps do the work on runner hosts. The engine runs the AI Operator and the decision steps. Escalation: step to AI Operator to human.</label>
+      <label data-option-id="steps-only" data-option-label="B. Only steps"><input type="radio" name="o1-actor-model" value="steps-only"><b>B. Only steps</b><br>No AI Operator: every intelligent function is a decision step, card-scoped or periodic; the human is the only operator. Simpler, but nothing takes initiative across cards or holds a conversation with the human; whatever no step was asked stays unnoticed.</label>
+      <label data-option-id="separate-ai-operator" data-option-label="C. AI Operator as its own service"><input type="radio" name="o1-actor-model" value="separate-ai-operator"><b>C. AI Operator as its own service</b><br>The AI Operator runs as a process of its own beside the engine. Separates the stateful, conversational role from the high-volume decision steps, at the cost of a further control-plane process; its actions still go through intents.</label>
+      <p><b>Recommendation: A.</b> It gives the operator's request of 4 October 2026 for a smart instance a defined place without turning every step into an agent, and keeps one runtime for all decisions (AGT-W65 D14).</p>
+      <p><b>Decision, 11 October 2026, operator: A</b> (following the recommendation). The North star states the actor model in its section 'Who decides'.</p>
+      <div data-comment="Operator note"><label>Operator note<textarea aria-label="O1. Actor model operator note"></textarea></label></div></div>
+    <table><thead><tr><th>Decision point</th><th>Decided (11 October 2026)</th><th>Rejected option</th></tr></thead><tbody>
       <tr><td>Authority</td><td>Strong model chooses; mechanical code checks floors and capability.</td><td>Pure decider selects ordinary action.</td></tr>
       <tr><td>Degraded mode</td><td>One bounded alternate-model transport retry, then <code>ask</code> and hold.</td><td>Silent deterministic continuation or repeated model calls.</td></tr>
       <tr><td>Emergency run limit</td><td>Configurable 24-hour default with existing salvage.</td><td>3,600-second shaping timeout or stepped run budgets.</td></tr>
@@ -465,14 +491,15 @@
   <section id="implementation" data-document-section="implementation">
     <h2>Implementation cards in order</h2>
     <ol><li><b>OD-S1 · Grounds and shadow receipt.</b> Smallest useful slice: freeze one post-core transition pack and record model choice, alternatives, content, tokens, price status, and outcome without dispatch change.</li><li><b>OD-S2 · Shared decision and authority adapter.</b> Activate one transition, fail closed, preserve exact fence/SHA and A0 to A3 limits.</li><li><b>OD-S3 · Artefact readers and loop signals.</b> Convert raw session/log readers and thirteen registered exhaustion actions to signals plus finite re-entry checks.</li><li><b>OD-S4 · Policy migration and wide timeout.</b> Convert eight policy roles, configure the 24-hour emergency ceiling and salvage path.</li><li><b>OD-S5 · Visibility and cost roll-ups.</b> Show inter-step chain, primary blocker, evidence path, model, and cost per occurrence/card/project in both themes.</li><li><b>OD-S6 · ORCH-3 administration and periodic seam.</b> Versioned rule editor, dry run, and non-card capacity occurrence for the Fluid capacity sibling.</li></ol>
-    <p>These are proposed implementation cards in <code>workbench.json</code>. No production behavior or operator approval is claimed.</p>
+    <p>Decided on 11 October 2026; cards: OD-S1 AGT-3063, OD-S2 AGT-3064, OD-S3 AGT-3065, OD-S4 AGT-3066, OD-S5 AGT-3067, OD-S6 AGT-3068, chained after AGT-3059. The surviving AGT-W68 slices are folded in: the per-card ledger and progress definition into OD-S1, checkpoint and salvage handoff into OD-S2, the operator controls as ask destination into OD-S5; the stepped budgets are superseded by the emergency limit of OD-S4.</p>
     <ol class="implementation-log">
 <!-- agent-studio:implementation-log:start -->
+    <li><b>2026-10-11 · Decided and promoted.</b> The operator followed the recommendations, including actor model O1 A. Cards AGT-3063 to AGT-3068 wait for the engine (AGT-3059); ADR-0078 records the ADR-0032 amendment (AGT-3071).</li>
 <!-- agent-studio:implementation-log:end -->
     </ol>
   </section>
   <!-- agent-studio:implementation-section:end -->
-  <footer>AGT-W73 · Source card AGT-3018 · Decision pending · 6 October 2026</footer>
+  <footer>AGT-W73 · Source card AGT-3018 · Decided 11 October 2026</footer>
 </main>
 </body>
 </html>

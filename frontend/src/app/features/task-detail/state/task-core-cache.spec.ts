@@ -213,6 +213,24 @@ describe('TaskDetailPrefetchService · task core cache', () => {
     expect(cache.isCoreCurrent('PROJ-A', 'b')).toBe(true);
   });
 
+  it('slim snapshots do not stale a core for omitted detail facts', () => {
+    read('PROJ-A', 'a');
+    http.expectOne(coreRequest('PROJ-A', 'a')).flush(makeCore('PROJ-A', 'a', {
+      released: true,
+      pins: { modelExplicit: false, thinkingLevelExplicit: false,
+        allowWebAccess: true, contextMode: 'clean', useOwnSession: true, noBranchExpected: false },
+      runtime: { location: 'none', leaseState: 'none',
+        activity: { kind: 'failed-idle', attempt: 1, lastError: null } },
+    }));
+    tasks.refresh(true);
+    http.expectOne(grouped).flush({ humanReview: [{ id: 'a', taskKey: 'C:/PROJ-A::a',
+      state: '5-human-review', title: 'a', order: 0,
+      model: null, modelExplicit: false, thinkingLevelExplicit: false,
+      noBranchExpected: false }], gitStateAt: null, stale: false });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
+    expect(cache.isCoreCurrent('PROJ-A', 'a')).toBe(true);
+  });
+
   it('a grouped snapshot revalidates cores when only runtime or pins change', () => {
     read('PROJ-A', 'runtime');
     read('PROJ-A', 'pins');

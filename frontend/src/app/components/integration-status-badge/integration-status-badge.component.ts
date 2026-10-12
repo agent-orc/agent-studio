@@ -114,6 +114,7 @@ export class IntegrationStatusBadgeComponent {
   private readonly statusLabel = computed(() => {
     const value = this.integration();
     if (!value) return '';
+    if (value.repositoryLabel) return value.repositoryLabel;
     if (value.repositories?.length) {
       return value.repositories.map((repository) => this.repositoryLine(repository)).join(' · ');
     }
@@ -190,7 +191,7 @@ export class IntegrationStatusBadgeComponent {
     })();
     const repositoryDetails = value.repositories?.map((repository) =>
       `${repository.repository}: ${repository.detail}`) ?? [];
-    return [...new Set([head, this.verificationLine(), ...repositoryDetails, value.failure?.reason, value.detail]
+    return [...new Set([head, this.verificationLine(), value.repositoryDetail, ...repositoryDetails, value.failure?.reason, value.detail]
       .filter(Boolean))].join('\n');
   });
 

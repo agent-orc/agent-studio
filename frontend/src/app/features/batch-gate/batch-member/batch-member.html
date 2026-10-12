@@ -1,0 +1,10 @@
+@if (member(); as item) {
+  <span class="batch-member" data-testid="batch-member-badge" [attr.data-status]="item.status">
+    @switch (item.status) {
+      @case ('pending') { Batch pending }
+      @case ('in-batch') { Batch {{ item.batchId }} · {{ item.position ?? '?' }} of {{ item.size ?? '?' }} }
+      @case ('published') { Batch published }
+      @case ('fallback') { Per-task fallback }
+    }
+  </span>
+}

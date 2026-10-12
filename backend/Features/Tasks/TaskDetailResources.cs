@@ -17,9 +17,30 @@ public static class TaskDetailResources
 {
     public static void MapTaskDetailResources(this RouteGroupBuilder group)
     {
+        group.MapGet("/{jobId}/details/overview", (string jobId, string? project, long? generation,
+            HttpContext context, ProjectRegistry projects, TaskIndexCache index,
+            ITaskCoreRuntime runtime, TaskScannerService scanner) =>
+        {
+            var lookup = Resolve(jobId, project, generation, context, projects, index);
+            if (lookup.Error is not null) return lookup.Error;
+            var core = lookup.Core!;
+            var task = scanner.FindJob(core.Id, core.WatchPath);
+            if (task is null || task.TaskKey != core.TaskKey) return Results.NotFound();
+            var data = new TaskOverviewResource(task.Decision,
+                TaskEndpointHelpers.BuildPlanningSpawnSummary(task),
+                TaskEndpointHelpers.BuildConceptDossierSummary(task),
+                task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
+                task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
+                task.References, task.References.DependsOn.Count > 0
+                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null);
+            return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
+                null, Modified(Path.Combine(core.FolderPath, "task.json")));
+        });
+
         group.MapGet("/{jobId}/details/git", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots, ILoggerFactory loggerFactory) =>
+            ITaskCoreRuntime runtime, TaskListGitProjectionCache snapshots,
+            TaskScannerService scanner, ILoggerFactory loggerFactory) =>
         {
             using var gitTelemetry = AgentStudio.Git.GitProcessTelemetry.BeginRequest("tasks/detail/git",
                 loggerFactory.CreateLogger("TaskGitResource"), includeNested: true);
@@ -33,7 +54,7 @@ public static class TaskDetailResources
             var data = new TaskGitResource(
                 snapshot.Merge.GetValueOrDefault(key), snapshot.Integration.GetValueOrDefault(key),
                 snapshot.Publish.GetValueOrDefault(key), snapshot.TestRuns.GetValueOrDefault(key),
-                core.Commit, core.Commits);
+                core.Commit, core.Commits, scanner.FindJob(core.Id, core.WatchPath)?.Provenance);
             var state = freshness.GitStateAt is null ? "unavailable" : freshness.Stale ? "stale" : "ready";
             var reason = state == "unavailable" ? "git-snapshot-pending" :
                 state == "stale" ? "git-snapshot-refreshing" : null;
@@ -180,7 +201,7 @@ internal sealed class PreSerializedJsonConverter : JsonConverter<PreSerializedJs
 public sealed record TaskGitResource(TaskMergeSignal? MergeSignal,
     TaskIntegrationStatus? Integration, TaskPublishSignal? PublishSignal,
     TaskTestRunEvidence? TestEvidence, TaskCommitInfo? Commit,
-    IReadOnlyList<TaskCommitInfo> Commits);
+    IReadOnlyList<TaskCommitInfo> Commits, TaskProvenance? Provenance);
 public sealed record TaskUsageResource(TaskTokenSummary? TokenSummary,
     SessionUsage? LastUsage, ContextUsageSnapshot? ContextUsage);
 public sealed record TaskReviewResource(ReviewProjectionView? ReviewProjection,
@@ -188,3 +209,8 @@ public sealed record TaskReviewResource(ReviewProjectionView? ReviewProjection,
 public sealed record TaskDocumentResource(string Name, string? Markdown, TaskSummaryState? SummaryState);
 public sealed record TaskHistoryResource(IReadOnlyList<TaskPromptHistoryEntry> PromptHistory,
     IReadOnlyList<TaskTitleHistoryEntry> TitleHistory, IReadOnlyList<TaskLogEntry> Log);
+public sealed record TaskOverviewResource(DecisionContent? Decision,
+    PlanningSpawnSummary? PlanningSpawn, ConceptDossierSummary? ConceptDossier,
+    OlderBriefDeliveryOffer? OlderBriefDelivery, IReadOnlyList<RelatedWikiPage> RelatedWikiPages,
+    string CreationSource, TaskCompletionClaim? CompletionClaim, ParkedBlockerStatus? ParkedBlocker,
+    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn);

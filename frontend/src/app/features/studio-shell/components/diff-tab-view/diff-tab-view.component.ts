@@ -52,6 +52,7 @@ export class StudioDiffViewComponent {
   readonly revealAllLargeDiffs = signal(false);
   private ownerLoadKey = '';
   private diffLoadKey = '';
+  private readonly remoteOwner = signal<{ job: TaskInfo; commit: { sha: string; message?: string; filesChanged?: number; at?: string } } | null>(null);
 
   toggleMessage(): void {
     this.messageExpanded.update((v) => !v);
@@ -65,7 +66,7 @@ export class StudioDiffViewComponent {
     return lines.slice(1).some((l) => l.trim().length > 0);
   }
 
-  readonly owner = computed<{ job: TaskInfo; commit: { sha: string; message?: string; filesChanged?: number; at?: string } } | null>(() => {
+  private readonly localOwner = computed<{ job: TaskInfo; commit: { sha: string; message?: string; filesChanged?: number; at?: string } } | null>(() => {
     const sha = this.commitSha();
     const short = sha.slice(0, 7);
     const jobs = this.jobService.jobs();
@@ -97,6 +98,24 @@ export class StudioDiffViewComponent {
       }
     }
     return null;
+  });
+
+  readonly owner = computed(() => this.localOwner() ?? this.remoteOwner());
+
+  private readonly _lookupOwner = effect((onCleanup) => {
+    const sha = this.commitSha();
+    if (this.localOwner()) {
+      this.remoteOwner.set(null);
+      return;
+    }
+    this.remoteOwner.set(null);
+    // Full commit chains live on task detail. Resolve an older commit only
+    // when its diff tab opens, using the cached task index on the server.
+    const request = this.jobService.findCommitOwner(sha).subscribe({
+      next: match => this.remoteOwner.set({ job: match.job, commit: match.commit }),
+      error: () => this.remoteOwner.set(null),
+    });
+    onCleanup(() => request.unsubscribe());
   });
 
   readonly selectedFile = computed<GitFileChange | null>(() => {

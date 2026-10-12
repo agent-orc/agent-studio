@@ -84,6 +84,13 @@
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true
+            },
+            "unit-test": {
+              "assets": [],
+              "styles": [],
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true
             }
           },
           "defaultConfiguration": "production"
@@ -116,11 +123,16 @@
         "test": {
           "builder": "@angular/build:unit-test",
           "options": {
-            "buildTarget": "frontend:build:development",
+            "buildTarget": "frontend:build:unit-test",
             "tsConfig": "tsconfig.spec.json",
             "runner": "vitest",
             "runnerConfig": "vitest.config.ts",
             "setupFiles": ["src/test-locale.ts", "src/test-lazy-imports.ts"]
+          },
+          "configurations": {
+            "release": {
+              "runnerConfig": "vitest.release.config.ts"
+            }
           }
         }
       }

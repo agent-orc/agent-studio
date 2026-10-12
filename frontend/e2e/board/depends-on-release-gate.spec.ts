@@ -81,6 +81,11 @@ async function openBoard(page: Page): Promise<void> {
     }));
   });
   await page.route('**/api/**', (route) => json(route, []));
+  // The header reads a structured usage snapshot. An unavailable reply keeps
+  // this board-only fixture on its supported empty state.
+  await page.route('**/api/usage/cockpit**', (route) => route.fulfill({
+    status: 503, contentType: 'application/json', body: '{}',
+  }));
   await page.route('**/api/v1/studio/auth/status', (route) => json(route, {
     profile: 'local', bootstrapRequired: false, authenticated: true, user: null,
   }));
@@ -139,6 +144,7 @@ test.describe('dependsOn release gate board status', () => {
       await expect(page.getByText('waits for completion: LIB-2')).toBeVisible();
 
       if (RESULTS_DIR) {
+        await page.addStyleTag({ content: 'app-offline-banner { display: none !important; }' });
         mkdirSync(RESULTS_DIR, { recursive: true });
         await page.screenshot({
           path: `${RESULTS_DIR}/depends-on-release-gate-${theme}--mocked.png`,

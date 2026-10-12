@@ -192,7 +192,8 @@ function dependencyWaitHeadline(task: TaskInfo): string | null {
   const blocked = open.find(item => item.unsatisfiable);
   if (blocked) return `this gate can never open: ${blocked.key}`;
 
-  const extra = Math.max(0, open.length - 1);
+  // Slim board cards carry only the first open items; openCount is the total.
+  const extra = Math.max(0, (waitsOn.openCount ?? open.length) - 1);
   const reason = primary.waitingForRelease ? 'release' : 'completion';
   return `waits for ${reason}: ${primary.key}${extra > 0 ? ` +${extra}` : ''}`;
 }
