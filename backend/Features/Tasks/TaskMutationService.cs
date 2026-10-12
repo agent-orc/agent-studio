@@ -255,7 +255,7 @@ public class TaskMutationService
         if (!File.Exists(jobJsonPath)) return false;
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, TaskJsonFile.ReadOpts)
                       ?? new Dictionary<string, JsonElement>();
 
@@ -483,7 +483,7 @@ public class TaskMutationService
         {
             TaskTokenSummary? persisted = null;
             var taskJsonPath = Path.Combine(folderPath, "task.json");
-            using (var document = JsonDocument.Parse(File.ReadAllText(taskJsonPath)))
+            using (var document = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(taskJsonPath)))
             {
                 if (document.RootElement.TryGetProperty("tokenSummary", out var tokenSummary)
                     && tokenSummary.ValueKind == JsonValueKind.Object)
@@ -974,7 +974,7 @@ public class TaskMutationService
             var jobJsonPath = Path.Combine(folderPath, "task.json");
             if (!File.Exists(jobJsonPath)) return 0;
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                File.ReadAllText(jobJsonPath), TaskJsonFile.ReadOpts);
+                AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath), TaskJsonFile.ReadOpts);
             if (doc == null) return 0;
 
             // Mirror AppendJobCommitOnFolder's parsing (case-insensitive via
@@ -1163,7 +1163,7 @@ public class TaskMutationService
                 ? (true, null) : (false, "Decision conversion failed; the card remains in its original lane.");
 
         var jsonPath = Path.Combine(info.FolderPath, "task.json");
-        var originalJson = File.ReadAllText(jsonPath);
+        var originalJson = AtomicJsonFileWriter.ReadAllTextWithBackup(jsonPath);
         var fields = new Dictionary<string, object>
         {
             ["kind"] = TaskKinds.Decision, ["decision"] = decision,
@@ -1456,7 +1456,7 @@ public class TaskMutationService
             var taskJsonPath = Path.Combine(folderPath, "task.json");
             if (!File.Exists(taskJsonPath)) return [];
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                File.ReadAllText(taskJsonPath), TaskJsonFile.ReadOpts);
+                AtomicJsonFileWriter.ReadAllTextWithBackup(taskJsonPath), TaskJsonFile.ReadOpts);
             if (doc == null) return [];
 
             var chain = new List<TaskCommitInfo>();

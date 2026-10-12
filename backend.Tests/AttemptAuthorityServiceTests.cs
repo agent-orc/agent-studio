@@ -12,6 +12,115 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "attempt-authority-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public void Corrupt_primary_recovers_backup_with_higher_fence_and_epoch()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var first = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 30, "first").RunAttempt!;
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        var writer = new AtomicJsonFileWriter();
+        var original = File.ReadAllText(path);
+        writer.Write(path, original); // create the last-good backup
+        var damaged = JsonNode.Parse(original)!;
+        damaged["lastFenceByTask"]!["AGT-1"] = first.LastFence + 7;
+        File.WriteAllText(path, damaged.ToJsonString() + new string('\0', 4096));
+
+        var recovered = NewService(() => now.AddMinutes(1));
+        Assert.Equal(path + ".bak", recovered.RecoverySource);
+        Assert.True(recovered.AuthorityEpoch > first.AuthorityEpoch);
+        Assert.True(recovered.CurrentFence("AGT-1") >= first.LastFence + 7);
+        Assert.True(recovered.AcquireRun("AGT-1", "PROJ-1", first.AttemptId, "runner-2", "host", 30, "next")
+            .RunAttempt!.LastFence > first.LastFence + 7);
+        Assert.Single(Directory.GetFiles(Path.GetDirectoryName(path)!, "attempt-authority.json.corrupt-*.json"));
+    }
+
+    [Fact]
+    public void Corrupt_checkpoint_replays_previous_journal_segment_from_backup()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1,"lastFenceByTask":{},"runAttempts":[],"reviewAttempts":[]}""");
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire").RunAttempt!;
+        service.CheckpointForMigration();
+        Assert.True(new FileInfo(path + ".journal.bak").Length > 0);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1}""" + new string('\0', 4096));
+
+        var recovered = NewService(() => now);
+        Assert.Equal(run.AttemptId, recovered.GetRun(run.AttemptId)!.AttemptId);
+        Assert.True(recovered.AuthorityEpoch > run.AuthorityEpoch);
+        Assert.True(recovered.CurrentFence("AGT-1") > run.LastFence);
+    }
+
+    [Fact]
+    public void Torn_journal_tail_keeps_valid_prefix_and_fences_old_lease()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, """{"schemaVersion":6,"authorityEpoch":1,"lastFenceByTask":{},"runAttempts":[],"reviewAttempts":[]}""");
+        var service = NewService(() => now);
+        var run = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire").RunAttempt!;
+        File.AppendAllText(path + ".journal", "torn tail");
+
+        var recovered = NewService(() => now.AddSeconds(1));
+        Assert.Equal(path + ".journal", recovered.RecoverySource);
+        Assert.Equal(AttemptLifecycleState.Superseded, recovered.GetRun(run.AttemptId)!.State);
+        Assert.True(recovered.CurrentFence("AGT-1") > run.LastFence);
+    }
+
+    [Fact]
+    public void Renewal_appends_a_small_durable_delta_instead_of_rewriting_a_large_snapshot()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var path = Path.Combine(_root, AttemptAuthorityService.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var padding = new string('x', 2_000);
+        File.WriteAllText(path, JsonSerializer.Serialize(new
+        {
+            schemaVersion = 6,
+            authorityEpoch = 1,
+            runAttempts = Enumerable.Range(0, 200).Select(i => new
+            {
+                attemptId = $"historical-{i}", taskKey = $"AGT-{i + 100}", repositoryId = "PROJ-1",
+                state = AttemptLifecycleState.Pending, createdAt = now,
+                terminalReason = padding,
+            }).ToArray(),
+        }));
+        var service = NewService(() => now);
+        var acquired = service.AcquireRun("AGT-1", "PROJ-1", null, "runner", "host", 60, "acquire");
+        Assert.Equal(AttemptWriteStatus.Accepted, acquired.Status);
+        var run = acquired.RunAttempt!;
+        var beforeJournal = File.Exists(path + ".journal") ? new FileInfo(path + ".journal").Length : 0;
+        Assert.Equal(AttemptWriteStatus.Accepted, service.RenewRun(
+            new AttemptWriteReference(run.AttemptId, run.LastFence, run.AuthorityEpoch, "renew"),
+            "runner", 60).Status);
+        var renewalBytes = new FileInfo(path + ".journal").Length - beforeJournal;
+        Assert.True(renewalBytes < new FileInfo(path).Length / 10,
+            $"snapshot={new FileInfo(path).Length} renewal={renewalBytes}");
+        Assert.NotNull(NewService(() => now).GetRun(run.AttemptId));
+        Console.WriteLine($"Attempt authority renewal: baseline full rewrite {new FileInfo(path).Length} bytes; journal {renewalBytes} bytes.");
+    }
+
+    [Fact]
+    public void Startup_removes_only_stale_authority_temp_files()
+    {
+        var now = new DateTime(2026, 10, 12, 10, 0, 0, DateTimeKind.Utc);
+        var directory = Path.Combine(_root, ".metadata");
+        Directory.CreateDirectory(directory);
+        var stale = Path.Combine(directory, "attempt-authority.json.old.tmp");
+        var fresh = Path.Combine(directory, "attempt-authority.json.new.tmp");
+        File.WriteAllText(stale, "old");
+        File.WriteAllText(fresh, "new");
+        File.SetLastWriteTimeUtc(stale, now.AddHours(-2));
+        File.SetLastWriteTimeUtc(fresh, now);
+        _ = NewService(() => now);
+        Assert.False(File.Exists(stale));
+        Assert.True(File.Exists(fresh));
+    }
+
+    [Fact]
     public void Deferred_review_claim_is_immediately_claimable_again_with_a_new_fence()
     {
         var service = NewService();
@@ -1480,6 +1589,12 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Console.WriteLine(
             $"Representative attempt-authority live size: {beforeBytes} -> {afterBytes} bytes; "
             + $"reviews: {reviewCount} -> {liveReviews.Count}; archived: {archivedReviews.Count}.");
+
+        _ = NewService(() => now, terminalRetentionCount: AttemptAuthorityService.DefaultTerminalRetentionCount);
+        var boundedBytes = new FileInfo(livePath).Length;
+        Assert.True(boundedBytes < 10_000_000,
+            $"Expected the default hot snapshot below 10 MB, got {boundedBytes} bytes.");
+        Console.WriteLine($"Default hot snapshot: {beforeBytes} -> {boundedBytes} bytes.");
     }
 
     [Fact]

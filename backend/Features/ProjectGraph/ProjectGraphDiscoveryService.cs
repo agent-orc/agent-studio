@@ -119,10 +119,12 @@ public sealed class ProjectGraphDiscoveryService
         if (_loaded) return;
         _loaded = true;
         var path = Path.Combine(_snapshotRoot, "current.json");
-        if (!File.Exists(path)) return;
+        if (!File.Exists(path) && !File.Exists(path + ".bak")) return;
         try
         {
-            _current = JsonSerializer.Deserialize<ProjectGraphSnapshot>(File.ReadAllText(path), JsonOptions);
+            _current = JsonSerializer.Deserialize<ProjectGraphSnapshot>(
+                AtomicJsonFileWriter.ReadAllTextWithBackup(path,
+                    source => _logger.LogWarning("project-graph-recovered source={Source}", source)), JsonOptions);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -54,7 +54,8 @@ internal sealed record ReviewDaemonRestartObservation(
 public sealed class AttemptAuthorityService
 {
     public const string RelativePath = ".metadata/attempt-authority.json";
-    public const int DefaultTerminalRetentionCount = 2_000;
+    public const int DefaultTerminalRetentionCount = 128;
+    private static readonly TimeSpan TerminalRetentionAge = TimeSpan.FromHours(24);
     public const int ReviewInfrastructureRetryBudget = 3;
     public const string UnmaterializableReviewSubjectReason = "review-subject-unmaterialisierbar";
 
@@ -97,7 +98,12 @@ public sealed class AttemptAuthorityService
     private readonly Func<DateTime> _utcNow;
     private readonly IAtomicJsonFileWriter _writer;
     private readonly int _terminalRetentionCount;
+    private readonly bool _useJournal;
+    private readonly Dictionary<string, string> _recordHashes = new(StringComparer.Ordinal);
+    private long _journalSequence;
+    private int _journalEntries;
     private AuthorityState _state;
+    private string? _recoverySource;
     private ImmutableDictionary<string, BoardReviewActivity> _boardReviewActivity =
         ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
 
@@ -178,8 +184,10 @@ public sealed class AttemptAuthorityService
         _logger = logger;
         _utcNow = utcNow ?? (() => DateTime.UtcNow);
         _writer = writer ?? new AtomicJsonFileWriter();
+        _useJournal = _writer is AtomicJsonFileWriter;
         var root = configuration["TaskRepository"];
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
+        CleanupStaleTemporaryFiles();
         _state = Load();
         var requiresCompactionMigration = _state.SchemaVersion < CurrentSchemaVersion;
         NormalizeLoadedState();
@@ -188,8 +196,9 @@ public sealed class AttemptAuthorityService
             ?? DefaultTerminalRetentionCount;
         if (_terminalRetentionCount <= 0)
             throw new InvalidDataException("AttemptAuthority:TerminalRetentionCount must be greater than zero.");
-        if (requiresCompactionMigration && _path is not null)
+        if ((requiresCompactionMigration || _recoverySource is not null || NeedsStartupCompaction()) && _path is not null)
             PersistLocked(forceCompaction: true);
+        RebuildRecordHashes();
         _boardReviewActivity = BuildBoardReviewActivityLocked();
     }
 
@@ -201,6 +210,20 @@ public sealed class AttemptAuthorityService
     public long AuthorityEpoch
     {
         get { lock (_gate) return _state.AuthorityEpoch; }
+    }
+
+    public string? RecoverySource => _recoverySource;
+
+    /// <summary>Materialize the current journal state before an offline import.</summary>
+    public void CheckpointForMigration()
+    {
+        if (_path is null) return;
+        lock (_gate)
+        {
+            _writer.WriteJson(_path, _state, JsonOptions);
+            if (_useJournal) CheckpointJournalFile();
+            RebuildRecordHashes();
+        }
     }
 
     /// <summary>
@@ -2372,14 +2395,138 @@ public sealed class AttemptAuthorityService
 
     private AuthorityState Load()
     {
-        if (_path is null || !File.Exists(_path)) return new AuthorityState();
+        if (_path is null) return new AuthorityState();
+        if (!File.Exists(_path))
+        {
+            if (!File.Exists(_path + ".bak")) return new AuthorityState();
+            var backup = JsonSerializer.Deserialize<AuthorityState>(File.ReadAllText(_path + ".bak"), JsonOptions)
+                ?? throw new InvalidDataException("Attempt authority backup contained null.");
+            backup = ReplayJournal(backup);
+            backup.AuthorityEpoch++;
+            backup.LastFenceByTask ??= new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (var task in backup.LastFenceByTask.Keys.ToArray())
+                backup.LastFenceByTask[task] = Math.Max(backup.LastFenceByTask[task], RecoveryFenceFloor(backup.AuthorityEpoch));
+            FenceRecoveredAttempts(backup);
+            _recoverySource = _path + ".bak";
+            _logger.LogCritical("attempt-authority-recovered missing-primary source={RecoverySource} epoch={Epoch}",
+                _recoverySource, backup.AuthorityEpoch);
+            return backup;
+        }
+        string? primaryText = null;
         try
         {
-            return JsonSerializer.Deserialize<AuthorityState>(File.ReadAllText(_path), JsonOptions) ?? new AuthorityState();
+            primaryText = File.ReadAllText(_path);
+            var state = JsonSerializer.Deserialize<AuthorityState>(primaryText, JsonOptions)
+                ?? throw new InvalidDataException("Attempt authority primary contained null.");
+            return ReplayJournal(state);
         }
         catch (Exception ex)
         {
-            throw new InvalidDataException($"Attempt authority store '{_path}' could not be loaded; refusing to reset fences.", ex);
+            var backupPath = _path + ".bak";
+            try
+            {
+                var backup = JsonSerializer.Deserialize<AuthorityState>(File.ReadAllText(backupPath), JsonOptions)
+                    ?? throw new InvalidDataException("Attempt authority backup contained null.");
+                var corruptText = primaryText ?? File.ReadAllText(_path);
+                backup.LastFenceByTask ??= new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                backup = ReplayJournal(backup);
+                foreach (var (task, fence) in ReadRecoverableFences(corruptText))
+                    backup.LastFenceByTask[task] = Math.Max(backup.LastFenceByTask.GetValueOrDefault(task), fence);
+                backup.AuthorityEpoch = Math.Max(backup.AuthorityEpoch, ReadRecoverableEpoch(corruptText)) + 1;
+                // A recovered epoch uses a new numeric fence range as well, so
+                // a lease whose last write was lost cannot reuse its old fence.
+                foreach (var task in backup.LastFenceByTask.Keys.ToArray())
+                    backup.LastFenceByTask[task] = Math.Max(
+                        backup.LastFenceByTask[task], RecoveryFenceFloor(backup.AuthorityEpoch));
+                FenceRecoveredAttempts(backup);
+                var quarantinedPath = _path + $".corrupt-{_utcNow():yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.json";
+                File.Move(_path, quarantinedPath);
+                _recoverySource = backupPath;
+                _logger.LogCritical(ex,
+                    "attempt-authority-recovered source={RecoverySource} corrupt={CorruptPath} epoch={Epoch}",
+                    backupPath, quarantinedPath, backup.AuthorityEpoch);
+                return backup;
+            }
+            catch (Exception backupFailure)
+            {
+                throw new InvalidDataException(
+                    $"Attempt authority store '{_path}' and backup '{backupPath}' could not be loaded; refusing to reset fences.",
+                    new AggregateException(ex, backupFailure));
+            }
+        }
+    }
+
+    private static Dictionary<string, long> ReadRecoverableFences(string text)
+    {
+        var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        var marker = text.IndexOf("\"lastFenceByTask\"", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0) return result;
+        var start = text.IndexOf('{', marker);
+        if (start < 0) return result;
+        var end = text.IndexOf('}', start);
+        if (end < 0) return result;
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, long>>(text[(start)..(end + 1)], JsonOptions)
+                ?? result;
+        }
+        catch (JsonException) { return result; }
+    }
+
+    private static long ReadRecoverableEpoch(string text)
+    {
+        var marker = text.IndexOf("\"authorityEpoch\"", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0) return 0;
+        var colon = text.IndexOf(':', marker);
+        if (colon < 0) return 0;
+        var end = colon + 1;
+        while (end < text.Length && (char.IsWhiteSpace(text[end]) || char.IsDigit(text[end]))) end++;
+        return long.TryParse(text[(colon + 1)..end], out var epoch) ? epoch : 0;
+    }
+
+    private static long RecoveryFenceFloor(long epoch) => checked(epoch * 1_000_000_000L);
+
+    private void FenceRecoveredAttempts(AuthorityState state)
+    {
+        var now = _utcNow();
+        state.RunAttempts ??= [];
+        state.ReviewAttempts ??= [];
+        foreach (var attempt in state.RunAttempts.Select(run => (run.TaskKey, run.LastFence))
+                     .Concat(state.ReviewAttempts.Select(review => (review.TaskKey, review.LastFence))))
+            state.LastFenceByTask[attempt.TaskKey] = Math.Max(
+                Math.Max(state.LastFenceByTask.GetValueOrDefault(attempt.TaskKey), attempt.LastFence),
+                RecoveryFenceFloor(state.AuthorityEpoch));
+        foreach (var run in state.RunAttempts.Where(run => !Terminal(run.State)))
+        {
+            run.State = AttemptLifecycleState.Superseded;
+            run.TerminalAt = now;
+            run.TerminalOutcome = "authority-recovered";
+            run.TerminalReason = "Authority recovered from backup; prior lease cannot be trusted.";
+            run.Lease = null;
+        }
+        foreach (var review in state.ReviewAttempts.Where(review => !Terminal(review.State)))
+        {
+            review.State = AttemptLifecycleState.Superseded;
+            review.TerminalAt = now;
+            review.TerminalReason = "Authority recovered from backup; prior lease cannot be trusted.";
+            review.Lease = null;
+            review.CurrentClaimDeliveryKey = null;
+        }
+    }
+
+    private void CleanupStaleTemporaryFiles()
+    {
+        if (_path is null) return;
+        var directory = Path.GetDirectoryName(_path)!;
+        if (!Directory.Exists(directory)) return;
+        foreach (var file in Directory.EnumerateFiles(directory, "attempt-authority.json.*.tmp"))
+        {
+            try
+            {
+                if (File.GetLastWriteTimeUtc(file) < _utcNow().AddHours(-1)) File.Delete(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { _logger.LogWarning(ex, "attempt-authority-temp-cleanup-failed path={Path}", file); }
         }
     }
 
@@ -2439,7 +2586,18 @@ public sealed class AttemptAuthorityService
         {
             CompactTerminalAttemptsLocked(forceCompaction);
             var boardReviewActivity = BuildBoardReviewActivityLocked();
-            _writer.WriteJson(_path, _state, JsonOptions);
+            if (_useJournal && !forceCompaction && File.Exists(_path))
+            {
+                AppendJournalDelta();
+                if (_journalEntries >= 256 || new FileInfo(JournalPath).Length >= 8 * 1024 * 1024)
+                    CheckpointJournal();
+            }
+            else
+            {
+                _writer.WriteJson(_path, _state, JsonOptions);
+                if (_useJournal) CheckpointJournalFile();
+                RebuildRecordHashes();
+            }
             // Publish only after the atomic write succeeds. Failed writes must
             // not expose speculative review state to concurrent board readers.
             Volatile.Write(ref _boardReviewActivity, boardReviewActivity);
@@ -2452,8 +2610,195 @@ public sealed class AttemptAuthorityService
             _state = Load();
             NormalizeLoadedState();
             if (_state.AuthorityEpoch <= 0) _state.AuthorityEpoch = 1;
+            RebuildRecordHashes();
             throw;
         }
+    }
+
+    private string JournalPath => _path + ".journal";
+
+    private void RebuildRecordHashes()
+    {
+        _recordHashes.Clear();
+        foreach (var run in _state.RunAttempts)
+            _recordHashes["r:" + run.AttemptId] = RecordHash(run);
+        foreach (var review in _state.ReviewAttempts)
+            _recordHashes["v:" + review.AttemptId] = RecordHash(review);
+        _journalSequence = _state.JournalSequence;
+    }
+
+    private static string RecordHash<T>(T record)
+        => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions)));
+
+    private bool NeedsStartupCompaction()
+    {
+        var terminal = _state.RunAttempts.Count(run => Terminal(run.State))
+            + _state.ReviewAttempts.Count(review => Terminal(review.State));
+        return terminal > _terminalRetentionCount
+            || _state.RunAttempts.Any(run => Terminal(run.State)
+                && _utcNow() - (run.TerminalAt ?? run.CreatedAt) >= TerminalRetentionAge)
+            || _state.ReviewAttempts.Any(review => Terminal(review.State)
+                && _utcNow() - (review.TerminalAt ?? review.CreatedAt) >= TerminalRetentionAge);
+    }
+
+    private void AppendJournalDelta()
+    {
+        var nextHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var changedRuns = new List<RunAttemptRecord>();
+        var changedReviews = new List<ReviewAttemptRecord>();
+        foreach (var run in _state.RunAttempts)
+        {
+            var key = "r:" + run.AttemptId;
+            var hash = RecordHash(run);
+            nextHashes[key] = hash;
+            if (!_recordHashes.TryGetValue(key, out var old) || old != hash) changedRuns.Add(run);
+        }
+        foreach (var review in _state.ReviewAttempts)
+        {
+            var key = "v:" + review.AttemptId;
+            var hash = RecordHash(review);
+            nextHashes[key] = hash;
+            if (!_recordHashes.TryGetValue(key, out var old) || old != hash) changedReviews.Add(review);
+        }
+        var delta = new AuthorityDelta
+        {
+            Sequence = _journalSequence + 1,
+            AuthorityEpoch = _state.AuthorityEpoch,
+            LastCompactedAt = _state.LastCompactedAt,
+            LastFenceByTask = _state.LastFenceByTask,
+            CurrentRunByTask = _state.CurrentRunByTask,
+            CurrentReviewByTask = _state.CurrentReviewByTask,
+            CurrentSubjectByTask = _state.CurrentSubjectByTask,
+            ReviewPrioritiesByTask = _state.ReviewPrioritiesByTask,
+            ReviewDaemonRestarts = _state.ReviewDaemonRestarts,
+            ChangedRuns = changedRuns,
+            ChangedReviews = changedReviews,
+            RemovedRunIds = _recordHashes.Keys.Where(key => key.StartsWith("r:") && !nextHashes.ContainsKey(key))
+                .Select(key => key[2..]).ToList(),
+            RemovedReviewIds = _recordHashes.Keys.Where(key => key.StartsWith("v:") && !nextHashes.ContainsKey(key))
+                .Select(key => key[2..]).ToList(),
+        };
+        var payload = JsonSerializer.SerializeToUtf8Bytes(delta, JsonOptions);
+        var firstJournalWrite = !File.Exists(JournalPath);
+        using var journal = new FileStream(JournalPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
+        journal.Seek(0, SeekOrigin.End);
+        var start = journal.Position;
+        try
+        {
+            journal.Write(BitConverter.GetBytes(payload.Length));
+            journal.Write(SHA256.HashData(payload));
+            journal.Write(payload);
+            journal.Flush(flushToDisk: true);
+            if (firstJournalWrite) AtomicJsonFileWriter.FlushDirectory(JournalPath);
+        }
+        catch
+        {
+            journal.SetLength(start);
+            journal.Flush(flushToDisk: true);
+            throw;
+        }
+        _state.JournalSequence = delta.Sequence;
+        _journalSequence = delta.Sequence;
+        _journalEntries++;
+        _recordHashes.Clear();
+        foreach (var (key, hash) in nextHashes) _recordHashes[key] = hash;
+    }
+
+    private AuthorityState ReplayJournal(AuthorityState state)
+    {
+        if (!_useJournal) return state;
+        _journalEntries = 0;
+        foreach (var path in new[] { JournalPath + ".bak", JournalPath })
+            if (File.Exists(path)) ReplayJournalFile(state, path);
+        return state;
+    }
+
+    private void ReplayJournalFile(AuthorityState state, string path)
+    {
+        using var journal = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+        long validEnd = 0;
+        var incomplete = false;
+        Span<byte> header = stackalloc byte[36];
+        while (journal.Position < journal.Length)
+        {
+            if (journal.Read(header) != header.Length) { incomplete = true; break; }
+            var length = BitConverter.ToInt32(header[..4]);
+            if (length <= 0 || length > 16 * 1024 * 1024 || journal.Length - journal.Position < length)
+            { incomplete = true; break; }
+            var payload = new byte[length];
+            journal.ReadExactly(payload);
+            if (!SHA256.HashData(payload).AsSpan().SequenceEqual(header[4..]))
+            { incomplete = true; break; }
+            var delta = JsonSerializer.Deserialize<AuthorityDelta>(payload, JsonOptions)
+                ?? throw new InvalidDataException("Attempt authority journal contained null.");
+            if (delta.Sequence > state.JournalSequence)
+            {
+                if (delta.Sequence != state.JournalSequence + 1)
+                    throw new InvalidDataException("Attempt authority journal has a sequence gap.");
+                ApplyDelta(state, delta);
+            }
+            validEnd = journal.Position;
+            if (path == JournalPath) _journalEntries++;
+        }
+        if (incomplete)
+        {
+            journal.SetLength(validEnd);
+            journal.Flush(flushToDisk: true);
+            state.AuthorityEpoch++;
+            foreach (var task in state.LastFenceByTask.Keys.ToArray())
+                state.LastFenceByTask[task] = Math.Max(state.LastFenceByTask[task], RecoveryFenceFloor(state.AuthorityEpoch));
+            FenceRecoveredAttempts(state);
+            _recoverySource = path;
+            _logger.LogCritical("attempt-authority-journal-recovered path={JournalPath} validBytes={ValidBytes} epoch={Epoch}",
+                path, validEnd, state.AuthorityEpoch);
+        }
+    }
+
+    private static void ApplyDelta(AuthorityState state, AuthorityDelta delta)
+    {
+        state.JournalSequence = delta.Sequence;
+        state.AuthorityEpoch = delta.AuthorityEpoch;
+        state.LastCompactedAt = delta.LastCompactedAt;
+        state.LastFenceByTask = delta.LastFenceByTask;
+        state.CurrentRunByTask = delta.CurrentRunByTask;
+        state.CurrentReviewByTask = delta.CurrentReviewByTask;
+        state.CurrentSubjectByTask = delta.CurrentSubjectByTask;
+        state.ReviewPrioritiesByTask = delta.ReviewPrioritiesByTask;
+        state.ReviewDaemonRestarts = delta.ReviewDaemonRestarts;
+        var removedRuns = delta.RemovedRunIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removedReviews = delta.RemovedReviewIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var run in delta.ChangedRuns) removedRuns.Add(run.AttemptId);
+        foreach (var review in delta.ChangedReviews) removedReviews.Add(review.AttemptId);
+        state.RunAttempts.RemoveAll(run => removedRuns.Contains(run.AttemptId));
+        state.ReviewAttempts.RemoveAll(review => removedReviews.Contains(review.AttemptId));
+        state.RunAttempts.AddRange(delta.ChangedRuns);
+        state.ReviewAttempts.AddRange(delta.ChangedReviews);
+    }
+
+    private void CheckpointJournal()
+    {
+        try
+        {
+            _writer.WriteJson(_path!, _state, JsonOptions);
+            CheckpointJournalFile();
+            RebuildRecordHashes();
+        }
+        catch (Exception ex)
+        {
+            // The appended delta is already durable. Keep it and retry the
+            // checkpoint on a later mutation without failing this write.
+            _logger.LogWarning(ex, "attempt-authority-checkpoint-failed path={Path}", _path);
+        }
+    }
+
+    private void CheckpointJournalFile()
+    {
+        if (!File.Exists(JournalPath) || new FileInfo(JournalPath).Length == 0) return;
+        // The new primary can fail after a crash. Its .bak is the preceding
+        // snapshot, so retain the just-checkpointed deltas beside it.
+        File.Move(JournalPath, JournalPath + ".bak", overwrite: true);
+        AtomicJsonFileWriter.FlushDirectory(JournalPath);
+        _journalEntries = 0;
     }
 
     private void CompactTerminalAttemptsLocked(bool force)
@@ -2480,21 +2825,22 @@ public sealed class AttemptAuthorityService
             .ToList();
         var terminalAttemptCount = _state.RunAttempts.Count(run => Terminal(run.State))
             + _state.ReviewAttempts.Count(review => Terminal(review.State));
-        if (terminalAttemptCount <= _terminalRetentionCount)
+        var hasOldTerminal = newestTerminalAttempts.Any(attempt => now - attempt.TerminalAt >= TerminalRetentionAge);
+        if (terminalAttemptCount <= _terminalRetentionCount && !hasOldTerminal)
         {
             if (force)
                 _state.LastCompactedAt = now;
             return;
         }
-        if (!force && _state.LastCompactedAt?.Date >= now.Date)
-            return;
 
         var retainedRunIds = newestTerminalAttempts
             .Where(attempt => !attempt.IsReview)
+            .Where(attempt => now - attempt.TerminalAt < TerminalRetentionAge)
             .Select(attempt => attempt.AttemptId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var retainedReviewIds = newestTerminalAttempts
             .Where(attempt => attempt.IsReview)
+            .Where(attempt => now - attempt.TerminalAt < TerminalRetentionAge)
             .Select(attempt => attempt.AttemptId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var protectedReviewIds = new HashSet<string>(
@@ -2548,7 +2894,7 @@ public sealed class AttemptAuthorityService
 
         if (archivedRuns.Count > 0 || archivedReviews.Count > 0)
         {
-            var archivePath = ArchivePath(now);
+            var archivePath = ArchivePath(now, archivedRuns, archivedReviews);
             var archive = new AuthorityArchive
             {
                 SchemaVersion = ArchiveSchemaVersion,
@@ -2591,13 +2937,30 @@ public sealed class AttemptAuthorityService
            && Terminal(state)
            && !retainedByCount;
 
-    private string ArchivePath(DateTime archivedAt)
+    private string ArchivePath(
+        DateTime archivedAt,
+        IReadOnlyList<RunAttemptRecord> runs,
+        IReadOnlyList<ReviewAttemptRecord> reviews)
     {
         var directory = Path.GetDirectoryName(_path)
             ?? throw new InvalidOperationException("Attempt authority path has no parent directory.");
-        return Path.Combine(
-            directory,
-            $"attempt-authority.archive-{archivedAt:yyyy-MM-dd}.json");
+        var legacyDailyPath = Path.Combine(directory, $"attempt-authority.archive-{archivedAt:yyyy-MM-dd}.json");
+        if (File.Exists(legacyDailyPath))
+        {
+            try { _ = LoadArchive(legacyDailyPath); }
+            catch (InvalidDataException)
+            {
+                // A pre-sharding archive write may have stopped before its
+                // live-file update. The live records are still present here.
+                return legacyDailyPath;
+            }
+        }
+        var identities = runs.Select(run => "r:" + run.AttemptId)
+            .Concat(reviews.Select(review => "v:" + review.AttemptId))
+            .Order(StringComparer.Ordinal);
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', identities))))[..16]
+            .ToLowerInvariant();
+        return Path.Combine(directory, $"attempt-authority.archive-{archivedAt:yyyy-MM-dd}-{digest}.json");
     }
 
     private IReadOnlyList<AuthorityArchive> LoadArchivesForHistory()
@@ -2846,6 +3209,7 @@ public sealed class AttemptAuthorityService
     private sealed class AuthorityState
     {
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+        public long JournalSequence { get; set; }
         public long AuthorityEpoch { get; set; } = 1;
         public DateTime? LastCompactedAt { get; set; }
         public Dictionary<string, long> LastFenceByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -2857,6 +3221,23 @@ public sealed class AttemptAuthorityService
         public Dictionary<string, ReviewSubjectRecord> CurrentSubjectByTask { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, ReviewDaemonRestartRecord> ReviewDaemonRestarts { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class AuthorityDelta
+    {
+        public long Sequence { get; set; }
+        public long AuthorityEpoch { get; set; }
+        public DateTime? LastCompactedAt { get; set; }
+        public Dictionary<string, long> LastFenceByTask { get; set; } = [];
+        public Dictionary<string, string> CurrentRunByTask { get; set; } = [];
+        public Dictionary<string, string> CurrentReviewByTask { get; set; } = [];
+        public Dictionary<string, ReviewSubjectRecord> CurrentSubjectByTask { get; set; } = [];
+        public Dictionary<string, string> ReviewPrioritiesByTask { get; set; } = [];
+        public Dictionary<string, ReviewDaemonRestartRecord> ReviewDaemonRestarts { get; set; } = [];
+        public List<RunAttemptRecord> ChangedRuns { get; set; } = [];
+        public List<ReviewAttemptRecord> ChangedReviews { get; set; } = [];
+        public List<string> RemovedRunIds { get; set; } = [];
+        public List<string> RemovedReviewIds { get; set; } = [];
     }
 
     private sealed class ReviewDaemonRestartRecord

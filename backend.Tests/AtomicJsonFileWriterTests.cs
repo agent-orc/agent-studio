@@ -108,7 +108,7 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
             Interlocked.Read(ref successfulReads) >= 50,
             $"the reader must have sampled the file during the swaps (reads: {successfulReads})");
         Assert.Equal(smallDocument, File.ReadAllText(path));
-        Assert.Equal(["task.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+        Assert.Equal(["task.json", "task.json.bak"], Directory.GetFiles(_dir).Select(Path.GetFileName).Order());
     }
 
     [Fact]
@@ -130,7 +130,38 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         writer.Write(path, """{"version":2}""");
 
         Assert.Equal("""{"version":2}""", File.ReadAllText(path));
-        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+        Assert.Equal(["state.json", "state.json.bak"], Directory.GetFiles(_dir).Select(Path.GetFileName).Order());
+        Assert.Equal("""{"version":1}""", File.ReadAllText(path + ".bak"));
+    }
+
+    [Fact]
+    public void ReadAllTextWithBackup_Uses_valid_backup_after_zero_tailed_primary()
+    {
+        var path = Path.Combine(_dir, "state.json");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, """{"version":1}""");
+        writer.Write(path, """{"version":2}""");
+        File.WriteAllText(path, """{"version":2}""" + new string('\0', 1024));
+        string? recoveredFrom = null;
+
+        Assert.Equal("""{"version":1}""",
+            AtomicJsonFileWriter.ReadAllTextWithBackup(path, source => recoveredFrom = source));
+        Assert.Equal(path + ".bak", recoveredFrom);
+        writer.Write(path, """{"version":3}""");
+        Assert.Equal("""{"version":1}""", File.ReadAllText(path + ".bak"));
+        Assert.Equal("""{"version":3}""", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void ReplaceExisting_TextDocument_KeepsPreviousTextAsBackup()
+    {
+        var path = Path.Combine(_dir, "notes.md");
+        var writer = new AtomicJsonFileWriter();
+        writer.Write(path, "first note\n");
+        writer.ReplaceExisting(path, "second note\n");
+
+        Assert.Equal("first note\n", File.ReadAllText(path + ".bak"));
+        Assert.Equal("second note\n", File.ReadAllText(path));
     }
 
     [Fact]
@@ -161,7 +192,7 @@ public sealed class AtomicJsonFileWriterTests : IDisposable
         writer.ReplaceExisting(path, """{"version":2}""");
 
         Assert.Equal("""{"version":2}""", File.ReadAllText(path));
-        Assert.Equal(["state.json"], Directory.GetFiles(_dir).Select(Path.GetFileName));
+        Assert.Equal(["state.json", "state.json.bak"], Directory.GetFiles(_dir).Select(Path.GetFileName).Order());
     }
 
     [Fact]

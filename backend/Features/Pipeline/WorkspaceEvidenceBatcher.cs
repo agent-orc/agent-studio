@@ -47,6 +47,7 @@ public sealed class WorkspaceEvidenceBatcher
     private static readonly string[] DefaultExcludeGlobs =
     {
         "*.tmp",
+        "*.bak",
         "*.cache",
         "*/.orchestrator/*",
         "*/attachments/*",
@@ -118,7 +119,9 @@ public sealed class WorkspaceEvidenceBatcher
         get
         {
             var configured = _config.GetSection("WorkspaceEvidence:ExcludeGlobs").Get<string[]>();
-            return configured is { Length: > 0 } ? configured : DefaultExcludeGlobs;
+            return configured is { Length: > 0 }
+                ? configured.Append("*.bak").Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                : DefaultExcludeGlobs;
         }
     }
 

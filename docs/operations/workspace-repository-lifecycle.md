@@ -10,8 +10,8 @@ The backend owns committing, push retry, drift sweeps, and object maintenance.
 |---|---|---|
 | `projects/**` task state, receipts, reviews, prompts, and small reports | Durable authority or evidence | Committed at run boundaries or in debounced transition batches. |
 | `logs/bus/**` | Runtime projection | Removed from the index and ignored through `.git/info/exclude`. The bus remains available to runtime readers and follows its own rotation policy. |
-| `.metadata/attempt-authority.json`, `.bak` remnants, and `attempt-authority.archive-*.json` | Runtime authority store | Never staged. The live service keeps the newest 2,000 terminal attempts by default and compacts older terminal records into a daily archive. |
-| `*.tmp`, caches, `.runtime/**`, attachments, and intermediate results selected by `WorkspaceEvidence:ExcludeGlobs` | Runtime or heavy working data | Excluded from transition evidence commits. |
+| `.metadata/attempt-authority.json`, `.bak`, `.journal`, `.journal.bak`, and `attempt-authority.archive-*.json` | Runtime authority store | Never staged. The live snapshot keeps at most 128 unprotected terminal attempts younger than 24 hours by default. Mutations append flushed deltas to the journal; periodic checkpoints replace the snapshot. The previous journal segment can recover the backup snapshot. Archive shards preserve older terminal records. |
+| `*.tmp`, `*.bak`, caches, `.runtime/**`, attachments, and intermediate results selected by `WorkspaceEvidence:ExcludeGlobs` | Runtime or heavy working data | Excluded from transition evidence commits. |
 
 On every maintenance pass, the backend installs the two runtime ignore patterns
 in the repository-local exclude file and runs `git rm --cached` for previously

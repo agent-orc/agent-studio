@@ -94,7 +94,9 @@ public class ClientIdentityStore
             }
         }
 
-        foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+        foreach (var file in Directory.EnumerateFiles(dir, "*.json")
+                     .Concat(Directory.EnumerateFiles(dir, "*.json.bak").Select(path => path[..^4]))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             TryLoadFileLocked(file);
         }
@@ -606,7 +608,7 @@ public class ClientIdentityStore
         var identityId = Path.GetFileNameWithoutExtension(file);
         try
         {
-            var json = File.ReadAllText(file);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(file);
             var record = JsonSerializer.Deserialize<ClientIdentity>(json, ReadOpts);
             if (record is null || string.IsNullOrWhiteSpace(record.Id))
                 throw new InvalidDataException("The identity document has no id.");

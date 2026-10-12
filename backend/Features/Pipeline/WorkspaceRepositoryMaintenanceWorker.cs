@@ -61,6 +61,7 @@ public sealed class WorkspaceRepositoryMaintenanceService
     {
         "/logs/bus/",
         "/.metadata/attempt-authority*",
+        "*.bak",
     };
 
     private readonly IConfiguration _configuration;

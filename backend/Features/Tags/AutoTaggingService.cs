@@ -105,7 +105,7 @@ internal static class ProposedGlossaryContext
             if (File.Exists(candidate)) { path = candidate; break; }
         }
         if (path == null) return snapshot;
-        using var json = JsonDocument.Parse(File.ReadAllText(path));
+        using var json = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(path));
         var source = json.RootElement.GetProperty("areas");
         var merged = snapshot.Glossaries.ToDictionary(x => x.Key, x => x.Value.ToList());
         foreach (var area in source.EnumerateObject())
@@ -139,7 +139,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     {
         var path = StatePath(project);
         return File.Exists(path)
-            ? JsonSerializer.Deserialize<List<AutoTagResult>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? []
+            ? JsonSerializer.Deserialize<List<AutoTagResult>>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json) ?? []
             : [];
     }
     private void Save(string project, IReadOnlyList<AutoTagResult> results)
@@ -162,7 +162,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     {
         var path = Path.ChangeExtension(StatePath(project), ".report.json");
         return File.Exists(path)
-            ? JsonSerializer.Deserialize<AutoTagReport>(File.ReadAllText(path), TagMaintenancePolicy.Json)
+            ? JsonSerializer.Deserialize<AutoTagReport>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json)
             : null;
     }
     private string PendingPath(string project) => Path.ChangeExtension(StatePath(project), ".pending.json");
@@ -176,7 +176,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
     private AutoTagReport CompletePending(string project, CancellationToken ct)
     {
         var path = PendingPath(project);
-        var pending = JsonSerializer.Deserialize<AutoTagPendingApply>(File.ReadAllText(path), TagMaintenancePolicy.Json)
+        var pending = JsonSerializer.Deserialize<AutoTagPendingApply>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json)
             ?? throw new InvalidOperationException("Auto-tag pending apply record is empty.");
         var watchPath = scanner.GetWatchPaths().Single(p => p.Name == project).Path;
         var prior = Read(project).ToDictionary(x => (x.Kind, x.Id));
@@ -336,7 +336,7 @@ public sealed class AutoTagBackfillQueue(AutoTaggingService service, IConfigurat
         if (!Guid.TryParseExact(id, "N", out _)) return null;
         var path = Path.Combine(DirectoryPath, id + ".json");
         if (!File.Exists(path)) return null;
-        var job = JsonSerializer.Deserialize<AutoTagBackfillJob>(File.ReadAllText(path), TagMaintenancePolicy.Json);
+        var job = JsonSerializer.Deserialize<AutoTagBackfillJob>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json);
         return job?.Project == project ? job : null;
     }
 
@@ -358,7 +358,7 @@ public sealed class AutoTagBackfillQueue(AutoTaggingService service, IConfigurat
             {
                 try
                 {
-                    var job = JsonSerializer.Deserialize<AutoTagBackfillJob>(File.ReadAllText(path), TagMaintenancePolicy.Json);
+                    var job = JsonSerializer.Deserialize<AutoTagBackfillJob>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json);
                     if (job == null) continue;
                     if (_jobs.ContainsKey(job.Id)) continue;
                     _jobs[job.Id] = job;
@@ -431,7 +431,7 @@ public sealed class AutoTagCreationWorker(AutoTaggingService service, ITagMainte
                     File.WriteAllText(path, TagMaintenancePolicy.Encode(now));
                     continue;
                 }
-                var previous = JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(path), TagMaintenancePolicy.Json) ?? [];
+                var previous = JsonSerializer.Deserialize<HashSet<string>>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), TagMaintenancePolicy.Json) ?? [];
                 if (now.Except(previous).Any())
                 {
                     var recorded = service.Read(project).Select(result => result.Kind + ":" + result.Id)

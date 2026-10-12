@@ -125,8 +125,9 @@ public sealed class RemoteRunStopRequestStore
         _path = string.IsNullOrWhiteSpace(root) ? null : Path.Combine(root, RelativePath);
         _utcNow = utcNow;
         _writer = writer ?? new AtomicJsonFileWriter();
-        if (_path is null || !File.Exists(_path)) return;
-        var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(File.ReadAllText(_path), Json)
+        if (_path is null || (!File.Exists(_path) && !File.Exists(_path + ".bak"))) return;
+        var loaded = JsonSerializer.Deserialize<List<RemoteRunStopRequest>>(
+            AtomicJsonFileWriter.ReadAllTextWithBackup(_path), Json)
             ?? throw new InvalidDataException("Remote stop receipt file is empty.");
         _requests = loaded.ToDictionary(item => item.CommandId, StringComparer.Ordinal);
     }

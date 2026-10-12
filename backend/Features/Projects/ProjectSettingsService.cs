@@ -1501,10 +1501,11 @@ public class ProjectSettingsService
             if (_loaded) return;
             _loaded = true;
             var path = ResolveStorePath();
-            if (path == null || !File.Exists(path)) return;
+            if (path == null || (!File.Exists(path) && !File.Exists(path + ".bak"))) return;
             try
             {
-                var json = File.ReadAllText(path);
+                var json = AtomicJsonFileWriter.ReadAllTextWithBackup(path,
+                    source => _logger.LogWarning("project-settings-recovered source={Source}", source));
                 var doc = JsonSerializer.Deserialize<Dictionary<string, ProjectSettings>>(
                     json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (doc != null)

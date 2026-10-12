@@ -87,7 +87,7 @@ internal static class TaskJsonFile
         if (!File.Exists(jobJsonPath))
             throw new FileNotFoundException("task.json was not found", jobJsonPath);
 
-        var json = File.ReadAllText(jobJsonPath);
+        var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
         var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
                   ?? new Dictionary<string, JsonElement>();
 
@@ -127,7 +127,7 @@ internal static class TaskJsonFile
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
                       ?? new Dictionary<string, JsonElement>();
             if (!doc.TryGetValue(fieldName, out var field) || field.ValueKind == JsonValueKind.Null)
@@ -157,7 +157,7 @@ internal static class TaskJsonFile
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
                       ?? new Dictionary<string, JsonElement>();
             var updated = new Dictionary<string, object>();
@@ -194,7 +194,7 @@ internal static class TaskJsonFile
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
                       ?? new Dictionary<string, JsonElement>();
             if (!doc.ContainsKey(fieldName)) return false;
@@ -228,7 +228,7 @@ internal static class TaskJsonFile
 
         try
         {
-            var json = File.ReadAllText(jobJsonPath);
+            var json = AtomicJsonFileWriter.ReadAllTextWithBackup(jobJsonPath);
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json, ReadOpts)
                       ?? new Dictionary<string, JsonElement>();
 

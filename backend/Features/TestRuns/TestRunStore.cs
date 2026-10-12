@@ -58,10 +58,10 @@ public sealed class TestRunStore
     private TestRunsFile Read(string projectId)
     {
         var path = PathFor(projectId);
-        if (path is null || !File.Exists(path)) return new();
+        if (path is null || (!File.Exists(path) && !File.Exists(path + ".bak"))) return new();
         try
         {
-            return JsonSerializer.Deserialize<TestRunsFile>(File.ReadAllText(path), Json) ?? new();
+            return JsonSerializer.Deserialize<TestRunsFile>(AtomicJsonFileWriter.ReadAllTextWithBackup(path), Json) ?? new();
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {

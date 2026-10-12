@@ -352,7 +352,7 @@ public sealed class WorkbenchCatalogueService
         if (descriptorPath == null || entryPath == null) return null;
         try
         {
-            var descriptorText = File.ReadAllText(descriptorPath);
+            var descriptorText = AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath);
             var descriptor = JsonNode.Parse(descriptorText) as JsonObject;
             var schemaVersion = descriptor?["schemaVersion"]?.GetValue<int>();
             if (descriptor == null || schemaVersion is not (1 or 2)) return null;
@@ -392,7 +392,7 @@ public sealed class WorkbenchCatalogueService
         {
             try
             {
-                using var json = JsonDocument.Parse(File.ReadAllText(descriptorPath));
+                using var json = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath));
                 var obj = json.RootElement;
                 // Both schemas store the receipt under the same key, so both
                 // can own an operationId (AGT-2375).
@@ -429,7 +429,7 @@ public sealed class WorkbenchCatalogueService
         {
             try
             {
-                using var json = JsonDocument.Parse(File.ReadAllText(descriptorPath));
+                using var json = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath));
                 var schema = RequiredInt(json.RootElement, "schemaVersion");
                 if (schema is not (1 or 2)) continue;
                 // pageKind is a schema v2 field; a v1 descriptor is a Workbench
@@ -487,7 +487,7 @@ public sealed class WorkbenchCatalogueService
             }
             try
             {
-                using var json = JsonDocument.Parse(File.ReadAllText(descriptor));
+                using var json = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(descriptor));
                 var obj = json.RootElement;
                 var schema = RequiredInt(obj, "schemaVersion");
                 if (schema is not (1 or 2)) throw new InvalidDataException("schemaVersion must be 1 or 2.");
@@ -587,7 +587,7 @@ public sealed class WorkbenchCatalogueService
             {
                 try
                 {
-                    using var json = JsonDocument.Parse(File.ReadAllText(descriptorPath));
+                    using var json = JsonDocument.Parse(AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath));
                     var key = OptionalString(json.RootElement, "key");
                     if (key != null && TryWorkbenchKeyNumber(key, null, out var number))
                         highest = Math.Max(highest, number);
@@ -603,7 +603,7 @@ public sealed class WorkbenchCatalogueService
             {
                 try
                 {
-                    var text = File.ReadAllText(descriptorPath);
+                    var text = AtomicJsonFileWriter.ReadAllTextWithBackup(descriptorPath);
                     var descriptor = JsonNode.Parse(text) as JsonObject;
                     if (descriptor == null || descriptor["key"] is JsonValue) continue;
                     var schema = descriptor["schemaVersion"]?.GetValue<int>();
