@@ -751,6 +751,62 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Disabled_code_gate_does_not_reconcile_or_fetch_pending_pushes()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        var reservations = factory.Services
+            .GetRequiredService<BatchIntegrationReservationService>();
+        reservations.MarkPushPending(ProjectName, "AGT-MISSING", "unpublished",
+            repositoryPath: _repo, integrationBranch: "develop", watchPath: _watchPath);
+        var fetchHead = Path.Combine(_repo, ".git", "FETCH_HEAD");
+        if (File.Exists(fetchHead)) File.Delete(fetchHead);
+
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.NotNull(reservations.GetWait(ProjectName));
+        Assert.False(File.Exists(fetchHead));
+        Assert.DoesNotContain("waiting on push", JsonSerializer.Serialize(pilot.State(ProjectName)));
+    }
+
+    [Fact]
+    public void Old_blocked_push_row_does_not_clear_a_new_merge_marker()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-PUSH-REINTEGRATED", "docs/reintegrated.md");
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, member.Key);
+        var pipeline = factory.Services.GetRequiredService<PipelineExecutionLog>();
+        pipeline.EnsureRun(folder, PipelineCatalogue.Standard, ProjectName, member.Key);
+        pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopPushStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Failed,
+            Verdict = "push-blocked",
+            StartedAt = _clock.UtcDateTime,
+            CompletedAt = _clock.UtcDateTime,
+        });
+        pipeline.RecordStep(folder, new PipelineStepExecution
+        {
+            StepId = PipelineCatalogue.MergeIntoDevelopStepId,
+            Kind = StepKind.Tool,
+            Status = PipelineStepStatus.Passed,
+            ApprovedIntegrationSha = member.ResultSha,
+            StartedAt = _clock.AddMinutes(1).UtcDateTime,
+            CompletedAt = _clock.AddMinutes(1).UtcDateTime,
+        });
+        var marker = new PendingIntegrationPush(member.Key, member.ResultSha,
+            folder, _repo, "develop", _watchPath, _clock);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        Assert.False(pilot.IsStalePush(ProjectName, marker,
+            new Dictionary<(string Repo, string Branch), string?>(), CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Publication_record_failure_after_remote_push_recovers_the_tested_batch()
     {
         using var factory = BuildFactory();

@@ -202,7 +202,8 @@ public sealed class BatchGatePilotService
         return BatchGatePilotSnapshotReader.Read(_store, project,
             falseCompleted, staleReleased) with
         {
-            PendingPushWait = _reservations?.GetWait(project),
+            PendingPushWait = CodeBatchEnabled(project)
+                ? _reservations?.GetWait(project) : null,
         };
     }
 
@@ -231,7 +232,13 @@ public sealed class BatchGatePilotService
                 .ToDictionary(group => group.Key, group => group.Last().Risk,
                     StringComparer.Ordinal);
         return BatchGateStateSnapshotReader.Read(_store, project, options, history,
-            risks, _reservations?.GetWait(project));
+            risks, CodeBatchEnabled(project) ? _reservations?.GetWait(project) : null);
+    }
+
+    private bool CodeBatchEnabled(string project)
+    {
+        var options = _settings.Get(project).BatchGate;
+        return options.Enabled && options.EffectiveScope == "code";
     }
 
     public async Task TickAsync(CancellationToken ct)
@@ -239,15 +246,17 @@ public sealed class BatchGatePilotService
         if (!await _tick.WaitAsync(0, ct).ConfigureAwait(false)) return;
         try
         {
+            var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
             if (_reservations is not null)
                 foreach (var project in _reservations.ProjectsWithPending())
                 {
                     try
                     {
+                        if (!CodeBatchEnabled(project)) continue;
                         using var grant = _reservations.TryAcquire(project);
                         if (grant is null) continue;
                         _reservations.Reconcile(project,
-                            marker => IsStalePush(project, marker, ct));
+                            marker => IsStalePush(project, marker, fetchedBases, ct));
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -263,7 +272,7 @@ public sealed class BatchGatePilotService
                             project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
                 }
             RecoverInterrupted();
-            await ResolvePausedAsync(ct).ConfigureAwait(false);
+            await ResolvePausedAsync(fetchedBases, ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
             StartClosedBatches(ct);
             foreach (var item in _store.ListPending().Where(item =>
@@ -339,8 +348,8 @@ public sealed class BatchGatePilotService
                         ScheduleFallback(item, ct);
                 var scope = Scope(first.Subject);
                 var current = group.ToArray();
-                var baseSha = _git.FetchBatchIntegrationTip(
-                    first.RepositoryPath, scope.IntegrationBranch, ct);
+                var baseSha = FetchBaseOnce(fetchedBases, first.RepositoryPath,
+                    scope.IntegrationBranch, ct);
                 if (baseSha is null) continue;
                 BatchGateFormation formed;
                 if (options.Planner == "look-ahead")
@@ -581,9 +590,10 @@ public sealed class BatchGatePilotService
     // subject, which either integrates the card or escalates it with the gate
     // reason. Members are released before the terminal state is written, so an
     // interruption in between only repeats an idempotent release.
-    private async Task ResolvePausedAsync(CancellationToken ct)
+    private async Task ResolvePausedAsync(
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        CancellationToken ct)
     {
-        var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
         foreach (var manifest in _store.ListPausedManifests())
         {
             ct.ThrowIfCancellationRequested();
@@ -615,13 +625,8 @@ public sealed class BatchGatePilotService
                             manifest.Members.Any(member => member.TaskKey == item.Subject.TaskKey
                                 && member.RunAttempt == item.Subject.RunAttempt));
                         if (pending is null) continue;
-                        var baseKey = (pending.RepositoryPath, manifest.Scope.IntegrationBranch);
-                        if (!fetchedBases.TryGetValue(baseKey, out var currentBase))
-                        {
-                            currentBase = _git.FetchBatchIntegrationTip(baseKey.RepositoryPath,
-                                baseKey.IntegrationBranch, ct);
-                            fetchedBases[baseKey] = currentBase;
-                        }
+                        var currentBase = FetchBaseOnce(fetchedBases,
+                            pending.RepositoryPath, manifest.Scope.IntegrationBranch, ct);
                         if (currentBase is null || string.Equals(currentBase, manifest.BaseSha,
                                 StringComparison.OrdinalIgnoreCase))
                             continue;
@@ -656,22 +661,31 @@ public sealed class BatchGatePilotService
             && state.Reason == "integration-branch-red";
     }
 
-    private bool IsStalePush(string project, PendingIntegrationPush marker,
+    private string? FetchBaseOnce(
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        string repo, string branch, CancellationToken ct)
+        => FetchBaseOnce(fetchedBases, repo, branch, _git.FetchBatchIntegrationTip, ct);
+
+    internal static string? FetchBaseOnce(
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
+        string repo, string branch,
+        Func<string, string, CancellationToken, string?> fetch,
+        CancellationToken ct)
+    {
+        var key = (repo, branch);
+        if (!fetchedBases.TryGetValue(key, out var sha))
+        {
+            sha = fetch(repo, branch, ct);
+            fetchedBases[key] = sha;
+        }
+        return sha;
+    }
+
+    internal bool IsStalePush(string project, PendingIntegrationPush marker,
+        Dictionary<(string Repo, string Branch), string?> fetchedBases,
         CancellationToken ct)
     {
         var task = _scanner.FindJob(marker.JobId, marker.WatchPath);
-        var repo = marker.RepositoryPath
-            ?? (task is null ? null : _git.ResolveRepoRootForWatchPath(task.WatchPath));
-        var branch = marker.IntegrationBranch
-            ?? (task is null ? _settings.Get(project).IntegrationBranch
-                : TaskIntegrationBranch.Resolve(task, _settings.Get(project).IntegrationBranch));
-        if (!string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(branch)
-            && !string.IsNullOrWhiteSpace(marker.ApprovedSha))
-        {
-            var remote = _git.FetchBatchIntegrationTip(repo, branch, ct);
-            if (remote is not null && _git.IsAncestor(repo, marker.ApprovedSha, remote))
-                return true;
-        }
         // The merge can enqueue its push before the lane leaves Auto Review.
         // Keep that short transition window fenced.
         if (task is null || task.State is not (TaskStates.AutoReview
@@ -688,8 +702,21 @@ public sealed class BatchGatePilotService
             return true;
         var push = record?.Steps.LastOrDefault(step =>
             step.StepId == PipelineCatalogue.MergeIntoDevelopPushStepId);
-        return push?.Status == PipelineStepStatus.Failed
-            && push.Verdict is ("push-blocked" or "lineage-blocked");
+        if (push?.StartedAt is { } pushStarted
+            && merge.CompletedAt is { } mergeCompleted
+            && pushStarted >= mergeCompleted
+            && (push.Status is PipelineStepStatus.Passed or PipelineStepStatus.Skipped
+                || push.Status == PipelineStepStatus.Failed
+                    && push.Verdict is ("push-blocked" or "lineage-blocked")))
+            return true;
+        var repo = marker.RepositoryPath
+            ?? _git.ResolveRepoRootForWatchPath(task.WatchPath);
+        var branch = marker.IntegrationBranch
+            ?? TaskIntegrationBranch.Resolve(task, _settings.Get(project).IntegrationBranch);
+        if (string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(branch)
+            || string.IsNullOrWhiteSpace(marker.ApprovedSha)) return false;
+        var remote = FetchBaseOnce(fetchedBases, repo, branch, ct);
+        return remote is not null && _git.IsAncestor(repo, marker.ApprovedSha, remote);
     }
 
     private async Task RecoverPublishedAsync(CancellationToken ct)
@@ -884,9 +911,11 @@ public sealed class BatchGatePilotService
         string repo, CancellationToken ct)
     {
         var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
+        var fetchedBases = new Dictionary<(string Repo, string Branch), string?>();
         using var reservation = _reservations is null ? null
             : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
-                marker => IsStalePush(manifest.Scope.Project, marker, ct), ct)
+                marker => IsStalePush(manifest.Scope.Project, marker, fetchedBases, ct),
+                ct, fetchedBases.Clear)
                 .ConfigureAwait(false);
         BatchCoordinatorLease? lease;
         try { lease = _leases.TryAcquire(manifest.Scope, Environment.MachineName); }
