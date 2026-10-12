@@ -252,6 +252,29 @@ It never touches task storage, worktrees or review workspaces. Do not make ad
 hoc copies of a cache directory: on the review host the cache plus two hand-made
 `-before-*` copies of it added up to the 36 GB.
 
+## 4. Remote gate transport: one GUID folder per dispatch
+
+The task server host stages each remote build/test gate dispatch in
+`<temp>/agentstudio-gate-transport/<runId>` (`%TEMP%` on Windows). The folder
+holds the private bare repository, the source bundle, `request.json` and
+`response.json`. `RemoteGateTransport` deletes it after every run, clearing the
+read-only attribute that git sets on `pack-*.{idx,pack,rev}` and never
+following reparse points. A delete that still fails (a file held open) logs
+`remote_gate_local_transport_cleanup_failed run_id=...` and leaves the gate
+result unchanged.
+
+At most once per hour per backend process, the next dispatch also sweeps that
+root: direct child directories named as 32 lowercase hex characters whose last
+write is more than **26 hours** old are removed, and one
+`remote_gate_local_transport_sweep removed=<n> failed=<m>` line is logged. Dev
+and Stable share the root, so the name shape and the age are the only ownership
+proof; the 26 hours cover the 24-hour gate budget plus the transport steps
+around it. Files, other names and top-level reparse points are never touched.
+
+AGT-3078 (12.10.2026): before this fix, the delete stopped at the read-only pack
+files, so every dispatch left its full fetched pack behind - 681 folders and
+56.2 GiB on the Stable host, 36 GiB of it from one day.
+
 ## When `/tmp` fills up anyway
 
 1. Measure before deleting, so the next card has a prefix breakdown:
