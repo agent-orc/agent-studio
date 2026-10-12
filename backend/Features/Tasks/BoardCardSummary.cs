@@ -183,7 +183,9 @@ internal static class BoardCardSummary
             {
                 park.BlockerType, park.ConditionKind,
                 conditionDescription = Short(park.ConditionDescription, 120),
-                park.ParkedAt, park.ParkedForSeconds,
+                // No read-time age: the client derives it from ParkedAt, so an
+                // unchanged parked card serializes to the same bytes on every read.
+                park.ParkedAt,
                 reason = Short(park.Reason, 120), park.RecallStatus,
                 park.RequiresDecisionCard,
                 decision = park.Decision is null ? null : new
@@ -255,7 +257,15 @@ internal static class BoardCardSummary
             };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
         Add(fields, "transitiveWaiters", job.TransitiveWaiters);
-        Add(fields, "pickupHold", job.PickupHold);
+        if (job.PickupHold is { } hold)
+            fields["pickupHold"] = new
+            {
+                // HeldForSeconds stays off the card for the same reason as the
+                // parked age; the client derives it from SinceUtc.
+                hold.Classification, hold.Mechanism, hold.Reason, hold.SinceUtc,
+                hold.Unsatisfiable, hold.Resolutions, hold.AttentionTargetKey, hold.AttentionReason,
+                hold.AttentionSinceUtc,
+            };
         Add(fields, "runActivity", job.RunActivity);
         if (job.LiveStatus is { } live)
             fields["liveStatus"] = new

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
 import type { PickupHoldResolution, PickupHoldStatus, TaskInfo } from '../../models/task.model';
 import { AppTooltipDirective } from '../tooltip/app-tooltip.directive';
+import { NowTickService } from '../../services/now-tick.service';
 import { TaskService } from '../../services/task.service';
 import type { Observable } from 'rxjs';
 
@@ -83,6 +84,7 @@ export const PICKUP_HOLD_RESOLUTION_ACTIONABILITY: Readonly<
 })
 export class PickupHoldComponent {
   private readonly tasks = inject(TaskService, { optional: true });
+  private readonly now = inject(NowTickService).now;
   readonly task = input.required<TaskInfo>();
   readonly variant = input<PickupHoldVariant>('card');
 
@@ -120,7 +122,7 @@ export class PickupHoldComponent {
   /** "held for 34d" - the number that turns a quiet lane into a standstill. */
   readonly age = computed(() => {
     const hold = this.hold();
-    return hold ? `held for ${elapsed(hold.heldForSeconds)}` : '';
+    return hold ? `held for ${elapsed(heldSeconds(hold, this.now()))}` : '';
   });
 
   /** Full calendar instant, disclosed on hover rather than spent inline. */
@@ -232,6 +234,12 @@ function titleCase(value: string): string {
   if (words.length === 0) return 'Held';
   return words.map((word, index) =>
     index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(' ');
+}
+
+/** Age at `nowMs`, from the hold start the board card carries. */
+function heldSeconds(hold: PickupHoldStatus, nowMs: number): number {
+  const since = Date.parse(hold.sinceUtc);
+  return Number.isNaN(since) ? hold.heldForSeconds ?? 0 : (nowMs - since) / 1000;
 }
 
 /** Coarse on purpose: a hold measured in weeks does not need its seconds. */
