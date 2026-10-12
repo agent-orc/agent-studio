@@ -491,11 +491,14 @@ missing matching registration records an unavailable analysis step. It never bor
 findings from a sibling checkout. Rule content and sensor configuration stay
 owned by Quality Studio.
 
-Agent Studio's test gates write ignored coverage under `coverage/`. The .NET
-test commands in `.agent-studio/project.yml` use
-`--collect "Code Coverage;Format=Cobertura"` with suite-specific results
-directories; the frontend `test:ci` command writes
-`coverage/frontend/lcov.info` through Vitest. Register the Quality Studio
+Coverage is written, ignored, under `coverage/`. Review and integration gates
+run the .NET test commands in `.agent-studio/project.yml` without a coverage
+collector: on agent-runner-01 the collector made the same backend tests 1.7 to
+2.5 times slower (test-acceleration Dossier, lever B11). The `release`-category
+suites `backend-coverage`, `runner-coverage` and `task-server-coverage` carry
+the coverage commands (`--collect "Code Coverage;Format=Cobertura"` with
+suite-specific results directories) for a scheduled or release run; the
+frontend release command writes `coverage/frontend/lcov.info` through Vitest. Register the Quality Studio
 coverage sensor with
 `reportPaths = coverage/dotnet/**/*.cobertura.xml;coverage/frontend/lcov.info`.
 The sensor ingests these reports after test execution; it does not run a second
