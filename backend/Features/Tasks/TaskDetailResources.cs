@@ -110,8 +110,9 @@ public static class TaskDetailResources
             catch (UnauthorizedAccessException) { return Reply(context, core, lookup.ProjectId!, runtime, "documents", "unavailable",
                 new TaskDocumentResource(name, null, null), "document-access-denied", null); }
             var summary = name == "status" ? scanner.ResolveSummaryState(core.TaskKey, markdown) : null;
+            var assessment = name == "status" ? SummaryAssessmentStore.Read(core.FolderPath) : null;
             return Reply(context, core, lookup.ProjectId!, runtime, "documents", "ready",
-                new TaskDocumentResource(name, markdown, summary), null, Modified(path));
+                new TaskDocumentResource(name, markdown, summary) { Assessment = assessment }, null, Modified(path));
         });
 
         group.MapGet("/{jobId}/details/history", (string jobId, string? project, long? generation,
@@ -206,7 +207,11 @@ public sealed record TaskUsageResource(TaskTokenSummary? TokenSummary,
     SessionUsage? LastUsage, ContextUsageSnapshot? ContextUsage);
 public sealed record TaskReviewResource(ReviewProjectionView? ReviewProjection,
     IReadOnlyList<ReviewEvidenceEntry>? Evidence);
-public sealed record TaskDocumentResource(string Name, string? Markdown, TaskSummaryState? SummaryState);
+public sealed record TaskDocumentResource(string Name, string? Markdown, TaskSummaryState? SummaryState)
+{
+    /// <summary>Closing Result assessment for the status document (AGT-3046); null for prompt or before one ran.</summary>
+    public SummaryAssessment? Assessment { get; init; }
+}
 public sealed record TaskHistoryResource(IReadOnlyList<TaskPromptHistoryEntry> PromptHistory,
     IReadOnlyList<TaskTitleHistoryEntry> TitleHistory, IReadOnlyList<TaskLogEntry> Log);
 public sealed record TaskOverviewResource(DecisionContent? Decision,

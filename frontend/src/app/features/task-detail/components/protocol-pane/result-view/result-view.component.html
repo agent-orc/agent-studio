@@ -60,6 +60,38 @@
       </div>
     </header>
 
+    @if (inconsistencies().length > 0) {
+      <section class="result__inconsistencies"
+               role="note"
+               [attr.data-work-lost]="anyWorkMayBeLost()"
+               aria-label="Signals that disagree"
+               data-testid="result-inconsistencies">
+        <p class="result__inconsistencies-title">
+          {{ inconsistencies().length === 1 ? '1 signal pair disagrees' : inconsistencies().length + ' signal pairs disagree' }}
+          @if (assessmentOutcome(); as outcome) {
+            <span class="result__inconsistencies-outcome" data-testid="result-assessment-outcome">assessed as {{ outcome }}</span>
+          }
+        </p>
+        <ul class="result__inconsistencies-list">
+          @for (item of inconsistencies(); track item.kind + '|' + item.signalA) {
+            <li class="result__inconsistency" [attr.data-kind]="item.kind" data-testid="result-inconsistency">
+              <div class="result__inconsistency-signals">
+                <span class="result__inconsistency-signal">{{ item.signalA }}</span>
+                <span class="result__inconsistency-vs" aria-hidden="true">vs</span>
+                <span class="result__inconsistency-signal">{{ item.signalB }}</span>
+                <span class="result__inconsistency-badge"
+                      [attr.data-tone]="item.workMayBeLost ? 'problem' : 'neutral'"
+                      data-testid="result-inconsistency-loss">{{ item.workMayBeLost ? 'work may be lost' : 'no work lost' }}</span>
+              </div>
+              @if (item.explanation) {
+                <p class="result__inconsistency-explanation" data-testid="result-inconsistency-explanation">{{ item.explanation }}</p>
+              }
+            </li>
+          }
+        </ul>
+      </section>
+    }
+
     @if (textScanHint(); as hint) {
       <div class="result__scan-hint"
            data-testid="result-text-scan-hint"

@@ -566,6 +566,8 @@ export class ProjectPipelinePanelComponent {
         return 'On reissues, foregrounds unresolved open items so the next agent run does not restart blindly.';
       case 'core-agent-run':
         return 'Runs the task-owning CLI agent with the task prompt, branch/worktree context, and selected task model.';
+      case 'post-summary-assessment':
+        return 'Closing Result assessment: writes status.md from the run log and the card evidence, classifies the outcome, and flags contradicting signals.';
       case 'post-orchestrator-review':
         return 'Early post-core completeness scan over close-out evidence before spending review tokens.';
       case 'post-orchestrator-decision':

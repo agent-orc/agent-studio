@@ -1,0 +1,32 @@
+{
+  "id": "AGT-2798",
+  "taskKey": "AGT-2798",
+  "title": "North star rewrite",
+  "taskType": "planning",
+  "mode": "concept",
+  "state": "6-completed",
+  "projectName": "agent-studio",
+  "commits": [],
+  "codeActivityDetected": false,
+  "integrationRecords": [
+    {
+      "id": "agt-2798-operator-merge",
+      "classification": "integrated-verified",
+      "recordedAtUtc": "2026-09-15T01:10:00Z",
+      "acceptedAtUtc": "2026-09-15T01:10:00Z",
+      "integrationBranch": "main",
+      "commitShas": ["5d480157fb91f5bd7908a4579aed63e1ae213a2e"],
+      "fenceRefs": [],
+      "evidence": "operator card-scoped merge of the salvaged concept work",
+      "sourceSha": "7aa00e27f5d80c26a220148683f7bd6ac556ac3d",
+      "integrationSha": "5d480157fb91f5bd7908a4579aed63e1ae213a2e"
+    }
+  ],
+  "completionClaim": {
+    "basis": "operator-override",
+    "evidence": "Delivered by operator merge 5d480157f on main.",
+    "reason": "Concept run parked on N1/N2; work salvaged and merged card-scoped by the operator.",
+    "actor": "human:operator",
+    "recordedAt": "2026-09-15T01:12:00Z"
+  }
+}
