@@ -11,7 +11,8 @@ export type QuotaForecastStatus =
   | 'reached'
   | 'idle'
   | 'full-before-reset'
-  | 'resets-first';
+  | 'resets-first'
+  | 'unknown-reset';
 
 export interface QuotaHistoryPoint {
   at: string;
