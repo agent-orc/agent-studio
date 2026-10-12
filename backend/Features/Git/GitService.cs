@@ -72,6 +72,19 @@ public sealed record DeveloperCheckoutRelease(
 public record GitFileContentResult(bool Success, string Content, bool IsBinary, string? Error);
 
 /// <summary>
+/// File contents read at one revision, keyed by the requested path. A
+/// <c>null</c> content is a path the revision does not contain.
+/// <see cref="Failure"/> is set when the read failed as a whole.
+/// </summary>
+public sealed record RevisionFiles(
+    IReadOnlyDictionary<string, string?> Files,
+    string? Failure = null)
+{
+    public static RevisionFiles Failed(string reason)
+        => new(new Dictionary<string, string?>(StringComparer.Ordinal), reason);
+}
+
+/// <summary>
 /// ADR-0052: result of a worktree / integration primitive
 /// (<see cref="GitService.WorktreeAdd"/>, <see cref="GitService.WorktreeRemove"/>,
 /// <see cref="GitService.RebaseOnto"/>, <see cref="GitService.ContinueRebase"/>,
@@ -3986,6 +3999,110 @@ public class GitService
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    /// <summary>Path cap of one <see cref="ReadFilesAtRevision"/> call.</summary>
+    internal const int MaxRevisionFileReadPaths = 512;
+
+    /// <summary>Byte cap of one <see cref="ReadFilesAtRevision"/> call, headers included.</summary>
+    internal const long MaxRevisionFileReadBytes = 16L * 1024 * 1024;
+
+    /// <summary>
+    /// Reads <paramref name="paths"/> at <paramref name="revision"/> with one
+    /// bounded <c>git cat-file --batch</c> process: no worktree, no checkout, no
+    /// fetch. A path the revision does not contain maps to <c>null</c> (a
+    /// deletion when the path is a delivery's changed path). Any other problem
+    /// (a cap, a timeout, a non-blob entry, malformed output) sets
+    /// <see cref="RevisionFiles.Failure"/> and returns no contents, so the
+    /// caller takes its conservative path.
+    /// </summary>
+    public RevisionFiles ReadFilesAtRevision(
+        string repoRoot,
+        string revision,
+        IReadOnlyList<string> paths)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Directory.Exists(repoRoot))
+            return RevisionFiles.Failed("repository path is missing");
+        if (!ReviewSubjectStore.IsValidResultSha(revision))
+            return RevisionFiles.Failed("revision is not a commit SHA");
+        if (paths.Count == 0) return new RevisionFiles(new Dictionary<string, string?>(StringComparer.Ordinal));
+        if (paths.Count > MaxRevisionFileReadPaths)
+            return RevisionFiles.Failed($"{paths.Count} paths exceed the cap of {MaxRevisionFileReadPaths}");
+        if (paths.Any(path => string.IsNullOrWhiteSpace(path) || path.IndexOfAny(['\n', '\r']) >= 0))
+            return RevisionFiles.Failed("a path contains a line break");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = repoRoot,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("cat-file");
+        psi.ArgumentList.Add("--batch");
+        psi.EnvironmentVariables["GIT_OPTIONAL_LOCKS"] = "0";
+        var stdin = string.Concat(paths.Select(path => $"{revision}:{path}\n"));
+
+        var command = CommandLabel(psi);
+        var sw = Stopwatch.StartNew();
+        GitBinaryProcessResult result;
+        using (GitProcessBudget.Acquire())
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(GitProcessBudget.Token))
+        {
+            result = GitNetworkProcessRunner.RunBinary(
+                psi, stdin, MaxRevisionFileReadBytes, GitNetworkProcessRunner.DefaultTimeout, linked.Token);
+        }
+        sw.Stop();
+        GitProcessTelemetry.Record(command, sw.ElapsedMilliseconds, result.ExitCode,
+            timedOut: result.FailureKind == GitProcessFailureKind.TimedOut);
+
+        if (!result.Success)
+            return RevisionFiles.Failed(string.IsNullOrWhiteSpace(result.StandardError)
+                ? $"git cat-file exited with {result.ExitCode}"
+                : result.StandardError.Trim());
+        if (result.OutputTruncated)
+            return RevisionFiles.Failed($"output exceeds the cap of {MaxRevisionFileReadBytes} bytes");
+        return ParseCatFileBatch(result.StandardOutput, paths);
+    }
+
+    /// <summary>
+    /// Parses <c>git cat-file --batch</c> output by the byte size in each
+    /// header (<c>&lt;oid&gt; &lt;type&gt; &lt;size&gt;</c>, then exactly that many content
+    /// bytes and a newline) rather than from a decoded string.
+    /// </summary>
+    internal static RevisionFiles ParseCatFileBatch(byte[] output, IReadOnlyList<string> paths)
+    {
+        var files = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var offset = 0;
+        foreach (var path in paths)
+        {
+            var lineEnd = Array.IndexOf(output, (byte)'\n', offset);
+            if (lineEnd < 0) return RevisionFiles.Failed($"cat-file output ended before {path}");
+            var header = Encoding.UTF8.GetString(output, offset, lineEnd - offset);
+            offset = lineEnd + 1;
+            if (header.EndsWith(" missing", StringComparison.Ordinal))
+            {
+                files[path] = null;
+                continue;
+            }
+            var parts = header.Split(' ');
+            if (parts.Length != 3 || !long.TryParse(parts[2], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var size))
+                return RevisionFiles.Failed($"unexpected cat-file header for {path}: {header}");
+            if (parts[1] != "blob")
+                return RevisionFiles.Failed($"{path} is a {parts[1]}, not a file");
+            if (size > output.Length - offset - 1 || output[offset + (int)size] != (byte)'\n')
+                return RevisionFiles.Failed($"cat-file output for {path} is shorter than its header");
+            var content = output.AsSpan(offset, (int)size);
+            if (content.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) content = content[3..];
+            files[path] = Encoding.UTF8.GetString(content);
+            offset += (int)size + 1;
+        }
+        return new RevisionFiles(files);
     }
 
     /// <summary>

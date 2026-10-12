@@ -22,6 +22,21 @@ internal sealed record GitProcessResult(
 }
 
 /// <summary>
+/// A git run whose standard output is kept as raw bytes, for output that is
+/// framed by byte counts (<c>git cat-file --batch</c>). A decoded string would
+/// shift every offset after the first non-ASCII character.
+/// </summary>
+internal sealed record GitBinaryProcessResult(
+    int ExitCode,
+    byte[] StandardOutput,
+    bool OutputTruncated,
+    string StandardError,
+    GitProcessFailureKind FailureKind)
+{
+    public bool Success => FailureKind == GitProcessFailureKind.None && ExitCode == 0;
+}
+
+/// <summary>
 /// Owns bounded backend Git child-process execution. Output pipes are drained
 /// concurrently, and every timeout or cancellation terminates the full process
 /// tree before returning. This prevents a DNS or remote stall from retaining
@@ -38,16 +53,52 @@ internal static class GitNetworkProcessRunner
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
+        var result = RunCore(
+            startInfo, stdin, timeout, cancellationToken,
+            process => StartDedicatedRead(process.StandardOutput), string.Empty);
+        return new GitProcessResult(result.ExitCode, result.Output, result.Error, result.FailureKind);
+    }
+
+    /// <summary>
+    /// Like <see cref="Run"/>, but standard output is read as bytes and kept up
+    /// to <paramref name="maxOutputBytes"/>. Output past the cap is drained and
+    /// discarded, and the result says so.
+    /// </summary>
+    internal static GitBinaryProcessResult RunBinary(
+        ProcessStartInfo startInfo,
+        string? stdin,
+        long maxOutputBytes,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = RunCore(
+            startInfo, stdin, timeout, cancellationToken,
+            process => StartDedicatedBinaryRead(process.StandardOutput.BaseStream, maxOutputBytes),
+            (Bytes: Array.Empty<byte>(), Truncated: false));
+        return new GitBinaryProcessResult(
+            result.ExitCode, result.Output.Bytes, result.Output.Truncated, result.Error, result.FailureKind);
+    }
+
+    private static (int ExitCode, TOutput Output, string Error, GitProcessFailureKind FailureKind) RunCore<TOutput>(
+        ProcessStartInfo startInfo,
+        string? stdin,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken,
+        Func<Process, Task<TOutput>> startOutputRead,
+        TOutput emptyOutput)
+    {
         ArgumentNullException.ThrowIfNull(startInfo);
         ApplyWindowsLongPathConfig(startInfo);
         var boundedTimeout = timeout ?? DefaultTimeout;
         if (boundedTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), "Git process timeout must be positive.");
+        (int, TOutput, string, GitProcessFailureKind) Failed(GitProcessFailureKind kind, string error)
+            => (-1, emptyOutput, error, kind);
         if (cancellationToken.IsCancellationRequested)
             return Failed(GitProcessFailureKind.Cancelled, "git operation cancelled");
 
         Process? process = null;
-        Task<string>? stdout = null;
+        Task<TOutput>? stdout = null;
         Task<string>? stderr = null;
         Task? input = null;
         var elapsed = Stopwatch.StartNew();
@@ -64,7 +115,7 @@ internal static class GitNetworkProcessRunner
             // compete with parallel xUnit/Kestrel work for ThreadPool threads.
             // Dedicated readers preserve concurrent pipe draining without any
             // ThreadPool continuation dependency in the synchronous boundary.
-            stdout = StartDedicatedRead(process.StandardOutput);
+            stdout = startOutputRead(process);
             stderr = StartDedicatedRead(process.StandardError);
             if (stdin is not null)
                 input = StartDedicatedWrite(process.StandardInput, stdin);
@@ -97,7 +148,7 @@ internal static class GitNetworkProcessRunner
                     $"git operation timed out after {boundedTimeout.TotalSeconds:0.###} seconds");
             }
 
-            return new GitProcessResult(
+            return (
                 process.ExitCode,
                 stdout.GetAwaiter().GetResult(),
                 stderr.GetAwaiter().GetResult(),
@@ -236,6 +287,28 @@ internal static class GitNetworkProcessRunner
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
 
+    private static Task<(byte[] Bytes, bool Truncated)> StartDedicatedBinaryRead(
+        Stream stream,
+        long maxBytes)
+        => Task.Factory.StartNew(
+            () =>
+            {
+                using var kept = new MemoryStream();
+                var buffer = new byte[81_920];
+                var truncated = false;
+                int read;
+                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    var room = (int)Math.Max(0, Math.Min(read, maxBytes - kept.Length));
+                    if (room > 0) kept.Write(buffer, 0, room);
+                    if (room < read) truncated = true;
+                }
+                return (kept.ToArray(), truncated);
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+
     private static Task StartDedicatedWrite(StreamWriter writer, string value)
         => Task.Factory.StartNew(
             () =>
@@ -271,7 +344,7 @@ internal static class GitNetworkProcessRunner
 
     private static void TerminateAndDrain(
         Process? process,
-        Task<string>? stdout,
+        Task? stdout,
         Task<string>? stderr,
         Task? input)
     {
