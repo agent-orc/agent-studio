@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TooltipDirective } from 'coding-agent-chat/shared';
-import type { TaskDetail } from '../../../../../models/task.model';
+import type { SummaryOutcome, TaskDetail } from '../../../../../models/task.model';
 import { laneTone } from '../../../../../models/lane-presentation';
 import type { ProtocolVerdict } from '../protocol-verdict';
 import { buildResultDocument } from '../result-document';
@@ -8,6 +8,14 @@ import { RESULT_CASE_META } from '../result-case';
 import { BeautifulResultsComponent } from '../../beautiful-results/beautiful-results.component';
 import type { GeneratedFileProvenanceView } from '../../generated-file-provenance.util';
 import { TestEvidenceStatusComponent } from '../../../../test-evidence';
+
+const SUMMARY_OUTCOME_LABELS: Record<SummaryOutcome, string> = {
+  'delivered': 'delivered',
+  'delivered-via-operator-merge': 'delivered via operator merge',
+  'parked-on-decision': 'parked on a decision',
+  'failed': 'failed',
+  'no-op': 'no change needed',
+};
 
 /**
  * The Result view (Protocol -> Result redesign).
@@ -76,6 +84,17 @@ export class ResultViewComponent {
     const lane = this.verdict().lane;
     return lane ? laneTone(lane) : null;
   });
+
+  /**
+   * Contradictions the closing Result assessment found between the card's
+   * signals (AGT-3046). Empty means no block: a clean card shows nothing.
+   */
+  readonly inconsistencies = computed(() => this.detail().summaryAssessment?.inconsistencies ?? []);
+  readonly assessmentOutcome = computed(() => {
+    const outcome = this.detail().summaryAssessment?.outcome;
+    return outcome ? SUMMARY_OUTCOME_LABELS[outcome] ?? outcome : null;
+  });
+  readonly anyWorkMayBeLost = computed(() => this.inconsistencies().some(item => item.workMayBeLost));
 
   readonly latestAspectVerdicts = computed(() =>
     this.detail().info.reviewProjection?.attempts?.[0]?.aspects ?? []);

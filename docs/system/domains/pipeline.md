@@ -1485,7 +1485,8 @@ external decision before Human Review; the card remains in Auto Review until
 the merge reaches the target branch.
 
 Result finalization is a distinct post-core gate on both execution paths. The
-local application retries only `SummaryGenerationService`; the V1 Task Server
+local application retries only `SummaryGenerationService` (the
+`post-summary-assessment` step); the V1 Task Server
 exposes `post-result-finalization`, generates the application-owned `status.md`
 artifact from durable run events and deliverables, and persists its typed state
 in task history. `Retryable` consumes the bounded summary budget without
@@ -1814,6 +1815,37 @@ operator changes cause the step to fail before its writer runs.
   operator-triggered action only (Project Hub Git-Management). See
   `docs/concepts/task-integration-and-merge-workflow.md` §"Branch cleanup"
   for the dry-run/execute contract and the AGT-1945 guard it would reuse.
+- `post-summary-assessment` (AGT-3046) is the closing Result assessment and
+  the first post-step in every catalogue pipeline. `SummaryGenerationService`
+  runs it from Result finalization (and the Regenerate action). It writes
+  `status.md` and `summary-assessment.json`. It cannot be disabled, and its
+  free-text prompt override is hidden, because it owns the Result document and
+  renders `summary-protocol.md` with typed slots. CLI, model and thinking level
+  resolve like any model-backed step: step override, then the project
+  orchestrator model, then the catalogue default `claude` /
+  `claude-opus-5-5` / `low`. The Haiku fallback and the shared
+  `ClaudeCli:SummaryModel` key no longer apply to it. An inherited model the
+  chosen CLI cannot run falls back to the catalogue default.
+  The prompt receives the log tail and an evidence bundle
+  (`SummaryEvidenceAssembler`). The bundle holds the lane and lane history,
+  pipeline step statuses, reasons and failure codes, the commit chain and
+  `codeActivityDetected`, integration records and verification, salvage refs
+  from `agent_run_finished`, the completion claim, review and sight-review
+  verdicts. The model appends one `<assessment>` JSON block: an outcome
+  (`delivered`, `delivered-via-operator-merge`, `parked-on-decision`,
+  `failed`, `no-op`) and `inconsistencies`. The block is peeled off before
+  protocol validation. `SummaryAssessmentPolicy` independently classifies the
+  same bundle plus the generated header (`Result`, `Files`, `Tests`). It
+  detects `files-vs-no-code`, `failure-vs-completed`,
+  `empty-commits-vs-integrated` and `salvage-not-integrated`. Merge rule: the
+  model's outcome wins when it is a known value. Every policy inconsistency
+  survives, taking the model's explanation when the kinds match, and "work may
+  be lost" is the OR of both. A missing or malformed block keeps the policy
+  result with a `fallbackReason`. The step row is `StepKind.Orchestrator`
+  with tokens, thinking level and `CostBasis = model`, so its cost lands in the
+  card ledger. The Result tab renders the inconsistencies under the verdict;
+  an empty list renders nothing. The assessment reflects the evidence at
+  generation time; Regenerate re-assesses after a later operator merge.
 - `post-task-spawner` (AGT-2028) is an opt-in `StepKind.Orchestrator` post-step,
   `DefaultEnabled = false` and additionally gated on a `ProjectSettings.TaskSpawner`
   target - a project must both enable the step (`PipelineSteps["post-task-spawner"]`)

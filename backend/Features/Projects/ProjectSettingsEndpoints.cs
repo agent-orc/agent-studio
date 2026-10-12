@@ -443,7 +443,10 @@ public static class ProjectSettingsEndpoints
                     // expose the shared CLI/model/thinking controls.
                     usesModel = PipelineStepModelDefaults.UsesModel(s),
                     supportsEconomyModel = s.Kind == StepKind.Aspect,
-                    usesPrompt = PipelineStepModelDefaults.UsesModel(s),
+                    // The Result summary renders its runtime prompt with typed
+                    // evidence slots, so a free-text override would drop them.
+                    usesPrompt = PipelineStepModelDefaults.UsesModel(s)
+                        && !string.Equals(s.Id, PipelineCatalogue.SummaryAssessmentStepId, StringComparison.OrdinalIgnoreCase),
                     supportsMode = s.Kind is StepKind.Tool or StepKind.Orchestrator,
                     cliType,
                     framework = s.Framework ?? s.AppliesTo,

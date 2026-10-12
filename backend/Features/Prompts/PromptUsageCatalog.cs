@@ -67,7 +67,7 @@ internal static class PromptUsageCatalog
         },
         ["summary-protocol.md"] = new[]
         {
-            new PromptUsageRef("SummaryGenerationService", "Generate", "Produces the run summary / review protocol."),
+            new PromptUsageRef("SummaryGenerationService", "Generate", "Produces the run summary and the closing evidence assessment."),
         },
         ["commit-message.md"] = new[]
         {

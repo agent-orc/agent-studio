@@ -284,6 +284,38 @@ public static class PipelineCatalogue
     };
 
     /// <summary>
+    /// The closing Result assessment (AGT-3046): writes <c>status.md</c> and
+    /// <c>summary-assessment.json</c> from the run log plus the card's evidence
+    /// bundle (pipeline step statuses, commit chain, integration records,
+    /// salvage refs, completion claim, review verdicts, lane history). It
+    /// classifies the outcome and names contradictions between those signals.
+    /// Always on because it owns the Result document; CLI, model and thinking
+    /// level are project-configurable. Implemented by
+    /// <c>SummaryGenerationService</c>, driven from Result finalization.
+    /// </summary>
+    public const string SummaryAssessmentStepId = "post-summary-assessment";
+
+    /// <summary>
+    /// Catalogue entry for <see cref="SummaryAssessmentStepId"/>. Defaults to
+    /// Claude Opus 5.5 at low reasoning; a project override replaces either.
+    /// </summary>
+    public static PipelineStep SummaryAssessmentStep => new()
+    {
+        Id = SummaryAssessmentStepId,
+        DisplayName = "Result summary and assessment",
+        Kind = StepKind.Orchestrator,
+        RunMode = StepRunMode.Sequential,
+        DependsOn = [CoreAgentRunStepId],
+        Model = ModelIds.ClaudeOpus55,
+        CliType = CliTypes.Claude,
+        PromptTemplate = "summary-protocol.md",
+        Idempotent = true,
+    };
+
+    /// <summary>Default reasoning level of <see cref="SummaryAssessmentStep"/>.</summary>
+    public const string SummaryAssessmentThinkingLevel = "low";
+
+    /// <summary>
     /// Opt-in deterministic post-step that keeps a watched project's local
     /// <c>docs/common-problems</c> library current from task outcome
     /// signals. It dedupes by slug, increments occurrence evidence, updates
@@ -651,6 +683,7 @@ public static class PipelineCatalogue
             ],
             Post =
             [
+                SummaryAssessmentStep,
                 new PipelineStep
                 {
                     Id = OrchestratorReviewStepId,
@@ -949,7 +982,8 @@ public static class PipelineCatalogue
     // deterministic preflight, one core authoring step, and two bounded handoff
     // checks. New standard post-steps must never leak into this list
     // automatically: build, test, lint, aspects, grading, Wiki automation, and
-    // drift work are intentionally out of scope.
+    // drift work are intentionally out of scope. The Result summary is listed
+    // explicitly because every card, document runs included, gets one.
     private static TaskPipeline BuildReadOnlyPipeline()
     {
         var review = StandardPipeline.Post.Single(s => s.Id == OrchestratorReviewStepId) with
@@ -967,7 +1001,7 @@ public static class PipelineCatalogue
             DisplayName = "Lightweight report pipeline",
             Pre = [.. StandardPipeline.Pre],
             Core = [.. StandardPipeline.Core],
-            Post = [review, decision],
+            Post = [SummaryAssessmentStep, review, decision],
         };
     }
 
@@ -992,6 +1026,7 @@ public static class PipelineCatalogue
             ],
             Post =
             [
+                SummaryAssessmentStep,
                 new PipelineStep
                 {
                     Id = ConceptWorkbenchPlacementStepId,
@@ -1056,6 +1091,7 @@ public static class PipelineCatalogue
             Core = StandardPipeline.Core.Select(step => step with { }).ToList(),
             Post =
             [
+                SummaryAssessmentStep,
                 StandardPipeline.Post.Single(step =>
                     step.Id == DossierMaintenanceStepId) with
                 {
