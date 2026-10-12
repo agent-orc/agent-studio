@@ -3,10 +3,9 @@ using AgentStudio.TaskServer.Contracts;
 namespace AgentRunner;
 
 /// <summary>
-/// Turns an empty review claim that names unclaimable pending attempts into an
-/// operator warning (AGT-2987). Repeats for the same missing keys are held back
-/// for <see cref="RepeatInterval"/> so a poll loop does not flood the journal,
-/// while a changed key set is reported immediately.
+/// Turns an unclaimable review claim or a required host-separation wait into
+/// an operator warning. Identical reasons are rate limited so polling does not
+/// flood the journal.
 /// </summary>
 internal sealed class ReviewClaimEmptyWarning
 {
@@ -17,6 +16,17 @@ internal sealed class ReviewClaimEmptyWarning
 
     public string? Next(ReviewClaimResponse claim, DateTime nowUtc)
     {
+        if (string.Equals(claim.Status, "empty", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(claim.Reason, ReviewClaimEmptyReasons.DifferentHostRequired, StringComparison.Ordinal))
+        {
+            var signature = $"{claim.Reason}:{claim.Message}";
+            if (string.Equals(signature, _lastSignature, StringComparison.Ordinal)
+                && nowUtc - _lastLoggedAt < RepeatInterval)
+                return null;
+            _lastSignature = signature;
+            _lastLoggedAt = nowUtc;
+            return $"review claim waiting: reason={claim.Reason}; {claim.Message}";
+        }
         if (!string.Equals(claim.Status, "empty", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(
                 claim.Reason,
@@ -25,10 +35,11 @@ internal sealed class ReviewClaimEmptyWarning
             return null;
 
         var missing = string.Join(",", claim.MissingCapabilities ?? []);
-        if (string.Equals(missing, _lastSignature, StringComparison.Ordinal)
+        var unclaimableSignature = $"{claim.Reason}:{missing}";
+        if (string.Equals(unclaimableSignature, _lastSignature, StringComparison.Ordinal)
             && nowUtc - _lastLoggedAt < RepeatInterval)
             return null;
-        _lastSignature = missing;
+        _lastSignature = unclaimableSignature;
         _lastLoggedAt = nowUtc;
 
         var oldest = claim.UnclaimableAttempts?.FirstOrDefault();

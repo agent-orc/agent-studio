@@ -47,8 +47,12 @@ public sealed class BatchGateLeaseService
         {
             using var guard = Guard(lease.Scope);
             var current = Read(lease.Scope);
-            if (!Matches(current, lease) || current!.ExpiresAtUtc <= _now()) return null;
-            var renewed = current with { ExpiresAtUtc = _now() + Ttl };
+            // One clock read: an expiry check against one instant and an
+            // extension from a later one could revive a grant that expired
+            // in between.
+            var now = _now();
+            if (!Matches(current, lease) || current!.ExpiresAtUtc <= now) return null;
+            var renewed = current with { ExpiresAtUtc = now + Ttl };
             Write(lease.Scope, renewed);
             return renewed;
         }

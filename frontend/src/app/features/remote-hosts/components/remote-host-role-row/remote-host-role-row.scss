@@ -53,6 +53,9 @@
 .role__plane,
 .role__alarm {
   grid-column: 2 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -149,9 +152,12 @@
 .role__menu button:disabled { opacity: 0.5; }
 .role__menu .role__menu-danger { color: var(--studio-error); }
 
-@container remote-host-table (max-width: 54rem) {
+@container remote-host-table (max-width: 80rem) {
   .role__actions-wide { display: none; }
   .role__overflow { display: block; }
+}
+
+@container remote-host-table (max-width: 54rem) {
   .role__activity { display: none; }
 }
 

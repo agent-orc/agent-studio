@@ -100,6 +100,18 @@ public sealed class ProjectSettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void Different_review_host_requirement_persists_per_project()
+    {
+        var svc = Build();
+        Assert.False(svc.Get("demo").RequireDifferentReviewHost);
+
+        svc.SetRequireDifferentReviewHost("demo", true);
+
+        Assert.True(Build().Get("demo").RequireDifferentReviewHost);
+        Assert.False(Build().Get("other").RequireDifferentReviewHost);
+    }
+
+    [Fact]
     public void ReviewRoundBudgets_PersistPerProject()
     {
         var svc = Build();

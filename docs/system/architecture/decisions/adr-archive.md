@@ -1935,3 +1935,63 @@ Provider selection without argv construction:
 and [`Runner guard`](../../../../runner.Tests/CliInvocationCentralizationGuardTests.cs).
 
 **Status.** Accepted.
+
+---
+
+## ADR-0078 - Engine placement and execution rule (2026-10-11)
+
+**Status.** Accepted. Records AGT-W65 D14 to D21, all option A, and AGT-W73's
+decided actor model and amendment of ADR-0032. The
+[North star](../../../operations/nordstern/index.html) is the entry point for
+the complete five-role target and delivery programme.
+
+**Decision.** The Orchestrator Engine is the only decider for transitions
+between steps and for planners and advisors, including batch, capacity and
+improvement planning. Decision logic moves out of the monolith. The Task Server
+remains the only durable authority: it validates versioned intents, grants
+fenced claims, applies transitions and records receipts. Engine and Operations
+Server are separate processes in every profile, although they may share a
+deployment unit. Neither commands runner hosts directly or owns task truth.
+
+A unit the Task Server admits as claimable work runs on the runner host holding
+its lease. Coding, review, gate and batch attempts and orchestrator chat turns
+use this rule, including their model calls, preparation, builds, tests, commits
+and pushes. The Operations Server executes only non-claimable host operations,
+such as developer-seat files and Git actions, host lifecycle and diagnostics,
+and rendering or capture requested by a person or frontend. Its result does
+not itself change task state. No pipeline step runs through it.
+
+Every fix round continues on the reviewed delivery. One per-card budget counts
+every automatic round. At budget end, non-test blocks degrade to concerns with
+a linked follow-up card; `build-tests` and `tests-and-evidence` blocks escalate
+with a receipt. Review prefers an eligible executor on a different host but
+never waits for that preference; a project may choose a hard host requirement.
+
+Engine instances are interchangeable under per-occurrence leases, with no
+leader election: one instance in workstation and one-box profiles, two in the
+distributed profile. Documentation and UI use **Operations Broker**, meaning
+the broker of host operations, not a message broker. Code identifiers, images,
+routes and contracts retain **Operations Server**.
+
+**Decision method.** A Human Operator sets aims, authorizes and decides matters
+reserved for a person. An AI Operator works within those bounds. A decision
+step answers one bounded question from frozen grounds, chooses one typed action,
+writes a receipt and ends. An execution step produces evidence and never chooses
+the next step. The Engine is the runtime for the AI Operator and decision steps;
+claimable execution steps run on runner hosts. A strong model chooses a typed
+action from bounded, versioned grounds. Deterministic code validates authority
+and safety, enforces finite execution, dispatches through the Task Server and
+records a receipt. This amends ADR-0032's placement of the final choice for
+these bounded orchestration decisions; its contract and loop guards remain.
+
+**Consequences.** This amends ADR-0063's runtime-role count from three to five
+and ADR-0076's consequence that Operations Server was the fourth role. The five
+roles are Studio and browser edges, Task Server, Orchestrator Engine, runner
+hosts, and Operations Server with outbound agents. Shared libraries are modules,
+not runtime roles. One-box Docker remains the selected standard after parity.
+The Engine and Operations Server use separate processes there and in the
+workstation and distributed profiles. During an Engine outage transitions wait
+visibly; no other role acts as a fallback decider. See the
+[target architecture](../../../concepts/distributed-agent-studio-target-architecture.md),
+[operations contract](../../contracts/operations-backchannel.md), and
+[review-plane contract](../../contracts/review-plane.md).
