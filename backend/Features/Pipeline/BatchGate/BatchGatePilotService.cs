@@ -133,9 +133,11 @@ public sealed class BatchGatePilotService
             ? _git.ChangedPathsAgainstMergeBase(repo, branch, resultRef)
             : null;
         var profile = GateProfile(project.BuildProfile, repo);
-        var projection = _authority.GetTaskProjection(task.Id);
+        var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
+        // The attempt authority and the batch store are keyed by the reference
+        // key (AGT-3048); task.Id is the slug of the flat task layout.
         var subject = new BatchGateSubject(
-            task.Id, task.ProjectName, review.RepositoryId, branch,
+            task.Key ?? task.Id, task.ProjectName, review.RepositoryId, branch,
             "complete-suite", profile, PlatformVersion(),
             envelope?.ImmutableRemoteRef ?? string.Empty,
             envelope?.ResultSha ?? string.Empty,
@@ -169,7 +171,7 @@ public sealed class BatchGatePilotService
         {
             var task = _scanner.FindJob(pending.Subject.TaskKey, pending.WatchPath);
             if (task?.State is not (TaskStates.HumanReview or TaskStates.Completed)) continue;
-            var projection = _authority.GetTaskProjection(task.Id);
+            var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
             if (projection.CurrentReviewAttempt?.AttemptId != pending.ReviewAttemptId)
                 continue;
             try
@@ -849,7 +851,7 @@ public sealed class BatchGatePilotService
                 if (task?.State == TaskStates.HumanReview)
                 {
                     var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
-                    var projection = _authority.GetTaskProjection(task.Id);
+                    var projection = _authority.GetTaskProjection(task.Key ?? task.Id);
                     if (ownership is not null && BatchGateOwnershipStore.ReleaseFailure(
                             ownership, projection, _store, task.FolderPath) is null)
                     {
