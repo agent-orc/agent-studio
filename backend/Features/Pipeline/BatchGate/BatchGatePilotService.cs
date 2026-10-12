@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using AgentStudio.Git;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
 using AgentStudio.TaskServer.Contracts.BatchGate;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentStudio.Pipeline;
 
@@ -30,6 +32,9 @@ public sealed class BatchGatePilotService
     private readonly BatchGateSnapshotBuilder _snapshots;
     private readonly BatchGateAdvisorService? _advisor;
     private readonly BatchIntegrationReservationService? _reservations;
+    private readonly PipelineExecutionLog _pipelineLog;
+    private readonly ConcurrentDictionary<string, byte> _pushAgeAlerts =
+        new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _tick = new(1, 1);
     private readonly Dictionary<string, Task> _fallbackFlights = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _runningBatches = new(StringComparer.OrdinalIgnoreCase);
@@ -52,7 +57,8 @@ public sealed class BatchGatePilotService
         ILogger<BatchGatePilotService> logger,
         ILoadThrottleGate? load = null, TimeProvider? timeProvider = null,
         BatchGateAdvisorService? advisor = null,
-        BatchIntegrationReservationService? reservations = null)
+        BatchIntegrationReservationService? reservations = null,
+        PipelineExecutionLog? pipelineLog = null)
     {
         _store = store;
         _leases = leases;
@@ -72,6 +78,8 @@ public sealed class BatchGatePilotService
         _snapshots = new BatchGateSnapshotBuilder(store, authority, scanner, git);
         _advisor = advisor;
         _reservations = reservations;
+        _pipelineLog = pipelineLog ?? new PipelineExecutionLog(
+            NullLogger<PipelineExecutionLog>.Instance);
     }
 
     public BatchGatePendingRecord Enqueue(TaskInfo task, ReviewAttemptDto review,
@@ -192,7 +200,10 @@ public sealed class BatchGatePilotService
             }
         }
         return BatchGatePilotSnapshotReader.Read(_store, project,
-            falseCompleted, staleReleased);
+            falseCompleted, staleReleased) with
+        {
+            PendingPushWait = _reservations?.GetWait(project),
+        };
     }
 
     public bool RequestEject(string project, string taskKey)
@@ -219,7 +230,8 @@ public sealed class BatchGatePilotService
                 .GroupBy(card => card.TaskKey, StringComparer.Ordinal)
                 .ToDictionary(group => group.Key, group => group.Last().Risk,
                     StringComparer.Ordinal);
-        return BatchGateStateSnapshotReader.Read(_store, project, options, history, risks);
+        return BatchGateStateSnapshotReader.Read(_store, project, options, history,
+            risks, _reservations?.GetWait(project));
     }
 
     public async Task TickAsync(CancellationToken ct)
@@ -227,6 +239,19 @@ public sealed class BatchGatePilotService
         if (!await _tick.WaitAsync(0, ct).ConfigureAwait(false)) return;
         try
         {
+            if (_reservations is not null)
+                foreach (var project in _reservations.ProjectsWithPending())
+                {
+                    _reservations.Reconcile(project,
+                        marker => IsStalePush(project, marker, ct));
+                    var wait = _reservations.GetWait(project);
+                    if (wait is { AgeAlert: true }
+                        && _pushAgeAlerts.TryAdd(project + "\n" + wait.JobId
+                            + "\n" + wait.ApprovedSha, 0))
+                        _logger.LogWarning(
+                            "batch-gate push wait exceeded age limit project={Project} job={JobId} approvedSha={ApprovedSha} since={SinceUtc}",
+                            project, wait.JobId, wait.ApprovedSha, wait.SinceUtc);
+                }
             RecoverInterrupted();
             await ResolvePausedAsync(ct).ConfigureAwait(false);
             await RecoverPublishedAsync(ct).ConfigureAwait(false);
@@ -599,6 +624,35 @@ public sealed class BatchGatePilotService
             && state.Reason == "integration-branch-red";
     }
 
+    private bool IsStalePush(string project, PendingIntegrationPush marker,
+        CancellationToken ct)
+    {
+        var task = _scanner.FindJob(marker.JobId, marker.WatchPath);
+        var repo = marker.RepositoryPath
+            ?? (task is null ? null : _git.ResolveRepoRootForWatchPath(task.WatchPath));
+        var branch = marker.IntegrationBranch
+            ?? (task is null ? _settings.Get(project).IntegrationBranch
+                : TaskIntegrationBranch.Resolve(task, _settings.Get(project).IntegrationBranch));
+        if (!string.IsNullOrWhiteSpace(repo) && !string.IsNullOrWhiteSpace(branch)
+            && !string.IsNullOrWhiteSpace(marker.ApprovedSha))
+        {
+            var remote = _git.FetchBatchIntegrationTip(repo, branch, ct);
+            if (remote is not null && _git.IsAncestor(repo, marker.ApprovedSha, remote))
+                return true;
+        }
+        // The merge can enqueue its push before the lane leaves Auto Review.
+        // Keep that short transition window fenced.
+        if (task is null || task.State is not (TaskStates.AutoReview
+                or TaskStates.HumanReview or TaskStates.Completed or TaskStates.Archive))
+            return true;
+        var folder = marker.JobFolderPath ?? task.FolderPath;
+        var merge = _pipelineLog.Read(folder)?.Steps.LastOrDefault(step =>
+            step.StepId == PipelineCatalogue.MergeIntoDevelopStepId);
+        return merge?.Status != PipelineStepStatus.Passed
+            || !string.Equals(merge.ApprovedIntegrationSha, marker.ApprovedSha,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task RecoverPublishedAsync(CancellationToken ct)
     {
         var waiting = _store.ListPending();
@@ -792,7 +846,9 @@ public sealed class BatchGatePilotService
     {
         var fallbackKeys = new HashSet<string>(StringComparer.Ordinal);
         using var reservation = _reservations is null ? null
-            : await _reservations.AcquireBatchAsync(manifest.Scope.Project, ct).ConfigureAwait(false);
+            : await _reservations.AcquireBatchAsync(manifest.Scope.Project,
+                marker => IsStalePush(manifest.Scope.Project, marker, ct), ct)
+                .ConfigureAwait(false);
         BatchCoordinatorLease? lease;
         try { lease = _leases.TryAcquire(manifest.Scope, Environment.MachineName); }
         catch (IOException) { return; }

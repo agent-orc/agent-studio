@@ -1,29 +1,43 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace AgentStudio.Pipeline;
 
-/// <summary>
-/// Serializes code integration and batch execution per project. A pending push
-/// marker fences the gap between a local merge and verified origin publication.
-/// </summary>
+public sealed record PendingIntegrationPush(string JobId, string? ApprovedSha,
+    string? JobFolderPath, string? RepositoryPath, string? IntegrationBranch,
+    string? WatchPath, DateTimeOffset SinceUtc);
+
+public sealed record PendingIntegrationPushWait(string Reason, string JobId,
+    string? ApprovedSha, DateTimeOffset SinceUtc, bool AgeAlert);
+
+/// <summary>Serializes code integration and batch execution per project.</summary>
 public sealed class BatchIntegrationReservationService
 {
     private readonly string? _root;
+    private readonly TimeProvider _time;
+    private readonly TimeSpan _alertAfter;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _projects =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PendingPushes> _pushes =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public BatchIntegrationReservationService(string? root = null) => _root = root;
-
-    private sealed class PendingPushes(IEnumerable<string> jobs)
+    public BatchIntegrationReservationService(string? root = null,
+        TimeProvider? timeProvider = null, TimeSpan? alertAfter = null)
     {
-        public HashSet<string> Jobs { get; } = new(jobs, StringComparer.Ordinal);
-        public TaskCompletionSource Cleared { get; set; } = Completed(jobs.Any());
+        _root = root;
+        _time = timeProvider ?? TimeProvider.System;
+        _alertAfter = alertAfter ?? TimeSpan.FromMinutes(15);
+    }
 
-        private static TaskCompletionSource Completed(bool pending)
+    private sealed class PendingPushes(IEnumerable<KeyValuePair<string, PendingIntegrationPush>> jobs)
+    {
+        public Dictionary<string, PendingIntegrationPush> Jobs { get; } =
+            new(jobs, StringComparer.Ordinal);
+        public TaskCompletionSource Cleared { get; set; } = Completion(jobs.Any());
+
+        private static TaskCompletionSource Completion(bool pending)
         {
             var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             if (!pending) source.SetResult();
@@ -33,12 +47,26 @@ public sealed class BatchIntegrationReservationService
 
     private PendingPushes ForProject(string project)
         => _pushes.GetOrAdd(project, name => new PendingPushes(
-            _root is null ? [] : Directory.Exists(ProjectDirectory(name))
-                ? Directory.EnumerateFiles(ProjectDirectory(name), "*.pending")
-                    .Select(Path.GetFileNameWithoutExtension)
-                    .Where(value => value is not null)
-                    .Select(value => value!).ToArray()
-                : []));
+            _root is null || !Directory.Exists(ProjectDirectory(name))
+                ? [] : Directory.EnumerateFiles(ProjectDirectory(name), "*.pending")
+                    .Select(ReadMarker).Where(item => item is not null)
+                    .Select(item => new KeyValuePair<string, PendingIntegrationPush>(
+                        Hash(PushKey(item!.JobId, item.ApprovedSha)), item)).ToArray()));
+
+    private static PendingIntegrationPush? ReadMarker(string path)
+    {
+        try
+        {
+            var value = File.ReadAllText(path);
+            if (value.StartsWith('{'))
+                return JsonSerializer.Deserialize<PendingIntegrationPush>(value);
+            var parts = value.Split('\n', 2);
+            return new PendingIntegrationPush(parts[0], parts.Length == 2 ? parts[1] : null,
+                null, null, null, null, File.GetLastWriteTimeUtc(path));
+        }
+        catch (IOException) { return null; }
+        catch (JsonException) { return null; }
+    }
 
     private string ProjectDirectory(string project)
         => Path.Combine(_root!, Hash(project.ToUpperInvariant()));
@@ -59,58 +87,118 @@ public sealed class BatchIntegrationReservationService
         return new Grant(semaphore);
     }
 
-    public async Task<IDisposable> AcquireBatchAsync(string project, CancellationToken ct)
+    public Task<IDisposable> AcquireBatchAsync(string project, CancellationToken ct)
+        => AcquireBatchAsync(project, null, ct);
+
+    public async Task<IDisposable> AcquireBatchAsync(string project,
+        Func<PendingIntegrationPush, bool>? isStale, CancellationToken ct)
     {
         while (true)
         {
             var grant = await AcquireAsync(project, ct).ConfigureAwait(false);
-            var pending = ForProject(project);
             Task wait;
-            lock (pending)
+            try
             {
-                if (pending.Jobs.Count == 0) return grant;
-                wait = pending.Cleared.Task;
+                Reconcile(project, isStale);
+                var pending = ForProject(project);
+                lock (pending)
+                {
+                    if (pending.Jobs.Count == 0) return grant;
+                    wait = pending.Cleared.Task;
+                }
+            }
+            catch
+            {
+                grant.Dispose();
+                throw;
             }
             grant.Dispose();
-            await wait.WaitAsync(ct).ConfigureAwait(false);
+            await Task.WhenAny(wait, Task.Delay(TimeSpan.FromSeconds(30), ct))
+                .ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
         }
     }
 
-    // Called while the code merge owns the reservation, before its push enters
-    // the background queue. A failed push remains pending for the backstop.
-    public void MarkPushPending(string project, string jobId, string? approvedSha)
+    public void Reconcile(string project, Func<PendingIntegrationPush, bool>? isStale)
     {
-        var pushKey = PushKey(jobId, approvedSha);
+        if (isStale is null) return;
         var pending = ForProject(project);
         lock (pending)
         {
+            foreach (var (key, marker) in pending.Jobs.ToArray())
+                if (isStale(marker)) Remove(project, pending, key, marker);
+        }
+    }
+
+    public PendingIntegrationPushWait? GetWait(string project)
+    {
+        var pending = ForProject(project);
+        lock (pending)
+        {
+            var marker = pending.Jobs.Values.MinBy(item => item.SinceUtc);
+            if (marker is null) return null;
+            var reason = $"waiting on push {marker.JobId}@{marker.ApprovedSha} since {marker.SinceUtc:O}";
+            return new PendingIntegrationPushWait(reason, marker.JobId, marker.ApprovedSha,
+                marker.SinceUtc, _time.GetUtcNow() - marker.SinceUtc >= _alertAfter);
+        }
+    }
+
+    public IReadOnlyList<string> ProjectsWithPending()
+        => _pushes.Where(item =>
+        {
+            lock (item.Value) return item.Value.Jobs.Count > 0;
+        }).Select(item => item.Key).ToArray();
+
+    public void MarkPushPending(string project, string jobId, string? approvedSha,
+        string? jobFolderPath = null, string? repositoryPath = null,
+        string? integrationBranch = null, string? watchPath = null)
+    {
+        var pushKey = PushKey(jobId, approvedSha);
+        var key = Hash(pushKey);
+        var pending = ForProject(project);
+        lock (pending)
+        {
+            foreach (var (oldKey, old) in pending.Jobs.ToArray())
+                if (old.JobId == jobId && oldKey != key)
+                    Remove(project, pending, oldKey, old);
+            if (pending.Jobs.ContainsKey(key)) return;
+            var marker = new PendingIntegrationPush(jobId, approvedSha,
+                jobFolderPath, repositoryPath, integrationBranch, watchPath,
+                _time.GetUtcNow());
             if (_root is not null)
             {
                 var path = PendingPath(project, pushKey);
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                if (!File.Exists(path)) File.WriteAllText(path, pushKey);
+                File.WriteAllText(path, JsonSerializer.Serialize(marker));
             }
             if (pending.Jobs.Count == 0)
                 pending.Cleared = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously);
-            pending.Jobs.Add(_root is null ? pushKey : Hash(pushKey));
+            pending.Jobs.Add(key, marker);
         }
     }
 
     public void MarkPushVerified(string project, string jobId, string? approvedSha)
     {
-        var pushKey = PushKey(jobId, approvedSha);
         var pending = ForProject(project);
         lock (pending)
         {
-            if (_root is not null)
-            {
-                var path = PendingPath(project, pushKey);
-                if (File.Exists(path)) File.Delete(path);
-            }
-            pending.Jobs.Remove(_root is null ? pushKey : Hash(pushKey));
-            if (pending.Jobs.Count == 0) pending.Cleared.TrySetResult();
+            var key = Hash(PushKey(jobId, approvedSha));
+            if (pending.Jobs.TryGetValue(key, out var marker))
+                Remove(project, pending, key, marker);
         }
+    }
+
+    private void Remove(string project, PendingPushes pending, string key,
+        PendingIntegrationPush marker)
+    {
+        if (_root is not null)
+        {
+            var path = PendingPath(project, PushKey(marker.JobId, marker.ApprovedSha));
+            if (File.Exists(path)) File.Delete(path);
+        }
+        pending.Jobs.Remove(key);
+        if (pending.Jobs.Count == 0) pending.Cleared.TrySetResult();
     }
 
     private sealed class Grant(SemaphoreSlim semaphore) : IDisposable
