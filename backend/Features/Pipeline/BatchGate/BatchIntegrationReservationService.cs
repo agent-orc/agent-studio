@@ -32,24 +32,44 @@ public sealed class BatchIntegrationReservationService
         LoadPersistedProjects();
     }
 
+    // Start-up preloads must never stop the host: an unreadable reservation
+    // store leaves the project unloaded, and ForProject loads it lazily on first
+    // use, where the error surfaces to the caller.
     private void LoadPersistedProjects()
     {
-        if (_root is null || !Directory.Exists(_root)) return;
-        foreach (var folder in Directory.EnumerateDirectories(_root))
-        foreach (var path in Directory.EnumerateFiles(folder, "*.pending"))
+        if (_root is null) return;
+        try
         {
-            var marker = ReadMarker(path);
-            if (!string.IsNullOrWhiteSpace(marker?.Project)
-                && string.Equals(folder, ProjectDirectory(marker.Project),
-                    StringComparison.OrdinalIgnoreCase))
-                _ = ForProject(marker.Project);
+            if (!Directory.Exists(_root)) return;
+            foreach (var folder in Directory.EnumerateDirectories(_root))
+            foreach (var path in Directory.EnumerateFiles(folder, "*.pending"))
+            {
+                var marker = ReadMarker(path);
+                if (!string.IsNullOrWhiteSpace(marker?.Project)
+                    && string.Equals(folder, ProjectDirectory(marker.Project),
+                        StringComparison.OrdinalIgnoreCase))
+                    TryPreload(marker.Project);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Warn(ex, "preload persisted push markers at start-up");
         }
     }
 
     public void LoadPersistedProjects(IEnumerable<string> projects)
     {
         foreach (var project in projects)
-            _ = ForProject(project);
+            TryPreload(project);
+    }
+
+    private void TryPreload(string project)
+    {
+        try { _ = ForProject(project); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AgentStudio.Diagnostics.SilentCatch.Warn(ex, $"preload push markers for project {project}");
+        }
     }
 
     private sealed class PendingPushes(IEnumerable<KeyValuePair<string, PendingIntegrationPush>> jobs)
