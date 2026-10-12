@@ -34,20 +34,25 @@ public sealed class OrchestrationExecutionModeTests
             descriptor.ServiceType == typeof(IHostedService));
     }
 
-    // AGT-2762 added a fourth legacy loop owner (RemoteReviewEvidenceProjectionWorker)
-    // and AGT-2936 a fifth (RemoteReviewSettlementReconciler, the restart owner of
-    // journaled review settlements), so the count grew from 3 to 5.
+    // AGT-2762 added a fourth legacy loop owner (RemoteReviewEvidenceProjectionWorker),
+    // AGT-2936 a fifth (RemoteReviewSettlementReconciler, the restart owner of
+    // journaled review settlements) and AGT-3052 a sixth (BatchGatePilotHostedService,
+    // the batch verification tick; it moves into the Orchestrator Engine with
+    // AGT-3055, decision D14), so the count grew from 3 to 6.
     [Fact]
-    public void Monolith_mode_registers_all_five_legacy_loop_owners()
+    public void Monolith_mode_registers_all_six_legacy_loop_owners()
     {
         var services = new ServiceCollection();
 
         services.AddOrchestrationExecutionLoops(OrchestrationExecutionMode.Monolith);
 
-        Assert.Equal(5, services.Count(descriptor =>
+        Assert.Equal(6, services.Count(descriptor =>
             descriptor.ServiceType == typeof(IHostedService)));
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IHostedService)
             && descriptor.ImplementationType == typeof(RemoteReviewSettlementReconciler));
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IHostedService)
+            && descriptor.ImplementationType == typeof(AgentStudio.Pipeline.BatchGatePilotHostedService));
     }
 }
