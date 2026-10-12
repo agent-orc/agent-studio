@@ -439,6 +439,33 @@ public sealed class RunLivenessMonitorTests : IDisposable
     }
 
     [Fact]
+    public async Task Uptime_does_not_demote_a_keyless_card_leased_under_its_scanner_key()
+    {
+        // The claim endpoints lease under Key ?? TaskKey ?? Id. A legacy card
+        // without a stable key is leased under the composite scanner key, which
+        // task.json does not carry (AGT-3075).
+        const string slug = "remote-keyless";
+        WriteJobWithSession(TaskStates.Progress, slug, sessionName: null, chain: []);
+        var folder = Path.Combine(_watchPath, TaskStates.Progress, slug);
+        WriteCliLog(folder, "remote run is alive on its host");
+        SetMtimeOld(Path.Combine(folder, "logs", "cli-output.log"));
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance);
+        var (monitor, scanner) = Build(leases: leases);
+        var taskKey = ResolveTaskKey(scanner, slug);
+        Assert.NotEqual(slug, taskKey);
+        Assert.True(leases.TryAcquire(new RunLeaseAcquireRequest(
+            taskKey, "runner-remote", "runner-remote", "remote-host", 42, "remote",
+            RequestedTtlSeconds: 120, RepositoryId: ProjectName,
+            IdempotencyKey: "remote-keyless-acquire")).Granted);
+
+        var outcomes = await monitor.SweepAsync();
+
+        Assert.Empty(outcomes);
+        Assert.True(Directory.Exists(folder));
+        Assert.False(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, slug)));
+    }
+
+    [Fact]
     public async Task Disabled_SkipsScanEntirely()
     {
         const string slug = "would-be-zombie";
