@@ -67,8 +67,8 @@ case "${PW_E2E_PROFILE:-standard}" in
   *) echo "Unknown PW_E2E_PROFILE: ${PW_E2E_PROFILE}" >&2; exit 2 ;;
 esac
 
-backend_started=1
 "${REPO_ROOT}/api.sh" start
+backend_started=1
 failures=0
 while true; do
   sleep 2
