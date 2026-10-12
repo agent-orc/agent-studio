@@ -2006,6 +2006,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             WorkingDirectory = cwd,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
