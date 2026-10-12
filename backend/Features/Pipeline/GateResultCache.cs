@@ -164,7 +164,8 @@ public sealed class GateResultCache
 
     internal static string LocalToolchainIdentity(
         IReadOnlyList<VerifyCommand> commands, string repositoryPath,
-        Func<string, string, string, string> readVersion)
+        Func<string, string, string, string> readVersion,
+        IReadOnlyList<string>? searchPaths = null)
     {
         var names = commands.Select(command => command.Command.Split(' ', '\t', '\r', '\n')
                 .FirstOrDefault() ?? "")
@@ -178,7 +179,7 @@ public sealed class GateResultCache
             RuntimeInformation.ProcessArchitecture.ToString(),
             RuntimeInformation.FrameworkDescription,
         };
-        var paths = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
+        var paths = searchPaths ?? (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
         foreach (var name in names)
         {
             var path = paths.SelectMany(dir => ExecutableFileNames(name).Select(file => Path.Combine(dir, file)))

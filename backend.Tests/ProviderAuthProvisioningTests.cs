@@ -82,6 +82,7 @@ public sealed class ProviderAuthProvisioningTests
 
         Assert.NotNull(status);
         Assert.Equal("completed", status!.State);
+        await audit.WaitForFirstEventAsync();
         Assert.Single(audit.Events);
         Assert.Equal(new ProviderSignInAuditEvent(
             "agent-runner-01",
@@ -111,6 +112,7 @@ public sealed class ProviderAuthProvisioningTests
         var status = coordinator.Get("agent-runner-01", started.Handle);
         Assert.Equal("failed", status?.State);
         Assert.DoesNotContain("ABCD-EFGH", status?.Detail ?? string.Empty, StringComparison.Ordinal);
+        await audit.WaitForFirstEventAsync();
         Assert.Single(audit.Events);
         Assert.Equal("failed", audit.Events[0].Outcome);
     }
@@ -161,6 +163,7 @@ public sealed class ProviderAuthProvisioningTests
 
         Assert.NotNull(status);
         Assert.Equal("completed", status!.State);
+        await audit.WaitForFirstEventAsync();
         Assert.Single(audit.Events);
         Assert.Equal(new ProviderSignInAuditEvent(
             "agent-runner-01",
@@ -188,6 +191,7 @@ public sealed class ProviderAuthProvisioningTests
 
         var status = coordinator.Get("agent-runner-01", started.Handle);
         Assert.Equal("failed", status?.State);
+        await audit.WaitForFirstEventAsync();
         Assert.Single(audit.Events);
         Assert.Equal("failed", audit.Events[0].Outcome);
     }
@@ -259,12 +263,18 @@ public sealed class ProviderAuthProvisioningTests
 
     private sealed class RecordingProviderSignInAudit : IProviderSignInAudit
     {
+        private readonly TaskCompletionSource _firstEvent =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public List<ProviderSignInAuditEvent> Events { get; } = [];
 
-        public Task WriteAsync(ProviderSignInAuditEvent evt, CancellationToken cancellationToken = default)
+        public Task WaitForFirstEventAsync() => _firstEvent.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        public async Task WriteAsync(ProviderSignInAuditEvent evt, CancellationToken cancellationToken = default)
         {
+            await Task.Yield();
             Events.Add(evt);
-            return Task.CompletedTask;
+            _firstEvent.TrySetResult();
         }
     }
 }
