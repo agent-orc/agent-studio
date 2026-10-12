@@ -75,6 +75,13 @@ public sealed class BatchGateSnapshotBuilder
             {
                 var task = _scanner.FindJob(review.TaskKey);
                 if (task is null || task.ProjectName != project) return null;
+                // A full-plan review or a review of a superseded run can never
+                // become a member; it is filtered before any git call.
+                var currentRun = _authority.GetTaskProjection(review.TaskKey).CurrentRunAttempt;
+                if (!BatchPlanUpcomingEligibility.IsCandidate(review.Subject.Plan,
+                        string.Equals(currentRun?.AttemptId, review.SourceRunAttemptId,
+                            StringComparison.Ordinal)))
+                    return null;
                 var refName = review.Subject.ResultRef;
                 var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
                 var diff = repo is null ? new CachedDiff([], 0, now)

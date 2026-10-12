@@ -5,6 +5,7 @@ using AgentStudio.Pipeline;
 using AgentStudio.Runner;
 using AgentStudio.Shared;
 using AgentStudio.Tasks;
+using AgentStudio.TaskServer.Contracts.BatchGate;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -188,6 +189,191 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Contains(snapshot.Upcoming,
             item => item.TaskKey == queued.Key && item.Stage == "review"
                 && item.EtaUtc is not null);
+    }
+
+    [Fact]
+    public void Look_ahead_snapshot_ignores_queued_reviews_without_a_deferred_plan()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-FULL-WAITING", "docs/waiting.md");
+        var queued = SeedMember(factory, "DOC-FULL-QUEUED", "docs/queued.md",
+            settleReview: false, deferredPlan: false);
+
+        var snapshot = BuildSnapshot(factory);
+
+        Assert.DoesNotContain(snapshot.Upcoming, item => item.TaskKey == queued.Key);
+    }
+
+    [Fact]
+    public void Look_ahead_snapshot_ignores_reviews_of_a_superseded_run()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-STALE-WAITING", "docs/waiting.md");
+        var queued = SeedMember(factory, "DOC-STALE-QUEUED", "docs/queued.md",
+            settleReview: false);
+        Supersede(factory.Services.GetRequiredService<AttemptAuthorityService>(), queued.Key);
+
+        var snapshot = BuildSnapshot(factory);
+
+        Assert.DoesNotContain(snapshot.Upcoming, item => item.TaskKey == queued.Key);
+    }
+
+    [Fact]
+    public void Look_ahead_snapshot_reads_the_current_run_by_card_key()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-KEYED-WAITING", "docs/waiting.md");
+        // Production cards carry a slug id; the authority keys runs by card key.
+        var queued = SeedMember(factory, "DOC-KEYED-QUEUED", "docs/queued.md",
+            settleReview: false, taskId: "doc-keyed-queued-slug");
+
+        var snapshot = BuildSnapshot(factory);
+
+        Assert.Contains(snapshot.Upcoming,
+            item => item.TaskKey == queued.Key && item.Stage == "review");
+    }
+
+    [Fact]
+    public void Look_ahead_plan_holds_a_lone_card_only_for_a_deferred_review()
+    {
+        using var factory = BuildFactory(authorityOnTestClock: true);
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        SeedMember(factory, "DOC-IDLE-WAITING", "docs/waiting.md");
+        SeedMember(factory, "DOC-IDLE-FULL", "docs/full.md",
+            settleReview: false, deferredPlan: false);
+
+        var alone = BatchGateLookAheadPlanner.Plan(BuildSnapshot(factory, idleGateHost: true));
+
+        Assert.Equal("per-task", alone.Decision);
+        Assert.Empty(alone.Upcoming);
+
+        SeedMember(factory, "DOC-IDLE-DEFERRED", "docs/deferred.md", settleReview: false);
+        var held = BatchGateLookAheadPlanner.Plan(BuildSnapshot(factory, idleGateHost: true));
+
+        Assert.Equal("wait", held.Decision);
+        Assert.Equal("DOC-IDLE-DEFERRED", Assert.Single(held.Upcoming,
+            item => item.Stage == "review").TaskKey);
+    }
+
+    [Fact]
+    public async Task Deferred_review_settlement_records_its_review_verification_minutes_once()
+    {
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", ReviewRunnerId);
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-VERIFY", "docs/verify.md", settleReview: false,
+            verificationCommand: VerificationCommand());
+        await RegisterReviewExecutorAsync(http);
+        var claimed = await http.PostAsJsonAsync(
+            $"/api/v1/runners/{ReviewRunnerId}/review-claims",
+            new Contract.ReviewClaimRequest(ReviewRunnerId, ReviewInstance, 300, AvailableSlots: 1));
+        claimed.EnsureSuccessStatusCode();
+        var claim = (await claimed.Content.ReadFromJsonAsync<Contract.ReviewClaimResponse>())!;
+        Assert.Equal(member.ReviewAttemptId, claim.Attempt!.AttemptId);
+        var report = PassingReport(claim, "batch-verify-pass") with
+        {
+            Commands = [Evidence(member.ResultSha, "candidate", _clock, 12)],
+        };
+
+        var response = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var replayed = await http.PostAsJsonAsync(
+            $"/api/v1/reviews/attempts/{claim.Attempt.AttemptId}/report", report);
+        Assert.True(replayed.IsSuccessStatusCode, await replayed.Content.ReadAsStringAsync());
+
+        var fact = Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListReviewVerifications(ProjectName));
+        Assert.Equal(member.Key, fact.TaskKey);
+        Assert.Equal(member.ReviewAttemptId, fact.ReviewAttemptId);
+        Assert.Equal(12, fact.CandidateMinutes, 6);
+        Assert.Equal(0, fact.BaselineMinutes);
+        Assert.Equal(1, fact.CountedCommands);
+    }
+
+    [Fact]
+    public void Deferred_review_with_a_product_failure_records_its_review_verification()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-VERIFY-RED", "docs/red.md", settleReview: false,
+            verificationCommand: VerificationCommand());
+        var review = Settle(factory, member, ReviewTerminalOutcome.ProductFailure);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        Assert.True(pilot.RecordReviewVerification(ProjectName, review,
+            [Evidence(member.ResultSha, "candidate", _clock, 9)]));
+
+        var fact = Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListReviewVerifications(ProjectName));
+        Assert.Equal("ProductFailure", fact.Outcome);
+        Assert.Equal(9, fact.CandidateMinutes, 6);
+    }
+
+    [Fact]
+    public void Review_without_a_deferred_plan_records_no_review_verification()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-VERIFY-FULL", "docs/full.md", settleReview: false,
+            deferredPlan: false, verificationCommand: VerificationCommand());
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+
+        Assert.False(pilot.RecordReviewVerification(ProjectName, review,
+            [Evidence(member.ResultSha, "candidate", _clock, 9)]));
+
+        Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListReviewVerifications(ProjectName));
+    }
+
+    [Fact]
+    public void Cached_baseline_adds_no_minutes_while_its_candidate_still_counts()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 4);
+        var member = SeedMember(factory, "DOC-VERIFY-CACHE", "docs/cache.md", settleReview: false,
+            verificationCommand: VerificationCommand());
+        var review = Settle(factory, member, ReviewTerminalOutcome.Pass);
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var cachedAt = _clock.AddMinutes(-90);
+
+        Assert.True(pilot.RecordReviewVerification(ProjectName, review,
+        [
+            Evidence(member.ResultSha, "candidate", _clock, 10) with
+            {
+                BaselineCacheHit = true, BaselineReusedFromAttemptId = "review-older",
+            },
+            // A cache hit is written with the cache creation time; it never ran.
+            Evidence(member.ResultSha, "baseline-0123456789ab", cachedAt, 0) with
+            {
+                BaselineCacheHit = true, BaselineReusedFromAttemptId = "review-older",
+            },
+            Evidence(member.ResultSha, "baseline-ba9876543210", _clock, 4),
+            Evidence(member.ResultSha, "clean-repeat", _clock.AddMinutes(10), 3),
+            Evidence(member.ResultSha, "candidate", _clock, 30) with { Aspect = "requirement-fit" },
+            Evidence(member.ResultSha, "candidate", _clock, 30) with
+            {
+                ExecutionKind = Contract.ReviewCommandKinds.AgentAspect,
+            },
+        ]));
+
+        var fact = Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListReviewVerifications(ProjectName));
+        Assert.Equal(13, fact.CandidateMinutes, 6);
+        Assert.Equal(4, fact.BaselineMinutes, 6);
+        Assert.Equal(3, fact.CountedCommands);
     }
 
     [Fact]
@@ -1112,6 +1298,8 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(1, _gate.FallbackRuns);
         AssertLane(member.Key, TaskStates.Escalated);
         Assert.Null(Ownership(member.Key));
+        Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListExecutions(ProjectName));
     }
 
     [Fact]
@@ -1232,6 +1420,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         AssertLane(member.Key, TaskStates.Escalated);
         Assert.Empty(factory.Services.GetRequiredService<BatchGateStore>().ListPending());
         Assert.Null(Ownership(member.Key));
+        // The emergency per-task gate ran, so the pilot report counts it.
+        Assert.Single(factory.Services.GetRequiredService<BatchGateStore>()
+            .ListExecutions(ProjectName));
     }
 
     [Fact]
@@ -1360,7 +1551,9 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     private sealed record SeededMember(string Key, string RunAttemptId, string ReviewAttemptId, string ResultSha);
 
     private SeededMember SeedMember(WebApplicationFactory<Program> factory, string key,
-        string changedFile, bool settleReview = true, string? parentSha = null)
+        string changedFile, bool settleReview = true, string? parentSha = null,
+        bool deferredPlan = true, string? taskId = null,
+        Contract.ReviewCommandDto? verificationCommand = null)
     {
         var baseSha = Git(_repo, "rev-parse", "origin/develop");
         var resultRef = "refs/heads/agent-studio/results/" + key;
@@ -1392,7 +1585,7 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "task.json"), JsonSerializer.Serialize(new
         {
-            id = key, title = key, state = TaskStates.AutoReview, order = 1, agent = "claude",
+            id = taskId ?? key, key, title = key, state = TaskStates.AutoReview, order = 1, agent = "claude",
             kind = TaskKinds.Task, enteredLaneAt = _clock.UtcDateTime,
             commits = new[]
             {
@@ -1412,10 +1605,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             Project = ProjectName, Repository = RepositoryId, ResultSha = resultSha,
             ImmutableResultRef = resultRef, CompletedAtUtc = _clock,
         });
-        var plan = new Contract.ReviewPlanDto(
-            [new Contract.ReviewCommandDto("aspect-requirement-fit", "requirement-fit", "claude", [],
-                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect, Prompt: "Review the delivery.")],
-            ["requirement-fit"], BuildTestDeferredToBatch: true);
+        Contract.ReviewCommandDto[] commands =
+        [
+            new("aspect-requirement-fit", "requirement-fit", "claude", [],
+                ExecutionKind: Contract.ReviewCommandKinds.AgentAspect, Prompt: "Review the delivery."),
+            .. verificationCommand is null ? [] : new[] { verificationCommand },
+        ];
+        var plan = new Contract.ReviewPlanDto(commands, ["requirement-fit"],
+            BuildTestDeferredToBatch: deferredPlan);
         var created = authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
             key, RepositoryId, resultSha, run.AttemptId, "requirements", "policy", [],
             "create-" + key, ResultRef: resultRef, Plan: plan));
@@ -1460,6 +1657,44 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                 | UnixFileMode.UserExecute);
         return (ready, go);
     }
+
+    private BatchPlanInput BuildSnapshot(WebApplicationFactory<Program> factory,
+        bool idleGateHost = false)
+    {
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        var builder = new BatchGateSnapshotBuilder(store,
+            factory.Services.GetRequiredService<AttemptAuthorityService>(),
+            factory.Services.GetRequiredService<TaskScannerService>(),
+            factory.Services.GetRequiredService<AgentStudio.Git.GitService>());
+        var settings = factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .Get(ProjectName).BatchGate;
+        return builder.Build(ProjectName, "develop", store.ListPending(), settings, _clock,
+            idleGateHost: idleGateHost);
+    }
+
+    private static ReviewAttemptDto Settle(WebApplicationFactory<Program> factory,
+        SeededMember member, ReviewTerminalOutcome outcome)
+    {
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var claimed = authority.ClaimReview(member.ReviewAttemptId, "review-executor", "review-host",
+            600, "claim-" + member.Key);
+        Assert.True(claimed.Accepted, claimed.Message);
+        var settled = authority.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(member.ReviewAttemptId, claimed.ReviewAttempt!.LastFence,
+                claimed.ReviewAttempt.AuthorityEpoch, "settle-review-" + member.Key),
+            member.ResultSha, outcome));
+        Assert.True(settled.Accepted, settled.Message);
+        return settled.ReviewAttempt!;
+    }
+
+    private static Contract.ReviewCommandDto VerificationCommand()
+        => new("verify-build", "review-verification", "dotnet", ["build"]);
+
+    private static Contract.ReviewCommandEvidenceDto Evidence(string sha, string workspaceRole,
+        DateTimeOffset startedAt, double minutes)
+        => new("verify-build", "review-verification", "dotnet", ["build"], sha, sha,
+            new string('c', 64), startedAt.UtcDateTime, startedAt.AddMinutes(minutes).UtcDateTime,
+            0, null, new string('d', 64), new string('e', 64), WorkspaceRole: workspaceRole);
 
     private static void Supersede(AttemptAuthorityService authority, string key)
     {
@@ -1562,7 +1797,10 @@ public sealed class BatchGatePilotServiceTests : IDisposable
             lease.AuthorityEpoch);
     }
 
-    private WebApplicationFactory<Program> BuildFactory()
+    // The host registers the attempt authority on the wall clock. A test that
+    // follows review CreatedAt into upcoming ETAs needs it on the test clock,
+    // or every ETA lies outside the look-ahead window of the fixed clock.
+    private WebApplicationFactory<Program> BuildFactory(bool authorityOnTestClock = false)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -1592,6 +1830,14 @@ public sealed class BatchGatePilotServiceTests : IDisposable
                 services.AddSingleton<ILoggerProvider>(_errors);
                 services.RemoveAll<IBuildTestGateRunner>();
                 services.AddSingleton<IBuildTestGateRunner>(_gate);
+                if (authorityOnTestClock)
+                {
+                    services.RemoveAll<AttemptAuthorityService>();
+                    services.AddSingleton(sp => new AttemptAuthorityService(
+                        sp.GetRequiredService<IConfiguration>(),
+                        sp.GetRequiredService<ILogger<AttemptAuthorityService>>(),
+                        () => _clock.UtcDateTime));
+                }
                 var tick = services.Single(descriptor =>
                     descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationType == typeof(BatchGatePilotHostedService));

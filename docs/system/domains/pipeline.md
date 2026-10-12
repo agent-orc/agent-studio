@@ -101,8 +101,12 @@ The hosted worker closes manifests at the configured size, age, pressure, or
 look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
 The look-ahead policy is pure and estimates the suite runs per member across
-the configured size range. Its snapshot includes queued cards and upcoming
-pending or leased review and coding cards. Diff statistics are cached by result
+the configured size range. Its snapshot includes queued cards, coding cards in
+progress, and upcoming pending or leased reviews whose frozen plan defers
+build/test to the batch and whose source run is the card's current run. A
+full-plan review or a review of a superseded run can never join a batch, so it
+is not an upcoming entry and cannot hold a waiting card on the look-ahead
+window (`BatchPlanUpcomingEligibility`). Diff statistics are cached by result
 SHA for repeated state reads. High-risk members use smaller batches or the
 per-card gate; `overlap: separate` excludes a card touching a selected member's
 files. Operator close-now overrides an advisor veto hold. An advisor may approve,
@@ -182,7 +186,15 @@ diagnosis. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
-until measured on the same window.
+until measured on the same window. `fullSuiteRuns` and `fullSuiteHostMinutes`
+count every gate execution, including emergency per-task fallbacks run at
+review settlement. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+and `reviewVerificationBaselineMinutes` count the builds and selected tests a
+batch-deferred review ran itself (`review-verification` tool commands,
+candidate and clean-repeat plus non-cached baseline workspaces), recorded once
+per review attempt when it settles. `totalVerificationHostMinutes` is the sum
+of both sides. Review-side minutes are counted from the deploy that introduced
+them onward; earlier reviews are not reconstructed.
 
 ## Compose-render gate step (AGT-2981)
 

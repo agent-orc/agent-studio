@@ -1,3 +1,4 @@
+using AgentStudio.TaskServer.Contracts;
 using AgentStudio.TaskServer.Contracts.BatchGate;
 using AgentStudio.Pipeline;
 using System.Text.Json;
@@ -75,6 +76,54 @@ public sealed class BatchGateLookAheadPlannerTests
 
         Assert.Equal("close", plan.Decision);
         Assert.Equal(["A", "C"], plan.ProposedMembers);
+    }
+
+    [Fact]
+    public void Lone_card_on_an_idle_gate_host_goes_per_task_without_upcoming_reviews()
+    {
+        var plan = BatchGateLookAheadPlanner.Plan(Input([Card("A", .08)], [])
+            with { IdleGateHost = true });
+
+        Assert.Equal("per-task", plan.Decision);
+        Assert.Equal(["A"], plan.ProposedMembers);
+    }
+
+    [Fact]
+    public void Lone_card_on_an_idle_gate_host_waits_for_a_due_deferred_review()
+    {
+        var plan = BatchGateLookAheadPlanner.Plan(Input([Card("A", .08)],
+            [new BatchPlanUpcoming("B", "review", Now.AddMinutes(10), .08, [])])
+            with { IdleGateHost = true });
+
+        Assert.Equal("wait", plan.Decision);
+        Assert.Equal("compatible card due inside look-ahead window", plan.Reason);
+        Assert.Equal(Now.AddMinutes(19), plan.CloseAtUtc);
+    }
+
+    [Fact]
+    public void Two_cards_without_upcoming_reviews_close_at_target_size()
+    {
+        var plan = BatchGateLookAheadPlanner.Plan(Input(
+            [Card("A", .08), Card("B", .08)], []));
+
+        Assert.Equal("close", plan.Decision);
+        Assert.Equal("target size reached", plan.Reason);
+        Assert.Equal(["A", "B"], plan.ProposedMembers);
+    }
+
+    [Theory]
+    [InlineData(false, false, true, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, true, true, true)]
+    public void Only_a_deferred_review_of_the_current_run_is_an_upcoming_candidate(
+        bool hasPlan, bool deferred, bool sourceRunIsCurrent, bool expected)
+    {
+        var plan = hasPlan
+            ? new ReviewPlanDto([], [], BuildTestDeferredToBatch: deferred)
+            : null;
+
+        Assert.Equal(expected, BatchPlanUpcomingEligibility.IsCandidate(plan, sourceRunIsCurrent));
     }
 
     [Fact]

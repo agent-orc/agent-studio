@@ -1,6 +1,16 @@
 namespace AgentStudio.Pipeline;
 
-/// <summary>Live pilot numbers. Missing comparable baseline values remain null.</summary>
+/// <summary>
+/// Live pilot numbers. Missing comparable baseline values remain null.
+/// <c>FullSuiteRuns</c> and <c>FullSuiteHostMinutes</c> count gate executions:
+/// batch runs, base-verdict runs and every per-task gate, emergency fallbacks
+/// included. The review-verification fields count the builds and selected tests
+/// that batch-deferred reviews ran on their own (aspect
+/// <c>review-verification</c>), candidate plus non-cached baseline workspaces.
+/// They are counted from the deploy that introduced them onward; reviews
+/// settled earlier have no fact and are not reconstructed from evidence.
+/// <c>TotalVerificationHostMinutes</c> is the sum of both sides.
+/// </summary>
 public sealed record BatchGatePilotSnapshot(
     string Project, int ClosedBatches, int EligibleDeliveredMembers,
     int FullSuiteRuns, double? FullSuiteRunsPerEligibleMember,
@@ -15,7 +25,11 @@ public sealed record BatchGatePilotSnapshot(
     int MissingShaMappings, int UntestedPublishShas,
     int FalseCompletedCards, bool CorrectnessFloorMet,
     int IntegrationBranchRedBatches = 0,
-    PendingIntegrationPushWait? PendingPushWait = null);
+    PendingIntegrationPushWait? PendingPushWait = null,
+    int ReviewVerificationRuns = 0,
+    double ReviewVerificationHostMinutes = 0,
+    double ReviewVerificationBaselineMinutes = 0,
+    double TotalVerificationHostMinutes = 0);
 
 public static class BatchGatePilotSnapshotReader
 {
@@ -86,6 +100,9 @@ public static class BatchGatePilotSnapshotReader
         var overload = executions.Sum(item => item.OverloadMinutes);
         var hostMinutes = executions.Sum(item =>
             (item.CompletedAtUtc - item.StartedAtUtc).TotalMinutes);
+        var reviewVerifications = store.ListReviewVerifications(project);
+        var reviewMinutes = reviewVerifications.Sum(item =>
+            item.CandidateMinutes + item.BaselineMinutes);
         return new BatchGatePilotSnapshot(
             project, primary.Length, eligible, executions.Count,
             Ratio(executions.Count, eligible), Ratio(attempted, primary.Length),
@@ -98,7 +115,11 @@ public static class BatchGatePilotSnapshotReader
             stale + staleReleasedCards == 0 && missingMappings == 0 && untested == 0
             && falseCompletedCards == 0,
             all.Count(item => store.LatestState(item.BatchId) is
-                { Phase: BatchPhase.Paused, Reason: "integration-branch-red" }));
+                { Phase: BatchPhase.Paused, Reason: "integration-branch-red" }),
+            ReviewVerificationRuns: reviewVerifications.Count(item => item.CountedCommands > 0),
+            ReviewVerificationHostMinutes: reviewMinutes,
+            ReviewVerificationBaselineMinutes: reviewVerifications.Sum(item => item.BaselineMinutes),
+            TotalVerificationHostMinutes: hostMinutes + reviewMinutes);
     }
 
     private static double? Ratio(double numerator, double denominator)
