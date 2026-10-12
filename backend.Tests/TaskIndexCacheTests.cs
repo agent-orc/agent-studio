@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 
@@ -97,17 +99,17 @@ public class TaskIndexCacheTests : IDisposable
 
     /// <summary>
     /// The safety rescan is the only behaviour in this class that needs a TTL
-    /// short enough to expire during a test, so it gets its own scanner and
-    /// cache over the same folder rather than tightening the TTL for every
-    /// other test in the fixture.
+    /// that expires during a test, so it gets its own scanner and cache over
+    /// the same folder, driven by a fake clock rather than a sleep.
     /// </summary>
     [Fact]
     public void SafetyTtl_PicksUpExternalChanges_EvenWithoutInvalidation()
     {
         var config = BuildConfig(safetyTtlSeconds: 1);
+        var time = new FakeTimeProvider();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config);
+        var cache = new TaskIndexCache(scanner, NullLogger<TaskIndexCache>.Instance, config, time);
         scanner.SetIndexCache(cache);
 
         WriteJob("2-ready", "job-1", "First");
@@ -116,8 +118,9 @@ public class TaskIndexCacheTests : IDisposable
 
         WriteJob("2-ready", "job-2", "Second");
         // No invalidation (simulating a missed FileSystemWatcher event).
-        // Wait past the configured 1 s safety TTL.
-        Thread.Sleep(1200);
+        Assert.Single(scanner.ScanAllJobs());
+        // Move past the configured 1 s safety TTL.
+        time.Advance(TimeSpan.FromMilliseconds(1200));
 
         var fresh = scanner.ScanAllJobs();
         Assert.Equal(2, fresh.Count);
@@ -611,6 +614,440 @@ public class TaskIndexCacheTests : IDisposable
         Assert.Equal(2, cache.Misses);
     }
 
+
+    // ---------------------------------------------------------------------
+    // AGT-3088: board reads take a published generation, pin it, and never
+    // refresh on the request path.
+    // ---------------------------------------------------------------------
+
+    private static readonly AsyncLocal<string?> RequestFlow = new();
+
+    /// <summary>
+    /// A scan delegate whose disk walk can be held open. It reads its result
+    /// before blocking, which is what a real walk racing a write does, and it
+    /// records whether it ran on a board request's flow.
+    /// </summary>
+    private sealed class GatedScan
+    {
+        private int _scans;
+        public int Scans => Volatile.Read(ref _scans);
+        public ManualResetEventSlim Entered { get; } = new(false);
+        public ManualResetEventSlim Release { get; } = new(true);
+        public ConcurrentQueue<string?> Flows { get; } = new();
+        public Func<int, List<TaskInfo>> Produce { get; set; } =
+            scan => [new TaskInfo { Id = $"job-{scan}", State = TaskStates.Ready }];
+        public Exception? FailNext;
+
+        public List<TaskInfo> Scan()
+        {
+            var scan = Interlocked.Increment(ref _scans);
+            Flows.Enqueue(RequestFlow.Value);
+            var result = Produce(scan);
+            Entered.Set();
+            Assert.True(Release.Wait(TimeSpan.FromSeconds(10)));
+            if (Interlocked.Exchange(ref FailNext, null) is { } failure) throw failure;
+            return result;
+        }
+
+        public void Hold()
+        {
+            Entered.Reset();
+            Release.Reset();
+        }
+    }
+
+    private TaskIndexCache NewCache(GatedScan gate, TimeProvider? time = null, int safetyTtlSeconds = 3600)
+        => new(
+            _scanner,
+            NullLogger<TaskIndexCache>.Instance,
+            BuildConfig(safetyTtlSeconds),
+            gate.Scan,
+            timeProvider: time);
+
+    private static async Task WaitForRefreshAsync(TaskIndexCache cache)
+    {
+        if (cache.RefreshInFlight is not { } refresh) return;
+        try { await refresh.WaitAsync(TimeSpan.FromSeconds(10)); }
+        catch (IOException) { /* a deliberately failed refresh */ }
+    }
+
+    private static Task<TaskIndexPublication> BoardRead(TaskIndexCache cache, string? client)
+        => cache.AcquireBoardReadAsync(client, CancellationToken.None).AsTask();
+
+    private static async Task AssertStillWaiting(Task task)
+        => Assert.NotSame(task, await Task.WhenAny(task, Task.Delay(TimeSpan.FromMilliseconds(150))));
+
+    [Fact]
+    public async Task BoardRead_OnADirtyCache_ServesThePublishedSnapshot_AndRefreshesOffTheRequestFlow()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        RequestFlow.Value = "board-request";
+        try
+        {
+            var cold = await BoardRead(cache, "client-x");
+            Assert.Equal("job-1", Assert.Single(cold.Live).Id);
+
+            gate.Hold();
+            cache.Invalidate(TaskIndexCache.InvalidationSource.External);
+            var stale = await BoardRead(cache, "client-x").WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Same(cold, stale);
+            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)), "a dirty read must start a background refresh");
+            gate.Release.Set();
+            await WaitForRefreshAsync(cache);
+
+            Assert.Equal("job-2", Assert.Single((await BoardRead(cache, "client-x")).Live).Id);
+            Assert.Equal(2, gate.Scans);
+            // Neither the cold start nor the dirty refresh ran on the request flow.
+            Assert.All(gate.Flows, flow => Assert.Null(flow));
+        }
+        finally
+        {
+            RequestFlow.Value = null;
+            gate.Release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task TenConcurrentBoardReads_DuringASlowRefresh_AllReturnAtOnce()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        var published = await BoardRead(cache, "client-x");
+
+        gate.Hold();
+        // A runner write: in-process, no client.
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        var reads = Enumerable.Range(0, 10).Select(_ => Task.Run(() => BoardRead(cache, "client-x"))).ToArray();
+        var all = Task.WhenAll(reads);
+        try
+        {
+            Assert.Same(all, await Task.WhenAny(all, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.All(await all, read => Assert.Same(published, read));
+            Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)));
+            Assert.Equal(2, gate.Scans);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        await WaitForRefreshAsync(cache);
+        Assert.Equal(2, gate.Scans);
+    }
+
+    [Fact]
+    public async Task IdentifiedBoardRead_WaitsForItsOwnMutation_AndNoOtherClientDoes()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        var published = await BoardRead(cache, "client-x");
+
+        gate.Hold();
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: "client-x");
+        try
+        {
+            var other = BoardRead(cache, "client-y");
+            Assert.Same(other, await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(2))));
+            Assert.Same(published, await other);
+
+            var writer = BoardRead(cache, "client-x");
+            await AssertStillWaiting(writer);
+            gate.Release.Set();
+            Assert.Equal("job-2", Assert.Single((await writer.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task AnonymousBoardRead_StillWaitsForEveryMutation()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        _ = await BoardRead(cache, null);
+
+        gate.Hold();
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        var anonymous = BoardRead(cache, null);
+        try
+        {
+            await AssertStillWaiting(anonymous);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        Assert.Equal("job-2", Assert.Single((await anonymous.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+    }
+
+    [Fact]
+    public async Task ColdStart_Waits_ForTheFirstPublish()
+    {
+        var gate = new GatedScan();
+        gate.Hold();
+        var cache = NewCache(gate);
+
+        var first = BoardRead(cache, "client-x");
+        try
+        {
+            await AssertStillWaiting(first);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        Assert.Equal("job-1", Assert.Single((await first.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+    }
+
+    [Fact]
+    public async Task WaitingBoardRead_HonoursTheRequestAbort()
+    {
+        var gate = new GatedScan();
+        gate.Hold();
+        var cache = NewCache(gate);
+        using var aborted = new CancellationTokenSource();
+
+        var read = cache.AcquireBoardReadAsync("client-x", aborted.Token).AsTask();
+        aborted.Cancel();
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task FailedBackgroundRefresh_KeepsTheSnapshot_AndTheNextReadRetries()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        var published = await BoardRead(cache, "client-x");
+
+        gate.FailNext = new IOException("workspace walk failed");
+        cache.Invalidate(TaskIndexCache.InvalidationSource.External);
+        Assert.Same(published, await BoardRead(cache, "client-x"));
+        await WaitForRefreshAsync(cache);
+        Assert.Equal(2, gate.Scans);
+
+        // The failure left the cache dirty: the next read serves the last
+        // snapshot again and starts the retry.
+        Assert.Same(published, await BoardRead(cache, "client-x"));
+        await WaitForRefreshAsync(cache);
+        Assert.Equal(3, gate.Scans);
+        Assert.Equal("job-3", Assert.Single((await BoardRead(cache, "client-x")).Live).Id);
+    }
+
+    [Fact]
+    public async Task OptimisticReorder_TheWritersNextBoardReadNeverShowsTheOldOrder()
+    {
+        string[] disk = ["a", "b"];
+        var gate = new GatedScan
+        {
+            Produce = _ =>
+            {
+                var order = Volatile.Read(ref disk);
+                return order.Select((id, index) => new TaskInfo { Id = id, State = TaskStates.Ready, Order = index + 1 })
+                    .ToList();
+            },
+        };
+        var cache = NewCache(gate);
+        Assert.Equal(["a", "b"], OrderedIds(await BoardRead(cache, "client-x")));
+
+        // Watcher churn starts a background walk that reads the old order...
+        gate.Hold();
+        cache.Invalidate(TaskIndexCache.InvalidationSource.External);
+        _ = await BoardRead(cache, "client-y");
+        Assert.True(gate.Entered.Wait(TimeSpan.FromSeconds(5)));
+
+        // ...and the writer's reorder lands while that walk is still running.
+        Volatile.Write(ref disk, ["b", "a"]);
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: "client-x");
+        var writersRead = BoardRead(cache, "client-x");
+        await AssertStillWaiting(writersRead);
+
+        gate.Release.Set();
+        Assert.Equal(["b", "a"], OrderedIds(await writersRead.WaitAsync(TimeSpan.FromSeconds(5))));
+        Assert.Equal(3, gate.Scans);
+
+        static string[] OrderedIds(TaskIndexPublication publication)
+            => publication.Live.OrderBy(task => task.Order).Select(task => task.Id).ToArray();
+    }
+
+    [Fact]
+    public async Task ClientTargets_AreBounded_AndAnEvictedWriterStillReadsItsWrite()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        _ = await BoardRead(cache, "client-0");
+
+        gate.Hold();
+        for (var i = 0; i <= TaskIndexCache.MaxTrackedClients; i++)
+            cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: $"client-{i}");
+
+        // client-0 had the oldest entry and was evicted by the bound; it must
+        // still wait for its own write instead of reading around it.
+        var evicted = BoardRead(cache, "client-0");
+        try
+        {
+            await AssertStillWaiting(evicted);
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        Assert.Equal("job-2", Assert.Single((await evicted.WaitAsync(TimeSpan.FromSeconds(5))).Live).Id);
+    }
+
+    [Fact]
+    public async Task ScannerInvalidation_IsAttributedOnlyToTheWriteRequestsOwnClient()
+    {
+        var gate = new GatedScan();
+        var cache = NewCache(gate);
+        _scanner.SetIndexCache(cache);
+        _ = await BoardRead(cache, "client-x");
+
+        gate.Hold();
+        using (AmbientClient.Enter("client-x"))
+            _scanner.InvalidateCache();
+        try
+        {
+            var other = BoardRead(cache, "client-y");
+            Assert.Same(other, await Task.WhenAny(other, Task.Delay(TimeSpan.FromSeconds(2))));
+            await AssertStillWaiting(BoardRead(cache, "client-x"));
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+        await WaitForRefreshAsync(cache);
+        _ = await BoardRead(cache, "client-x");
+
+        // Work started inside a write request but writing after it finished
+        // is background work, not the client's own mutation.
+        var requestDone = new TaskCompletionSource();
+        Task background;
+        using (AmbientClient.Enter("client-z"))
+            background = Task.Run(async () =>
+            {
+                await requestDone.Task;
+                _scanner.InvalidateCache();
+            });
+        gate.Hold();
+        requestDone.SetResult();
+        await background;
+        try
+        {
+            var read = BoardRead(cache, "client-z");
+            Assert.Same(read, await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(2))));
+        }
+        finally
+        {
+            gate.Release.Set();
+        }
+    }
+
+    [Fact]
+    public async Task Pin_ServesEveryNestedIndexReadFromOneGeneration_WithoutEnteringTheRefreshPath()
+    {
+        var gate = new GatedScan
+        {
+            Produce = scan =>
+            [
+                new TaskInfo { Id = $"job-{scan}", Key = $"JOB-{scan}", State = TaskStates.Ready },
+                new TaskInfo { Id = $"fixture-{scan}", Key = $"FIX-{scan}", State = TaskStates.Ready, Fixture = true },
+                new TaskInfo { Id = $"done-{scan}", Key = $"DONE-{scan}", State = TaskStates.Archive },
+            ],
+        };
+        var cache = NewCache(gate);
+        _scanner.SetIndexCache(cache);
+        var pinned = await BoardRead(cache, "client-x");
+
+        // A publish lands after the read took its generation.
+        cache.ForceRefresh();
+        Assert.Equal(pinned.Generation + 1, cache.Generation);
+        // And the index is dirty again, with the next walk held open.
+        gate.Hold();
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+
+        using (_scanner.PinBoardRead(pinned))
+        {
+            var hits = cache.Hits;
+            var misses = cache.Misses;
+            Assert.Equal(pinned.Generation, _scanner.SnapshotGeneration);
+            Assert.Equal(["job-1", "fixture-1"], _scanner.ScanAllJobs().Select(task => task.Id));
+            Assert.Equal(["job-1", "done-1"], _scanner.ScanAllAutomationJobsWithArchive().Select(task => task.Id));
+            Assert.Same(pinned.References, _scanner.GetReferenceIndex());
+            Assert.Equal(pinned.Generation, await Task.Run(() => _scanner.SnapshotGeneration));
+
+            // The dependency lookups of the body build take the pinned graph.
+            var lookups = TaskEndpointHelpers.BuildDependencyGraphLookups(
+                [new TaskInfo { Id = "waiter", TaskKey = "waiter-key", Key = "W-1", State = TaskStates.Ready,
+                    References = new TaskReferences { DependsOn = ["DONE-1"] } }],
+                _scanner,
+                references: pinned.References);
+            Assert.True(lookups.WaitsOn["waiter-key"].Items.Single().Fulfilled);
+
+            Assert.Equal(hits, cache.Hits);
+            Assert.Equal(misses, cache.Misses);
+        }
+
+        gate.Release.Set();
+        Assert.NotEqual(pinned.Generation, _scanner.SnapshotGeneration);
+        Assert.Contains(_scanner.ScanAllJobs(), task => task.Id == "job-3");
+    }
+
+    [Fact]
+    public async Task Publish_AfterAnInvalidationAStaleReadSaw_PushesOnce_AndATtlOnlyPublishNeverPushes()
+    {
+        var time = new FakeTimeProvider();
+        var gate = new GatedScan();
+        var cache = NewCache(gate, time, safetyTtlSeconds: 30);
+        var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
+        var pushes = 0;
+        notifier.JobsBulkChanged += () => Interlocked.Increment(ref pushes);
+        cache.AttachBulkChangedPublisher(notifier.PublishBulkChanged);
+
+        _ = await BoardRead(cache, "client-x");
+        time.Advance(TaskIndexCache.BulkChangedDebounce);
+        Assert.Equal(0, pushes);
+
+        // Two invalidations, one stale read: one background publish, one push.
+        cache.Invalidate(TaskIndexCache.InvalidationSource.External);
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation);
+        _ = await BoardRead(cache, "client-x");
+        await WaitForRefreshAsync(cache);
+        Assert.Equal(0, pushes);
+        time.Advance(TaskIndexCache.BulkChangedDebounce);
+        Assert.Equal(1, pushes);
+
+        // A clean read publishes nothing and pushes nothing.
+        _ = await BoardRead(cache, "client-x");
+        time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(2, gate.Scans);
+        Assert.Equal(1, pushes);
+
+        // The safety TTL rescans in the background, but does not push.
+        time.Advance(TimeSpan.FromSeconds(31));
+        _ = await BoardRead(cache, "client-x");
+        await WaitForRefreshAsync(cache);
+        time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(3, gate.Scans);
+        Assert.Equal(1, pushes);
+
+        // The writer waits for its own mutation, so no stale read occurs.
+        // The background publish still announces the new generation.
+        cache.Invalidate(TaskIndexCache.InvalidationSource.Mutation, clientId: "client-x");
+        _ = await BoardRead(cache, "client-x");
+        time.Advance(TaskIndexCache.BulkChangedDebounce);
+        Assert.Equal(2, pushes);
+    }
+
     /// <summary>
     /// Moves a folder's <c>task.json</c> write time clear of the filesystem's
     /// timestamp granule, which is what the scanner requires before it will
@@ -626,7 +1063,7 @@ public class TaskIndexCacheTests : IDisposable
     private void SettleWriteTime(string state, string slug)
     {
         var taskJson = Path.Combine(_watchPath, state, slug, "task.json");
-        File.SetLastWriteTimeUtc(taskJson, DateTime.UtcNow.AddMinutes(-5));
+        File.SetLastWriteTimeUtc(taskJson, File.GetLastWriteTimeUtc(taskJson).AddMinutes(-5));
     }
 
     private void WriteJob(string state, string slug, string title)

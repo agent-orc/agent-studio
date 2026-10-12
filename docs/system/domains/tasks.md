@@ -1763,6 +1763,54 @@ every byte of it is a byte the client already holds.
   heartbeat. The client contract is in
   [Task core cache and board reuse](frontend.md#task-core-cache-and-board-reuse-agt-2956).
 
+### Board reads serve the last published snapshot (AGT-3088)
+
+A board read never refreshes the task index on its own thread and never probes
+disk for runner state.
+
+- **One pinned generation per read.** `GET /api/tasks/grouped` (also reached
+  through `/api/v1/studio/board`) and `GET /api/tasks/` take one published
+  generation of the index (`TaskIndexCache.AcquireBoardReadAsync`) and pin it
+  for the request (`TaskScannerService.PinBoardRead`). Every nested index read
+  of that request answers from it: the task list, the reference graph the body's
+  dependency lookups receive, the runner status that the validator and the
+  live-status strip read, and the `tasks` generation the validator folds. The
+  shared body build pins the same generation itself, so the tag always names the
+  generation the body came from.
+- **A dirty index refreshes in the background.** A dirty or TTL-expired index
+  starts one single-flight background refresh that inherits neither the request
+  trace nor the pin, and the read answers from the last snapshot. Only two cases
+  wait, asynchronously and cancelled with the request: a cold start, and the
+  caller's own pending write. A failed background refresh keeps the last
+  snapshot, logs `task-index-background-refresh-failed`, and the next read
+  retries.
+- **Read-your-writes is per client.** `ClientIdentityMiddleware` runs every
+  write request of a registered client inside `AmbientClient`. When such a
+  request invalidates the index, the required generation is recorded for that
+  `X-Client-Id` in a bounded map. A board read with that client id waits only
+  for those writes. Runner, review and post-processing writes, and other
+  clients' writes, never make it wait. A read without a registered client id
+  keeps the global read-after-write target. Every Angular tab sends
+  `local-default`, so tabs of one browser share their writes. Callers outside a
+  board read keep the global semantics.
+- **The client learns about the newer snapshot by push.** When a background
+  refresh publishes after an invalidation, the index sends one
+  `jobsBulkChanged` after a 250 ms debounce. The board answers it with a
+  conditional read. A TTL-only rescan does not push.
+- **Runner status reads the snapshot.** `ProjectRunner.GetStatus` takes provider
+  limits from the snapshot's `TaskInfo.QuotaWait` and the displayed queue from
+  one Ready-candidate order per generation and `ProjectSettingsService.Version`,
+  shared by all runners. That order resolves waits-on against the published
+  fixture-free reference graph. Only the in-memory rapid-crash backoff is
+  applied per read. Pickup itself keeps its fresh read.
+- **Board-read trace.** `TaskOperationTimingFilter` traces board reads on
+  `X-Task-Switch-Trace: 1` and otherwise one read in
+  `BoardReadTrace:SampleEvery` (default every read, `0` disables). Each traced
+  read logs one `board-read-trace` line with the `snapshot`, `filter`,
+  `git-freshness`, `compose` and `body` stages, with the `index.lookup` and
+  `index.wait` spans nested inside `snapshot`. The timing line logs the status
+  the result writes, so a 304 is logged as 304.
+
 ## Project Git inventory contract
 
 - `GET /api/git/inventory` and `GET /api/git/history` return an in-memory

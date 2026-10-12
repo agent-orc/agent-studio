@@ -46,8 +46,12 @@ public static class QuotaWaitMarker
         }
     }
 
+    /// <summary>Counts <see cref="TryRead"/> calls per observing flow (tests).</summary>
+    public static FlowCallCounter Reads { get; } = new();
+
     public static QuotaWaitRecord? TryRead(string jobFolder, ILogger? logger = null)
     {
+        Reads.Hit();
         if (string.IsNullOrWhiteSpace(jobFolder)) return null;
         try
         {

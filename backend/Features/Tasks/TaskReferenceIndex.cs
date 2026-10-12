@@ -118,8 +118,12 @@ public sealed class TaskReferenceIndex
         return links.Where(l => KeyComparer.Equals(l.Kind, kind)).ToList();
     }
 
+    /// <summary>Counts <see cref="Build"/> calls per observing flow (tests).</summary>
+    public static FlowCallCounter Builds { get; } = new();
+
     public static TaskReferenceIndex Build(IEnumerable<TaskInfo> tasks)
     {
+        Builds.Hit();
         var byKey = new Dictionary<string, TaskInfo>(KeyComparer);
         var dependsOn = new Dictionary<string, IReadOnlyCollection<string>>(KeyComparer);
         var incoming = new Dictionary<string, List<TaskReferenceLink>>(KeyComparer);

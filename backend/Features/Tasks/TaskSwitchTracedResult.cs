@@ -8,7 +8,8 @@ internal sealed class TaskSwitchTracedResult(
     TaskSwitchTrace trace,
     (int Spawns, long GitMs, int FileReads)? git,
     int gitTimeouts,
-    ILogger logger) : IResult
+    ILogger logger,
+    string label = "task-switch-trace") : IResult
 {
     public async Task ExecuteAsync(HttpContext httpContext)
     {
@@ -41,7 +42,7 @@ internal sealed class TaskSwitchTracedResult(
             httpContext.Response.Body = original;
             trace.RecordWrite(started);
             if (httpContext.RequestAborted.IsCancellationRequested) outcome = "aborted";
-            logger.LogInformation("task-switch-trace {Trace}",
+            logger.LogInformation(label + " {Trace}",
                 trace.Summary(outcome, httpContext.Response.StatusCode, counting.Bytes, git, gitTimeouts));
         }
     }

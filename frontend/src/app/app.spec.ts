@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import type { HttpRequest } from '@angular/common/http';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { App } from './app';
@@ -36,6 +37,50 @@ describe('App workspace Feed navigation', () => {
     expect(app.studioTabState.tabs().filter(tab => tab.kind === 'feed')).toHaveLength(1);
     expect(app.orchFeedProject()).toBeNull();
     expect(markSeen).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('App boot board reads (AGT-3088)', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  const boardRequest = (request: HttpRequest<unknown>) => request.url === '/api/v1/studio/board';
+  const watchPathsRequest = (request: HttpRequest<unknown>) => request.url.endsWith('/watch-paths');
+
+  function configure(): { app: App; taskService: TaskService; http: HttpTestingController } {
+    localStorage.removeItem('atp.studio.tabs.v1');
+    TestBed.configureTestingModule({
+      providers: [App, provideZonelessChangeDetection(), provideHttpClient(), provideHttpClientTesting(), provideRouter([])],
+    });
+    return { app: TestBed.inject(App), taskService: TestBed.inject(TaskService), http: TestBed.inject(HttpTestingController) };
+  }
+
+  it('starts one board read at boot; loading the project list does not queue another', () => {
+    const { app, taskService, http } = configure();
+    vi.spyOn(taskService, 'startLiveUpdates').mockImplementation(() => undefined);
+    const loadWatchPaths = vi.spyOn(app, 'loadWatchPaths');
+
+    (app as unknown as { initializeStudio(): void }).initializeStudio();
+    expect(loadWatchPaths).toHaveBeenCalledWith(false);
+
+    const boot = http.match(boardRequest);
+    expect(boot).toHaveLength(1);
+    const refresh = vi.spyOn(taskService, 'refresh');
+    http.expectOne(watchPathsRequest).flush([{ name: 'demo', path: 'C:/demo' }]);
+
+    expect(refresh).not.toHaveBeenCalled();
+    boot[0].flush({});
+    expect(http.match(boardRequest)).toHaveLength(0);
+    app.ngOnDestroy();
+  });
+
+  it('still refreshes the board when the project list reloads after a project delete', () => {
+    const { app, taskService, http } = configure();
+    const refresh = vi.spyOn(taskService, 'refresh').mockImplementation(() => undefined);
+
+    app.loadWatchPaths();
+    http.expectOne(watchPathsRequest).flush([{ name: 'demo', path: 'C:/demo' }]);
+
+    expect(refresh).toHaveBeenCalledWith(true);
   });
 });
 

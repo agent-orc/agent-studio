@@ -9,11 +9,20 @@ public sealed class BoardReadConcurrencyGate
 {
     private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _bodies = new();
     private readonly Lock _trimLock = new();
+    private long _builds;
+
+    /// <summary>Body builds started so far (diagnostics and tests).</summary>
+    internal long Builds => Interlocked.Read(ref _builds);
 
     public async Task<byte[]> GetOrBuildAsync(string key, Func<byte[]> build, CancellationToken cancellationToken)
     {
         var entry = _bodies.GetOrAdd(key, _ => new Lazy<Task<byte[]>>(
-            () => Task.Run(build), LazyThreadSafetyMode.ExecutionAndPublication));
+            () =>
+            {
+                Interlocked.Increment(ref _builds);
+                return Task.Run(build);
+            },
+            LazyThreadSafetyMode.ExecutionAndPublication));
         try
         {
             // Disconnecting one waiter does not cancel the shared build.

@@ -13,7 +13,10 @@ internal sealed class TaskSwitchTrace
         "index.lookup", "index.wait", "index.refresh", "task.json", "sidecar.status",
         "sidecar.prompt", "sidecar.history", "sidecar.log", "sidecar.evidence",
         "sidecar.other", "commits", "integration", "merge", "publish", "tests",
-        "review", "tokens", "runtime", "dependencies", "serialize.write"
+        "review", "tokens", "runtime", "dependencies", "serialize.write",
+        // AGT-3088 board-read stages; "body" covers the shared-build gate wait,
+        // the build and the payload serialisation.
+        "snapshot", "filter", "git-freshness", "compose", "body"
     ];
     private readonly long _started = Stopwatch.GetTimestamp();
     private readonly double[] _elapsed = new double[StageNames.Length];

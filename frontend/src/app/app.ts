@@ -1079,7 +1079,7 @@ export class App implements OnInit, OnDestroy {
     this.refresh();
     this.jobService.startLiveUpdates();
     this.projectHubUrls.start();
-    this.loadWatchPaths();
+    this.loadWatchPaths(false);
     this.jobService.refreshRunnerStatus();
     this.devTools.loadFlags();
     this.clientService.refresh();
@@ -1516,13 +1516,13 @@ export class App implements OnInit, OnDestroy {
 
   /**
    * Load (or reload) the backend WatchPaths into `watchPaths`. Runs once at
-   * boot and again whenever a project is deleted from the studio shell — the
-   * deleted project's WatchPaths entry is gone server-side, so re-pulling here
-   * drops its name from `projectNames()` (no ghost picker / tree row) and the
-   * job refresh clears its now-empty board. Also re-purges stale board filters
-   * and persisted tabs against the surviving name set.
+   * boot (no board refresh: boot already reads the board, AGT-3088) and again
+   * whenever a project is deleted from the studio shell: the deleted project's
+   * entry is gone server-side, so re-pulling drops its name from `projectNames()`
+   * (no ghost picker / tree row) and the board refresh clears its now-empty
+   * lanes. Also re-purges stale board filters and persisted tabs.
    */
-  loadWatchPaths(): void {
+  loadWatchPaths(refreshBoard = true): void {
     this.jobService.getWatchPaths().subscribe({
       next: (entries) => {
         this.watchPaths.set(entries);
@@ -1543,7 +1543,7 @@ export class App implements OnInit, OnDestroy {
 
         // Refresh the board so a deleted project's jobs disappear right away
         // rather than on the next live-update tick.
-        this.jobService.refresh(true);
+        if (refreshBoard) this.jobService.refresh(true);
       },
       error: (err) => {
         this.errorDialog.show(err, {

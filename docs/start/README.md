@@ -71,7 +71,7 @@ path either under `app/` or registered in `WikiProducerTargets`.
 | Stale-branch sweep: all-namespace classification, reports, report-only vs reclaim, operator reclamation (AGT-2794) | [concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794](../concepts/task-integration-and-merge-workflow.md#stale-branch-sweep-agt-2794) |
 | Tasks | [domains/tasks.md](../system/domains/tasks.md) |
 | Decision cards: lifecycle, fields, decider, apply step, reminders, API, and migration | [operations/decision-cards.md](../operations/decision-cards.md) |
-| Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
+| Conditional board reads: ETag/304 on `/api/tasks/grouped` and `/api/tasks/`, what the validator has to cover, and the client-derived run-activity backoff (AGT-2703); board reads serve a pinned published snapshot with per-client read-your-writes (AGT-3088) | [domains/tasks.md#conditional-board-reads-agt-2703](../system/domains/tasks.md#conditional-board-reads-agt-2703) |
 | Frontend | [domains/frontend.md](../system/domains/frontend.md) |
 | Stable view URL contract | [contracts/stable-view-urls.md](../system/contracts/stable-view-urls.md) |
 | Global search palette and API | [domains/frontend.md#global-search](../system/domains/frontend.md#global-search) |
