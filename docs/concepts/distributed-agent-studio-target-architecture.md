@@ -37,6 +37,10 @@ Agent Studio for Software is one product made from five runtime roles:
    host operations and is not a message broker. Code identifiers, images,
    routes, and contracts retain **Operations Server**.
 
+**Glossary: Operations Broker.** The documentation and UI name for the
+Operations Server role. It brokers host operations and is not a message broker;
+code identifiers, images, routes and contracts keep **Operations Server**.
+
 Shared contracts and orchestration libraries remain modules, not runtime roles.
 [ADR-0078](../system/architecture/decisions/adr-archive.md#adr-0078---engine-placement-and-execution-rule-2026-10-11)
 amends the earlier role and decision placement. The selected standard is one-box
@@ -146,7 +150,34 @@ automatic round. At budget end, non-test blocks become concerns with a linked
 follow-up card; `build-tests` and `tests-and-evidence` blocks escalate. Review
 prefers an eligible executor on another host but never waits for that preference.
 Engine instances are interchangeable under per-occurrence leases, with one in
-workstation and one-box profiles and two in the distributed profile.
+workstation and one-box profiles and two in the distributed profile. There is
+no leader election. A project may require review on a different host; without
+that opt-in, the review host preference never delays review (AGT-W65 D19 A,
+implementation AGT-3069).
+
+### Actors and decision steps
+
+Human Operator and AI Operator are actors with the same Task Server intent
+interface and different autonomy classes (AGT-W73 O1 A). The human sets aims
+and grants approvals reserved for a person. The AI Operator works within those
+bounds. Decision steps answer one bounded question per card or plan, choose a
+typed action and leave a receipt. Execution steps do the work on runner hosts.
+The Orchestrator Engine runs the AI Operator and decision steps. Escalation runs
+from a decision step to the AI Operator to the human.
+
+If the strong model is unavailable or returns an invalid or inadmissible action,
+the decision step records `ask(reason=decision-unavailable)` and holds the
+transition for human review. One bounded transport retry may use an alternate
+strong model within the same capability and price ceiling. Already authorized
+safe work may finish; mechanical cleanup and emergency stop remain available.
+The configurable emergency run limit defaults to 24 hours and preserves
+salvage evidence. Decision calls are capped at 24 per card, 8,000 input and
+1,000 output tokens per call, and $5 in priced spend per card. Host capacity
+checks have 48 scheduled and 12 event calls per host-day, 180,000 input and
+90,000 output tokens, and a $10 priced spend cap. Rules have a versioned
+workspace definition, bounded project overlay, dry run and explicit activation.
+Grounds packs and authorized drill-downs remain bounded. AGT-3063 to AGT-3068
+implement these AGT-W73 decisions and ADR-0078 amends ADR-0032 accordingly.
 
 This split lets post-processing and reissue continue when Agent Studio is
 closed without turning every Runner into an independent Task Server.

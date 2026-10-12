@@ -1965,7 +1965,8 @@ Every fix round continues on the reviewed delivery. One per-card budget counts
 every automatic round. At budget end, non-test blocks degrade to concerns with
 a linked follow-up card; `build-tests` and `tests-and-evidence` blocks escalate
 with a receipt. Review prefers an eligible executor on a different host but
-never waits for that preference; a project may choose a hard host requirement.
+never waits for that preference; a project may choose a hard host requirement
+(AGT-W65 D19 A, implementation AGT-3069).
 
 Engine instances are interchangeable under per-occurrence leases, with no
 leader election: one instance in workstation and one-box profiles, two in the
@@ -1974,15 +1975,32 @@ the broker of host operations, not a message broker. Code identifiers, images,
 routes and contracts retain **Operations Server**.
 
 **Decision method.** A Human Operator sets aims, authorizes and decides matters
-reserved for a person. An AI Operator works within those bounds. A decision
-step answers one bounded question from frozen grounds, chooses one typed action,
+reserved for a person. Human Operator and AI Operator are actors using the same
+Task Server intent interface with different autonomy classes (AGT-W73 O1 A).
+The AI Operator works within human-set bounds. A decision step answers one
+bounded question per card or plan from frozen grounds, chooses a typed action,
 writes a receipt and ends. An execution step produces evidence and never chooses
-the next step. The Engine is the runtime for the AI Operator and decision steps;
-claimable execution steps run on runner hosts. A strong model chooses a typed
-action from bounded, versioned grounds. Deterministic code validates authority
-and safety, enforces finite execution, dispatches through the Task Server and
-records a receipt. This amends ADR-0032's placement of the final choice for
-these bounded orchestration decisions; its contract and loop guards remain.
+the next step. The Engine runs the AI Operator and decision steps; claimable
+execution steps run on runner hosts. Escalation goes from decision step to AI
+Operator to human. A strong model chooses a typed action from bounded,
+versioned grounds. Deterministic code validates authority and safety, enforces
+finite execution, dispatches through the Task Server and records a receipt.
+This amends ADR-0032's placement of the final choice for these bounded
+orchestration decisions; its contract and loop guards remain.
+
+If the model is unavailable or returns an invalid or inadmissible decision,
+the transition records `ask(reason=decision-unavailable)` and waits for human
+review. One bounded transport retry may use an alternate strong model within
+the same capability and price ceiling. Already authorized safe work may finish;
+mechanical cleanup and emergency stop continue. The configurable emergency
+run limit defaults to 24 hours and preserves salvage evidence. Decision costs
+are capped at 24 calls per card, 8,000 input and 1,000 output tokens per call,
+and $5 in priced spend per card. A host capacity occurrence allows 48 scheduled
+and 12 event calls per host-day, capped at 180,000 input tokens, 90,000 output
+tokens and $10 in priced spend. Rules are versioned at workspace scope with a
+bounded project overlay, dry run and explicit activation; evidence packs and
+authorized drill-downs are bounded. AGT-3063 to AGT-3068 implement these
+AGT-W73 decisions.
 
 **Consequences.** This amends ADR-0063's runtime-role count from three to five
 and ADR-0076's consequence that Operations Server was the fourth role. The five
