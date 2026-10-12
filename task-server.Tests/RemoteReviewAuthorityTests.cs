@@ -1841,6 +1841,70 @@ public sealed partial class RemoteReviewAuthorityTests
         Assert.Equal(DeliveryFailureDiagnosis.FirstOccurrence, report.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-3089 (AGT-3033 shape): a worker that predates the diagnosis contract
+    /// reports ProductFailure with an undiagnosed failed verify command and no
+    /// clean repeat. Normalize rewrites the outcome first, so the store keeps
+    /// the classification Normalize set; a worker that ended with its own
+    /// infrastructure class keeps DiagnosisMissing.
+    /// </summary>
+    [Theory]
+    [InlineData("ProductFailure", null, ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported)]
+    [InlineData("ReviewInfra", "CommandStalled", "DiagnosisMissing")]
+    public async Task Undiagnosed_failure_without_clean_repeat_is_classified_by_the_worker_outcome(
+        string workerOutcome, string? workerClassification, string expected)
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 12, 17, 31, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var plan = new ReviewPlanDto(
+            [new ReviewCommandDto(
+                "verify-3",
+                "build-tests",
+                "dotnet",
+                ["test"],
+                CompareToBaseline: true)],
+            ["build-tests"],
+            IntegrationRef: "refs/heads/develop");
+        await SeedReviewSubjectAsync(store, plan: plan);
+        await RegisterReviewerAsync(store, "review-a", "instance-a", "host-a");
+        var claim = await store.ClaimReviewAsync(
+            new ReviewClaimRequest("review-a", "instance-a"), "review-a", default);
+        var request = PassingReport(claim);
+        request = request with
+        {
+            Outcome = workerOutcome,
+            FailureClassification = workerClassification,
+            Commands = request.Commands.Select(command => command with
+            {
+                ExitCode = 1,
+                BaselineSha = new string('c', 40),
+                BaselineExitCode = 1,
+                NewFailures = ["Tests.TestClockGuardTests.Test_files_do_not_read_the_wall_clock"],
+                PreExistingFailures = [],
+                RetryPerformed = true,
+            }).ToArray(),
+            Verdicts =
+            [
+                new ReviewVerdictDto(
+                    "build-tests",
+                    "block",
+                    "NewTestFailures",
+                    "1 new failure; Step verify-3 is already exiting 1 on the merge base.")
+            ],
+        };
+
+        var report = await store.ReportReviewAsync(
+            claim.Attempt!.AttemptId,
+            request,
+            "review-a",
+            default);
+
+        Assert.Equal("ReviewInfra", report.Outcome);
+        Assert.Equal(expected, report.FailureClassification);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

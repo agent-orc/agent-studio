@@ -1152,6 +1152,11 @@ public static class V1ReviewPlaneEndpoints
                 request.Outcome,
                 "ReviewInfra",
                 StringComparison.OrdinalIgnoreCase);
+            // AGT-3089: a worker that predates the diagnosis contract gives the
+            // same report on every retry of the unchanged subject. It escalates
+            // at once instead of feeding the cause breaker or the retry budget.
+            var diagnosisContractUnsupported = infrastructureFailure
+                && !Contract.ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(request.FailureClassification);
             var probeFailed = false;
             FailureInterventionResult? intervention = null;
             CauseBreakerOutcome? causeBreaker = null;
@@ -1159,6 +1164,7 @@ public static class V1ReviewPlaneEndpoints
             var breakerEnabled = causeBreakers.IsEnabled(task.ProjectName);
             if (infrastructureFailure
                 && !aspectRetryExhausted
+                && !diagnosisContractUnsupported
                 && (breakerEnabled
                     || PipelineStepConfigResolver.IsEnabled(settings.Get(task.ProjectName), interventionStep)))
             {
@@ -1226,7 +1232,7 @@ public static class V1ReviewPlaneEndpoints
                 probeFailed = causeBreakers.ObserveProbeFailure(task,
                     settled.ReviewAttempt.TaskKey, settled.ReviewAttempt.AttemptId, request.Outcome);
             var retry = infrastructureFailure && !aspectRetryExhausted && intervention is null
-                        && !probeFailed
+                        && !probeFailed && !diagnosisContractUnsupported
                         && authority.HasReviewInfrastructureRetryBudget(settled.ReviewAttempt.AttemptId);
             var repeatDiagnosis = infrastructureFailure
                 ? RecordInfrastructureRepeatDiagnosis(authority, timeline, task, settled.ReviewAttempt)
@@ -1824,13 +1830,15 @@ public static class V1ReviewPlaneEndpoints
                     var chain = BuildAttemptChainSummary(authority, review.TaskKey);
                     var category = intervention is not null
                         ? HumanReviewEscalationCategories.FailureIntervention
-                        : aspectRetryExhausted
+                        : aspectRetryExhausted || diagnosisContractUnsupported
                             ? HumanReviewEscalationCategories.Environmental
                             : HumanReviewEscalationCategories.ReviewSubjectUnmaterializable;
                     var escalationReason = intervention?.WaitReason
                         ?? (aspectRetryExhausted
                             ? $"Remote Review retried the malformed aspect once, but it still produced no parseable verdict. {chain.Headline}"
-                            : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
+                            : diagnosisContractUnsupported
+                                ? $"{Contract.ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason(request.ExecutorId, request.Environment.Worker?.WorkerReleaseId)} {chain.Headline}"
+                                : $"The immutable ReviewSubject exhausted its budget of {AttemptAuthorityService.ReviewInfrastructureRetryBudget} infrastructure retries and cannot be materialized. {chain.Headline}");
                     var moved = await escalation.EscalateAsync(
                         task.Id,
                         task.WatchPath,

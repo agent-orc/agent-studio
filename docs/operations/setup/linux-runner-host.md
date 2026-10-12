@@ -1447,6 +1447,11 @@ fresh one would have produced. Files are written atomically under a per-entry
 **What it never does.** A cache hit only replaces the baseline run. The
 candidate command always executes in the attempt's own workspace, and the flake
 retry still re-runs it, so a hit cannot turn a real regression into a pass.
+It also never stores or reuses a test baseline that exited non-zero without a
+parsed failure name. Such a run never executed its suite, and the attempt ends
+as `ReviewInfra/BaselineUnavailable` (AGT-3089). Entries written before parser
+version 4, including the `ExitCode 1 / Failures []` records of older workers,
+are ignored by an upgraded worker.
 
 **When entries go away.** Automatically, before the first lookup of an attempt:
 any entry older than 24 hours, and every baseline SHA the freshly fetched

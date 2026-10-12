@@ -1402,6 +1402,168 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.Equal("pass", verdict.Status);
     }
 
+    /// <summary>
+    /// AGT-3089 (AGT-3033 shape): the merge-base test run exited 1 with only
+    /// "The argument ... is invalid" on stderr. It ran no test, so it is an
+    /// unavailable baseline, not a red merge base, and it is never cached.
+    /// </summary>
+    [Fact]
+    public async Task Unrun_test_failures_baseline_is_unavailable_and_never_cached()
+    {
+        var (baselineSha, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.NewFailure [1 ms]\\n'; " +
+            "else printf 'The argument /review/baseline/bin/Debug/net10.0/Fixture.dll is invalid.\\n' >&2; fi; exit 1");
+        var (workspace, _) = Workspace(
+            "attempt-unrun-baseline",
+            subjectSha,
+            [command],
+            26216,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main");
+        await workspace.PrepareAsync(null!, default);
+
+        var exception = await Assert.ThrowsAsync<ReviewInfrastructureException>(
+            () => workspace.ExecutePlanAsync(default));
+
+        Assert.Equal("BaselineUnavailable", exception.Classification);
+        Assert.Contains(
+            "baseline verify-2 exited 1 without reporting a test result: " +
+            "The argument /review/baseline/bin/Debug/net10.0/Fixture.dll is invalid.",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("already exiting", exception.Message, StringComparison.Ordinal);
+        var facts = ReviewInfrastructureDiagnosis.Parse(exception.Message);
+        Assert.Equal(baselineSha, facts[ReviewInfrastructureDiagnosis.BaseKey]);
+        Assert.Equal("refs/heads/main", facts[ReviewInfrastructureDiagnosis.RefKey]);
+        Assert.Equal("verify-2", facts[ReviewInfrastructureDiagnosis.StepKey]);
+        var evidence = Assert.IsType<ReviewExecutionEvidence>(exception.Evidence);
+        Assert.Equal("ReviewInfra", evidence.Outcome);
+        Assert.Empty(evidence.Verdicts);
+        Assert.Contains(evidence.Commands, item =>
+            item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal) && item.ExitCode == 1);
+        Assert.Empty(Directory.EnumerateFiles(
+            workspace.BaselineCacheRoot, "*.json", SearchOption.AllDirectories));
+    }
+
+    /// <summary>
+    /// AGT-3089: entries written before this change (parser version 3) and an
+    /// unrun test-failures result (exit 1, no failure name) are both cache
+    /// misses. The baseline executes again in the next attempt.
+    /// </summary>
+    [Theory]
+    [InlineData("parser version 3")]
+    [InlineData("exit 1 without failures")]
+    public async Task Unusable_baseline_cache_entry_is_executed_again_instead_of_reused(string variant)
+    {
+        var (_, subjectSha) = await SeedSubjectBranchAsync();
+        var command = BaselineCommand(
+            "if grep -q subject product.txt; then " +
+            "printf '  Failed Product.ExistingFailure [1 ms]\\n  Failed Product.NewFailure [1 ms]\\n'; " +
+            "else printf '  Failed Product.ExistingFailure [1 ms]\\n'; fi; exit 1");
+        var first = Workspace(
+            "attempt-unusable-fill",
+            subjectSha,
+            [command],
+            26224,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await first.PrepareAsync(null!, default);
+        await first.ExecutePlanAsync(default);
+        await first.CleanupAsync();
+        if (variant == "parser version 3")
+            RewriteBaselineCacheEntries(first.BaselineCacheRoot, parserVersion: 3);
+        else
+            RewriteBaselineCacheEntries(first.BaselineCacheRoot, exitCode: 1, clearFailures: true);
+
+        var second = Workspace(
+            "attempt-unusable-miss",
+            subjectSha,
+            [command],
+            26232,
+            resultRef: "refs/heads/task/new-failure",
+            integrationRef: "refs/heads/main").Workspace;
+        await second.PrepareAsync(null!, default);
+        var evidence = await second.ExecutePlanAsync(default);
+
+        var candidate = CandidateVerification(evidence);
+        Assert.False(candidate.BaselineCacheHit);
+        Assert.Null(candidate.BaselineReusedFromAttemptId);
+        Assert.Equal(["Product.ExistingFailure"], candidate.PreExistingFailures);
+        var baseline = Assert.Single(evidence.Commands, item =>
+            item is { Phase: "verification" } && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal));
+        Assert.Null(baseline.BaselineReusedFromAttemptId);
+        Assert.Equal("attempt-unusable-miss", baseline.AttemptId);
+        Assert.Contains(
+            ReviewBaselineReuse.ExecutedInThisAttempt,
+            Assert.Single(evidence.Verdicts).Summary,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AGT-3089 Expected 5 (AGT-3033 shape on an upgraded worker): the host
+    /// still holds a version-3 entry with exit 1 and no failures for the key.
+    /// The worker ignores it, builds the baseline before its --no-build test,
+    /// finds it green, and the clean repeat reproduces both failures, so the
+    /// delivery is charged with both names.
+    /// </summary>
+    [Fact]
+    public async Task Upgraded_worker_ignores_an_unrun_cached_baseline_and_charges_the_reproduced_failures()
+    {
+        await SeedOriginWithFilesAsync(new Dictionary<string, string>
+        {
+            ["Fixture.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>",
+            ["Fixture.cs"] = "public class Fixture { public int Value => 1; }",
+        });
+        var (_, subjectSha) = await SeedSubjectBranchWithFileAsync(
+            "task/clock-guard", "product.txt", "subject product");
+        IReadOnlyList<ReviewCommandDto> plan =
+        [
+            IsolatedBuildPlan()[0],
+            new("verify-test", "test", PosixShell.RequirePath(),
+                ["-c",
+                    "test -f bin/Debug/net10.0/Fixture.dll || " +
+                    "{ printf 'The argument bin/Debug/net10.0/Fixture.dll is invalid.\\n' >&2; exit 1; }; " +
+                    ": 'dotnet test --no-build'; " +
+                    "if grep -q subject product.txt; then " +
+                    "printf '  Failed Product.ClockGuard [1 ms]\\n  Failed Product.WaitsOn [1 ms]\\n'; exit 1; fi; exit 0"],
+                CompareToBaseline: true),
+        ];
+        var first = Workspace("attempt-clock-guard-fill", subjectSha, plan, 26240,
+            resultRef: "refs/heads/task/clock-guard", integrationRef: "refs/heads/main").Workspace;
+        await first.PrepareAsync(null!, default);
+        await first.ExecutePlanAsync(default);
+        await first.CleanupAsync();
+        RewriteBaselineCacheEntries(
+            first.BaselineCacheRoot, parserVersion: 3, exitCode: 1, clearFailures: true);
+
+        var (second, subject) = Workspace("attempt-clock-guard", subjectSha, plan, 26248,
+            resultRef: "refs/heads/task/clock-guard", integrationRef: "refs/heads/main");
+        await second.PrepareAsync(null!, default);
+        var evidence = await second.ExecutePlanAsync(default);
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(Report(evidence, second), subject.Plan);
+
+        Assert.Equal("ProductFailure", evidence.Outcome);
+        Assert.Equal("ProductFailure", normalized.Outcome);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, normalized.FailureClassification);
+        var candidate = Assert.Single(evidence.Commands, item =>
+            item is { StepId: "verify-test", Phase: "verification", WorkspaceRole: "candidate" });
+        Assert.False(candidate.BaselineCacheHit);
+        Assert.Equal(0, candidate.BaselineExitCode);
+        // The baseline test exits 1 unless the DLL exists, so a green baseline
+        // proves it was built before its --no-build run.
+        Assert.Contains(evidence.Commands, item => item.StepId == "verify-test"
+            && item.WorkspaceRole.StartsWith("baseline-", StringComparison.Ordinal) && item.ExitCode == 0);
+        Assert.Contains(evidence.Commands, item => item is
+            { StepId: "verify-test", WorkspaceRole: "clean-repeat", ExitCode: > 0 });
+        var verdict = Assert.Single(evidence.Verdicts, item => item.Aspect == "test");
+        Assert.Equal("block", verdict.Status);
+        Assert.Equal(DeliveryFailureDiagnosis.Product, verdict.Classification);
+        Assert.Contains("Product.ClockGuard", verdict.Missing, StringComparison.Ordinal);
+        Assert.Contains("Product.WaitsOn", verdict.Missing, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("same key", true)]
     [InlineData("other repository", false)]
@@ -1409,13 +1571,19 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
     [InlineData("other command", false)]
     [InlineData("other toolchain", false)]
     [InlineData("older parser", false)]
+    [InlineData("parser version 3", false)]
     [InlineData("expired", false)]
+    [InlineData("wrong mode", false)]
+    [InlineData("test-failures exit 1 without failures", false)]
+    [InlineData("test-failures exit 0 without failures", true)]
+    [InlineData("exit-status exit 1", true)]
     public void Baseline_cache_reuse_decision_matrix(string variant, bool reusable)
     {
         var now = new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc);
         Assert.Equal(TimeSpan.FromHours(24), ReviewBaselineResultCache.MaximumAge);
         var key = new ReviewBaselineCacheKey("repo", new string('a', 40), "command", "toolchain");
-        var entry = Entry(key, now.AddHours(-2), parserVersion: 3);
+        var entry = Entry(key, now.AddHours(-2));
+        var mode = ReviewBaselineModes.TestFailures;
         entry = variant switch
         {
             "same key" => entry,
@@ -1424,13 +1592,24 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             "other command" => entry with { CommandHash = "other-command" },
             "other toolchain" => entry with { ToolchainFingerprint = "other-toolchain" },
             "older parser" => entry with { ParserVersion = 2 },
+            "parser version 3" => entry with { ParserVersion = 3 },
             "expired" => entry with { CreatedAt = now.AddHours(-25) },
+            "wrong mode" => entry with { BaselineMode = ReviewBaselineModes.ExitStatus },
+            // AGT-3089: "The argument ... is invalid" exited 1 and ran no test.
+            "test-failures exit 1 without failures" => entry with { ExitCode = 1, Failures = [] },
+            "test-failures exit 0 without failures" => entry with { ExitCode = 0, Failures = [] },
+            "exit-status exit 1" => entry with
+            {
+                BaselineMode = mode = ReviewBaselineModes.ExitStatus,
+                ExitCode = 1,
+                Failures = [],
+            },
             _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null),
         };
 
         Assert.Equal(
             reusable,
-            ReviewBaselineResultCache.IsReusable(entry, key, parserVersion: 3, now));
+            ReviewBaselineResultCache.IsReusable(entry, key, CurrentParserVersion, mode, now));
     }
 
     [Fact]
@@ -1464,10 +1643,13 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.False(File.Exists(ReviewBaselineResultCache.EntryPath(root, stale)));
     }
 
+    /// <summary>Parser version the workspace writes and requires (AGT-3089 raised it to 4).</summary>
+    private const int CurrentParserVersion = 4;
+
     private static BaselineCacheEntry Entry(
         ReviewBaselineCacheKey key,
         DateTime createdAt,
-        int parserVersion = 3)
+        int parserVersion = CurrentParserVersion)
         => new(
             parserVersion,
             key.RepositoryId,
@@ -1481,7 +1663,31 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
             ["Product.ExistingFailure"],
             "baseline stdout",
             "baseline stderr",
-            createdAt);
+            createdAt,
+            ReviewBaselineModes.TestFailures);
+
+    /// <summary>
+    /// Rewrites every stored baseline entry in place and keeps its CreatedAt,
+    /// so the entry stays within the cache lifetime and only the rewritten
+    /// fields can make it unusable.
+    /// </summary>
+    private static void RewriteBaselineCacheEntries(
+        string root,
+        int? parserVersion = null,
+        int? exitCode = null,
+        bool clearFailures = false)
+    {
+        var paths = Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories).ToArray();
+        Assert.NotEmpty(paths);
+        foreach (var path in paths)
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+            if (parserVersion is { } version) node["ParserVersion"] = version;
+            if (exitCode is { } code) node["ExitCode"] = code;
+            if (clearFailures) node["Failures"] = new System.Text.Json.Nodes.JsonArray();
+            File.WriteAllText(path, node.ToJsonString());
+        }
+    }
 
     private static void AgeBaselineCacheEntries(string root, DateTime createdAt)
     {

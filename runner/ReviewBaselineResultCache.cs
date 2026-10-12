@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentStudio.TaskServer.Contracts;
 
 namespace AgentRunner;
 
@@ -32,7 +33,8 @@ internal sealed record BaselineCacheEntry(
     IReadOnlyList<string> Failures,
     string StdOut,
     string StdErr,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? BaselineMode = null);
 
 internal sealed record ReviewBaselineCachePruneResult(
     int InspectedBaselines,
@@ -78,18 +80,26 @@ internal static class ReviewBaselineResultCache
     /// <summary>
     /// Pure reuse decision. Every key input is re-checked against the stored
     /// entry, so a file that survives a key change or a parser change is
-    /// ignored rather than trusted by its path alone.
+    /// ignored rather than trusted by its path alone. A test-failures entry
+    /// that exited non-zero without a failure name recorded a baseline that
+    /// never ran (AGT-3089) and is never reused; an exit-status entry carries
+    /// its state in the exit code alone and stays reusable.
     /// </summary>
     internal static bool IsReusable(
         BaselineCacheEntry entry,
         ReviewBaselineCacheKey key,
         int parserVersion,
+        string baselineMode,
         DateTime utcNow)
         => entry.ParserVersion == parserVersion
            && string.Equals(entry.RepositoryId, key.RepositoryId, StringComparison.Ordinal)
            && string.Equals(entry.BaselineSha, key.BaselineSha, StringComparison.OrdinalIgnoreCase)
            && string.Equals(entry.CommandHash, key.CommandHash, StringComparison.Ordinal)
            && string.Equals(entry.ToolchainFingerprint, key.ToolchainFingerprint, StringComparison.Ordinal)
+           && string.Equals(entry.BaselineMode, baselineMode, StringComparison.OrdinalIgnoreCase)
+           && (ReviewBaselineModes.IsExitStatus(baselineMode)
+               || entry.ExitCode == 0
+               || entry.Failures is { Count: > 0 })
            && !IsExpired(entry, utcNow);
 
     internal static bool IsExpired(BaselineCacheEntry entry, DateTime utcNow)
@@ -108,11 +118,12 @@ internal static class ReviewBaselineResultCache
         string path,
         ReviewBaselineCacheKey key,
         int parserVersion,
+        string baselineMode,
         DateTime utcNow,
         CancellationToken ct)
     {
         var entry = await ReadEntryAsync(path, ct);
-        return entry is not null && IsReusable(entry, key, parserVersion, utcNow) ? entry : null;
+        return entry is not null && IsReusable(entry, key, parserVersion, baselineMode, utcNow) ? entry : null;
     }
 
     internal static async Task WriteAsync(string path, BaselineCacheEntry entry, CancellationToken ct)

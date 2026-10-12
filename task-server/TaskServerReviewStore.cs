@@ -1256,8 +1256,17 @@ public sealed partial class TaskServerStore
             .ToArray();
         foreach (var failed in failedDeterministic)
         {
+            // The request arrives after ReviewReportDiagnosisPolicy.Normalize has
+            // rewritten the worker's outcome, so a pre-diagnosis worker is kept by
+            // the classification Normalize set, not derived again (AGT-3089).
             if (failed.Diagnosis is null)
-                return ("ReviewInfra", "DiagnosisMissing");
+                return string.Equals(
+                           request.FailureClassification,
+                           ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported,
+                           StringComparison.Ordinal)
+                       || ReviewReportDiagnosisPolicy.IsDiagnosisContractUnsupported(request)
+                    ? ("ReviewInfra", ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported)
+                    : ("ReviewInfra", "DiagnosisMissing");
             if (string.IsNullOrWhiteSpace(failed.BaselineSha) || failed.BaselineExitCode is null)
                 return ("ReviewInfra", "BaselineEvidenceMissing");
             var clean = request.Commands.FirstOrDefault(command =>

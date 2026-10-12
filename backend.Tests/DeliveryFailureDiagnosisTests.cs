@@ -208,6 +208,90 @@ public sealed class DeliveryFailureDiagnosisTests
         Assert.Equal("DiagnosisMissing", normalized.FailureClassification);
     }
 
+    /// <summary>
+    /// AGT-3089 (AGT-3033 shape): a worker that predates the diagnosis contract
+    /// reports ProductFailure with an undiagnosed failed command and no clean
+    /// repeat. It would give the same report on every retry.
+    /// </summary>
+    [Fact]
+    public void Pre_diagnosis_worker_report_is_diagnosis_contract_unsupported()
+    {
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands = [FailedCommand("verify-3", DeliveryFailureDiagnosis.Product, true) with { Diagnosis = null }],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.True(ReviewReportDiagnosisPolicy.IsDiagnosisContractUnsupported(report));
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal(ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported, normalized.FailureClassification);
+    }
+
+    /// <summary>
+    /// A current worker that ends with its own infrastructure classification
+    /// (CommandStalled, NoCpuProgress, ToolUnavailable, TmpMountTornDown) also
+    /// leaves the failed candidate undiagnosed; that keeps today's result.
+    /// </summary>
+    [Theory]
+    [InlineData("CommandStalled")]
+    [InlineData("NoCpuProgress")]
+    [InlineData("ToolUnavailable")]
+    [InlineData("TmpMountTornDown")]
+    public void Worker_infrastructure_exit_without_diagnosis_stays_diagnosis_missing(string classification)
+    {
+        var report = EmptyReport("ReviewInfra") with
+        {
+            FailureClassification = classification,
+            Commands = [FailedCommand("verify-3", DeliveryFailureDiagnosis.Product, true) with { Diagnosis = null }],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.False(ReviewReportDiagnosisPolicy.IsDiagnosisContractUnsupported(report));
+        Assert.Equal("ReviewInfra", normalized.Outcome);
+        Assert.Equal("DiagnosisMissing", normalized.FailureClassification);
+    }
+
+    [Fact]
+    public void Undiagnosed_failure_with_clean_repeat_evidence_stays_diagnosis_missing()
+    {
+        var missing = FailedCommand("verify-3", DeliveryFailureDiagnosis.Product, true) with { Diagnosis = null };
+        var report = EmptyReport("ProductFailure") with
+        {
+            Commands = [missing, missing with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat" }],
+        };
+
+        var normalized = ReviewReportDiagnosisPolicy.Normalize(report, new ReviewPlanDto([], []));
+
+        Assert.False(ReviewReportDiagnosisPolicy.IsDiagnosisContractUnsupported(report));
+        Assert.Equal("DiagnosisMissing", normalized.FailureClassification);
+    }
+
+    [Theory]
+    [InlineData(ReviewReportDiagnosisPolicy.DiagnosisContractUnsupported, false)]
+    [InlineData("DiagnosisMissing", true)]
+    [InlineData("CommandStalled", true)]
+    [InlineData("NoCpuProgress", true)]
+    [InlineData("ToolUnavailable", true)]
+    [InlineData("TmpMountTornDown", true)]
+    [InlineData("BaselineUnavailable", true)]
+    [InlineData(null, true)]
+    public void Only_diagnosis_contract_unsupported_skips_the_infrastructure_retry(
+        string? classification, bool retries)
+        => Assert.Equal(retries, ReviewReportDiagnosisPolicy.RetriesOnUnchangedSubject(classification));
+
+    [Theory]
+    [InlineData("20260928T1211Z-v0.9.4-6759fe303", "20260928T1211Z-v0.9.4-6759fe303")]
+    [InlineData("0.9.4+sha.unknown", "0.9.4+sha.unknown")]
+    [InlineData(null, "unknown")]
+    [InlineData(" ", "unknown")]
+    public void Diagnosis_contract_reason_names_the_executor_and_the_worker_release(
+        string? release, string expected)
+        => Assert.Equal(
+            $"Review worker {expected} on agent-runner-01-review predates the diagnosis contract; upgrade the review host.",
+            ReviewReportDiagnosisPolicy.DiagnosisContractUnsupportedReason("agent-runner-01-review", release));
+
     [Fact]
     public void Semantic_block_without_diff_evidence_cannot_charge_as_product_failure()
     {
