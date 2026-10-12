@@ -7,7 +7,7 @@ import {
   type TaskTestRunEvidence,
 } from '../../../../models/task.model';
 
-type TestEvidenceContext = Pick<TaskInfo, 'id' | 'watchPath' | 'state' | 'commit' | 'commits' | 'integration' | 'testEvidence'>;
+type TestEvidenceContext = Pick<TaskInfo, 'id' | 'watchPath' | 'state' | 'commit' | 'commits' | 'commitCount' | 'integration' | 'testEvidence'>;
 export type TestEvidenceStatusVariant = 'card' | 'panel';
 
 const MISSING_EVIDENCE_RELEVANT_STATES = new Set<string>([
@@ -20,11 +20,11 @@ const MISSING_EVIDENCE_RELEVANT_STATES = new Set<string>([
 function hasRecordedEvidence(evidence: TaskTestRunEvidence): boolean {
   return evidence.evidenceState !== 'unassigned'
     || !!evidence.runId
-    || (evidence.sources?.length ?? 0) > 0;
+    || (evidence.sources?.length ?? evidence.sourceCount ?? 0) > 0;
 }
 
 function hasAttributedDelivery(task: TestEvidenceContext): boolean {
-  return (task.commits?.length ?? 0) > 0
+  return (task.commitCount ?? task.commits?.length ?? 0) > 0
     || !!task.commit
     || !!task.integration?.deliveryRef?.trim();
 }
@@ -59,11 +59,13 @@ export class TestEvidenceStatusComponent {
       ? [`Project test run ${evidence.runId} at ${evidence.runCommit || 'unknown commit'}`]
       : [];
     details.push(...(evidence.sources ?? []).map(source => `${source.summary}: ${this.sourceReason(source)}`));
+    if (evidence.sourceLabel && !evidence.sources?.length) details.push(evidence.sourceLabel);
     return details.length > 0 ? details.join(' · ') : evidence.summary;
   }
 
   sourceDetail(): string {
     const sources = this.evidence()?.sources ?? [];
+    if (sources.length === 0) return this.evidence()?.sourceLabel ?? '';
     if (sources.length > 1) return sources.slice(1).map(source => source.summary).join(' · ');
     if (sources.length === 1) return `${this.sourceLabel(sources[0].kind)} · ${sources[0].id}`;
     return '';

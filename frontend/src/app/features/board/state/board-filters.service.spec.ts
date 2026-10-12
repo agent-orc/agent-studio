@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { BoardFiltersService } from './board-filters.service';
 import { TaskService } from '../../../services/task.service';
@@ -87,6 +87,22 @@ describe('BoardFiltersService project selection', () => {
     const g = svc.filteredGrouped();
     expect(g.ready.length).toBe(4);
     expect(g.archive.length).toBe(3);
+  });
+
+  it('filters overflow dependencies from summary keys across board refreshes without detail reads', () => {
+    const card = {
+      ...makeJob('many-edges', 'Agent Task Processor', '2-ready'),
+      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'], dependsOnCount: 20,
+        relatedTo: [], blockedBy: [], supersedes: [] },
+    } as TaskInfo;
+    jobs.grouped.set(makeGrouped([card]));
+    svc.activeDependsOnFilter.set('AGT-20');
+    expect(svc.filteredGrouped().ready).toEqual([card]);
+    const refreshed = { ...card, references: { ...card.references } } as TaskInfo;
+    jobs.grouped.set(makeGrouped([refreshed]));
+    expect(svc.filteredGrouped().ready).toEqual([refreshed]);
+    const http = TestBed.inject(HttpTestingController);
+    http.verify();
   });
 
   it('selectProject switches to single-project view by default', () => {
@@ -440,6 +456,24 @@ describe('BoardFiltersService waiting-for-release facet', () => {
     expect(grouped.ready.map(j => j.id)).toEqual(['dependent']);
     expect(grouped.completed.map(j => j.id)).toEqual(['target']);
     expect(svc.filteredTaskCount()).toBe(2);
+  });
+
+  it('matches release waiters and every target beyond the three visible labels', () => {
+    const target = makeJob('fourth-target', 'Agent Task Processor', '6-completed');
+    const dependent = {
+      ...makeJob('many-waits', 'Agent Task Processor', '2-ready'),
+      waitsOn: {
+        blocked: true, cycleDetected: false, anyWaitingForRelease: true,
+        items: ['AGT-1', 'AGT-2', 'AGT-3'].map(key => ({
+          key, fulfilled: false, waitingForRelease: false,
+        })),
+        releaseTargets: [{ targetJobId: target.id, targetWatchPath: target.watchPath }],
+      },
+    } as TaskInfo;
+    jobs.grouped.set(makeGrouped([dependent, target]));
+    svc.setWaitingForReleaseOnly(true);
+    expect(svc.filteredGrouped().ready.map(job => job.id)).toEqual(['many-waits']);
+    expect(svc.filteredGrouped().completed.map(job => job.id)).toEqual(['fourth-target']);
   });
 
   it('counts as an active filter and renders a removable pill', () => {

@@ -126,7 +126,7 @@ export function taskCoreKey(project: string, id: string): string {
   return `${project}\u0000${id}`;
 }
 
-export type ResourceName = 'git' | 'usage' | 'review' | 'documents' | 'history';
+export type ResourceName = 'git' | 'usage' | 'review' | 'documents' | 'history' | 'overview';
 
 export interface TaskResource<T> {
   id: string; taskKey: string; projectId: string; attemptId: string | null;
@@ -152,4 +152,9 @@ export interface TaskGitData {
   mergeSignal: TaskInfo['mergeSignal']; integration: TaskInfo['integration'];
   publishSignal: TaskInfo['publishSignal']; testEvidence: TaskInfo['testEvidence'];
   commit: TaskInfo['commit']; commits: TaskInfo['commits'];
+  provenance: TaskInfo['provenance'];
 }
+export type TaskOverviewData = Pick<TaskInfo,
+  'decision' | 'planningSpawn' | 'conceptDossier' | 'olderBriefDelivery'
+  | 'relatedWikiPages' | 'creationSource' | 'completionClaim' | 'parkedBlocker' | 'needsInput'
+  | 'references' | 'waitsOn'>;

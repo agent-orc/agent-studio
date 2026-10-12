@@ -31,6 +31,7 @@ describe('TaskSelectionService · stable task URLs', () => {
   } as unknown as TaskInfo;
 
   const detail = { info } as unknown as TaskDetail;
+  const readyInfo = { ...info, state: '2-ready' } as TaskInfo;
   const coreFor = (task: TaskInfo, projectId = 'PROJ-001') => ({
     state: 'ready', projectId, projectName: task.projectName, id: task.id,
     taskKey: task.taskKey, key: task.key, title: task.title,
@@ -104,6 +105,26 @@ describe('TaskSelectionService · stable task URLs', () => {
     coreVersion, resource: 'history', version: 'h1', computedAt: null, state: 'ready',
     data: { promptHistory: [], titleHistory: [], log: [{ at: 'x', message: `${task.id} log` }] }, reason: null,
   });
+  const overviewReply = (task: TaskInfo, coreVersion = '1') => ({
+    id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+    coreVersion, resource: 'overview', version: 'o1', computedAt: null, state: 'ready',
+    data: { decision: null, planningSpawn: null, conceptDossier: null,
+      olderBriefDelivery: null, relatedWikiPages: [], creationSource: null,
+      completionClaim: null, parkedBlocker: null, needsInput: null,
+    references: null, waitsOn: null }, reason: null,
+  });
+  const flushOverview = (task: TaskInfo, coreVersion = '1') =>
+    http.expectOne(req => req.url.endsWith(`/${task.id}/details/overview`))
+      .flush(overviewReply(task, coreVersion));
+  const flushUpfrontReview = (task: TaskInfo, coreVersion = '1') => {
+    if (!['4-auto-review', '5-human-review', '5e-escalated', '6-completed'].includes(task.state)
+      && !task.needsInput) return;
+    http.expectOne(req => req.url.endsWith(`/${task.id}/details/review`)).flush({
+      id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion, resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+    });
+  };
   /**
    * Hold `core` as a visited core that a board-store event marked stale: the
    * next open paints it at once and revalidates it with the server.
@@ -115,8 +136,10 @@ describe('TaskSelectionService · stable task URLs', () => {
     prefetch.invalidate(core.id);
   };
 
-  /** Land both documents after the core paint, then usage (and history) after the rich paint. */
-  const paintRich = async (task: TaskInfo, opts: { history?: boolean; coreVersion?: string } = {}) => {
+  /** Land both documents after the core paint, then overview, usage and an expanded tab. */
+  const paintRich = async (task: TaskInfo, opts: {
+    history?: boolean; coreVersion?: string; flushReview?: boolean;
+  } = {}) => {
     await loading('documents');
     const documents = http.match(req => req.url.endsWith(`/${task.id}/details/documents`));
     expect(documents).toHaveLength(2);
@@ -125,6 +148,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await loading('usage');
     http.expectOne(req => req.url.endsWith(`/${task.id}/details/usage`))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(task, opts.coreVersion);
+    if (opts.flushReview !== false) flushUpfrontReview(task, opts.coreVersion);
     if (opts.history) {
       const request = http.expectOne(req => req.url.endsWith(`/${task.id}/details/history`));
       expect(request.request.params.get('generation')).toBe(opts.coreVersion ?? '1');
@@ -133,9 +158,12 @@ describe('TaskSelectionService · stable task URLs', () => {
   };
 
   afterEach(() => {
-    http.verify();
-    history.replaceState(null, '', '/');
-    TestBed.resetTestingModule();
+    try {
+      http.verify();
+    } finally {
+      history.replaceState(null, '', '/');
+      TestBed.resetTestingModule();
+    }
   });
 
   it('round-trips a canonical key without a watch path or URL normalization', () => {
@@ -455,12 +483,13 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('loads history and review evidence only when their tab is expanded', async () => {
-    selection.openDetail(info);
+    selection.openDetail(readyInfo);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
-      .flush(coreFor(info, 'Agent Studio'));
+      .flush(coreFor(readyInfo, 'Agent Studio'));
     selection.loadResourcesForTab('prompt');
     http.expectNone(req => req.url.includes('/details/'));
-    await paintRich(info);
+    await paintRich(readyInfo);
+    http.expectNone(req => req.url.endsWith('/details/review'));
 
     selection.loadResourcesForTab('timeline');
     http.expectOne(req => req.url.endsWith('/details/history'));
@@ -470,12 +499,46 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.resourceStates().git.phase).toBe('idle');
   });
 
+  it('loads review facts after paint for a human-review card', async () => {
+    selection.openDetail(info);
+    http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
+      .flush(coreFor(info, 'Agent Studio'));
+    await paintRich(info, { flushReview: false });
+    const upfront = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(upfront.request.params.has('evidence')).toBe(false);
+    upfront.flush({
+      id: info.id, taskKey: info.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+    });
+  });
+
+  it.each([
+    ['4-auto-review', false], ['5-human-review', false],
+    ['5e-escalated', false], ['6-completed', false], ['2-ready', true],
+  ])('loads review facts after paint for lane %s with needs-input %s', async (state, needsInput) => {
+    const task = { ...info, state, needsInput: null } as TaskInfo;
+    const core = coreFor(task, 'Agent Studio');
+    selection.openDetail(task);
+    http.expectOne(req => req.url.endsWith(`/${task.id}/core`)).flush({
+      ...core, blocking: { ...core.blocking, needsInput: needsInput ? 'Choose a path' : null },
+    });
+    await paintRich(task, { flushReview: false });
+    const review = http.expectOne(req => req.url.endsWith('/details/review'));
+    expect(review.request.params.has('evidence')).toBe(false);
+    review.flush({
+      id: task.id, taskKey: task.taskKey, projectId: 'Agent Studio', attemptId: null,
+      coreVersion: '1', resource: 'review', version: 'r1', computedAt: null,
+      state: 'ready', reason: null, data: { reviewProjection: null, evidence: null },
+    });
+  });
+
   describe('expanded tab resources', () => {
     it('keeps a pending review projection retryable without clearing the task', async () => {
-      selection.openDetail(info);
+      selection.openDetail(readyInfo);
       http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
-        .flush(coreFor(info, 'Agent Studio'));
-      await paintRich(info);
+        .flush(coreFor(readyInfo, 'Agent Studio'));
+      await paintRich(readyInfo);
 
       selection.loadResourcesForTab('evidence');
       const pending = http.expectOne(req => req.url.endsWith('/details/review'));
@@ -560,9 +623,9 @@ describe('TaskSelectionService · stable task URLs', () => {
   });
 
   it('keeps the selection while the task index warms under an enrichment read', async () => {
-    selection.openDetail(info);
+    selection.openDetail(readyInfo);
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
-      .flush(coreFor(info, 'Agent Studio'));
+      .flush(coreFor(readyInfo, 'Agent Studio'));
     const warming = { state: 'warming', reason: 'task-index-warming', jobId: info.id, projectId: 'Agent Studio' };
     await loading('documents');
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
@@ -575,7 +638,7 @@ describe('TaskSelectionService · stable task URLs', () => {
     http.expectNone(req => req.url.endsWith('/details/usage'));
 
     // One warming retry later the rich view paints as usual.
-    await paintRich(info);
+    await paintRich(readyInfo);
     expect(selection.resourceStates().documents.phase).toBe('ready');
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
 
@@ -726,6 +789,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await loading('usage');
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info, generation);
+    flushUpfrontReview(info, generation);
   });
 
   it('settles post-paint work before a negative assertion even when the host stalls', async () => {
@@ -767,6 +832,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await loading('usage');
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info, '2');
+    flushUpfrontReview(info, '2');
   });
 
   it('re-reads a conflicted section once when the refreshed core keeps its generation', async () => {
@@ -801,6 +868,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()?.promptMarkdown).toBe('prompt markdown');
     (await nextRequest(req => req.url.endsWith('/details/usage')))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info);
+    flushUpfrontReview(info);
   });
 
   it('ignores the superseded document batch while conflict recovery re-reads documents', async () => {
@@ -830,6 +899,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     expect(selection.selected()?.statusMarkdown).toBe('status markdown');
     (await nextRequest(req => req.url.endsWith('/details/usage')))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info);
+    flushUpfrontReview(info);
   });
 
   it('lets an evidence request supersede a plain review read in flight', async () => {
@@ -864,6 +935,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!));
     await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    flushOverview(info);
+    flushUpfrontReview(info);
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
 
@@ -884,6 +957,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info, '2');
+    flushUpfrontReview(info, '2');
   });
 
   it('revalidates core when retrying a generation conflict', async () => {
@@ -894,6 +969,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     for (const request of http.match(req => req.url.endsWith('/details/documents')))
       request.flush(documentReply(info, request.request.params.get('name')!));
     await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
+    flushOverview(info);
+    flushUpfrontReview(info);
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'stale core' }, { status: 409, statusText: 'Conflict' });
     http.expectOne(req => req.url.endsWith('/human-readable-slug/core'))
@@ -909,6 +986,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info, '2');
+    flushUpfrontReview(info, '2');
   });
 
   it('refreshes a revalidated core in place instead of flipping the rich pane back to the core view', async () => {
@@ -926,6 +1005,8 @@ describe('TaskSelectionService · stable task URLs', () => {
       () => http.expectOne(req => req.url.endsWith('/details/usage')),
       { timeout: 5000 },
     );
+    flushOverview(info);
+    flushUpfrontReview(info);
 
     revalidation.flush({ ...coreFor(info, 'Agent Studio'), coreVersion: '2', title: 'Renamed task' });
 
@@ -942,6 +1023,8 @@ describe('TaskSelectionService · stable task URLs', () => {
     await vi.waitFor(() => expect(selection.resourceStates().usage.phase).toBe('loading'), { timeout: 5000 });
     http.expectOne(req => req.url.endsWith('/details/usage'))
       .flush({ error: 'usage offline' }, { status: 503, statusText: 'Unavailable' });
+    flushOverview(info, '2');
+    flushUpfrontReview(info, '2');
   });
 
   it('keeps the rich task and its editing state while a cached core revalidation warms', async () => {

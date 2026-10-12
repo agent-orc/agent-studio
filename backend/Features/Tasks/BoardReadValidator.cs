@@ -23,8 +23,8 @@ namespace AgentStudio.Tasks;
 /// always revalidate. The one difference is the shape: a wiki read has its
 /// payload in hand before it formats the tag, so one method can do both, while a
 /// board read has to answer <see cref="NotModified"/> before it starts building
-/// anything - skipping enrichment, lane sorting and serialisation is where the
-/// measured ~1.9 MB per poll actually goes.</para>
+/// anything. Skipping enrichment, lane sorting and serialisation avoids the
+/// large board poll payload cost.</para>
 /// </summary>
 public static class BoardReadValidator
 {
@@ -96,6 +96,12 @@ public static class BoardReadValidator
     {
         ApplyHeaders(http, etag);
         return Results.Ok(payload);
+    }
+
+    public static IResult Bytes(HttpContext http, string etag, byte[] payload)
+    {
+        ApplyHeaders(http, etag);
+        return Results.Bytes(payload, "application/json");
     }
 
     /// <summary>

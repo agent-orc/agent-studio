@@ -251,7 +251,7 @@ internal static partial class TaskQueryEngine
         if (match != null && q.Fields.Length == 0)
             return new TaskSearchResult(job.Key ?? job.Id, job.Id, job.Title, job.State, job.ProjectName, match);
 
-        if (q.Fields.Length == 0) return job;
+        if (q.Fields.Length == 0) return BoardCardSummary.AsJsonElement(job);
 
         var shaped = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in q.Fields)

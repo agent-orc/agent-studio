@@ -7,6 +7,30 @@ Use this when a change touches job folders, lane states, task metadata,
 workspace registry records, task CRUD, ordering, review evidence, run timeline,
 or commit attribution.
 
+## Board read contract
+
+`GET /api/tasks` and `GET /api/tasks/grouped` return compact card summaries.
+They include identity, lane, sort and filter fields, card badges, a commit
+count and latest short commit label, and the branch facts needed for the Git
+badge. They omit the full commit chain, provenance transitions, review
+projection, token call rows, and detailed test evidence. Opening a task loads
+full data through `GET /api/tasks/{id}/core` and the detail resources. The
+card's `references.dependsOn` contains at most three edges and
+`references.dependsOnCount` gives the full count. The board dependency filter
+loads full task detail for cards whose truncated edges could contain its target;
+the detail reference editor always uses the full relation set. The
+`overview` resource supplies decision options, planning and concept summaries,
+older brief offers, wiki links, creation and completion facts, parked blockers,
+and needs-input text. The `git` resource supplies the full commit chain and
+provenance, while the `review` resource supplies review projection. A diff tab
+can resolve an older commit through `GET /api/tasks/commit-owner/{sha}`;
+`GET /api/tasks/{id}` remains the full compatibility read. The response ETag
+includes the task-index generation, live overlay generations, and a strong
+digest of the caller-visible task keys. Serialized response bodies are cached
+under that key, so concurrent warm readers share one build and disconnected
+readers stop waiting without cancelling it. ETag validation remains a separate
+HTTP optimization from the card contract.
+
 ## Execution modes
 
 The task core read exposes `core-index`, `core-runtime`, `core-serialize` and
@@ -1626,12 +1650,17 @@ was measured at roughly 1.9 MB, polled every two seconds; on an unchanged board
 every byte of it is a byte the client already holds.
 
 - **Concurrent board builds are bounded.** Both routes share one
-  `BoardReadConcurrencyGate`, held from the first scanner read through the
-  completion of JSON serialization. Waiting requests do not build snapshots;
-  `RequestAborted` removes disconnected clients from the queue before they
-  start work. This prevents overlapping full-board projections from multiplying
-  the heap under load. Responses are still built from current authorized inputs
-  when their turn starts; the gate does not retain or share response bodies.
+  `BoardReadConcurrencyGate`. A body is serialized once per cache key, and
+  concurrent callers await the same in-flight result with their own
+  `RequestAborted` cancellation. The body cache is invalidated by the task
+  index generation and other board validator inputs.
+- **Slim card dependencies remain complete for filters.** `references.dependsOn`
+  contains only the first three detailed edges on list and grouped reads;
+  `references.dependsOnKeys` contains every dependency key as a string. The
+  waiting-for-release facet reads `waitsOn.anyWaitingForRelease`, and
+  `waitsOn.releaseTargets` identifies every waiting target even when its label
+  is outside the first three `waitsOn.items`. Full reference and review facts
+  remain on task detail resources.
 - **Review activity and queue order never wait for authority persistence.** The
   board reads one immutable snapshot of the current review state, priority,
   creation time, result-envelope availability, and lease end per task. The

@@ -1439,10 +1439,7 @@
       color: #fbbf24;
     }
 
-    /* Token bubble: a small status indicator that shows total tokens spent
-       on this task. The popover opens on hover and on keyboard focus, so
-       the bubble is keyboard-reachable as well. We render it as a button
-       (not a div) so screen readers and Tab navigation pick it up. */
+    /* Token bubble remains keyboard reachable through its button. */
     .task-card__token-wrap {
       position: relative;
       display: inline-flex;
@@ -1499,10 +1496,7 @@
     .task-card__token-label {
       white-space: nowrap;
     }
-    /* Spend-tier colours. Defaults: < 50k = neutral, 50k-500k = blue,
-       500k-5M = mauve, > 5M = peach. Tier thresholds are computed in the
-       component (see tokenBubble()). Catppuccin palette to stay in line
-       with the rest of the board. */
+    /* Spend tiers are computed by tokenBubble(). */
     .task-card__token-bubble--neutral {
       color: var(--studio-fg-dim);
     }
@@ -1516,19 +1510,11 @@
       color: color-mix(in srgb, #fb923c 76%, var(--studio-fg-dim));
     }
 
-    /* Compact-card mode: collapse the card to a single dense row showing
-       only what is needed to find a task by name. CLI icon + project
-       initial sit before the title; a relative timestamp sits at the end.
-       Everything else (header chips, badges, meta, git/commit pills,
-       activity line) is hidden so the user can fit many more cards on
-       screen. The drag-handle, click-to-open behaviour, and per-state
-       border accent are preserved. */
+    /* Compact cards show identity and recency in one dense row. */
     .task-card--compact {
       padding: var(--studio-card-compact-padding-block) var(--studio-card-compact-padding-inline);
       border-radius: var(--studio-card-compact-radius);
-      // Compact cards have a known small rendered height — tighten the
-      // intrinsic-size hint so the scroll geometry matches what the
-      // user sees once cards near the viewport are painted.
+      // Match scroll geometry to the compact card's painted height.
       contain-intrinsic-size: 56px;
     }
     .task-card--compact .task-card__header,
@@ -1584,9 +1570,7 @@
       flex: 0 0 auto;
       white-space: nowrap;
     }
-    /* In compact mode the steady accent (tinted bg + uniform outline ring
-       from --shadow-running) marks the row as the active one without adding
-       edge-specific motion noise. */
+    /* Tinted running state keeps compact cards visually steady. */
     .task-card.task-card--compact.task-card--running {
       background: var(--studio-bg-running);
     }

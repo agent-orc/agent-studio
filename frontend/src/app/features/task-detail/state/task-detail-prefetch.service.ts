@@ -385,19 +385,24 @@ export class TaskDetailPrefetchService {
     const runtime = core.runtime;
     return (info.archiveState !== undefined && (info.archiveState ?? null) !== (core.archiveState ?? null))
       || (info.enteredLaneAt !== undefined && (info.enteredLaneAt ?? null) !== (core.enteredLaneAt ?? null))
-      || (info.released ?? false) !== core.released
+      || (info.released !== undefined && info.released !== core.released)
       || (info.pendingIntent != null) !== core.pendingIntent
       || (info.model ?? null) !== (pins.model ?? null)
       || (info.modelExplicit ?? false) !== pins.modelExplicit
       || (info.thinkingLevel ?? null) !== (pins.thinkingLevel ?? null)
       || (info.thinkingLevelExplicit ?? false) !== pins.thinkingLevelExplicit
       || (info.cliType ?? null) !== (pins.cliType ?? null)
-      || (info.contextMode ?? null) !== (pins.contextMode ?? null)
-      || (info.useOwnSession ?? null) !== (pins.useOwnSession ?? null)
-      || (info.allowWebAccess ?? false) !== pins.allowWebAccess
+      || (info.contextMode !== undefined && (info.contextMode ?? null) !== (pins.contextMode ?? null))
+      || (info.useOwnSession !== undefined && (info.useOwnSession ?? null) !== (pins.useOwnSession ?? null))
+      || (info.allowWebAccess !== undefined && info.allowWebAccess !== pins.allowWebAccess)
       || (info.noBranchExpected ?? false) !== pins.noBranchExpected
       || (info.execution?.status ?? null) !== (runtime.executionStatus ?? null)
-      || JSON.stringify(info.runActivity ?? null) !== JSON.stringify(runtime.activity ?? null)
+      || (info.runActivity !== undefined && (
+        (info.runActivity?.kind ?? null) !== (runtime.activity?.kind ?? null)
+        || (info.runActivity?.processId ?? null) !== (runtime.activity?.processId ?? null)
+        || (info.runActivity?.backoffUntil ?? null) !== (runtime.activity?.backoffUntil ?? null)
+        || (info.runActivity?.attempt ?? null) !== (runtime.activity?.attempt ?? null)
+        || (info.runActivity?.lastError ?? null) !== (runtime.activity?.lastError ?? null)))
       || (info.executionLocation?.executionKind ?? 'none') !== runtime.location
       || (info.executionLocation?.runnerId ?? null) !== (runtime.runnerId ?? null)
       || (info.executionLocation?.lastHeartbeat ?? null) !== (runtime.heartbeatAt ?? null);

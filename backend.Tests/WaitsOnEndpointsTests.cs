@@ -124,7 +124,8 @@ public sealed class WaitsOnEndpointsTests : IDisposable
 
         var waitsOn = FindCard(doc.RootElement, "consumer").GetProperty("waitsOn");
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
-        Assert.True(item.GetProperty("releaseGate").GetBoolean());
+        Assert.True(item.TryGetProperty("releaseGate", out var releaseGate), item.ToString());
+        Assert.True(releaseGate.GetBoolean());
         Assert.True(item.GetProperty("waitingForRelease").GetBoolean());
         Assert.False(item.GetProperty("targetReleased").GetBoolean());
         Assert.False(item.GetProperty("fulfilled").GetBoolean());

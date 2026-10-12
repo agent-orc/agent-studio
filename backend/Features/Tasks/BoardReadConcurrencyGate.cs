@@ -1,34 +1,49 @@
+using System.Collections.Concurrent;
+
 namespace AgentStudio.Tasks;
 
 /// <summary>
-/// Keeps overlapping board reads from building and serializing multiple full
-/// task projections at once. Requests wait without scanning and can leave the
-/// queue when their HTTP client disconnects.
+/// Shares one serialized body build among readers of the same board generation.
 /// </summary>
 public sealed class BoardReadConcurrencyGate
 {
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentDictionary<string, Lazy<Task<byte[]>>> _bodies = new();
+    private readonly Lock _trimLock = new();
 
-    public IResult Wrap(Func<IResult> buildResponse) => new GatedResult(_gate, buildResponse);
-
-    private sealed class GatedResult(SemaphoreSlim gate, Func<IResult> buildResponse) : IResult
+    public async Task<byte[]> GetOrBuildAsync(string key, Func<byte[]> build, CancellationToken cancellationToken)
     {
-        public async Task ExecuteAsync(HttpContext context)
+        var entry = _bodies.GetOrAdd(key, _ => new Lazy<Task<byte[]>>(
+            () => Task.Run(build), LazyThreadSafetyMode.ExecutionAndPublication));
+        try
         {
-            await gate.WaitAsync(context.RequestAborted);
-            try
+            // Disconnecting one waiter does not cancel the shared build.
+            var body = await entry.Value.WaitAsync(cancellationToken);
+            if (_bodies.Count > 24) Trim(key);
+            return body;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            _bodies.TryRemove(new KeyValuePair<string, Lazy<Task<byte[]>>>(key, entry));
+            throw;
+        }
+    }
+
+    private void Trim(string current)
+    {
+        lock (_trimLock)
+        {
+            if (_bodies.Count <= 24) return;
+            foreach (var key in _bodies
+                .Where(entry => entry.Key != current && entry.Value.IsValueCreated
+                    && entry.Value.Value.IsCompleted)
+                .Select(entry => entry.Key)
+                .Take(_bodies.Count - 12))
             {
-                context.RequestAborted.ThrowIfCancellationRequested();
-                var result = buildResponse();
-                context.RequestAborted.ThrowIfCancellationRequested();
-                // Results.Ok only serializes here, after the route handler has
-                // returned. Releasing at the end of the factory would still
-                // allow multiple full boards to occupy the heap together.
-                await result.ExecuteAsync(context);
-            }
-            finally
-            {
-                gate.Release();
+                _bodies.TryRemove(key, out _);
             }
         }
     }
