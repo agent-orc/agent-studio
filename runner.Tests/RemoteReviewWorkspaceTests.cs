@@ -902,6 +902,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         var active = CreateReviewDirectory("review-active-f2", now.AddDays(-8));
         var young = CreateReviewDirectory("review-young-f1", now.AddHours(-71));
         var baseline = CreateReviewDirectory(".baseline-cache", now.AddDays(-30));
+        var verify = CreateReviewDirectory(".verify-cache", now.AddDays(-30));
         var unrelated = CreateReviewDirectory("operator-notes", now.AddDays(-30));
 
         var result = ReviewWorkspaceRetention.Sweep(
@@ -914,6 +915,7 @@ public sealed class RemoteReviewWorkspaceTests : IDisposable
         Assert.True(Directory.Exists(active));
         Assert.True(Directory.Exists(young));
         Assert.True(Directory.Exists(baseline));
+        Assert.True(Directory.Exists(verify));
         Assert.True(Directory.Exists(unrelated));
         Assert.Equal(new ReviewWorkspaceRetentionResult(3, 1, 1, 1, 1), result);
     }

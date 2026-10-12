@@ -67,6 +67,19 @@ public sealed record ReviewAttempt
     public string? BaselineReuse { get; init; }
 
     /// <summary>
+    /// True when this ReviewInfra successor carried passed verify results over
+    /// from the failed attempt instead of executing them (AGT-2841).
+    /// </summary>
+    public bool VerifyReused { get; init; }
+
+    /// <summary>
+    /// The grade's citation for that reuse, per step, e.g.
+    /// <c>verify-1: verify result reused from attempt r-17 (4m)</c>; null when
+    /// every verify command of this attempt ran in it.
+    /// </summary>
+    public string? VerifyReuse { get; init; }
+
+    /// <summary>
     /// The agent-host release of the detached worker that produced this verdict,
     /// and the release of the daemon that reported it (AGT-2863). Null on a local
     /// attempt and on a remote report written before this provenance existed.
@@ -219,6 +232,8 @@ public static class ReviewProjectionReader
         ReportRef = fact.ReportRef,
         BaselineReused = !string.IsNullOrWhiteSpace(fact.BaselineReuse),
         BaselineReuse = fact.BaselineReuse,
+        VerifyReused = !string.IsNullOrWhiteSpace(fact.VerifyReuse),
+        VerifyReuse = fact.VerifyReuse,
         WorkerReleaseId = fact.WorkerReleaseId,
         DaemonReleaseId = fact.DaemonReleaseId,
         WorkerReleaseSuperseded = AgentStudio.TaskServer.Contracts.ReviewWorkerProvenancePolicy

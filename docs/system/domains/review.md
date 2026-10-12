@@ -385,6 +385,44 @@ setting now costs exactly one attempt. This closes the
 AGT-2841 gap where a `ReviewInfra` verdict left a card sitting in Auto Review
 with no automatic next attempt until an operator issued `POST /move`.
 
+The successor does not pay again for what already passed. After a `ReviewInfra`
+outcome the fresh plan names the failed attempt, and every earlier `ReviewInfra`
+attempt of the same chain and Result-SHA, in `ReviewPlanDto.VerifyReuseFromAttemptIds`
+(`ReviewVerifyReusePolicy`); a product failure, an inconclusive or cancelled
+review, and an integration-branch defect name none. The plan itself is still
+built fresh (AGT-W57): it names source attempts, never results, and only the
+commands of the new plan that still match are carried over. On the executor,
+`runner/ReviewVerifyResultCache.cs` stores every passed deterministic verify
+command (build, test, lint) once per host under
+`$RUNNER_REVIEW_WORKDIR/.verify-cache`, keyed like the AGT-2843 baseline cache:
+repository, exact Result-SHA, command hash (the command line, its working
+directory and baseline mode, the preparation commands before it, and a library
+step digest), and the toolchain fingerprint. An entry keeps the exit code, the
+verdict, and the complete stdout and stderr. The successor re-attaches a
+matching entry as its own candidate evidence instead of executing the command,
+and executes everything else. Rules that keep the reuse honest:
+
+- **Only a pass from a named attempt.** A failed result is never stored and
+  never read, and an entry from an attempt the plan does not name is ignored.
+  A different Result-SHA, command line or toolchain is a different key.
+- **Aspects always run again.** Agent aspect calls are never stored; the aspect
+  that timed out or failed runs as before.
+- **A `--no-build` test keeps its build.** A reused command leaves no output in
+  the fresh workspace. The clean repeat already runs each verify command alone,
+  except a `dotnet test --no-build` that needs its preceding build
+  (`ReviewTargetedRerunPolicy.PrecedingBuild`), so that build executes whenever
+  such a test executes.
+- **Bounded.** Entries expire after 24 hours, and an attempt that settles
+  without `ReviewInfra` drops every entry of its Result-SHA. The store is per
+  host: a successor claimed by another review host finds nothing and runs the
+  commands.
+- **Reuse is visible.** The verdict summary of a reused command, the Markdown
+  grade (`verifyReused`/`verifyReuse` frontmatter plus a `Result` column in the
+  command evidence table), and `ReviewProjectionView.Attempts[].VerifyReused`/
+  `VerifyReuse` carry the sentence worded once by `ReviewVerifyReuse.Citation`:
+  `verify result reused from attempt <id> (<age>)`. The evidence row also
+  carries `VerifyReusedFromAttemptId` and `VerifyReusedAgeSeconds`.
+
 Before that per-card retry runs, the fleet-wide cause breaker
 (`backend/Features/Runner/CauseBreaker/`, AGT-W57) counts the failure by its
 cause fingerprint: failure class (`ReviewInfra/<classification>`), normalised
@@ -839,6 +877,12 @@ dependency preparation so the test assembly exists.
   (`Monolith_v1_review_plane_schedules_a_named_retry_for_a_fake_aspect_timeout_without_an_operator_move`):
   the backoff schedule, the three-retry cap, and the
   `review_infrastructure_retry_scheduled` timeline entry.
+- `backend/Features/Runner/ReviewVerifyReusePolicy.cs`,
+  `runner/ReviewVerifyResultCache.cs`, `backend.Tests/ReviewVerifyReusePolicyTests.cs`
+  and `runner.Tests/ReviewVerifyResultReuseTests.cs`: which failed attempts a
+  `ReviewInfra` successor may take passed verify results from, the per-host
+  store, and the fake-aspect-timeout reproduction in which only the failed or
+  unrun commands execute again.
 - `contracts/TaskServer.Contracts/ReviewAspectBudgetPolicy.cs` and
   `runner.Tests/ReviewAspectBudgetPolicyTests.cs`: the derived per-aspect budget.
 - `contracts/TaskServer.Contracts/ReviewPlanResourcePolicy.cs` and

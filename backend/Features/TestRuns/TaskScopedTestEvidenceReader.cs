@@ -154,6 +154,7 @@ internal static class TaskScopedTestEvidenceReader
         };
 
         var baselineReuse = frontmatter.GetValueOrDefault("baselineReuse");
+        var verifyReuse = frontmatter.GetValueOrDefault("verifyReuse");
         var workerRelease = frontmatter.GetValueOrDefault("workerReleaseId");
         var daemonRelease = frontmatter.GetValueOrDefault("daemonReleaseId");
         return new RemoteReviewAttemptFacts(
@@ -169,7 +170,8 @@ internal static class TaskScopedTestEvidenceReader
             BuildSteps: buildSteps,
             BaselineReuse: string.IsNullOrWhiteSpace(baselineReuse) ? null : baselineReuse,
             WorkerReleaseId: string.IsNullOrWhiteSpace(workerRelease) ? null : workerRelease,
-            DaemonReleaseId: string.IsNullOrWhiteSpace(daemonRelease) ? null : daemonRelease);
+            DaemonReleaseId: string.IsNullOrWhiteSpace(daemonRelease) ? null : daemonRelease,
+            VerifyReuse: string.IsNullOrWhiteSpace(verifyReuse) ? null : verifyReuse);
     }
 
     private static IReadOnlyList<TaskTestEvidenceSource> ReadRemoteReview(string path)
@@ -466,4 +468,10 @@ internal sealed record RemoteReviewAttemptFacts(
     /// can differ (AGT-2863). Null for a report written before this provenance.
     /// </summary>
     string? WorkerReleaseId = null,
-    string? DaemonReleaseId = null);
+    string? DaemonReleaseId = null,
+    /// <summary>
+    /// The report's <c>verifyReuse</c> citation when this ReviewInfra successor
+    /// carried passed verify results over from the failed attempt instead of
+    /// executing them; null when every command ran in this attempt (AGT-2841).
+    /// </summary>
+    string? VerifyReuse = null);

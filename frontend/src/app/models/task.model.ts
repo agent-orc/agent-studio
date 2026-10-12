@@ -2336,6 +2336,17 @@ export interface ReviewAttempt {
    */
   baselineReuse?: string | null;
   /**
+   * True when this ReviewInfra successor carried passed verify results over
+   * from the failed attempt instead of executing them (AGT-2841).
+   */
+  verifyReused?: boolean;
+  /**
+   * The grade's per-step citation for that reuse, e.g.
+   * `verify-1: verify result reused from attempt r-17 (4m)`; null when every
+   * verify command of this attempt ran in it.
+   */
+  verifyReuse?: string | null;
+  /**
    * The agent-host release of the detached worker that produced this verdict,
    * and the release of the daemon that reported it (AGT-2863). A review-daemon
    * restart adopts running workers instead of discarding their gate work, so

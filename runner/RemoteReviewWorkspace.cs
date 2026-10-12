@@ -22,11 +22,13 @@ public sealed class RemoteReviewWorkspace
     private readonly Action<string> _log;
     private readonly Func<string, Task<FailureFingerprintHistoryDto?>>? _historyReader;
     private readonly RemoteReviewAgentCommandRunner _agentCommands;
+    private readonly Func<DateTime> _utcNow;
     private string? _initialTree;
     private string? _baselineSha;
     private string? _integrationHeadSha;
     private string? _reviewedIntegrationTipSha;
     private bool _baselineCachePruned;
+    private bool _verifyCachePruned;
     private bool _dirtyBefore;
 
     public RemoteReviewWorkspace(
@@ -34,13 +36,15 @@ public sealed class RemoteReviewWorkspace
         ReviewSubjectDto subject,
         ReviewLeaseDto lease,
         Action<string> log,
-        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null)
+        Func<string, Task<FailureFingerprintHistoryDto?>>? historyReader = null,
+        Func<DateTime>? utcNow = null)
     {
         _options = options;
         _subject = subject;
         _lease = lease;
         _log = log;
         _historyReader = historyReader;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
         var root = Path.GetFullPath(options.ReviewWorkDir);
         AttemptRoot = Path.Combine(root, SafeSegment(lease.ResourceNamespace));
         RepositoryPath = Path.Combine(AttemptRoot, "repository");
@@ -49,6 +53,7 @@ public sealed class RemoteReviewWorkspace
         TempPath = Path.Combine(AttemptRoot, "tmp");
         HomePath = Path.Combine(AttemptRoot, "home");
         BaselineCacheRoot = Path.Combine(root, ".baseline-cache");
+        VerifyCacheRoot = Path.Combine(root, ".verify-cache");
         DependencyCacheRoot = Path.Combine(root, ".dependency-cache");
         _agentCommands = new RemoteReviewAgentCommandRunner(
             options,
@@ -66,6 +71,7 @@ public sealed class RemoteReviewWorkspace
     public string TempPath { get; }
     public string HomePath { get; }
     public string BaselineCacheRoot { get; }
+    public string VerifyCacheRoot { get; }
     public string DependencyCacheRoot { get; }
 
     public IReadOnlyDictionary<string, string?> ProcessEnvironment()
@@ -256,6 +262,8 @@ public sealed class RemoteReviewWorkspace
                 artifacts,
                 ct);
 
+            var reusableVerify = await ReusableVerifyResultsAsync(plannedCommands, ct);
+
             foreach (var plannedCommand in plannedCommands)
             {
                 if (CanResumeCommand(plannedCommand, commands, verdicts))
@@ -267,6 +275,16 @@ public sealed class RemoteReviewWorkspace
                     throw new ReviewInfrastructureException(
                         "CommandSubjectMismatch",
                         $"Step '{plannedCommand.StepId}' would run at '{headBefore}', not '{_subject.ExpectedResultSha}'.");
+
+                // AGT-2841: a ReviewInfra successor carries a command that
+                // already passed in the failed attempt instead of executing it
+                // again. Only a matching, passed result is in this map.
+                if (reusableVerify.TryGetValue(plannedCommand.StepId, out var reusedVerify))
+                {
+                    await ReuseVerifyResultAsync(plannedCommand, reusedVerify, commands, artifacts, verdicts, ct);
+                    await SaveCheckpointAsync();
+                    continue;
+                }
 
                 // AGT-2820: the plan froze a budget for the prompt as authored.
                 // The authoritative diff is appended here, at execution time, so
@@ -706,20 +724,13 @@ public sealed class RemoteReviewWorkspace
                 verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
                     verdict,
                     ReviewCommandKinds.IsAgent(command.ExecutionKind)));
-                if (checkpoint is not null)
-                {
-                    await checkpoint(
-                        new ReviewExecutionCheckpoint(
-                            commands.Select(item => item.StepId).ToArray(),
-                            commands.Sum(item => Math.Max(
-                                0,
-                                (item.FinishedAt - item.StartedAt).TotalSeconds)),
-                            DateTime.UtcNow,
-                            commands.ToArray(),
-                            artifacts.ToArray(),
-                            verdicts.ToArray()),
-                        ct);
-                }
+                if (comparison is null
+                    && !ReviewCommandKinds.IsAgent(command.ExecutionKind)
+                    && execution.Process.Success
+                    && execution.Signal is null
+                    && string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
+                    await StoreVerifyResultAsync(command, headBefore, treeBefore, execution.Process, ct);
+                await SaveCheckpointAsync();
                 PurgeStepTemp(command.StepId);
             }
         }
@@ -727,6 +738,22 @@ public sealed class RemoteReviewWorkspace
         {
             if (candidateCache is not null)
                 foreach (var message in candidateCache.Save()) _log(message);
+        }
+
+        async Task SaveCheckpointAsync()
+        {
+            if (checkpoint is null) return;
+            await checkpoint(
+                new ReviewExecutionCheckpoint(
+                    commands.Select(item => item.StepId).ToArray(),
+                    commands.Sum(item => Math.Max(
+                        0,
+                        (item.FinishedAt - item.StartedAt).TotalSeconds)),
+                    DateTime.UtcNow,
+                    commands.ToArray(),
+                    artifacts.ToArray(),
+                    verdicts.ToArray()),
+                ct);
         }
 
         var semanticAspects = _subject.Plan.Commands
@@ -762,6 +789,8 @@ public sealed class RemoteReviewWorkspace
             : IntegrationBranchDefectSteps(commands).Count > 0
                 ? "IntegrationBranchDefect"
                 : "Pass";
+        if (outcome != "ReviewInfra")
+            DiscardStoredVerifyResults();
         return new ReviewExecutionEvidence(outcome, proof, commands, artifacts, verdicts);
     }
 
@@ -1313,7 +1342,9 @@ public sealed class RemoteReviewWorkspace
         string? reusedFromAttemptId = null,
         TimeSpan? reusedAge = null,
         string? repeatFilter = null,
-        IReadOnlyList<string>? repeatObservedTests = null)
+        IReadOnlyList<string>? repeatObservedTests = null,
+        string? verifyReusedFromAttemptId = null,
+        TimeSpan? verifyReusedAge = null)
     {
         var stdoutName = ArtifactName(workspaceRole, stepId, "stdout");
         var stderrName = ArtifactName(workspaceRole, stepId, "stderr");
@@ -1386,7 +1417,9 @@ public sealed class RemoteReviewWorkspace
             comparison?.Diagnosis,
             repeatFilter,
             repeatObservedTests,
-            comparison?.InitialFailures);
+            comparison?.InitialFailures,
+            verifyReusedFromAttemptId,
+            (long)Math.Max(0, (verifyReusedAge ?? TimeSpan.Zero).TotalSeconds));
     }
 
     private async Task<ReviewArtifactEvidenceDto> WriteArtifactAsync(
@@ -2043,6 +2076,167 @@ public sealed class RemoteReviewWorkspace
             cached.ExitCode,
             cached.AttemptId,
             age);
+    }
+
+    /// <summary>
+    /// The candidate verify results this attempt may carry over instead of
+    /// executing (AGT-2841): only for a plan that names its failed ReviewInfra
+    /// predecessors, only deterministic tool commands, and only a stored pass
+    /// whose Result-SHA, command line and toolchain match this attempt. Aspect
+    /// calls always run again.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, VerifyCacheEntry>> ReusableVerifyResultsAsync(
+        IReadOnlyList<ReviewCommandDto> plannedCommands,
+        CancellationToken ct)
+    {
+        var reusable = new Dictionary<string, VerifyCacheEntry>(StringComparer.Ordinal);
+        var sources = _subject.Plan.VerifyReuseFromAttemptIds;
+        if (sources is not { Count: > 0 }) return reusable;
+        await PruneVerifyCacheAsync(ct);
+        var now = _utcNow();
+        foreach (var command in plannedCommands.Where(item => !ReviewCommandKinds.IsAgent(item.ExecutionKind)))
+        {
+            var key = VerifyCacheKey(command);
+            var entry = await ReviewVerifyResultCache.ReadAsync(
+                ReviewVerifyResultCache.EntryPath(VerifyCacheRoot, key), key, sources, now, ct);
+            if (entry is not null) reusable[command.StepId] = entry;
+        }
+        var kept = ReviewVerifyResultCache.WithoutBuildsOfExecutedTests(
+            plannedCommands, _subject.Plan, reusable.Keys.ToArray());
+        foreach (var stepId in reusable.Keys.Except(kept, StringComparer.Ordinal).ToArray())
+        {
+            reusable.Remove(stepId);
+            _log($"review verify result not reused step={stepId}: a --no-build test that executes needs its output");
+        }
+        return reusable;
+    }
+
+    /// <summary>
+    /// Re-attaches a stored passed result as this attempt's candidate evidence:
+    /// the full streams become this attempt's artefacts, the verdict is the
+    /// pass the exit code yields, and its summary cites the source attempt.
+    /// </summary>
+    private async Task ReuseVerifyResultAsync(
+        ReviewCommandDto command,
+        VerifyCacheEntry cached,
+        ICollection<ReviewCommandEvidenceDto> commands,
+        ICollection<ReviewArtifactEvidenceDto> artifacts,
+        ICollection<ReviewVerdictDto> verdicts,
+        CancellationToken ct)
+    {
+        var age = ReviewVerifyResultCache.Age(cached, _utcNow());
+        var process = new ProcessResult(cached.ExitCode, cached.StdOut, cached.StdErr);
+        commands.Add(await AddCommandEvidenceAsync(
+            command.StepId,
+            command.Aspect,
+            command.FileName,
+            command.Arguments,
+            cached.HeadSha,
+            cached.TreeSha,
+            process,
+            cached.CreatedAt,
+            cached.CreatedAt,
+            signal: null,
+            command.TimeoutSeconds,
+            "verification",
+            "candidate",
+            baselineSha: null,
+            comparison: null,
+            retryPerformed: false,
+            dependencyCacheHit: false,
+            dependencyCache: null,
+            artifacts,
+            ct,
+            command,
+            verifyReusedFromAttemptId: cached.AttemptId,
+            verifyReusedAge: age));
+        var citation = ReviewVerifyReuse.Citation(cached.AttemptId, (long)age.TotalSeconds);
+        var verdict = ReviewCommandVerdictPolicy.FromExitCode(command.Aspect, command.StepId, cached.ExitCode);
+        verdicts.Add(ReviewVerdictCitationPolicy.Normalize(
+            verdict with { Summary = $"{verdict.Summary.TrimEnd('.')}; {citation}." },
+            semanticAspect: false));
+        _log(
+            $"review verify result reused repository={_subject.RepositoryId} sha={_subject.ExpectedResultSha} " +
+            $"step={command.StepId} reusedFromAttempt={cached.AttemptId} ageMinutes={age.TotalMinutes:F0}");
+    }
+
+    /// <summary>
+    /// Stores a passed candidate verify result for a possible ReviewInfra
+    /// successor. A store failure costs only the reuse, never the review.
+    /// </summary>
+    private async Task StoreVerifyResultAsync(
+        ReviewCommandDto command,
+        string headSha,
+        string treeSha,
+        ProcessResult process,
+        CancellationToken ct)
+    {
+        var key = VerifyCacheKey(command);
+        try
+        {
+            await ReviewVerifyResultCache.WriteAsync(
+                ReviewVerifyResultCache.EntryPath(VerifyCacheRoot, key),
+                new VerifyCacheEntry(
+                    key.RepositoryId,
+                    key.ResultSha,
+                    key.CommandHash,
+                    key.ToolchainFingerprint,
+                    _lease.AttemptId,
+                    command.StepId,
+                    headSha,
+                    treeSha,
+                    process.ExitCode,
+                    "pass",
+                    process.StdOut,
+                    process.StdErr,
+                    _utcNow()),
+                ct);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _log($"review verify cache store failed step={command.StepId}: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// An attempt that settles without ReviewInfra gets no successor, so the
+    /// results stored for its Result-SHA would never be read.
+    /// </summary>
+    private void DiscardStoredVerifyResults()
+        => ReviewVerifyResultCache.DeleteResult(
+            VerifyCacheRoot, _subject.RepositoryId, _subject.ExpectedResultSha.ToLowerInvariant(), _log);
+
+    private async Task PruneVerifyCacheAsync(CancellationToken ct)
+    {
+        if (_verifyCachePruned) return;
+        _verifyCachePruned = true;
+        await ReviewVerifyResultCache.PruneAsync(VerifyCacheRoot, _subject.RepositoryId, _utcNow(), _log, ct);
+    }
+
+    private ReviewVerifyCacheKey VerifyCacheKey(ReviewCommandDto command)
+        => new(
+            _subject.RepositoryId,
+            _subject.ExpectedResultSha.ToLowerInvariant(),
+            VerifyCommandHash(command),
+            ToolchainFingerprint(command));
+
+    /// <summary>
+    /// The exact command line, plus what decides its result besides the
+    /// subject: the preparation commands that ran before it and the digest of
+    /// a library step it invokes.
+    /// </summary>
+    private string VerifyCommandHash(ReviewCommandDto command)
+    {
+        var text = new StringBuilder(CommandHash(command));
+        text.Append("\0library=").Append(command.LibraryStep?.Digest);
+        foreach (var preparation in _subject.Plan.Preparation ?? [])
+        {
+            text.Append("\0prepare:").Append(preparation.StepId).Append('=').Append(preparation.FileName);
+            foreach (var argument in preparation.Arguments) text.Append('\0').Append(argument);
+            text.Append('\0').Append(preparation.WorkingSubdir)
+                .Append('\0').Append(preparation.LibraryStep?.Digest);
+        }
+        return HashText(text.ToString());
     }
 
     private void SaveCaches(params DependencyCacheSession?[] sessions)

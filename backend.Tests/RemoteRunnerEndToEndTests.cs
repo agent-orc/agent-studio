@@ -6185,6 +6185,9 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(AttemptLifecycleState.Pending, successor.State);
         Assert.Contains(successor.Subject.Plan!.Commands, command =>
             command.StepId == "aspect-code-quality" && command.Model == "review-model-updated");
+        // The fresh plan names the failed ReviewInfra attempt, so the executor
+        // may carry over the verify results that passed there.
+        Assert.Equal([failedAttemptId], successor.Subject.Plan.VerifyReuseFromAttemptIds);
 
         Assert.Empty(factory.Services.GetRequiredService<CauseBreakerService>().List(openOnly: true));
     }
