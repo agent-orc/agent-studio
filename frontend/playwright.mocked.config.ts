@@ -13,7 +13,10 @@ export default defineConfig({
   outputDir: 'test-results-mocked',
   projects: [{
     name: 'mocked-api',
-    testMatch: '**/board/card-state-pill-matches-lane.spec.ts',
+    testMatch: [
+      '**/board/card-state-pill-matches-lane.spec.ts',
+      '**/board/failed-pickup-lane.spec.ts',
+    ],
     use: { ...devices['Desktop Chrome'], channel: undefined, serviceWorkers: 'block' },
   }],
   webServer: {

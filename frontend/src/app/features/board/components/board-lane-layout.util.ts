@@ -139,3 +139,21 @@ export function buildLaneGroups(grouped: GroupedJobs, dragActive: boolean): Boar
     },
   ];
 }
+
+const EMPTY_GROUPED: GroupedJobs = {
+  backlog: [], preparation: [], orchestratorPrep: [], ready: [], progress: [], failedPickup: [],
+  codeNotComplete: [], autoReview: [], humanReview: [], escalated: [], review: [], completed: [], archive: [],
+};
+
+/**
+ * AGT-3038: lane states the board renders under the current container focus,
+ * in board order. The card context menu steps only between lanes the operator
+ * can see. Only hide-when-empty lanes depend on the feed, and none of them is a
+ * manual move target, so an empty feed resolves the same targets as the live
+ * board without threading the shell's lane groups down to every card.
+ */
+export function focusVisibleLaneStates(focusedContainer: string | null): string[] {
+  return buildLaneGroups(EMPTY_GROUPED, false)
+    .filter((group) => focusedContainer === null || group.id === focusedContainer)
+    .flatMap((group) => group.lanes.map((lane) => lane.state));
+}

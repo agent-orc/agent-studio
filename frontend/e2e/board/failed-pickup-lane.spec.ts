@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { join } from 'node:path';
 
 /**
  * ADR-0051 (eliminate the failed-pickup lane) regression spec. Supersedes the
@@ -44,7 +45,7 @@ function jobInfo(over: Partial<Record<string, unknown>>): Record<string, unknown
   };
 }
 
-function fixtureGrouped(failedCount: number): Record<string, unknown[]> {
+function fixtureGrouped(failedCount: number, reviewCount = 0): Record<string, unknown[]> {
   const failedPickup: unknown[] = [];
   for (let i = 0; i < failedCount; i++) {
     failedPickup.push(jobInfo({
@@ -60,20 +61,23 @@ function fixtureGrouped(failedCount: number): Record<string, unknown[]> {
     progress: [jobInfo({ id: 'fx-progress-1', title: 'Live', state: '3-progress' })],
     failedPickup,
     autoReview: [],
-    humanReview: [],
+    humanReview: Array.from({ length: reviewCount }, (_, i) => jobInfo({
+      id: `fx-review-${i + 1}`, title: 'Review fixture', state: '5-human-review',
+    })),
     review: [],
     completed: [jobInfo({ id: 'fx-done-1', title: 'Done', state: '6-completed' })],
     archive: []
   };
 }
 
-async function installBoardMocks(page: Page, failedCount: number): Promise<void> {
-  const grouped = fixtureGrouped(failedCount);
+async function installBoardMocks(page: Page, failedCount: number, reviewCount = 0): Promise<void> {
+  const grouped = fixtureGrouped(failedCount, reviewCount);
   const allJobs = [
     ...(grouped.preparation as unknown[]),
     ...(grouped.ready as unknown[]),
     ...(grouped.progress as unknown[]),
     ...(grouped.failedPickup as unknown[]),
+    ...(grouped.humanReview as unknown[]),
     ...(grouped.completed as unknown[])
   ];
 
@@ -84,6 +88,14 @@ async function installBoardMocks(page: Page, failedCount: number): Promise<void>
     }
     await route.fallback();
   });
+  await page.route('**/api/v1/studio/auth/status', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ profile: 'local', bootstrapRequired: false, authenticated: true, user: null }) });
+  });
+  await page.route('**/api/usage/cockpit**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ workspaceId: 'fixture', clis: [], cost: null }) });
+  });
   await page.route('**/api/watch-paths', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify([{ name: FIXTURE_PROJECT, path: FIXTURE_WATCH, rootPath: FIXTURE_WATCH }]) });
@@ -91,7 +103,7 @@ async function installBoardMocks(page: Page, failedCount: number): Promise<void>
   await page.route('**/api/tasks', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allJobs) });
   });
-  await page.route('**/api/v1/studio/board', async (route) => {
+  await page.route('**/api/v1/studio/board**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(grouped) });
   });
   await page.route('**/api/v1/studio/runner/status', async (route) => {
@@ -172,5 +184,23 @@ test.describe('ADR-0051 failed-pickup lane is eliminated', () => {
     );
 
     await page.screenshot({ path: 'test-results/failed-pickup-lane-eliminated.png', fullPage: false });
+  });
+});
+
+test.describe('Board card move menu', () => {
+  test('Human review offers Ready, Delivered, and Archive without duplicate rows', async ({ page }) => {
+    await installBoardMocks(page, 0, 1);
+    await page.goto('/');
+    const reviewCard = page.getByTestId('lane-5-human-review').getByTestId('task-card');
+    await expect(reviewCard).toBeVisible();
+    await reviewCard.dispatchEvent('contextmenu', { button: 2, clientX: 400, clientY: 300 });
+
+    const menu = page.getByRole('menu', { name: 'Task actions' });
+    await expect(menu.getByRole('menuitem', { name: 'Move back: Ready' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Move forward: Delivered' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Move to Archive' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: 'Move to Delivered' })).toHaveCount(0);
+    await expect(menu.getByRole('menuitem', { name: /In Progress|Post Processing|Failed pickup|Code not complete/ })).toHaveCount(0);
+    await menu.screenshot({ path: join(process.env.JOB_RESULTS_DIR ?? 'test-results', 'card-move-menu.png') });
   });
 });
