@@ -193,7 +193,9 @@ public class TaskStateMachine
 
         if (_guardedDelivery && _integrationStatus is not null && !archiveOverrideRollback)
         {
-            var status = _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
+            var status = targetState == TaskStates.Completed
+                ? _integrationStatus.BuildForCompletion(recheck)
+                : _integrationStatus.BuildLookup([recheck]).GetValueOrDefault(recheck.TaskKey);
             var admission = DeliveryLanePolicy.Decide(recheck.State, targetState,
                 AcceptanceIntegrationPolicy.IsIntegrationRequired(recheck), status?.Status, archiveOverride);
             if (!admission.Allowed && !historicalAcceptanceRepair)

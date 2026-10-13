@@ -1334,12 +1334,16 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         var sha = RunGit(repo, "rev-parse develop").Out.Trim();
 
         var svc = BuildService(repo, out var project, out var log);
+        var backlog = Job("backlog", "AGT-3007", project, repo, log, commits: [Commit(sha)]) with { State = TaskStates.Backlog };
+        var ready = Job("ready", "AGT-3008", project, repo, log, commits: [Commit(sha)]) with { State = TaskStates.Ready };
         var inProgress = Job("wip", "AGT-3004", project, repo, log, commits: new[] { Commit(sha) }) with { State = TaskStates.Progress };
         var autoReview = Job("reviewing", "AGT-3006", project, repo, log, commits: new[] { Commit(sha) }) with { State = TaskStates.AutoReview };
         var completed = Job("done", "AGT-3005", project, repo, log, commits: new[] { Commit(sha) }) with { State = TaskStates.Completed };
 
-        var lookup = svc.BuildLookup(new[] { inProgress, autoReview, completed });
+        var lookup = svc.BuildLookup(new[] { backlog, ready, inProgress, autoReview, completed });
 
+        Assert.False(lookup.ContainsKey(backlog.TaskKey));
+        Assert.False(lookup.ContainsKey(ready.TaskKey));
         Assert.False(lookup.ContainsKey(inProgress.TaskKey));
         Assert.Equal(IntegrationStatuses.Integrated, lookup[autoReview.TaskKey].Status);
         Assert.True(lookup.ContainsKey(completed.TaskKey));

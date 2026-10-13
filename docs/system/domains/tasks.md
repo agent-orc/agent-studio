@@ -1098,6 +1098,12 @@ disabled. Operator-initiated moves are refused with a typed reason
 (`IntegrationFailed`, HTTP 409). `operatorOverride` without a written reason
 is refused at the endpoint boundary with HTTP 400.
 
+The completion move checks Git containment for the moved card from any source
+lane, including Backlog, Preparation, and Ready. The board integration lookup
+still projects only delivered lanes. A card with no attributed delivery gets
+the missing-delivery refusal; an unreadable Git answer gets the unknown
+containment refusal. A direct completion does not schedule review or a gate.
+
 Every path into `6-completed`, including API moves, the UI, and automatic
 acceptance, also runs `CompletionContentPolicy`. The source RunAttempt's brief
 version must equal the card's current authored brief version. The settled
