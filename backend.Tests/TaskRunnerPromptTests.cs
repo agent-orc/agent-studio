@@ -741,6 +741,7 @@ public class TaskRunnerPromptTests
 
         Assert.Contains("## Verification scope", framing);
         Assert.Contains($"--filter \"{AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter}\"", framing);
+        Assert.Contains("guard tests on every .NET test project of the repository, not only the ones you changed", framing);
         Assert.Contains("commands.test", framing);
         Assert.Contains("commands.lint", framing);
         Assert.Contains(".agent-studio/project.yml", framing);

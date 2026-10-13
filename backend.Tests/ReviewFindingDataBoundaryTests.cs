@@ -120,6 +120,7 @@ public sealed class ReviewFindingDataBoundaryTests
         Assert.Contains(ReviewFindingDataBlock.BeginFence(Nonce), lines);
         Assert.Contains(ReviewFindingDataBlock.EndFence(Nonce), lines);
         Assert.Contains("Gate or review evidence:", lines);
+        Assert.DoesNotContain(IntegrationContinuationPrompt.RerunFailingCommandFirst.Trim(), prompt);
     }
 
     private static CouncilReviewReaction Reissue(params string[] findings)
