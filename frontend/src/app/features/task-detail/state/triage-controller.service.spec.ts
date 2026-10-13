@@ -11,6 +11,7 @@ import { TaskDetailPrefetchService } from './task-detail-prefetch.service';
 import { LanePagerService } from './lane-pager.service';
 import { TaskService } from '../../../services/task.service';
 import { ErrorDialogService } from '../../../services/error-dialog.service';
+import { NotificationService } from '../../../services/notification.service';
 import { ConfirmDialogService } from '../../../services/confirm-dialog.service';
 import type { RegistryWorkspaceListItem, TaskInfo, TaskDetail } from '../../../models/task.model';
 import type { TaskCore } from '../../../models/task-core.model';
@@ -277,6 +278,40 @@ describe('TriageController · optimistic navigation on Accept', () => {
 
     expect(revertSpy).toHaveBeenCalled();
     expect(openSpy).toHaveBeenCalledWith(taskA);
+  });
+
+  /**
+   * AGT-3096: a 409 run-attempt-missing is never a silent refresh. Its text
+   * says "delivery evidence", which the integration refusal match also hits;
+   * the explicit code wins, the card reopens (its overview carries the gap
+   * notice) and a warning names the refusal.
+   */
+  it('names a run-attempt-missing refusal and reopens the card instead of refreshing silently', () => {
+    const taskA = makeJob('task-a', '5-human-review');
+    const taskB = makeJob('task-b', '5-human-review');
+    vi.spyOn(jobService, 'getDetail').mockImplementation((id: string) =>
+      of(makeDetail(id, '5-human-review')));
+    TestBed.inject(LanePagerService).capture('5-human-review', [taskA, taskB], taskA.taskKey);
+    selection.triageLaneState = '5-human-review';
+    selection.selected.set(makeDetail('task-a', '5-human-review'));
+    vi.spyOn(jobService, 'revertOptimisticMove').mockImplementation(noop);
+    vi.spyOn(jobService, 'applyOptimisticMove').mockReturnValue({} as never);
+    const refusal = "Acceptance refused: no run attempt in the current authority epoch (2) for 'AGT-3042'. "
+      + 'Accept with an operator override and a written reason to record the acceptance against the delivery evidence.';
+    vi.spyOn(jobService, 'moveJob').mockReturnValue(throwError(() => ({
+      status: 409, error: { error: refusal, code: 'run-attempt-missing' },
+    })));
+    const refresh = vi.spyOn(jobService, 'refresh').mockImplementation(noop);
+    const errorDialog = vi.spyOn(TestBed.inject(ErrorDialogService), 'show').mockImplementation(noop);
+    const warning = vi.spyOn(TestBed.inject(NotificationService), 'warning');
+    const openSpy = vi.spyOn(selection, 'openDetail').mockImplementation(noop);
+
+    ctrl.move(taskA, { targetState: '6-completed', actionId: 'mark-done' });
+
+    expect(openSpy).toHaveBeenCalledWith(taskA);
+    expect(warning).toHaveBeenCalledWith(refusal, 'Acceptance needs an operator override');
+    expect(refresh).not.toHaveBeenCalled();
+    expect(errorDialog).not.toHaveBeenCalled();
   });
 });
 

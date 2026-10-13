@@ -1131,8 +1131,12 @@ the authority epoch, the subject's run attempt, integration status, branch and
 SHA, delivery ref, result SHA, and `task.json` commits. The integration check
 still applies, so an override does not accept an unintegrated delivery. A stale
 or mismatched subject stays refused even with an override, because a different
-delivery is current. The task detail projects `acceptanceAttemptGap`, and the
-delivery panel explains why acceptance needs an override.
+delivery is current. The task detail projects `acceptanceAttemptGap` on both
+the legacy full-detail read and the core-first `/details/overview` resource
+(AGT-3096). The delivery panel explains why acceptance needs an override and
+offers an inline override that requires a written reason. A plain Accept that
+the server answers with `run-attempt-missing` reopens the card on that notice
+and names the refusal; it is never a silent refresh.
 
 An accepted card must not come back on its own (AGT-3098). The move writes
 `completionClaim` before the lane change, and puts the previous claim back when

@@ -19,7 +19,8 @@ public static class TaskDetailResources
     {
         group.MapGet("/{jobId}/details/overview", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskScannerService scanner) =>
+            ITaskCoreRuntime runtime, TaskScannerService scanner,
+            AgentStudio.Runner.AttemptAuthorityService attemptAuthority) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
@@ -32,7 +33,10 @@ public static class TaskDetailResources
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
                 task.References, task.References.DependsOn.Count > 0
-                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null);
+                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null,
+                // AGT-3096: the core-first detail needs the same acceptance
+                // lineage gap the legacy full-detail read projects.
+                AcceptanceAttemptLineagePolicy.ReadGap(task, attemptAuthority));
             return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
                 null, Modified(Path.Combine(core.FolderPath, "task.json")));
         });
@@ -218,4 +222,5 @@ public sealed record TaskOverviewResource(DecisionContent? Decision,
     PlanningSpawnSummary? PlanningSpawn, ConceptDossierSummary? ConceptDossier,
     OlderBriefDeliveryOffer? OlderBriefDelivery, IReadOnlyList<RelatedWikiPage> RelatedWikiPages,
     string CreationSource, TaskCompletionClaim? CompletionClaim, ParkedBlockerStatus? ParkedBlocker,
-    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn);
+    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn,
+    AcceptanceAttemptGap? AcceptanceAttemptGap);

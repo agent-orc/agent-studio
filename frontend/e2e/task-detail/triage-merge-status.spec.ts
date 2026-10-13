@@ -266,7 +266,7 @@ test.describe('Human Review acceptance primary is landed-state aware', () => {
       await dismissDevErrorDialog(page);
       if (RESULTS_DIR) {
         fs.mkdirSync(RESULTS_DIR, { recursive: true });
-        await page.getByTestId('delivery-claim-panel').locator('..').screenshot({
+        await page.getByTestId('delivery-claim-panel').screenshot({
           path: path.join(RESULTS_DIR, `acceptance-attempt-gap-${theme}.png`),
         });
       }

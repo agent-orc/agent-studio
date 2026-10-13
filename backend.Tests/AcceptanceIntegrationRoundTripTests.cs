@@ -510,7 +510,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
     /// <summary>
     /// AGT-3076 - the HTTP contract the operator hit: 409 with a typed code
     /// instead of 500, the card detail says why an override is needed, and
-    /// the override is accepted.
+    /// the override is accepted. AGT-3096 - the core-first detail reads the
+    /// same gap from <c>/details/overview</c>, not only the legacy detail.
     /// </summary>
     [Fact]
     public async Task AcceptHttp_RunAttemptLostFromRebuiltAuthorityStore_Answers409ThenAcceptsOverride()
@@ -560,6 +561,18 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 gap.GetProperty("reason").GetString());
         }
 
+        var projectId = factory.Services.GetRequiredService<AgentStudio.Registry.ProjectRegistry>()
+            .FindByStorageLocation(_watchPath)!.Id;
+        using (var overview = await ReadOverviewAsync(client, projectId))
+        {
+            var gap = overview.RootElement.GetProperty("data").GetProperty("acceptanceAttemptGap");
+            Assert.Equal(2, gap.GetProperty("authorityEpoch").GetInt64());
+            Assert.Equal(deliverySha, gap.GetProperty("resultSha").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(gap.GetProperty("subjectRunAttemptId").GetString()));
+            Assert.StartsWith(AcceptanceAttemptLineagePolicy.MissingRunAttemptRefusal,
+                gap.GetProperty("reason").GetString());
+        }
+
         using (var refused = await client.PostAsJsonAsync(route,
                    new { targetState = TaskStates.Completed }).WaitAsync(AsyncTestDeadline))
         {
@@ -582,6 +595,26 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(TaskStates.Completed, completed.State);
         Assert.Contains(factory.Services.GetRequiredService<TimelineLog>().ReadAll(completed.FolderPath),
             entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
+        // An accepted card is no longer in Human Review; the gap is gone.
+        using (var overview = await ReadOverviewAsync(client, projectId))
+            Assert.Equal(JsonValueKind.Null,
+                overview.RootElement.GetProperty("data").GetProperty("acceptanceAttemptGap").ValueKind);
+    }
+
+    /// <summary>The core-first overview read; the task index hydrates lazily and answers 202 until then.</summary>
+    private static async Task<JsonDocument> ReadOverviewAsync(HttpClient client, string projectId)
+    {
+        var url = $"/api/tasks/{Slug}/details/overview?project={Uri.EscapeDataString(projectId)}";
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            using var response = await client.GetAsync(url).WaitAsync(AsyncTestDeadline);
+            if (response.StatusCode == HttpStatusCode.OK)
+                return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted && waited.Elapsed < AsyncTestDeadline,
+                $"overview answered {(int)response.StatusCode}");
+            await Task.Delay(50);
+        }
     }
 
     /// <summary>
