@@ -865,6 +865,50 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Empty(recorder.Entries);
     }
 
+    /// <summary>
+    /// AGT-2793 requirement 2(a): the live pre-Human-Review merge, not the
+    /// legacy <see cref="AcceptedIntegrationWorker"/>, is the path every Remote
+    /// delivery takes. Same broken-repository signal as above, through the
+    /// coordinator's DI constructor. The reclaim runs on the drain after the
+    /// result is handed back, so the test waits for the warning.
+    /// </summary>
+    [Fact]
+    public async Task RemoteDeliveryIntegration_LandedMerge_TriggersBranchReclaimAfterIntegration()
+    {
+        var deliverySha = PublishDelivery("remote-reclaim.txt", "remote work\n");
+        var deps = Build(deliverySha, initialState: TaskStates.AutoReview);
+        var autoReview = deps.Scanner.FindJob(Slug, _watchPath)!;
+        var (brokenGit, branchReclaim, recorder) = BuildBrokenBranchReclaim(deps);
+        var coordinator = new RemoteDeliveryIntegrationCoordinator(
+            deps.Merge,
+            deps.Scanner,
+            deps.Provenance,
+            deps.Pipeline,
+            deps.Timeline,
+            AgentRounds(deps),
+            NullLogger<RemoteDeliveryIntegrationCoordinator>.Instance,
+            deps.Authority,
+            brokenGit,
+            branchReclaim);
+
+        var result = await coordinator.EnqueueAsync(new RemoteDeliveryIntegrationRequest(
+            Project,
+            autoReview.Id,
+            autoReview.FolderPath,
+            autoReview.WatchPath,
+            "develop",
+            IntegrationStrategies.DirectMerge,
+            PipelineTypes.Task,
+            ReviewSubjectStore.Read(autoReview.FolderPath)!.CompletedAtUtc)).WaitAsync(AsyncTestDeadline);
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Merged, result.Outcome);
+        await recorder.Logged.WaitAsync(AsyncTestDeadline);
+        Assert.Contains(recorder.Snapshot(), e =>
+            e.Level == LogLevel.Warning
+            && e.Message.Contains("Branch reclaim after integration had errors")
+            && e.Message.Contains(Project));
+    }
+
     private (GitService BrokenGit, BranchReclaimTriggerService BranchReclaim, RecordingLogger<BranchReclaimTriggerService> Recorder)
         BuildBrokenBranchReclaim(Deps deps)
     {
@@ -2810,7 +2854,17 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
 
     private sealed class RecordingLogger<T> : ILogger<T>
     {
+        private readonly TaskCompletionSource _logged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        /// <summary>Completes on the first entry, for loggers written off the test thread.</summary>
+        public Task Logged => _logged.Task;
+
+        public IReadOnlyList<(LogLevel Level, string Message)> Snapshot()
+        {
+            lock (Entries) return [.. Entries];
+        }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -2822,7 +2876,10 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter)
-            => Entries.Add((logLevel, formatter(state, exception)));
+        {
+            lock (Entries) Entries.Add((logLevel, formatter(state, exception)));
+            _logged.TrySetResult();
+        }
     }
 
     private sealed class CountingBuildTestGateRunner(

@@ -622,12 +622,18 @@ both apply the same `BranchRetentionPolicy` and share `GitRetention:Enabled` as 
 settings gate. It is wired into three lifecycle points, always after the transition
 lands and never blocking it on failure:
 
-1. **After integration.** `AcceptedIntegrationWorker.FinalizeAcceptedTaskAsync` calls
-   `ReclaimAfterIntegration` once a merge into the project's integration branch
-   succeeds (`MergeIntoIntegrationResult.Outcome.IsSuccessfulIntegration()`). It never
-   runs on a failed or skipped merge, and never for the branchless-delivery path
-   (`FinalizeBranchlessTaskAsync`, which has no ref to reclaim). It evaluates the
-   task's `task/*`, `runner/*`, and `delivery/*` refs.
+1. **After integration.** The live path is the pre-Human-Review merge every Remote
+   delivery takes: `RemoteDeliveryIntegrationCoordinator`
+   (`backend/Features/Pipeline/RemoteDeliveryIntegration.cs`) calls
+   `ReclaimAfterIntegration` once that merge into the project's integration branch
+   succeeds (`MergeIntoIntegrationResult.Outcome.IsSuccessfulIntegration()`). It runs
+   after the result is handed back, so the move to Human Review never waits on ref
+   deletion, but still inside the per-project integration queue, so it never races the
+   next merge into the same repository. It never runs on a gate failure, conflict,
+   agent round, superseded review, or a delivery gate rejected before the merge. The
+   legacy `AcceptedIntegrationWorker.FinalizeAcceptedTaskAsync` calls the same method
+   for the acceptance transactions it still replays; new deliveries never enqueue
+   there. Both evaluate the task's `task/*`, `runner/*`, and `delivery/*` refs.
 2. **When a card is archived.** `TaskTransitionService.MoveAsync` calls
    `ReclaimAfterArchive` once the move to `7-archive` lands successfully. It evaluates
    the same task/runner/delivery namespace plus this task's salvage and quarantine

@@ -160,7 +160,9 @@ public sealed record RemoteDeliveryIntegrationRequest(
 /// <summary>
 /// Serializes immediately eligible fenced deliveries per project in delivery
 /// order, then delegates every mutation to <see cref="MergeIntoDevelopRunner"/>.
-/// The caller awaits the result before moving the card to Human Review.
+/// The caller awaits the result before moving the card to Human Review. This
+/// is the merge every live Remote delivery takes, so it is also the
+/// after-integration trigger of <see cref="BranchReclaimTriggerService"/>.
 /// </summary>
 public sealed class RemoteDeliveryIntegrationCoordinator
 {
@@ -175,6 +177,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
     private readonly Action<RemoteDeliveryIntegrationRequest, string, string, string> _recordFailure;
     private readonly ILogger<RemoteDeliveryIntegrationCoordinator> _logger;
     private readonly Func<RemoteDeliveryIntegrationRequest, bool> _isCurrentReview;
+    private readonly Action<RemoteDeliveryIntegrationRequest> _reclaimAfterIntegration;
     private long _sequence;
 
     public RemoteDeliveryIntegrationCoordinator(
@@ -185,7 +188,9 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         TimelineLog timeline,
         IntegrationAgentRoundService agentRounds,
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
-        AttemptAuthorityService authority)
+        AttemptAuthorityService authority,
+        GitService? git = null,
+        BranchReclaimTriggerService? branchReclaim = null)
         : this(
             request => IntegrateAndRecordAsync(
                 request,
@@ -208,7 +213,8 @@ public sealed class RemoteDeliveryIntegrationCoordinator
             request => request.ReviewAttemptId is null
                 || authority.GetReview(request.ReviewAttemptId) is { } review
                    && authority.GetTaskProjection(review.TaskKey).CurrentReviewAttempt?.AttemptId
-                       == request.ReviewAttemptId)
+                       == request.ReviewAttemptId,
+            request => ReclaimBranchesAfterIntegration(request, scanner, git, branchReclaim))
     {
     }
 
@@ -217,13 +223,15 @@ public sealed class RemoteDeliveryIntegrationCoordinator
         ILogger<RemoteDeliveryIntegrationCoordinator> logger,
         Action<RemoteDeliveryIntegrationRequest, string, string, string>? recordFailure = null,
         Func<RemoteDeliveryIntegrationRequest, MergeIntoIntegrationResult, Task<IntegrationAgentRoundStartResult>>? startAgentRound = null,
-        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null)
+        Func<RemoteDeliveryIntegrationRequest, bool>? isCurrentReview = null,
+        Action<RemoteDeliveryIntegrationRequest>? reclaimAfterIntegration = null)
     {
         _integrate = integrate;
         _startAgentRound = startAgentRound ?? ((_, _) => Task.FromResult(
             new IntegrationAgentRoundStartResult(false, "No automatic agent-round boundary was configured.")));
         _recordFailure = recordFailure ?? ((_, _, _, _) => { });
         _isCurrentReview = isCurrentReview ?? (_ => true);
+        _reclaimAfterIntegration = reclaimAfterIntegration ?? (_ => { });
         _logger = logger;
     }
 
@@ -387,6 +395,7 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                         continuation.Reason);
                 }
                 CompleteDelivery(delivery, result);
+                if (result.Outcome.IsSuccessfulIntegration()) ReclaimAfterIntegration(delivery);
             }
             catch (Exception ex)
             {
@@ -406,6 +415,51 @@ public sealed class RemoteDeliveryIntegrationCoordinator
                     ex.Message));
             }
         }
+    }
+
+    /// <summary>
+    /// Runs after <see cref="CompleteDelivery"/>, so the caller's move to Human
+    /// Review never waits on ref deletion, and still inside the per-project
+    /// drain, so the reclaim never races the next merge into the same
+    /// repository. Only a landed or already-contained merge reaches here; a
+    /// gate failure, conflict, agent round, or superseded review never does.
+    /// A reclaim failure is logged and retried by the periodic sweep; it never
+    /// becomes an integration failure.
+    /// </summary>
+    private void ReclaimAfterIntegration(QueuedDelivery delivery)
+    {
+        try
+        {
+            _reclaimAfterIntegration(delivery.Request);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "remote-delivery-integration branch reclaim failed project={Project} job={JobId}",
+                delivery.Request.Project,
+                delivery.Request.JobId);
+        }
+    }
+
+    private static void ReclaimBranchesAfterIntegration(
+        RemoteDeliveryIntegrationRequest request,
+        TaskScannerService scanner,
+        GitService? git,
+        BranchReclaimTriggerService? branchReclaim)
+    {
+        if (git is null || branchReclaim is null) return;
+        var job = scanner.FindJob(request.JobId, request.WatchPath);
+        if (job is null) return;
+        var repoPath = git.ResolveRepoRootForWatchPath(job.WatchPath);
+        if (string.IsNullOrWhiteSpace(repoPath)) return;
+        var taskKey = !string.IsNullOrWhiteSpace(job.Key)
+            ? job.Key!
+            : !string.IsNullOrWhiteSpace(job.TaskKey)
+                ? job.TaskKey
+                : job.Id;
+        branchReclaim.ReclaimAfterIntegration(
+            request.Project, repoPath, taskKey, request.IntegrationBranch, job.FolderPath);
     }
 
     private void CompleteDelivery(
