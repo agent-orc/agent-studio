@@ -251,13 +251,19 @@ const STATE_TO_LANE: Record<string, LaneKey> = {
  * signal from that same snapshot so one refresh cannot launch two equivalent
  * backend enrichment pipelines. The legacy `review` lane aliases
  * `autoReview`, hence the identity-based de-duplication.
+ *
+ * Board cards leave out `taskKey` when it is `{watchPath}::{id}` (the
+ * backend's TaskIdentity.CreateKey); it is restored here on the freshly
+ * parsed cards, which both the grouped and the flat signal share, so every
+ * consumer still reads it.
  */
 function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
   const seen = new Set<string>();
   const jobs: TaskInfo[] = [];
   for (const lane of Object.values(grouped)) {
     for (const job of lane ?? []) {
-      const key = job.taskKey || `${job.watchPath}::${job.id}`;
+      job.taskKey ||= `${job.watchPath}::${job.id}`;
+      const key = job.taskKey;
       if (seen.has(key)) continue;
       seen.add(key);
       jobs.push(job);
@@ -560,8 +566,10 @@ export class TaskService {
         const body = response.body;
         if (body && acceptOptimisticTarget()) {
           const { gitStateAt, stale, ...grouped } = body;
+          // Restores each card's taskKey before either signal publishes it.
+          const jobs = uniqueJobsFromGrouped(grouped);
           this.grouped.set(grouped);
-          this.jobs.set(uniqueJobsFromGrouped(grouped));
+          this.jobs.set(jobs);
           this.gitStateAt.set(gitStateAt);
           this.gitStateStale.set(stale);
           this.groupedETag = response.headers.get('ETag');

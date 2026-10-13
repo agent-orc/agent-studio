@@ -749,6 +749,17 @@ function shortSha(sha: string): string {
  * the live worktree, not an earlier run's tip. Null when no transition ever saw
  * a branch (a sequential run in the shared main checkout never cuts one).
  */
+/**
+ * The task branch named by the board card's git context. The card leaves out
+ * the default `task/{id}` branch, so an absent branch on a present context is
+ * that default; an empty one stays empty.
+ */
+export function gitContextBranch(job: Pick<TaskInfo, 'id' | 'gitContext'>): string | null {
+  const context = job.gitContext;
+  if (!context) return null;
+  return context.branch === undefined ? `task/${job.id}` : context.branch || null;
+}
+
 function currentBranchTip(prov: TaskInfo['provenance']): string | null {
   const transitions = prov?.transitions;
   if (!transitions?.length) return null;
@@ -795,7 +806,7 @@ export function buildGitStateBadge(job: TaskInfo): GitStateBadge | null {
   }
 
   const prov = job.provenance ?? null;
-  const branchName = job.gitContext?.branch || prov?.branch || `task/${job.key || job.id}`;
+  const branchName = gitContextBranch(job) || prov?.branch || `task/${job.key || job.id}`;
   const tip = job.gitContext?.branchTip || currentBranchTip(prov);
   const mergeSha = job.gitContext?.mergeSha || recordedMergeSha(prov);
   const canonicalIntegration = currentIntegrationStatus(job);
@@ -965,7 +976,7 @@ export function buildMergeSignal(job: TaskInfo): MergeSignalView | null {
       ? inDevelop ? canonicalIntegration?.sha ?? null : null
       : sig.integrationSha ?? null;
     mainSha = sig.releaseSha ?? null;
-    branch = sig.branch || job.gitContext?.branch || prov?.branch || null;
+    branch = sig.branch || gitContextBranch(job) || prov?.branch || null;
     integrationLabel = canonicalIntegration?.integrationBranch || sig.integrationBranch || 'develop';
     releaseLabel = sig.releaseBranch || 'main';
   } else {
@@ -975,7 +986,7 @@ export function buildMergeSignal(job: TaskInfo): MergeSignalView | null {
     inMain = false;
     developSha = inDevelop ? shortShaOf(canonicalIntegration?.sha) : null;
     mainSha = null;
-    branch = job.gitContext?.branch || prov?.branch || null;
+    branch = gitContextBranch(job) || prov?.branch || null;
     integrationLabel = canonicalIntegration?.integrationBranch || 'develop';
     releaseLabel = 'main';
   }

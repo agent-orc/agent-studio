@@ -71,7 +71,17 @@ internal static class BoardCardSummary
     /// <summary>Short SHA length on the card; consumers display seven characters.</summary>
     private const int ShortShaLength = 9;
 
-    public static byte[] Serialize(TaskInfo job)
+    /// <summary>
+    /// One board card. The task key is left out on the list
+    /// and grouped routes: there the key is always <c>{watchPath}::{id}</c>,
+    /// which the client derives (task.service), and repeating the watch path
+    /// and the often long id cost about 180 bytes per card. Single-card replies
+    /// (query rows, commit owner) keep it for API callers.
+    /// </summary>
+    public static byte[] Serialize(TaskInfo job) => Serialize(job, includeTaskKey: false);
+
+    /// <inheritdoc cref="Serialize(TaskInfo)"/>
+    public static byte[] Serialize(TaskInfo job, bool includeTaskKey)
     {
         var fields = new Dictionary<string, object?>
         {
@@ -107,6 +117,8 @@ internal static class BoardCardSummary
             ["commitCount"] = job.CommitCount,
             ["requiresIntegration"] = job.RequiresIntegration,
         };
+        if (!includeTaskKey && job.TaskKey == TaskIdentity.CreateKey(job.WatchPath, job.Id))
+            fields.Remove("taskKey");
         // An absent top-level value reads as null on every consumer.
         foreach (var name in fields.Where(field => field.Value is null or "").Select(field => field.Key).ToList())
             fields.Remove(name);
@@ -128,7 +140,9 @@ internal static class BoardCardSummary
         if (job.Provenance is { } provenance)
             fields["gitContext"] = new
             {
-                branch = provenance.Branch,
+                // The default task/{id} branch repeats the id; the client
+                // restores it when gitContext carries no branch.
+                branch = provenance.Branch == DefaultBranch(job.Id) ? null : provenance.Branch,
                 branchTip = ShortSha(provenance.Transitions.LastOrDefault(t => !string.IsNullOrEmpty(t.BranchTip))?.BranchTip),
                 mergeSha = ShortSha(provenance.Merge?.MergeCommit),
             };
@@ -370,7 +384,9 @@ internal static class BoardCardSummary
     }
 
     public static JsonElement AsJsonElement(TaskInfo job)
-        => JsonSerializer.Deserialize<JsonElement>(Serialize(job));
+        => JsonSerializer.Deserialize<JsonElement>(Serialize(job, includeTaskKey: true));
+
+    private static string DefaultBranch(string id) => "task/" + id;
 
     private static void Add(Dictionary<string, object?> fields, string name, object? value)
     {
