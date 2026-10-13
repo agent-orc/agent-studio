@@ -27,6 +27,15 @@ public sealed partial class MergeIntoDevelopRunner
         string Branch,
         bool NoOp = false);
 
+    /// <param name="Sha">The earlier verified tree the published tip still carries.</param>
+    /// <param name="CoveredDeliveryShas">
+    /// Delivery SHAs the verdict covers although they are not ancestors of
+    /// <paramref name="Sha"/>: a batch gate tested the member's replayed
+    /// commits, so its original result SHA is covered by name. Null means the
+    /// covered SHAs are the delivery commits <paramref name="Sha"/> contains.
+    /// </param>
+    private sealed record CarriedTree(string Sha, IReadOnlyList<string>? CoveredDeliveryShas = null);
+
     /// <summary>
     /// Boundary of the rule: gathers the facts the pure
     /// <see cref="IntegrationVerificationPolicy"/> needs, runs the gate once
@@ -54,6 +63,9 @@ public sealed partial class MergeIntoDevelopRunner
         // A no-op claims the published tip that proved containment instead.
         var sha = containmentSha ?? _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
         var integrationRecords = ReadIntegrationRecords(jobId, watchPath);
+        var carried = noOp
+            ? CarriedVerifiedTree(jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
+            : null;
         var tree = ReviewSubjectStore.IsValidResultSha(sha) ? _git.GetCommitTree(repoRoot, sha!) : null;
         bool SameTree(string candidate)
             => string.Equals(candidate, sha, StringComparison.OrdinalIgnoreCase)
@@ -80,9 +92,7 @@ public sealed partial class MergeIntoDevelopRunner
                     && SameTree(record.IntegrationSha!)),
             GateRun: null,
             NoOpIntegration: noOp,
-            CarriedVerifiedTreeSha: noOp
-                ? CarriedVerifiedTree(jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
-                : null);
+            CarriedVerifiedTreeSha: carried?.Sha);
         var decision = IntegrationVerificationPolicy.Decide(facts);
         var gate = facts.ExactReceipt;
 
@@ -121,7 +131,8 @@ public sealed partial class MergeIntoDevelopRunner
         var verifiedSha = decision.Evidence == IntegrationVerificationEvidence.CarriedTree
             ? facts.CarriedVerifiedTreeSha
             : sha;
-        RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha);
+        RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
+            decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
         _logger.LogInformation(
             "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} noOp={NoOp} containedIn={ContainedIn} state={State} evidence={Evidence} action={Action}",
             project, jobId, branch, sha, noOp, containmentSha ?? "none", decision.State, decision.Evidence, decision.Action);
@@ -199,11 +210,12 @@ public sealed partial class MergeIntoDevelopRunner
     /// <summary>
     /// AGT-3103: an earlier verified tree that the published tip still carries
     /// and that already contained every delivery commit: the card's own
-    /// verified record, or an <c>integrated-verified</c> record that names its
-    /// integration SHA. The same carry the board projection applies after the
-    /// tip moves on; later commits belong to the cards that brought them.
+    /// verified record, an <c>integrated-verified</c> record that names its
+    /// integration SHA, or a batch candidate whose gate passed with this
+    /// delivery as a member. The same carry the board projection applies after
+    /// the tip moves on; later commits belong to the cards that brought them.
     /// </summary>
-    private string? CarriedVerifiedTree(
+    private CarriedTree? CarriedVerifiedTree(
         string jobFolderPath,
         string repoRoot,
         string branch,
@@ -221,14 +233,77 @@ public sealed partial class MergeIntoDevelopRunner
             && IntegrationVerificationProjection.SameBranch(own.IntegrationBranch, branch)
             && Carries(own.Sha))
         {
-            return own.Sha;
+            return new(own.Sha!);
         }
 
-        return integrationRecords
+        var recorded = integrationRecords
             .Where(record => string.Equals(record.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
                              && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch))
             .Select(record => record.IntegrationSha)
             .FirstOrDefault(Carries);
+        return recorded is not null
+            ? new(recorded)
+            : CarriedBatchCandidate(repoRoot, branch, tip, deliveryShas);
+    }
+
+    /// <summary>
+    /// AGT-3103 (operator review decision): the operator fast path pushes a
+    /// batch candidate to the integration branch before the members' reviews
+    /// settle. That candidate's batch gate already tested every member on the
+    /// candidate tree, so a passed member record counts as a carried tree when
+    /// the published tip still carries the candidate. Matching is by the
+    /// member's original result SHA: the candidate holds its replayed commits.
+    /// Without such a record the no-op stays integrated-unverified.
+    /// </summary>
+    private CarriedTree? CarriedBatchCandidate(
+        string repoRoot, string branch, string tip, IReadOnlyList<string> deliveryShas)
+    {
+        if (_batchGates is null || deliveryShas.Count == 0) return null;
+        try
+        {
+            foreach (var manifest in _batchGates.ListManifests()
+                         .Where(manifest => IntegrationVerificationProjection.SameBranch(manifest.Scope.IntegrationBranch, branch))
+                         .OrderByDescending(manifest => manifest.ClosedAtUtc))
+            {
+                foreach (var member in manifest.Members.Where(member => deliveryShas.Contains(member.ResultSha, StringComparer.OrdinalIgnoreCase)))
+                {
+                    foreach (var run in _batchGates.ListRuns(manifest.BatchId))
+                    {
+                        var record = _batchGates.TryReadMember(manifest.BatchId, member.TaskKey, run.BatchRunId);
+                        if (record is null
+                            || !string.Equals(record.Verdict, "pass", StringComparison.Ordinal)
+                            || !ReviewSubjectStore.IsValidResultSha(record.TestedCandidateSha)
+                            || !_git.IsAncestor(repoRoot, record.TestedCandidateSha, tip))
+                        {
+                            continue;
+                        }
+
+                        var candidate = record.TestedCandidateSha;
+                        // Every delivery commit is this member's result or
+                        // already sits below the tested candidate.
+                        if (!deliveryShas.All(deliverySha
+                                => string.Equals(deliverySha, record.OriginalResultSha, StringComparison.OrdinalIgnoreCase)
+                                   || _git.IsAncestor(repoRoot, deliverySha, candidate)))
+                        {
+                            continue;
+                        }
+
+                        _logger.LogInformation(
+                            "merge-into-develop carried batch candidate batch={BatchId} run={RunId} candidate={Candidate} result={ResultSha}",
+                            manifest.BatchId, run.BatchRunId, candidate, record.OriginalResultSha);
+                        return new(candidate, [record.OriginalResultSha.ToLowerInvariant()]);
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            // Unreadable batch evidence proves nothing; the no-op stays
+            // integrated-unverified, which an operator can still override.
+            _logger.LogWarning(ex, "merge-into-develop could not read batch gate evidence for branch {Branch}", branch);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -478,7 +553,8 @@ public sealed partial class MergeIntoDevelopRunner
         IntegrationVerificationDecision decision,
         BuildTestGateResult? gate,
         IReadOnlyList<string>? evidenceShas = null,
-        string? containmentSha = null)
+        string? containmentSha = null,
+        IReadOnlyList<string>? coveredDeliveryShas = null)
     {
         try
         {
@@ -488,9 +564,9 @@ public sealed partial class MergeIntoDevelopRunner
                 Sha = sha,
                 IntegrationBranch = branch,
                 ContainmentSha = containmentSha,
-                DeliveryShas = decision.State == IntegrationVerificationStates.Verified
-                    ? DeliveryShasContainedIn(jobFolderPath, repoRoot, sha, evidenceShas)
-                    : [],
+                DeliveryShas = decision.State != IntegrationVerificationStates.Verified
+                    ? []
+                    : coveredDeliveryShas?.ToList() ?? DeliveryShasContainedIn(jobFolderPath, repoRoot, sha, evidenceShas),
                 Evidence = decision.Evidence,
                 GateVerdict = gate?.Verdict.ToString(),
                 GateFailed = decision.GateFailed,
