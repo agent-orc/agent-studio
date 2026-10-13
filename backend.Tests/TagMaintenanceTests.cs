@@ -537,7 +537,8 @@ public sealed class TagMaintenanceTests : IDisposable
         Directory.CreateDirectory(Path.Combine(project, "docs", "architecture", "decisions"));
         File.WriteAllText(Path.Combine(project, "docs", "architecture", "decisions", "adr-1.md"), "# ADR 1\n\nRunner pool decision.");
         return (new TagMaintenanceWorkspace(scanner, mutations, tags, areas, glossaries, catalogue,
-            new WorkbenchTagService(catalogue, areas, git), docs, registry), config);
+            new WorkbenchTagService(catalogue, areas, git), docs, registry,
+            new ManagedRepositoryMutationService(git, logger: NullLogger<ManagedRepositoryMutationService>.Instance)), config);
     }
 
     private async Task<(TagMaintenanceRun Run, TagMaintenanceState State)> RunRealAsync(

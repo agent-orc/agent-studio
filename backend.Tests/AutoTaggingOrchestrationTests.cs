@@ -9,7 +9,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Trait("Category", "MachineBound")]
 public sealed class AutoTaggingOrchestrationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "auto-tag-orchestration-" + Guid.NewGuid().ToString("N"));
@@ -75,7 +74,10 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
+        if (!Directory.Exists(_root)) return;
+        foreach (var file in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(_root, recursive: true);
     }
 
     [Fact]
