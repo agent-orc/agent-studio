@@ -9,6 +9,8 @@ export interface GitEndpointStats {
   p95Ms: number;
   totalSpawns: number;
   spawnsPerMinute: number;
+  /** Rollups the p50/p95 were computed from; below sampleCount when the reservoir truncated a busy label. */
+  percentileSampleCount?: number;
 }
 
 export interface GitStateRepositoryStatus {

@@ -84,6 +84,24 @@ Selection reads the existing project inventory and exact changed paths without
 creating a result worktree for each queued review. A changed project inventory
 keeps the ordinary full per-card gate. Batch setting edits replan queued reviews
 in the background; an executor claim can proceed during selection.
+In that deferred plan only (AGT-3085), an impacted .NET test project runs the
+test classes that name a changed type instead of the whole project. Seeds are
+the top-level types of the changed `.cs` files in the referenced production
+projects and in the test project. A test file that names a seed is selected,
+and its own top-level types become seeds until nothing new is found, so
+fixtures and base classes carry the selection. The checkout supplies unchanged
+files, and one bounded `git cat-file --batch` supplies the changed paths at the
+result commit. The whole project still runs, with the reason in the audit, for
+a process-level (`ReferenceOutputAssembly="false"`) reference, a changed non-C#
+input or repository build input, a composition root (`Program.cs`,
+`Startup.cs`, `Host/`), a deleted, unreadable, or type-less changed file, a
+selection above half of the classes, or a filter above 16,384 characters. A
+project whose selection is empty gets no command and leaves its coverage to the
+batch gate's Full run. Tests that reach a change only through a caller, a
+route, dependency injection, or reflection are missed by design; that Full run
+is the safety net. The audit records the seed types, the selected classes and
+files, the closure depth, any fallback reason, and the plan-build time. The
+pre-develop, batch and promotion gates do not use this selection.
 The plan carries its test level and selection digest. The
 settlement journal of such a pass carries no delivery record, so neither the
 settlement reconciler nor Auto Review resume integrates the card or settles it
@@ -101,8 +119,12 @@ The hosted worker closes manifests at the configured size, age, pressure, or
 look-ahead decision, assembles the candidate, persists a run before invoking
 `BuildTestGateRunner` on its exact SHA, and records verdict and evidence.
 The look-ahead policy is pure and estimates the suite runs per member across
-the configured size range. Its snapshot includes queued cards and upcoming
-pending or leased review and coding cards. Diff statistics are cached by result
+the configured size range. Its snapshot includes queued cards, coding cards in
+progress, and upcoming pending or leased reviews whose frozen plan defers
+build/test to the batch and whose source run is the card's current run. A
+full-plan review or a review of a superseded run can never join a batch, so it
+is not an upcoming entry and cannot hold a waiting card on the look-ahead
+window (`BatchPlanUpcomingEligibility`). Diff statistics are cached by result
 SHA for repeated state reads. High-risk members use smaller batches or the
 per-card gate; `overlap: separate` excludes a card touching a selected member's
 files. Operator close-now overrides an advisor veto hold. An advisor may approve,
@@ -182,7 +204,15 @@ diagnosis. It does not claim an independently claimable remote `GateAttempt`;
 that separate target remains described in the [Gates Dossier](../../operations/gates/index.html#sect4).
 `GET /api/projects/{project}/batch-gate/report` exposes observed pilot counts
 including `integrationBranchRedBatches` and the correctness floor; comparable baseline and cost fields remain null
-until measured on the same window.
+until measured on the same window. `fullSuiteRuns` and `fullSuiteHostMinutes`
+count every gate execution, including emergency per-task fallbacks run at
+review settlement. `reviewVerificationRuns`, `reviewVerificationHostMinutes`
+and `reviewVerificationBaselineMinutes` count the builds and selected tests a
+batch-deferred review ran itself (`review-verification` tool commands,
+candidate and clean-repeat plus non-cached baseline workspaces), recorded once
+per review attempt when it settles. `totalVerificationHostMinutes` is the sum
+of both sides. Review-side minutes are counted from the deploy that introduced
+them onward; earlier reviews are not reconstructed.
 
 ## Compose-render gate step (AGT-2981)
 
@@ -537,9 +567,16 @@ collector: on agent-runner-01 the collector made the same backend tests 1.7 to
 2.5 times slower (test-acceleration Dossier, lever B11). The `release`-category
 suites `backend-coverage`, `runner-coverage` and `task-server-coverage` carry
 the coverage commands (`--collect "Code Coverage;Format=Cobertura"` with
-suite-specific results directories) for a scheduled or release run; the
-frontend release command writes `coverage/frontend/lcov.info` through Vitest. Register the Quality Studio
-coverage sensor with
+suite-specific results directories); `frontend-coverage` runs
+`npm --prefix frontend run test:release`, which writes
+`coverage/frontend/lcov.info` through Vitest. The scheduled
+`agent-host coverage-run` (AGT-3074) runs these suites on a runner host at
+night, one at a time under `nice`, against the integration branch tip in a
+dedicated checkout, skips while the host has claimed work or load, and then
+asks Quality Studio to ingest the reports, which tags them with the measured
+commit. Setup and logs:
+[Scheduled coverage run](../../operations/setup/linux-runner-host.md#scheduled-coverage-run).
+Register the Quality Studio coverage sensor with
 `reportPaths = coverage/dotnet/**/*.cobertura.xml;coverage/frontend/lcov.info`.
 The sensor ingests these reports after test execution; it does not run a second
 test suite. `scripts/register-quality-studio-coverage.mjs` updates an existing
@@ -1660,6 +1697,16 @@ operator changes cause the step to fail before its writer runs.
   escalation branch. A grade transport/runtime failure records `Failed` with its
   error and clears stale `code-review:grade-*` tags, but never changes the lane
   decision.
+- A deferred review re-drives the same open attempt, so the orchestrator grade
+  reuses an unchanged result (AGT-3081). Each grade report carries
+  `inputKey: sha256:<hex>` in its frontmatter: a length-prefixed hash over the
+  diff, commit label, task body, `results/` inventory, card mode, CLI, model and
+  thinking level. When the open attempt's terminal grade row has an A-D verdict
+  and its `EvidenceRef` report carries the same key, the orchestrator rebuilds
+  that report for the council and lane decision. It makes no model call and
+  writes no file, row, tag or outcome line. Any input change, a new attempt, a
+  row without a verdict, or a missing or keyless report grades afresh. The
+  operator-triggered grade always runs fresh.
 - Completing a pipeline terminalizes every known, non-deferred, non-stub row:
   an unreached `Pending` row becomes `Skipped` with the branch's causal reason,
   while an interrupted `Running` row becomes `Failed`. Deferred merge/push rows
@@ -1703,9 +1750,18 @@ operator changes cause the step to fail before its writer runs.
   key, delivery date, slice name, and compact shipped summary. Auto Review
   compares the first touching commit's parent with the delivered revision. The
   bytes outside the bounded implementation log and the complete prior log must
-  remain unchanged. A missing or non-append-only update fails the visible row
-  and follows the existing completion-gate reissue or escalation budget before
-  build and aspect review continue.
+  remain unchanged. When the attributed revision only lacks the entry (no
+  file, section markers, append log, or card entry), the gate checks one newer
+  revision: the review-subject run result, else the integration branch tip at
+  `refs/remotes/origin/<branch>`, else `refs/heads/<branch>`, without a fetch.
+  Exactly one well-formed entry there passes as idempotent and the row names
+  that revision. Cards with no attributed Dossier commit are read at that
+  revision, not from the working tree. A newer revision never clears an
+  append-only violation. Every finding names the inspected revision. A missing
+  or non-append-only update fails the visible row and follows the existing
+  completion-gate reissue or escalation budget before build and aspect review
+  continue. The reissue follow-up is worded as a Dossier gap and tells the
+  agent to report, not re-add, an entry already on the integration branch.
 - Dossier implementation work is cut one card per slice. Each
   `workbench.json.implementationTasks` entry carries, or is normalized to, a
   `bounded-slice` acceptance scope. Promotion rejects a single open-ended

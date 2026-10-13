@@ -3,6 +3,43 @@ namespace AgentStudio.TaskServer.Contracts;
 /// <summary>Prevents an unproven deterministic failure or uncited reviewer block from charging a card.</summary>
 public static class ReviewReportDiagnosisPolicy
 {
+    /// <summary>
+    /// A review worker that predates the AGT-2916 diagnosis contract reported a
+    /// failed deterministic command without a diagnosis and without a clean
+    /// repeat (AGT-3089). The same worker gives the same report on every retry
+    /// of the unchanged subject, so this result is escalated instead of retried.
+    /// </summary>
+    public const string DiagnosisContractUnsupported = "DiagnosisContractUnsupported";
+
+    /// <summary>
+    /// True when a report has the shape only a pre-diagnosis worker produces:
+    /// the worker did not end with its own ReviewInfra classification, a failed
+    /// deterministic candidate command carries no diagnosis, and the report has
+    /// no clean-repeat evidence at all. A current worker either diagnoses every
+    /// failed deterministic command or ends with ReviewInfra itself.
+    /// </summary>
+    public static bool IsDiagnosisContractUnsupported(ReviewReportRequest request)
+        => !string.Equals(request.Outcome, "ReviewInfra", StringComparison.OrdinalIgnoreCase)
+           && FailedDeterministicCandidates(request).Any(command => command.Diagnosis is null)
+           && !request.Commands.Any(command => command.Phase == "clean-repeat");
+
+    /// <summary>
+    /// Whether a ReviewInfra result may be retried on the unchanged subject.
+    /// Only <see cref="DiagnosisContractUnsupported"/> is excluded; every other
+    /// infrastructure class keeps the bounded retry.
+    /// </summary>
+    public static bool RetriesOnUnchangedSubject(string? failureClassification)
+        => !string.Equals(failureClassification, DiagnosisContractUnsupported, StringComparison.Ordinal);
+
+    /// <summary>Escalation reason for <see cref="DiagnosisContractUnsupported"/>.</summary>
+    public static string DiagnosisContractUnsupportedReason(string executorId, string? workerReleaseId)
+    {
+        var release = ReviewWorkerProvenancePolicy.IsKnown(workerReleaseId)
+            ? workerReleaseId!.Trim()
+            : ReviewWorkerProvenancePolicy.Unknown;
+        return $"Review worker {release} on {executorId} predates the diagnosis contract; upgrade the review host.";
+    }
+
     public static ReviewReportRequest Normalize(ReviewReportRequest request, ReviewPlanDto? plan)
     {
         // Report admission is shared by the Task Server and monolith. A retry
@@ -21,12 +58,14 @@ public static class ReviewReportDiagnosisPolicy
             ? ReviewDiffEvidencePolicy.Normalize(verdict, request.Workspace.ChangedPaths ?? [])
             : verdict).ToArray();
         request = request with { Verdicts = verdicts };
+        if (IsDiagnosisContractUnsupported(request))
+            return request with
+            {
+                Outcome = "ReviewInfra",
+                FailureClassification = DiagnosisContractUnsupported,
+            };
 
-        var failed = request.Commands.Where(command =>
-            command.Phase == "verification"
-            && command.WorkspaceRole == "candidate"
-            && command.ExitCode != 0
-            && !ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
+        var failed = FailedDeterministicCandidates(request);
         string? unproven = null;
         string? nonProduct = null;
         var confirmedProduct = false;
@@ -111,4 +150,11 @@ public static class ReviewReportDiagnosisPolicy
             return request with { Outcome = "Pass", FailureClassification = null };
         return request;
     }
+
+    private static ReviewCommandEvidenceDto[] FailedDeterministicCandidates(ReviewReportRequest request)
+        => request.Commands.Where(command =>
+            command.Phase == "verification"
+            && command.WorkspaceRole == "candidate"
+            && command.ExitCode != 0
+            && !ReviewCommandKinds.IsAgent(command.ExecutionKind)).ToArray();
 }

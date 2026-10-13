@@ -1545,8 +1545,9 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
                 commits: [Commit(anchor)]))
             .ToArray();
 
-        // Prime ancestry/root caches so the only required spawn in another
-        // unchanged projection is the fresh origin lookup, independent of cards.
+        // Prime ancestry/root caches and the origin store. Another unchanged
+        // projection then needs no spawn at all (AGT-3083): the stored origin
+        // stays valid while Git's contributing config files are unchanged.
         service.BuildLookup([jobs[0]]);
         using var telemetry = GitProcessTelemetry.BeginRequest(
             "origin-batch-regression", NullLogger.Instance, includeNested: true);
@@ -1554,7 +1555,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
 
         Assert.Equal(jobs.Length, lookup.Count);
         Assert.All(lookup.Values, status => Assert.Equal(IntegrationStatuses.Integrated, status.Status));
-        Assert.Equal(1, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
+        Assert.Equal(0, GitProcessTelemetry.CurrentTally()!.Value.Spawns);
     }
 
     [Fact]
@@ -1596,10 +1597,206 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.Equal("other", ProjectedRepository());
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void OriginStore_TwoLookups_CaptureTheConfigOnce()
+    {
+        var repo = SeedDevelopMainRepo();
+        Assert.Equal(0, RunGit(repo, "remote add origin https://example.invalid/first.git").Code);
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var (store, captures) = CountingOriginStore();
+        var service = BuildService(repo, out var project, out var log, originStore: store);
+        var job = Job("origin-store", "AGT-STORE", project, repo, log, commits: [Commit(anchor)]);
+
+        Assert.Equal("first", Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository);
+        Assert.Equal("first", Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository);
+
+        Assert.Equal(1, captures());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void OriginStore_ChangedOrigin_CapturesExactlyOnceMoreAndReadsTheNewOrigin()
+    {
+        var repo = SeedDevelopMainRepo();
+        Assert.Equal(0, RunGit(repo, "remote add origin https://example.invalid/first.git").Code);
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var (store, captures) = CountingOriginStore();
+        var service = BuildService(repo, out var project, out var log, originStore: store);
+        var job = Job("origin-store-change", "AGT-STORE-CHANGE", project, repo, log, commits: [Commit(anchor)]);
+        string ProjectedRepository() => Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository;
+
+        Assert.Equal("first", ProjectedRepository());
+        Assert.Equal(0, RunGit(repo, "remote set-url origin https://example.invalid/other.git").Code);
+        Assert.Equal("other", ProjectedRepository());
+        Assert.Equal("other", ProjectedRepository());
+
+        Assert.Equal(2, captures());
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void OriginStore_SeededFromAnIndexCapture_NeedsNoCaptureInsideTheLookup()
+    {
+        var repo = SeedDevelopMainRepo();
+        Assert.Equal(0, RunGit(repo, "remote add origin https://example.invalid/indexed.git").Code);
+        var anchor = RunGit(repo, "rev-parse develop").Out.Trim();
+        var (store, captures) = CountingOriginStore();
+        var service = BuildService(repo, out var project, out var log, originStore: store);
+        // What GitStateIndexService publishes from its own index run or sweep.
+        store.Publish(repo, GitConfigSignature.Capture(repo));
+        var job = Job("origin-store-indexed", "AGT-STORE-INDEXED", project, repo, log, commits: [Commit(anchor)]);
+
+        Assert.Equal("indexed", Assert.Single(service.BuildLookup([job])[job.TaskKey].Repositories).Repository);
+        Assert.Equal(0, captures());
+    }
+
+    [Fact]
+    public void OriginStore_FailedCapture_ReadsNullAndIsNotStored()
+    {
+        var calls = 0;
+        var store = new GitOriginStore(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new IOException("repository-config-unavailable");
+        });
+        var root = Path.Combine(_tempDir, "missing-repository");
+
+        Assert.Null(store.ReadOrigin(root));
+        Assert.Null(store.ReadOrigin(root));
+        Assert.Equal(2, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void OriginStore_MissingOrigin_IsStoredLikeAnyOtherCapture()
+    {
+        var repo = SeedDevelopMainRepo();
+        var (store, captures) = CountingOriginStore();
+
+        Assert.Null(store.ReadOrigin(repo));
+        Assert.Null(store.ReadOrigin(repo));
+        Assert.Equal(1, captures());
+    }
+
+    /// <summary>
+    /// AGT-2817 rework - a verdict proven by the current result must still
+    /// carry per-commit membership. The delivery-claim answer and the release
+    /// rollup read containment from <see cref="TaskIntegrationStatus.Repositories"/>;
+    /// an empty list made an integrated card read as "not on develop" and
+    /// "release unknown" (AGT-2822 on Stable).
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildLookup_CurrentResultAncestor_CarriesPerCommitMembershipAndRelease(bool released)
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "shortcut.txt"), "delivered");
+        Commit(repo, "feat: delivered through the current result");
+        var delivered = RunGit(repo, "rev-parse develop").Out.Trim();
+        if (released)
+        {
+            RunGit(repo, "checkout -q main");
+            RunGit(repo, "merge -q --ff-only develop");
+        }
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("shortcut", "AGT-2822", project, repo, log,
+            commits: [Commit(delivered) with { RunAttemptId = "run-agt-2822" }]);
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-agt-2822",
+            Project = project,
+            Repository = repo,
+            ResultSha = delivered,
+            AttemptChainId = "attempt-agt-2822",
+            CompletedAtUtc = NewClock().GetUtcNow(),
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal("current-result-ancestor", status.Detail);
+        var repository = Assert.Single(status.Repositories);
+        Assert.True(repository.OnIntegrationBranch);
+        var commit = Assert.Single(repository.Commits);
+        Assert.Equal(delivered, commit.Sha);
+        Assert.True(commit.OnIntegrationBranch);
+        Assert.Equal(released, commit.OnReleaseBranch);
+        Assert.Equal(released, status.Released);
+    }
+
+    [Fact]
+    public void BuildLookup_CurrentResultCuratedMapping_CarriesTheMappedCommitAsContained()
+    {
+        var repo = SeedDevelopMainRepo();
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "checkout -q -b task/curated");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work");
+        Commit(repo, "feat: reviewed work");
+        var source = RunGit(repo, "rev-parse task/curated").Out.Trim();
+        RunGit(repo, "checkout -q develop");
+        File.WriteAllText(Path.Combine(repo, "curated.txt"), "reviewed work, curated");
+        Commit(repo, "merge(AGT-2920): curated integration");
+        var integrated = RunGit(repo, "rev-parse develop").Out.Trim();
+
+        var svc = BuildService(repo, out var project, out var log);
+        var job = Job("curated", "AGT-2920", project, repo, log,
+            commits: [Commit(source) with { RunAttemptId = "run-curated" }]) with
+        {
+            IntegrationRecords =
+            [
+                new TaskIntegrationRecord
+                {
+                    Id = "curated-mapping",
+                    Classification = IntegrationRecordClasses.CuratedMapping,
+                    IntegrationBranch = "develop",
+                    SourceSha = source,
+                    IntegrationSha = integrated,
+                    DeliveryEpoch = "run-curated",
+                },
+            ],
+        };
+        ReviewSubjectStore.Write(job.FolderPath, new ReviewSubjectRecord
+        {
+            TaskKey = job.Key!,
+            RunAttemptId = "run-curated",
+            Project = project,
+            Repository = repo,
+            ResultSha = source,
+            AttemptChainId = "attempt-curated",
+            CompletedAtUtc = NewClock().GetUtcNow(),
+        });
+
+        var status = svc.BuildLookup([job])[job.TaskKey];
+
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal("current-result-curated-mapping", status.Detail);
+        var commit = Assert.Single(Assert.Single(status.Repositories).Commits);
+        Assert.Equal(source, commit.Sha);
+        Assert.Equal(CommitIntegrationRules.IntegratedByContent, commit.IntegrationRule);
+        Assert.True(commit.OnIntegrationBranch);
+    }
+
     // --- helpers -----------------------------------------------------------
 
+    private static (GitOriginStore Store, Func<int> Captures) CountingOriginStore()
+    {
+        var captures = 0;
+        var store = new GitOriginStore(root =>
+        {
+            Interlocked.Increment(ref captures);
+            return GitConfigSignature.Capture(root);
+        });
+        return (store, () => Volatile.Read(ref captures));
+    }
+
     private TaskIntegrationStatusService BuildService(string repo, out string projectName,
-        out PipelineExecutionLog log, Func<string, string?>? readOriginUrl = null)
+        out PipelineExecutionLog log, Func<string, string?>? readOriginUrl = null,
+        GitOriginStore? originStore = null)
     {
         projectName = "Fixture";
         var config = ConfigFor(repo, projectName);
@@ -1611,7 +1808,7 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         return new TaskIntegrationStatusService(
             git, settings, log, NullLogger<TaskIntegrationStatusService>.Instance,
-            NewClock(), readOriginUrl: readOriginUrl);
+            NewClock(), readOriginUrl: readOriginUrl, originStore: originStore);
     }
 
     private (TaskIntegrationStatusService Service, string Project, PipelineExecutionLog Log)

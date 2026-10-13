@@ -1,5 +1,6 @@
 
 
+using System.Globalization;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -13,6 +14,9 @@ public class ClaudeQuotaProbeTests
             "quota",
             "claude",
             name));
+
+    // The moment the compact "Oct13,2pm" label was captured (AGT-3080).
+    private static readonly DateTime Now = new(2026, 10, 12, 19, 28, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// Live capture from claude --version 2.1.140 on 2026-05-13. The probe
@@ -40,7 +44,7 @@ public class ClaudeQuotaProbeTests
         // this exact rawSample shipped on 2026-05-13 with windows: [] and the
         // detail modal showed no 5h / 7d windows. The fix lives in the probe
         // step, not the parser.
-        var windows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140);
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140, nowUtc: Now);
 
         Assert.Empty(windows);
     }
@@ -50,7 +54,7 @@ public class ClaudeQuotaProbeTests
     {
         // Drift signature: banner is visible (we got a session) but Windows is
         // empty. This is what the runtime warn-log triggers on.
-        var windows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140);
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140, nowUtc: Now);
 
         Assert.True(ClaudeQuotaProbe.LooksLikeParserDrift(BrokenSnapshotV2_1_140, windows),
             "v2.1.140 broken snapshot should be flagged as parser drift");
@@ -127,7 +131,7 @@ public class ClaudeQuotaProbeTests
         // precedence contract: the wizard predicate is true here, so the drift branch is dead.
         Assert.True(ClaudeQuotaProbe.LooksLikeOnboardingWizard(ThemeWizardSnapshotV2_1_201));
         // ...while the real drift snapshot is the mirror image: drift true, wizard false.
-        var driftWindows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140);
+        var driftWindows = ClaudeQuotaProbe.ParseUsageWindows(BrokenSnapshotV2_1_140, nowUtc: Now);
         Assert.True(ClaudeQuotaProbe.LooksLikeParserDrift(BrokenSnapshotV2_1_140, driftWindows));
         Assert.False(ClaudeQuotaProbe.LooksLikeOnboardingWizard(BrokenSnapshotV2_1_140));
     }
@@ -139,7 +143,7 @@ public class ClaudeQuotaProbeTests
             "Currentsession▌1%usedResets11:40pm(Europe/Berlin)" +
             "Currentweek(allmodels)████████████████32%usedResets2pm(Europe/Berlin)";
 
-        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot);
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot, nowUtc: Now);
 
         Assert.Equal(2, windows.Count);
         Assert.Equal("Current session (5h)", windows[0].Label);
@@ -157,12 +161,88 @@ public class ClaudeQuotaProbeTests
         const string snapshot =
             "Current week (all models) ████████████ 28% used Resets Apr 28, 2pm (Europe/Berlin)";
 
-        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot);
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(
+            snapshot, nowUtc: new DateTime(2026, 4, 25, 10, 0, 0, DateTimeKind.Utc));
 
         Assert.Single(windows);
         Assert.Equal("Weekly (all models)", windows[0].Label);
         Assert.Equal(28, windows[0].UsedPct);
         Assert.Equal("Apr 28, 2pm (Europe/Berlin)", windows[0].ResetLabel);
+        Assert.Equal(new DateTime(2026, 4, 28, 12, 0, 0, DateTimeKind.Utc), windows[0].ResetAt);
+    }
+
+    [Fact]
+    public void ParseUsageWindows_ReadsCompactWeeklyDateWithoutSpaces()
+    {
+        // Real PTY shape from 2026-10-12: every space is collapsed, including the
+        // one between month and day.
+        const string snapshot = "Currentweek(allmodels)███40%usedResetsOct13,2pm(Europe/Berlin)";
+
+        var weekly = Assert.Single(ClaudeQuotaProbe.ParseUsageWindows(snapshot, nowUtc: Now));
+
+        Assert.Equal("Weekly (all models)", weekly.Label);
+        Assert.Equal(40, weekly.UsedPct);
+        Assert.Equal("Oct13,2pm (Europe/Berlin)", weekly.ResetLabel);
+        Assert.Equal(new DateTime(2026, 10, 13, 12, 0, 0, DateTimeKind.Utc), weekly.ResetAt);
+    }
+
+    [Theory]
+    [InlineData("Oct13,2pm", "2026-10-13T12:00:00Z")]
+    [InlineData("Oct 13, 2pm", "2026-10-13T12:00:00Z")]
+    [InlineData("Oct13,2:30pm", "2026-10-13T12:30:00Z")]
+    [InlineData("Apr28,14:30", "2027-04-28T12:30:00Z")]
+    [InlineData("April 28, 2:30pm", "2027-04-28T12:30:00Z")]
+    public void ParseUsageWindows_ReadsDatedResetForms(string reset, string expectedUtc)
+    {
+        var snapshot = $"Current week (all models) ██ 40% used Resets {reset} (Europe/Berlin)";
+
+        var weekly = Assert.Single(ClaudeQuotaProbe.ParseUsageWindows(snapshot, nowUtc: Now));
+
+        var expected = DateTimeOffset.Parse(expectedUtc, CultureInfo.InvariantCulture).UtcDateTime;
+        Assert.Equal(expected, weekly.ResetAt);
+    }
+
+    [Fact]
+    public void ParseUsageWindows_DatedResetEarlyInTheYearRollsIntoNextYear()
+    {
+        const string snapshot = "Currentweek(allmodels)███40%usedResetsJan2,2pm(Europe/Berlin)";
+
+        var weekly = Assert.Single(ClaudeQuotaProbe.ParseUsageWindows(
+            snapshot, nowUtc: new DateTime(2026, 12, 31, 20, 0, 0, DateTimeKind.Utc)));
+
+        Assert.Equal(new DateTime(2027, 1, 2, 13, 0, 0, DateTimeKind.Utc), weekly.ResetAt);
+    }
+
+    [Fact]
+    public void WarnUnparsedResets_LogsEachRawLabelOnce()
+    {
+        var entries = new List<string>();
+        var logger = new CollectingLogger(entries);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var windows = new List<QuotaWindow>
+        {
+            new() { Label = "Weekly (all models)", UsedPct = 40, ResetLabel = "Okt13,14 Uhr (Europe/Berlin)" },
+            new() { Label = "Current session (5h)", UsedPct = 5, ResetAt = Now.AddHours(2), ResetLabel = "11:40pm (Europe/Berlin)" },
+        };
+
+        ClaudeQuotaProbe.WarnUnparsedResets(windows, logger, seen);
+        ClaudeQuotaProbe.WarnUnparsedResets(windows, logger, seen);
+
+        var entry = Assert.Single(entries);
+        Assert.Contains("Okt13,14 Uhr (Europe/Berlin)", entry, StringComparison.Ordinal);
+    }
+
+    private sealed class CollectingLogger(List<string> entries) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => entries.Add(formatter(state, exception));
     }
 
     [Fact]
@@ -170,7 +250,7 @@ public class ClaudeQuotaProbeTests
     {
         var snapshot = ReadFixture("claude-usage-v2.1.202-api-billing.txt");
 
-        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot);
+        var windows = ClaudeQuotaProbe.ParseUsageWindows(snapshot, nowUtc: Now);
 
         var quota = Assert.Single(windows);
         Assert.Equal("Quota", quota.Label);
@@ -186,7 +266,7 @@ public class ClaudeQuotaProbeTests
             .Replace("Session", "Session\nExperimental provider field: ignored", StringComparison.Ordinal)
             .Replace("Usage:", "Unrecognized line with arbitrary values\nUsage:", StringComparison.Ordinal);
 
-        var quota = Assert.Single(ClaudeQuotaProbe.ParseUsageWindows(snapshot));
+        var quota = Assert.Single(ClaudeQuotaProbe.ParseUsageWindows(snapshot, nowUtc: Now));
 
         Assert.Equal("Quota", quota.Label);
         Assert.Null(quota.UsedPct);

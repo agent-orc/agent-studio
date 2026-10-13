@@ -169,6 +169,12 @@ describe('forecast wording', () => {
     expect(forecastSentence(forecast({ status: 'idle' }), now, when)).toContain('No growth');
   });
 
+  it('does not claim a full window before an unknown reset', () => {
+    const unknown = forecast({ status: 'unknown-reset', resetAt: null, reachesFullBeforeReset: false });
+    expect(forecastSentence(unknown, now, when))
+      .toBe('100% at 12:57Z (in 8h 30m) at this rate; the reset time is unknown.');
+  });
+
   it('formats durations, rates, and tones', () => {
     expect(formatDuration(8.5 * 3_600_000)).toBe('8h 30m');
     expect(formatDuration(12 * 60_000)).toBe('12m');
