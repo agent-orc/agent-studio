@@ -42,13 +42,18 @@ const TOOL_RESULT = /^\s*(?<status>succeeded|failed)\s+in\s+.+:$/i;
  * is named by what it states; "Runner" stays the group heading only.
  */
 const RUNNER_FACT_LABELS: readonly (readonly [RegExp, string])[] = [
-  [/^server-composed mode framing\b/i, 'Framing'],
+  [/^(?:server-composed mode framing|results-dir context|claimed follow-up)\b/i, 'Framing'],
   [/^engine=/i, 'Engine'],
-  [/^clean-context seeded\b/i, 'Clean context'],
+  [/^clean-context (?:seeded|reused)\b/i, 'Clean context'],
   [/^started\s+\S+\s+CLI\s+\(PID\b/i, 'CLI started'],
-  [/^project(?:-prepare\b|\s+preparation\s+ready\b)/i, 'Prepare'],
+  [/^(?:project(?:-prepare\b|\s+preparation\s+ready\b)|repository has no \.agent-studio\/project\.yml\b)/i, 'Prepare'],
   [/^runner transport\b/i, 'Transport'],
+  [/^worker-envelope\b/i, 'Worker envelope'],
+  [/^dotnet build-server\b/i, 'Build server'],
+  [/^provider(?:-auth\b|\s+rejected model request\b)/i, 'Provider auth'],
 ];
+/** A runner fact keyed by a leading kebab-case token, e.g. `worker-lost attempt=...`. */
+const RUNNER_FACT_KEY = /^(?<key>[a-z]+(?:-[a-z]+)+)\b/i;
 
 type TranscriptMode = 'outside' | 'metadata' | 'agent' | 'user' | 'tool';
 
@@ -238,8 +243,17 @@ function runnerPresentation(body: string): {
   if (/^CLI exited\b/i.test(body) || /\bfailed\b/i.test(body)) {
     return { label: 'Runner stopped', explanation: sentence(body), severity: 'error' };
   }
+  return { label: runnerFactLabel(body), explanation: sentence(body), severity: 'info' };
+}
+
+/** Name a runner fact by what it states; "Runner" stays the group heading only. */
+function runnerFactLabel(body: string): string {
   const fact = RUNNER_FACT_LABELS.find(([pattern]) => pattern.test(body));
-  return { label: fact?.[1] ?? 'Runner', explanation: sentence(body), severity: 'info' };
+  if (fact) return fact[1];
+  const key = RUNNER_FACT_KEY.exec(body)?.groups?.['key'];
+  if (!key) return 'Note';
+  const words = key.toLowerCase().replace(/-/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function toolEvent(block: TranscriptBlock, source: string): ToolBurstEvent {

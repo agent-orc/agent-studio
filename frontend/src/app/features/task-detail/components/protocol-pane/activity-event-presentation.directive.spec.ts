@@ -208,4 +208,50 @@ describe('ActivityEventPresentationDirective — runner-group rendering', () => 
     expect(opened).toEqual([1, 2, 3, 4, 5, 6].map((line) => ({ source: 'AGT-2814', start: line, end: line })));
     fixture.destroy();
   });
+
+  // Fixed clock: line shapes of a follow-up run (clean-context reused,
+  // claimed follow-up) and of a run tail (provider-auth, build server,
+  // worker envelope) as the runner emits them.
+  const realRunnerGroups: { name: string; lines: string[]; labels: string[] }[] = [
+    {
+      name: 'follow-up start-up',
+      lines: [
+        "[runner] working tree ready on branch 'runner/agent-runner-01/AGT-2814'",
+        '[runner] repository has no .agent-studio/project.yml; compatibility preparation remains active',
+        "[runner] claimed follow-up claim=32df22be mode=extend hash=32df22bedfaa7f54 delivered as this run's prompt",
+        '[runner] engine=car cli=claude model=claude-opus-5-5 thinking=medium permission=yolo context=clean',
+        "[runner] clean-context reused task home '/home/agent/.local/state/agent-studio/clean-context/claude/56716d68'",
+      ],
+      labels: ['Runner ready', 'Prepare', 'Framing', 'Engine', 'Clean context'],
+    },
+    {
+      name: 'run tail',
+      lines: [
+        '[runner] provider-auth state=retrying provider=claude; last-good capability retained',
+        '[runner] dotnet build-server shutdown unavailable: No such file or directory',
+        '[runner] worker-envelope attempt=att-7 applied=no cores=16 slots=4 coresPerSlot=4.00 cpuQuota=400% cpuWeight=100 tasksMax=4096; no per-worker cgroup on this host, so CPU seconds and peak tasks were not measured',
+      ],
+      labels: ['Provider auth', 'Build server', 'Worker envelope'],
+    },
+  ];
+
+  for (const run of realRunnerGroups) {
+    it(`names every ${run.name} runner fact from real runner lines, never the bare Runner`, async () => {
+      const at = (index: number) => new Date(Date.UTC(2026, 9, 13, 1, 50, 0, index * 100)).toISOString();
+      const lines: CliOutputLine[] = run.lines.map((text, index) => ({ timestamp: at(index), stream: 'system', text }));
+      const projected = projectStructuredActivityContent(lines, 'AGT-2814').events;
+      const fixture = await renderHost(presentActivityEvents(projected, 'AGT-2814', null));
+      const host: HTMLElement = fixture.nativeElement;
+
+      const groups = host.querySelectorAll<HTMLElement>('[data-category="runner-group"]');
+      expect(groups).toHaveLength(1);
+      expect(groups[0].querySelector('.status-row__chip')?.textContent).toBe('Runner');
+      const list = groups[0].querySelector<HTMLElement>('[data-testid="runner-group-rows"]')!;
+      const labels = Array.from(list.querySelectorAll('dt')).map((el) => el.textContent);
+      expect(labels).toEqual(run.labels);
+      expect(labels).not.toContain('Runner');
+      expect(list.querySelectorAll('[data-testid="runner-group-row-trace"]')).toHaveLength(run.labels.length);
+      fixture.destroy();
+    });
+  }
 });

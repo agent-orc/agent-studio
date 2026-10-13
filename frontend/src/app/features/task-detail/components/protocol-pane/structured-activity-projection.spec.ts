@@ -107,6 +107,46 @@ describe('projectStructuredActivityContent', () => {
     ]);
   });
 
+  it('names the same-fact variants and tail facts real runs emit, never the bare Runner', () => {
+    // Shapes copied from the runner's own emitters (CarWorkerExecution,
+    // RemoteTaskRunner, WorkerBuildServerHygiene) as seen in AGT-2814 logs.
+    const at = (index: number) => `2026-10-12T06:13:${String(index).padStart(2, '0')}.000Z`;
+    const bodies = [
+      "clean-context reused task home '/home/agent/.local/state/agent-studio/clean-context/claude/56716d68'",
+      'results-dir context + remote-completion-protocol appended to task prompt',
+      "claimed follow-up claim=32df22be mode=extend hash=32df22bedfaa7f54 delivered as this run's prompt",
+      'repository has no .agent-studio/project.yml; compatibility preparation remains active',
+      'provider-auth state=retrying provider=claude; last-good capability retained',
+      'provider rejected model request provider=claude; provider-auth capability unchanged',
+      'dotnet build-server shutdown unavailable: No such file or directory',
+      'worker-envelope attempt=att-7 applied=yes cores=16 slots=4 coresPerSlot=4.00 cpuQuota=400% cpuWeight=100 tasksMax=4096 cpuSeconds=812.4 peakTasks=211 killedLeftovers=0',
+      'mechanical-continuation decision=fresh-run reason=no-session',
+      'retained worktree recovery: pushed 1 commit',
+    ];
+    const lines: CliOutputLine[] = bodies.map((body, index) => ({
+      timestamp: at(index),
+      stream: 'system',
+      text: `[runner] ${body}`,
+    }));
+
+    const labels = projectStructuredActivityContent(lines, 'AGT-2814').events
+      .map((event) => (event as SystemStatusEvent).label);
+
+    expect(labels).toEqual([
+      'Clean context',
+      'Framing',
+      'Framing',
+      'Prepare',
+      'Provider auth',
+      'Provider auth',
+      'Build server',
+      'Worker envelope',
+      'Mechanical continuation',
+      'Note',
+    ]);
+    expect(labels).not.toContain('Runner');
+  });
+
   it('projects aspect and terminal sentinels as status rows without raw marker text', () => {
     const lines: CliOutputLine[] = [
       { timestamp: '2026-09-18T10:00:00Z', stream: 'stderr', text: 'OpenAI Codex v0.144.1' },

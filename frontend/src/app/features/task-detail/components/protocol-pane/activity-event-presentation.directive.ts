@@ -76,8 +76,10 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
    * repeating a "RUNNER"-styled row per fact with its own trace button. The
    * library's own trace button is left in place - its `rawRange` now spans
    * the whole group, so it stays the one trace affordance for the block.
-   * Inside the disclosure each fact keeps access to its own source line via
-   * a quiet per-row trace button that emits through the view's `openTrace`.
+   * Inside the disclosure each fact gets a quiet per-row trace button that
+   * emits the row's own `rawRange` through the view's `openTrace`. The
+   * protocol pane listener currently opens Trace mode without focusing that
+   * range, so the title promises Trace mode, not the line itself.
    */
   private syncRunnerGroups(): void {
     const groups = this.events().filter(isPresentedRunnerGroupEvent);
@@ -144,7 +146,7 @@ export class ActivityEventPresentationDirective implements AfterViewChecked, OnD
     button.textContent = 'trace';
     button.dataset['testid'] = 'runner-group-row-trace';
     button.setAttribute('aria-label', `Open ${fact.label} in Trace mode`);
-    button.title = 'Open the source line in Trace mode';
+    button.title = 'Open Trace mode';
     button.style.cssText =
       'padding:0 5px;border-radius:4px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);background:transparent;cursor:pointer;font:inherit;font-size:10.5px;color:color-mix(in srgb,currentColor 66%,transparent);';
     button.addEventListener('click', () => this.conversationView.openTrace.emit(fact.rawRange));
