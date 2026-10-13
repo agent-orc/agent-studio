@@ -732,8 +732,11 @@ export interface TaskInfo {
     hasFiles: boolean;
   } | null;
   commitCount?: number;
-  /** Board-only branch facts; full provenance is loaded with task detail. */
-  gitContext?: { branch: string; branchTip?: string | null; mergeSha?: string | null } | null;
+  /**
+   * Board-only branch facts; full provenance is loaded with task detail.
+   * `branch` is absent when it is the default `task/{id}` (see `gitContextBranch`).
+   */
+  gitContext?: { branch?: string; branchTip?: string | null; mergeSha?: string | null } | null;
   /**
    * Cheap "did any run move HEAD / was an auto-commit stamped" signal from
    * the scanner. Lets the card disambiguate a card with zero `commits[]`:
