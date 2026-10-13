@@ -255,16 +255,21 @@ internal static class BoardCardSummary
         Add(fields, "causeWait", job.CauseWait);
         Add(fields, "remoteClaimFailure", job.RemoteClaimFailure);
         if (job.PendingIntent is { } intent)
+        {
+            // pending-intent.json is read without a non-null check, so a
+            // "prompt": null file must not fail the whole board read.
+            var pendingPrompt = intent.Prompt ?? string.Empty;
             fields["pendingIntent"] = new
             {
                 // A steer prompt can run to pages; the Ready card shows its
                 // start and the tooltip 120 characters. /details/overview
                 // carries the whole intent.
                 intent.RunIntent, intent.Mode, intent.SavedAt,
-                prompt = NullIfEmpty(intent.Prompt.Length <= PendingPromptLength
-                    ? intent.Prompt : intent.Prompt[..PendingPromptLength]),
-                promptTruncated = intent.Prompt.Length > PendingPromptLength ? true : (bool?)null,
+                prompt = NullIfEmpty(pendingPrompt.Length <= PendingPromptLength
+                    ? pendingPrompt : pendingPrompt[..PendingPromptLength]),
+                promptTruncated = pendingPrompt.Length > PendingPromptLength ? true : (bool?)null,
             };
+        }
         if (job.NeedsInput is { } need)
             fields["needsInput"] = new { message = Short(need.FirstLine, 120) ?? "" };
         if (job.AutoLoop is { } loop)
