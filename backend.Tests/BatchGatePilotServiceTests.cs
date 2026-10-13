@@ -27,7 +27,7 @@ namespace AgentStudio.Tests;
 /// tick is removed so each test owns the tick order.
 /// </summary>
 [Collection(WebApplicationFactorySerialCollection.Name)]
-public sealed class BatchGatePilotServiceTests : IDisposable
+public sealed partial class BatchGatePilotServiceTests : IDisposable
 {
     private const string ProjectName = "batch-pilot";
     private const string RepositoryId = "batch-pilot-repo";
