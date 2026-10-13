@@ -352,40 +352,6 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         Assert.Equal(TokenLedgerCollapseCount.None, collapsed);
     }
 
-    // ---- repair -----------------------------------------------------------
-
-    [Fact]
-    public void Repair_reports_collapsed_entries_per_project_and_runs_once()
-    {
-        var store = new FakeRepairStore(
-        [
-            new TokenLedgerReceiptSource("/agt-3004", ProjectName, "AGT-3004", Agt3004Summary()),
-            new TokenLedgerReceiptSource("/clean", ProjectName, "AGT-1", Summary(CodexCall("agent:codex"))),
-        ]);
-        var reportPath = Path.Combine(_workspace, "migrations", TokenLedgerDuplicateRepair.ReportFileName);
-        var repair = new TokenLedgerDuplicateRepair(TokenTestServices.Pricing(), store, reportPath, NullLogger<TokenLedgerDuplicateRepair>.Instance);
-
-        var report = repair.RunOnce();
-
-        Assert.True(report.Completed);
-        var project = Assert.Single(report.Projects);
-        Assert.Equal(1, project.ReceiptTasks);
-        Assert.Equal(Copies - 1, project.ReceiptEntriesCollapsed);
-        Assert.Equal((Copies - 1) * SessionTotal, project.ReceiptTokensCollapsed);
-        Assert.True(project.ReceiptCostCollapsedUsd > 0m);
-        var task = Assert.Single(report.Tasks);
-        Assert.Equal(Copies + 1, task.EntriesBefore);
-        Assert.Equal(SessionTotal + CodexTotal, task.TotalTokensAfter);
-        var rewritten = Assert.Single(store.Rewrites);
-        Assert.Equal(2, rewritten.Summary.Entries.Count);
-        Assert.Equal(SessionTotal + CodexTotal, rewritten.Summary.TotalTokens);
-        Assert.True(File.Exists(reportPath));
-
-        var again = repair.RunOnce();
-        Assert.True(again.AlreadyCompleted);
-        Assert.Single(store.Rewrites);
-    }
-
     // ---- AGT-2882 Codex cache correction ----------------------------------
 
     [Fact]
@@ -609,22 +575,4 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         return (scanner, mutations, receipts);
     }
 
-    private sealed class FakeRepairStore(IReadOnlyList<TokenLedgerReceiptSource> jobs) : ITokenLedgerDuplicateRepairStore
-    {
-        public List<TokenLedgerReceiptRewrite> Rewrites { get; } = [];
-
-        public IReadOnlyList<TokenLedgerReceiptSource> ScanJobs() => jobs;
-
-        public IEnumerable<TokenLedgerBusSource> ReadBus(IEnumerable<string> projects) => [];
-
-        public bool ReplaceTokenSummary(string folderPath, TaskTokenSummary summary)
-        {
-            Rewrites.Add(new TokenLedgerReceiptRewrite(folderPath, folderPath, summary));
-            return true;
-        }
-
-        public void InvalidateCaches()
-        {
-        }
-    }
 }

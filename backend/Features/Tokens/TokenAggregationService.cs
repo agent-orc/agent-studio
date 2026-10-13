@@ -134,7 +134,7 @@ public sealed class TokenAggregationService : ITokenAggregator
         foreach (var (name, watchPath) in projects)
         {
             var snapshot = _ledger.LoadSnapshot(name, watchPath);
-            perProject.Add((name, _pricing.Price(snapshot.Entries)));
+            perProject.Add((name, _pricing.Price(InWindow(snapshot.Entries, windowStart, windowEnd))));
             freshness.Add(snapshot.Freshness);
         }
 
@@ -152,8 +152,9 @@ public sealed class TokenAggregationService : ITokenAggregator
     {
         var workspaceRoot = _config["TaskRepository"] ?? "(unconfigured)";
         var perProject = projects
-            .Select(project => (project.Name, _pricing.Price(
-                BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, project.Name))))
+            .Select(project => (project.Name, _pricing.Price(InWindow(
+                BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, project.Name),
+                fromUtc, toUtc))))
             .ToList();
         return WorkspaceTimelineFold.Build(perProject, fromUtc, toUtc, bucketMinutes);
     }
@@ -173,6 +174,11 @@ public sealed class TokenAggregationService : ITokenAggregator
 
     private IReadOnlyList<PricedTokenEntry> PricedLedger(string projectName, string watchPath)
         => _pricing.Price(_ledger.LoadSnapshot(projectName, watchPath).Entries);
+
+    private static IReadOnlyList<OrchestratorLogEntry> InWindow(
+        IReadOnlyList<OrchestratorLogEntry> entries, DateTime start, DateTime end)
+        => entries.Where(entry => entry.Ts.ToUniversalTime() >= start
+            && entry.Ts.ToUniversalTime() < end).ToList();
 
     /// <summary>
     /// Project name for a watch path from the <c>WatchedPaths</c> config, the

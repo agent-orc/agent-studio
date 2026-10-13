@@ -7,7 +7,7 @@ namespace AgentStudio.Pipeline;
 /// receipts are authoritative when present; legacy tasks fall back to
 /// <c>pipeline-execution.json</c>. Both paths fold token usage into
 /// (step-kind, day) cells priced
-/// through the single <see cref="TokenPricing"/> table. The frontend
+/// through the single <see cref="ITokenPricing"/> service. The frontend
 /// renders the result as a stacked time trend in the project Token Usage
 /// surface, next to the orchestrator-log heatmap.
 ///

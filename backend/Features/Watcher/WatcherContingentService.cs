@@ -25,7 +25,7 @@ public sealed record WatcherContingentSnapshot(
 /// <summary>
 /// Durable per-day/per-week Watcher spend tracker (§10.4). Priced token
 /// counts are read from the Token Economy catalog by the caller
-/// (<see cref="AgentStudio.Tokens.TokenPricing"/>) for display; this service
+/// (<see cref="AgentStudio.Tokens.ITokenPricing"/>) for display; this service
 /// only owns the count/token ledger and the admission checks. Single JSON
 /// file per workspace, rewritten atomically; the Watcher sweep is
 /// sequential so a coarse read-check-write is sufficient (no concurrent
