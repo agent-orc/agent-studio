@@ -2,6 +2,8 @@ using AgentStudio.Setup;
 using AgentStudio.TaskServer.Contracts;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Xunit;
 
 namespace AgentOrchestratorSetup.Tests;
@@ -57,6 +59,64 @@ public sealed class SetupContractTests
             "\"runnerId\":\"runner-one\"",
             await captured.Content!.ReadAsStringAsync(),
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Agent_host_rejoin_rotates_under_the_contract_and_retires_the_previous_credential()
+    {
+        var joinCredential = new string('j', 64);
+        var runnerCredential = "ats_0011223344556677." + new string('r', 64);
+        var issuedAt = new DateTime(2026, 7, 28, 12, 0, 0, DateTimeKind.Utc);
+        var requests = new List<(HttpMethod Method, string Path, string? Bearer, string? Consumer, string Body)>();
+        var handler = new StubHandler(request =>
+        {
+            requests.Add((request.Method, request.RequestUri!.AbsolutePath,
+                request.Headers.Authorization?.Parameter,
+                request.Headers.TryGetValues("X-Principal-Consumer-Id", out var consumer) ? consumer.Single() : null,
+                request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty));
+            if (request.RequestUri.AbsolutePath == "/api/v1/management/principals")
+                return new HttpResponseMessage(HttpStatusCode.Conflict);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new IssuedPrincipalCredential(
+                    new PrincipalDto("runner:runner-one", TaskServerPrincipalKinds.Runner,
+                        [TaskServerScopes.TasksRead], "runner-one", issuedAt, null, null),
+                    runnerCredential,
+                    issuedAt)),
+            };
+        });
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("https://tasks.example.test") };
+        var payload = new JoinPayload(1, "https://tasks.example.test", joinCredential, "0.4.0", issuedAt);
+
+        var actual = await SetupApplication.MintRunnerCredentialAsync(payload, "runner-one", default, client);
+
+        Assert.Equal(runnerCredential, actual);
+        var rotate = requests[1];
+        Assert.Equal("/api/v1/management/principals/runner%3Arunner-one/rotate", rotate.Path);
+        Assert.Equal(joinCredential, rotate.Bearer);
+        var body = JsonSerializer.Deserialize<RotatePrincipalRequest>(rotate.Body,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            })!;
+        Assert.Matches("^[A-Za-z0-9._:-]{1,128}$", body.OperationId!);
+        Assert.Equal(new PrincipalRotationConsumer("runner-one", TaskServerScopes.TasksRead),
+            Assert.Single(body.Consumers!));
+        var operation = body.OperationId;
+        Assert.Equal(
+            [
+                (HttpMethod.Post, $"/api/v1/principal-rotations/{operation}/delivered"),
+                (HttpMethod.Get, "/api/v1/workspaces"),
+                (HttpMethod.Post, $"/api/v1/principal-rotations/{operation}/ack"),
+            ],
+            requests.Skip(2).Select(request => (request.Method, request.Path)));
+        Assert.All(requests.Skip(2), request =>
+        {
+            Assert.Equal(runnerCredential, request.Bearer);
+            Assert.Equal("runner-one", request.Consumer);
+        });
+        Assert.Equal("runner-one", JsonSerializer.Deserialize<PrincipalRotationAcknowledgement>(
+            requests[^1].Body, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.ConsumerId);
     }
 
     [Fact]

@@ -74,12 +74,35 @@ scripts/compose-rotate.sh engine --dev
 scripts/compose-rotate.sh studio --dev
 ```
 
-For a published-image stack, omit `--dev`. The command calls the Task Server
-principal API, replaces the protected file in the named volume, and recreates
-the matching service within the credential overlap. Run it while coding tasks
-are idle because rotating the Runner recreates its container. It never prints
-or requires pasting a bearer value. Do not edit or remove individual files
-from the volume. `docker compose down` retains the volume; `down --volumes`
+For a published-image stack, omit `--dev`. The command follows the Task Server
+[principal rotation contract](task-server.md#rotate-and-revoke-principals) in
+three steps:
+
+1. The `credential-manager` service issues a rotation under a fresh operation
+   id with one declared consumer and a one-hour overlap. It replaces the
+   protected file in the named volume and marks the bearer delivered.
+2. The command recreates the matching service, which starts with the new
+   bearer.
+3. Once the recreated service is healthy, `credential-manager --complete`
+   makes one `tasks:read` call with the installed bearer and acknowledges it.
+   Task Server then retires the rotation and revokes the previous generation
+   without waiting for the overlap to end. The credential manager makes this
+   scoped call itself because an idle consumer, such as the Studio edge
+   without user traffic, may never make one. Unlike
+   `scripts/install-principal-rotation.py`, it therefore proves the installed
+   file rather than the running consumer.
+
+The declared consumer is `compose-studio` or `compose-engine` for the Studio
+and Engine roles. For the two Runner roles it is the bound Runner id
+(`distributed-runner` or `distributed-review-runner`). Until completion, the
+operation id stays in a root-only state file inside the secrets volume. If a
+step fails, run the same command again: it resumes that operation and never
+issues a second credential. If the one-hour deadline passes before completion,
+the previous generation expires and a new rotation needs a recovery principal;
+see the Task Server rotation section. Run the command while coding tasks are
+idle because rotating the Runner recreates its container. It never prints or
+requires pasting a bearer value. Do not edit or remove individual files from
+the volume. `docker compose down` retains the volume; `down --volumes`
 deletes it and all installation data.
 
 The included coding and review hosts register without a Git remote or CLI

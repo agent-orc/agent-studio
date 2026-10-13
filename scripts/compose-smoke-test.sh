@@ -191,8 +191,19 @@ COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
 new_review_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/review_runner/review_runner_token | cut -d' ' -f1)"
 test "$old_review_sha" != "$new_review_sha"
 test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/review_runner/review_runner_token)" = 600
+old_engine_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/engine/engine_token | cut -d' ' -f1)"
+COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
+    "$repo_root/scripts/compose-rotate.sh" engine "${rotate_mode[@]}"
+new_engine_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/engine/engine_token | cut -d' ' -f1)"
+test "$old_engine_sha" != "$new_engine_sha"
+test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/engine/engine_token)" = 600
+previous_studio_token="$studio_token"
 COMPOSE_PROJECT_NAME="$project" COMPOSE_ROTATE_OVERRIDE_FILE="$override" \
     "$repo_root/scripts/compose-rotate.sh" studio "${rotate_mode[@]}"
+# Completion acknowledged the new generation, so the overlap ended early.
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    -H "Authorization: Bearer $previous_studio_token" -H 'X-Task-Protocol-Version: 2' \
+    "http://127.0.0.1:${STUDIO_TASKSERVER_PORT}/api/v1/workspaces")" = 401
 new_studio_sha="$("${compose[@]}" exec -T "task-server${suffix}" sha256sum /run/agent-studio-secrets/studio/studio_token | cut -d' ' -f1)"
 test "$secret_sha" != "$new_studio_sha"
 test "$("${compose[@]}" exec -T "task-server${suffix}" stat -c %a /run/agent-studio-secrets/studio/studio_token)" = 600
