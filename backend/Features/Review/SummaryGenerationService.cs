@@ -444,7 +444,7 @@ public sealed class SummaryGenerationService
         try
         {
             var assessment = BuildAssessment(evidence, statusMarkdown, result.AssessmentJson, result.Usage?.Model ?? result.Model, DateTime.UtcNow);
-            SummaryAssessmentStore.Write(info.FolderPath, assessment);
+            SummaryAssessmentStore.Write(info.FolderPath, assessment, statusMarkdown);
             if (assessment.FallbackReason is not null)
             {
                 _logger.LogInformation("Summary assessment for {JobId} used the policy fallback: {Reason}",

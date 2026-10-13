@@ -345,6 +345,57 @@ public sealed class SummaryAssessmentTests
         }
     }
 
+    // --- status.md binding ----------------------------------------------------
+
+    [Fact]
+    public void Store_serves_the_assessment_only_next_to_the_status_it_was_generated_with()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "summary-assessment-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var parked = new SummaryAssessment
+            {
+                Outcome = SummaryOutcomes.ParkedOnDecision,
+                GeneratedAt = Now,
+                Inconsistencies = [new SummaryInconsistency { Kind = SummaryInconsistencyKinds.SalvageNotIntegrated, WorkMayBeLost = true }],
+            };
+            SummaryAssessmentStore.Write(root, parked, CleanStatus);
+
+            Assert.Equal(SummaryOutcomes.ParkedOnDecision, SummaryAssessmentStore.ReadFor(root, CleanStatus)!.Outcome);
+            // Line endings, a BOM and trailing whitespace are storage noise, not a new document.
+            Assert.NotNull(SummaryAssessmentStore.ReadFor(root, "\uFEFF" + CleanStatus.ReplaceLineEndings("\r\n") + "\r\n\r\n"));
+
+            // Another writer (external completion, escalation stub, remote delivery
+            // failure, result scaffold) replaced status.md: the stale warning is not served.
+            Assert.Null(SummaryAssessmentStore.ReadFor(root, "# Result\n\n- Result: Success\n- Completed externally by the operator.\n"));
+            Assert.Null(SummaryAssessmentStore.ReadFor(root, CleanStatus + "\n\n## Acceptance integration\n- Outcome: `Conflict`\n"));
+            Assert.Null(SummaryAssessmentStore.ReadFor(root, null));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void Store_does_not_serve_an_assessment_without_a_status_fingerprint()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "summary-assessment-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(SummaryAssessmentStore.PathFor(root), """{"outcome":"failed","inconsistencies":[]}""");
+
+            Assert.NotNull(SummaryAssessmentStore.Read(root));
+            Assert.Null(SummaryAssessmentStore.ReadFor(root, CleanStatus));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
     // --- service wiring -------------------------------------------------------
 
     [Fact]
@@ -389,9 +440,10 @@ public sealed class SummaryAssessmentTests
 
             var status = await File.ReadAllTextAsync(Path.Combine(root, "status.md"));
             Assert.DoesNotContain("assessment>", status);
-            var assessment = SummaryAssessmentStore.Read(root);
+            var assessment = SummaryAssessmentStore.ReadFor(root, status);
             Assert.NotNull(assessment);
-            Assert.Equal(SummaryAssessmentSources.Model, assessment!.Source);
+            Assert.Equal(SummaryAssessmentStore.Fingerprint(status), assessment!.StatusFingerprint);
+            Assert.Equal(SummaryAssessmentSources.Model, assessment.Source);
             Assert.Equal(SummaryOutcomes.Delivered, assessment.Outcome);
 
             var row = Assert.Single(pipelineLog.Read(root)!.Steps, s => s.StepId == PipelineCatalogue.SummaryAssessmentStepId);

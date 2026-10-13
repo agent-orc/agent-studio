@@ -110,7 +110,7 @@ public static class TaskDetailResources
             catch (UnauthorizedAccessException) { return Reply(context, core, lookup.ProjectId!, runtime, "documents", "unavailable",
                 new TaskDocumentResource(name, null, null), "document-access-denied", null); }
             var summary = name == "status" ? scanner.ResolveSummaryState(core.TaskKey, markdown) : null;
-            var assessment = name == "status" ? SummaryAssessmentStore.Read(core.FolderPath) : null;
+            var assessment = name == "status" ? SummaryAssessmentStore.ReadFor(core.FolderPath, markdown) : null;
             return Reply(context, core, lookup.ProjectId!, runtime, "documents", "ready",
                 new TaskDocumentResource(name, markdown, summary) { Assessment = assessment }, null, Modified(path));
         });

@@ -27,6 +27,12 @@ public sealed record SummaryAssessment
 
     public DateTime GeneratedAt { get; init; }
 
+    /// <summary>
+    /// SHA-256 of the status.md this assessment was generated with; the
+    /// assessment is served only next to that exact document.
+    /// </summary>
+    public string? StatusFingerprint { get; init; }
+
     public List<SummaryInconsistency> Inconsistencies { get; init; } = [];
 }
 
