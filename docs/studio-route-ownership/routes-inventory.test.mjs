@@ -9,6 +9,7 @@ import { buildInventory } from './build-inventory.mjs';
 
 const dossier = path.dirname(fileURLToPath(import.meta.url));
 const extractRoutesPath = path.join(dossier, 'extract-routes.mjs');
+const extractTaskServerRoutesPath = path.join(dossier, 'extract-taskserver-routes.mjs');
 const routesJsonPath = path.join(dossier, 'routes.json');
 
 test('routes.json is the exact output of regenerating from current frontend and backend source', () => {
@@ -21,7 +22,12 @@ test('routes.json is the exact output of regenerating from current frontend and 
     [extractRoutesPath],
     { encoding: 'utf8' },
   ));
-  const fresh = buildInventory(candidatePayload);
+  const taskServerPayload = JSON.parse(execFileSync(
+    process.execPath,
+    [extractTaskServerRoutesPath],
+    { encoding: 'utf8' },
+  ));
+  const fresh = buildInventory(candidatePayload, { taskServerPayload });
   const committed = JSON.parse(fs.readFileSync(routesJsonPath, 'utf8'));
   assert.deepEqual(fresh, committed);
 });
