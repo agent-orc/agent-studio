@@ -213,6 +213,22 @@ describe('TaskService', () => {
     expect(card.waitsOn?.items.map(item => item.resolved)).toEqual([true, false]);
   });
 
+  it('restores the task key and card defaults on a pushed card', () => {
+    const hub = TestBed.inject(JobsHubClient) as unknown as JobsHubClientStub;
+    service.startLiveUpdates();
+    http.expectOne('/api/projects/settings').flush({});
+
+    hub.handlers?.jobUpdated?.({
+      id: 'job-5', watchPath: 'C:/projects/demo', state: '2-ready', title: 'Pushed',
+      tokenSummary: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, lastModel: null, lastUpdate: null },
+    } as unknown as TaskInfo);
+
+    expect(service.jobs().map(job => job.taskKey)).toEqual(['C:/projects/demo::job-5']);
+    expect(service.grouped().ready.map(job => job.taskKey)).toEqual(['C:/projects/demo::job-5']);
+    expect(service.jobs()[0].tokenSummary).toMatchObject({ totalTokens: 17, allModelsPriced: true });
+    service.stopLiveUpdates();
+  });
+
   it('polls the board conditionally and keeps the last payload on 304', () => {
     const task = {
       id: 'job-1',

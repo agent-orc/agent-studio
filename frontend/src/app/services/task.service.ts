@@ -3212,6 +3212,10 @@ export class TaskService {
    */
   private upsertJobLocal(info: TaskInfo): void {
     if (!info || !info.id) return;
+    // A pushed card is published without the grouped snapshot pass, so restore
+    // the values a board card may leave out here as well.
+    info.taskKey ||= `${info.watchPath}::${info.id}`;
+    restoreBoardCardDefaults(info);
     const key = `${info.watchPath}::${info.id}`;
 
     const flat = this.jobs();

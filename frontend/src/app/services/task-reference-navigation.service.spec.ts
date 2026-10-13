@@ -78,6 +78,15 @@ describe('TaskReferenceNavigationService', () => {
     expect(labels).toContain('human-visible-folder-slug');
   });
 
+  it('falls back to watchPath::id for a card without a task key', () => {
+    const slim = { ...task({ id: 'slim-card', key: 'AGT-9001' }), taskKey: undefined } as unknown as TaskInfo;
+    const { service, openedTabs } = setup([slim]);
+
+    expect(service.markdownReferences()).toContainEqual({ label: 'AGT-9001', taskKey: 'C:/Projects/demo::slim-card' });
+    expect(service.openReference('AGT-9001')).toBe(true);
+    expect(openedTabs).toEqual([{ kind: 'task', taskKey: 'C:/Projects/demo::slim-card' }]);
+  });
+
   it('keeps the reference catalogue stable across equivalent task polls', () => {
     const original = task({ key: 'ASS-740' });
     const { service, jobsSignal } = setup([original]);

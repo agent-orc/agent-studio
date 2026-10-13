@@ -28,7 +28,7 @@ export class TaskReferenceNavigationService {
   private readonly jobsByTaskKey = computed(() => {
     const map = new Map<string, TaskInfo>();
     for (const job of this.currentJobs()) {
-      map.set(job.taskKey, job);
+      map.set(taskKeyOf(job), job);
     }
     return map;
   });
@@ -36,17 +36,18 @@ export class TaskReferenceNavigationService {
   readonly markdownReferences = computed<readonly MarkdownTaskReference[]>(() => {
     const references: MarkdownTaskReference[] = [];
     for (const job of this.currentJobs()) {
+      const taskKey = taskKeyOf(job);
       const labels = new Set<string>();
       if (job.key) labels.add(job.key);
       if (job.id) labels.add(job.id);
-      const taskKeyTail = job.taskKey.includes('::')
-        ? job.taskKey.slice(job.taskKey.lastIndexOf('::') + 2)
-        : job.taskKey;
+      const taskKeyTail = taskKey.includes('::')
+        ? taskKey.slice(taskKey.lastIndexOf('::') + 2)
+        : taskKey;
       if (taskKeyTail) labels.add(taskKeyTail);
       const folderSlug = folderName(job.folderPath);
       if (folderSlug) labels.add(folderSlug);
       for (const label of labels) {
-        references.push({ label, taskKey: job.taskKey });
+        references.push({ label, taskKey });
       }
     }
     return references;
@@ -56,7 +57,7 @@ export class TaskReferenceNavigationService {
     if (!taskKey) return false;
     const job = this.jobsByTaskKey().get(taskKey);
     if (!job) return false;
-    this.tabs.open({ kind: 'task', taskKey: job.taskKey });
+    this.tabs.open({ kind: 'task', taskKey });
     this.selection.openDetail(job);
     return true;
   }
@@ -81,6 +82,14 @@ export class TaskReferenceNavigationService {
     if (typeof source === 'function') return source() as readonly TaskInfo[];
     return Array.isArray(source) ? source as readonly TaskInfo[] : [];
   }
+}
+
+/**
+ * Board cards leave out a task key that equals `{watchPath}::{id}`. TaskService
+ * restores it, but one card without it must not break every markdown view.
+ */
+function taskKeyOf(job: TaskInfo): string {
+  return job.taskKey || `${job.watchPath}::${job.id}`;
 }
 
 function folderName(path: string | null | undefined): string | null {
