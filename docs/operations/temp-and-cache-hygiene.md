@@ -137,6 +137,33 @@ six-hour sweep. A verify command avoids it up front:
 `MSBUILDDISABLENODEREUSE=1` and `-nodeReuse:false` are already part of the
 review attempt environment and of the frozen plan.
 
+### Provider CLIs are stubbed below the suite root (AGT-3087)
+
+Services built without `ClaudeCli:Path` fall back to the bare name `claude`,
+and on a runner host that is the real npm-installed CLI. On 12.10.2026 the
+runner host measured about 90 real `claude -p` spawns a minute from
+`OrchestratorApi.Tests` and 76,269 leftover `~/.claude/projects/-tmp-ats-*`
+transcript folders. So `Redirect()` also calls
+`AgentStudio.TestSupport.TestCliGuard.Install()`. It writes a stub to
+`<suiteRoot>/cli-guard/claude` (`claude.cmd` on Windows) and puts that
+directory first on the process `PATH`:
+
+- `claude --version` prints `99.0.0 (agent-studio test guard)` and exits 0,
+  so availability probes and model admission keep working.
+- Any other call logs one line (`claude`, cwd, argv) to
+  `<suiteRoot>/cli-guard/invocations/`, drains stdin for `-p`, prints
+  `agent-studio test guard: the real claude CLI is not available in tests` to
+  stderr and exits 1.
+
+An explicitly configured `ClaudeCli:Path` (a `StubCli` script,
+`fake-cli.mjs`) is not affected. `CLAUDE_CONFIG_DIR` is left alone. To keep
+the invocation log after the suite root is deleted, set
+`AGENT_STUDIO_TEST_CLI_GUARD_LOG` to an absolute directory outside it. The
+tripwire `TestCliGuardTests.No_claude_transcript_carries_the_suite_root_token`
+fails when a transcript folder carries this host's `ats-<token>`. Clean up the
+old folders by hand: check the naming on the host first, then delete only the
+`~/.claude/projects` entries whose name starts with `-tmp-ats-`.
+
 ## 2. Review attempts: the executor empties its own temp
 
 `RemoteReviewWorkspace` roots every writable path of an attempt under the
