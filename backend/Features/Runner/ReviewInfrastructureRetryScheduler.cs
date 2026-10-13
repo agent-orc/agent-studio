@@ -214,6 +214,10 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
     /// every attempt means a corrected setting costs exactly one attempt. The
     /// immutable ReviewSubject identity (result SHA, requirements, policy,
     /// evidence) is unchanged; only the execution plan is renewed.
+    /// After a ReviewInfra outcome the fresh plan also names the failed
+    /// attempt whose passed verify results the executor may carry over
+    /// (<see cref="ReviewVerifyReusePolicy"/>); only commands of this plan that
+    /// still match are reused.
     /// </summary>
     public AttemptWriteResult CreateFreshSuccessor(ReviewAttemptDto review, TaskInfo task, string deliveryKey,
         bool linkTerminalReview = true)
@@ -232,6 +236,9 @@ public sealed class ReviewInfrastructureRetryScheduler : BackgroundService
             review.Subject.ExpectedResultSha,
             RemoteReviewPlanBuilder.DeliveryChangedFiles(
                 _git, repositoryPath, integrationRef, review.Subject.ExpectedResultSha));
+        var reuseSources = ReviewVerifyReusePolicy.SourceAttemptIds(review);
+        if (reuseSources.Count > 0)
+            plan = plan with { VerifyReuseFromAttemptIds = reuseSources };
 
         return _lifecycle.CreateReviewAttemptInAutoReview(task, new CreateReviewAttemptRequest(
             review.TaskKey,

@@ -2,14 +2,15 @@ namespace AgentRunner;
 
 /// <summary>
 /// Removes abandoned remote-review attempt workspaces after a fixed safety
-/// window. The reusable baseline cache and every attempt the daemon still owns
-/// are outside the deletion set.
+/// window. The reusable baseline, verify and dependency caches and every attempt
+/// the daemon still owns are outside the deletion set.
 /// </summary>
 internal static class ReviewWorkspaceRetention
 {
     internal static readonly TimeSpan MaximumOrphanAge = TimeSpan.FromHours(72);
     private const string BaselineCacheDirectoryName = ".baseline-cache";
     private const string DependencyCacheDirectoryName = ".dependency-cache";
+    private const string VerifyCacheDirectoryName = ".verify-cache";
     private const string AttemptDirectoryPrefix = "review-";
 
     internal static ReviewWorkspaceRetentionResult Sweep(
@@ -34,7 +35,7 @@ internal static class ReviewWorkspaceRetention
         foreach (var directory in Directory.EnumerateDirectories(root))
         {
             var info = new DirectoryInfo(directory);
-            if (info.Name is BaselineCacheDirectoryName or DependencyCacheDirectoryName)
+            if (info.Name is BaselineCacheDirectoryName or DependencyCacheDirectoryName or VerifyCacheDirectoryName)
                 continue;
             if (!info.Name.StartsWith(AttemptDirectoryPrefix, StringComparison.Ordinal))
             {

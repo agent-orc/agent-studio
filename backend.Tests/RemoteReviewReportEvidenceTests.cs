@@ -193,6 +193,70 @@ public sealed class RemoteReviewReportEvidenceTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-2841: a ReviewInfra successor that carried a passed verify result
+    /// over from the failed attempt says so in the grade and in the card
+    /// projection; the command it executed itself reads as executed.
+    /// </summary>
+    [Fact]
+    public async Task Reused_verify_result_is_cited_in_the_grade_and_in_the_card_projection()
+    {
+        Directory.CreateDirectory(_root);
+        var head = new string('a', 40);
+        var reused = Command("verify-1", "candidate", head, null) with
+        {
+            ExitCode = 0,
+            VerifyReusedFromAttemptId = "review_failed",
+            VerifyReusedAgeSeconds = 240,
+        };
+        var executed = Command("verify-2", "candidate", head, null) with { ExitCode = 0 };
+        var request = Request(head, [reused, executed]) with
+        {
+            Outcome = "Pass",
+            FailureClassification = null,
+        };
+
+        var reportFile = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "review_successor", "subject-1", request, new string('c', 64),
+            new DateTime(2026, 10, 12, 21, 4, 0, DateTimeKind.Utc), default);
+
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        Assert.Contains("verifyReused: true", report, StringComparison.Ordinal);
+        Assert.Contains(
+            "verifyReuse: \"verify-1: verify result reused from attempt review_failed (4m)\"",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "| verify result reused from attempt review_failed (4m) |",
+            report,
+            StringComparison.Ordinal);
+        Assert.Contains("| executed in this attempt |", report, StringComparison.Ordinal);
+
+        var attempt = Assert.Single(
+            AgentStudio.Review.ReviewProjectionReader.Read(Job(_root), [], null).Attempts);
+        Assert.True(attempt.VerifyReused);
+        Assert.Equal("verify-1: verify result reused from attempt review_failed (4m)", attempt.VerifyReuse);
+    }
+
+    [Fact]
+    public async Task Verify_commands_executed_by_this_attempt_are_not_reported_as_reused()
+    {
+        Directory.CreateDirectory(_root);
+        var head = new string('a', 40);
+        var request = Request(head, [Command("verify-2", "candidate", head, null)]);
+
+        var reportFile = await RemoteReviewReportEvidence.WriteAsync(
+            _root, "review_now", "subject-1", request, new string('c', 64),
+            new DateTime(2026, 10, 12, 21, 4, 0, DateTimeKind.Utc), default);
+
+        var report = await File.ReadAllTextAsync(Path.Combine(_root, reportFile));
+        Assert.DoesNotContain("verifyReused:", report, StringComparison.Ordinal);
+        var attempt = Assert.Single(
+            AgentStudio.Review.ReviewProjectionReader.Read(Job(_root), [], null).Attempts);
+        Assert.False(attempt.VerifyReused);
+        Assert.Null(attempt.VerifyReuse);
+    }
+
+    /// <summary>
     /// AGT-2863: a review-daemon restart adopts running detached workers, so the
     /// build that graded an attempt can be older than the daemon that reported
     /// it. Executor and fence cannot tell those apart; the grade file names the

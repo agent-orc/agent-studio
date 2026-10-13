@@ -114,7 +114,16 @@ public sealed record ReviewPlanDto(
     bool BuildTestDeferredToBatch = false,
     string? TaskMode = null,
     string? TestLevel = null,
-    string? TestSelectionDigest = null);
+    string? TestSelectionDigest = null,
+    /// <summary>
+    /// Terminal ReviewInfra attempts of the same ReviewSubject whose passed
+    /// deterministic verify results this attempt may reuse instead of
+    /// re-executing (AGT-2841). Only the executor can tell whether a stored
+    /// result still matches the command line and its own toolchain, so this
+    /// names the eligible source attempts and never a result. Null or empty
+    /// means every command runs.
+    /// </summary>
+    IReadOnlyList<string>? VerifyReuseFromAttemptIds = null);
 
 public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 
@@ -368,7 +377,14 @@ public sealed record ReviewCommandEvidenceDto(
     /// <summary>Failed test names observed passing in a class-only clean repeat.</summary>
     IReadOnlyList<string>? RepeatObservedTests = null,
     /// <summary>Original candidate failures, retained after a repeat clears comparison failures.</summary>
-    IReadOnlyList<string>? InitialFailures = null);
+    IReadOnlyList<string>? InitialFailures = null,
+    /// <summary>
+    /// The earlier attempt whose passed result this candidate verify command
+    /// carries instead of executing again (AGT-2841). Null means the command
+    /// ran in this attempt.
+    /// </summary>
+    string? VerifyReusedFromAttemptId = null,
+    long VerifyReusedAgeSeconds = 0);
 
 /// <summary>
 /// The one word every surface uses for a test failure that a targeted re-run
@@ -404,6 +420,21 @@ public static class ReviewBaselineReuse
         if (age.TotalHours < 1) return $"{(int)age.TotalMinutes}m";
         return $"{(int)age.TotalHours}h {age.Minutes}m";
     }
+}
+
+/// <summary>
+/// One sentence for a passed candidate verify result that a ReviewInfra
+/// successor carried over from the failed attempt instead of executing again
+/// (AGT-2841). The executor's verdict summary, the Markdown grade, and the card
+/// review projection all read this, as they do for
+/// <see cref="ReviewBaselineReuse"/>.
+/// </summary>
+public static class ReviewVerifyReuse
+{
+    public const string ExecutedInThisAttempt = "executed in this attempt";
+
+    public static string Citation(string attemptId, long ageSeconds)
+        => $"verify result reused from attempt {attemptId} ({ReviewBaselineReuse.DescribeAge(ageSeconds)})";
 }
 
 public sealed record ReviewCommandBudgetEvidenceDto(

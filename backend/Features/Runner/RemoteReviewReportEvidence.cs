@@ -82,6 +82,12 @@ internal static class RemoteReviewReportEvidence
             text.AppendLine("baselineReused: true");
             text.AppendLine($"baselineReuse: {Yaml(baselineReuse)}");
         }
+        var verifyReuse = VerifyReuseCitations(request.Commands);
+        if (verifyReuse is not null)
+        {
+            text.AppendLine("verifyReused: true");
+            text.AppendLine($"verifyReuse: {Yaml(verifyReuse)}");
+        }
         text.AppendLine("---");
         text.AppendLine();
         text.AppendLine("# Remote Review Grade");
@@ -147,8 +153,8 @@ internal static class RemoteReviewReportEvidence
         }
         else
         {
-            text.AppendLine("| Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors | Baseline |");
-            text.AppendLine("| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- |");
+            text.AppendLine("| Phase | Workspace | Step | Location | Host / executor | Command | Exit | Budget | Output | Errors | Baseline | Result |");
+            text.AppendLine("| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |");
             foreach (var command in request.Commands)
             {
                 var budget = command.Budget is null
@@ -162,7 +168,7 @@ internal static class RemoteReviewReportEvidence
                     $"`{Cell(CommandLine(command))}` | {Cell(command.ExitCode?.ToString() ?? command.Signal ?? "n/a")} | " +
                     $"{Cell(budget)} | {ArtifactLink("stdout", command.StdoutSha256, artifactFiles)} | " +
                     $"{ArtifactLink("stderr", command.StderrSha256, artifactFiles)} | " +
-                    $"{Cell(BaselineProvenance(command))} |");
+                    $"{Cell(BaselineProvenance(command))} | {Cell(ResultProvenance(command))} |");
             }
         }
 
@@ -244,6 +250,30 @@ internal static class RemoteReviewReportEvidence
             .Select(command => Contract.ReviewBaselineReuse.Citation(
                 command.BaselineReusedFromAttemptId!,
                 command.BaselineReusedAgeSeconds))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return citations.Count == 0 ? null : string.Join("; ", citations);
+    }
+
+    /// <summary>
+    /// Whether this command ran in this attempt or carried a passed result over
+    /// from the failed attempt it succeeds (AGT-2841).
+    /// </summary>
+    private static string ResultProvenance(Contract.ReviewCommandEvidenceDto command)
+        => string.IsNullOrWhiteSpace(command.VerifyReusedFromAttemptId)
+            ? Contract.ReviewVerifyReuse.ExecutedInThisAttempt
+            : Contract.ReviewVerifyReuse.Citation(
+                command.VerifyReusedFromAttemptId,
+                command.VerifyReusedAgeSeconds);
+
+    private static string? VerifyReuseCitations(
+        IReadOnlyList<Contract.ReviewCommandEvidenceDto> commands)
+    {
+        var citations = commands
+            .Where(command => !string.IsNullOrWhiteSpace(command.VerifyReusedFromAttemptId))
+            .Select(command => $"{command.StepId}: " + Contract.ReviewVerifyReuse.Citation(
+                command.VerifyReusedFromAttemptId!,
+                command.VerifyReusedAgeSeconds))
             .Distinct(StringComparer.Ordinal)
             .ToList();
         return citations.Count == 0 ? null : string.Join("; ", citations);

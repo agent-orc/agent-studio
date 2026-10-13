@@ -757,7 +757,7 @@ identity values such as `RUNNER_ID=agent-runner-01` are not renamed.
 | `RUNNER_BASE_BRANCH` | `--base-branch` | `main` | Fallback when the task branch is absent on origin. |
 | `RUNNER_WORKDIR` | `--workdir` | `$TMPDIR/agent-runner-work` | Where repo checkouts, result files, and attempt evidence live. |
 | `RUNNER_ROLE` | `--role` | `coding` | `coding`, the separately registered `review` service, or the separately registered `gate` service. The gate role uses its own runner identity, credential, state directory, and disposable `RUNNER_REVIEW_WORKDIR`; see the [claimable gate contract](../../system/domains/runner.md#claimable-gate-host-and-task-api). |
-| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` is preserved; see [Baseline verify result cache](#baseline-verify-result-cache). |
+| `RUNNER_REVIEW_WORKDIR` | `--review-workdir` | `$TMPDIR/agent-review-work` | Disposable review-only workspace, cache, temp, and evidence root. Must differ from `RUNNER_WORKDIR`. Settled attempt workspaces are removed after report acceptance; inactive attempt remnants older than 72 hours are swept hourly. The reusable `.baseline-cache` and `.verify-cache` are preserved; see [Baseline verify result cache](#baseline-verify-result-cache) and [Verify result reuse after ReviewInfra](#verify-result-reuse-after-reviewinfra). |
 | `RUNNER_REVIEW_CREDENTIAL_ENV` | `--review-credential-env` | (none) | Comma-separated read-only credential variable names admitted into the cleared review environment. |
 | `RUNNER_REVIEW_NO_CPU_PROGRESS_SECONDS` | `--review-no-cpu-progress-seconds` | `900` | Floor for the hang watchdog on review commands. A command's whole process tree must burn at least one percent of one core within the *effective* window; otherwise the tree is killed and the attempt is reported as `ReviewInfra/NoCpuProgress`. The effective window is `max(this value, 50%` of that command's own budget`)` (AGT-2851), so a legitimately quiet suite with a large budget is not killed for sitting near 0% CPU during a real test wait. `0` disables the watchdog outright, ignoring the budget-derived floor. Linux only: the tree's CPU time is read from `/proc`. See [Review parallelism and build-server isolation](#review-parallelism-and-build-server-isolation). |
 | `RUNNER_STATE_DIR` | `--state-dir` | `$RUNNER_WORKDIR/.runner-state` | Durable slot, attempt, PID, worker result, and file-backed output state used for planned restart reattachment. Keep it on persistent local storage. |
@@ -1576,6 +1576,35 @@ sudo systemctl start agent-runner-review
 
 To drop one repository or one baseline only, delete the matching
 `<repository-hash>` or `<baseline-sha>` subdirectory instead of the whole tree.
+
+### Verify result reuse after ReviewInfra
+
+When a review ends `ReviewInfra` (an aspect timeout, a missing tool, ...), its
+automatic successor carries the build, test and lint results that already
+passed instead of running them again (AGT-2841). The executor stores every
+passed verify command under
+`$RUNNER_REVIEW_WORKDIR/.verify-cache/<repository-hash>/<result-sha>/<command-hash>.<toolchain>.json`
+with the complete stdout and stderr. Only a successor whose plan names the
+failed attempt (its direct predecessor) reads an entry, and only for the same
+Result-SHA, command line and toolchain; failed results are never stored, and a
+command that executes drops its stored entry first. A reused entry is stored
+again under the successor's attempt id. Entries older than 24 hours are pruned,
+and a Result-SHA whose review settles without `ReviewInfra` loses all its
+entries. The store is per host, so a successor on another review host runs
+every command.
+
+The grade shows the reuse as `verifyReused: true`, a `Result` column in the
+command evidence table, and `verify result reused from attempt <id> (<age>)` in
+the verdict summary; that grade is the place to check it. The review commands
+run in the detached review worker, which does not write workspace log lines to
+the journal, so there is no journal line for a reuse or a failed store.
+Clearing the tree is always safe; the next successor simply runs the commands:
+
+```bash
+sudo systemctl stop agent-runner-review
+sudo -u agent-review rm -rf "$RUNNER_REVIEW_WORKDIR/.verify-cache"
+sudo systemctl start agent-runner-review
+```
 
 ### Multi-repository clone layout and eligibility
 
