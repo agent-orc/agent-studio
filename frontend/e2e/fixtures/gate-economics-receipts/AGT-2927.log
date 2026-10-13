@@ -1,0 +1,49 @@
+verdict=Fail exit=1 durationMs=3055919 failureKind=Code
+expectedSha=c6673af8d85ab1439d79b3a684567027c6374ea8 testedSha=c6673af8d85ab1439d79b3a684567027c6374ea8
+reason=`dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound` exit 1; failed: AgentStudio.Tests.PromptEnrichmentServiceTests.Prepare_AgentStudioRepository_PreservesCatalogueBlocks, AgentStudio.Tests.TaskIndexCacheTests.MutationDuringInFlightRefresh_WaitsAndDrivesOneFreshFollowup; Total tests: 7735 Passed: 7710 Failed: 2 Skipped: 23; test-level=full; selected=4; full-suite=not-run; omitted=3
+verdictSource=Executed originalRunId=54dd88de96a54c5d9b77d4fb7afe0007 originalCompletedAtUtc=2026-09-29T00:28:23.3429404+00:00 originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=1 toolchainIdentity=n/a
+testSelectionAuditDigest=359d2e72396b5b7ec52595d868128f6d9b1061e7233b541006955852710c793a
+reviewReuse=full attempt=review_cd85f8a679a246189517f1423d55b260 reason=develop moved since the review: tip is 9154dbd1, the review verified 9afa702f
+budget=none
+retryPerformed=true classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+--- test-selection.json ---
+{
+  "Digest": "359d2e72396b5b7ec52595d868128f6d9b1061e7233b541006955852710c793a",
+  "Level": "full",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "backend.Tests/DecisionCardPolicyTests.cs",
+    "backend.Tests/DecisionCardServiceTests.cs",
+    "backend.Tests/PublicDemoExecutionProfileTests.cs"
+  ],
+  "DiffStatuses": [],
+  "HistoryInput": [],
+  "Candidates": [],
+  "SelectedCandidateIds": [],
+  "SelectedCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "AttemptedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"
+  ],
+  "UnmappedSourceDirectories": [],
+  "SelectedTestClasses": [],
+  "OmittedTestCommands": [
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "folder-to-test-project map is missing",
+    "unmapped changed path: backend.Tests/DecisionCardPolicyTests.cs",
+    "unmapped changed path: backend.Tests/DecisionCardServiceTests.cs",
+    "unmapped changed path: backend.Tests/PublicDemoExecutionProfileTests.cs"
+  ],
+  "Selector": "deterministic-map-full-fallback",
+  "FullSuiteRequired": true,
+  "FullSuiteRan": false
+}
