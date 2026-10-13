@@ -47,6 +47,7 @@ public sealed partial class MergeIntoDevelopRunner
     private readonly BatchIntegrationReservationService? _batchReservations;
     private readonly BatchGateStore? _batchGates;
     private readonly PipelineHealthService? _pipelineHealth;
+    private readonly TimeProvider _gateTime;
     private readonly TimeSpan? _preMainTimeout;
     private readonly TimeSpan? _preDevelopTimeout;
     private readonly Func<int, TimeSpan> _environmentalBackoff;
@@ -95,8 +96,10 @@ public sealed partial class MergeIntoDevelopRunner
         RefMutationLeaseService? refMutationLeases = null,
         BatchIntegrationReservationService? batchReservations = null,
         BatchGateStore? batchGates = null,
-        PipelineHealthService? pipelineHealth = null)
+        PipelineHealthService? pipelineHealth = null,
+        TimeProvider? timeProvider = null)
     {
+        _gateTime = timeProvider ?? TimeProvider.System;
         _git = git;
         _pipelineLog = pipelineLog;
         _logger = logger;
@@ -249,6 +252,7 @@ public sealed partial class MergeIntoDevelopRunner
         string? reviewedResultSha,
         CancellationToken ct)
     {
+        var cancellationSubject = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, reviewedResultSha);
         var startedAt = DateTime.UtcNow;
         var strategy = IntegrationStrategies.Normalize(integrationStrategy);
         try
@@ -382,7 +386,7 @@ public sealed partial class MergeIntoDevelopRunner
             // The synchronized local tips a refused publication restores. Every
             // local mutation below stays unpublished until the fence admits it.
             var fenceAnchors = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (publicationFence is not null && synchronized.Success)
+            if (synchronized.Success)
             {
                 foreach (var anchored in lineage?.Mode == ImmediateIntegrationLineageMode.DevelopThenMain
                              ? new[] { branch, "develop" }
@@ -580,15 +584,51 @@ public sealed partial class MergeIntoDevelopRunner
                 }
                 pushDecidedByFence = true;
             }
+            var cancelledGate = preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                ? preMainResult : preDevelopResult?.FailureKind == BuildTestGateFailureKind.Cancellation
+                    ? preDevelopResult : null;
+            var shutdownCancellation = false;
+            if (cancelledGate is not null)
+            {
+                var live = CaptureCancellationSubject(jobId, watchPath, jobFolderPath, null);
+                var reason = GateCancellationPolicy.Decide(cancellationSubject.Sha, live.Sha,
+                    cancellationSubject.Lane, live.Lane, live.ContinuePending,
+                    ct.IsCancellationRequested, cancelledGate.CancellationReason);
+                cancelledGate = GateCancellationPolicy.Apply(cancelledGate, reason);
+                if (preMainResult?.FailureKind == BuildTestGateFailureKind.Cancellation) preMainResult = cancelledGate;
+                else preDevelopResult = cancelledGate;
+                _timeline?.Append(live.Folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime, Kind = "gate-cancelled",
+                    Actor = TimelineActors.System, Summary = cancelledGate.Reason,
+                    Details = new Dictionary<string, string> { ["reason"] = reason },
+                });
+                // The gate already refused publication. Restore all captured
+                // anchors before treating a cancelled merge as routine recovery.
+                var rolledBack = RollBackSupersededPublication(repoRoot, fenceAnchors, out var clean);
+                pushBranch = null;
+                if (!clean) result = rolledBack;
+                else if (reason == GateCancellationReasons.Superseded)
+                {
+                    supersededCleanly = true;
+                    result = rolledBack with { FailureCode = AcceptedIntegrationFailureCodes.StaleAttempt };
+                }
+                else if (reason == GateCancellationReasons.Shutdown)
+                {
+                    shutdownCancellation = true;
+                    result = MergeIntoIntegrationResult.Failed(
+                        AcceptedIntegrationFailureCodes.GateInterrupted, cancelledGate.Reason);
+                }
+            }
             // A cleanly rolled-back supersession is routine, not a failure; only
             // a failed rollback needs the operator.
             var unverifiedBranch = verification?.Decision.Action == IntegrationVerificationAction.FailUnverified;
             result = await ConcludeAsync(
                 project, jobId, jobFolderPath, watchPath, taskBranch, branch, strategy,
                 result, preMainResult, preDevelopResult, startedAt, ct,
-                raiseIntervention: !supersededCleanly && !unverifiedBranch,
+                raiseIntervention: !supersededCleanly && !shutdownCancellation && !unverifiedBranch,
                 approvedPushSha: approvedPushSha).ConfigureAwait(false);
-            if (!supersededCleanly && unverifiedBranch)
+            if (!supersededCleanly && !shutdownCancellation && unverifiedBranch)
             {
                 await RaiseUnverifiedBranchCauseAsync(jobId, watchPath, verification!, startedAt, ct)
                     .ConfigureAwait(false);
@@ -2071,6 +2111,10 @@ public sealed partial class MergeIntoDevelopRunner
         BuildTestGateResult? preMainResult,
         BuildTestGateResult? preDevelopResult)
     {
+        if ((preMainResult ?? preDevelopResult)?.CancellationReason == GateCancellationReasons.Superseded
+            && result.FailureCode == AcceptedIntegrationFailureCodes.StaleAttempt)
+            return (PipelineStepStatus.Skipped, GateCancellationReasons.Superseded,
+                "Gate cancelled: superseded.", null);
         switch (result.Outcome)
         {
             case MergeIntoIntegrationOutcome.Merged:

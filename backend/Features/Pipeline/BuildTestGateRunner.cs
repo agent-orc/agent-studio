@@ -281,6 +281,9 @@ public sealed record BuildTestGateResult(
     /// </summary>
     public IReadOnlyList<string> UnmetRequirements { get; init; } = [];
 
+    /// <summary>Lifecycle classification supplied by the cancellation owner.</summary>
+    public string? CancellationReason { get; init; }
+
     public bool IsInfrastructureFailure => FailureKind is not BuildTestGateFailureKind.None
         and not BuildTestGateFailureKind.Code;
 }
