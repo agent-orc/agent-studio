@@ -177,7 +177,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
                     [ExecutionAdmissionPath.Review] = 9,
                     [ExecutionAdmissionPath.Chat] = 9,
                     [ExecutionAdmissionPath.Preview] = 26,
-                    [ExecutionAdmissionPath.PostStep] = 12,
+                    [ExecutionAdmissionPath.PostStep] = 13,
                 },
                 routes.GroupBy(route => route.Metadata.GetMetadata<ExecutionRouteMetadata>()!.Path)
                     .ToDictionary(group => group.Key, group => group.Count()));
