@@ -446,15 +446,37 @@ public sealed class GateEnvironmentRetryService
                 : $"Gate-environment retry {rung}/{maximum} replayed the integration of "
                   + $"{Short(deliverySha)} into {evaluation.IntegrationBranch}, reusing the passed review.");
 
-        var result = await _runner.RunAsync(
-            job.ProjectName,
-            job.Id,
-            job.FolderPath,
-            job.WatchPath,
-            evaluation.IntegrationBranch,
-            ct,
-            evaluation.IntegrationStrategy,
-            PipelineTypes.Resolve(job)).ConfigureAwait(false);
+        var now = _time.GetUtcNow();
+        var prior = IntegrationLaneEvents.Read(job.FolderPath);
+        var sequence = Math.Max(now.UtcTicks, prior.Select(e => e.Sequence).DefaultIfEmpty(0).Max() + 1);
+        using var deliveryScope = IntegrationLaneEvents.BeginDelivery(sequence);
+        var deliveredAt = ReviewSubjectStore.Read(job.FolderPath)?.CompletedAtUtc;
+        IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id, "enqueued",
+            deliveredAtUtc: deliveredAt, reason: "gate-environment-retry", atUtc: now);
+        IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id, "dequeued", atUtc: now);
+        MergeIntoIntegrationResult result;
+        try
+        {
+            result = await _runner.RunAsync(
+                job.ProjectName,
+                job.Id,
+                job.FolderPath,
+                job.WatchPath,
+                evaluation.IntegrationBranch,
+                ct,
+                evaluation.IntegrationStrategy,
+                PipelineTypes.Resolve(job)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id, "ejected",
+                outcome: "error", reason: ex.Message, atUtc: _time.GetUtcNow());
+            throw;
+        }
+        IntegrationLaneEvents.Append(job.FolderPath, job.ProjectName, job.Id,
+            result.Outcome.IsSuccessfulIntegration() ? "ready-to-publish" : "ejected",
+            outcome: result.Outcome.ToString(), reason: result.Error,
+            receipt: result.MergedSha, atUtc: _time.GetUtcNow());
 
         RecordOutcome(job, evaluation, result, rung, maximum, source);
         return new GateEnvironmentRetryResult(
