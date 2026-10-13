@@ -57,8 +57,8 @@ export class ExecutionLocationBadgeComponent {
         ? `Latest rejection: Runner ${value.lastRejection.runnerName || value.lastRejection.runnerId} rejected: ${value.lastRejection.reason}`
         : null,
       value.lastRunnerEvent ? `Last runner event: ${value.lastRunnerEvent}` : null,
-      `Connection: ${value.connectionState}; lease: ${value.leaseState}`,
-      `Trusted because: ${value.trustReason}`,
+      `Connection: ${value.connectionState ?? 'none'}; lease: ${value.leaseState ?? 'none'}`,
+      value.trustReason ? `Trusted because: ${value.trustReason}` : null,
     ];
     return lines.filter(Boolean).join('\n');
   });

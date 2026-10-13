@@ -77,11 +77,11 @@ public sealed class WaitsOnEndpointsTests : IDisposable
 
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
         Assert.Equal("LIB-1", item.GetProperty("key").GetString());
-        Assert.True(item.GetProperty("resolved").GetBoolean());       // target exists
-        Assert.False(item.GetProperty("fulfilled").GetBoolean());     // but is still open
+        Assert.True(Flag(item, "resolved"));       // target exists
+        Assert.False(Flag(item, "fulfilled"));     // but is still open
         Assert.Equal(TaskStates.Ready, item.GetProperty("targetState").GetString());
-        Assert.True(waitsOn.GetProperty("blocked").GetBoolean());
-        Assert.False(waitsOn.GetProperty("cycleDetected").GetBoolean());
+        Assert.True(Flag(waitsOn, "blocked"));
+        Assert.False(Flag(waitsOn, "cycleDetected"));
     }
 
     [Fact]
@@ -103,12 +103,22 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         var waitsOn = card.GetProperty("waitsOn");
 
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
-        Assert.True(item.GetProperty("fulfilled").GetBoolean());
-        Assert.False(waitsOn.GetProperty("blocked").GetBoolean());
-        // Navigation payload the chip needs to route to the target without a
-        // second lookup — the target is in a different project's watch path.
-        Assert.Equal("dep", item.GetProperty("targetJobId").GetString());
-        Assert.Equal(_libWatch, item.GetProperty("targetWatchPath").GetString());
+        Assert.True(Flag(item, "fulfilled"));
+        Assert.False(Flag(waitsOn, "blocked"));
+        // The board chip routes by key (the target card is on the board); the
+        // card leaves the long job id and watch path to the detail read.
+        Assert.Equal("LIB-1", item.GetProperty("key").GetString());
+        Assert.False(item.TryGetProperty("targetJobId", out _));
+        Assert.False(item.TryGetProperty("targetWatchPath", out _));
+
+        // The detail still carries the navigation payload for a target in a
+        // different project's watch path.
+        using var detail = JsonDocument.Parse(await client.GetStringAsync(
+            $"/api/tasks/consumer?watchPath={Uri.EscapeDataString(_appWatch)}"));
+        var detailItem = Assert.Single(detail.RootElement.GetProperty("info").GetProperty("waitsOn")
+            .GetProperty("items").EnumerateArray());
+        Assert.Equal("dep", detailItem.GetProperty("targetJobId").GetString());
+        Assert.Equal(_libWatch, detailItem.GetProperty("targetWatchPath").GetString());
     }
 
     [Fact]
@@ -126,10 +136,12 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
         Assert.True(item.TryGetProperty("releaseGate", out var releaseGate), item.ToString());
         Assert.True(releaseGate.GetBoolean());
-        Assert.True(item.GetProperty("waitingForRelease").GetBoolean());
-        Assert.False(item.GetProperty("targetReleased").GetBoolean());
-        Assert.False(item.GetProperty("fulfilled").GetBoolean());
-        Assert.True(waitsOn.GetProperty("blocked").GetBoolean());
+        Assert.True(Flag(item, "waitingForRelease"));
+        Assert.False(Flag(item, "targetReleased"));
+        Assert.False(Flag(item, "fulfilled"));
+        Assert.True(Flag(waitsOn, "blocked"));
+        // The release filter keeps the target visible by key.
+        Assert.Equal("LIB-1", Assert.Single(waitsOn.GetProperty("releaseTargetKeys").EnumerateArray()).GetString());
     }
 
     [Fact]
@@ -153,7 +165,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
         Assert.True(item.GetProperty("resolved").GetBoolean());
         Assert.True(item.GetProperty("fulfilled").GetBoolean());
-        Assert.False(waitsOn.GetProperty("blocked").GetBoolean());
+        Assert.False(Flag(waitsOn, "blocked"));
     }
 
     [Fact]
@@ -175,7 +187,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 
         var waitsOn = doc.RootElement.GetProperty("info").GetProperty("waitsOn");
-        Assert.True(waitsOn.GetProperty("cycleDetected").GetBoolean());
+        Assert.True(Flag(waitsOn, "cycleDetected"));
     }
 
     [Fact]
@@ -269,7 +281,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         var item = Assert.Single(waitsOn.GetProperty("items").EnumerateArray());
         Assert.Equal("GHOST-9", item.GetProperty("key").GetString());
         Assert.False(item.GetProperty("resolved").GetBoolean());
-        Assert.True(waitsOn.GetProperty("blocked").GetBoolean());
+        Assert.True(Flag(waitsOn, "blocked"));
     }
 
     [Fact]
@@ -405,7 +417,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
                 $"/api/tasks/{slug}?watchPath={watchPath}"));
             var waitsOn = detail.RootElement.GetProperty("info").GetProperty("waitsOn");
             if (waitsOn.ValueKind != JsonValueKind.Null)
-                Assert.False(waitsOn.GetProperty("cycleDetected").GetBoolean());
+                Assert.False(Flag(waitsOn, "cycleDetected"));
         }
 
         using var after = JsonDocument.Parse(await client.GetStringAsync(
@@ -583,7 +595,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
         Assert.True(item.GetProperty("targetReleased").GetBoolean());
         Assert.False(item.GetProperty("waitingForRelease").GetBoolean());
         Assert.True(item.GetProperty("fulfilled").GetBoolean());
-        Assert.False(waitsOn.GetProperty("blocked").GetBoolean());
+        Assert.False(Flag(waitsOn, "blocked"));
     }
 
     [Fact]
@@ -663,6 +675,10 @@ public sealed class WaitsOnEndpointsTests : IDisposable
             .Select(line => JsonDocument.Parse(line).RootElement.Clone())
             .ToList();
     }
+
+    /// <summary>Board card flags are sparse: an absent flag is false.</summary>
+    private static bool Flag(JsonElement item, string name)
+        => item.TryGetProperty(name, out var value) && value.GetBoolean();
 
     private static JsonElement FindCard(JsonElement lane, string id)
     {

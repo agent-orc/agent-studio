@@ -90,7 +90,7 @@
       <strong>Waiting to steer</strong>
       <pre>{{ needsInput.message }}</pre>
       @if (job().pendingIntent?.mode === 'steer' && job().pendingIntent?.prompt) {
-        <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}</div>
+        <div data-testid="ready-needs-input-answer"><span>Answer:</span> {{ job().pendingIntent?.prompt }}{{ job().pendingIntent?.promptTruncated ? '…' : '' }}</div>
       }
     </section>
   }<div class="task-card__badges">
