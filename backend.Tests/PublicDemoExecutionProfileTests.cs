@@ -106,7 +106,7 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             Assert.Equal(ExecutionAdmissionPolicy.PublicDemoProfile, admission.StartupProfile);
 
             var hostedServices = factory.Services.GetServices<IHostedService>();
-            Assert.DoesNotContain(hostedServices, service => service is TaskRunnerService);
+            Assert.DoesNotContain(hostedServices, service => HostTimelineHostedService.Unwrap(service) is TaskRunnerService);
 
             var runner = factory.Services.GetRequiredService<TaskRunnerService>();
             Assert.Throws<ExecutionAdmissionDeniedException>(() =>
