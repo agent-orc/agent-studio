@@ -2221,6 +2221,21 @@ check:
 - The first `task '<key>' handed back to the local board: <outcome>` line
   passes the check. The runner logs it only after the Task Server accepted the
   completion, on the legacy and the v1 plane alike.
+- An accepted completion also has to deliver its artifacts (AGT-3095). The
+  helper takes the task key from that line and reads the same journal (the new
+  invocation, up to the deadline). If the task has an
+  `artifact-transfer outcome=ArtifactTransferFailed task=<key> ` line whose
+  reason contains `-> 409` or `invalidState`, the Task Server refused the
+  upload because the RunAttempt had already settled. Release 0.9.4 settled
+  before uploading, so every coding run lost its result files and reviewers saw
+  the result scaffold. The helper then prints the previous release and the
+  rollback command, writes
+  `action=verify-completions ... result=failed reason=artifacts-rejected`, and
+  exits nonzero. `ArtifactTooLarge` partials, skipped-only partials, a task
+  that transferred nothing, and heartbeat
+  `lease lost; terminating CLI process group: InvalidState - RunAttempt is Completed ...`
+  lines never fail the check. The heartbeat line also appears on a fixed
+  release when the server settles during the completion call.
 - If the window closes without one, the helper reports how many completions
   were rejected (`/completion -> 4xx`) or that none was attempted, prints the
   previous release and the rollback command, writes an
@@ -2233,8 +2248,17 @@ agent-runner-deploy: previous release: <previous>
 agent-runner-deploy: rollback command: sudo sh -c 'ln -sfnT /opt/agent-host/releases/<previous> /opt/agent-host/current && /usr/local/sbin/agent-runner-deploy restart-review --force && systemctl restart agent-runner.service'
 ```
 
-Rejected completions mean the release is broken for this fleet: run the printed
-command. "No completion was attempted" means the host had no finished work in
+```text
+agent-runner-deploy: release <new> is active and a completion was accepted, but 4 artifact upload(s) of that task were rejected with 409: [..] [agent-host] task 'AGT-2951' handed back to the local board: Done
+```
+
+Rejected completions or rejected artifact uploads mean the release is broken
+for this fleet: run the printed command. The Task Server logs each refused
+write as `runner-artifact-after-settlement taskKey=... attemptId=... runner=...
+state=... terminalAt=...` and raises one `artifact-upload-after-settlement`
+pipeline health alarm once a runner had writes refused for three distinct
+RunAttempts within one hour (see the
+[runner domain map](../../system/domains/runner.md)). "No completion was attempted" means the host had no finished work in
 the window, so the release is unproven rather than broken. Rerun the check once
 cards are flowing; it reads only the recorded Coding invocation's journal
 through the original deadline and waits only for the rest of the window. A
