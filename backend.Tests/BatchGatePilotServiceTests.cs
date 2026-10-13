@@ -1989,6 +1989,51 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(members.Skip(1).Select(member => member.Key), plan.ProposedMembers);
     }
 
+    [Fact]
+    [Trait("Category", "MachineBound")]
+    public void Formed_batch_release_failure_retries_remaining_ownership_after_restart()
+    {
+        BatchGateManifest manifest;
+        SeededMember[] members;
+        using (var factory = BuildFactory(authorityOnTestClock: true))
+        {
+            _ = factory.CreateClient();
+            EnableBatchGate(factory, closeSize: 3);
+            members = Enumerable.Range(0, 3).Select(index =>
+                SeedMember(factory, $"DOC-RELEASE-{index}", $"docs/release-{index}.md"))
+                .ToArray();
+            var store = factory.Services.GetRequiredService<BatchGateStore>();
+            manifest = ClosePendingBatch(factory);
+            SaveContinuation(factory, members[0]);
+            var survivorFolder = Path.Combine(_watchPath, TaskStates.AutoReview, members[1].Key);
+            var lockPath = Path.Combine(TaskPaths.LogsDir(survivorFolder),
+                "batch-gate-ownership.lock");
+            using (var blockedWrite = new FileStream(lockPath, FileMode.OpenOrCreate,
+                       FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Throws<IOException>(() => factory.Services
+                    .GetRequiredService<BatchGatePilotService>().ReconcileFormedBatches());
+            }
+
+            AssertPhase(store, manifest.BatchId, BatchPhase.Formed);
+            Assert.Null(Ownership(members[0].Key)?.BatchId);
+            Assert.Equal(manifest.BatchId, Ownership(members[1].Key)?.BatchId);
+            Assert.Contains(store.ListRecoverableManifests(), item => item.BatchId == manifest.BatchId);
+        }
+
+        using var restarted = BuildFactory(authorityOnTestClock: true);
+        _ = restarted.CreateClient();
+        restarted.Services.GetRequiredService<BatchGatePilotService>().ReconcileFormedBatches();
+
+        var recoveredStore = restarted.Services.GetRequiredService<BatchGateStore>();
+        var retired = AssertPhase(recoveredStore, manifest.BatchId, BatchPhase.Abandoned);
+        Assert.Contains(members[0].Key + ": pending-continue-intent", retired.Reason);
+        Assert.All(members, member => Assert.Null(Ownership(member.Key)?.BatchId));
+        var snapshot = BuildSnapshot(restarted) with { CloseNow = true };
+        Assert.Equal(members.Skip(1).Select(member => member.Key),
+            BatchGateLookAheadPlanner.Plan(snapshot).ProposedMembers);
+    }
+
     [Theory]
     [Trait("Category", "MachineBound")]
     [InlineData(false)]

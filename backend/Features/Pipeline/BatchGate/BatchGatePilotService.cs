@@ -594,9 +594,9 @@ public sealed class BatchGatePilotService
 
         // Closed manifests are immutable. Retire this snapshot with a per-member
         // audit reason, then let the normal planner select the eligible survivors.
+        ReturnToPending(manifest);
         State(manifest, BatchPhase.Abandoned, null, fence,
             "formed-batch-replanned; removed " + string.Join("; ", exclusions));
-        ReturnToPending(manifest);
         return true;
     }
 
