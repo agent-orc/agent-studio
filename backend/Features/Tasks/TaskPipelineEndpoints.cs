@@ -230,7 +230,7 @@ public static class TaskPipelineEndpoints
         foreach (var key in new[] { task.TaskKey, task.Id, task.Key })
         {
             if (!string.IsNullOrWhiteSpace(key) && lookup.TryGetValue(key, out var summary))
-                return TokenSummaryService.WithModelFallback(summary, task.Model);
+                return RunModelFallback.Apply(summary, task.Model);
         }
         return null;
     }

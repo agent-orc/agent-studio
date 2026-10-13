@@ -7,11 +7,11 @@ namespace AgentStudio.Tokens;
 public sealed class BetterCandidateUsageReportService
 {
     private readonly OrchestratorLog _log;
-    private readonly BusBackedProjectTokenUsageReader _tokenUsage;
+    private readonly ProjectTokenLedger _tokenUsage;
 
     public BetterCandidateUsageReportService(
         OrchestratorLog log,
-        BusBackedProjectTokenUsageReader tokenUsage)
+        ProjectTokenLedger tokenUsage)
     {
         _log = log;
         _tokenUsage = tokenUsage;

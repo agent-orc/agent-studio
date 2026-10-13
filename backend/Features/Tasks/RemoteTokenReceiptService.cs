@@ -137,7 +137,7 @@ public sealed class RemoteTokenReceiptService
         if (entries.Count == 0)
             return new RemoteTokenReceiptResult(false, 0, "The remote CLI log contains no token usage frames.");
 
-        var summary = TokenSummaryService.SummarizePerJob(entries).GetValueOrDefault(task.Id);
+        var summary = TaskTokenSummaryFold.PerJob(TokenPricing.Price(entries)).GetValueOrDefault(task.Id);
         if (summary is null)
             return new RemoteTokenReceiptResult(false, 0, "Token usage frames could not be summarized.");
 
