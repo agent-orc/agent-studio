@@ -232,6 +232,12 @@ public record TaskInfo
     public PendingIntent? PendingIntent { get; init; }
     /// <summary>A remote result held for a decision because the card brief changed after claim.</summary>
     public AgentStudio.Tasks.OlderBriefDeliveryOffer? OlderBriefDelivery { get; init; }
+    /// <summary>
+    /// AGT-3076: set on the detail read when a Human Review card's RunAttempt
+    /// is missing from the current authority epoch, so acceptance needs an
+    /// operator override. Null otherwise.
+    /// </summary>
+    public AgentStudio.Tasks.AcceptanceAttemptGap? AcceptanceAttemptGap { get; init; }
 
     /// <summary>
     /// Snapshot of the auto-mode "stuck loop" counter for this job, populated

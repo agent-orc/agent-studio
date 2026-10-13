@@ -194,13 +194,9 @@ describe('RemoteHostsPanelComponent', () => {
     expect(marker?.getAttribute('data-tone')).toBe('warn');
     expect(roleRelease?.getAttribute('title')).toContain('Stable runs 0.3.0');
 
-    // The newer review role is current, but the aggregate must take the complete
-    // release identity and warning from the stale coding role (R3).
+    // Differing role releases stay visible on their respective rows.
     const machineRelease = el.querySelector('[data-testid="remote-host-release"]');
-    expect(machineRelease?.textContent).toContain('0.2.7');
-    expect(machineRelease?.textContent).not.toContain('0.3.0');
-    expect(machineRelease?.querySelector('[data-testid="remote-host-release-drift"]')?.textContent?.trim())
-      .toBe('19d behind');
+    expect(machineRelease?.textContent).toContain('Per role');
 
     fixture.destroy();
   });

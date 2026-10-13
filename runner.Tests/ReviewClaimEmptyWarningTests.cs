@@ -49,6 +49,19 @@ public sealed class ReviewClaimEmptyWarningTests
         Assert.Null(warning.Next(new ReviewClaimResponse(status, Reason: reason), Now));
     }
 
+    [Fact]
+    public void Required_different_host_wait_is_visible_without_poll_log_spam()
+    {
+        var warning = new ReviewClaimEmptyWarning();
+        var claim = ReviewClaimEmptyResponses.Empty(
+            ReviewClaimEmptyReasons.DifferentHostRequired,
+            "Review waits for a host other than coding host 'host-a'.");
+
+        Assert.Contains("coding host 'host-a'", warning.Next(claim, Now));
+        Assert.Null(warning.Next(claim, Now.AddMinutes(1)));
+        Assert.NotNull(warning.Next(claim, Now.Add(ReviewClaimEmptyWarning.RepeatInterval)));
+    }
+
     private static ReviewClaimResponse Unclaimable(params string[] missing)
         => ReviewClaimEmptyResponses.ForQueue(
             [new ReviewUnclaimableAttemptDto("review-1", "AGT-1", Now.AddHours(-1), missing)],
