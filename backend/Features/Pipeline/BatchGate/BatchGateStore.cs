@@ -74,7 +74,7 @@ public sealed record BatchGateBaseVerdict(
 /// all later facts are append-only files carrying its digest. CreateNew and
 /// durable flush prevent retries from silently changing an existing fact.
 /// </summary>
-public sealed class BatchGateStore
+public sealed partial class BatchGateStore
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -368,6 +368,10 @@ public sealed class BatchGateStore
         var dir = BatchDirectory(manifest.BatchId);
         Directory.CreateDirectory(dir);
         WriteOnce(Path.Combine(dir, "manifest.json"), manifest);
+        lock (_deliveryIndexLock)
+        {
+            if (_deliveryIndex is not null) IndexDeliveryManifest(manifest);
+        }
         AppendState(new BatchGateState(
             manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
             null, 0, DateTimeOffset.UtcNow));

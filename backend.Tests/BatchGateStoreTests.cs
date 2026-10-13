@@ -69,6 +69,40 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Delivery_index_isolates_corruption_and_reuses_closed_manifests()
+    {
+        var manifest = Close();
+        var corrupt = _store.BatchDirectory("corrupt");
+        Directory.CreateDirectory(corrupt);
+        File.WriteAllText(Path.Combine(corrupt, "manifest.json"), "{broken");
+        var errors = new List<Exception>();
+        var reader = new BatchGateStore(_root);
+        Assert.Equal(manifest.BatchId,
+            Assert.Single(reader.FindDeliveryManifests("project", "develop", [Base], errors.Add)).BatchId);
+        Assert.Single(errors);
+
+        // Closed manifests were indexed once. Later reads only use the index,
+        // while run verdicts and replays are deliberately not cached.
+        File.WriteAllText(Path.Combine(_store.BatchDirectory(manifest.BatchId), "manifest.json"), "{broken");
+        Assert.Single(reader.FindDeliveryManifests("project", "develop", [Base], errors.Add));
+        Assert.Single(errors);
+        Assert.Empty(reader.FindDeliveryManifests("other-project", "develop", [Base], errors.Add));
+        Assert.Empty(reader.FindDeliveryManifests("project", "main", [Base], errors.Add));
+        Assert.Empty(reader.FindDeliveryManifests("project", "develop", [Next], errors.Add));
+    }
+
+    [Fact]
+    public void Closing_a_manifest_updates_an_initialized_delivery_index()
+    {
+        var errors = new List<Exception>();
+        Assert.Empty(_store.FindDeliveryManifests("project", "develop", [Base], errors.Add));
+        var manifest = Close();
+        Assert.Equal(manifest.BatchId,
+            Assert.Single(_store.FindDeliveryManifests("project", "develop", [Base], errors.Add)).BatchId);
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void PendingReviewIsDurableIdempotentAndSequenced()
     {
         var first = _store.Enqueue(new BatchGatePendingRecord(
