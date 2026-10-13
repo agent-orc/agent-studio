@@ -1025,6 +1025,61 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Empty(recorder.Entries);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DivergedLane_CompletedCardFallsBackOnlyWhenDeliveryIsMissing(bool publishDelivery)
+    {
+        var deliverySha = PublishDelivery("guarded-delivery.txt", "reviewed work\n");
+        var deps = Build(deliverySha, backgroundIntegration: true);
+        var reviewed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        File.WriteAllText(Path.Combine(reviewed.FolderPath, "status.md"), "# Status\n\n- Result: Success\n");
+        var moved = deps.States.MoveJob(Slug, TaskStates.Completed, _watchPath);
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+
+        RunGit(_repo, "checkout", "-q", "-b", "unpublished", "origin/develop");
+        File.WriteAllText(Path.Combine(_repo, "unpublished.txt"), "still pending\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "pending delivery");
+        RunGit(_repo, "checkout", "-q", "-b", "lane-build", "origin/develop");
+        RunGit(_repo, "merge", "-q", "--no-ff", "-m", "pending merge", "unpublished");
+        var laneSha = Git(_repo, "rev-parse", "HEAD").Out.Trim();
+        RunGit(_repo, "update-ref", GitService.IntegrationLaneRef("develop"), laneSha);
+        RunGit(_repo, "checkout", "-q", "main");
+        RunGit(_repo, "branch", "-D", "lane-build");
+
+        RunGit(_repo, "checkout", "-q", "-b", "operator-candidate", "origin/develop");
+        if (publishDelivery)
+            RunGit(_repo, "merge", "-q", "--no-ff", "-m", "published delivery", deliverySha);
+        File.WriteAllText(Path.Combine(_repo, "operator.txt"), "operator change\n");
+        RunGit(_repo, "add", "-A");
+        RunGit(_repo, "commit", "-q", "-m", "operator candidate");
+        RunGit(_repo, "push", "-q", "origin", "operator-candidate:develop");
+        RunGit(_repo, "checkout", "-q", "main");
+
+        var git = new GitService(NullLogger<GitService>.Instance, deps.Scanner, deps.Configuration);
+        Assert.Equal(_repo, git.ResolveRepoRootForWatchPath(_watchPath));
+        Assert.Equal(publishDelivery ? PublishedDeliveryContainment.Contained : PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        var workerLog = new RecordingLogger<AcceptedIntegrationWorker>();
+        var worker = new AcceptedIntegrationWorker(
+            deps.AcceptedQueue!, deps.Merge, deps.Scanner, deps.Mutations, deps.Provenance,
+            workerLog, deps.Transitions, deps.Timeline, git);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(_watchPath, completed.WatchPath);
+        Assert.True(AcceptanceIntegrationPolicy.IsIntegrationRequired(completed));
+        var result = await worker.ProcessAsync(new AcceptedIntegrationRequest(
+            Project, Slug, completed.FolderPath, _watchPath, "develop", IntegrationStrategies.DirectMerge));
+
+        Assert.Equal(MergeIntoIntegrationOutcome.Error, result.Outcome);
+        Assert.Contains("unpublished", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(publishDelivery ? PublishedDeliveryContainment.Contained : PublishedDeliveryContainment.Missing,
+            git.CheckPublishedDelivery(_repo, "develop", deliverySha));
+        Assert.True(deps.Scanner.FindJob(Slug, _watchPath)!.State
+                    == (publishDelivery ? TaskStates.Completed : TaskStates.HumanReview),
+            string.Join("\n", workerLog.Snapshot().Select(entry => entry.Message)));
+    }
+
     /// <summary>
     /// AGT-2793 requirement 2(a): the live pre-Human-Review merge, not the
     /// legacy <see cref="AcceptedIntegrationWorker"/>, is the path every Remote

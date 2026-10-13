@@ -44,6 +44,24 @@
       </div>
     }
 
+    @if (checkout(); as observed) {
+      @if (observed.status === 'behind') {
+        <div class="pbc__checkout" data-testid="project-checkout-lag" role="status">
+          <span>The {{ observed.branch }} checkout is {{ observed.behind }} commits behind origin.</span>
+          @if (observed.dirtyFiles.length === 0 && !observed.lockFile) {
+            <button type="button" class="pbc__checkout-action" data-testid="project-checkout-sync"
+                    [disabled]="syncingCheckout()" (click)="syncCheckout()">
+              {{ syncingCheckout() ? 'Syncing...' : 'Sync checkout' }}
+            </button>
+          } @else {
+            <span>{{ observed.reason }}</span>
+          }
+        </div>
+      } @else if (observed.status !== 'up-to-date' && observed.status !== 'fast-forwarded') {
+        <p class="pbc__checkout" data-testid="project-checkout-status" role="status">Checkout: {{ observed.reason || observed.status }}</p>
+      }
+    }
+
     <footer class="pbc__actions">
       <div class="pbc__feedback" aria-live="polite">
         @if (saveError(); as error) {
