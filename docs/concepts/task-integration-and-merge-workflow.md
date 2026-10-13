@@ -533,7 +533,8 @@ now a no-op integration:
   `members/<SafeName(taskKey)>/<SafeName(runId)>.json`.
   Closed manifests are indexed by delivery SHA once per store lifetime;
   closing a new manifest updates that index. An unreadable manifest is logged
-  and skipped independently. Matching runs and replays are read on each lookup.
+  and skipped independently, then retried on the next lookup. Matching runs
+  and replays are read on each lookup.
   The verification record names the tested candidate SHA and lists covered
   original result SHAs in `deliveryShas`, because the candidate holds replayed
   commits. A missing or non-passing verdict, non-admitted replay, mismatched

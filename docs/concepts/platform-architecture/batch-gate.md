@@ -67,6 +67,12 @@ A delivery is eligible only when all of the following hold:
 | Unowned | Not already claimed by another batch or an active per-task gate. |
 | Not yet integrated | The integration tip does not already contain the result SHA. A contained member leaves the queue as integrated through the no-op integration, without a candidate or a per-task gate (AGT-3103, [no-op integration](../task-integration-and-merge-workflow.md#no-op-integration-agt-3103)). |
 
+The formation check takes precedence when the integration branch already
+contains a member before closing the manifest. Once a manifest is closed,
+assembly handles its frozen members. If an earlier replay makes a later
+member's result SHA part of the candidate, that later member is unattributable
+to a distinct candidate commit and takes the per-task gate path (AGT-3104).
+
 The manifest records every eligible key and every exclusion with a typed
 reason. The coordinator may not silently pick an easier subset.
 

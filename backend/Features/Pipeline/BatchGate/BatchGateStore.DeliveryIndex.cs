@@ -6,6 +6,7 @@ public sealed partial class BatchGateStore
 {
     private readonly object _deliveryIndexLock = new();
     private Dictionary<string, List<BatchGateManifest>>? _deliveryIndex;
+    private readonly HashSet<string> _unreadableDeliveryManifests = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Closed manifests are immutable. Read retained manifests once per store
@@ -27,16 +28,14 @@ public sealed partial class BatchGateStore
                     {
                         var path = Path.Combine(directory, "manifest.json");
                         if (!File.Exists(path)) continue;
-                        try
-                        {
-                            IndexDeliveryManifest(Read<BatchGateManifest>(path));
-                        }
-                        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
-                        {
-                            onUnreadable(ex);
-                        }
+                        TryIndexDeliveryManifest(path, onUnreadable);
                     }
                 }
+            }
+            else
+            {
+                foreach (var path in _unreadableDeliveryManifests.ToArray())
+                    TryIndexDeliveryManifest(path, onUnreadable);
             }
 
             return deliveryShas
@@ -46,6 +45,19 @@ public sealed partial class BatchGateStore
                     && IntegrationVerificationProjection.SameBranch(manifest.Scope.IntegrationBranch, branch))
                 .OrderByDescending(manifest => manifest.ClosedAtUtc)
                 .ToArray();
+        }
+    }
+
+    private void TryIndexDeliveryManifest(string path, Action<Exception> onUnreadable)
+    {
+        try
+        {
+            IndexDeliveryManifest(Read<BatchGateManifest>(path));
+            _unreadableDeliveryManifests.Remove(path);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
+        {
+            if (_unreadableDeliveryManifests.Add(path)) onUnreadable(ex);
         }
     }
 
@@ -59,6 +71,11 @@ public sealed partial class BatchGateStore
             || manifest.MembershipDigest != BatchGatePolicy.MembershipDigest(
                 manifest.BaseSha, manifest.Scope, manifest.Members))
             throw new InvalidDataException("The retained batch manifest has an invalid membership digest.");
+        AddToDeliveryIndex(manifest);
+    }
+
+    private void AddToDeliveryIndex(BatchGateManifest manifest)
+    {
         foreach (var sha in manifest.Members.Select(member => member.ResultSha).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!_deliveryIndex!.TryGetValue(sha, out var manifests))

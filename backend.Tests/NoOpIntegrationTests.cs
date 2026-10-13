@@ -15,7 +15,6 @@ namespace AgentStudio.Tests;
 /// 60 to 75 minute merge gate on the shared gate host while two formed batches
 /// waited behind the reservation.
 /// </summary>
-[Trait("Category", "MachineBound")]
 public sealed class NoOpIntegrationTests : IDisposable
 {
     private readonly string _tempDir;

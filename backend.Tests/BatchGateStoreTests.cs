@@ -106,6 +106,24 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void Delivery_index_retries_a_manifest_that_becomes_readable()
+    {
+        var manifest = Close();
+        var path = Path.Combine(_store.BatchDirectory(manifest.BatchId), "manifest.json");
+        var original = File.ReadAllText(path);
+        File.WriteAllText(path, "{broken");
+        var reader = new BatchGateStore(_root);
+        var errors = new List<Exception>();
+
+        Assert.Empty(reader.FindDeliveryManifests("project", "develop", [Base], errors.Add));
+        Assert.Single(errors);
+        File.WriteAllText(path, original);
+        Assert.Equal(manifest.BatchId,
+            Assert.Single(reader.FindDeliveryManifests("project", "develop", [Base], errors.Add)).BatchId);
+        Assert.Single(errors);
+    }
+
+    [Fact]
     public void PendingReviewIsDurableIdempotentAndSequenced()
     {
         var first = _store.Enqueue(new BatchGatePendingRecord(

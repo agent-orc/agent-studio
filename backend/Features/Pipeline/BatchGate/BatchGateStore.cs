@@ -377,7 +377,7 @@ public sealed partial class BatchGateStore
         WriteOnce(Path.Combine(dir, "manifest.json"), manifest);
         lock (_deliveryIndexLock)
         {
-            if (_deliveryIndex is not null) IndexDeliveryManifest(manifest);
+            if (_deliveryIndex is not null) AddToDeliveryIndex(manifest);
         }
         AppendState(new BatchGateState(
             manifest.BatchId, manifest.MembershipDigest, BatchPhase.Formed,
