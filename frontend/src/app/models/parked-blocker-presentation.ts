@@ -126,8 +126,8 @@ function recallView(park: ParkedBlockerStatus): ParkedRecallView {
   // had cleared. The projection reports the absence of a verdict as its own
   // state rather than defaulting it to the blocked one.
   return {
-    status: park.recallStatus,
-    label: park.evaluationStale ? 'Never checked' : known?.label ?? park.recallStatus,
+    status: park.recallStatus ?? '',
+    label: park.evaluationStale ? 'Never checked' : known?.label ?? park.recallStatus ?? '',
     tone: park.evaluationStale ? 'neutral' : known?.tone ?? 'neutral',
     detail: park.detail?.trim() ?? '',
     at: park.lastEvaluatedAt,
@@ -193,7 +193,7 @@ export function buildParkedBlockerView(
     parkedAt: park.parkedAt,
     parkedFor,
     condition: park.conditionDescription?.trim() ?? '',
-    conditionKind: park.conditionKind,
+    conditionKind: park.conditionKind ?? '',
     recall: recallView(park),
     openItems: parkedOpenItems(park),
     chipLabel: `${park.requiresDecisionCard ? 'Waiting on you' : 'Parked'} · ${parkedFor}`,

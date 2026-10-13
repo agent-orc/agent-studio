@@ -444,7 +444,8 @@ export interface WaitsOnStatus {
   itemCount?: number;
   openCount?: number;
   anyWaitingForRelease?: boolean;
-  releaseTargets?: { targetJobId: string; targetWatchPath?: string | null }[];
+  /** Keys of every item waiting for its target's release (board card). */
+  releaseTargetKeys?: string[];
   /** At least one dependency is not yet fulfilled (open or unknown). */
   blocked: boolean;
   /** The card sits on a dependsOn cycle - a configuration error. */
@@ -1042,9 +1043,10 @@ export interface TaskExecutionLocation {
   sessionId?: string | null;
   branch?: string | null;
   worktreePath?: string | null;
-  connectionState: string;
-  leaseState: string;
-  trustReason: string;
+  /** Board cards omit `none`, the trust reason and the detail-only facts above. */
+  connectionState?: string;
+  leaseState?: string;
+  trustReason?: string;
   historical?: boolean;
   /** Latest remote Runner refusal during the task's current Ready-lane stay. */
   lastRejection?: RemoteDispatchRejection | null;
@@ -1208,13 +1210,16 @@ export type ContinueMode = 'continue' | 'steer' | 'extend' | 'newTask';
  * Mirrors backend `PendingIntent`.
  */
 export interface PendingIntent {
-  version: number;
+  version?: number;
   mode: ContinueMode;
+  /** On a board card only the first 200 characters; /details/overview has all. */
   prompt: string;
+  /** Board card: the prompt was cut to its first 200 characters. */
+  promptTruncated?: boolean;
   savedAt: string;
-  savedReason: string;
+  savedReason?: string;
   author?: string | null;
-  savedAgainstActiveJobId: string | null;
+  savedAgainstActiveJobId?: string | null;
 }
 
 /**
@@ -2451,15 +2456,20 @@ export interface ParkedDecision {
 export interface ParkedBlockerStatus {
   /** Escalation category, or `operator-decision` for a manual park. */
   blockerType: string;
-  conditionKind: string;
-  conditionDescription: string;
+  /** Absent on board cards; /details/overview carries it. */
+  conditionKind?: string;
+  /** Absent on board cards; /details/overview carries it. */
+  conditionDescription?: string;
   parkedAt: string;
   /** Read-time age; absent on board cards, which derive it from `parkedAt`. */
   parkedForSeconds?: number;
   /** The original freetext park reason, verbatim. */
   reason: string;
-  /** Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`. */
-  recallStatus: string;
+  /**
+   * Latest sweep verdict: `blocked`, `recallable`, or `undeterminable`.
+   * Absent on board cards; /details/overview carries it.
+   */
+  recallStatus?: string;
   lastEvaluatedAt: string | null;
   detail: string;
   lane: string;

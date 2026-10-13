@@ -65,7 +65,8 @@ export class TestEvidenceStatusComponent {
 
   sourceDetail(): string {
     const sources = this.evidence()?.sources ?? [];
-    if (sources.length === 0) return this.evidence()?.sourceLabel ?? '';
+    // A board card omits the label when it repeats the summary.
+    if (sources.length === 0) return this.evidence()?.sourceLabel ?? this.evidence()?.summary ?? '';
     if (sources.length > 1) return sources.slice(1).map(source => source.summary).join(' · ');
     if (sources.length === 1) return `${this.sourceLabel(sources[0].kind)} · ${sources[0].id}`;
     return '';
