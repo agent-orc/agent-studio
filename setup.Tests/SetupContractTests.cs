@@ -66,6 +66,7 @@ public sealed class SetupContractTests
     {
         var joinCredential = new string('j', 64);
         var runnerCredential = "ats_0011223344556677." + new string('r', 64);
+        var issuedAt = new DateTime(2026, 7, 28, 12, 0, 0, DateTimeKind.Utc);
         var requests = new List<(HttpMethod Method, string Path, string? Bearer, string? Consumer, string Body)>();
         var handler = new StubHandler(request =>
         {
@@ -79,13 +80,13 @@ public sealed class SetupContractTests
             {
                 Content = JsonContent.Create(new IssuedPrincipalCredential(
                     new PrincipalDto("runner:runner-one", TaskServerPrincipalKinds.Runner,
-                        [TaskServerScopes.TasksRead], "runner-one", DateTime.UtcNow, null, null),
+                        [TaskServerScopes.TasksRead], "runner-one", issuedAt, null, null),
                     runnerCredential,
-                    DateTime.UtcNow)),
+                    issuedAt)),
             };
         });
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://tasks.example.test") };
-        var payload = new JoinPayload(1, "https://tasks.example.test", joinCredential, "0.4.0", DateTime.UtcNow);
+        var payload = new JoinPayload(1, "https://tasks.example.test", joinCredential, "0.4.0", issuedAt);
 
         var actual = await SetupApplication.MintRunnerCredentialAsync(payload, "runner-one", default, client);
 
