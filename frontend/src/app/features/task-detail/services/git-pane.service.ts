@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, computed, signal, inject } from '@angular/core';
+import { Injectable, OnDestroy, computed, signal, inject, untracked } from '@angular/core';
 import type { TaskInfo } from '../../../models/task.model';
 import type {
   GitFileChange,
@@ -231,8 +231,16 @@ export class GitPaneService implements OnDestroy {
    * Tell the service which job is currently displayed. Resets the pane
    * state when the job actually changes; same-job calls are no-ops so
    * we don't blow away in-flight selections.
+   *
+   * The task detail calls this from an effect. The pane state it reads is
+   * untracked: a same-job refresh of a commit-less card writes a fresh empty
+   * chain, which would otherwise re-run that effect forever (AGT-3096).
    */
   setJob(info: TaskInfo | null | undefined): void {
+    untracked(() => this.applyJob(info));
+  }
+
+  private applyJob(info: TaskInfo | null | undefined): void {
     const sameJob =
       this.currentJob &&
       info &&

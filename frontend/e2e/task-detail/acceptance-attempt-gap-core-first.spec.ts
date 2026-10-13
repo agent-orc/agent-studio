@@ -191,13 +191,13 @@ async function mockApplication(page: Page, move: (route: Route) => Promise<void>
 async function openCoreFirst(page: Page): Promise<void> {
   await page.goto(`/#/tasks/${TASK_REF}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await dismissDevErrorDialog(page);
-  await expect(page.getByTestId('task-core')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('studio-task')).toBeVisible({ timeout: 30_000 });
 }
 
 async function screenshot(page: Page, fileName: string): Promise<void> {
   if (!RESULTS_DIR) return;
   mkdirSync(RESULTS_DIR, { recursive: true });
-  await page.getByTestId('delivery-claim-panel').locator('..').screenshot({ path: path.join(RESULTS_DIR, fileName) });
+  await page.getByTestId('delivery-claim-panel').screenshot({ path: path.join(RESULTS_DIR, fileName) });
 }
 
 test.describe('Acceptance attempt gap in the core-first detail (AGT-3096)', () => {

@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
-import { provideZonelessChangeDetection } from '@angular/core';
+import { effect, provideZonelessChangeDetection, signal } from '@angular/core';
 import { GitPaneService } from './git-pane.service';
 import type { TaskInfo } from '../../../models/task.model';
 
@@ -319,3 +319,38 @@ function utf8Buffer(value: string): ArrayBuffer {
   new Uint8Array(buffer).set(bytes);
   return buffer;
 }
+
+/**
+ * AGT-3096: the task detail calls `setJob` from an effect. A same-job refresh
+ * of a commit-less core-first card builds a fresh empty chain each call; if
+ * `setJob` let the effect track `commitChain`, that write re-ran the effect
+ * forever and froze the browser once the documents painted.
+ */
+describe('GitPaneService.setJob inside an effect', () => {
+  it('does not make the calling effect depend on the commit chain', async () => {
+    await TestBed.configureTestingModule({
+      providers: [
+        GitPaneService,
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    const service = TestBed.inject(GitPaneService);
+    const http = TestBed.inject(HttpTestingController);
+    const detail = signal({ id: 'job-x', watchPath: '/wp', commit: null } as unknown as TaskInfo);
+    let runs = 0;
+    TestBed.runInInjectionContext(() => effect(() => {
+      runs++;
+      service.setJob(detail());
+    }));
+
+    TestBed.tick();
+    detail.set({ ...detail() });
+    TestBed.tick();
+
+    expect(runs).toBe(2);
+    http.match(() => true).forEach(request => request.flush(null));
+  });
+});
