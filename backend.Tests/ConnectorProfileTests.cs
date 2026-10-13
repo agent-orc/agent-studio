@@ -60,7 +60,7 @@ public sealed class ConnectorProfileTests
             .Distinct()
             .Count());
         Assert.DoesNotContain(connector.Services.GetServices<IHostedService>(),
-            service => service.GetType().Assembly == typeof(ConnectorProfile).Assembly);
+            service => HostTimelineHostedService.Unwrap(service).GetType().Assembly == typeof(ConnectorProfile).Assembly);
     }
 
     /// <summary>
