@@ -416,7 +416,7 @@ The integration projection carries the second half as
 
 | State | Meaning |
 |---|---|
-| `integrated-verified` | A gate passed on the merged tree: this lane's own merge gate, a gate receipt on the card for the exact tree, an `integrated-verified` integration record naming that SHA, or the one verification gate the lane ran on the tip. |
+| `integrated-verified` | A gate passed on the merged tree: this lane's own merge gate, a gate receipt on the card for the exact tree, an `integrated-verified` integration record naming that SHA, the one verification gate the lane ran on the tip, or, for a no-op integration, a verified earlier tree the branch still carries (AGT-3103). |
 | `integrated-unverified` | The delivery is on the branch, but no gate evidence exists for that tree, or the gate that ran on it failed. |
 | absent | The card is not currently classified as contained. A contained card without exact-tree evidence projects as `integrated-unverified`. |
 
@@ -435,9 +435,13 @@ pure `IntegrationVerificationPolicy`
    that only prove containment (no `integrationSha`) do not count.
 2. **A red receipt for the exact tree** is the verdict. The gate is not run
    again.
-3. **No evidence**: the lane writes `integrated-unverified` with the SHA and the
-   reason to `integration-verification.json`, then runs the gate **once** on the
-   current branch tip. The work line runs the pre-develop gate over the
+3. **No evidence, delivery on the published branch**: the integration is a
+   no-op and runs no gate; see
+   [No-op integration (AGT-3103)](#no-op-integration-agt-3103).
+4. **No evidence, delivery only on the unpublished lane**: the lane writes
+   `integrated-unverified` with the SHA and the reason to
+   `integration-verification.json`, then runs the gate **once** on the
+   current lane tip, because a push of that tip follows. The work line runs the pre-develop gate over the
    delivery's own diff plus the tip's last merge; when the review subject is
    missing, the lane derives the delivery range from the merge that brought it
    onto the branch and the Git diffs of every attributed card commit. Without a
@@ -449,7 +453,7 @@ pure `IntegrationVerificationPolicy`
    exact tip was
    already gated. "No gate applies" is written as an explicit `NotApplicable`
    receipt.
-4. **Green**: the card completes and the record says `integrated-verified`.
+5. **Green**: the card completes and the record says `integrated-verified`.
    **Red on the code**: the result is `GateFailed`, nothing is pushed, the
    branch history is left unchanged, the card goes to `5-human-review` with the
    gate verdict, and a cause card (`integration/unverified-branch`) is opened for
@@ -461,7 +465,8 @@ pure `IntegrationVerificationPolicy`
 A fresh merge created by the lane is verified by construction: its own gate
 guarded it, and the lane records that too. For a merge awaiting publication,
 verification compares the Studio integration lane tip, even when the developer
-checkout still holds an older local branch tip.
+checkout still holds an older local branch tip. A no-op integration compares
+the published tip that proved containment instead (AGT-3103).
 
 **When the tip moves on.** A verified record names the exact tree the gate
 passed on and lists the card's delivery SHAs that tree contained
@@ -471,8 +476,81 @@ it and the card's current delivery is one of those SHAs. A rewritten branch, a
 newer delivery, another branch, or a record without `deliveryShas` makes it
 stale. Later commits are their own cards' responsibility: re-gating every
 completed card on each tip change would let a red tip they did not cause reopen
-them. The merge runner itself still matches the exact tip only, so a push it
-approves never extends past a gated tree.
+them. The merge runner itself still matches the exact tip only when it
+releases a push, so a push it approves never extends past a gated tree. A
+no-op integration releases no push, so it accepts the same carried verdict
+(AGT-3103).
+
+### No-op integration (AGT-3103)
+
+On 13.10.2026 several deliveries reached `develop` through the operator fast
+path before their system reviews settled. When the reviews passed, the
+settlement integrated each card again. The merge result was the current
+`develop` tip, yet a full `merge-into-develop-build-gate` ran on the shared
+gate host for 60 to 75 minutes per card. The project's integration reservation
+was held for that time, so two formed batches (8 cards) sat in phase `formed`
+with no run for over 45 minutes.
+
+A delivery that the **published** integration branch already contains
+(`origin/<branch>`, or the local branch in a repository without `origin`) is
+now a no-op integration:
+
+- **No build, no test, no push.** The merge step completes as `AlreadyMerged`
+  (or `AlreadyOnIntegrationBranch` for a branchless delivery). Its reason names
+  the SHA that proved containment (`Containment proven by <sha>; no gate ran
+  and nothing was pushed`). The push step is recorded as `already-remote`
+  (`no-remote` without `origin`), so the push backstop has nothing to re-drive.
+  The project's integration reservation is released as soon as the call
+  returns.
+- **Containment SHA.** The containment SHA is recorded on the merge step
+  (`ContainmentSha` on the result), in `integration-verification.json`
+  (`containmentSha`), and in the `integration_verification_recorded` timeline
+  event (`containmentSha` detail plus a "No-op integration" sentence).
+- **Verification from existing evidence only.** The lane never produces new
+  evidence for a no-op. It reads, in order: a green receipt or an
+  `integrated-verified` record for the exact tree; a red receipt for the exact
+  tree (still `GateFailed`, still no rerun); then a **carried tree**. A carried
+  tree is an earlier verified tree that the published tip still carries and
+  that already contained every delivery commit: the card's own verified record,
+  or an `integrated-verified` record that names its `integrationSha`. A carried
+  verdict is recorded against that earlier tree (evidence `carried-tree`). This
+  is the same carry the board projection applies after the tip moves on.
+- **No evidence.** The card is `integrated-unverified`, with the reason that
+  the no-op ran no gate. The integration step still passes, so a settling
+  review moves the card to Human Review as usual. Acceptance follows the rule
+  above: the acceptance rail does not auto-accept it, and a human acceptance
+  needs gate evidence or a written operator override. The accepted-integration
+  worker and backstop never complete such a result. They return the card to
+  Human Review with the outcome `IntegrationUnverified` instead of re-running
+  a gate.
+- **Unpublished lane.** A delivery that only the Studio integration lane
+  carries (a gated merge whose push is still pending) is not a no-op: the lane
+  still owes that push. It keeps the AGT-3002 rule of one gate on the lane tip
+  before releasing the push.
+
+The batch gate applies the same rule to its members. At every formation tick
+it fetches the integration tip once per group. A current, unowned member
+whose result SHA that tip already contains (`BatchGatePolicy.LeavesAsIntegrated`)
+is not put into a candidate, and gets no per-task fallback gate either. It
+leaves the queue as integrated:
+
+1. `logs/batch-contained-<reviewAttemptId>.json` records the containment SHA,
+   and the ownership marker carries `containedInSha`. The lane release guard
+   accepts that marker instead of a gate verdict.
+2. The delivery goes through the no-op integration above.
+3. The card moves to Human Review, and the pending record resolves as
+   `already-integrated`.
+
+It applies whenever batching is enabled for the project, in either scope. A
+contained member whose exact tree already failed its gate is escalated with
+that verdict instead of being replayed on every tick.
+
+A gate that does run on a SHA reuses a passed (or deterministic red) result
+from the per-SHA gate result cache when the resolved command plan is the same.
+The cache key is the plan, not the diff that selected it; see
+[Exact-SHA gate verdict cache](../system/domains/pipeline.md#exact-sha-gate-verdict-cache).
+A hit is recorded as `cached-ok` on the step and as `gate_verdict_cache_hit` in
+the task timeline.
 
 **Who else asks.** The accepted-integration backstop finalizes a merged card only
 when its verification is `integrated-verified` for the current integration
@@ -484,7 +562,8 @@ branch. The projection checks that exact-tree record before the file.
 An unverified card goes back through
 the merge runner, which applies the rule above; once a gate has failed on that
 tree, the backstop returns the card to Human Review instead of running it
-again. Archived cards are left alone: the archive guard runs before every
+again. A no-op integration that is still unverified also returns to Human
+Review (`IntegrationUnverified`); it never runs a gate from the backstop. Archived cards are left alone: the archive guard runs before every
 recovery action, so a failed gate never reopens one. A card whose delivery is
 not merged and that carries a historical verification row is not replayed
 either; that row stays bookkeeping. The acceptance rail does not

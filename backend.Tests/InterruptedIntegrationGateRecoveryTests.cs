@@ -250,9 +250,11 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
     }
 
     /// <summary>
-    /// The runner refuses to roll back history it did not create, so a gate that
-    /// re-verifies an already merged delivery must leave nothing behind that
-    /// would invite restart recovery to rewrite that branch either.
+    /// The runner refuses to roll back history it did not create, so an already
+    /// merged delivery must leave nothing behind that would invite restart
+    /// recovery to rewrite that branch either. AGT-3103: a delivery the
+    /// published branch carries is a no-op integration, so not even the
+    /// (dying) verification gate runs.
     /// </summary>
     [Fact]
     public async Task InterruptedGateOverHistoryThisRunDidNotCreate_LeavesNoRecordToRollBack()
@@ -267,7 +269,8 @@ public sealed class InterruptedIntegrationGateRecoveryTests : IDisposable
         var merge = await stack.Runner.RunAsync(
             Project, "already", folder, _repo, "develop", CancellationToken.None);
 
-        Assert.Equal(MergeIntoIntegrationOutcome.Error, merge.Outcome);
+        Assert.Equal(MergeIntoIntegrationOutcome.AlreadyMerged, merge.Outcome);
+        Assert.Equal(alreadyMerged, merge.ContainmentSha);
         Assert.Null(IntegrationGateJournal.Read(folder));
 
         var report = BuildRecovery(stack).RunOnce();

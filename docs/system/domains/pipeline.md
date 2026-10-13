@@ -30,9 +30,15 @@ pipeline view.
 ## Exact-SHA gate verdict cache
 
 `BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
-tested tree SHA and the same gate-profile digest. The digest includes the build
-profile, resolved verify commands and selection inputs, gate mode, pipeline
-definition version, and executor toolchain identity. A changed input is a miss.
+tested tree SHA and the same gate-profile digest. The digest is the resolved
+command plan: the build profile, resolved verify commands, gate id, lane, test
+execution policy and required level, gate mode, pipeline definition version,
+and executor toolchain identity. A changed input is a miss. Since AGT-3103 the
+changed-file list that selected the plan is not part of the digest (version 2):
+two gates on one SHA whose diffs select the same commands run the same
+verification, so the second reuses the first verdict. A diff whose own
+selection reports unmapped source directories never takes a hit, so the
+stale folder-to-test map check still fails it.
 The local fallback identity includes the effective `dotnet --version` result
 from each command directory, as well as the `node` and `npm` versions when
 installed. Version probing fails closed for cache use: a failed probe runs the
