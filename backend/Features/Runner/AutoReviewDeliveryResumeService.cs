@@ -169,7 +169,11 @@ public sealed class AutoReviewDeliveryResumeService
         ArgumentNullException.ThrowIfNull(task);
         var gate = _resumeGates.GetOrAdd(task.ProjectName + "/" + task.Id,
             _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct).ConfigureAwait(false);
+        // An existing resume may own the gate for an entire integration.
+        // Keep duplicate callers and the cards behind them moving (AGT-3091).
+        if (!await gate.WaitAsync(0, ct).ConfigureAwait(false))
+            return new AutoReviewResumeOutcome(AutoReviewResumeAction.None,
+                Reasons.IntegrationInFlight, Resumed: false);
         try { return await ResumeCoreAsync(task, source, ct).ConfigureAwait(false); }
         finally { gate.Release(); }
     }
