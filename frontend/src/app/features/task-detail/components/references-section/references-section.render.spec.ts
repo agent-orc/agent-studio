@@ -7,6 +7,7 @@ import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { of } from 'rxjs';
 
 import { ReferencesSectionComponent } from './references-section.component';
+import { isCompleteReferences } from './references-completeness';
 import { TaskService } from '../../../../services/task.service';
 import { NotificationService } from '../../../../services/notification.service';
 import { TaskSelectionService } from '../../state/task-selection.service';
@@ -239,6 +240,27 @@ describe('ReferencesSectionComponent (render — both dependency directions)', (
     const { fixture } = await mount(info, []);
     const host: HTMLElement = fixture.nativeElement;
     expect(host.querySelector('[data-testid="references-section"]')).toBeNull();
+  });
+
+  it('ignores the slim board summary and seeds once the full reference set arrives', async () => {
+    // The board list serves a summary: counts, keys and at most three dependsOn
+    // edges, no other kinds. Seeding from it threw (relatedTo is not iterable)
+    // and a replace-all save from it would drop edges.
+    const slimReferences = {
+      dependsOnCount: 1, dependsOnKeys: ['CAR-3'], dependsOn: ['CAR-3'], raisedFollowUps: [],
+    } as unknown as TaskInfo['references'];
+    expect(isCompleteReferences(slimReferences)).toBe(false);
+    const slim = makeTask({ references: slimReferences });
+    const { fixture } = await mount(slim, []);
+    expect(fixture.nativeElement.querySelector('[data-testid="reference-chip-CAR-3"]')).toBeNull();
+
+    const full = makeTask({
+      references: { dependsOn: ['CAR-3'], relatedTo: [], blockedBy: [], supersedes: [] },
+    });
+    expect(isCompleteReferences(full.references)).toBe(true);
+    fixture.componentRef.setInput('info', full);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[data-testid="reference-chip-CAR-3"]')).not.toBeNull();
   });
 
   it('renders a linked document key and opens its viewer tab', async () => {

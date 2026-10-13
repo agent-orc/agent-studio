@@ -28,6 +28,7 @@ import { ProjectDocsService } from '../../../../services/project-docs.service';
 import type { WorkbenchListItem } from '../../../../models/project-docs.model';
 import { ReleaseGateSectionComponent } from '../release-gate-section/release-gate-section.component';
 import { stateLabel } from '../../../../services/format.util';
+import { isCompleteReferences } from './references-completeness';
 
 /**
  * F34 detail-view reference editor. Renders the typed cross-reference rows
@@ -119,10 +120,11 @@ export class ReferencesSectionComponent {
       this.loadBlocking(info);
       this.loadWorkbenchIndex(info);
     }
-    // Slim board cards carry no references; they arrive with the overview
-    // resource. Until then keep the last known set instead of seeding an
-    // empty one that a replace-all save would write back.
-    if (info.references !== undefined && this.busyKind() === null) {
+    // Slim board cards carry no references, or only the board summary
+    // (dependsOn trimmed, counts, no other kinds); the full set arrives with the
+    // overview resource. Until then keep the last known set instead of seeding a
+    // partial one that a replace-all save would write back.
+    if (isCompleteReferences(info.references) && this.busyKind() === null) {
       this.localRefs.set(cloneRefs(info.references));
     }
   });
@@ -348,7 +350,7 @@ export class ReferencesSectionComponent {
     const info = this.info();
     // The save replaces the whole reference set. Never send one built while
     // the task's references are still loading, or it would delete edges.
-    if (info.references === undefined) {
+    if (!isCompleteReferences(info.references)) {
       this.notifications.warning('References are still loading. Try again in a moment.');
       return;
     }
