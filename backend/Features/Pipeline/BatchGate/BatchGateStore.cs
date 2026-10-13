@@ -60,7 +60,8 @@ public sealed record BatchGateExecutionFact(
     string Project, string? BatchId, string? BatchRunId,
     string TestedSha, string Outcome, string Host,
     DateTimeOffset StartedAtUtc, DateTimeOffset CompletedAtUtc,
-    long QueueWaitMs, double OverloadMinutes, string EvidencePath);
+    long QueueWaitMs, double OverloadMinutes, string EvidencePath,
+    long? DurationMs = null, IReadOnlyList<string>? MemberKeys = null);
 
 /// <summary>
 /// Review-side verification of one batch-deferred review: the builds and
@@ -297,11 +298,17 @@ public sealed class BatchGateStore
 
     public IReadOnlyList<BatchGateExecutionFact> ListExecutions(string project)
     {
+        return ListAllExecutions()
+            .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
+            .ToArray();
+    }
+
+    public IReadOnlyList<BatchGateExecutionFact> ListAllExecutions()
+    {
         var folder = Path.Combine(_root, "executions");
         return Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.json")
                 .Select(Read<BatchGateExecutionFact>)
-                .Where(fact => string.Equals(fact.Project, project, StringComparison.Ordinal))
                 .ToArray()
             : [];
     }

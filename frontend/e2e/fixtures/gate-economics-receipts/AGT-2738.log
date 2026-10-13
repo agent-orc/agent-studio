@@ -1,0 +1,97 @@
+verdict=Fail exit=1 durationMs=3090341 failureKind=Code
+expectedSha=ebbaef7de3e4efd991a60e5a460b42483f278e18 testedSha=ebbaef7de3e4efd991a60e5a460b42483f278e18
+reason=`dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound` exit 1; failed: AgentStudio.Tests.PromptEnrichmentServiceTests.Prepare_AgentStudioRepository_PreservesCatalogueBlocks; Total tests: 7735 Passed: 7711 Failed: 1 Skipped: 23; test-level=full; selected=4; full-suite=not-run; omitted=3
+verdictSource=Executed originalRunId=c90e7b483bd8446aacdaa7329a4342d7 originalCompletedAtUtc=2026-09-29T01:51:40.5835695+00:00 originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=1 toolchainIdentity=n/a
+testSelectionAuditDigest=31a02a08725df5a7d27daee4ae729c631fe1b2fef8df9a46fcbdfad03f8c29e9
+reviewReuse=full attempt=review_afa42445dd144defa053f4337e6ca7b3 reason=develop moved since the review: tip is c6673af8, the review verified d8f11a5f
+budget=none
+retryPerformed=true classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+--- test-selection.json ---
+{
+  "Digest": "31a02a08725df5a7d27daee4ae729c631fe1b2fef8df9a46fcbdfad03f8c29e9",
+  "Level": "full",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "deploy/windows/fallback/install-fallback-profile.ps1",
+    "deploy/windows/fallback/lib.ps1",
+    "deploy/windows/fallback/uninstall-fallback-profile.ps1",
+    "deploy/windows/studio-connector/install-studio-connector.ps1",
+    "docs/operations/setup/control-plane-docker.md",
+    "docs/operations/setup/getting-started.md",
+    "docs/operations/setup/images/installer-flow--mocked.png",
+    "docs/operations/setup/images/installer-help--mocked.png",
+    "docs/operations/setup/install.md",
+    "docs/operations/setup/multi-machine.md",
+    "docs/operations/setup/README.md",
+    "docs/operations/setup/website-onboarding-template.md",
+    "docs/operations/setup/windows-fallback-runbook.md",
+    "docs/start/README.md",
+    "github/workflows/release.yml",
+    "README.md",
+    "scripts/release/package-release.sh",
+    "scripts/release/release-scripts.test.sh",
+    "scripts/release/setup-e2e-probe.sh",
+    "setup.Tests/ProductSetupTests.cs",
+    "setup/AgentOrchestratorSetup.csproj",
+    "setup/ProductCommand.cs",
+    "setup/ProductSetup.cs",
+    "setup/Program.cs",
+    "setup/ReleaseArtifacts.cs",
+    "setup/SetupApplication.cs",
+    "setup/WindowsServiceSetup.cs"
+  ],
+  "DiffStatuses": [],
+  "HistoryInput": [],
+  "Candidates": [],
+  "SelectedCandidateIds": [],
+  "SelectedCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "AttemptedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"
+  ],
+  "UnmappedSourceDirectories": [],
+  "SelectedTestClasses": [],
+  "OmittedTestCommands": [
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "folder-to-test-project map is missing",
+    "unmapped changed path: .github/workflows/release.yml",
+    "unmapped changed path: README.md",
+    "unmapped changed path: deploy/windows/fallback/install-fallback-profile.ps1",
+    "unmapped changed path: deploy/windows/fallback/lib.ps1",
+    "unmapped changed path: deploy/windows/fallback/uninstall-fallback-profile.ps1",
+    "unmapped changed path: deploy/windows/studio-connector/install-studio-connector.ps1",
+    "unmapped changed path: docs/operations/setup/README.md",
+    "unmapped changed path: docs/operations/setup/control-plane-docker.md",
+    "unmapped changed path: docs/operations/setup/getting-started.md",
+    "unmapped changed path: docs/operations/setup/images/installer-flow--mocked.png",
+    "unmapped changed path: docs/operations/setup/images/installer-help--mocked.png",
+    "unmapped changed path: docs/operations/setup/install.md",
+    "unmapped changed path: docs/operations/setup/multi-machine.md",
+    "unmapped changed path: docs/operations/setup/website-onboarding-template.md",
+    "unmapped changed path: docs/operations/setup/windows-fallback-runbook.md",
+    "unmapped changed path: docs/start/README.md",
+    "unmapped changed path: scripts/release/package-release.sh",
+    "unmapped changed path: scripts/release/release-scripts.test.sh",
+    "unmapped changed path: scripts/release/setup-e2e-probe.sh",
+    "unmapped changed path: setup.Tests/ProductSetupTests.cs",
+    "unmapped changed path: setup/AgentOrchestratorSetup.csproj",
+    "unmapped changed path: setup/ProductCommand.cs",
+    "unmapped changed path: setup/ProductSetup.cs",
+    "unmapped changed path: setup/Program.cs",
+    "unmapped changed path: setup/ReleaseArtifacts.cs",
+    "unmapped changed path: setup/SetupApplication.cs",
+    "unmapped changed path: setup/WindowsServiceSetup.cs"
+  ],
+  "Selector": "deterministic-map-full-fallback",
+  "FullSuiteRequired": true,
+  "FullSuiteRan": false
+}

@@ -140,11 +140,42 @@ async function installMocks(page: Page): Promise<void> {
       repository: REPOSITORY,
     }],
   })));
+  await page.route('**/api/gate-economics?window=*', r => r.fulfill(json({
+    window: '7d', asOfUtc: '2026-10-12T12:00:00Z', rows: [
+      { project: 'All projects', projectShortCode: null, projectColor: null, gatedMerges: 5, gateGreen: 4, gateRed: 1, gateCancelled: 0, gateMinutesMedian: 24, gateMinutesP90: 42,
+        queueWaitP90Ms: 120000, exactReuseRate: 0.4, disjointReuseRate: 0,
+        fullSuiteShare: 0.6, sameShaRetestRate: 0.1, lastNightlyGuard: null,
+        deliveryLagP50Minutes: 50, deliveryLagP95Minutes: 120, oldestWaitingMinutes: 60, preparationP50Minutes: 8,
+        queued: 2, prepared: 0, gating: 1, readyToPublish: 0,
+        laneGateDurationP50Minutes: 24, laneGateDurationP95Minutes: 42, laneGateGreen: 4, laneGateRed: 1, laneGateCancelled: 0,
+        gateTokenWaitP50Ms: 500, gateTokenWaitP95Ms: 120000, gateHoldingProject: 'Agent Taskboard', mergeLockWaitP95Ms: 60000,
+        publicationLockWaitP95Ms: null, ejectedConflict: 0, ejectedAgentRound: 1,
+        ejectedRed: 0, ejectedError: 0, arrivalsPerHour: 0.3, mergesPerHour: 0.2 },
+      { project: PROJECT, projectShortCode: 'AGT', projectColor: null, gatedMerges: 3, gateGreen: 2, gateRed: 1, gateCancelled: 0, gateMinutesMedian: 20, gateMinutesP90: 40,
+        queueWaitP90Ms: 120000, exactReuseRate: 0.3, disjointReuseRate: 0,
+        fullSuiteShare: 0.7, sameShaRetestRate: 0.1, lastNightlyGuard: null,
+        deliveryLagP50Minutes: 40, deliveryLagP95Minutes: 100, oldestWaitingMinutes: 60, preparationP50Minutes: 7,
+        queued: 1, prepared: 0, gating: 1, readyToPublish: 0,
+        laneGateDurationP50Minutes: 20, laneGateDurationP95Minutes: 40, laneGateGreen: 2, laneGateRed: 1, laneGateCancelled: 0,
+        gateTokenWaitP50Ms: 500, gateTokenWaitP95Ms: 120000, gateHoldingProject: 'Quality Studio', mergeLockWaitP95Ms: 60000,
+        publicationLockWaitP95Ms: null, ejectedConflict: 0, ejectedAgentRound: 1,
+        ejectedRed: 0, ejectedError: 0, arrivalsPerHour: 0.2, mergesPerHour: 0.1 },
+      { project: 'Quality Studio', projectShortCode: 'QS', projectColor: null, gatedMerges: 2, gateGreen: 2, gateRed: 0, gateCancelled: 0, gateMinutesMedian: 30, gateMinutesP90: 42,
+        queueWaitP90Ms: null, exactReuseRate: 0.5, disjointReuseRate: 0,
+        fullSuiteShare: 0.5, sameShaRetestRate: null, lastNightlyGuard: null,
+        deliveryLagP50Minutes: null, deliveryLagP95Minutes: null, oldestWaitingMinutes: null, preparationP50Minutes: 9,
+        queued: 1, prepared: 0, gating: 0, readyToPublish: 0,
+        laneGateDurationP50Minutes: 30, laneGateDurationP95Minutes: 42, laneGateGreen: 2, laneGateRed: 0, laneGateCancelled: 0,
+        gateTokenWaitP50Ms: null, gateTokenWaitP95Ms: null, gateHoldingProject: null, mergeLockWaitP95Ms: null,
+        publicationLockWaitP95Ms: null, ejectedConflict: 0, ejectedAgentRound: 0,
+        ejectedRed: 0, ejectedError: 0, arrivalsPerHour: 0.1, mergesPerHour: 0.1 },
+    ],
+  })));
 }
 
 test('pipeline health shows a stalled workspace evidence flush with repository and error', async ({ page }) => {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await installMocks(page);
   await page.goto('/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.evaluate(() => {
@@ -170,9 +201,17 @@ test('pipeline health shows a stalled workspace evidence flush with repository a
   await expect(stall).toContainText('Workspace evidence flush failing for 17 min');
   await expect(stall).toContainText('index.lock');
   await expect(stall).toContainText(REPOSITORY);
+  const economics = page.getByTestId('gate-economics');
+  await expect(economics).toContainText('Quality Studio');
+  await expect(page.getByTestId('pipeline-health-economics')).toContainText('3 gated merges');
+  const counts = await page.getByTestId('gate-economics-project').locator('td:nth-child(2)').allTextContents();
+  expect(counts.reduce((sum, count) => sum + Number(count.trim()), 0)).toBe(5);
+  await expect(page.getByTestId('gate-economics-all').locator('td:nth-child(2)')).toHaveText('5');
 
   await setTheme(page, 'light');
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-evidence-flush-light.png') });
+  await economics.screenshot({ path: path.join(SCREENSHOT_DIR, 'gate-economics-light--mocked.png') });
   await setTheme(page, 'dark');
   await health.screenshot({ path: path.join(SCREENSHOT_DIR, 'pipeline-health-evidence-flush-dark.png') });
+  await economics.screenshot({ path: path.join(SCREENSHOT_DIR, 'gate-economics-dark--mocked.png') });
 });

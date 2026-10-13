@@ -778,6 +778,7 @@ builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchGateLeaseServi
         builder.Environment.ContentRootPath, builder.Configuration["TaskRepository"], "batch-gate-leases")));
 builder.Services.AddSingleton<AgentStudio.Pipeline.RefMutationLeaseService>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGatePilotService>();
+builder.Services.AddSingleton<AgentStudio.Pipeline.GateEconomicsProjection>();
 builder.Services.AddSingleton<AgentStudio.Pipeline.BatchGateAdvisorService>();
 builder.Services.AddSingleton(sp => new AgentStudio.Pipeline.BatchIntegrationReservationService(
     AgentStudio.Pipeline.BatchGateStorageRoot.ForInstance(
