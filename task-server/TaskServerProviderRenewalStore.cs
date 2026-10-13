@@ -237,6 +237,8 @@ public sealed partial class TaskServerStore
                     ("$credential", previous.CredentialId), ("$expected", previous.ExpectedGeneration)) != 1)
                     throw new TaskServerConflictException("stale-credential-generation",
                         "Credential generation changed before renewal completed.");
+                // Successful renewal clears the previous generation's reminder.
+                await ReconcileCredentialRemindersAsync(connection, transaction, ct);
             }
             await WriteRenewalAsync(connection, transaction, result, ct);
             await AuditAsync(connection, transaction, actorId, "provider-renewal." + request.Step,
