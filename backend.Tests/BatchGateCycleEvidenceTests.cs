@@ -48,6 +48,77 @@ public sealed class BatchGateCycleEvidenceTests
                 .Sum(s => s.Seconds));
             Assert.Equal(31 * 60, evidence.Where(s => s.Step == "batchGate").Sum(s => s.Seconds));
             Assert.All(evidence.Where(s => s.Step == "batchGate"), s => Assert.Equal("TUFI2", s.Executor));
+            var exitAt = runStart.AddMinutes(10).UtcDateTime;
+            var clipped = BatchGateCycleEvidence.Load(store, "Demo").ForTask("AGT-3095", ledger:
+            [new TimelineEvent { Ts = exitAt, Kind = TimelineEventKinds.LaneChanged,
+                Details = new() { ["from"] = TaskStates.AutoReview, ["to"] = TaskStates.Progress } }]);
+            Assert.All(clipped, segment => Assert.True(segment.End <= exitAt));
+            Assert.Equal(66 * 60, clipped.Where(s => s.Resource == "gateHost").Sum(s => s.Seconds));
+            Assert.DoesNotContain(clipped, s => s.Step == "batchGate");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(BatchPhase.Red, true)]
+    [InlineData(BatchPhase.Abandoned, true)]
+    [InlineData(BatchPhase.Paused, false)]
+    [InlineData(BatchPhase.Abandoned, false)]
+    public void BatchEvidence_EndsAtReviewExit_AndRestartsAtNewReview(
+        BatchPhase phase, bool secondBatch)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "cycle-batch-rework-" + Guid.NewGuid().ToString("N"));
+        var t0 = new DateTimeOffset(2026, 10, 13, 0, 0, 0, TimeSpan.Zero);
+        try
+        {
+            var store = new BatchGateStore(root);
+            AddBatch("old", 0, 10, 20, phase);
+            if (secondBatch) AddBatch("new", 60, 70, 80, BatchPhase.Green);
+            var events = new[]
+            {
+                new TimelineEvent { Ts = t0.UtcDateTime, Kind = TimelineEventKinds.PromptCreated,
+                    Details = new() { ["targetState"] = TaskStates.AutoReview } },
+                Lane(25, TaskStates.AutoReview, TaskStates.Ready),
+                Lane(30, TaskStates.Ready, TaskStates.Progress),
+                Lane(55, TaskStates.Progress, TaskStates.AutoReview),
+                Lane(90, TaskStates.AutoReview, TaskStates.Completed),
+            };
+            var evidence = BatchGateCycleEvidence.Load(store, "Demo").ForTask(
+                "CARD", terminalAt: t0.AddMinutes(90).UtcDateTime, ledger: events);
+            Assert.DoesNotContain(evidence, span => span.Start < t0.AddMinutes(60).UtcDateTime
+                && span.End > t0.AddMinutes(25).UtcDateTime);
+            Assert.Equal((secondBatch ? 20 : 10) * 60,
+                evidence.Where(s => s.Resource == "gateHost").Sum(s => s.Seconds));
+            var flow = TaskCycleTimeAnalyzer.Analyze(new TaskInfo
+            {
+                Id = "CARD", Key = "CARD", TaskKey = "CARD", Title = "CARD",
+                State = TaskStates.Completed, CreatedAt = t0.UtcDateTime,
+                EnteredLaneAt = t0.AddMinutes(90).UtcDateTime,
+            }, events, null, gateEvidence: evidence).Row!.Flow!;
+            Assert.Equal(5 * 60, flow.Segments.Where(s => s.Resource == "codingSlot").Sum(s => s.Seconds));
+            Assert.Equal(25 * 60, flow.Segments.Where(s => s.Step == "coding").Sum(s => s.Seconds));
+            Assert.Equal(flow.EpisodeSeconds, flow.Segments.Sum(s => s.Seconds));
+
+            TimelineEvent Lane(int minutes, string from, string to) => new()
+            {
+                Ts = t0.AddMinutes(minutes).UtcDateTime, Kind = TimelineEventKinds.LaneChanged,
+                Details = new() { ["from"] = from, ["to"] = to },
+            };
+            void AddBatch(string id, int reviewAt, int runAt, int endAt, BatchPhase state)
+            {
+                var scope = new BatchGateScope("Demo", "repo", "develop", "full", "digest", "v1");
+                var subject = new BatchGateSubject("CARD", "Demo", "repo", "develop", "full", "digest", "v1",
+                    "refs/heads/result", new string('a', 40), "run_" + id, 1, 1, new string('a', 40),
+                    true, true, true, true, false, null, true, t0.AddMinutes(reviewAt), 1);
+                var folder = store.BatchDirectory(id);
+                Write(Path.Combine(folder, "manifest.json"), new BatchGateManifest(id, scope,
+                    new string('a', 40), "membership", t0.AddMinutes(reviewAt + 1), [subject], [], ["CARD"]));
+                Write(Path.Combine(folder, "runs", "run.json"), new BatchGateRunRecord("run", id,
+                    "membership", new string('a', 40), new string('b', 40), "full", "digest", "host", 1,
+                    ["build"], t0.AddMinutes(runAt), "gate.log"));
+                Write(Path.Combine(folder, "state", "00000001.json"), new BatchGateState(id,
+                    "membership", state, new string('b', 40), 1, t0.AddMinutes(endAt)));
+            }
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }

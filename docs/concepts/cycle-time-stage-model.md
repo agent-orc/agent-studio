@@ -92,6 +92,13 @@ use `CycleTimeStatistics.Aggregate` over cards with an episode. Steps and
 resources use per-card totals for percentiles. Holds and human kinds are
 excluded from machine time.
 
+Integration uses the same outcome collapsing and start pairing as the lane-stage
+analyzer: a start belongs to the same stay and has no intervening outcome.
+Delivery-gate failures do not create integration spans. Batch evidence ends at
+the card's next exit from Auto Review; a later manifest starts its queue no
+earlier than that member's new review completion. A previous batch cannot
+consume a later coding or coding-slot interval.
+
 `throughputPerDay` has one UTC entry per window day. The `all` window shows
 its last 30 days. It counts deliveries into Auto Review, cards whose machine
 work ended, real completions, and excluded re-acceptances. A delivery can
@@ -307,6 +314,11 @@ AGT-3114 synthetic-store measurement is in that task's `results/` report.
   backward moves over all time).
 
 ## Living knowledge log
+
+- 2026-10-13 (AGT-3114 review follow-up): bounded integration pairing and
+  batch evidence to their lane stays, with regressions for repeated outcomes,
+  abandoned batches and rework. The synthetic benchmark includes tokens,
+  live review authority, gate headers and batch-store evidence.
 
 - 2026-10-13 (AGT-3114): the completion anchor now excludes same-work
   re-acceptances from both cycle time and `/throughput`. Flow episodes partition

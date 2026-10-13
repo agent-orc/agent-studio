@@ -268,6 +268,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('cycle time rail renders aggregates, composition, drill-down, and both themes', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1400 });
   await page.goto(`/#/projects/${PROJECT_ID}/cycle-time`);
   const panel = page.getByTestId('project-cycle-time-panel');
   await expect(panel).toBeVisible({ timeout: 20_000 });
@@ -322,7 +323,8 @@ test('cycle time rail renders aggregates, composition, drill-down, and both them
 
   await setTheme(page, 'light');
   const light = path.join(RESULTS_DIR, 'project-cycle-time--7d--light--mocked.png');
-  await panel.screenshot({ path: light });
+  await panel.getByRole('heading', { name: 'Throughput & cycle time', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: light });
   await testInfo.attach('project-cycle-time--7d--light', { path: light, contentType: 'image/png' });
   const transitionsLight = path.join(RESULTS_DIR, 'project-cycle-time--transitions--light--mocked.png');
   await page.getByTestId('cycle-time-transitions').screenshot({ path: transitionsLight });
@@ -336,7 +338,8 @@ test('cycle time rail renders aggregates, composition, drill-down, and both them
 
   await setTheme(page, 'dark');
   const dark = path.join(RESULTS_DIR, 'project-cycle-time--all--dark--mocked.png');
-  await panel.screenshot({ path: dark });
+  await panel.getByRole('heading', { name: 'Throughput & cycle time', exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: dark });
   await testInfo.attach('project-cycle-time--all--dark', { path: dark, contentType: 'image/png' });
   const transitionsDark = path.join(RESULTS_DIR, 'project-cycle-time--transitions--dark--mocked.png');
   await page.getByTestId('cycle-time-transitions').screenshot({ path: transitionsDark });

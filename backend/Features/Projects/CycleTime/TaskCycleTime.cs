@@ -140,7 +140,7 @@ public static class TaskCycleTimeAnalyzer
     /// <summary>Data-gap prefix of a backfilled row; the suffix names the evidence (<c>backfilled:git-archive-move</c>).</summary>
     public const string BackfilledGapPrefix = "backfilled:";
 
-    private const string DeliveryGateFailedOutcome = "delivery-gate-failed";
+    internal const string DeliveryGateFailedOutcome = "delivery-gate-failed";
     private const string NoLedgerGap = "no-ledger";
     private const string CompletionFromLaneEntryGap = "completion-from-lane-entry";
     private const string ReviewStartUnknownGap = "review-start-unknown";
@@ -590,7 +590,7 @@ public static class TaskCycleTimeAnalyzer
     }
 
     /// <summary>The <c>integration_started</c> row inside the stay that opened this outcome: the latest start before it with no other outcome in between.</summary>
-    private static TimelineEvent? StartOf(TimelineEvent outcome, LaneInterval interval, List<TimelineEvent> starts, List<TimelineEvent> outcomes) =>
+    internal static TimelineEvent? StartOf(TimelineEvent outcome, LaneInterval interval, List<TimelineEvent> starts, List<TimelineEvent> outcomes) =>
         starts
             .Where(s => s.Ts <= outcome.Ts && interval.Contains(s.Ts))
             .Where(s => !outcomes.Any(o => o.Ts > s.Ts && o.Ts < outcome.Ts))
@@ -627,7 +627,7 @@ public static class TaskCycleTimeAnalyzer
         return result;
     }
 
-    private static string OutcomeOf(TimelineEvent e) =>
+    internal static string OutcomeOf(TimelineEvent e) =>
         Detail(e, "outcome") ?? (e.Kind switch
         {
             TimelineEventKinds.IntegrationSucceeded => "integrated",
@@ -723,7 +723,7 @@ public static class TaskCycleTimeAnalyzer
     /// lane change belongs to the lane it was emitted into, never to both. The
     /// final stay (ending at completion) also owns its end instant.
     /// </summary>
-    private sealed record LaneInterval(string Lane, DateTime Start, DateTime End, bool IncludeEnd = false)
+    internal sealed record LaneInterval(string Lane, DateTime Start, DateTime End, bool IncludeEnd = false)
     {
         public double Seconds => Math.Max(0, (End - Start).TotalSeconds);
         public bool Contains(DateTime ts) => ts >= Start && (ts < End || (IncludeEnd && ts == End));
