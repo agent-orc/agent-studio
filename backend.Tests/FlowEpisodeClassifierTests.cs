@@ -3,6 +3,7 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the classifier compares only the supplied fixture instants.
 public sealed class FlowEpisodeClassifierTests
 {
     private static readonly DateTime T0 = new(2026, 10, 13, 0, 0, 0, DateTimeKind.Utc);
@@ -66,6 +67,14 @@ public sealed class FlowEpisodeClassifierTests
         Assert.Equal(secondEnd, row.MachineDoneAt);
         Assert.Contains(row.Segments!, s => s.Step == "reviewAspects" && s.Executor == "review-host");
         AssertFlowPartition(row.Flow!);
+        var results = Environment.GetEnvironmentVariable("JOB_RESULTS_DIR");
+        if (!string.IsNullOrWhiteSpace(results))
+        {
+            Directory.CreateDirectory(results);
+            File.WriteAllText(Path.Combine(results, "golden-agt-3095.json"),
+                System.Text.Json.JsonSerializer.Serialize(row,
+                    new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)));
+        }
         var list = row with { Flow = row.Flow!.WithoutSegments() };
         Assert.Empty(list.Segments!);
         Assert.Equal(row.MachineCycleSeconds, list.MachineCycleSeconds);
@@ -324,6 +333,58 @@ public sealed class FlowEpisodeClassifierTests
             days[0].Completed, days[0].ReAcceptanceArtefacts));
         Assert.Equal((0, 0, 1, 1), (days[1].Delivered, days[1].MachineDone,
             days[1].Completed, days[1].ReAcceptanceArtefacts));
+    }
+
+    [Theory]
+    [InlineData("delivery-gate-failed")]
+    [InlineData("OperatorOverride")]
+    [InlineData("failed")]
+    public void IntegrationOutcomeAfterRework_DoesNotReuseOldStart(string outcome)
+    {
+        var events = new[]
+        {
+            Created(T0, TaskStates.AutoReview),
+            new TimelineEvent { Ts = T0.AddMinutes(1), Kind = TimelineEventKinds.IntegrationStarted },
+            new TimelineEvent { Ts = T0.AddMinutes(2), Kind = TimelineEventKinds.IntegrationFailed,
+                Details = new() { ["outcome"] = "failed" } },
+            Lane(T0.AddMinutes(3), TaskStates.AutoReview, TaskStates.Ready),
+            Lane(T0.AddMinutes(5), TaskStates.Ready, TaskStates.Progress, cause: "claimed"),
+            Lane(T0.AddMinutes(10), TaskStates.Progress, TaskStates.AutoReview, cause: "delivered"),
+            new TimelineEvent { Ts = T0.AddMinutes(12), Kind = TimelineEventKinds.IntegrationFailed,
+                Details = new() { ["outcome"] = outcome } },
+            Lane(T0.AddMinutes(15), TaskStates.AutoReview, TaskStates.Completed, "human:operator"),
+        };
+        var row = TaskCycleTimeAnalyzer.Analyze(Task("rework-integration", TaskStates.Completed), events, null).Row!;
+        Assert.Equal(60, Seconds(row.Flow!, "active", "integration"));
+        Assert.Equal(120, Seconds(row.Flow!, "resourceWait", "codingSlot"));
+        Assert.Equal(300, Seconds(row.Flow!, "active", "coding"));
+        Assert.Equal(row.LeadTimeSeconds, row.Stages!.Sum, 1);
+        AssertFlowPartition(row.Flow!);
+    }
+
+    [Theory]
+    [InlineData(false, "Merged", 60)]
+    [InlineData(false, "delivery-gate-failed", 0)]
+    [InlineData(true, "Merged", 0)]
+    public void IntegrationPairing_SkipsRepeatsGateFailuresAndStartsInOtherStays(
+        bool moveBeforeOutcome, string outcome, int seconds)
+    {
+        var events = new List<TimelineEvent>
+        {
+            Created(T0, TaskStates.AutoReview),
+            new() { Ts = T0.AddMinutes(1), Kind = TimelineEventKinds.IntegrationStarted },
+        };
+        if (moveBeforeOutcome)
+            events.Add(Lane(T0.AddMinutes(1.5), TaskStates.AutoReview, TaskStates.HumanReview));
+        events.Add(new TimelineEvent { Ts = T0.AddMinutes(2), Kind = TimelineEventKinds.IntegrationSucceeded,
+            Details = new() { ["outcome"] = outcome } });
+        events.Add(new TimelineEvent { Ts = T0.AddMinutes(3), Kind = TimelineEventKinds.IntegrationSucceeded,
+            Details = new() { ["outcome"] = outcome } });
+        events.Add(Lane(T0.AddMinutes(5), moveBeforeOutcome ? TaskStates.HumanReview : TaskStates.AutoReview,
+            TaskStates.Completed, "human:operator"));
+        var row = TaskCycleTimeAnalyzer.Analyze(Task("pairing", TaskStates.Completed), events, null).Row!;
+        Assert.Equal(seconds, Seconds(row.Flow!, "active", "integration"));
+        AssertFlowPartition(row.Flow!);
     }
 
     private static void AssertFlowPartition(FlowEpisode flow)

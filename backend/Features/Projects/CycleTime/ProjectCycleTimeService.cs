@@ -462,7 +462,7 @@ public sealed class ProjectCycleTimeService
         var reviewIds = events.Where(e => e.Kind == TimelineEventKinds.ReviewAttemptClaimed)
             .Select(e => e.Details?.GetValueOrDefault("attemptId") ?? e.RunId)
             .OfType<string>().ToList();
-        var gateSpans = (gates?.ForTask(taskKey, reviewIds, task.EnteredLaneAt) ?? []).Concat(gateLogs.Segments)
+        var gateSpans = (gates?.ForTask(taskKey, reviewIds, task.EnteredLaneAt, events) ?? []).Concat(gateLogs.Segments)
             .Concat(dependencySpans).ToList();
         var firstBatchQueue = gateSpans.Where(s => s.Resource == "gateHost")
             .OrderBy(s => s.Start).FirstOrDefault();

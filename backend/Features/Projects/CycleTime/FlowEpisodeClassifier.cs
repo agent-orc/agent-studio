@@ -93,6 +93,7 @@ public static class FlowEpisodeClassifier
         if (start is null || start > completedAt) return null;
 
         var spans = new List<Span>();
+        var laneStays = new List<TaskCycleTimeAnalyzer.LaneInterval>();
         var reviewStays = new List<(DateTime Start, DateTime End, TimelineEvent? Exit)>();
         var gaps = new List<string>();
         var cursor = createdAt;
@@ -212,14 +213,18 @@ public static class FlowEpisodeClassifier
             Add(waiting.Ts, release?.Ts ?? completedAt, "systemHold", kind: "causeBreaker", priority: 75);
         }
 
+        var integrationOutcomes = TaskCycleTimeAnalyzer.CollapseRepeatedOutcomes(ledger);
         var integrationStarts = ledger.Where(e => e.Kind == TimelineEventKinds.IntegrationStarted).ToList();
-        foreach (var outcome in ledger.Where(e => e.Kind is TimelineEventKinds.IntegrationSucceeded
-                     or TimelineEventKinds.IntegrationFailed or TimelineEventKinds.IntegrationOverridden))
+        foreach (var stay in laneStays)
+        foreach (var outcome in integrationOutcomes)
         {
-            var from = integrationStarts.LastOrDefault(e => e.Ts <= outcome.Ts);
+            if (!stay.Contains(outcome.Ts) && !(stay.IncludeEnd && outcome.Ts > stay.End)) continue;
+            if (string.Equals(TaskCycleTimeAnalyzer.OutcomeOf(outcome),
+                    TaskCycleTimeAnalyzer.DeliveryGateFailedOutcome, StringComparison.OrdinalIgnoreCase)) continue;
+            var from = TaskCycleTimeAnalyzer.StartOf(outcome, stay, integrationStarts, integrationOutcomes);
             if (from is null) continue;
-            Add(from.Ts, outcome.Ts, "active", "integration", priority: 120);
-            var reviewVerdict = ledger.LastOrDefault(e => e.Ts <= from.Ts && e.Ts >= start
+            Add(from.Ts, outcome.Ts > stay.End ? stay.End : outcome.Ts, "active", "integration", priority: 120);
+            var reviewVerdict = ledger.LastOrDefault(e => e.Ts <= from.Ts && e.Ts >= stay.Start
                 && e.Kind == TimelineEventKinds.PostStepFinished
                 && (Detail(e, "pipelineStepId") ?? "").StartsWith("aspect-", StringComparison.Ordinal));
             if (reviewVerdict is not null)
@@ -262,8 +267,7 @@ public static class FlowEpisodeClassifier
             var lastActivity = ledger.Where(e => e.Ts >= stay.Start && e.Ts < end &&
                 (e.Kind == TimelineEventKinds.PostStepFinished
                     && (Detail(e, "pipelineStepId") ?? "").StartsWith("aspect-", StringComparison.Ordinal)
-                 || e.Kind is TimelineEventKinds.IntegrationSucceeded or TimelineEventKinds.IntegrationFailed
-                     or TimelineEventKinds.IntegrationOverridden)).Select(e => e.Ts)
+                 || integrationOutcomes.Contains(e))).Select(e => e.Ts)
                 .Concat((gateEvidence ?? []).Where(e => e.Step == "batchGate"
                     && e.End >= stay.Start && e.End <= end).Select(e => e.End))
                 .DefaultIfEmpty().Max();
@@ -298,6 +302,7 @@ public static class FlowEpisodeClassifier
         void AddLane(DateTime from, DateTime to, string laneName, TimelineEvent? exit)
         {
             if (to <= start || from >= completedAt || to <= from) return;
+            laneStays.Add(new TaskCycleTimeAnalyzer.LaneInterval(laneName, from, to, to == completedAt));
             if (laneName == TaskStates.Ready)
                 Add(from, to, "resourceWait", resource: "codingSlot", executor: exit?.Actor);
             else if (laneName is TaskStates.Progress or TaskStates.FailedPickup or TaskStates.CodeNotComplete)
