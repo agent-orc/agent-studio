@@ -592,6 +592,9 @@ public sealed class TaskFileHistoryEndpointsTests : IDisposable
         Assert.Empty(TaskPaths.ResultArtifacts(job));
         Assert.False(AgentStudio.Runner.ResultsInventory.HasActiveArtifacts(job));
 
+        // Pass the AGT-3076 content gate so the move reaches the AGT-2817
+        // completion contract, the check the legacy cache could fool.
+        CompletionContentFixture.RecordPassedReview(job);
         using var move = await client.PostAsJsonAsync(
             $"/api/tasks/{id}/move?watchPath={watchPath}",
             new MoveJobRequest { TargetState = TaskStates.Completed, Reason = "Accept the concept." });
