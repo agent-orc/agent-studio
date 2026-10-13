@@ -997,6 +997,13 @@ preview types keep their MIME type, and unknown binary types remain
 `application/octet-stream`. Allowed text log links use the existing
 workspace-scoped task file route.
 
+`PUT /api/tasks/{id}/files/{fileName}` saves the editable `prompt.md`. If its
+folder or file disappears during the save, the route returns `409 Conflict`
+with a message to reload the task before saving again. Editing during a live
+CLI run also returns `409`. A missing task or a file that is not editable
+returns `404`. Other I/O failures return `503 Service Unavailable` with
+retry guidance.
+
 ## Parked-card blocker and recall
 
 Every move into `5-human-review` or `5e-escalated` writes a machine-readable
