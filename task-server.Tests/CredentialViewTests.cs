@@ -7,6 +7,7 @@ using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -383,7 +384,8 @@ public sealed class CredentialViewTests
         var studioToken = "studio-" + Guid.NewGuid().ToString("N");
         var engineToken = "engine-" + Guid.NewGuid().ToString("N");
         var ownerCode = "owner-code-" + Guid.NewGuid().ToString("N");
-        await using var factory = new RoleFactory(temp.Path, studioToken, engineToken, ownerCode);
+        var clock = new ManualTimeProvider(Start);
+        await using var factory = new RoleFactory(temp.Path, studioToken, engineToken, ownerCode, clock);
         using var edge = Client(factory, studioToken);
         var bootstrap = await edge.PostAsJsonAsync("/api/v1/studio/auth/bootstrap",
             new StudioBootstrapRequest("owner", "owner password 1234", BootstrapCode: ownerCode));
@@ -396,12 +398,12 @@ public sealed class CredentialViewTests
         using var viewerClient = Client(factory, studioToken, viewerSession);
 
         var put = await owner.PutAsJsonAsync("/api/v1/management/credentials",
-            new CredentialRegistryObservationRequest(Issued(DateTime.UtcNow.AddDays(3)), "instance-a", null, DateTime.UtcNow));
+            new CredentialRegistryObservationRequest(Issued(clock.GetUtcNow().UtcDateTime.AddDays(3)), "instance-a", null, clock.GetUtcNow().UtcDateTime));
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
 
         Assert.Equal("owner-role-required", await ErrorCodeAsync(await operatorClient.PutAsJsonAsync(
             "/api/v1/management/credentials",
-            new CredentialRegistryObservationRequest(Issued(DateTime.UtcNow.AddDays(3)), "instance-a", null, DateTime.UtcNow)),
+            new CredentialRegistryObservationRequest(Issued(clock.GetUtcNow().UtcDateTime.AddDays(3)), "instance-a", null, clock.GetUtcNow().UtcDateTime)),
             HttpStatusCode.Forbidden));
         Assert.Equal("owner-role-required", await ErrorCodeAsync(await operatorClient.PostAsJsonAsync(
             "/api/v1/management/principals/any/rotate", new { }), HttpStatusCode.Forbidden));
@@ -541,12 +543,14 @@ public sealed class CredentialViewTests
         return client;
     }
 
-    private sealed class RoleFactory(string dataDirectory, string studioToken, string engineToken, string ownerCode)
+    private sealed class RoleFactory(string dataDirectory, string studioToken, string engineToken, string ownerCode,
+        TimeProvider clock)
         : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.ConfigureServices(services => services.AddSingleton(clock));
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {

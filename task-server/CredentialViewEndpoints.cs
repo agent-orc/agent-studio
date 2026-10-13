@@ -95,7 +95,8 @@ public sealed class CredentialReminderHostedService(
             }
             catch (TaskServerConflictException exception) when (exception.Code == "server-not-writable")
             {
-                // Read-only and maintenance modes evaluate again on the next tick.
+                logger.LogDebug(exception,
+                    "credential-reminders sweep-deferred: server is not writable; retry on the next tick");
             }
             catch (Exception exception)
             {
