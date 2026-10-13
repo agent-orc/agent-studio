@@ -4,6 +4,9 @@
 train fixes the fetched `develop` tip as its exact candidate, runs the complete
 blocking gate against that commit, publishes an annotated release marker with
 `main`, and hands the new `main` SHA to the external Stable deploy watcher.
+With `--release-dir` it also packages that SHA for deployment from the same
+gated worktree, so a deploy does not run the full gate a second time (see
+[One-gate deploy package](#one-gate-deploy-package)).
 
 Use [the promotion command](../../scripts/release/promote-develop-to-main.sh)
 for this repository. It is an operator command, not a worker pipeline step.
@@ -86,9 +89,14 @@ removed before retrying the same marker.
    `PROMOTION_TAGGER_EMAIL` defaults to
    `promotion@agent-studio.invalid`.
 
+   Add `--release-dir <directory>` when this train also feeds a deploy. The
+   package then lands in `<directory>/<candidate sha>/`; see
+   [One-gate deploy package](#one-gate-deploy-package).
+
 6. Verify `promotion-record.json` says `status=promoted`, `gate=passed`, and
    `atomicPush=true`. Verify the remote `main` and peeled tag resolve to the
-   recorded `candidateSha`.
+   recorded `candidateSha`. With `--release-dir`, also verify
+   `releasePackage.status=written`.
 7. Pass `--project <name>` on the `--execute` run (an Agent Studio project
    name, e.g. `Agent Studio`) so the atomic push step also requests branch
    reclaim - see "Branch reclaim after promotion" below. Omitting it only
@@ -310,6 +318,69 @@ failure after a passed gate writes `status=blocked-tag` or
 `status=blocked-push`, retains `gate=passed`, and records the command error so
 the evidence directory remains complete.
 
+## One-gate deploy package
+
+Until AGT-3099 every deploy ran the full gate twice for the same SHA: once in
+the promotion train and again in the operator's `run-final-verified-release.sh`
+on a clean checkout, which only then published and packed the release. On
+12 and 13 October 2026 the promotion gate took 91 minutes and the second gate
+97 minutes, `OrchestratorApi.Tests` alone 72 minutes in each. The second run
+proved nothing new: same SHA, same gate script, same toolchain.
+
+`--release-dir <directory>` makes the train write that package itself, from the
+gate worktree, after the verified atomic push and before the worktree is
+removed:
+
+1. `dotnet publish backend/OrchestratorApi.csproj --configuration Release
+   --no-build --no-restore` into `backend/`, reusing the gate's Release build
+   (output in `release-publish.log` in the evidence directory);
+2. the gate's production frontend build `frontend/dist/frontend/browser` into
+   `frontend/`, plus `frontend/dist/frontend/3rdpartylicenses.txt` when
+   present;
+3. `RELEASE-SHA` (the candidate SHA) and `FULL-GATE`
+   (`PROMOTION_FULL_GATE=passed:<sha>`) in both `backend/` and `frontend/`;
+4. the gate log as `full-gate.log`; and
+5. `release.tar.gz` with only `backend/` and `frontend/`, and `release.sha256`
+   with its digest.
+
+This is the layout `fetch-remote-artifacts.sh` validates, so the deploy flow
+becomes:
+
+1. On the gate host (the host `fetch-remote-artifacts.sh` reaches as
+   `RemoteGate__SshHost`), run the train with `--release-dir` pointing at the
+   directory configured there as `REMOTE_RELEASE_ROOT`:
+
+   ```sh
+   ./scripts/release/promote-develop-to-main.sh \
+     --execute \
+     --tag "release/$(date -u +%Y%m%d-%H%M%SZ)" \
+     --release-dir /srv/agent-studio-releases
+   ```
+
+2. Read `releasePackage` in `promotion-record.json`
+   (`{"status":"written","directory":...,"archive":...,"sha256":...}`).
+3. On the devspace, run `fetch-remote-artifacts.sh <candidate sha>`. Do not
+   run `run-final-verified-release.sh` for a SHA that already has a package;
+   it refuses an existing `release.tar.gz` anyway.
+
+The package is written only when the gate passed and the push was verified. A
+red, incomplete, or dirty gate, a tag or push failure, and a failed remote
+verification leave no package and record `"releasePackage":null`. The package
+is built in a hidden `.<sha>.partial.*` staging directory beside the target and
+renamed into place only when complete, so a packaging failure or a stop signal
+never leaves a partial package. The target directory is checked before the
+gate: an unwritable `--release-dir` or an existing `<directory>/<sha>/` records
+`status=blocked-release-dir` and leaves `main` unchanged, because a package is
+immutable once written.
+
+Packaging cannot endanger the push because it runs after it. When packaging
+fails after a verified push, `main` and the tag stay promoted, the record keeps
+`status=promoted` with
+`"releasePackage":{"status":"failed","directory":...,"error":...}`, the log
+warns, and the command exits with code `8`. Without `--release-dir` the train
+behaves as before and records `"releasePackage":null`. In `--dry-run` the
+option is only logged.
+
 ## Branch reclaim after promotion
 
 AGT-2793: `develop`/`main` promotion is the last point at which a task's
@@ -371,6 +442,11 @@ condition and a later cron tick retries. The watcher never changes task state.
   Correct the configured tagger identity or local repository problem, then
   rerun from fresh refs without repeating diagnosis from an incomplete evidence
   directory.
+- Release package failure (exit code `8`, `releasePackage.status=failed`):
+  `main` and the release marker are promoted and stay that way. Read the
+  `error` and `release-publish.log`, then build the package for that SHA
+  separately, for example with `run-final-verified-release.sh`, which runs the
+  gate again. Do not rerun the promotion; `main` already contains the SHA.
 - Deploy failure: the promotion remains a valid release fact. Diagnose the
   external updater and use its rollback procedure; do not rewrite `main` or
   move the release marker.
