@@ -547,7 +547,7 @@ public sealed class ProviderAuthProbeTests
     }
 
     [Fact]
-    public async Task Successful_run_after_an_expired_limit_still_forces_auth_reprobe()
+    public async Task Successful_run_after_an_expired_limit_stays_claimable_through_indeterminate_reprobe()
     {
         var calls = 0;
         var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
@@ -555,7 +555,7 @@ public sealed class ProviderAuthProbeTests
             (_, _, _) =>
             {
                 Interlocked.Increment(ref calls);
-                return Task.FromResult(new ProcessResult(0, "Logged in", ""));
+                return Task.FromResult(new ProcessResult(1, "", "unknown command: auth"));
             },
             clock: () => now);
         await probe.RefreshAsync("claude", CancellationToken.None);
@@ -569,7 +569,13 @@ public sealed class ProviderAuthProbeTests
 
         Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
         Assert.Equal(now, afterRun.LastRealSuccessAt);
-        await WaitUntil(() => Volatile.Read(ref calls) >= 2);
+        Assert.Equal(ProviderAuthProbe.SignalOk, afterRun.Signal);
+        Assert.Equal(ProviderProbeOutcome.Healthy, afterRun.Outcome);
+        Assert.Null(afterRun.LimitedUntil);
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(2, Volatile.Read(ref calls));
+        Assert.Equal(ProviderProbeOutcome.Healthy, probe.Current("claude").Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, probe.Current("claude").Signal);
     }
 
     [Fact]

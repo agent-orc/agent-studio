@@ -483,6 +483,7 @@ internal static class RunnerCapabilityProbe
                 healthOutcome: auth.Outcome switch
                 {
                     ProviderProbeOutcome.Healthy => "healthy",
+                    ProviderProbeOutcome.Unverified => "unverified",
                     ProviderProbeOutcome.CredentialInvalid => "credential_invalid",
                     ProviderProbeOutcome.ProviderIncident => "provider_incident",
                     ProviderProbeOutcome.QuotaExhausted => "quota_exhausted",
@@ -1349,11 +1350,13 @@ public sealed class ProviderAuthProbe
                 SignalSignedOut);
         }
         if (evidence.Kind == ProviderAccessEvidenceKind.RateLimited)
+            // The shared classifier supplies a short retry for other callers.
+            // The provider-auth cache uses its own configured unknown-reset window.
             return new ProviderAuthObservation(
                 ProviderAuthObservationKind.Limited,
-                $"'{command}' reports a provider limit until {evidence.LimitedUntil:o}: {Excerpt(text)}",
+                $"'{command}' reports a provider limit: {Excerpt(text)}",
                 SignalLimited,
-                LimitedUntil: evidence.LimitedUntil);
+                LimitedUntil: evidence.ResetTimeReported ? evidence.LimitedUntil : null);
         if (evidence.Kind == ProviderAccessEvidenceKind.TransientFailure)
             return new ProviderAuthObservation(
                 ProviderAuthObservationKind.Transient,
@@ -1389,25 +1392,41 @@ public sealed class ProviderAuthProbe
         // "rate-limited" or "usage limit" without any limit being hit.
         if (result.ExitCode == 0)
         {
+            ProviderAuthCacheEntry? beforeSuccess = null;
+            ProviderAuthCacheEntry? recovered = null;
             lock (_sync)
             {
                 if (_observed.TryGetValue(cliBinary, out var last)
                     && (last.Status.CredentialGeneration is null
                         || last.Status.CredentialGeneration == credentialGeneration))
                 {
-                    var ready = last.Status.Status == Ready;
+                    var now = _clock();
+                    var expiredLimit = last.Status.Status == Limited
+                        && LimitDeadline(last.Status, _unknownLimitTtl) <= now;
+                    var ready = last.Status.Status == Ready || expiredLimit;
                     // Working access interrupts any run of explicit logout answers.
                     _observed[cliBinary] = last with { ConsecutiveLogoutSignals = 0, Status = last.Status with
                     {
-                        LastRealSuccessAt = _clock(),
+                        Status = ready ? Ready : last.Status.Status,
+                        ObservedAt = expiredLimit ? now : last.Status.ObservedAt,
+                        LimitedUntil = expiredLimit ? null : last.Status.LimitedUntil,
+                        LastRealSuccessAt = now,
                         Outcome = ProviderProbeOutcome.Healthy,
                         Signal = ready ? SignalOk : last.Status.Signal,
                         ProbeDegraded = ready ? false : last.Status.ProbeDegraded,
                         Detail = ready ? "Same-generation work confirmed provider access." : last.Status.Detail,
                     } };
+                    if (expiredLimit)
+                    {
+                        beforeSuccess = last;
+                        recovered = _observed[cliBinary];
+                    }
                     _runEvidenceVersions[cliBinary] = _runEvidenceVersions.GetValueOrDefault(cliBinary) + 1;
                 }
             }
+            if (recovered is not null)
+                LogTransition(cliBinary, beforeSuccess, recovered, new ProviderAuthObservation(
+                    ProviderAuthObservationKind.Authenticated, recovered.Status.Detail));
             // Current() still owns expired-limit and TTL re-probes.
             return Current(cliBinary);
         }
@@ -1427,9 +1446,9 @@ public sealed class ProviderAuthProbe
                 SignalTransient),
             ProviderAccessEvidenceKind.RateLimited => new ProviderAuthObservation(
                 ProviderAuthObservationKind.Limited,
-                $"'{RunnerCapabilityProbe.Provider(cliBinary)}' is rate-limited until {evidence.LimitedUntil:o}: {Excerpt(evidence.Detail)}",
+                $"'{RunnerCapabilityProbe.Provider(cliBinary)}' is rate-limited: {Excerpt(evidence.Detail)}",
                 SignalLimited,
-                LimitedUntil: evidence.LimitedUntil,
+                LimitedUntil: evidence.ResetTimeReported ? evidence.LimitedUntil : null,
                 EvidenceId: SafeEvidenceId(evidenceId),
                 EvidenceExcerpt: Excerpt(evidence.Detail)),
             ProviderAccessEvidenceKind.TransientFailure => new ProviderAuthObservation(
@@ -1507,8 +1526,8 @@ public sealed class ProviderAuthProbe
                 ObservedAt = observedAt,
                 LimitedUntil = null,
                 ProbeDegraded = true,
-                Outcome = ProviderProbeOutcome.Indeterminate,
-                Signal = "indeterminate",
+                Outcome = ProviderProbeOutcome.Unverified,
+                Signal = SignalOk,
                 EvidenceId = null,
                 EvidenceExcerpt = null,
             }
@@ -1596,6 +1615,11 @@ public sealed class ProviderAuthProbe
             var generation = observation.CredentialGeneration ?? retained.CredentialGeneration;
             var sameBinding = effectiveSource == retained.EffectiveSource
                 && generation == retained.CredentialGeneration;
+            var recentRealSuccess = sameBinding && retained.Status == Ready
+                && retained.LastRealSuccessAt is { } lastRealSuccess
+                && (previous?.Status.Status != Limited || lastRealSuccess > previous.Status.ObservedAt)
+                && observedAt >= lastRealSuccess
+                && observedAt - lastRealSuccess < HealthyRealCheckCeiling;
             return new ProviderAuthCacheEntry(
                 retained with
                 {
@@ -1604,16 +1628,28 @@ public sealed class ProviderAuthProbe
                         : $"probe degraded: {observation.Detail} Retaining last status '{retained.Status}'.",
                     ObservedAt = retained.ObservedAt,
                     ProbeDegraded = true,
-                    Outcome = ProviderProbeOutcome.Indeterminate,
+                    Outcome = recentRealSuccess && observation.Kind != ProviderAuthObservationKind.Unauthorized
+                        ? ProviderProbeOutcome.Healthy
+                        : observation.Kind != ProviderAuthObservationKind.Unauthorized
+                        && retained.Outcome == ProviderProbeOutcome.Unverified
+                        && retained.Status == Ready && sameBinding
+                        ? ProviderProbeOutcome.Unverified : ProviderProbeOutcome.Indeterminate,
                     EffectiveSource = effectiveSource,
                     CredentialGeneration = generation,
                     LastRealSuccessAt = sameBinding ? retained.LastRealSuccessAt : null,
                     EvidenceId = null,
                     EvidenceExcerpt = null,
-                    Signal = observation.Kind == ProviderAuthObservationKind.Unauthorized
-                        || observedAt - retained.ObservedAt > LastGoodWindow
-                        ? "indeterminate" : observation.Kind == ProviderAuthObservationKind.Transient
-                            ? SignalTransient : retained.Signal,
+                    Signal = recentRealSuccess && observation.Kind != ProviderAuthObservationKind.Unauthorized
+                        ? SignalOk
+                        : observation.Kind != ProviderAuthObservationKind.Unauthorized
+                        && retained.Outcome == ProviderProbeOutcome.Unverified
+                        && retained.Status == Ready && sameBinding
+                        ? SignalOk
+                        : observation.Kind == ProviderAuthObservationKind.Unauthorized
+                            || observedAt - retained.ObservedAt > LastGoodWindow
+                            ? "indeterminate"
+                            : observation.Kind == ProviderAuthObservationKind.Transient
+                                ? SignalTransient : retained.Signal,
                 },
                 0, observedAt);
         }

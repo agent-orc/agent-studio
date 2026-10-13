@@ -8,10 +8,12 @@ public sealed class ProviderLimitRecoveryTests
 {
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 10, 13, 11, 0, 0, TimeSpan.Zero));
 
-    private ProviderAuthProbe Probe(ProcessResult answer, Action<string>? log = null)
+    private ProviderAuthProbe Probe(ProcessResult answer, Action<string>? log = null,
+        TimeSpan? unknownLimitTtl = null)
         => new((_, _, _) => Task.FromResult(answer), executableExists: _ => true,
             clock: _clock.GetUtcNow, diagnosticLog: log,
-            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "Fixture credentials."));
+            credentialFreshness: _ => new ProviderCredentialFreshness(null, null, "Fixture credentials."),
+            unknownLimitTtl: unknownLimitTtl);
 
     [Theory]
     [InlineData("unknown command: auth")]
@@ -30,9 +32,16 @@ public sealed class ProviderLimitRecoveryTests
         Assert.Contains("unverified", recovered.Detail);
         Assert.Null(recovered.LimitedUntil);
         Assert.True(recovered.ProbeDegraded);
-        Assert.Equal(ProviderProbeOutcome.Indeterminate, recovered.Outcome);
+        Assert.Equal(ProviderProbeOutcome.Unverified, recovered.Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, recovered.Signal);
 
         await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(ProviderProbeOutcome.Unverified, probe.Current("claude").Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, probe.Current("claude").Signal);
+        _clock.Advance(TimeSpan.FromMinutes(11));
+        await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(ProviderProbeOutcome.Unverified, probe.Current("claude").Outcome);
+        Assert.Equal(ProviderAuthProbe.SignalOk, probe.Current("claude").Signal);
         Assert.Single(logs, line => line.StartsWith("provider-auth recovered provider=claude after="));
     }
 
@@ -56,8 +65,43 @@ public sealed class ProviderLimitRecoveryTests
         _clock.Advance(TimeSpan.FromMinutes(61));
         await probe.RefreshAsync("claude", CancellationToken.None);
         var after = RunnerCapabilityProbe.Advertise(options, gitPushReady: false, providerAuth: probe);
-        Assert.Equal(ProviderAuthProbe.Ready,
-            Assert.Single(after, item => item.Key == "provider-auth:claude").Status);
+        var recovered = Assert.Single(after, item => item.Key == "provider-auth:claude");
+        Assert.Equal(ProviderAuthProbe.Ready, recovered.Status);
+        Assert.Equal(ProviderAuthProbe.SignalOk, recovered.Signal);
+        Assert.Equal("unverified", recovered.HealthOutcome);
+    }
+
+    [Theory]
+    [InlineData(60)]
+    [InlineData(15)]
+    public async Task Unknown_reset_from_completed_run_uses_configured_window(int windowMinutes)
+    {
+        var window = TimeSpan.FromMinutes(windowMinutes);
+        var probe = Probe(new ProcessResult(1, "", "unknown command: auth"),
+            unknownLimitTtl: window);
+        var limited = probe.RecordProcessResult("claude", new ProcessResult(1, "", "usage limit reached"));
+        Assert.Equal(ProviderAuthProbe.Limited, limited.Status);
+        Assert.Null(limited.LimitedUntil);
+
+        _clock.Advance(window - TimeSpan.FromMinutes(1));
+        Assert.Equal(ProviderAuthProbe.Limited,
+            (await probe.RefreshAsync("claude", CancellationToken.None)).Status);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var recovered = await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.Ready, recovered.Status);
+        Assert.Equal(ProviderProbeOutcome.Unverified, recovered.Outcome);
+    }
+
+    [Fact]
+    public async Task Unknown_reset_from_status_probe_uses_configured_window()
+    {
+        var answer = new ProcessResult(1, "", "usage limit reached");
+        var probe = Probe(answer, unknownLimitTtl: TimeSpan.FromMinutes(15));
+        var limited = await probe.RefreshAsync("claude", CancellationToken.None);
+        Assert.Equal(ProviderAuthProbe.Limited, limited.Status);
+        Assert.Null(limited.LimitedUntil);
+        _clock.Advance(TimeSpan.FromMinutes(15));
+        Assert.Equal(ProviderAuthProbe.Ready, probe.Current("claude").Status);
     }
 
     private static ProviderAuthStatus Limit(ProviderAuthProbe probe)
