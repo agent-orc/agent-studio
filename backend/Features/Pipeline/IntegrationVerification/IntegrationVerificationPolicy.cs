@@ -13,6 +13,15 @@ public enum IntegrationVerificationAction
     RunGate,
 
     /// <summary>
+    /// AGT-3103: the published integration branch already carries the
+    /// delivery, so the integration is a no-op. It completes without a build,
+    /// a test run, or a push. No evidence names a tree that carries the
+    /// delivery, so the card stays integrated-unverified and is not accepted
+    /// on containment alone.
+    /// </summary>
+    CompleteUnverified,
+
+    /// <summary>
     /// A gate reached a product verdict on the exact merged tree and it
     /// failed. The card returns to Human Review with the verdict and a cause
     /// card is opened for the branch.
@@ -47,6 +56,12 @@ public static class IntegrationVerificationEvidence
     /// <summary>A fresh merge whose diff no gate applies to.</summary>
     public const string GateNotApplicable = "gate-not-applicable";
 
+    /// <summary>
+    /// AGT-3103: verified evidence for an earlier tree that the published
+    /// branch still carries and that already contained the delivery.
+    /// </summary>
+    public const string CarriedTree = "carried-tree";
+
     /// <summary>Nothing proves the tree.</summary>
     public const string None = "none";
 }
@@ -57,12 +72,24 @@ public static class IntegrationVerificationEvidence
 /// <param name="ExactReceipt">Newest gate receipt on the card whose tested tree is exactly that SHA's tree.</param>
 /// <param name="HasVerifiedIntegrationRecord">An <c>integrated-verified</c> record on the card names that SHA.</param>
 /// <param name="GateRun">The single gate run on the current tip, once it ran.</param>
+/// <param name="NoOpIntegration">
+/// AGT-3103: the published integration branch already contains the delivery
+/// at <paramref name="Sha"/>. Nothing is merged or pushed, so the lane runs no
+/// gate either; only existing evidence can verify the card.
+/// </param>
+/// <param name="CarriedVerifiedTreeSha">
+/// An earlier tree with verified gate evidence that the branch still carries
+/// and that already contained the delivery. Counts only for a no-op
+/// integration: a push the lane approves never extends past a gated tree.
+/// </param>
 public sealed record IntegrationVerificationFacts(
     MergeIntoIntegrationOutcome Outcome,
     string? Sha,
     BuildTestGateResult? ExactReceipt,
     bool HasVerifiedIntegrationRecord,
-    BuildTestGateResult? GateRun);
+    BuildTestGateResult? GateRun,
+    bool NoOpIntegration = false,
+    string? CarriedVerifiedTreeSha = null);
 
 public sealed record IntegrationVerificationDecision(
     IntegrationVerificationAction Action,
@@ -82,6 +109,14 @@ public sealed record IntegrationVerificationDecision(
 /// delivery "already merged". Such a card completes only on gate evidence for
 /// the exact tree it would claim, and the lane produces that evidence at most
 /// once per call by running the gate on the current tip.
+/// <para>
+/// AGT-3103: when the published branch already carries the delivery, the
+/// integration is a no-op and the lane produces no evidence at all. A full
+/// merge gate there held the shared gate host and the project's integration
+/// reservation for over an hour to re-test a tree this card did not change.
+/// Such a card is verified by existing evidence, including a verified earlier
+/// tree the branch still carries, or it stays integrated-unverified.
+/// </para>
 /// </summary>
 public static class IntegrationVerificationPolicy
 {
@@ -133,6 +168,24 @@ public static class IntegrationVerificationPolicy
                 $"The gate already ran on the exact merged tree {sha} and returned {failed.Verdict}: {failed.Reason}");
         }
 
+        if (facts.NoOpIntegration
+            && ReviewSubjectStore.IsValidResultSha(facts.CarriedVerifiedTreeSha))
+        {
+            return Verified(
+                IntegrationVerificationEvidence.CarriedTree,
+                $"The branch tip {sha} carries the verified tree {Short(facts.CarriedVerifiedTreeSha!)}, "
+                + "which already contained this delivery.");
+        }
+
+        if (facts.NoOpIntegration && facts.GateRun is null)
+        {
+            return Unverified(
+                IntegrationVerificationAction.CompleteUnverified,
+                IntegrationVerificationEvidence.None,
+                $"The published branch already contains this delivery at {sha}, so the integration is a no-op and "
+                + "ran no gate. No gate receipt and no integrated-verified record names a tree that carries it.");
+        }
+
         if (facts.GateRun is not { } gate)
         {
             return Unverified(
@@ -146,7 +199,9 @@ public static class IntegrationVerificationPolicy
         {
             return Verified(
                 IntegrationVerificationEvidence.GateRun,
-                $"The gate ran once on the current branch tip {sha} and returned {gate.Verdict}.");
+                facts.NoOpIntegration
+                    ? $"No gate applies to this delivery ({gate.Verdict}); the published branch already carries it at {sha}."
+                    : $"The gate ran once on the current branch tip {sha} and returned {gate.Verdict}.");
         }
 
         return IsTreeVerdict(gate)

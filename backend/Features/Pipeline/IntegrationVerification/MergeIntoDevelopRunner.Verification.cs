@@ -15,18 +15,34 @@ public sealed partial class MergeIntoDevelopRunner
 
     private const string PreMainTestGateStep = "pre-main-test-gate";
 
+    /// <param name="NoOp">
+    /// AGT-3103: the published branch already carried the delivery. Nothing
+    /// was merged, gated, or pushed.
+    /// </param>
     private sealed record ContainedDeliveryVerification(
         MergeIntoIntegrationResult Result,
         IntegrationVerificationDecision Decision,
         BuildTestGateResult? Gate,
         bool ReleaseGate,
-        string Branch);
+        string Branch,
+        bool NoOp = false);
+
+    /// <param name="Sha">The earlier verified tree the published tip still carries.</param>
+    /// <param name="CoveredDeliveryShas">
+    /// Delivery SHAs the verdict covers although they are not ancestors of
+    /// <paramref name="Sha"/>: a batch gate tested the member's replayed
+    /// commits, so its original result SHA is covered by name. Null means the
+    /// covered SHAs are the delivery commits <paramref name="Sha"/> contains.
+    /// </param>
+    private sealed record CarriedTree(string Sha, IReadOnlyList<string>? CoveredDeliveryShas = null);
 
     /// <summary>
     /// Boundary of the rule: gathers the facts the pure
     /// <see cref="IntegrationVerificationPolicy"/> needs, runs the gate once
     /// when the policy asks for it, and records the answer on the card. The
     /// branch history is never rewritten here: this call did not create it.
+    /// A delivery the published branch already carries is a no-op integration
+    /// (AGT-3103): no gate runs, and only existing evidence verifies it.
     /// </summary>
     private async Task<ContainedDeliveryVerification> VerifyContainedDeliveryAsync(
         string project,
@@ -35,12 +51,21 @@ public sealed partial class MergeIntoDevelopRunner
         string? watchPath,
         string repoRoot,
         string branch,
+        DeliveryRefResolution delivery,
         MergeIntoIntegrationResult result)
     {
         var releaseGate = IsReleaseBranch(branch);
+        var deliveryShas = ContainedDeliveryShas(repoRoot, delivery, result);
+        var containmentSha = PublishedContainment(repoRoot, branch, deliveryShas);
+        var noOp = containmentSha is not null;
         // The Studio-owned lane is authoritative. The developer checkout may
         // still hold a stale local branch after origin advanced out of band.
-        var sha = _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
+        // A no-op claims the published tip that proved containment instead.
+        var sha = containmentSha ?? _git.GetBranchTip(repoRoot, _git.IntegrationLineRef(repoRoot, branch));
+        var integrationRecords = ReadIntegrationRecords(jobId, watchPath);
+        var carried = noOp
+            ? CarriedVerifiedTree(project, jobFolderPath, repoRoot, branch, sha!, deliveryShas, integrationRecords)
+            : null;
         var tree = ReviewSubjectStore.IsValidResultSha(sha) ? _git.GetCommitTree(repoRoot, sha!) : null;
         bool SameTree(string candidate)
             => string.Equals(candidate, sha, StringComparison.OrdinalIgnoreCase)
@@ -60,14 +85,31 @@ public sealed partial class MergeIntoDevelopRunner
                     [releaseGate ? PreMainTestGateStep : IntegrationGateJournal.PreDevelopBuildGateStep],
                     SameTree),
             HasVerifiedIntegrationRecord: tree is not null
-                && ReadIntegrationRecords(jobId, watchPath).Any(record =>
+                && integrationRecords.Any(record =>
                     string.Equals(record.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
                     && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch)
                     && ReviewSubjectStore.IsValidResultSha(record.IntegrationSha)
                     && SameTree(record.IntegrationSha!)),
-            GateRun: null);
+            GateRun: null,
+            NoOpIntegration: noOp,
+            CarriedVerifiedTreeSha: carried?.Sha);
         var decision = IntegrationVerificationPolicy.Decide(facts);
         var gate = facts.ExactReceipt;
+
+        if (decision.Action == IntegrationVerificationAction.CompleteUnverified && !releaseGate)
+        {
+            // A no-op runs nothing, but "no gate applies to this delivery" is
+            // a path classification, not a gate run. It stays an explicit
+            // NotApplicable receipt, exactly as before AGT-3103.
+            var (_, scopeVerdict) = VerificationScope(jobId, jobFolderPath, repoRoot, sha!, BuildProfileFor(project));
+            if (scopeVerdict?.Verdict == BuildTestGateVerdict.NotApplicable)
+            {
+                IntegrationGateReceipts.Record(
+                    jobFolderPath, IntegrationGateJournal.PreDevelopBuildGateStep, scopeVerdict, _timeline);
+                gate = scopeVerdict;
+                decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = scopeVerdict });
+            }
+        }
 
         if (decision.Action == IntegrationVerificationAction.RunGate)
         {
@@ -84,23 +126,39 @@ public sealed partial class MergeIntoDevelopRunner
             decision = IntegrationVerificationPolicy.Decide(facts with { GateRun = gate });
         }
 
-        RecordVerification(jobFolderPath, repoRoot, branch, sha, decision, gate, result.EvidenceShas);
+        // A carried verdict names the earlier tree the gate passed on, so the
+        // board keeps it only while the branch still carries that tree.
+        var verifiedSha = decision.Evidence == IntegrationVerificationEvidence.CarriedTree
+            ? facts.CarriedVerifiedTreeSha
+            : sha;
+        RecordVerification(jobFolderPath, repoRoot, branch, verifiedSha, decision, gate, result.EvidenceShas, containmentSha,
+            decision.Evidence == IntegrationVerificationEvidence.CarriedTree ? carried?.CoveredDeliveryShas : null);
         _logger.LogInformation(
-            "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} state={State} evidence={Evidence} action={Action}",
-            project, jobId, branch, sha, decision.State, decision.Evidence, decision.Action);
+            "merge-into-develop contained-delivery verification project={Project} job={JobId} integration={Integration} sha={Sha} noOp={NoOp} containedIn={ContainedIn} state={State} evidence={Evidence} action={Action}",
+            project, jobId, branch, sha, noOp, containmentSha ?? "none", decision.State, decision.Evidence, decision.Action);
 
         var shortSha = sha is null ? "(unresolved)" : Short(sha);
         return decision.Action switch
         {
             IntegrationVerificationAction.CompleteVerified => new(
-                result with { MergedSha = sha }, decision, gate, releaseGate, branch),
+                result with { MergedSha = sha, ContainmentSha = containmentSha }, decision, gate, releaseGate, branch, noOp),
+            IntegrationVerificationAction.CompleteUnverified => new(
+                result with
+                {
+                    MergedSha = sha,
+                    ContainmentSha = containmentSha,
+                    VerificationPending = true,
+                    Error = $"{branch} already contains this delivery at {shortSha}, but it is integrated-unverified: "
+                            + $"{decision.Reason} Accepting it needs gate evidence for a tree that carries it, or an operator override.",
+                },
+                decision, gate, releaseGate, branch, noOp),
             IntegrationVerificationAction.GateUnresolved when gate?.FailureKind == BuildTestGateFailureKind.Environment => new(
                 MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.GateEnvironmentFailure,
                     error: $"{branch} already contains this delivery at {shortSha}, but it is integrated-unverified: {decision.Reason} "
                            + "The integration history was left unchanged and no push was released; "
                            + "GateEnvironment: the same delivery is verified again without a new review."),
-                decision, gate, releaseGate, branch),
+                decision, gate, releaseGate, branch, noOp),
             _ => new(
                 MergeIntoIntegrationResult.Of(
                     MergeIntoIntegrationOutcome.GateFailed,
@@ -109,8 +167,140 @@ public sealed partial class MergeIntoDevelopRunner
                            + (decision.GateFailed
                                ? " until the branch is repaired and a gate passes; a cause card tracks the branch."
                                : " until a gate reaches a verdict on the tree.")),
-                decision, gate, releaseGate, branch),
+                decision, gate, releaseGate, branch, noOp),
         };
+    }
+
+    /// <summary>
+    /// The delivery commits whose containment decides a no-op: the attributed
+    /// evidence of a branchless delivery, else the fenced result SHA, else the
+    /// local delivery branch tip.
+    /// </summary>
+    private IReadOnlyList<string> ContainedDeliveryShas(
+        string repoRoot, DeliveryRefResolution delivery, MergeIntoIntegrationResult result)
+    {
+        if (result.EvidenceShas.Count > 0)
+            return result.EvidenceShas.Where(ReviewSubjectStore.IsValidResultSha).ToList();
+        if (ReviewSubjectStore.IsValidResultSha(delivery.ExpectedResultSha))
+            return [delivery.ExpectedResultSha!];
+        var tip = _git.GetBranchTip(repoRoot, delivery.Ref)
+                  ?? _git.GetBranchTip(repoRoot, "origin/" + delivery.Ref);
+        return ReviewSubjectStore.IsValidResultSha(tip) ? [tip!] : [];
+    }
+
+    /// <summary>
+    /// AGT-3103: the published branch SHA that already contains every delivery
+    /// commit, or null when the delivery is only on the unpublished lane. That
+    /// lane still owes a push, so it keeps the AGT-3002 rule of one gate before
+    /// it releases one. A repository without <c>origin</c> publishes nothing
+    /// but its local branch, the same published ref the lane sync reads.
+    /// </summary>
+    private string? PublishedContainment(string repoRoot, string branch, IReadOnlyList<string> deliveryShas)
+    {
+        if (deliveryShas.Count == 0) return null;
+        var published = _git.GetBranchTip(repoRoot, _git.HasOriginRemote(repoRoot)
+            ? $"refs/remotes/origin/{branch}"
+            : $"refs/heads/{branch}");
+        if (!ReviewSubjectStore.IsValidResultSha(published)) return null;
+        return deliveryShas.All(deliverySha => _git.IsAncestor(repoRoot, deliverySha, published!))
+            ? published
+            : null;
+    }
+
+    /// <summary>
+    /// AGT-3103: an earlier verified tree that the published tip still carries
+    /// and that already contained every delivery commit: the card's own
+    /// verified record, an <c>integrated-verified</c> record that names its
+    /// integration SHA, or a batch candidate whose gate passed with this
+    /// delivery as a member. The same carry the board projection applies after
+    /// the tip moves on; later commits belong to the cards that brought them.
+    /// </summary>
+    private CarriedTree? CarriedVerifiedTree(
+        string project,
+        string jobFolderPath,
+        string repoRoot,
+        string branch,
+        string tip,
+        IReadOnlyList<string> deliveryShas,
+        IReadOnlyList<TaskIntegrationRecord> integrationRecords)
+    {
+        bool Carries(string? candidate)
+            => ReviewSubjectStore.IsValidResultSha(candidate)
+               && _git.IsAncestor(repoRoot, candidate!, tip)
+               && deliveryShas.All(deliverySha => _git.IsAncestor(repoRoot, deliverySha, candidate!));
+
+        var own = IntegrationVerificationStore.Read(jobFolderPath);
+        if (own is { State: IntegrationVerificationStates.Verified }
+            && IntegrationVerificationProjection.SameBranch(own.IntegrationBranch, branch)
+            && Carries(own.Sha))
+        {
+            return new(own.Sha!);
+        }
+
+        var recorded = integrationRecords
+            .Where(record => string.Equals(record.Classification, IntegrationRecordClasses.IntegratedVerified, StringComparison.Ordinal)
+                             && IntegrationVerificationProjection.SameBranch(record.IntegrationBranch, branch))
+            .Select(record => record.IntegrationSha)
+            .FirstOrDefault(Carries);
+        return recorded is not null
+            ? new(recorded)
+            : CarriedBatchCandidate(project, repoRoot, branch, tip, deliveryShas);
+    }
+
+    /// <summary>
+    /// A passed batch run and admitted replay survive an operator publication
+    /// followed by StaleBase abandonment. Publication and member-release records
+    /// do not exist in that flow. The tested candidate must still be carried by
+    /// the published tip; the original result is covered through its replay.
+    /// </summary>
+    private CarriedTree? CarriedBatchCandidate(
+        string project, string repoRoot, string branch, string tip, IReadOnlyList<string> deliveryShas)
+    {
+        if (_batchGates is null || deliveryShas.Count == 0) return null;
+        void Unreadable(Exception ex) => _logger.LogWarning(ex,
+            "merge-into-develop could not read batch gate evidence for branch {Branch}", branch);
+        try
+        {
+            foreach (var manifest in _batchGates.FindDeliveryManifests(project, branch, deliveryShas, Unreadable))
+            {
+                try
+                {
+                    foreach (var member in manifest.Members.Where(member => deliveryShas.Contains(member.ResultSha, StringComparer.OrdinalIgnoreCase)))
+                    {
+                        var replay = _batchGates.TryReadReplay(manifest.BatchId, member.TaskKey);
+                        foreach (var run in _batchGates.ListRuns(manifest.BatchId))
+                        {
+                            var verdict = _batchGates.ReadVerdict(manifest.BatchId, run.BatchRunId);
+                            if (!BatchGateCarryPolicy.Accepts(manifest, member, replay, run, verdict)
+                                || !_git.IsAncestor(repoRoot, run.CandidateSha, tip)
+                                || !_git.IsAncestor(repoRoot, replay!.TipAfterSha!, run.CandidateSha)
+                                || !deliveryShas.All(deliverySha
+                                    => string.Equals(deliverySha, member.ResultSha, StringComparison.OrdinalIgnoreCase)
+                                       || _git.IsAncestor(repoRoot, deliverySha, run.CandidateSha)))
+                            {
+                                continue;
+                            }
+
+                            _logger.LogInformation(
+                                "merge-into-develop carried batch candidate batch={BatchId} run={RunId} candidate={Candidate} result={ResultSha}",
+                                manifest.BatchId, run.BatchRunId, run.CandidateSha, member.ResultSha);
+                            return new(run.CandidateSha, deliveryShas.Select(sha => sha.ToLowerInvariant()).ToArray());
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                {
+                    // One unreadable batch cannot hide another batch's evidence.
+                    Unreadable(ex);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            Unreadable(ex);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -154,47 +344,8 @@ public sealed partial class MergeIntoDevelopRunner
         }
 
         var profile = BuildProfileFor(project);
-        var changedPaths = VerificationChangedPaths(repoRoot, jobId, jobFolderPath, sha);
-        // An exact delivery range is unavailable for some fast-forwarded
-        // histories. Declared build commands still provide a real gate on the
-        // current tip; only a history with no gate scope must fail unresolved.
-        if (changedPaths is null && VerifyCommandPlanner.HasProfileBuildCommands(profile))
-            changedPaths = [];
-        if (changedPaths is null)
-        {
-            return new BuildTestGateResult(
-                BuildTestGateVerdict.Fail,
-                null,
-                0,
-                string.Empty,
-                "The verification gate could not derive the changed-file set of the contained delivery.",
-                false,
-                false)
-            {
-                ExpectedSha = sha,
-                TestedSha = sha,
-                FailureKind = BuildTestGateFailureKind.MissingSource,
-            };
-        }
-
-        if (!PreDevelopBuildGate.AppliesTo(profile, changedPaths))
-        {
-            // Written as an explicit receipt: "no gate applies" is itself a
-            // gate verdict, and the card must be able to name it.
-            return new BuildTestGateResult(
-                BuildTestGateVerdict.NotApplicable,
-                null,
-                0,
-                string.Empty,
-                "No gate applies: the contained delivery touches neither frontend/ nor managed sources "
-                + "and the project declares no build-profile build commands.",
-                false,
-                false)
-            {
-                ExpectedSha = sha,
-                TestedSha = sha,
-            };
-        }
+        var (changedPaths, scopeVerdict) = VerificationScope(jobId, jobFolderPath, repoRoot, sha, profile);
+        if (scopeVerdict is not null) return scopeVerdict;
 
         if (_preDevelopBuildGate is null)
             return UnwiredGate("pre-develop build gate", sha);
@@ -212,10 +363,64 @@ public sealed partial class MergeIntoDevelopRunner
                 TimeoutBudgetSource = preDevelopTimeoutSource,
                 InfrastructureTimeout = ResolveGateInfrastructureTimeout(),
             },
-            changedPaths,
+            changedPaths!,
             profile,
             preDevelopTimeout,
             CancellationToken.None).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The work-line gate scope of a contained delivery, decided from paths
+    /// alone: the changed paths a gate runs over, or the verdict that settles
+    /// it without one. That is NotApplicable when no gate applies, or a
+    /// MissingSource failure when no trustworthy scope can be derived.
+    /// </summary>
+    private (IReadOnlyList<string>? ChangedPaths, BuildTestGateResult? Verdict) VerificationScope(
+        string jobId, string jobFolderPath, string repoRoot, string sha, BuildProfile? profile)
+    {
+        var changedPaths = VerificationChangedPaths(repoRoot, jobId, jobFolderPath, sha);
+        // An exact delivery range is unavailable for some fast-forwarded
+        // histories. Declared build commands still provide a real gate on the
+        // current tip; only a history with no gate scope must fail unresolved.
+        if (changedPaths is null && VerifyCommandPlanner.HasProfileBuildCommands(profile))
+            changedPaths = [];
+        if (changedPaths is null)
+        {
+            return (null, new BuildTestGateResult(
+                BuildTestGateVerdict.Fail,
+                null,
+                0,
+                string.Empty,
+                "The verification gate could not derive the changed-file set of the contained delivery.",
+                false,
+                false)
+            {
+                ExpectedSha = sha,
+                TestedSha = sha,
+                FailureKind = BuildTestGateFailureKind.MissingSource,
+            });
+        }
+
+        if (!PreDevelopBuildGate.AppliesTo(profile, changedPaths))
+        {
+            // Written as an explicit receipt: "no gate applies" is itself a
+            // gate verdict, and the card must be able to name it.
+            return (changedPaths, new BuildTestGateResult(
+                BuildTestGateVerdict.NotApplicable,
+                null,
+                0,
+                string.Empty,
+                "No gate applies: the contained delivery touches neither frontend/ nor managed sources "
+                + "and the project declares no build-profile build commands.",
+                false,
+                false)
+            {
+                ExpectedSha = sha,
+                TestedSha = sha,
+            });
+        }
+
+        return (changedPaths, null);
     }
 
     private IReadOnlyList<string>? VerificationChangedPaths(
@@ -344,7 +549,9 @@ public sealed partial class MergeIntoDevelopRunner
         string? sha,
         IntegrationVerificationDecision decision,
         BuildTestGateResult? gate,
-        IReadOnlyList<string>? evidenceShas = null)
+        IReadOnlyList<string>? evidenceShas = null,
+        string? containmentSha = null,
+        IReadOnlyList<string>? coveredDeliveryShas = null)
     {
         try
         {
@@ -353,9 +560,10 @@ public sealed partial class MergeIntoDevelopRunner
                 State = decision.State,
                 Sha = sha,
                 IntegrationBranch = branch,
-                DeliveryShas = decision.State == IntegrationVerificationStates.Verified
-                    ? DeliveryShasContainedIn(jobFolderPath, repoRoot, sha, evidenceShas)
-                    : [],
+                ContainmentSha = containmentSha,
+                DeliveryShas = decision.State != IntegrationVerificationStates.Verified
+                    ? []
+                    : coveredDeliveryShas?.ToList() ?? DeliveryShasContainedIn(jobFolderPath, repoRoot, sha, evidenceShas),
                 Evidence = decision.Evidence,
                 GateVerdict = gate?.Verdict.ToString(),
                 GateFailed = decision.GateFailed,
@@ -366,7 +574,11 @@ public sealed partial class MergeIntoDevelopRunner
                 jobFolderPath,
                 TimelineEventKinds.IntegrationVerificationRecorded,
                 TimelineActors.System,
-                $"{decision.State} on {branch}{ShaSuffix(sha)}: {decision.Reason}",
+                $"{decision.State} on {branch}{ShaSuffix(sha)}: {decision.Reason}"
+                + (containmentSha is null
+                    ? string.Empty
+                    : $" No-op integration: {branch} already contained the delivery at {Short(containmentSha)}; "
+                      + "no gate ran and nothing was pushed."),
                 details: new Dictionary<string, string>
                 {
                     ["state"] = decision.State,
@@ -374,6 +586,7 @@ public sealed partial class MergeIntoDevelopRunner
                     ["integrationBranch"] = branch,
                     ["evidence"] = decision.Evidence,
                     ["gateVerdict"] = gate?.Verdict.ToString() ?? string.Empty,
+                    ["containmentSha"] = containmentSha ?? string.Empty,
                 });
         }
         catch (Exception ex)

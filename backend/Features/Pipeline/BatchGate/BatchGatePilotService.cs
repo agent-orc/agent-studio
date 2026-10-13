@@ -336,7 +336,8 @@ public sealed class BatchGatePilotService
                 var ownership = BatchGateOwnershipStore.Read(task.FolderPath);
                 if (ownership?.ReviewAttemptId == item.ReviewAttemptId
                     && ownership.FallbackIntegrated)
-                    _store.ResolvePending(item.ReviewAttemptId, "per-task-gate");
+                    _store.ResolvePending(item.ReviewAttemptId,
+                        ownership.ContainedInSha is null ? "per-task-gate" : AlreadyIntegratedResolution);
             }
             // A persisted active per-task marker with no flight in this process
             // is a gate the process lost: it stopped or the gate threw. Resume
@@ -381,15 +382,25 @@ public sealed class BatchGatePilotService
                             ScheduleFallback(item, ct);
                     continue;
                 }
-                if (options.EffectiveScope == "documentation")
-                    foreach (var item in group.Where(item => !item.Subject.DocumentationOnly
-                                 && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null))
-                        ScheduleFallback(item, ct);
                 var scope = Scope(first.Subject);
-                var current = group.ToArray();
                 var baseSha = FetchBaseOnce(fetchedBases, first.RepositoryPath,
                     scope.IntegrationBranch, ct);
-                if (baseSha is null) continue;
+                // AGT-3103: a member the branch already carries (for example
+                // one an operator pushed before its review settled) needs no
+                // candidate and no per-task gate. It leaves as integrated.
+                var contained = baseSha is null
+                    ? []
+                    : group.Where(item => BatchGatePolicy.LeavesAsIntegrated(item.Subject,
+                            resultSha => _git.IsAncestor(item.RepositoryPath, resultSha, baseSha)))
+                        .ToArray();
+                foreach (var item in contained)
+                    ScheduleFallback(item, ct, containedInSha: baseSha);
+                var current = group.Except(contained).ToArray();
+                if (options.EffectiveScope == "documentation")
+                    foreach (var item in current.Where(item => !item.Subject.DocumentationOnly
+                                 && BatchGateOwnershipStore.Read(item.JobFolderPath)?.BatchId is null))
+                        ScheduleFallback(item, ct);
+                if (baseSha is null || current.Length == 0) continue;
                 BatchGateFormation formed;
                 if (options.Planner == "look-ahead")
                 {
@@ -1684,9 +1695,9 @@ public sealed class BatchGatePilotService
     // settlement request, or a tick that meets a running fallback, joins it
     // instead of starting a second gate on the same immutable subject.
     private void ScheduleFallback(BatchGatePendingRecord pending,
-        CancellationToken ct, bool clearEject = false)
+        CancellationToken ct, bool clearEject = false, string? containedInSha = null)
     {
-        var flight = RunPerTaskFallbackAsync(pending, ct);
+        var flight = RunPerTaskFallbackAsync(pending, ct, containedInSha: containedInSha);
         _ = flight.ContinueWith(done =>
         {
             if (done.IsCompletedSuccessfully && clearEject)
@@ -1699,14 +1710,14 @@ public sealed class BatchGatePilotService
     }
 
     private Task RunPerTaskFallbackAsync(BatchGatePendingRecord pending,
-        CancellationToken ct, bool recordInStore = true)
+        CancellationToken ct, bool recordInStore = true, string? containedInSha = null)
     {
         Task flight;
         lock (_fallbackFlights)
         {
             if (!_fallbackFlights.TryGetValue(pending.ReviewAttemptId, out flight!))
             {
-                flight = RunFallbackFlightAsync(pending, recordInStore, ct);
+                flight = RunFallbackFlightAsync(pending, recordInStore, containedInSha, ct);
                 _fallbackFlights[pending.ReviewAttemptId] = flight;
             }
         }
@@ -1719,13 +1730,13 @@ public sealed class BatchGatePilotService
     }
 
     private async Task RunFallbackFlightAsync(BatchGatePendingRecord pending,
-        bool recordInStore, CancellationToken ct)
+        bool recordInStore, string? containedInSha, CancellationToken ct)
     {
         // Yield first so the flight is registered before it can complete.
         await Task.Yield();
         try
         {
-            await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore).ConfigureAwait(false);
+            await RunPerTaskFallbackCoreAsync(pending, ct, recordInStore, containedInSha).ConfigureAwait(false);
         }
         finally
         {
@@ -1734,7 +1745,7 @@ public sealed class BatchGatePilotService
     }
 
     private async Task RunPerTaskFallbackCoreAsync(BatchGatePendingRecord pending,
-        CancellationToken ct, bool recordInStore)
+        CancellationToken ct, bool recordInStore, string? containedInSha = null)
     {
         var refreshed = Refresh(pending);
         if (!refreshed.Subject.CurrentGeneration)
@@ -1753,7 +1764,13 @@ public sealed class BatchGatePilotService
             && string.Equals(ownership.FallbackTestedSha, pending.Subject.ResultSha,
                 StringComparison.OrdinalIgnoreCase)
             && File.Exists(evidence);
-        if (!alreadyPassed)
+        if (containedInSha is not null)
+        {
+            // AGT-3103: the branch already carries this result. Record the SHA
+            // that proved it and integrate as a no-op; no gate runs.
+            ownership = RecordContainment(task, pending, containedInSha);
+        }
+        else if (!alreadyPassed)
         {
             // Starts are counted only across interrupted gates of this review
             // generation; the budget turns a gate that never returns into
@@ -1825,7 +1842,15 @@ public sealed class BatchGatePilotService
             task.ProjectName, task.Id, task.FolderPath, task.WatchPath,
             pending.Subject.IntegrationBranch, pending.IntegrationStrategy,
             pending.PipelineType, pending.Subject.ReviewCompletedAtUtc)).ConfigureAwait(false);
-        if (!result.Outcome.IsSuccessfulIntegration()) return;
+        if (!result.Outcome.IsSuccessfulIntegration())
+        {
+            // A contained member whose tree already failed its gate has a
+            // verdict; replaying the no-op on every tick would not change it.
+            if (containedInSha is not null && result.Outcome == MergeIntoIntegrationOutcome.GateFailed)
+                await EscalateFallbackAsync(task, pending,
+                    result.Error ?? "integration-unverified", recordInStore, ct).ConfigureAwait(false);
+            return;
+        }
         BatchGateOwnershipStore.Write(task.FolderPath,
             ownership! with { FallbackIntegrated = true });
         var moved = await _transitions.MoveAsync(task.Id, TaskStates.HumanReview,
@@ -1833,15 +1858,56 @@ public sealed class BatchGatePilotService
             suppressProductExecution: true,
             expectedSourceState: TaskStates.AutoReview,
             transitionCause: LaneChangeCauses.ReviewVerdict,
-            transitionDetail: "per-task-gate-passed").ConfigureAwait(false);
+            transitionDetail: containedInSha is null ? "per-task-gate-passed" : AlreadyIntegratedResolution)
+            .ConfigureAwait(false);
         if (moved.Status == MoveJobStatus.Success)
         {
             if (recordInStore)
-                _store.ResolvePending(pending.ReviewAttemptId, "per-task-gate");
+                _store.ResolvePending(pending.ReviewAttemptId,
+                    containedInSha is null ? "per-task-gate" : AlreadyIntegratedResolution);
             _reviewJournal.RecordRemoteReviewParkVerdict(task.ProjectName, task.Id,
                 moved.NewFolderPath ?? task.FolderPath, "Pass",
-                "Per-task fallback gate passed on the immutable result SHA.");
+                containedInSha is null
+                    ? "Per-task fallback gate passed on the immutable result SHA."
+                    : $"The integration branch already contained the result SHA at {containedInSha}; "
+                      + "no batch candidate and no gate ran.");
         }
+    }
+
+    /// <summary>Pending-queue resolution of a member that left as integrated (AGT-3103).</summary>
+    internal const string AlreadyIntegratedResolution = "already-integrated";
+
+    /// <summary>
+    /// AGT-3103: the durable evidence of a member that left the queue because
+    /// the integration branch already contained its result SHA. The lane
+    /// release guard reads it instead of a gate verdict.
+    /// </summary>
+    private BatchGateOwnership RecordContainment(TaskInfo task,
+        BatchGatePendingRecord pending, string containedInSha)
+    {
+        var name = $"batch-contained-{pending.ReviewAttemptId}.json";
+        var path = Path.Combine(TaskPaths.LogsDir(task.FolderPath), name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, new
+            {
+                pending.ReviewAttemptId,
+                pending.Subject.TaskKey,
+                pending.Subject.ResultSha,
+                pending.Subject.IntegrationBranch,
+                ContainedInSha = containedInSha,
+                RecordedAtUtc = _time.GetUtcNow(),
+            });
+            stream.Flush(flushToDisk: true);
+        }
+        var ownership = new BatchGateOwnership(pending.ReviewAttemptId, pending.Subject,
+            FallbackEvidencePath: name, ContainedInSha: containedInSha);
+        BatchGateOwnershipStore.Write(task.FolderPath, ownership);
+        _logger.LogInformation(
+            "batch-member-already-integrated task={TaskKey} attempt={AttemptId} result={ResultSha} containedIn={ContainedIn}",
+            pending.Subject.TaskKey, pending.ReviewAttemptId, pending.Subject.ResultSha, containedInSha);
+        return ownership;
     }
 
     private async Task EscalateFallbackAsync(TaskInfo task, BatchGatePendingRecord pending,

@@ -36,6 +36,76 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.False(decision.GateFailed);
     }
 
+    [Theory]
+    [InlineData(MergeIntoIntegrationOutcome.AlreadyMerged)]
+    [InlineData(MergeIntoIntegrationOutcome.AlreadyOnIntegrationBranch)]
+    public void NoOpWithoutEvidence_CompletesUnverifiedWithoutAGate(MergeIntoIntegrationOutcome outcome)
+    {
+        // AGT-3103: the published branch already carries the delivery. The
+        // integration completes, no gate runs, and the card stays unverified.
+        var decision = Decide(outcome, noOp: true);
+
+        Assert.Equal(IntegrationVerificationAction.CompleteUnverified, decision.Action);
+        Assert.Equal(IntegrationVerificationStates.Unverified, decision.State);
+        Assert.Equal(IntegrationVerificationEvidence.None, decision.Evidence);
+        Assert.Contains("no-op", decision.Reason);
+        Assert.False(decision.GateFailed);
+    }
+
+    [Fact]
+    public void NoOpCarryingAVerifiedTree_CompletesVerifiedWithoutAGate()
+    {
+        var decision = Decide(noOp: true, carriedTree: CarriedSha);
+
+        Assert.Equal(IntegrationVerificationAction.CompleteVerified, decision.Action);
+        Assert.Equal(IntegrationVerificationEvidence.CarriedTree, decision.Evidence);
+        Assert.Contains(CarriedSha[..7], decision.Reason);
+    }
+
+    [Fact]
+    public void NoOpThatNoGateAppliesTo_IsVerifiedByItsNotApplicableScope()
+    {
+        // Path classification, not a gate run: the explicit NotApplicable
+        // receipt verifies a delivery no gate applies to, as before AGT-3103.
+        var decision = Decide(noOp: true, gateRun: Gate(BuildTestGateVerdict.NotApplicable));
+
+        Assert.Equal(IntegrationVerificationAction.CompleteVerified, decision.Action);
+        Assert.Equal(IntegrationVerificationEvidence.GateRun, decision.Evidence);
+        Assert.Contains("No gate applies", decision.Reason);
+    }
+
+    [Fact]
+    public void CarriedTreeOnTheUnpublishedLane_StillRunsTheGateBeforeThePush()
+    {
+        // A push of the lane tip follows; it never extends past a gated tree.
+        var decision = Decide(noOp: false, carriedTree: CarriedSha);
+
+        Assert.Equal(IntegrationVerificationAction.RunGate, decision.Action);
+    }
+
+    [Fact]
+    public void NoOpWithRedReceiptForTheExactTree_KeepsTheVerdictWithoutARerun()
+    {
+        var decision = Decide(
+            receipt: Gate(BuildTestGateVerdict.Fail, BuildTestGateFailureKind.Code),
+            noOp: true,
+            carriedTree: CarriedSha);
+
+        Assert.Equal(IntegrationVerificationAction.FailUnverified, decision.Action);
+        Assert.True(decision.GateFailed);
+    }
+
+    [Theory]
+    [InlineData(BuildTestGateVerdict.Ok)]
+    [InlineData(BuildTestGateVerdict.NotApplicable)]
+    public void NoOpWithGreenReceiptForTheExactTree_UsesTheExactReceipt(BuildTestGateVerdict verdict)
+    {
+        var decision = Decide(receipt: Gate(verdict), noOp: true, carriedTree: CarriedSha);
+
+        Assert.Equal(IntegrationVerificationAction.CompleteVerified, decision.Action);
+        Assert.Equal(IntegrationVerificationEvidence.GateReceipt, decision.Evidence);
+    }
+
     [Fact]
     public void ContainedWithUnresolvableSha_NeverCompletesAndBlamesNoBranch()
     {
@@ -539,14 +609,18 @@ public sealed class IntegrationVerificationPolicyTests
         Assert.NotEqual(first.Fingerprint, other!.Fingerprint);
     }
 
+    private const string CarriedSha = "fedcba9876543210fedcba9876543210fedcba98";
+
     private static IntegrationVerificationDecision Decide(
         MergeIntoIntegrationOutcome outcome = MergeIntoIntegrationOutcome.AlreadyMerged,
         string? sha = Sha,
         BuildTestGateResult? receipt = null,
         bool verifiedRecord = false,
-        BuildTestGateResult? gateRun = null)
+        BuildTestGateResult? gateRun = null,
+        bool noOp = false,
+        string? carriedTree = null)
         => IntegrationVerificationPolicy.Decide(new IntegrationVerificationFacts(
-            outcome, sha, receipt, verifiedRecord, gateRun));
+            outcome, sha, receipt, verifiedRecord, gateRun, noOp, carriedTree));
 
     private static BuildTestGateResult Gate(
         BuildTestGateVerdict verdict,

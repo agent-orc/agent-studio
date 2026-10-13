@@ -738,6 +738,35 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Member_already_on_the_integration_branch_leaves_as_integrated_without_a_gate()
+    {
+        // AGT-3103: an operator pushed the delivery before its review settled.
+        // The member needs neither a candidate nor a per-task gate.
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-CONTAINED", "docs/contained.md");
+        Git(_repo, "push", "-q", "origin", $"{member.ResultSha}:refs/heads/develop");
+        var containedIn = RemoteTip();
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, _gate.BatchRuns);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.Empty(store.ListManifests());
+        Assert.Empty(store.ListPending());
+        AssertLane(member.Key, TaskStates.HumanReview);
+        var ownership = Ownership(member.Key);
+        Assert.Equal(containedIn, ownership?.ContainedInSha);
+        Assert.True(ownership!.FallbackIntegrated);
+        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(
+            Path.Combine(_watchPath, TaskStates.HumanReview, member.Key)), ownership.FallbackEvidencePath!)));
+        Assert.Equal(containedIn, RemoteTip());
+    }
+
+    [Fact]
     public async Task Published_recovery_does_not_wait_for_an_ejected_members_running_fallback()
     {
         using var factory = BuildFactory();
@@ -1325,12 +1354,19 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         var factory = BuildFactory();
         _ = factory.CreateClient();
         EnableBatchGate(factory, closeSize: 2);
-        var admitted = SeedMember(factory, "DOC-RESTART-ADMITTED", "docs/restart-admitted.md");
-        var contained = SeedMember(factory, "DOC-RESTART-CONTAINED", "docs/restart-contained.md");
-        // An operator fast-path merged the delivery into develop: the candidate
-        // already contains it, so the member cannot be attributed to the batch.
-        Git(_repo, "push", "-q", "origin", $"{contained.ResultSha}:refs/heads/develop");
-        Git(_repo, "fetch", "-q", "origin");
+        var contained = SeedMember(factory, "DOC-RESTART-CONTAINED", "docs/restart-contained.md",
+            settleReview: false);
+        var admitted = SeedMember(factory, "DOC-RESTART-ADMITTED", "docs/restart-admitted.md",
+            parentSha: contained.ResultSha);
+        // Both deliveries are absent from develop at formation. The first
+        // replay advances the candidate past the second member's result SHA,
+        // so assembly must eject that member as unattributable.
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        var settled = Settle(factory, contained, ReviewTerminalOutcome.Pass);
+        var task = factory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(contained.Key, _watchPath)!;
+        factory.Services.GetRequiredService<BatchGatePilotService>().Enqueue(task,
+            settled, authority.GetRun(contained.RunAttemptId)!, _clock);
         var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
         var store = factory.Services.GetRequiredService<BatchGateStore>();
         string? blockedPath = null;
