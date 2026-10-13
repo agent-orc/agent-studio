@@ -5211,6 +5211,16 @@ public class GitService
         return HasRemote(repoRoot, "origin") ? published : $"refs/heads/{branch}";
     }
 
+    /// <summary>Base for local task worktrees: the published ref when it
+    /// resolves, else the local branch. Every Studio push that can leave a
+    /// holder lagging also writes the tracking ref, so the fallback only
+    /// applies to a branch origin has never carried for this checkout.</summary>
+    public string TaskWorktreeBaseRef(string repoRoot, string branch)
+    {
+        var published = PublishedIntegrationRef(repoRoot, branch);
+        return GetBranchTip(repoRoot, published) is not null ? published : $"refs/heads/{branch}";
+    }
+
     /// <summary>
     /// The integration line a merge primitive reads and moves at
     /// <paramref name="repoRoot"/>. Only the detached, Studio-owned integration
@@ -5503,7 +5513,18 @@ public class GitService
         {
             var (_, error, code) = RunGitArgs(holder!, "merge", "--ff-only", testedCandidateSha);
             if (code != 0)
+            {
+                // The batch is already published. A refusing holder checkout
+                // only lags: its ref stays put and the lag signal is recorded.
+                if (temporary is null)
+                    RecordCheckoutLag(holder!, integrationBranch, testedCandidateSha, error.Trim());
                 return new GitWorktreeResult(false, holder, error.Trim());
+            }
+            if (temporary is null)
+            {
+                _checkoutLagStates.TryRemove(LagKey(holder!, integrationBranch), out _);
+                _fastForwardedCheckouts[LagKey(holder!, integrationBranch)] = testedCandidateSha;
+            }
             return string.Equals(GetBranchTip(repoRoot, integrationBranch), testedCandidateSha,
                     StringComparison.OrdinalIgnoreCase)
                 ? new GitWorktreeResult(true, holder, null)

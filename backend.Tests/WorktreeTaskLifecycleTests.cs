@@ -56,7 +56,6 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "MachineBound")]
     public void Prepare_UsesPublishedRefWhenDeveloperBranchLags()
     {
         var (repo, life) = SeedWithDevelop("prepare-published-base");
@@ -173,7 +172,6 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
     /// for retry after the developer resolves the checkout obstacle.
     /// </summary>
     [Fact]
-    [Trait("Category", "MachineBound")]
     public void DirectMerge_DirtyDeveloperCheckout_ReportsObstacleAndKeepsTheEdits()
     {
         var (repo, life) = SeedWithDevelop("dirty-developer-checkout", seedShared: true);

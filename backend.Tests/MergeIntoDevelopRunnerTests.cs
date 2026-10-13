@@ -2990,7 +2990,6 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
     [Theory]
     [InlineData("dirty")]
     [InlineData("lock")]
-    [Trait("Category", "MachineBound")]
     public async Task PushIntegrationBranch_ReleaseError_RecordsCheckoutWarningAfterSuccessfulPush(string obstacle)
     {
         var (repo, remote) = SeedDevelopWithOriginAndTask("release-error", "task/2996-release-error");

@@ -1721,7 +1721,7 @@ public class ProjectRunner
                 // Attribution starts at the published ref used by the worktree
                 // rebase, even if the developer checkout has an older tip.
                 var integrationBaseSha = _git.GetBranchTip(
-                    repositoryRoot, _git.PublishedIntegrationRef(repositoryRoot, workBranch));
+                    repositoryRoot, _git.TaskWorktreeBaseRef(repositoryRoot, workBranch));
                 var leaseSuffix = integrationLease is null
                     ? ""
                     : $" Integration lease token `{integrationLease.FencingToken}` is current.";

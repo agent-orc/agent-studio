@@ -606,7 +606,6 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "MachineBound")]
     public void ReleaseToCheckout_DirtyDeveloperCheckoutHoldsRelease_LeavesBranchAndFilesUntouched()
     {
         var repo = SeedRepo("release-ff-dirty-holder");
@@ -636,7 +635,6 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "MachineBound")]
     public void FastForwardIntegrationBranch_HeldDirtyCheckout_RefusesRefOnlyMove()
     {
         var repo = SeedRepo("direct-ff-dirty-holder");
@@ -662,7 +660,6 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     [InlineData("dirty", "dirty")]
     [InlineData("lock", "locked")]
     [InlineData("diverged", "diverged")]
-    [Trait("Category", "MachineBound")]
     public void SyncDeveloperCheckout_ReportsObstaclesAndOnlyMovesCleanCheckout(string setup, string expected)
     {
         var repo = SeedRepo("sync-" + setup);
@@ -701,7 +698,6 @@ public sealed class GitWorktreePrimitivesTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "MachineBound")]
     public void Rollback_RestoresOnlyAHolderFastForwardedByThisGitService()
     {
         var repo = SeedRepo("rollback-held-checkout");

@@ -115,7 +115,9 @@ backend logs a warning once per changed lag state and the project snapshot and
 `GET /api/projects/{project}/checkout/status` expose the lag, dirty files and
 lock file. The operator can call `POST /api/projects/{project}/checkout/sync`
 to fetch and fast-forward a clean checkout. Its response reports obstacles for
-interactive resolution.
+interactive resolution. The batch gate follows the same rule: a batch that
+reached origin is `Published` and its members are released even when the
+holder checkout refuses the fast-forward; only the lag signal is recorded.
 When no push worker runs for the result - the project disabled the
 `post-merge-into-develop-push` step - nothing is published and the checkout is
 not moved either; the gated result stays on the integration lane until a later

@@ -206,7 +206,7 @@ public sealed class WorktreeTaskLifecycle
 
         // A developer checkout may lag after a refused fast-forward. New task
         // work starts from published origin, never from an unapproved lane tip.
-        var baseRef = _git.PublishedIntegrationRef(repoRoot, integrationBranch);
+        var baseRef = _git.TaskWorktreeBaseRef(repoRoot, integrationBranch);
         var add = _git.WorktreeAdd(repoRoot, path, branch, baseRef);
         if (!add.Success)
         {
@@ -280,7 +280,7 @@ public sealed class WorktreeTaskLifecycle
             //    recut, so it is re-attached as before (no behavior change).
             var checkedOut = _git.WorktreePathForBranch(repoRoot, branch);
             var notCheckedOut = string.IsNullOrEmpty(checkedOut) || !Directory.Exists(checkedOut);
-            var baseRef = _git.PublishedIntegrationRef(repoRoot, integrationBranch);
+            var baseRef = _git.TaskWorktreeBaseRef(repoRoot, integrationBranch);
             var mergedButStale = _git.IsAncestor(repoRoot, branch, baseRef)
                                  && !_git.IsAncestor(repoRoot, baseRef, branch);
             if (notCheckedOut && mergedButStale)
@@ -372,7 +372,7 @@ public sealed class WorktreeTaskLifecycle
 
         var rebase = _git.RebaseOnto(
             worktreePath,
-            _git.PublishedIntegrationRef(repoRoot, integrationBranch),
+            _git.TaskWorktreeBaseRef(repoRoot, integrationBranch),
             abortOnConflict: !preserveConflictForResolution);
         if (!rebase.Success)
         {
