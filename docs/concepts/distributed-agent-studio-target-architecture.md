@@ -133,6 +133,29 @@ durable orchestration state machine and applies only valid, fenced intents.
 The Runner cannot extend budgets or choose another global task. Orchestration
 libraries may be shared, but decision ownership stays in the Engine.
 
+Decided actor model (AGT-W73 O1 A, 11 October 2026). The Engine is a runtime,
+not an actor. A Human Operator and an AI Operator are actors with the same
+intent interface and different autonomy classes: the AI Operator acts on its
+own within A0 and A1, prepares A2 as a proposal and never takes A3. A decision
+step answers one bounded question for one card or one plan from frozen grounds,
+chooses one typed action, writes a receipt and ends. An execution step produces
+evidence on a runner host and never chooses the next step. The AI Operator and
+the decision steps run in the Engine. Escalation runs one way: from decision
+step to AI Operator to human.
+
+Decision limits (AGT-W73, implementation AGT-3063 to AGT-3068). In degraded
+mode, when the model is unavailable, over quota or its invocation cap, or
+returns invalid output, a forbidden action or insufficient evidence, the Engine
+records `ask` and holds the transition for a person. No deterministic fallback
+decides instead. Only a transport failure may get one bounded retry on an
+alternate strong model of the same capability and price ceiling. Cap
+exhaustion makes no call and writes a no-call receipt. A configurable 24-hour
+emergency run limit, with existing salvage, replaces the 3,600-second coding
+timeout and never sizes a card. Decision cost caps apply per card (24 calls,
+8,000 input and 1,000 output tokens per call, $5 priced). The Fluid capacity
+periodic host check has its own separate limit per host-day (48 scheduled plus
+12 event calls, 180,000 input and 90,000 output tokens, $10 priced).
+
 A unit admitted by the Task Server as claimable work runs on the runner host
 holding its lease. This includes coding, review, gate and batch attempts and
 orchestrator chat turns, with their model calls, preparation, builds, tests,
@@ -144,7 +167,8 @@ task state by itself. No pipeline step executes through the Operations Server.
 Fix rounds continue on the reviewed delivery. One per-card budget counts every
 automatic round. At budget end, non-test blocks become concerns with a linked
 follow-up card; `build-tests` and `tests-and-evidence` blocks escalate. Review
-prefers an eligible executor on another host but never waits for that preference.
+prefers an eligible executor on another host but never waits for that preference;
+a project may opt into a hard requirement for a different host (AGT-3069).
 Engine instances are interchangeable under per-occurrence leases, with one in
 workstation and one-box profiles and two in the distributed profile.
 
