@@ -834,6 +834,10 @@ installer. An incomplete stage from an older installer that has a bearer but
 no proof is rejected before the live file changes; replay that same operation's
 management response to restage it. No retry requests a second bearer.
 
+A Compose one-box installation uses `scripts/compose-rotate.sh` instead, which
+runs this sequence for its four bootstrap principals; see
+[Docker setup](docker.md).
+
 The receiving consumer calls `POST /api/v1/principal-rotations/{operationId}/delivered`
 with the new bearer, completes a successful operation on a route requiring its
 declared `requiredScope`, then calls

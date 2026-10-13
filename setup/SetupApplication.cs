@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Setup;
@@ -386,12 +387,17 @@ internal static class SetupApplication
                     TaskServerPrincipalKinds.Runner,
                     RunnerId: runnerId),
                 cancellationToken);
+            string? operationId = null;
             if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
             {
                 response.Dispose();
+                operationId = $"setup-rejoin-{DateTime.UtcNow:yyyyMMddTHHmmssZ}-"
+                              + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
                 response = await client.PostAsJsonAsync(
                     $"/api/v1/management/principals/{Uri.EscapeDataString($"runner:{runnerId}")}/rotate",
-                    new RotatePrincipalRequest(),
+                    new RotatePrincipalRequest(
+                        OperationId: operationId,
+                        Consumers: [new PrincipalRotationConsumer(runnerId, TaskServerScopes.TasksRead)]),
                     cancellationToken);
             }
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -403,12 +409,48 @@ internal static class SetupApplication
                          ?? throw new InvalidOperationException(
                              "Task Server returned an empty Runner credential response.");
             response.Dispose();
-            return issued.Credential;
+            var credential = issued.Credential
+                             ?? throw new InvalidOperationException(
+                                 "Task Server returned no Runner credential.");
+            if (operationId is not null)
+                await CompleteRunnerRotationAsync(client, operationId, runnerId, credential, cancellationToken);
+            return credential;
         }
         finally
         {
             if (ownsClient)
                 client.Dispose();
+        }
+    }
+
+    // A re-join rotates the enrolled Runner principal. Setup is its single
+    // declared consumer: it records delivery, proves the new bearer with one
+    // tasks:read call, and acknowledges, which retires the previous generation.
+    // Without the acknowledgement the rotation stays open and the next re-join
+    // after its deadline would need a recovery principal.
+    private static async Task CompleteRunnerRotationAsync(
+        HttpClient client,
+        string operationId,
+        string runnerId,
+        string credential,
+        CancellationToken cancellationToken)
+    {
+        var operation = Uri.EscapeDataString(operationId);
+        foreach (var (method, path, content) in new (HttpMethod, string, HttpContent?)[]
+                 {
+                     (HttpMethod.Post, $"/api/v1/principal-rotations/{operation}/delivered", null),
+                     (HttpMethod.Get, "/api/v1/workspaces", null),
+                     (HttpMethod.Post, $"/api/v1/principal-rotations/{operation}/ack",
+                         JsonContent.Create(new PrincipalRotationAcknowledgement(runnerId))),
+                 })
+        {
+            using var request = new HttpRequestMessage(method, path) { Content = content };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential);
+            request.Headers.Add("X-Principal-Consumer-Id", runnerId);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException(
+                    $"Task Server did not complete the Runner '{runnerId}' credential rotation at {method} {path} ({(int)response.StatusCode}).");
         }
     }
 
