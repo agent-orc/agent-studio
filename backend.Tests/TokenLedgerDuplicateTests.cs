@@ -328,11 +328,11 @@ public sealed class TokenLedgerDuplicateTests : IDisposable
         var entries = BusTokenEntryConverter.LoadTokenUsageEntries(store, _workspace, ProjectName);
         Assert.Equal(3, entries.Count);
 
-        var summary = new BusBackedTokenSummaryReader(store, BuildConfig()).Summarize(ProjectName);
+        var projectReader = BuildProjectReader(store);
+        var summary = projectReader.BuildLifetimeSummary(ProjectName, _watchPath);
         Assert.Equal(3, summary.OrchestratorLlmCalls);
         Assert.Equal(2 * SessionCacheRead + 5_901_696, summary.TotalCacheReadTokens);
 
-        var projectReader = BuildProjectReader(store);
         var row = Assert.Single(projectReader.BuildExpensiveJobs(ProjectName, _watchPath, 10));
         Assert.Equal(3, row.Calls);
     }

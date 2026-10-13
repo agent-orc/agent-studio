@@ -51,67 +51,13 @@ public sealed record TokenSummaryByModel(
     public string? Cli { get; init; } = AgentStudio.Tokens.ModelIdentity.Resolve(Model)?.Cli;
 }
 
-public class TokenSummaryService
+public static class TokenSummaryService
 {
     public const string DefaultDisclaimer =
         "Theoretical API cost based on published model-provider list prices. " +
         "Your actual usage is billed through the CLI subscription you signed in with " +
         "(Pro / Max / Team / Enterprise), so the dollar number above is a comparison, " +
         "not a bill.";
-
-    private readonly OrchestratorLog _log;
-    private readonly TokenSummaryCacheStore? _cache;
-    private readonly BusBackedTokenSummaryReader? _busReader;
-    private readonly IConfiguration? _config;
-
-    public TokenSummaryService(
-        OrchestratorLog log,
-        TokenSummaryCacheStore? cache = null,
-        BusBackedTokenSummaryReader? busReader = null,
-        IConfiguration? config = null)
-    {
-        _log = log;
-        _cache = cache;
-        _busReader = busReader;
-        _config = config;
-    }
-
-    public TokenSummary Summarize(string projectName, string watchPath)
-    {
-        if (_busReader != null)
-            return _busReader.Summarize(projectName);
-
-        var entries = _log.Read(watchPath);
-        return Summarize(projectName, entries);
-    }
-
-    /// <summary>
-    /// Read the orchestrator log once for a watch path and produce a
-    /// per-job token rollup. The kanban card uses this to render a
-    /// colour-tiered "token bubble" with a hover popover. Returns an
-    /// empty dictionary when the log file does not exist.
-    ///
-    /// <para>
-    /// Performance: O(N) over orchestrator entries, single sequential
-    /// read of <c>orchestrator.jsonl</c>. Callers must batch this per
-    /// watch path so the perf contract on
-    /// <c>TaskEndpointHelpers.WithRuntime</c> (no per-job disk I/O)
-    /// stays intact.
-    /// </para>
-    /// </summary>
-    public Dictionary<string, TaskTokenSummary> SummarizePerJob(string watchPath)
-    {
-        if (_busReader != null)
-        {
-            var projectName = ResolveProjectName(watchPath);
-            return string.IsNullOrWhiteSpace(projectName)
-                ? new Dictionary<string, TaskTokenSummary>(StringComparer.Ordinal)
-                : _busReader.SummarizePerJob(projectName);
-        }
-
-        var entries = _log.Read(watchPath);
-        return SummarizePerJob(entries);
-    }
 
     /// <summary>
     /// Pure overload for tests: takes orchestrator log entries directly.
@@ -272,22 +218,6 @@ public class TokenSummaryService
     }
 
     /// <summary>
-    /// Workspace-wide aggregate: walks every watched project, runs the
-    /// per-project summarizer, and folds amounts + per-model buckets into
-    /// a single rollup. Persists the result to disk via
-    /// <see cref="TokenSummaryCacheStore"/> so the status-bar usage modal
-    /// can render last-known totals immediately on app start.
-    /// </summary>
-    public TokenSummaryAggregate Aggregate(IEnumerable<(string Name, string WatchPath)> projects)
-    {
-        if (_busReader != null)
-            return _busReader.Aggregate(projects, _cache);
-
-        var perProject = projects.Select(p => (p.Name, Summary: Summarize(p.Name, p.WatchPath))).ToList();
-        return AggregateSummaries(perProject, _cache);
-    }
-
-    /// <summary>
     /// Pure overload: fold a pre-computed list of (project, summary) pairs
     /// into the workspace aggregate. Both the legacy reader and the
     /// Phase-4 bus-backed reader (<c>BusBackedTokenSummaryReader</c>) call
@@ -395,30 +325,6 @@ public class TokenSummaryService
         try { cache?.Write(aggregate); } catch (Exception __ex) { SilentCatch.Note(__ex, "TokenSummary: swallow; tolerant by design"); /* swallow; tolerant by design */ }
 
         return aggregate;
-    }
-
-    /// <summary>
-    /// Read the persisted aggregate (no fresh probe). Returns null when
-    /// the cache file does not exist or fails to parse.
-    /// </summary>
-    public TokenSummaryAggregate? ReadCachedAggregate() => _cache?.Read();
-
-    private string? ResolveProjectName(string watchPath)
-    {
-        if (string.IsNullOrWhiteSpace(watchPath)) return null;
-
-        if (_config != null)
-        {
-            foreach (var child in _config.GetSection("WatchedPaths").GetChildren())
-            {
-                var path = child["Path"];
-                var name = child["Name"];
-                if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(name)) continue;
-                if (string.Equals(path, watchPath, StringComparison.OrdinalIgnoreCase)) return name;
-            }
-        }
-
-        return Path.GetFileName(watchPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
     }
 
     /// <summary>

@@ -20,7 +20,6 @@ internal sealed class PerfBaselineFixture : IDisposable
     public CliRouter Router { get; }
     public SummaryGenerationService Summary { get; }
     public TaskStateMachine States { get; }
-    public ProjectTokenUsageService TokenUsage { get; }
 
     public TaskIndexCache? IndexCache { get; }
 
@@ -114,8 +113,6 @@ internal sealed class PerfBaselineFixture : IDisposable
             Router, contextUsageParser, Summary, prompts, transitions, projectSettings,
             quotaService, quotaCaps,
             chatLog, orchestratorLog, orchestratorRunner, orchestratorSessions, globalBoot, git, pickupFailures, infraBreaker, taskAccess);
-
-        TokenUsage = new ProjectTokenUsageService(orchestratorLog, Scanner);
     }
 
     private void WriteJob(string state, string slug, string title)

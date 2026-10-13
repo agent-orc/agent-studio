@@ -16,7 +16,6 @@ wall-clock backend.Tests/AcceptanceIntegrationRoundTripTests.cs 11
 wall-clock backend.Tests/AcceptanceRailHostedServiceTests.cs 4
 wall-clock backend.Tests/AcceptanceRailPolicyTests.cs 1
 wall-clock backend.Tests/AccessSecurityTests.cs 11
-wall-clock backend.Tests/AdHocUsageBusParityTests.cs 2
 wall-clock backend.Tests/AdHocUsageTests.cs 1
 wall-clock backend.Tests/AdrCodeDriftAnalysisServiceTests.cs 2
 wall-clock backend.Tests/AgentDocsReadAnalyticsTests.cs 2
@@ -130,7 +129,6 @@ wall-clock backend.Tests/ProjectProposalManagementTests.cs 1
 wall-clock backend.Tests/ProjectRunnerModeTests.cs 6
 wall-clock backend.Tests/ProjectRunnerPickupAtomicityTests.cs 29
 wall-clock backend.Tests/ProjectSettingsServiceTests.cs 2
-wall-clock backend.Tests/ProjectTokenUsageBusParityTests.cs 2
 wall-clock backend.Tests/ProjectTokenUsageEndpointPerfTests.cs 1
 wall-clock backend.Tests/ProjectUrlDiagnosticsTests.cs 2
 wall-clock backend.Tests/Projection/ConversationProjectionTests.cs 4
@@ -196,7 +194,6 @@ wall-clock backend.Tests/TaskTransitionAutoCommitAttributionTests.cs 6
 wall-clock backend.Tests/TaskWatcherServiceTests.cs 7
 wall-clock backend.Tests/TasksEndpointPerfTests.cs 1
 wall-clock backend.Tests/TestRunServiceTests.cs 1
-wall-clock backend.Tests/TokenSummaryBusParityTests.cs 2
 wall-clock backend.Tests/UpdateServiceIntegrationTests.cs 10
 wall-clock backend.Tests/UpdateServicePreflightPreconditionTests.cs 2
 wall-clock backend.Tests/UpdateServiceRestartIdentityDrillTests.cs 2
@@ -212,7 +209,6 @@ wall-clock backend.Tests/WikiGradingServiceTests.cs 2
 wall-clock backend.Tests/WikiSearchServiceTests.cs 1
 wall-clock backend.Tests/WorkspaceArtifactCommitServiceTests.cs 3
 wall-clock backend.Tests/WorkspaceRegistryTests.cs 3
-wall-clock backend.Tests/WorkspaceTokensTimelineBusParityTests.cs 2
 wall-clock backend.Tests/WorkspaceTokensTimelineCategoryTests.cs 2
 wall-clock backend.Tests/WorktreeOrphanDirectorySweeperTests.cs 4
 wall-clock operations-server.Tests/BoundaryPolicyTests.cs 1
@@ -297,7 +293,6 @@ wall-clock testsupport/TestTempRoot.cs 1
 
 fixed-date backend.Tests/AcceptanceRailPolicyTests.cs
 fixed-date backend.Tests/AcceptedIntegrationBackstopPolicyTests.cs
-fixed-date backend.Tests/AdHocUsageBusParityTests.cs
 fixed-date backend.Tests/AdHocUsageTests.cs
 fixed-date backend.Tests/AgentMessageBusBridgeTests.cs
 fixed-date backend.Tests/AgentMessageBusStoreTests.cs
@@ -395,7 +390,6 @@ fixed-date backend.Tests/ProjectProposalEvidencePerfTests.cs
 fixed-date backend.Tests/ProjectProposalManagementTests.cs
 fixed-date backend.Tests/ProjectRunnerModeTests.cs
 fixed-date backend.Tests/ProjectTokenReceiptReaderTests.cs
-fixed-date backend.Tests/ProjectTokenUsageBusParityTests.cs
 fixed-date backend.Tests/ProjectVisualEvidenceServiceTests.cs
 fixed-date backend.Tests/ProjectWikiEnhancementsTests.cs
 fixed-date backend.Tests/Projection/ConversationProjectionTests.cs
@@ -460,7 +454,6 @@ fixed-date backend.Tests/TasksEndpointPerfTests.cs
 fixed-date backend.Tests/TestRunServiceTests.cs
 fixed-date backend.Tests/TokenPricingTests.cs
 fixed-date backend.Tests/TokenSummaryAggregateTests.cs
-fixed-date backend.Tests/TokenSummaryBusParityTests.cs
 fixed-date backend.Tests/TokenSummaryTests.cs
 fixed-date backend.Tests/UpdateServicePreflightPreconditionTests.cs
 fixed-date backend.Tests/UpdateServiceRestartIdentityDrillTests.cs

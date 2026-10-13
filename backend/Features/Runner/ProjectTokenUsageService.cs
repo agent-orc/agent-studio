@@ -35,7 +35,7 @@ namespace AgentStudio.Runner;
 /// <see cref="AgentStudio.Tests.ProjectTokenUsageEndpointPerfTests"/>.
 /// </para>
 /// </summary>
-public class ProjectTokenUsageService
+public static class ProjectTokenUsageService
 {
     /// <summary>
     /// Title prefixes that mark a job as a "supporting" loop in the
@@ -65,36 +65,12 @@ public class ProjectTokenUsageService
     /// <summary>Hard cap for the expensive-jobs list.</summary>
     public const int MaxExpensiveLimit = 50;
 
-    private readonly OrchestratorLog _log;
-    private readonly TaskScannerService _scanner;
-    private readonly BusBackedProjectTokenUsageReader? _busReader;
-
-    public ProjectTokenUsageService(OrchestratorLog log, TaskScannerService scanner, BusBackedProjectTokenUsageReader? busReader = null)
-    {
-        _log = log;
-        _scanner = scanner;
-        _busReader = busReader;
-    }
-
     /// <summary>
     /// Lifetime + rolling 24h / 7d totals with the Job / Supporting / Orchestrator
     /// split. Returns an "empty" payload (HasData = false) when the
     /// project has not produced a single token-using orchestrator entry
     /// yet, so the panel can render its hide-when-empty branch (Hard
     /// rules in the prompt).
-    /// </summary>
-    public ProjectTokenUsageSummary BuildSummary(string projectName, string watchPath, DateTime? nowUtc = null)
-    {
-        if (_busReader != null)
-            return _busReader.BuildSummary(projectName, watchPath, nowUtc);
-
-        var entries = _log.Read(watchPath);
-        var jobsById = BuildJobsById(watchPath);
-        return BuildSummaryFromEntries(projectName, entries, jobsById, nowUtc);
-    }
-
-    /// <summary>
-    /// Pure overload for tests. Takes pre-loaded entries + job lookup.
     /// </summary>
     public static ProjectTokenUsageSummary BuildSummaryFromEntries(
         string projectName,
@@ -181,16 +157,6 @@ public class ProjectTokenUsageService
     /// rendered matrix (the rendering contract: rows = jobs most
     /// expensive first).
     /// </summary>
-    public ProjectTokenHeatmap BuildHeatmap(string projectName, string watchPath, int days, DateTime? nowUtc = null)
-    {
-        if (_busReader != null)
-            return _busReader.BuildHeatmap(projectName, watchPath, days, nowUtc);
-
-        var entries = _log.Read(watchPath);
-        var jobsById = BuildJobsById(watchPath);
-        return BuildHeatmapFromEntries(projectName, entries, jobsById, days, nowUtc);
-    }
-
     public static ProjectTokenHeatmap BuildHeatmapFromEntries(
         string projectName,
         IReadOnlyList<OrchestratorLogEntry> entries,
@@ -289,16 +255,6 @@ public class ProjectTokenUsageService
     /// so deleted-job spend stays visible (Critical Boundaries: Token
     /// usage is accountability).
     /// </summary>
-    public IReadOnlyList<ProjectExpensiveJob> BuildExpensiveJobs(string projectName, string watchPath, int limit)
-    {
-        if (_busReader != null)
-            return _busReader.BuildExpensiveJobs(projectName, watchPath, limit);
-
-        var entries = _log.Read(watchPath);
-        var jobsById = BuildJobsById(watchPath);
-        return BuildExpensiveJobsFromEntries(entries, jobsById, limit);
-    }
-
     public static IReadOnlyList<ProjectExpensiveJob> BuildExpensiveJobsFromEntries(
         IReadOnlyList<OrchestratorLogEntry> entries,
         IReadOnlyDictionary<string, TaskInfo> jobsById,
@@ -369,17 +325,6 @@ public class ProjectTokenUsageService
     /// call. The frontend's drill-down panel renders this as a list
     /// (per the prompt's "split by run, by category, with deltas").
     /// </summary>
-    public ProjectJobTokenDetail? BuildJobDetail(string projectName, string watchPath, string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId)) return null;
-        if (_busReader != null)
-            return _busReader.BuildJobDetail(projectName, watchPath, jobId);
-
-        var entries = _log.Read(watchPath);
-        var jobsById = BuildJobsById(watchPath);
-        return BuildJobDetailFromEntries(projectName, entries, jobsById, jobId);
-    }
-
     public static ProjectJobTokenDetail? BuildJobDetailFromEntries(
         string projectName,
         IReadOnlyList<OrchestratorLogEntry> entries,
@@ -460,25 +405,6 @@ public class ProjectTokenUsageService
             Runs = rows,
             FetchedAt = DateTime.UtcNow.ToString("o"),
         };
-    }
-
-    /// <summary>
-    /// Build the (jobId → TaskInfo) lookup for the current watch path.
-    /// Single disk walk, dictionary indexed by id. Last-write-wins on
-    /// duplicates (rare; an id is supposed to be unique within the
-    /// project, but if a stale folder remains the latest scanner result
-    /// is the one we keep).
-    /// </summary>
-    private IReadOnlyDictionary<string, TaskInfo> BuildJobsById(string watchPath)
-    {
-        var map = new Dictionary<string, TaskInfo>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(watchPath)) return map;
-        foreach (var job in _scanner.ScanAllAutomationJobs())
-        {
-            if (!string.Equals(job.WatchPath, watchPath, StringComparison.OrdinalIgnoreCase)) continue;
-            map[job.Id] = job;
-        }
-        return map;
     }
 
     /// <summary>
