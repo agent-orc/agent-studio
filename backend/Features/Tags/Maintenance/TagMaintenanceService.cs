@@ -76,13 +76,19 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 decision.CardId = workspace.CreateCard(project, decision);
             var run = new TagMaintenanceRun { StartedAt = time.GetUtcNow(), Model = synthesis.Model };
             state.Runs.Add(run);
+            // Bounded history: repeated failures cannot grow the report file without limit.
+            TagMaintenancePolicy.TrimRuns(state, Math.Clamp(
+                configuration.GetValue<int?>("TagMaintenance:RunHistoryLimit") ?? 50, 10, 1000));
             Save(project, state);
             try
             {
                 var snapshot = workspace.Capture(project);
                 run.GoldenSet = await goldenSets.EvaluateAsync(project, snapshot, ct);
                 var active = snapshot.Items.Where(item => item.Project == project && item.Active).ToArray();
-                var offset = state.Runs.Where(r => r.Status == "reported").Sum(r => r.ItemsReviewed);
+                run.Unreadable = snapshot.Unreadable;
+                run.UsageComplete = snapshot.UsageComplete;
+                var offset = state.ItemsReviewedTotal
+                    ?? state.Runs.Where(r => r.Status == "reported").Sum(r => r.ItemsReviewed);
                 var selected = active.Length == 0 ? [] : Enumerable.Range(0, Math.Min(30, active.Length))
                     .Select(i => active[(offset + i) % active.Length]).ToArray();
                 run.ItemsReviewed = selected.Length;
@@ -94,6 +100,8 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 {
                     project, snapshot.Registry, snapshot.AreaIds, snapshot.Glossaries,
                     globalUsage = run.GlobalUsage,
+                    usageComplete = snapshot.UsageComplete,
+                    unreadable = snapshot.Unreadable,
                     otherProjectUsage = snapshot.Registry.ToDictionary(t => t.Id,
                         t => snapshot.Items.Count(i => i.Project != project && i.Tags.Contains(t.Id))),
                     eligibleItems = active.Length, offset,
@@ -102,6 +110,12 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                 });
                 var proposals = await synthesis.ProposeAsync(project, input, ct);
                 if (proposals.Count > 20) throw new ArgumentException("Synthesis exceeded 20 proposals.");
+                // Incomplete usage counts cannot prove a tag unused; the other proposal kinds continue.
+                if (!snapshot.UsageComplete)
+                {
+                    run.RetireProposalsSuppressed = proposals.Count(p => p.Kind == "retire");
+                    proposals = proposals.Where(p => p.Kind != "retire").ToArray();
+                }
                 // Validate the whole response before any proposal card is persisted.
                 var planned = proposals.Select(proposal =>
                 {
@@ -121,6 +135,7 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                     decision.CardId = workspace.CreateCard(project, decision);
                     Save(project, state);
                 }
+                state.ItemsReviewedTotal = offset + selected.Length;
                 run.Status = "reported";
             }
             catch (OperationCanceledException)

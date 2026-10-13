@@ -372,6 +372,10 @@
     <strong>AGT-2797 &middot; Program umbrella integration check</strong>
     <span>Delivered: a check that all nine program cards are integrated on the delivery line. AGT-2798 (North star rewrite), AGT-2799 (Delivery chain), AGT-2800 (Observation), AGT-2801 (Gates) and AGT-2802 (Task and board UI) arrived as operator card-scoped merges 5d480157f, 495dc597b, 1b7d8ef54, bc98a2566 and e94bb4649. The theme Dossiers delivery-chain, observation, gates and task-and-board-ui exist under docs/operations. AGT-2803 to AGT-2806 (tag backend, auto-tagging, tag UI, tag maintenance) are ancestors of HEAD and have their own entries above. Those five merges added no entries of their own to this log, and this entry does not write them on their behalf. No product code changed in this slice. Open follow-up from AGT-2804: operator approval of the tagging golden set.</span>
   </li>
+  <li data-implementation-entry="" data-task-key="AGT-2806" data-delivered-at="2026-10-13" data-slice="Tag maintenance tolerant inventory">
+    <strong>AGT-2806 &middot; Tag maintenance tolerant inventory</strong>
+    <span>Delivered: the workspace-wide maintenance capture no longer fails on an invalid Dossier or an unavailable Dossier or wiki inventory in any project; it skips them, lists them in the run report as unreadable items (project, kind, id, error), marks usage counts incomplete, drops retirement proposals and blocks registry removal while counts are incomplete, and still ends the run as reported with the other proposal kinds. The per-project run history is bounded (TagMaintenance:RunHistoryLimit, default 50, latest successful run kept). Evidence: TagMaintenanceTests 29 of 29 (new: invalid Dossier in a second project, missing Dossier inventory of another project, complete-inventory control, policy rejection, bounded history), AutoTaggingOrchestrationTests 35 of 35, Architecture 60 of 60.</span>
+  </li>
 <!-- agent-studio:implementation-log:end -->
   </ol>
 </section>
