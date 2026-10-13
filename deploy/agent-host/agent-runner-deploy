@@ -859,7 +859,9 @@ restart_release_services() {
 # accepted a completion, on the legacy and the v1 plane alike; a rejected one
 # surfaces as "/completion -> 4xx". Prints the first acceptance and returns 0,
 # or prints the number of rejected completions and returns 1 when the window
-# closes without one.
+# closes without one. An acceptance whose artifact uploads the Task Server
+# refused with 409 returns 3 and prints the acceptance and the refusal count
+# on two lines (AGT-3095).
 watch_for_accepted_completion() {
   local invocation_id="$1"
   local window_seconds="$2"
@@ -868,6 +870,7 @@ watch_for_accepted_completion() {
   local deadline=$((SECONDS + window_seconds))
   local journal=""
   local accepted
+  local rejected_artifacts
 
   while :; do
     # The invocation identifies the new runner. Include its completions during
@@ -880,6 +883,11 @@ watch_for_accepted_completion() {
     accepted="$(grep -m 1 -F "handed back to the local board: " <<<"$journal" || true)"
     if [[ -n "$accepted" ]]; then
       printf '%s\n' "$accepted"
+      rejected_artifacts="$(rejected_artifact_writes "$accepted" "$journal")"
+      if [[ "$rejected_artifacts" != "0" ]]; then
+        printf '%s\n' "$rejected_artifacts"
+        return 3
+      fi
       return 0
     fi
     ((SECONDS < deadline)) || break
@@ -887,6 +895,29 @@ watch_for_accepted_completion() {
   done
   grep -cE '/completion -> [45][0-9][0-9]' <<<"$journal" || true
   return 1
+}
+
+# An accepted completion is not delivered evidence. Release 0.9.4 settled the
+# RunAttempt before uploading its result files, and the Task Server refused every
+# upload with "409 invalidState ... no longer has write authority" while the
+# completions were accepted (AGT-3095). Prints how many artifact uploads of the
+# accepted task were refused with 409 in the same journal read. Heartbeat
+# "lease lost" lines, ArtifactTooLarge partials and tasks that transfer nothing
+# never count. The key is matched with its trailing space so AGT-1 does not
+# match AGT-10.
+rejected_artifact_writes() {
+  local accepted="$1"
+  local journal="$2"
+  local acceptance_pattern="task '([^']+)' handed back to the local board: "
+  local task_key
+
+  if [[ ! "$accepted" =~ $acceptance_pattern ]]; then
+    printf '0\n'
+    return 0
+  fi
+  task_key="${BASH_REMATCH[1]}"
+  grep -F "artifact-transfer outcome=ArtifactTransferFailed task=$task_key " <<<"$journal" \
+    | grep -cE -e '-> 409|invalidState' || true
 }
 
 record_last_promotion() {
@@ -922,6 +953,7 @@ verify_completions() {
   local invocation_id
   local remaining
   local observation
+  local watch_status=0
   local detail
 
   release_id="$(last_promotion_value release)" \
@@ -941,11 +973,22 @@ verify_completions() {
   ((remaining > 0)) || remaining=0
   printf 'agent-runner-deploy: waiting up to %ss for %s to report an accepted completion from release %s\n' \
     "$remaining" "$coding_unit" "$release_id"
-  if observation="$(watch_for_accepted_completion "$invocation_id" "$remaining" "$activated_epoch")"; then
+  observation="$(watch_for_accepted_completion "$invocation_id" "$remaining" "$activated_epoch")" \
+    || watch_status=$?
+  if ((watch_status == 0)); then
     logger -p authpriv.notice -t agent-runner-deploy \
       "action=verify-completions release=$release_id result=accepted" || true
     printf 'agent-runner-deploy: completion accepted after release %s: %s\n' "$release_id" "$observation"
     return 0
+  fi
+
+  if ((watch_status == 3)); then
+    logger -p authpriv.notice -t agent-runner-deploy \
+      "action=verify-completions release=$release_id previous=${previous_release_id:-none} result=failed reason=artifacts-rejected" || true
+    printf 'agent-runner-deploy: release %s is active and a completion was accepted, but %s artifact upload(s) of that task were rejected with 409: %s\n' \
+      "$release_id" "${observation##*$'\n'}" "${observation%%$'\n'*}" >&2
+    print_rollback_hint "$previous_release_id"
+    die "post-restart artifact delivery check failed for release $release_id"
   fi
 
   if [[ "$observation" =~ ^[1-9][0-9]*$ ]]; then

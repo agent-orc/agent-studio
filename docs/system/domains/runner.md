@@ -140,6 +140,25 @@ rollout decision.
   length. The runner logs the complete response body so operators can compare
   the attempted transfer with the advertised limit. The Task Server's global
   request-body denial-of-service bound is not raised.
+  The legacy plane keeps the strict fence: an artifact write for a RunAttempt
+  that is already Completed, Failed, or Cancelled returns
+  `409 invalidState ... no longer has write authority`. The Task Server logs
+  each such refusal as one `runner-artifact-after-settlement taskKey=...
+  attemptId=... runner=... state=... terminalAt=...` warning, and a write
+  without the current lease as `runner-artifact-stale-lease taskKey=...
+  runner=... leaseId=...`. `ArtifactUploadAfterSettlementTracker` counts refused
+  RunAttempts (not files or requests) per runner; three distinct attempts
+  within one hour raise one `artifact-upload-after-settlement` pipeline health
+  alarm in the project of the attempt that crossed the threshold. It names the
+  runner, the attempts' task keys, and the runner's release id when the
+  capability registry knows it. A further attempt does not alarm again; the
+  runner's next accepted artifact write clears the alarm and re-arms the
+  tracker. The threshold and window are code constants in
+  `PipelineHealthConventions` (AGT-3095: release 0.9.4 settled before uploading
+  and lost every coding artifact for a week without a log line or alarm). The
+  deploy helper's post-restart completion check fails with
+  `reason=artifacts-rejected` when the first accepted task's uploads were
+  refused with 409 ([runbook](../../operations/setup/linux-runner-host.md)).
 - `backend/Services/TaskRunnerService.cs`: project runner ownership and public
   start, stop, continue, and mode surface.
 - `runner/FinalizationRetryPolicy.cs`, `runner/CodingFinalizationReconciler.cs`,

@@ -913,7 +913,7 @@ public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
         string? runnerPrincipalId = null,
         IReadOnlyDictionary<string, string?>? extraConfiguration = null,
         TimeProvider? advisorClock = null) =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");

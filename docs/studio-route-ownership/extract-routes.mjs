@@ -123,6 +123,10 @@ function placeholder(expression) {
   const relPath = argumentOf('encodeRelPath');
   if (relPath) return `{${relPath}*}`;
   if (/orchestratorContextChatSegment/.test(expression)) return '{contextKey}';
+  // A conditional interpolation whose result begins with "?" is an opaque
+  // query suffix, not another path segment. Keep the same marker used for a
+  // prebuilt `${query}` variable so build-inventory.mjs can normalize both.
+  if (/["'`]\?/.test(expression)) return '{query}';
   if (/\bqs\b/.test(expression)) return '{?trigger,severity,topic,limit}';
   if (/\bphase\b/.test(expression)) return '{phase}';
   if (/\baction\b/.test(expression)) return '{action}';

@@ -519,7 +519,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
         var deps = Build(deliverySha, authorityRebuilt: true, guarded: true);
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -601,7 +601,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             true,
             false));
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -680,7 +680,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
                 }],
             }));
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -1068,7 +1068,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         var deps = Build(deliverySha, backgroundIntegration: true, briefVersion: "brief-v1", seedContent: false);
         BriefVersionStore.Record(deps.Scanner.FindJob(Slug, _watchPath)!.FolderPath, "brief v2");
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -1519,7 +1519,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         await gate.Entered.WaitAsync(AsyncTestDeadline);
         Assert.True(deps.Merge.IsMergeGateBusy);
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -1592,7 +1592,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         Assert.Equal(MoveJobStatus.IntegrationFailed, accepted.Status);
         Assert.Equal(TaskStates.HumanReview, deps.Scanner.FindJob(Slug, _watchPath)?.State);
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");
@@ -1663,7 +1663,7 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             FailureCode = AcceptedIntegrationFailureCodes.SourceNeedsRebase,
         });
 
-        using var factory = new WebApplicationFactory<Program>()
+        using var factory = new TestHostFactory()
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Test");

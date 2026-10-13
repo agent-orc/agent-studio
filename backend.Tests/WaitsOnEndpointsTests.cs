@@ -715,7 +715,7 @@ public sealed class WaitsOnEndpointsTests : IDisposable
     }
 
     private WebApplicationFactory<Program> BuildFactory() =>
-        new WebApplicationFactory<Program>()
+        new TestHostFactory()
             .WithWebHostBuilder(b =>
             {
                 b.UseEnvironment("Test");

@@ -285,8 +285,10 @@ production evidence must be attached before cutover:
    cutover (`backend/Host/StudioV1LegacyRouteAlias.cs`); with
    `TaskServer:BaseUrl` set the legacy `/api` handlers are closed and the plane
    proxy forwards the versioned paths to the standalone Task Server, while
-   `/hubs/v1/studio` stays on the local hub. The other three bundles (261 operations) still
-   call legacy `/api` paths and remain post-cutover work; see
+   `/hubs/v1/studio` stays on the local hub. Across the other three bundles,
+   296 Task Server-owned operations have a matching standalone v1 handler and
+   50 do not; those 50 remain cutover blockers under the route-ownership gate.
+   See
    [Route inventory snapshot](#route-inventory-snapshot) below.
 2. **Current workspace migration acceptance, implementation delivered by B3.**
    The standalone CLI and management API now inventory and import canonical
@@ -342,7 +344,7 @@ production evidence must be attached before cutover:
      Contract tests: `task-server.Tests/StudioAttachTests.cs` and
      `backend.Tests/ConnectorSecurityPolicyTests.cs`.
    - **Route coverage.** `ConnectorProfileTests.Every_task_server_owned_inventory_route_is_forwarded_to_its_target`
-     walks all 325 Task Server-owned operations in `routes.json` (309 when
+     walks all 346 Task Server-owned operations in `routes.json` (309 when
      AGT-2984 closed the gate; AGT-2983 added the versioned core-attach routes). It sends
      each through the connector and asserts the upstream received it at its
      approved target route with the Studio credential. The walk found, and
@@ -368,57 +370,73 @@ is the generated source of truth; regenerate it with
 `node docs/studio-route-ownership/build-inventory.mjs --write` after any
 frontend `HttpClient`/`sessionFetch`/`EventSource`/SignalR call or backend
 `MapGroup("/api/...")` change, and a repository test fails on drift (see
-"Guard test" below). This snapshot is current as of 2026-10-01, regenerated
-after AGT-2983 switched the core-attach call sites (earlier reconciliations:
+"Guard test" below). This snapshot is current as of 2026-10-13, regenerated
+from the current frontend calls, OrchestratorApi endpoint groups, standalone
+Task Server v1 routes, and public-demo denial boundaries after AGT-2983
+switched the core-attach call sites (earlier reconciliations:
 AGT-2731, AGT-2754 connector profile, AGT-2756 task detail and host control,
 AGT-2757 operations and insight, AGT-2758 administration and long tail,
 AGT-2835):
 
 | Metric | Count |
 |---|---:|
-| Frontend operations (total) | 433 |
-| — `/api` operations | 432 |
+| Frontend operations (total) | 456 |
+| — `/api` operations | 455 |
 | — `/hubs` operations | 1 |
-| Classified `task-server` | 325 |
-| Classified `dev-seat` | 108 |
+| Classified `task-server` | 346 |
+| Classified `dev-seat` | 110 |
 | Classified `retired` | 0 |
 | Backend `/api` `MapGroup` groups | 31 |
-| Frontend operations already calling `/api/v1/*` or `/hubs/v1/*` | 64 |
-| — of which the standalone Task Server implements | 64 |
-| `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 261 |
+| Frontend operations already calling `/api/v1/*` or `/hubs/v1/*` | 70 |
+| `task-server` operations with a matching standalone v1 handler | 296 |
+| `task-server` operations still needing a v1 route (`d4bRoutesToAdd`) | 50 |
 | of which in the P0 `core-attach` bundle | 0 |
 
 Every frontend operation is classified (0 unclassified, 0 retired), which
-satisfies the "classify every Studio route" half of gate 1 above. The 261
-`must-add` operations are the remaining work, sized and bundled by
-`docs/studio-route-ownership/routes.json` `d4bEstimate.bundles`
-(`task-detail-and-hosts` 125, `operations-and-insight` 106,
-`administration-and-tail` 30). Release gate 1 does not require them before
-cutover: detached-Studio acceptance only needs the P0 **core-attach** bundle,
-which is now empty.
+satisfies the "classify every Studio route" half of gate 1 above. `v1Status`
+is derived by matching each Task Server-owned operation's `targetRoute`
+against the routes registered under `task-server/`; route parameter names do
+not affect the match. The 50 `must-add` operations are the remaining work,
+sized and bundled by `docs/studio-route-ownership/routes.json`
+`d4bEstimate.bundles` (`task-detail-and-hosts` 29,
+`operations-and-insight` 9, `administration-and-tail` 12). The public-demo
+execution inventory and read allowlist remain separate denial boundaries:
+appearing there does not change route ownership or prove that the standalone
+Task Server implements a route.
 
-The 2026-09-26 guard finding (421 operations against the 408-operation
-AGT-2835 reference, delta in the AGT-2737 result `route-inventory-delta.json`)
-is reconciled: the regenerated inventory classifies every added operation with
-the same generator rules (7 `dev-seat`: the Git branch-sweep routes; 9
-`task-server`, all outside `core-attach`), and four further operations landed
-since then. The AGT-2983 fix round replaced the generator's single
-`orchestrator/context/{contextKey}` guess (2 operations) with the real
-per-shape routes (8 operations, see below), a net +6. The decision-card routes (`POST /api/tasks/{taskId}/decision` and
-`/decision/reopen`, P1 `task-server`, outside `core-attach`) added two more.
-The connector pins this inventory by checksum and by its 108/325 split (`ConnectorRouteInventory.cs`)
-and forwards exactly the classified inventory: an operation added later is
-not forwarded until it is classified and that checksum is updated with it.
+Compared with the previously committed 433-operation snapshot, the current
+frontend extractor finds 22 additional call shapes, and AGT-3032 adds
+`POST /api/v1/studio/orchestrator/sessions/archive`. The classification also
+restores `GET /api/search/repository` to the dev seat because it reads the live
+checkout. The connector pins this inventory by checksum and by its 110/346
+split (`ConnectorRouteInventory.cs`) and forwards exactly the classified
+inventory: an operation added later is not forwarded until it is classified
+and that checksum is updated with it.
 
 #### Operations still blocking cutover
 
-None. The table is empty since AGT-2983 (2026-09-28): all 27 P0 core-attach
-operations call a versioned route that the standalone Task Server implements,
-and `docs/studio-route-ownership/core-attach-cutover.test.mjs` fails if any of
-their legacy `/api` or `/hubs/jobs` call sites comes back.
+These are the 50 Task Server-owned frontend operations for which no matching
+standalone v1 route is registered. The table groups related operations to keep
+the cutover remainder reviewable. "Owner" is the calling frontend area; the
+reason is the same unless stated otherwise: the generated `targetRoute` has no
+method-and-shape match in the standalone Task Server.
 
-| Feature area | Route | Owner | Target v1 route |
+| Feature area | Operations | Owner | Reason |
 |---|---|---|---|
+| Admin telemetry | `GET /api/admin/git-telemetry` | Shared frontend services | No standalone v1 target. |
+| Remote-host cleanup | `POST /api/clients/retired/purge` | Remote hosts | No standalone v1 target. |
+| Project knowledge and chat | `GET /api/projects/{project}/areas`<br>`GET /api/projects/{project}/areas/{id}/glossary`<br>`GET /api/projects/{project}/chat-metadata` | Project hub; Orchestrator | No standalone v1 targets. |
+| Project execution and policy | `PUT /api/projects/{project}/automatic-failure-continuations`<br>`GET /api/projects/{project}/execution`<br>`DELETE, PUT /api/projects/{project}/execution/override`<br>`POST /api/projects/{project}/execution/proposal`<br>`PUT /api/projects/{project}/integration-gate-review-reuse`<br>`POST /api/projects/{project}/model-migrations/apply`<br>`GET /api/projects/{project}/operator-sweeps`<br>`POST /api/projects/{project}/operator-sweeps/{sweep}/pause`<br>`POST /api/projects/{project}/operator-sweeps/{sweep}/resume`<br>`PUT /api/projects/{project}/review-follow-up`<br>`PUT /api/projects/{project}/review-round-budgets` | Project hub; Shared frontend services | No standalone v1 targets. |
+| Tag governance | `GET /api/projects/{project}/tag-proposals`<br>`POST /api/projects/{project}/tag-proposals/{id}/decision`<br>`GET /api/projects/{project}/tags` | Shared frontend services | No standalone v1 targets. |
+| Runner and search insight | `GET /api/runner/project-chat/status`<br>`GET /api/search/stream`<br>`GET /api/usage/cockpit` | Shared frontend services; Studio shell | No standalone v1 targets. |
+| Task detail and lifecycle | `GET /api/tasks/{taskId}/core`<br>`POST /api/tasks/{taskId}/decision`<br>`POST /api/tasks/{taskId}/decision/reopen`<br>`GET /api/tasks/{taskId}/delivery-claim`<br>`GET /api/tasks/{taskId}/details/{resource}`<br>`POST /api/tasks/{taskId}/failure/continue`<br>`GET /api/tasks/{taskId}/files/{path*}/history`<br>`POST /api/tasks/{taskId}/integration/retry`<br>`GET /api/tasks/{taskId}/result-history`<br>`GET /api/tasks/{taskId}/result-history/{versionId}`<br>`POST /api/tasks/{taskId}/review-priority`<br>`GET /api/tasks/{taskId}/review-projection`<br>`PUT /api/tasks/{taskId}/waits-on`<br>`GET /api/tasks/commit-owner/{sha}` | Shared frontend services | No standalone v1 targets. |
+| Host management and provider sign-in | `GET /api/v1/management/host-releases`<br>`GET /api/v1/management/links`<br>`POST /api/v1/management/links/{clientId}/{action}`<br>`POST /api/v1/management/links/{clientId}/reconnect`<br>`POST, GET /api/v1/management/remote-hosts/{hostId}/claude-sign-in[/{handle}]`<br>`POST, GET /api/v1/management/remote-hosts/{hostId}/codex-sign-in[/{handle}]` | Remote hosts | The frontend path is versioned, but only OrchestratorApi currently maps it; the standalone Task Server does not. |
+| Watcher | `GET /api/watcher/cases`<br>`GET /api/watcher/proposals`<br>`POST /api/watcher/proposals/{proposalId}/decision`<br>`GET /api/watcher/status` | Shared frontend services | No standalone v1 targets. |
+| Workspace migration policy | `PUT /api/workspaces/{workspaceId}/auto-apply-model-migrations` | Shared frontend services | No standalone v1 target. |
+
+All 27 P0 core-attach operations do have matching versioned routes, and
+`docs/studio-route-ownership/core-attach-cutover.test.mjs` fails if their
+legacy `/api` or `/hubs/jobs` call sites return.
 
 How each former blocker was closed, and what was verified against the Task
 Server before switching:

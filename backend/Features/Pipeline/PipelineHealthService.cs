@@ -19,6 +19,9 @@ public static class PipelineHealthConventions
     public static readonly TimeSpan SensorInterval = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan AlertCooldown = TimeSpan.FromHours(1);
     public const string EvidenceFlushStalledKind = "evidence-flush-stalled";
+    public const string ArtifactUploadAfterSettlementKind = "artifact-upload-after-settlement";
+    public const int ArtifactUploadAfterSettlementAttempts = 3;
+    public static readonly TimeSpan ArtifactUploadAfterSettlementWindow = TimeSpan.FromHours(1);
 }
 
 public sealed record PipelineGateContext(
@@ -240,11 +243,12 @@ public interface IPipelineHealthSensor
 
 /// <summary>
 /// Visibility-only pipeline sensor. It observes gate lifecycle, the
-/// append-only lane ledger and stalled workspace evidence flushes, emits
-/// deduplicated feed alarms, and exposes a compact read model. It never cancels
-/// gates or moves tasks.
+/// append-only lane ledger, stalled workspace evidence flushes and artifact
+/// uploads refused after settlement, emits deduplicated feed alarms, and
+/// exposes a compact read model. It never cancels gates or moves tasks.
 /// </summary>
-public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSensor, IEvidenceFlushAlarm
+public sealed class PipelineHealthService
+    : BackgroundService, IPipelineHealthSensor, IEvidenceFlushAlarm, IArtifactUploadAfterSettlementAlarm
 {
     private static readonly string[] ObservedLanes =
     [
@@ -320,7 +324,8 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
         var unhealthy = activeGate?.IsHanging == true
             || fingerprint?.IsSystemic == true
             || lanes.Any(lane => lane.IsStalled)
-            || alerts.Any(alert => alert.Kind == PipelineHealthConventions.EvidenceFlushStalledKind)
+            || alerts.Any(alert => alert.Kind is PipelineHealthConventions.EvidenceFlushStalledKind
+                or PipelineHealthConventions.ArtifactUploadAfterSettlementKind)
             || _currentAlerts.ContainsKey(project + "\0" + ReviewClaimStallIdentity);
         return new PipelineHealthSnapshot(
             project,
@@ -377,6 +382,48 @@ public sealed class PipelineHealthService : BackgroundService, IPipelineHealthSe
     }
 
     private static string EvidenceFlushIdentity(string gitRoot) => "evidence-flush:" + gitRoot;
+
+    /// <summary>
+    /// Raises <c>artifact-upload-after-settlement</c> in the project of the
+    /// attempt that crossed the threshold (AGT-3095). The alert stays in the
+    /// snapshot, and keeps the status at <c>alarm</c>, until the runner's next
+    /// accepted artifact write reports recovery.
+    /// </summary>
+    public void ArtifactUploadsRejectedAfterSettlement(ArtifactUploadAfterSettlement rejection)
+    {
+        var tasks = string.Join(", ", rejection.Attempts.Select(attempt => attempt.TaskKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+        var attempts = string.Join(", ", rejection.Attempts.Select(attempt =>
+            $"{attempt.TaskKey} {attempt.AttemptId} ({attempt.RejectedWrites} write(s))"));
+        var release = rejection.ReleaseId is null ? "unknown" : rejection.ReleaseId;
+        var alert = new PipelineHealthAlert(
+            PipelineHealthConventions.ArtifactUploadAfterSettlementKind,
+            "high",
+            $"Runner {rejection.RunnerId} uploads artifacts after settlement for {rejection.Attempts.Count} attempts ({tasks})",
+            $"The Task Server refused artifact writes from runner {rejection.RunnerId} (release {release}) because " +
+            $"the RunAttempt had already settled: {attempts}. Their result files never reached the board, so " +
+            "reviewers see the result scaffold. Check that the host runs a release that uploads before completing.",
+            rejection.DetectedAtUtc,
+            rejection.Attempts[^1].TaskKey);
+        EmitAlert(rejection.Project, rejection.WatchPath, alert, ArtifactUploadAfterSettlementIdentity(rejection.RunnerId));
+    }
+
+    public void ArtifactUploadsRecovered(string runnerId, DateTime recoveredAtUtc)
+    {
+        var suffix = "\0" + ArtifactUploadAfterSettlementIdentity(runnerId);
+        foreach (var key in _currentAlerts.Keys.Where(key => key.EndsWith(suffix, StringComparison.Ordinal)).ToArray())
+        {
+            _currentAlerts.TryRemove(key, out _);
+            // Re-arm: a later regression of the same runner alarms immediately.
+            _lastAlertAt.TryRemove(key, out _);
+        }
+        _logger.LogInformation(
+            "pipeline_health_alarm_cleared kind={Kind} runner={Runner} at={At:O}",
+            PipelineHealthConventions.ArtifactUploadAfterSettlementKind, runnerId, recoveredAtUtc);
+    }
+
+    private static string ArtifactUploadAfterSettlementIdentity(string runnerId)
+        => "artifact-after-settlement:" + runnerId;
 
     private IReadOnlyList<(string Project, string WatchPath)> ProjectsIn(string gitRoot)
     {

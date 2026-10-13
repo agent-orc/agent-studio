@@ -35,6 +35,14 @@ test('splitQuery treats "?${...}" as a dynamic query suffix instead of inventing
   assert.equal(result.dynamic, true);
 });
 
+test('the frontend extractor marker for a conditional query suffix stays out of the route path', () => {
+  const result = splitQuery(canonicalPath('/api/crash-recovery/pending/{id}/commit{query}'));
+  assert.equal(result.path, '/api/crash-recovery/pending/{id}/commit');
+  assert.deepEqual(result.fixed, {});
+  assert.deepEqual(result.optional, []);
+  assert.equal(result.dynamic, true);
+});
+
 test('splitQuery still parses literal fixed and optional query keys unchanged', () => {
   const literal = splitQuery(canonicalPath('/api/tasks?project=demo'));
   assert.equal(literal.path, '/api/tasks');
@@ -77,6 +85,41 @@ test('buildInventory emits clean paths and a dynamic query variant for the three
         `${key} should be flagged as a dynamic query instead of losing the query entirely`,
       );
     }
+  } finally {
+    fs.rmSync(emptyBackendRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildInventory marks the generated target as existing only when the standalone Task Server maps it', () => {
+  const emptyBackendRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'route-inventory-v1-test-'));
+  try {
+    const payload = buildInventory(
+      {
+        routes: [
+          { method: 'GET', path: '/api/tasks/{taskId}/core', evidence: ['frontend/src/app/services/task.service.ts:1'] },
+          { method: 'GET', path: '/api/v1/management/links', evidence: ['frontend/src/app/services/task.service.ts:2'] },
+        ],
+      },
+      {
+        backendRoot: emptyBackendRoot,
+        taskServerPayload: {
+          routes: [
+            { method: 'GET', path: '/api/v1/projects/{projectIdentity}/tasks/{taskIdentity}/core' },
+          ],
+        },
+      },
+    );
+
+    const taskCore = payload.frontendRoutes.find(
+      (route) => route.method === 'GET' && route.path === '/api/tasks/{taskId}/core',
+    );
+    assert.equal(taskCore.targetRoute, '/api/v1/projects/{projectId}/tasks/{taskId}/core');
+    assert.equal(taskCore.v1Status, 'exists', 'parameter names must not affect a v1 route match');
+
+    const links = payload.frontendRoutes.find(
+      (route) => route.method === 'GET' && route.path === '/api/v1/management/links',
+    );
+    assert.equal(links.v1Status, 'must-add', 'a versioned frontend URL alone is not a Task Server implementation');
   } finally {
     fs.rmSync(emptyBackendRoot, { recursive: true, force: true });
   }

@@ -70,7 +70,7 @@ public sealed class BoardConditionalReadTests : IDisposable
     /// </summary>
     private WebApplicationFactory<Program> BuildFactory(
         Func<Func<List<TaskInfo>>, Func<List<TaskInfo>>>? wrapIndexScan = null) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
+        new TestHostFactory().WithWebHostBuilder(b =>
         {
             if (wrapIndexScan is not null)
             {

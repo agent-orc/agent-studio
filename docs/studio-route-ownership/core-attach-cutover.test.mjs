@@ -73,7 +73,12 @@ function inventory() {
     [path.join(dossier, 'extract-routes.mjs')],
     { encoding: 'utf8' },
   ));
-  return buildInventory(candidates);
+  const taskServerPayload = JSON.parse(execFileSync(
+    process.execPath,
+    [path.join(dossier, 'extract-taskserver-routes.mjs')],
+    { encoding: 'utf8' },
+  ));
+  return buildInventory(candidates, { taskServerPayload });
 }
 
 test('the core-attach bundle lists exactly 27 operations', () => {

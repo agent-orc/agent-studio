@@ -185,6 +185,9 @@ function classification(routePath, method) {
     /^\/api\/projects\/\{project\}\/(?:wiki|architecture|graph|steering|style-guides|build-profile)(?:\/|$)/,
     /^\/api\/projects\/\{project\}\/security(?:\/files|\/meta|$)/,
     /^\/api\/(?:workbenches|projects\/\{project\}\/workbenches)(?:\/|$)/,
+    // Repository search reads the live checked-out tree. Task search remains
+    // Task Server-owned at the separately named GET /api/search route.
+    /^\/api\/search\/repository$/,
     // A Dossier context digest composes the local Dossier descriptors (AGT-2983).
     /^\/api\/orchestrator\/context\/workbench:/,
     /^\/api\/tasks\/\{taskId\}\/(?:git|commit|commits|provenance|open-in-vscode|checkout)(?:\/|$)/,
@@ -200,21 +203,29 @@ function classification(routePath, method) {
   return 'task-server';
 }
 
-// A route already "exists" in v1 exactly when the frontend calls a path
-// under /api/v1/ today; the backend groups above only ever accept a call at
-// the path the frontend actually sends. Earlier revisions of this script
-// carried a hand-maintained allowlist of four such paths here, which fell
-// behind as later cards (AGT-2756, AGT-2757, AGT-2758) moved many more
-// frontend calls onto /api/v1/ without anyone updating the list, silently
-// misclassifying already-migrated routes as must-add. The versioned Studio
-// hub (/hubs/v1/studio, AGT-2983) counts the same way.
-function isExistingV1(routePath) {
+// Keep "Angular already calls a versioned URL" separate from "the standalone
+// Task Server implements the target". The former is a useful migration count;
+// v1Status below is derived from the extracted Task Server surface instead.
+function isVersionedFrontendRoute(routePath) {
   return routePath.startsWith('/api/v1/') || routePath.startsWith('/hubs/v1/');
+}
+
+// Parameter names are not part of route identity. The frontend target may use
+// {taskId} while the Task Server endpoint uses {taskIdentity}; catch-all and
+// embedded parameters follow the same rule for this availability check.
+function routeShape(routePath) {
+  return routePath.toLowerCase().replace(/\{[^}]+\}/g, '{}');
+}
+
+function implementedV1Routes(taskServerPayload) {
+  return new Set((taskServerPayload?.routes ?? []).map(
+    (route) => `${route.method} ${routeShape(route.path)}`,
+  ));
 }
 
 function targetRoute(method, routePath, routeClass) {
   if (routeClass === 'dev-seat') return routePath;
-  if (isExistingV1(routePath)) return routePath;
+  if (isVersionedFrontendRoute(routePath)) return routePath;
   if (routePath === '/hubs/jobs') return '/hubs/v1/studio';
   if (routePath === '/api/workspaces') return '/api/v1/workspaces';
   if (routePath === '/api/projects') return '/api/v1/projects';
@@ -276,7 +287,11 @@ function walk(directory) {
   });
 }
 
-export function buildInventory(candidatePayload, { backendRoot = path.join(root, 'backend') } = {}) {
+export function buildInventory(candidatePayload, {
+  backendRoot = path.join(root, 'backend'),
+  taskServerPayload = { routes: [] },
+} = {}) {
+  const existingV1 = implementedV1Routes(taskServerPayload);
   const merged = new Map();
   for (const candidate of [...candidatePayload.routes, ...extras.map(([method, route, evidence]) => ({ method, path: route, evidence: [evidence] }))]) {
     const query = splitQuery(canonicalPath(candidate.path));
@@ -301,7 +316,10 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
     .map((route, index) => {
       const routeClass = classification(route.path, route.method);
-      const status = routeClass === 'dev-seat' ? 'not-applicable' : isExistingV1(route.path) ? 'exists' : 'must-add';
+      const target = targetRoute(route.method, route.path, routeClass);
+      const status = routeClass === 'dev-seat'
+        ? 'not-applicable'
+        : existingV1.has(`${route.method} ${routeShape(target)}`) ? 'exists' : 'must-add';
       const move = estimate(route.method, route.path, routeClass, status);
       const optional = [...route.optional].sort();
       const queryVariants = [{ kind: 'none', query: '' }];
@@ -319,7 +337,7 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
         owningComponent: routeClass === 'dev-seat' ? 'Windows connector dev-seat module' : 'Remote Task Server',
         frontendOwner: frontendOwner(route.evidence),
         v1Status: status,
-        targetRoute: targetRoute(route.method, route.path, routeClass),
+        targetRoute: target,
         frontendEvidence: route.evidence.sort(),
         decisionEvidence: routeClass === 'dev-seat'
           ? ['docs/operations/remote-task-server-local-studio.md:99-106', 'docs/concepts/distributed-agent-studio-target-architecture.md:110-115']
@@ -387,14 +405,16 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
 
   return {
     schemaVersion: 1,
-    id: 'studio-route-ownership-2026-09-15',
+    id: 'studio-route-ownership-2026-10-13',
     title: 'Studio route ownership inventory',
-    updatedAt: '2026-09-28',
+    updatedAt: '2026-10-13',
     sourceTaskKeys: ['AGT-2731', 'AGT-2754', 'AGT-2756', 'AGT-2757', 'AGT-2758', 'AGT-2835', 'AGT-2983'],
     countingUnit: 'A route is one distinct frontend method plus normalized path template. Query combinations are variants on that route, not additional routes. WS and SSE transports are counted once each.',
     scope: {
       frontend: 'frontend/src/app/**/*.ts excluding *.spec.ts; HttpClient, Fetch upload, EventSource, URL-producing media helpers, and SignalR.',
       backendGroups: 'Every app.MapGroup("/api/...") call under backend/, representing OrchestratorApi endpoint groups.',
+      taskServerV1: 'Every Map{Get,Post,Put,Delete,Patch}(...) call under task-server/, resolved through its MapGroup(...) prefix chain, plus /hubs/v1/studio.',
+      publicDemo: 'The backend public-demo execution inventory and read allowlist remain independent denial boundaries; route ownership does not treat demo-visible legacy reads as Task Server implementations.',
       exclusions: ['Comments and models without a runtime call site', 'The cross-origin UpdateService /update surface on port 5039', 'Runner-only and management-only individual routes not called by Angular'],
     },
     counts: {
@@ -403,7 +423,7 @@ export function buildInventory(candidatePayload, { backendRoot = path.join(root,
       frontendHubOperations: frontendRoutes.filter((route) => route.path.startsWith('/hubs')).length,
       byClassification: countsByClass,
       orchestratorApiMapGroups: orchestratorApiGroups.length,
-      frontendV1Operations: frontendRoutes.filter((route) => isExistingV1(route.path)).length,
+      frontendV1Operations: frontendRoutes.filter((route) => isVersionedFrontendRoute(route.path)).length,
       frontendV1OperationsExistingInStandaloneTaskServer: frontendRoutes.filter((route) => route.v1Status === 'exists').length,
       d4bRoutesToAdd: moveRoutes.length,
     },
@@ -429,7 +449,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     [path.join(dossier, 'extract-routes.mjs')],
     { cwd: root, encoding: 'utf8' },
   ));
-  const output = `${JSON.stringify(buildInventory(candidatePayload), null, 2)}\n`;
+  const taskServerPayload = JSON.parse(execFileSync(
+    process.execPath,
+    [path.join(dossier, 'extract-taskserver-routes.mjs')],
+    { cwd: root, encoding: 'utf8' },
+  ));
+  const output = `${JSON.stringify(buildInventory(candidatePayload, { taskServerPayload }), null, 2)}\n`;
   if (process.argv.includes('--write')) fs.writeFileSync(path.join(dossier, 'routes.json'), output);
   else process.stdout.write(output);
 }

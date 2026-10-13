@@ -596,6 +596,34 @@ public sealed class RunnerServiceUnitTests
         Assert.Contains("no completion was attempted within 600s", output);
         Assert.DoesNotContain("accepted-output: agent-runner-deploy: rollback", output);
 
+        // AGT-3095: an accepted completion whose uploads were refused with 409 fails;
+        // heartbeat "lease lost" lines, ArtifactTooLarge partials and another task's
+        // refusals do not.
+        foreach (var passed in new[]
+                 {
+                     "artifacts-complete", "heartbeat-lease-lost", "artifacts-too-large", "other-task-rejected",
+                 })
+        {
+            Assert.Contains($"{passed}-status=0", output);
+            Assert.Contains($"{passed}-polls=1", output);
+            Assert.Contains($"{passed}-output: logger: action=verify-completions release=rel-new result=accepted", output);
+            Assert.DoesNotContain($"{passed}-output: agent-runner-deploy: {rollback}", output);
+        }
+        Assert.Contains("artifacts-rejected-status=2", output);
+        Assert.Contains("artifacts-rejected-polls=1", output);
+        Assert.Contains(
+            "artifacts-rejected-output: logger: action=verify-completions release=rel-new previous=rel-previous " +
+            "result=failed reason=artifacts-rejected",
+            output);
+        Assert.Contains(
+            "artifacts-rejected-output: agent-runner-deploy: release rel-new is active and a completion was accepted, " +
+            "but 4 artifact upload(s) of that task were rejected with 409: ",
+            output);
+        Assert.Contains("artifacts-rejected-output: agent-runner-deploy: previous release: rel-previous", output);
+        Assert.Contains($"artifacts-rejected-output: agent-runner-deploy: {rollback}", output);
+        Assert.DoesNotContain("artifacts-rejected-output: agent-runner-deploy: completion accepted", output);
+        Assert.Contains("accepted-output: logger: action=verify-completions release=rel-new result=accepted", output);
+
         var helper = File.ReadAllText(
             Path.Combine(RepoRoot(), "deploy", "agent-host", "agent-runner-deploy"));
         Assert.Contains("readonly completion_watch_seconds=600", helper, StringComparison.Ordinal);
