@@ -76,9 +76,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
 
         Assert.Equal(1, report.Integrated);
         Assert.Equal(0, report.Failed);
-        Assert.Equal(
-            0,
-            Git(_repo, ["merge-base", "--is-ancestor", card.DeliverySha, "develop"], allowFailure: true));
+        Assert.True(IsOnIntegrationLane(card.DeliverySha), "the delivery did not reach the integration lane");
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, moved.State);
 
@@ -1201,9 +1199,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             StringComparison.Ordinal);
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, moved.State);
-        Assert.Equal(
-            0,
-            Git(_repo, ["merge-base", "--is-ancestor", card.DeliverySha, "develop"], allowFailure: true));
+        Assert.True(IsOnIntegrationLane(card.DeliverySha), "the delivery did not reach the integration lane");
     }
 
     /// <summary>
@@ -1220,8 +1216,11 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var card = SeedPassedDelivery(seeded, "operator-move");
         RemoteDeliverySettlementStore.Write(card.FolderPath, Settlement(card, shouldIntegrate: true));
 
-        // origin/develop and local develop diverge: the first integration
-        // cannot synchronize its branch.
+        // origin/develop and the integration lane diverge: the first
+        // integration cannot synchronize its branch. Since AGT-2996 the lane,
+        // not the checkout's develop, is what follows origin; a local-only
+        // develop commit no longer blocks anything, an unpublished lane merge
+        // that origin moved past does.
         var other = Path.Combine(_root, "other");
         Git(_root, "clone", "-q", "-b", "develop", _origin, other);
         Git(other, "config", "user.email", "other@example.com");
@@ -1230,9 +1229,12 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Git(other, "add", "-A");
         Git(other, "commit", "-q", "-m", "chore: remote-only develop work");
         Git(other, "push", "-q", "origin", "develop");
+        Git(_repo, "checkout", "-q", "-b", "unpublished-lane", "develop");
         File.WriteAllText(Path.Combine(_repo, "local.txt"), "local\n");
         Git(_repo, "add", "-A");
-        Git(_repo, "commit", "-q", "-m", "chore: local-only develop work");
+        Git(_repo, "commit", "-q", "-m", "chore: unpublished lane work");
+        Git(_repo, "update-ref", IntegrationLane, Git(_repo, "rev-parse", "HEAD"));
+        Git(_repo, "checkout", "-q", "develop");
 
         var first = await seeded.Resume.RunOnceAsync("delivery");
         Assert.Equal(1, first.Integrated);
@@ -1245,7 +1247,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
 
         // The operator repairs the branch and moves the card out of the park.
         Git(_repo, "fetch", "-q", "origin");
-        Git(_repo, "reset", "-q", "--hard", "origin/develop");
+        Git(_repo, "update-ref", IntegrationLane, "refs/remotes/origin/develop");
         var moved = await seeded.Transitions.MoveAsync(
             card.Id, TaskStates.AutoReview, _watchPath, cause: "operator");
         Assert.Equal(MoveJobStatus.Success, moved.Status);
@@ -1266,9 +1268,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.EndsWith(AutoReviewResumePolicy.Reasons.OperatorReentry, settledOutcome.Reason, StringComparison.Ordinal);
         var settled = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.HumanReview, settled.State);
-        Assert.Equal(
-            0,
-            Git(_repo, ["merge-base", "--is-ancestor", card.DeliverySha, "develop"], allowFailure: true));
+        Assert.True(IsOnIntegrationLane(card.DeliverySha), "the delivery did not reach the integration lane");
         Assert.False(
             settled.ParkedBlocker?.Reason?.StartsWith(RemoteDeliveryParkReason.Prefix, StringComparison.Ordinal) ?? false,
             $"stale park reason re-applied: {settled.ParkedBlocker?.Reason}");
@@ -1332,6 +1332,16 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Stage = RemoteDeliverySettlementStage.IntegrationPending,
         RecordedAtUtc = DateTimeOffset.UtcNow,
     };
+
+    /// <summary>
+    /// AGT-2996: an integration merges onto the Studio-owned lane; the
+    /// checkout's <c>develop</c> follows only once the push worker published
+    /// it, and this drill never pushes (<see cref="AutoPushStrategies.Never"/>).
+    /// </summary>
+    private static readonly string IntegrationLane = GitService.IntegrationLaneRef("develop");
+
+    private bool IsOnIntegrationLane(string sha)
+        => Git(_repo, ["merge-base", "--is-ancestor", sha, IntegrationLane], allowFailure: true) == 0;
 
     private TaskIntegrationStatus Status(Stack stack, string id)
         => stack.Integration
@@ -1618,6 +1628,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                CreateNoWindow = true,
             },
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
