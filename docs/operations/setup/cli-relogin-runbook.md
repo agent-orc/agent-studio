@@ -204,3 +204,45 @@ sudo journalctl -u agent-host.service -u agent-runner-review.service -n 100 --no
 - Do not edit the Studio database or repository to distribute a credential.
 - Do not treat a systemd restart alone as renewal. Recovery requires a fresh
   provider-auth probe.
+
+## 6. Typed runbook operations
+
+Task Server executes the three incident runbooks in
+[`docs/credentials-and-logins/runbooks.json`](../../credentials-and-logins/runbooks.json)
+as versioned data (AGT-2979). Each step is an allowlisted adapter opcode; the
+catalogue cannot carry a command to run. The routes need the existing
+`management` scope and are listed in the
+[Task Server bus contract](../../task-server-bus/index.html#credential-runbook-contract).
+
+| Observed facts | Runbook | Recovery policy |
+|---|---|---|
+| Claude credential confirmed `credential_invalid` and a refresh session shared across hosts | `RB-CLAUDE-ROTATION` | One renewal item; pause for browser consent; retire only after both units prove the new generation |
+| Codex `unauthorized` with an official applicable incident or an independent known-good match | `RB-CODEX-INCIDENT` | Service-cohort hold, 60/120/300-second retries, recovery canary; no operator item and no rotation |
+| Codex `unauthorized` without corroboration | none | Stays indeterminate; diagnosis item only after 15 minutes; no sign-in advice |
+| Workspace repository credential whose required access is unverified | `RB-GITHUB-WORKSPACE` | Repository-scoped repair; administrator registers the public key explicitly |
+
+Start with `intent: "diagnose"`. A null fact gives `diagnosis-only` and no
+repair step runs. Repair needs a separate `repair` intent and the current
+registry generation. For Claude, the operation reserves the existing sign-in
+renewal under `{operationId}.login`; open the Claude sign-in with that key as
+its idempotency key so browser consent attaches to the same receipt. The
+sign-in must reach Task Server as the same actor that started the operation;
+a different actor gets `renewal-idempotency-conflict` and no second login is issued. Deploy-key
+steps are recorded by the host operator or the repository administrator
+through the steps route; Task Server never contacts GitHub or the host.
+
+A retry of the original diagnosis request keeps its operation after repair is
+explicitly authorized through `/run`. The operation retains `initialIntent`
+separately from its current `intent`. Receipt order follows that operation's
+runbook and version. Journal updates compare a durable revision, so a stale
+request receives `runbook-operation-conflict`; reload the operation before
+retrying. Matching final step receipts remain idempotent.
+
+`POST /api/v1/management/credential-runbook-operations/{operationId}/cancel`
+cancels an operation before credential custody changes are dispatched. It is
+idempotent and requires the same management scope. Once a host or provider
+renewal has been authorized to issue, stage, install or retire credentials,
+the route returns `runbook-recovery-required`. Finish or roll back through
+the existing host/provider renewal flow and submit its proof before settling
+the runbook. Cancellation never revokes credentials or clears a provider
+incident hold. Completed operations retain their terminal outcome.

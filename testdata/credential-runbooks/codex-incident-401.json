@@ -1,0 +1,43 @@
+{
+  "fixtureVersion": 1,
+  "runbookId": "RB-CODEX-INCIDENT",
+  "provenance": {
+    "type": "operator-report",
+    "sourceTaskKey": "AGT-2968",
+    "reportedAt": "2026-09-26",
+    "measured": false,
+    "note": "Codex runs returned 401 naming a service-account-shaped key; the operator found a status-page incident after about forty minutes. Incident ID, archived status response and recovery transcript were not supplied. Only the normalized signature is kept."
+  },
+  "registry": { "kind": "codex_chatgpt_login", "provider": "codex", "renewalMethod": "R3",
+    "normalizedSignature": "unauthorized:service-account-shaped" },
+  "cases": [
+    {
+      "name": "official-applicable-incident",
+      "facts": { "requestNormalizedCode": "unauthorized", "incidentCorroboration": "official-applicable" },
+      "expected": { "mode": "repair", "runbookId": "RB-CODEX-INCIDENT", "operatorItem": "none",
+        "holdScope": "service-cohort", "humanBoundaries": [], "signInAdvice": false, "rotation": false,
+        "retrySeconds": [60, 120, 300] }
+    },
+    {
+      "name": "independent-known-good-match",
+      "facts": { "requestNormalizedCode": "unauthorized", "incidentCorroboration": "independent-known-good-match" },
+      "expected": { "mode": "repair", "runbookId": "RB-CODEX-INCIDENT", "operatorItem": "none",
+        "holdScope": "service-cohort", "humanBoundaries": [], "signInAdvice": false, "rotation": false,
+        "retrySeconds": [60, 120, 300] }
+    },
+    {
+      "name": "uncorroborated-401",
+      "facts": { "requestNormalizedCode": "unauthorized", "incidentCorroboration": "none" },
+      "expected": { "mode": "none", "runbookId": null, "operatorItem": "diagnosis-after-15-minutes",
+        "holdScope": "binding", "humanBoundaries": [], "signInAdvice": false, "rotation": false,
+        "retrySeconds": [60, 120, 300] }
+    },
+    {
+      "name": "corroboration-not-checked",
+      "facts": { "requestNormalizedCode": "unauthorized" },
+      "expected": { "mode": "diagnosis-only", "runbookId": "RB-CODEX-INCIDENT",
+        "operatorItem": "diagnosis-after-15-minutes", "holdScope": "binding", "humanBoundaries": [],
+        "signInAdvice": false, "rotation": false }
+    }
+  ]
+}

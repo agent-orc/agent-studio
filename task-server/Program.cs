@@ -244,6 +244,7 @@ app.UseMiddleware<TaskServerProtocolMiddleware>();
 app.UseMiddleware<ArtifactRequestLimitMiddleware>();
 app.MapTaskServerEndpoints();
 app.MapOperationPermitEndpoints();
+app.MapCredentialRunbookEndpoints();
 app.MapStudioEndpoints();
 // Studio route-ownership P1 "task detail and hosts" bundle
 // (docs/studio-route-ownership/index.html).

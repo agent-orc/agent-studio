@@ -1,0 +1,36 @@
+{
+  "fixtureVersion": 1,
+  "runbookId": "RB-GITHUB-WORKSPACE",
+  "provenance": {
+    "type": "operator-report",
+    "sourceTaskKey": "AGT-2968",
+    "reportedAt": "2026-09-26",
+    "measured": false,
+    "note": "The runner pushed product repositories but could not reach the private workspace repository. Deploy-key ID, key path, write evidence and issuer receipt were not supplied."
+  },
+  "registry": { "kind": "github_deploy_key", "provider": "github", "renewalMethod": "R5",
+    "repositoryPurpose": "workspace" },
+  "cases": [
+    {
+      "name": "private-workspace-access-unverified",
+      "facts": { "repositoryRequiredAccessVerified": false },
+      "expected": { "mode": "repair", "runbookId": "RB-GITHUB-WORKSPACE", "operatorItem": "repository-repair",
+        "holdScope": "repository", "humanBoundaries": ["repository-administration"], "signInAdvice": false,
+        "rotation": true }
+    },
+    {
+      "name": "workspace-access-not-probed",
+      "facts": {},
+      "expected": { "mode": "diagnosis-only", "runbookId": "RB-GITHUB-WORKSPACE",
+        "operatorItem": "diagnosis-after-15-minutes", "holdScope": "binding", "humanBoundaries": [],
+        "signInAdvice": false, "rotation": false }
+    },
+    {
+      "name": "product-push-success-is-not-workspace-proof",
+      "facts": { "repositoryPurpose": "product", "repositoryRequiredAccessVerified": false },
+      "registryOverride": { "repositoryPurpose": "product" },
+      "expected": { "mode": "none", "runbookId": null, "operatorItem": "existing-owner", "holdScope": "none",
+        "humanBoundaries": [], "signInAdvice": false, "rotation": false }
+    }
+  ]
+}

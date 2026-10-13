@@ -28,5 +28,8 @@ docs/**
 # OrchestratorApi embeds the reviewed route inventory as a compiled resource.
 !docs/studio-route-ownership/
 !docs/studio-route-ownership/routes.json
+# Task Server embeds the versioned credential runbook catalogue.
+!docs/credentials-and-logins/
+!docs/credentials-and-logins/runbooks.json
 **/*.log
 **/cli-output.log
