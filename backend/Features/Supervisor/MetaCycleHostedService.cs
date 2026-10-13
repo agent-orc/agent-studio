@@ -278,8 +278,7 @@ public sealed class MetaCycleHostedService : BackgroundService
     {
         try
         {
-            var resultsDir = Path.Combine(job.FolderPath, "results");
-            if (Directory.Exists(resultsDir) && Directory.EnumerateFileSystemEntries(resultsDir).Any()) return true;
+            if (TaskPaths.ResultArtifacts(job.FolderPath).Any()) return true;
             var logPath = Path.Combine(job.FolderPath, "logs", "cli-output.log");
             if (File.Exists(logPath) && new FileInfo(logPath).Length > 0) return true;
         }

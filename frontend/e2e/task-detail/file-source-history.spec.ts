@@ -95,6 +95,8 @@ async function installRoutes(page: Page): Promise<void> {
   await page.route('**/api/agent-rules**', (route) => json(route, []));
   await page.route('**/api/projects/*/workbenches**', (route) => json(route, { items: [] }));
   await page.route('**/api/cli/usage**', (route) => json(route, { items: [] }));
+  // The usage header expects an object; the catch-all's [] crashes it.
+  await page.route('**/api/usage/cockpit**', (route) => route.fulfill({ status: 503 }));
   await page.route('**/api/cli/quota**', (route) => json(route, { at: '2026-06-09T00:00:00Z', snapshots: [] }));
   await page.route(/\/api\/v1\/studio\/runner\/status(\?|$)/, (route) => json(route, {
     projects: {
@@ -346,5 +348,54 @@ test.describe('File source history viewer', () => {
     await page.getByTestId('previous-results-current').click();
     await expect(page.getByTestId('previous-result-banner')).toHaveCount(0);
     await expect(result).toContainText('The current protocol summary.');
+  });
+
+  test('Result tab says older results are loading or failed instead of claiming there are none', async ({ page }) => {
+    await installRoutes(page);
+    await installStatusRoutes(page);
+    const idEsc = JOB_ID.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // AGT-3086: the legacy git backfill runs in the background. The first
+    // answer is pending, and the open menu looks once more.
+    let menuOpened = false;
+    let release!: () => void;
+    const refetchHeld = new Promise<void>(resolve => { release = resolve; });
+    await page.route(new RegExp(`/api/tasks/${idEsc}/result-history(\\?|$)`), async route => {
+      const legacy = menuOpened ? 'failed' : 'pending';
+      if (legacy === 'failed') await refetchHeld;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'X-Result-History-Legacy': legacy },
+        body: '[]',
+      });
+    });
+
+    await page.goto(`/?job=${encodeURIComponent(JOB_ID)}&watchPath=${encodeURIComponent(WATCH_PATH)}`);
+    await expect(page.getByTestId('protocol-beautiful-results')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('previous-results-toggle')).toBeEnabled();
+
+    mkdirSync(EVIDENCE_DIR, { recursive: true });
+    menuOpened = true;
+    await page.getByTestId('previous-results-toggle').click();
+    const list = page.getByTestId('previous-results-list');
+    await expect(list.getByTestId('previous-results-legacy-hint')).toHaveText('Older results are still loading.');
+    await expect(list).not.toContainText('No previous results found.');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('pane-protocol').screenshot({
+        path: join(EVIDENCE_DIR, `previous-results-legacy-pending-${theme}--mocked.png`),
+      });
+    }
+
+    release();
+    await expect(list.getByTestId('previous-results-legacy-hint'))
+      .toHaveText('Older results could not be loaded. Studio retries later.');
+    await expect(list).not.toContainText('No previous results found.');
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(page, theme);
+      await page.getByTestId('pane-protocol').screenshot({
+        path: join(EVIDENCE_DIR, `previous-results-legacy-failed-${theme}--mocked.png`),
+      });
+    }
   });
 });

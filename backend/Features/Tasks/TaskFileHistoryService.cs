@@ -19,6 +19,7 @@ public sealed class TaskFileHistoryService
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
     private readonly ILogger<TaskFileHistoryService> _logger;
+    private readonly ITaskHistoryGitRunner _runner;
 
     /// <summary>
     /// Budget every lookup of this service starts with. Overridable so tests can
@@ -31,12 +32,14 @@ public sealed class TaskFileHistoryService
         TaskScannerService scanner,
         GitService git,
         ILogger<TaskFileHistoryService> logger,
-        TimeSpan? gitCallBudget = null)
+        TimeSpan? gitCallBudget = null,
+        ITaskHistoryGitRunner? runner = null)
     {
         _scanner = scanner;
         _git = git;
         _logger = logger;
         _gitCallBudget = gitCallBudget ?? GitCallBudgetPolicy.DefaultTotalBudget;
+        _runner = runner ?? new ProcessTaskHistoryGitRunner();
     }
 
     public TaskFileLookupResult<IReadOnlyList<TaskFileHistoryEntry>> GetHistory(
@@ -137,85 +140,108 @@ public sealed class TaskFileHistoryService
     /// Generic file history follows one path; task Results must also search the
     /// same task folder under every lane because moving a card renames that
     /// portion of its workspace-repository path.
+    ///
+    /// <para>This walks the whole workspace repository, which takes seconds to
+    /// tens of seconds on a large one, so it never runs on a request path: only
+    /// <see cref="LegacyResultHistoryBackfill"/> calls it, with its own budget
+    /// (AGT-3086). The answer is all or nothing. A missing repository, a spent
+    /// budget, a timeout or a failed read fails the walk with a reason instead
+    /// of returning a shorter list that looks complete. A git exit that only
+    /// says "this path is not in that commit" is an answer, not a failure.</para>
     /// </summary>
-    public TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>> GetWorkspaceResultHistory(
-        string jobId,
-        string? watchPath)
+    internal TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>> WalkLegacyResultHistory(
+        TaskInfo info,
+        GitCallBudget budget)
     {
-        var info = _scanner.FindJob(jobId, watchPath);
-        if (info is null)
-            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(404, "Job not found.");
-        var budget = new GitCallBudget(_gitCallBudget);
-        var candidate = BuildWorkspaceCandidate(budget, info, "status.md");
-        if (candidate?.GitRoot is null)
-            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok([], TaskFileSources.Workspace);
+        var jobRoot = Path.GetFullPath(info.FolderPath);
+        var revParse = RunGit(budget, jobRoot, "rev-parse", "--show-toplevel");
+        if (revParse.Code != 0 || string.IsNullOrWhiteSpace(revParse.Out))
+            return LegacyWalkFailed(revParse.RunnerFailed
+                ? revParse.Err
+                : "The workspace task folder is not in a git repository. " + revParse.Err.Trim());
+        var gitRoot = Path.GetFullPath(revParse.Out.Trim());
+        var gitPath = Path.GetRelativePath(gitRoot, Path.Combine(jobRoot, "status.md")).Replace('\\', '/');
+        if (Path.IsPathRooted(gitPath) || gitPath.StartsWith("..", StringComparison.Ordinal))
+            return LegacyWalkFailed("The task folder is outside the workspace repository.");
 
-        var possiblePaths = LanePaths(candidate.GitPath, info.State).Distinct(StringComparer.Ordinal).ToList();
-        var args = new List<string> { "log", "--all", "--format=%H", "--" };
+        var possiblePaths = LanePaths(gitPath, info.State).Distinct(StringComparer.Ordinal).ToList();
+        // The commit metadata rides along with the walk, so no commit needs a
+        // separate `show -s` call.
+        var args = new List<string> { "log", "--all", "--format=%H%x1f%aI%x1f%an <%ae>%x1f%s%x1f%B%x1e", "--" };
         args.AddRange(possiblePaths);
-        var log = RunGit(budget, candidate.GitRoot, args.ToArray());
+        var log = RunGit(budget, gitRoot, args.ToArray());
         if (log.Code != 0)
-            return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(400, log.Err);
+            return LegacyWalkFailed(log.RunnerFailed ? log.Err : "git log failed. " + log.Err.Trim());
 
         var versions = new List<WorkspaceResultFileVersion>();
-        foreach (var sha in log.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in log.Out.Split(RecordSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            var historicalPath = possiblePaths.FirstOrDefault(path =>
-                RunGit(budget, candidate.GitRoot, "cat-file", "-e", $"{sha}:{path}").Code == 0);
-            if (historicalPath is null) continue;
-            var content = RunGit(budget, candidate.GitRoot, "show", $"{sha}:{historicalPath}");
-            if (content.Code != 0) continue;
-            var commit = RunGit(
-                budget,
-                candidate.GitRoot,
-                "show",
-                "-s",
-                "--format=%aI%x1f%an <%ae>%x1f%s%x1f%B",
-                sha);
-            if (commit.Code != 0) continue;
-            var parts = commit.Out.Split(UnitSeparator, 4);
-            DateTime? at = DateTimeOffset.TryParse(
-                parts.ElementAtOrDefault(0)?.Trim(), CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dto)
-                ? dto.UtcDateTime
-                : null;
-            var body = parts.ElementAtOrDefault(3) ?? string.Empty;
-            var runRaw = ReadTrailer(body, "Run-Index");
-            int? runIndex = int.TryParse(runRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var run)
-                ? run
-                : null;
-            var historicalFolder = Path.GetDirectoryName(historicalPath)!.Replace('\\', '/');
-            var historicalCandidate = candidate with
+            var parts = raw.Split(UnitSeparator, 5);
+            var sha = parts[0].Trim();
+            if (parts.Length < 5 || sha.Length == 0 || !seen.Add(sha)) continue;
+
+            string? historicalPath = null;
+            foreach (var path in possiblePaths)
             {
-                GitPath = historicalPath,
-                JobFolderPath = Path.Combine(candidate.GitRoot, historicalFolder.Replace('/', Path.DirectorySeparatorChar)),
-            };
+                var exists = RunGit(budget, gitRoot, "cat-file", "-e", $"{sha}:{path}");
+                if (exists.RunnerFailed) return LegacyWalkFailed(exists.Err);
+                if (exists.Code != 0) continue;
+                historicalPath = path;
+                break;
+            }
+            // The commit touched a lane path without leaving status.md there,
+            // for example the delete half of a lane move.
+            if (historicalPath is null) continue;
+
+            var content = RunGit(budget, gitRoot, "show", $"{sha}:{historicalPath}");
+            if (content.Code != 0)
+                return LegacyWalkFailed(content.RunnerFailed
+                    ? content.Err
+                    : $"git show {sha}:{historicalPath} failed. {content.Err.Trim()}");
+
+            var historicalFolder = Path.GetDirectoryName(historicalPath)!.Replace('\\', '/');
             var taskJson = ReadFirstAt(
                 budget,
-                candidate.GitRoot,
+                gitRoot,
                 sha,
                 $"{historicalFolder}/task.json",
                 $"{historicalFolder}/job.json");
+            if (!taskJson.Success) return LegacyWalkFailed(taskJson.Error);
+
+            DateTime? at = DateTimeOffset.TryParse(
+                parts[1].Trim(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dto)
+                ? dto.UtcDateTime
+                : null;
+            var body = parts[4];
+            int? runIndex = int.TryParse(ReadTrailer(body, "Run-Index"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var run)
+                ? run
+                : null;
             versions.Add(new WorkspaceResultFileVersion(
                 new TaskFileHistoryEntry(
                     sha,
                     at,
                     runIndex,
                     NullIfEmpty(ReadTrailer(body, "Verdict")),
-                    NullIfEmpty(parts.ElementAtOrDefault(2)?.Trim()) ?? FirstLine(body),
-                    parts.ElementAtOrDefault(1)?.Trim() ?? string.Empty,
+                    NullIfEmpty(parts[3]) ?? FirstLine(body),
+                    parts[2].Trim(),
                     new TaskFileVersionProvenance(
                         TaskFileSources.Workspace,
                         historicalPath,
                         NullIfEmpty(ReadTrailer(body, "Steps")),
-                        ReadGenerationAt(budget, historicalCandidate, sha))),
+                        Generation: null)),
                 content.Out,
-                taskJson));
+                taskJson.Value));
         }
 
         return TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Ok(versions, TaskFileSources.Workspace);
     }
+
+    private static TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>> LegacyWalkFailed(string? reason)
+        => TaskFileLookupResult<IReadOnlyList<WorkspaceResultFileVersion>>.Fail(
+            StatusCodes.Status503ServiceUnavailable,
+            string.IsNullOrWhiteSpace(reason) ? "git failed without a message." : reason.Trim());
 
     private static IEnumerable<string> LanePaths(string currentGitPath, string currentState)
     {
@@ -231,14 +257,19 @@ public sealed class TaskFileHistoryService
         }
     }
 
-    private static string? ReadFirstAt(GitCallBudget budget, string gitRoot, string sha, params string[] paths)
+    /// <summary>
+    /// First of <paramref name="paths"/> present at <paramref name="sha"/>, or
+    /// null when none is. Fails only when git itself gave no answer.
+    /// </summary>
+    private GitValue<string?> ReadFirstAt(GitCallBudget budget, string gitRoot, string sha, params string[] paths)
     {
         foreach (var path in paths)
         {
             var value = RunGit(budget, gitRoot, "show", $"{sha}:{path}");
-            if (value.Code == 0) return value.Out;
+            if (value.RunnerFailed) return GitValue<string?>.Fail(value.Err);
+            if (value.Code == 0) return GitValue<string?>.Ok(value.Out);
         }
-        return null;
+        return GitValue<string?>.Ok(null);
     }
 
     private static string? NullIfEmpty(string? value)
@@ -509,7 +540,7 @@ public sealed class TaskFileHistoryService
         return true;
     }
 
-    private static string? ResolveGitRoot(GitCallBudget budget, string path)
+    private string? ResolveGitRoot(GitCallBudget budget, string path)
     {
         var result = RunGit(budget, path, "rev-parse", "--show-toplevel");
         if (result.Code != 0 || string.IsNullOrWhiteSpace(result.Out)) return null;
@@ -582,40 +613,12 @@ public sealed class TaskFileHistoryService
     /// supplies the timeout, so a lookup that walks many commits stays bounded as
     /// a whole (AGT-2867).
     /// </summary>
-    private static GitProcessResult RunGit(GitCallBudget budget, string cwd, params string[] args)
+    private TaskHistoryGitResult RunGit(GitCallBudget budget, string cwd, params string[] args)
     {
         var timeout = budget.NextCallTimeout();
         if (timeout <= TimeSpan.Zero)
-            return new GitProcessResult("", GitBudgetExhausted, -1);
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "git",
-            WorkingDirectory = cwd,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-
-        using var p = Process.Start(psi);
-        if (p == null) return new GitProcessResult("", "Failed to start git.", -1);
-
-        var stdout = p.StandardOutput.ReadToEndAsync();
-        var stderr = p.StandardError.ReadToEndAsync();
-        if (!p.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            try { p.Kill(entireProcessTree: true); } catch (Exception __ex) { SilentCatch.Note(__ex, "TaskFileHistoryService:523"); }
-            return new GitProcessResult("", "git timed out.", -1);
-        }
-
-        return new GitProcessResult(
-            stdout.GetAwaiter().GetResult(),
-            stderr.GetAwaiter().GetResult(),
-            p.ExitCode);
+            return TaskHistoryGitResult.Failed(GitBudgetExhausted);
+        return _runner.Run(cwd, args, timeout);
     }
 
     private sealed record TaskFileCandidate(
@@ -625,8 +628,6 @@ public sealed class TaskFileHistoryService
         string? GitRoot,
         string GitPath,
         string JobFolderPath);
-
-    private sealed record GitProcessResult(string Out, string Err, int Code);
 
     private sealed record GitValue<T>(bool Success, T Value, string? Error)
     {

@@ -59,8 +59,8 @@ public static class NamedDeliverableReader
                     return $"results/{preferred}";
             }
 
-            var any = Directory
-                .EnumerateFiles(results, "*", SearchOption.AllDirectories)
+            // results/history/ is Studio's own record, not something the card produced.
+            var any = TaskPaths.ResultArtifacts(folderPath)
                 .FirstOrDefault(file => new FileInfo(file).Length > 0);
             return any is null
                 ? null

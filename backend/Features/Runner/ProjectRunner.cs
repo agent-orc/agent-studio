@@ -7656,16 +7656,15 @@ public class ProjectRunner
         return ToEscalationCategory(issueKind);
     }
 
-    /// <summary>True when the task's <c>results/</c> dir holds at least one file.
+    /// <summary>True when the task's <c>results/</c> dir holds at least one file
+    /// outside <c>results/history/</c>.
     /// Best-effort and fails closed (no results claim on an unreadable dir).</summary>
     private static bool HasNonEmptyResults(string? jobFolderPath)
     {
         if (string.IsNullOrWhiteSpace(jobFolderPath)) return false;
         try
         {
-            var resultsDir = TaskPaths.ResultsDir(jobFolderPath);
-            return Directory.Exists(resultsDir)
-                && Directory.EnumerateFiles(resultsDir, "*", SearchOption.AllDirectories).Any();
+            return TaskPaths.ResultArtifacts(jobFolderPath).Any();
         }
         catch (Exception __ex)
         {

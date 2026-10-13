@@ -60,6 +60,20 @@ public class GitCallBudgetPolicyTests
     }
 
     [Fact]
+    public void BackfillBudget_OutlastsTheColdWorkspaceWalk()
+    {
+        // The legacy Result walk took 21 s cold on the measured workspace
+        // repository; the request-path cap of 10 s killed it every time
+        // (AGT-3086). The background backfill has no client deadline to beat.
+        var coldWalk = TimeSpan.FromSeconds(21);
+        Assert.True(GitCallBudgetPolicy.BackfillPerCallCap > coldWalk);
+        Assert.True(GitCallBudgetPolicy.BackfillTotalBudget > coldWalk);
+        Assert.True(GitCallBudgetPolicy.BackfillPerCallCap <= GitCallBudgetPolicy.BackfillTotalBudget);
+        Assert.Equal(TimeSpan.FromSeconds(30), GitCallBudgetPolicy.DefaultTotalBudget);
+        Assert.Equal(TimeSpan.FromSeconds(10), GitCallBudgetPolicy.DefaultPerCallCap);
+    }
+
+    [Fact]
     public void ABudgetInstance_StartsWithAFullPerCallAllowance()
     {
         var budget = new GitCallBudget(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));

@@ -21,9 +21,9 @@
 
   @if (open()) {
     <div class="previous-results__menu" id="previous-results-list" data-testid="previous-results-list">
-      @if (entries().length === 0) {
+      @if (entries().length === 0 && legacy() === 'complete') {
         <p class="previous-results__empty">No previous results found.</p>
-      } @else {
+      } @else if (entries().length > 0) {
         <ol>
           @for (entry of entries(); track entry.id) {
             <li>
@@ -39,6 +39,11 @@
             </li>
           }
         </ol>
+      }
+      @if (legacy() === 'pending') {
+        <p class="previous-results__hint" data-testid="previous-results-legacy-hint">Older results are still loading.</p>
+      } @else if (legacy() === 'failed') {
+        <p class="previous-results__hint" data-testid="previous-results-legacy-hint">Older results could not be loaded. Studio retries later.</p>
       }
     </div>
   }

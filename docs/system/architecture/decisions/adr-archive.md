@@ -1642,6 +1642,20 @@ then derives timestamp and producer from commit and generation metadata and
 the lane from `task.json` at that commit. This is read-time backfill only. No
 task folders are migrated and no Git history is rewritten.
 
+**Amendment (2026-10-12, AGT-3086).** The Git backfill no longer runs at read
+time. On the 16,895-commit workspace repository the path-limited
+`git log --all` walk took 7-21 s, so every card open hit the 10 s per-call cap
+and the timeout was answered as an empty history. Result-history requests now
+start no Git process. The first list request for a card schedules one
+background backfill (single-flight per card, one walk per repository at a time,
+its own 120 s per-call and 300 s total budget). Its outcome is persisted per
+card in `results/history/legacy-git.json`, which the workspace repository
+ignores: `complete` with the versions, or `failed` with a reason, retried at
+most every 6 hours. The list response keeps its array body and adds
+`X-Result-History-Legacy: pending|complete|failed`, so a failure is never shown
+as "no previous results". Task folders are still not migrated, and Git history
+is still not rewritten.
+
 **Context.** AGT-2707 had a generated successful Result from 2026-09-07. An
 operator moved it from Escalated to Auto Review on 2026-09-11. The requeue
 rotator treated the source lane as proof that every `status.md` there was an

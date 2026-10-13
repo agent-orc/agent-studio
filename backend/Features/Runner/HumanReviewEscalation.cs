@@ -566,8 +566,9 @@ public sealed class HumanReviewEscalation
     }
 
     /// <summary>
-    /// True when the task's <c>results/</c> directory holds at least one file -
-    /// i.e. a dying run left partial deliverables the reviewer should see.
+    /// True when the task's <c>results/</c> directory holds at least one file
+    /// outside <c>results/history/</c> - i.e. a dying run left partial
+    /// deliverables the reviewer should see.
     /// Best-effort and fails closed (no results claim on an unreadable dir):
     /// a wrong "partial results present" line is worse than a missing one.
     /// </summary>
@@ -575,9 +576,7 @@ public sealed class HumanReviewEscalation
     {
         try
         {
-            var resultsDir = AgentStudio.Tasks.TaskPaths.ResultsDir(folderPath);
-            return Directory.Exists(resultsDir)
-                && Directory.EnumerateFiles(resultsDir, "*", SearchOption.AllDirectories).Any();
+            return AgentStudio.Tasks.TaskPaths.ResultArtifacts(folderPath).Any();
         }
         catch (Exception __ex)
         {

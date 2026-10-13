@@ -185,6 +185,27 @@ public class CompletionClaimPersistenceTests : IDisposable
         Assert.True(NamedDeliverableReader.Exists(task));
     }
 
+    /// <summary>
+    /// AGT-3086: <c>results/history/</c> holds Studio's own records (earlier
+    /// Result versions, rotated review evidence, the legacy Result-history
+    /// cache a card open writes). None of it names a deliverable.
+    /// </summary>
+    [Fact]
+    public void FilesUnderResultsHistoryNameNothing()
+    {
+        var (scanner, _) = Build();
+        var jobDir = SeedJob("opened");
+        var history = Path.Combine(jobDir, "results", "history");
+        Directory.CreateDirectory(Path.Combine(history, "0001-20261001T080000Z"));
+        File.WriteAllText(Path.Combine(history, "legacy-git.json"), "{\"schemaVersion\":1}");
+        File.WriteAllText(Path.Combine(history, "0001-20261001T080000Z", "status.md"), "# Status");
+
+        Assert.False(NamedDeliverableReader.Exists(scanner.FindJob("opened", _watchPath)!));
+
+        File.WriteAllText(Path.Combine(jobDir, "results", "analysis.json"), "content");
+        Assert.Equal("results/analysis.json", NamedDeliverableReader.Read(scanner.FindJob("opened", _watchPath)!).Path);
+    }
+
     [Fact]
     public void ACardThatProducedNothingNamesNothing()
     {

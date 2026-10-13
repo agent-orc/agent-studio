@@ -19,16 +19,23 @@ public static class TaskFilesEndpoints
 {
     public static void MapTaskFilesEndpoints(this RouteGroupBuilder group)
     {
+        // Never starts git (AGT-3086): legacy versions come from the card's
+        // persisted backfill, and the header says whether that backfill is
+        // complete, still pending, or failed, so an unfinished walk is never
+        // shown as an empty history. The body stays a plain array.
         group.MapGet("/{jobId}/result-history", (
             string jobId,
             [FromQuery] string? project,
             [FromQuery] string? watchPath,
+            HttpResponse response,
             ResultHistoryQueryService history,
             AgentStudio.Registry.ProjectRegistry projects) =>
         {
             watchPath = ResolveWatchPath(projects, project, watchPath);
             var result = history.List(jobId, watchPath);
-            return result.Success ? Results.Ok(result.Value ?? []) : ErrorResult(result);
+            if (!result.Success) return ErrorResult(result);
+            response.Headers[LegacyResultHistoryStates.HeaderName] = result.Value!.LegacyState;
+            return Results.Ok(result.Value.Entries);
         });
 
         group.MapGet("/{jobId}/result-history/{versionId}", (

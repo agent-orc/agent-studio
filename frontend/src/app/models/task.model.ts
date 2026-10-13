@@ -1459,6 +1459,17 @@ export interface ResultHistoryDocument {
   markdown: string;
 }
 
+/**
+ * `X-Result-History-Legacy`: whether the background backfill of a card's
+ * pre-snapshot Results from workspace git has an answer yet (AGT-3086).
+ */
+export type ResultHistoryLegacyState = 'pending' | 'complete' | 'failed';
+
+export interface ResultHistoryList {
+  entries: ResultHistoryEntry[];
+  legacy: ResultHistoryLegacyState;
+}
+
 export type ReviewEvidenceSource = 'security-audit' | 'code-review' | 'task-check' | 'human-note' | 'other';
 export type ReviewEvidenceSeverity = 'info' | 'warn' | 'high';
 
