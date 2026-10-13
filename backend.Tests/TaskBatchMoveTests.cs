@@ -388,7 +388,7 @@ public class TaskBatchMoveTests : IDisposable
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var status = new TaskIntegrationStatusService(git, settings,
-            new AgentStudio.Pipeline.PipelineExecutionLog(
+            new AgentStudio.Pipeline.PipelineExecutionLog(TokenTestServices.Pricing(),
                 NullLogger<AgentStudio.Pipeline.PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance,

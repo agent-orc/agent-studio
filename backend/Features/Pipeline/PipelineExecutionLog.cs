@@ -19,6 +19,7 @@ namespace AgentStudio.Pipeline;
 /// </summary>
 public sealed class PipelineExecutionLog
 {
+    private readonly ITokenPricing _pricing;
     public const string FileName = "pipeline-execution.json";
 
     /// <summary>
@@ -53,8 +54,9 @@ public sealed class PipelineExecutionLog
         new(StringComparer.OrdinalIgnoreCase);
     private readonly AsyncLocal<AttemptFence?> _attemptFence = new();
 
-    public PipelineExecutionLog(ILogger<PipelineExecutionLog> logger)
+    public PipelineExecutionLog(ITokenPricing pricing, ILogger<PipelineExecutionLog> logger)
     {
+        _pricing = pricing;
         _logger = logger;
     }
 
@@ -306,7 +308,7 @@ public sealed class PipelineExecutionLog
                     // A repeated execution keeps the earlier one in the row's
                     // run history instead of overwriting it, and every terminal
                     // row is stamped with its measured cost (AGT-3015).
-                    stepResult = Measure(jobFolderPath, StepCostMeasurement.CarryRuns(existing, stepResult));
+                    stepResult = Measure(jobFolderPath, StepCostMeasurement.CarryRuns(_pricing, existing, stepResult));
                     updatedSteps.Add(stepResult);
                     replaced = true;
                 }
@@ -316,7 +318,7 @@ public sealed class PipelineExecutionLog
                 }
             }
             if (!replaced)
-                updatedSteps.Add(Measure(jobFolderPath, StepCostMeasurement.CarryRuns(null, stepResult)));
+                updatedSteps.Add(Measure(jobFolderPath, StepCostMeasurement.CarryRuns(_pricing, null, stepResult)));
 
             WriteAtomic(jobFolderPath, current with { Steps = updatedSteps });
         }
@@ -324,7 +326,7 @@ public sealed class PipelineExecutionLog
 
     private PipelineStepExecution Measure(string jobFolderPath, PipelineStepExecution row)
     {
-        var stamped = StepCostMeasurement.Stamp(row);
+        var stamped = StepCostMeasurement.Stamp(_pricing, row);
         if (StepCostMeasurement.IsMissingModel(stamped))
         {
             _logger.LogWarning(
@@ -482,7 +484,7 @@ public sealed class PipelineExecutionLog
     /// Previous attempts are normalized recursively so the Run Switcher cannot
     /// resurrect a stale Pending grade from an older completed attempt.
     /// </summary>
-    private static PipelineExecutionRecord NormalizeCompletedRecord(
+    private PipelineExecutionRecord NormalizeCompletedRecord(
         PipelineExecutionRecord record,
         string? pendingStepReason = null)
     {
@@ -516,7 +518,7 @@ public sealed class PipelineExecutionLog
 
             if (step.Status == PipelineStepStatus.Running)
             {
-                return StepCostMeasurement.Stamp(step with
+                return StepCostMeasurement.Stamp(_pricing, step with
                 {
                     Status = PipelineStepStatus.Failed,
                     CompletedAt = record.CompletedAt,
@@ -527,7 +529,7 @@ public sealed class PipelineExecutionLog
                 });
             }
 
-            return StepCostMeasurement.Stamp(step with
+            return StepCostMeasurement.Stamp(_pricing, step with
             {
                 Status = PipelineStepStatus.Skipped,
                 CompletedAt = record.CompletedAt,

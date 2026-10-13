@@ -88,7 +88,7 @@ public sealed class OrchestratorChatWorkingDirectoryTests : IDisposable
             NullLogger<TaskScannerService>.Instance,
             summary,
             projectRegistry: projects);
-        return new OrchestratorChatService(
+        return new OrchestratorChatService(TokenTestServices.Pricing(),
             chat: null!,
             runner: null!,
             sessionStore: null!,

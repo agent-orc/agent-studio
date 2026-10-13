@@ -17,7 +17,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Assigned_runner_claims_turn_and_completion_preserves_exact_host_checkout()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         var pending = broker.EnqueueTurnAsync(
             Route,
             "Inspect the repository.",
@@ -90,7 +90,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Concurrent_contexts_in_one_project_keep_their_own_execution_metadata()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         var taskRoute = Route with { ContextKey = "task:Agent Studio/AGT-2901" };
         var dossierRoute = Route with { ContextKey = "workbench:Agent Studio/dossier-1" };
         var taskPending = broker.EnqueueTurnAsync(
@@ -126,7 +126,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Capability_preparation_can_defer_fallback_work_without_consuming_it()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         using var cancelled = new CancellationTokenSource();
         var pending = broker.EnqueueTurnAsync(
             Route,
@@ -166,7 +166,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Cancelled_unclaimed_turn_is_removed_before_a_host_can_pick_it_up()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         using var cancelled = new CancellationTokenSource();
         var pending = broker.EnqueueTurnAsync(
             Route,
@@ -186,7 +186,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public void Inspection_work_is_deduplicated_per_project_checkout()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
 
         broker.RequestInspection(Route);
         broker.RequestInspection(Route);
@@ -204,7 +204,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Unreachable_host_releases_queued_turn_for_workstation_fallback()
     {
-        var broker = new RemoteChatWorkBroker(
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(),
             NullLogger<RemoteChatWorkBroker>.Instance,
             TimeSpan.FromMilliseconds(25));
         await Assert.ThrowsAsync<RemoteChatHostUnreachableException>(() =>
@@ -215,7 +215,7 @@ public sealed class RemoteChatWorkBrokerTests
     [Fact]
     public async Task Usage_separates_light_and_heavy_chat_from_coding_capacity()
     {
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         var pending = broker.EnqueueTurnAsync(
             Route, "question", "gpt-5.5", null, CancellationToken.None);
         var work = broker.TryClaim(new RemoteChatWorkClaimRequest(

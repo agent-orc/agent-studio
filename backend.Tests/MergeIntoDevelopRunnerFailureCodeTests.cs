@@ -49,7 +49,7 @@ public sealed class MergeIntoDevelopRunnerFailureCodeTests : IDisposable
             NullLogger<TaskScannerService>.Instance,
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
-        var log = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var log = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var jobFolder = BeginRun(log, "root-unavailable");
         var logger = new RecordingLogger<MergeIntoDevelopRunner>();
         var runner = new MergeIntoDevelopRunner(git, log, logger);
@@ -332,7 +332,7 @@ public sealed class MergeIntoDevelopRunnerFailureCodeTests : IDisposable
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
         return (
             new GitService(NullLogger<GitService>.Instance, scanner, config),
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance));
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance));
     }
 
     private string SeedRepo(string name)

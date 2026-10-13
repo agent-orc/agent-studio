@@ -10,7 +10,7 @@ namespace AgentStudio.Tests;
 /// <summary>
 /// Runtime read path of the project token surfaces: the merged ledger
 /// (bus history, durable task receipts, chat fallback receipts) read by
-/// <see cref="BusBackedProjectTokenUsageReader"/> and folded by the shared
+/// <see cref="TokenAggregationService"/> and folded by the shared
 /// pure folds.
 /// </summary>
 public sealed class ProjectTokenLedgerReaderTests : IDisposable
@@ -47,7 +47,7 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
             MakeEntry("claude-opus-4-7", 400, 40, Now.AddTicks(1), jobId: "real-job"),
         };
 
-        var result = ProjectTokenUsageService.BuildSummaryFromEntries(
+        var result = ProjectTokenUsageFold.Summary(
             ProjectName, entries, jobsById, Now);
 
         Assert.Equal(440, result.Last7dTotalTokens);
@@ -96,9 +96,9 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
         Assert.DoesNotContain(scanner.ScanAllJobs(), j => j.State == TaskStates.Archive);
 
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        var reader = new BusBackedProjectTokenUsageReader(store, config, stats, new ProjectTokenReceiptReader());
+        var reader = TokenTestServices.Aggregator(store, config, stats, new ProjectTokenReceiptReader());
 
-        var result = reader.BuildSummary(ProjectName, _watchPath, Now);
+        var result = reader.ProjectSummary(ProjectName, _watchPath, Now);
 
         Assert.True(result.HasData);
         Assert.Equal(11_000, result.LifetimeTotalTokens);
@@ -124,9 +124,9 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
         File.Copy(Path.Combine(fixtureRoot, "task.json"), Path.Combine(taskFolder, "task.json"));
 
         var reader = BuildInstanceReader(store);
-        var summary = reader.BuildSummary(ProjectName, _watchPath, now);
-        var heatmap = reader.BuildHeatmap(ProjectName, _watchPath, 30, now);
-        var perJob = reader.BuildPerJob(ProjectName, _watchPath);
+        var summary = reader.ProjectSummary(ProjectName, _watchPath, now);
+        var heatmap = reader.ProjectHeatmap(ProjectName, _watchPath, 30, now);
+        var perJob = reader.WorkspacePerJob(ProjectName, _watchPath);
 
         Assert.Equal(6_600, summary.LifetimeTotalTokens);
         Assert.Equal(5_500, summary.Last24hTotalTokens);
@@ -154,7 +154,7 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
         Directory.CreateDirectory(taskFolder);
         File.WriteAllText(Path.Combine(taskFolder, "task.json"), "{ \"id\": \"AGT-2542\", \"tokenSummary\": ");
 
-        var result = BuildInstanceReader(store).BuildSummary(ProjectName, _watchPath, Now);
+        var result = BuildInstanceReader(store).ProjectSummary(ProjectName, _watchPath, Now);
 
         Assert.Equal("partial", result.Freshness.Status);
         Assert.NotNull(result.Freshness.Warning);
@@ -192,7 +192,7 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
             createdAt: startedAt.AddMinutes(5));
 
         await WaitForBusCountAsync(store, 2);
-        var perJob = BuildInstanceReader(store).BuildPerJob(ProjectName, _watchPath);
+        var perJob = BuildInstanceReader(store).WorkspacePerJob(ProjectName, _watchPath);
         var summary = perJob[jobId];
 
         Assert.Equal(13_900, summary.TotalTokens);
@@ -218,7 +218,7 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
         return (bridge, store);
     }
 
-    private BusBackedProjectTokenUsageReader BuildInstanceReader(AgentMessageBusStore store)
+    private TokenAggregationService BuildInstanceReader(AgentMessageBusStore store)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -231,7 +231,7 @@ public sealed class ProjectTokenLedgerReaderTests : IDisposable
         var generation = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, generation);
         var stats = new JobStatsMetadataCache(scanner, config, NullLogger<JobStatsMetadataCache>.Instance);
-        return new BusBackedProjectTokenUsageReader(store, config, stats, new ProjectTokenReceiptReader());
+        return TokenTestServices.Aggregator(store, config, stats, new ProjectTokenReceiptReader());
     }
 
     private static IReadOnlyDictionary<string, TaskInfo> BuildJobs(params (string Id, string Title)[] jobs)

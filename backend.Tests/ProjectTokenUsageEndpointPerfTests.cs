@@ -71,12 +71,12 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
         // Warm — read once so the JIT / disk cache are settled. We are
         // measuring the rollup, not the first-touch cost.
         _ = svc.BuildSummary(projectName, _watchPath);
-        _ = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageService.DefaultHeatmapDays);
+        _ = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageFold.DefaultHeatmapDays);
 
         // Act — measure the two calls the panel mounts in parallel.
         var sw = Stopwatch.StartNew();
         var summary = svc.BuildSummary(projectName, _watchPath);
-        var heatmap = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageService.DefaultHeatmapDays);
+        var heatmap = svc.BuildHeatmap(projectName, _watchPath, ProjectTokenUsageFold.DefaultHeatmapDays);
         sw.Stop();
 
         // Assert — generous ceiling. The fast path is a few hundred ms
@@ -193,13 +193,13 @@ public class ProjectTokenUsageEndpointPerfTests : IDisposable
     private sealed class ProjectTokenUsageFromLog(OrchestratorLog log, TaskScannerService scanner)
     {
         public ProjectTokenUsageSummary BuildSummary(string projectName, string watchPath)
-            => ProjectTokenUsageService.BuildSummaryFromEntries(projectName, log.Read(watchPath), JobsById(watchPath));
+            => ProjectTokenUsageFold.Summary(projectName, log.Read(watchPath), JobsById(watchPath));
 
         public ProjectTokenHeatmap BuildHeatmap(string projectName, string watchPath, int days)
-            => ProjectTokenUsageService.BuildHeatmapFromEntries(projectName, log.Read(watchPath), JobsById(watchPath), days);
+            => ProjectTokenUsageFold.Heatmap(projectName, log.Read(watchPath), JobsById(watchPath), days);
 
         public IReadOnlyList<ProjectExpensiveJob> BuildExpensiveJobs(string watchPath, int limit)
-            => ProjectTokenUsageService.BuildExpensiveJobsFromEntries(log.Read(watchPath), JobsById(watchPath), limit);
+            => ProjectTokenJobFold.ExpensiveJobs(log.Read(watchPath), JobsById(watchPath), limit);
 
         private IReadOnlyDictionary<string, TaskInfo> JobsById(string watchPath)
             => scanner.ScanAllAutomationJobs()

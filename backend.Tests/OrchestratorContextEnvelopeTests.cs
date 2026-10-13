@@ -493,7 +493,7 @@ public sealed class OrchestratorContextEnvelopeTests : IDisposable
             runner,
             scanner,
             config);
-        return new OrchestratorChatService(
+        return new OrchestratorChatService(TokenTestServices.Pricing(),
             new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
             runner,
             sessionStore,

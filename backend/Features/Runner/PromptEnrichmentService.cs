@@ -22,6 +22,7 @@ public sealed record PromptEnrichmentPreparation(
 /// </summary>
 public sealed class PromptEnrichmentService
 {
+    private readonly ITokenPricing _pricing;
     public const string ReportFileName = "enrichment-report.json";
     public const string PolicyVersion = "2";
     private const string Tokenizer = "character-estimate-v1";
@@ -44,13 +45,14 @@ public sealed class PromptEnrichmentService
     private readonly PipelineExecutionLog? _pipelineLog;
     private readonly TimeProvider _time;
 
-    public PromptEnrichmentService(
+    public PromptEnrichmentService(ITokenPricing pricing,
         ILogger<PromptEnrichmentService> logger,
         ProjectSettingsService? projectSettings = null,
         ProjectStyleGuideService? styleGuides = null,
         PipelineExecutionLog? pipelineLog = null,
         TimeProvider? time = null)
     {
+        _pricing = pricing;
         _logger = logger;
         _projectSettings = projectSettings;
         _styleGuides = styleGuides;
@@ -237,7 +239,7 @@ public sealed class PromptEnrichmentService
         return builder.ToString().TrimEnd();
     }
 
-    private static PromptEnrichmentReport BuildReport(
+    private PromptEnrichmentReport BuildReport(
         TaskInfo task,
         string authoredPrompt,
         string launchPrompt,
@@ -322,7 +324,7 @@ public sealed class PromptEnrichmentService
         string? unknownReason = null;
         if (appendedTokens > 0)
         {
-            var estimate = TokenPricing.Estimate(
+            var estimate = _pricing.Estimate(
                 downstreamModel, appendedTokens, 0, 0, 0, generatedAt);
             if (estimate.ModelKnown)
                 appendedInputUsd = estimate.Total;

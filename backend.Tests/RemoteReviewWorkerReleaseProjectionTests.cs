@@ -102,10 +102,10 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
                     "Clean diff with one dead no-op assertion.", "spec and diff", "none"),
             ],
         };
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
-        var projector = new RemotePipelineReviewEvidenceProjector(
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
             pipeline,
             timeline,
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
@@ -149,10 +149,10 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
                     "command:aspect-code-quality", "successful execution of aspect-code-quality"),
             ],
         };
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
-        var projector = new RemotePipelineReviewEvidenceProjector(
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
             pipeline,
             timeline,
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
@@ -204,8 +204,8 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
             new ProjectRegistry(configuration, NullLogger<ProjectRegistry>.Instance),
             new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
             NullLogger<TaskMutationService>.Instance);
-        var projector = new RemotePipelineReviewEvidenceProjector(
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             new TimelineLog(NullLogger<TimelineLog>.Instance),
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration),
@@ -229,8 +229,8 @@ public sealed class RemoteReviewWorkerReleaseProjectionTests : IDisposable
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Workspace:Root"] = _root }).Build();
-        var projector = new RemotePipelineReviewEvidenceProjector(
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+        var projector = new RemotePipelineReviewEvidenceProjector(TokenTestServices.Pricing(),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             timeline,
             new FileGenerationIndex(NullLogger<FileGenerationIndex>.Instance),
             new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, configuration));

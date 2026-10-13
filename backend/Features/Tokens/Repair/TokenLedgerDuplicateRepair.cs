@@ -12,6 +12,7 @@ namespace AgentStudio.Tokens;
 /// </summary>
 public sealed class TokenLedgerDuplicateRepair
 {
+    private readonly ITokenPricing _pricing;
     public const string ReportFileName = "token-ledger-duplicates-v1.json";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -22,7 +23,7 @@ public sealed class TokenLedgerDuplicateRepair
     private readonly ILogger<TokenLedgerDuplicateRepair> _logger;
     private readonly string _reportPath;
 
-    public TokenLedgerDuplicateRepair(
+    public TokenLedgerDuplicateRepair(ITokenPricing pricing,
         TaskScannerService scanner,
         TaskMutationService mutations,
         AgentMessageBusStore bus,
@@ -30,7 +31,7 @@ public sealed class TokenLedgerDuplicateRepair
         WorkspaceTokensCacheStore workspaceCache,
         IConfiguration configuration,
         ILogger<TokenLedgerDuplicateRepair> logger)
-        : this(
+        : this(pricing,
             new TokenLedgerDuplicateRepairStore(
                 scanner,
                 mutations,
@@ -48,11 +49,12 @@ public sealed class TokenLedgerDuplicateRepair
     {
     }
 
-    internal TokenLedgerDuplicateRepair(
+    internal TokenLedgerDuplicateRepair(ITokenPricing pricing,
         ITokenLedgerDuplicateRepairStore store,
         string reportPath,
         ILogger<TokenLedgerDuplicateRepair> logger)
     {
+        _pricing = pricing;
         _store = store;
         _reportPath = reportPath;
         _logger = logger;
@@ -68,7 +70,7 @@ public sealed class TokenLedgerDuplicateRepair
         }
 
         var jobs = _store.ScanJobs();
-        var plan = Plan(jobs, _store.ReadBus(jobs.Select(job => job.Project)));
+        var plan = Plan(_pricing, jobs, _store.ReadBus(jobs.Select(job => job.Project)));
         var failedKeys = new List<string>();
         foreach (var rewrite in plan.Rewrites)
         {
@@ -103,7 +105,7 @@ public sealed class TokenLedgerDuplicateRepair
     /// Pure planning step: which receipts to rewrite and what each project
     /// loses. Also the read-only dry run used for delivery evidence.
     /// </summary>
-    public static TokenLedgerDuplicatePlan Plan(
+    public static TokenLedgerDuplicatePlan Plan(ITokenPricing pricing,
         IEnumerable<TokenLedgerReceiptSource> receipts,
         IEnumerable<TokenLedgerBusSource> bus)
     {
@@ -126,7 +128,7 @@ public sealed class TokenLedgerDuplicateRepair
             var collapsedSummary = ProjectTokenReceiptReader.CollapseDuplicateCalls(summary, out var collapsed);
             if (collapsed.Entries == 0) continue;
 
-            var cost = PricedCost(summary.Entries) - PricedCost(collapsedSummary.Entries);
+            var cost = PricedCost(pricing, summary.Entries) - PricedCost(pricing, collapsedSummary.Entries);
             var acc = For(job.Project);
             acc.ReceiptTasks++;
             acc.Receipt = acc.Receipt.Add(collapsed);
@@ -167,11 +169,11 @@ public sealed class TokenLedgerDuplicateRepair
             TokenLedgerDuplicateRepairReport.Empty with { Projects = rows, Tasks = tasks });
     }
 
-    private static decimal PricedCost(IEnumerable<TaskTokenCall> calls)
+    private static decimal PricedCost(ITokenPricing pricing, IEnumerable<TaskTokenCall> calls)
         => calls.Sum(stored =>
         {
             var call = StoredUsageNormalization.Normalize(stored);
-            var estimate = TokenPricing.Estimate(
+            var estimate = pricing.Estimate(
                 ModelIdentity.RegistryId(call.Model),
                 call.InputTokens,
                 call.OutputTokens,

@@ -175,7 +175,7 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
             NullLogger<GlobalOrchestratorBootstrap>.Instance,
             sessionStore, runner, scanner, config);
         var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             chat, runner, sessionStore, bootstrap, scanner, config,
             NullLogger<OrchestratorChatService>.Instance);
 
@@ -232,7 +232,7 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
             NullLogger<GlobalOrchestratorBootstrap>.Instance,
             sessionStore, runner, scanner, config);
         var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             chat, runner, sessionStore, bootstrap, scanner, config,
             NullLogger<OrchestratorChatService>.Instance);
 
@@ -299,7 +299,7 @@ public class OrchestratorChatErrorTranslatorTests : IDisposable
             NullLogger<GlobalOrchestratorBootstrap>.Instance,
             sessionStore, runner, scanner, config);
         var chat = new OrchestratorChat(NullLogger<OrchestratorChat>.Instance);
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             chat, runner, sessionStore, bootstrap, scanner, config,
             NullLogger<OrchestratorChatService>.Instance);
 

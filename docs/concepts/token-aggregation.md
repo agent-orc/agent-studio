@@ -30,6 +30,19 @@ summaries, per-job views, and timelines. Both project and workspace model rows
 use `ModelUsageFold`. Endpoint projections and caches do not read or normalize
 receipts themselves.
 
+Every cost consumer receives `ITokenPricing`, including `PipelineCostCalculator`,
+step measurement, chat metadata, review evidence, prompt telemetry, and repairs.
+`RunModelPricing` belongs to the pricing stage and applies the existing run-model
+fallback before the endpoint projects a task summary. Aggregation folds contain
+no pricing calls. Reader tests construct `TokenAggregationService`; they do not
+recreate its pipeline behind legacy-name aliases.
+
+The startup-only `OpenAiUsageHistoryRepair` and `TokenLedgerDuplicateRepair` remain
+isolated under `Tokens/Repair`. Removing them requires verified successful Stable
+completion reports for both migration versions; that evidence was unavailable
+in the AGT-3037 fix round. Neither service runs in the ledger or aggregation read
+path.
+
 The bus-backed reader and legacy service names below describe the earlier
 migration phases. Those concrete readers and parity-only tests were removed
 in AGT-3037. The golden characterization in

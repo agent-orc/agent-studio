@@ -48,9 +48,9 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
         var repository = Path.Combine(_root, "repository");
         WriteSource(repository, "AGENTS.md");
         WriteSource(repository, "docs/quality/frontend-styling.md");
-        var pipeline = new PipelineExecutionLog(
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(),
             NullLogger<PipelineExecutionLog>.Instance);
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance,
             pipelineLog: pipeline);
 
@@ -127,7 +127,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             Mode = TaskModes.Coding,
             Title = "Change the frontend card styling",
         };
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance);
 
         var result = service.Prepare(
@@ -167,7 +167,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             "foreign-routing", "Foreign routing guide",
             "system/domains/model-routing-policy.md", "Routing", "Follow this missing file.", "1",
             new StyleGuideAppliesTo(["*"], ["dotnet"], ["runner"]));
-        var service = new PromptEnrichmentService(NullLogger<PromptEnrichmentService>.Instance);
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(), NullLogger<PromptEnrichmentService>.Instance);
 
         var result = service.Prepare(task, "Update runner card styling.", null,
             enabledOverride: true, guidesOverride: [foreignGuide],
@@ -216,7 +216,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
                 WriteSource(repository, path);
         }
-        var service = new PromptEnrichmentService(NullLogger<PromptEnrichmentService>.Instance);
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(), NullLogger<PromptEnrichmentService>.Instance);
 
         var result = service.Prepare(task, "Improve the frontend runner card.", null,
             enabledOverride: true, repositoryRootOverride: repository,
@@ -292,7 +292,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
         const string authoredPrompt = "Polish release notes for the next release.";
         Assert.Empty(IntakeRunner.DetectTaskAreas(task, authoredPrompt));
 
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance, projectSettings: settings);
         var result = service.Prepare(task, authoredPrompt, null,
             repositoryRootOverride: repository);
@@ -329,7 +329,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             State = TaskStates.Ready, Mode = TaskModes.Coding,
             Title = "Change runner task state handling"
         };
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance, projectSettings: settings);
 
         var result = service.Prepare(task, "Change runner task state handling.", null,
@@ -408,7 +408,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             State = TaskStates.Ready, Mode = TaskModes.Coding,
             Title = $"Prompt enrichment source audit for {project}"
         };
-        var service = new PromptEnrichmentService(NullLogger<PromptEnrichmentService>.Instance);
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(), NullLogger<PromptEnrichmentService>.Instance);
 
         var authoredPrompt =
             "# Prompt enrichment source audit\n\n"
@@ -479,7 +479,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             "This guide deliberately exercises selector fallback.",
             "1",
             null!);
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance);
 
         var result = service.Prepare(
@@ -513,7 +513,7 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
             State = TaskStates.Ready,
             Title = "Blocked persistence",
         };
-        var service = new PromptEnrichmentService(
+        var service = new PromptEnrichmentService(TokenTestServices.Pricing(),
             NullLogger<PromptEnrichmentService>.Instance);
 
         var error = Assert.Throws<InvalidOperationException>(() =>

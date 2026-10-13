@@ -312,7 +312,6 @@ fixed-date backend.Tests/BranchReclaimTriggerWiringTests.cs
 fixed-date backend.Tests/BranchSweepPolicyTests.cs
 fixed-date backend.Tests/BuildIdentityTests.cs
 fixed-date backend.Tests/BusAggregationCacheTests.cs
-fixed-date backend.Tests/BusBackedProjectTokenUsageReaderCacheTests.cs
 fixed-date backend.Tests/ClaudeOutcomeClassifierFixtureTests.cs
 fixed-date backend.Tests/ClaudeRateLimitEventParserTests.cs
 fixed-date backend.Tests/ClaudeSessionUsageAggregateTests.cs

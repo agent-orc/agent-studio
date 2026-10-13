@@ -429,7 +429,7 @@ public sealed class OperatorSweepServiceTests : IDisposable
         if (repository is not null)
         {
             settings.SetIntegrationBranch(Project, "develop");
-            var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+            var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
             readGateFacts = new OperatorSweepGateFacts(
                 new TaskIntegrationStatusService(
                     new GitService(NullLogger<GitService>.Instance, scanner, configuration),

@@ -79,8 +79,8 @@ public static class ModelIdentity
             "opus" => ModelIds.ClaudeOpus5,
             _ => value,
         };
-        var listing = TokenEconomy.ModelPriceCatalog.Default.Find(bareAlias)
-            ?? TokenEconomy.ModelPriceCatalog.Default.Listings.FirstOrDefault(entry =>
+        var listing = TokenEconomyPriceProvider.FindListing(bareAlias)
+            ?? TokenEconomyPriceProvider.Catalog.Values.FirstOrDefault(entry =>
                 string.Equals(entry.DisplayName, bareAlias, StringComparison.OrdinalIgnoreCase));
         var modelId = listing?.ModelId ?? ModelMetadataRegistry.FindByLabelOrAlias(bareAlias)?.Id ?? bareAlias;
         var metadata = ModelMetadataRegistry.Find(modelId);

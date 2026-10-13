@@ -3,7 +3,7 @@ namespace AgentStudio.Tokens;
 /// <summary>
 /// The projection stage behind <see cref="ITokenAggregator"/>. Each surface
 /// composes the same pipeline: read the merged project ledger
-/// (<see cref="ProjectTokenLedger"/>), price it (<see cref="TokenPricing"/>),
+/// (<see cref="ProjectTokenLedger"/>), price it (<see cref="ITokenPricing"/>),
 /// and fold it with a pure fold. Nothing here resolves model identity or
 /// prices a call itself.
 /// </summary>

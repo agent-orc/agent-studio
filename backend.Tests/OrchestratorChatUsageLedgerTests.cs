@@ -84,11 +84,9 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
             new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, harness.Configuration));
         var stats = new JobStatsMetadataCache(scanner, harness.Configuration,
             NullLogger<JobStatsMetadataCache>.Instance);
-        var ledger = new BusBackedProjectTokenUsageReader(new AgentMessageBusStore(),
+        var ledger = TokenTestServices.Aggregator(new AgentMessageBusStore(),
             harness.Configuration, stats, new ProjectTokenReceiptReader());
-        var timeline = BusBackedWorkspaceTimelineReader.BuildFromLedger(
-            ledger, [(ProjectName, WatchPath: harness.WatchPath)], 24, 60,
-            nowUtc: reply.FinishedAt!.Value.AddHours(1));
+        var timeline = ledger.WorkspaceTimeline([(ProjectName, WatchPath: harness.WatchPath)], 24, 60, nowUtc: reply.FinishedAt!.Value.AddHours(1));
         Assert.Equal(1, Assert.Single(timeline.Projects).Calls);
         Assert.Equal(2_100, Assert.Single(timeline.Models).Total);
         Assert.Contains("chat-usage-fallback", timeline.Freshness.Sources);
@@ -188,11 +186,11 @@ public sealed class OrchestratorChatUsageLedgerTests : IDisposable
         var bootstrap = new GlobalOrchestratorBootstrap(
             NullLogger<GlobalOrchestratorBootstrap>.Instance,
             sessionStore, runner, scanner, configuration);
-        var broker = new RemoteChatWorkBroker(NullLogger<RemoteChatWorkBroker>.Instance);
+        var broker = new RemoteChatWorkBroker(TokenTestServices.Pricing(), NullLogger<RemoteChatWorkBroker>.Instance);
         var bus = new AgentMessageBusBridge(
             new AgentMessageBusStore(), configuration, NullLogger<AgentMessageBusBridge>.Instance);
         var logger = new CapturingLogger();
-        var service = new OrchestratorChatService(
+        var service = new OrchestratorChatService(TokenTestServices.Pricing(),
             new OrchestratorChat(NullLogger<OrchestratorChat>.Instance),
             runner, sessionStore, bootstrap, scanner, configuration, logger,
             projectSettings: settings, projects: projects, remoteWork: broker,

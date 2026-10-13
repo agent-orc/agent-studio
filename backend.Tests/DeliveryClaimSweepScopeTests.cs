@@ -179,7 +179,7 @@ public sealed class DeliveryClaimSweepScopeTests : IDisposable
         var integration = new TaskIntegrationStatusService(
             git,
             settings,
-            new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance),
+            new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance),
             NullLogger<TaskIntegrationStatusService>.Instance);
         var sweep = new DeliveryClaimSweep(
             scanner,

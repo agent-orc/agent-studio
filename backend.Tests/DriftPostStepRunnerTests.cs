@@ -97,7 +97,7 @@ public sealed class DriftPostStepRunnerTests : IDisposable
     public async Task RunAsync_NoEnabledDriftSteps_DoesNoWork()
     {
         var driftStore = new DriftReportStore();
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var runner = BuildRunner(driftStore, pipelineLog);
 
         var cliCalls = 0;
@@ -124,7 +124,7 @@ public sealed class DriftPostStepRunnerTests : IDisposable
     public async Task RunAsync_EnabledLlmDimension_RoutesPerStepModel_PersistsScheduledReport_RecordsTelemetry()
     {
         var driftStore = new DriftReportStore();
-        var pipelineLog = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipelineLog = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var runner = BuildRunner(driftStore, pipelineLog);
 
         string? capturedCli = null;

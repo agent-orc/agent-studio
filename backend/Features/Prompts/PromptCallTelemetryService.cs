@@ -13,6 +13,7 @@ namespace AgentStudio.Prompts;
 /// </summary>
 public sealed class PromptCallTelemetryService
 {
+    private readonly ITokenPricing _pricing;
     public const string LogFileName = "prompt-calls.jsonl";
     public const int DeadPromptDays = 30;
     public const int HistoryDays = 14;
@@ -29,10 +30,11 @@ public sealed class PromptCallTelemetryService
     private readonly ILogger<PromptCallTelemetryService> _logger;
     private readonly object _writeLock = new();
 
-    public PromptCallTelemetryService(
+    public PromptCallTelemetryService(ITokenPricing pricing,
         IConfiguration configuration,
         ILogger<PromptCallTelemetryService> logger)
     {
+        _pricing = pricing;
         _configuration = configuration;
         _logger = logger;
     }
@@ -133,7 +135,7 @@ public sealed class PromptCallTelemetryService
         return records;
     }
 
-    private static PromptCallAnalytics BuildAnalytics(
+    private PromptCallAnalytics BuildAnalytics(
         IEnumerable<PromptCallRecord> source,
         string? currentVersion,
         DateTimeOffset now)
@@ -186,7 +188,7 @@ public sealed class PromptCallTelemetryService
         };
     }
 
-    private static PromptCallVersion BuildVersion(
+    private PromptCallVersion BuildVersion(
         string version,
         List<(PromptCallRecord Record, TokenCostEstimate Price)> records,
         string? currentVersion)
@@ -213,8 +215,8 @@ public sealed class PromptCallTelemetryService
         };
     }
 
-    private static TokenCostEstimate Price(PromptCallRecord record) =>
-        TokenPricing.Estimate(
+    private TokenCostEstimate Price(PromptCallRecord record) =>
+        _pricing.Estimate(
             record.Model,
             record.InputTokens,
             outputTokens: 0,

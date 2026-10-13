@@ -309,10 +309,9 @@ public sealed record ModelMetadata(
     string? MinimumCliVersion = null)
 {
     // Pricing is intentionally a live catalog pass-through. Studio owns no
-    // rates; callers that need historical cost use TokenPricing.Estimate.
+    // rates; callers that need historical cost use ITokenPricing.Estimate.
     private TokenEconomy.ModelPrice? CurrentPrice =>
-        TokenEconomy.ModelPriceCatalog.Default
-            .ResolvePrice(Id, DateTime.UtcNow).Price;
+        TokenEconomyPriceProvider.CurrentPrice(Id);
     public decimal? InputPricePerMillion => CurrentPrice?.InputPerMTok;
     public decimal? OutputPricePerMillion => CurrentPrice?.OutputPerMTok;
     public decimal? CacheReadPerMillionOverride => CurrentPrice?.CacheReadPerMTok;

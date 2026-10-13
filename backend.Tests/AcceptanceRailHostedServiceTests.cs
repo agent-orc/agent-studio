@@ -899,7 +899,7 @@ public sealed class AcceptanceRailHostedServiceTests : IDisposable
         settings.SetIntegrationBranch(Project, "develop");
         settings.SetAutoPushStrategy(Project, AutoPushStrategies.Never);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, configuration);
-        var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
+        var pipeline = new PipelineExecutionLog(TokenTestServices.Pricing(), NullLogger<PipelineExecutionLog>.Instance);
         var integration = new TaskIntegrationStatusService(
             git,
             settings,

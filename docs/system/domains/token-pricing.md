@@ -7,21 +7,22 @@
 
 ## Contract
 
-The token aggregation path uses injectable `ITokenPricing`, implemented by
+All historical cost callers use injectable `ITokenPricing`, implemented by
 `TokenPricingService` in `backend/Features/Tokens/Pricing/TokenPricing.cs`.
 The package-specific implementation in
 `backend/Features/Tokens/Pricing/TokenEconomyPriceProvider.cs` adapts
 `TokenEconomy.ModelPriceCatalog.Default` and its historical pricing API.
 
-The adapter is exposed through `ITokenPriceProvider`; the active
-`TokenPricing.Provider` configuration selects `TokenEconomyPriceProvider`, the
-package-specific implementation from the exactly pinned `TokenEconomy` 0.3.7
-dependency. Aggregators and frontend contracts do not depend on the provider
+The adapter is exposed through `ITokenPriceProvider`. `AddTokenUsage` registers
+one singleton provider and one singleton `ITokenPricing` service. There is no
+static pricing facade or independently constructed runtime pricing instance.
+`TokenEconomyPriceProvider` is the only production class that reads the price
+catalog or calls its historical cost API. Aggregators and frontend contracts do not depend on the provider
 package directly.
 
 `ModelIdentity.Resolve` owns the model id, display label, and CLI projection for
 catalog ids, aliases, display labels, and bare `sonnet` / `opus` aliases.
-`TokenPricing.Estimate` resolves through it before calling TokenEconomy.
+`ITokenPricing.Estimate` resolves through it before calling TokenEconomy.
 Per-project, workspace, and ad-hoc `byModel` rows carry `modelId` and `cli`;
 `model` is a display label. Historical receipts that stored labels resolve on
 read, without changing `task.json`. `GET /api/token-pricing/unpriced-models`

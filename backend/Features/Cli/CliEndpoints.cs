@@ -11,6 +11,7 @@ public static class CliEndpoints
 {
     public static void MapCliEndpoints(this WebApplication app)
     {
+        var pricing = app.Services.GetRequiredService<ITokenPricing>();
         // ── Multi-CLI endpoints ────────────────────────────────────────
 
         var cliGroup = app.MapGroup("/api/cli");
@@ -284,7 +285,7 @@ public static class CliEndpoints
                 table.RemoveAll(row =>
                     string.Equals(row.FromCliType, profile.CliType, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(row.FromModel, profile.PrimaryModel, StringComparison.OrdinalIgnoreCase));
-                table.Add(OverrideView(profile));
+                table.Add(OverrideView(pricing, profile));
             }
             foreach (var used in ModelsInUse(scanner, projectSettings))
             {
@@ -296,7 +297,7 @@ public static class CliEndpoints
                 var targetCli = used.CliType == CliTypes.Claude ? CliTypes.Codex : CliTypes.Claude;
                 var derived = catalogue.TryGetRoute(used.CliType, used.Model, used.ThinkingLevel, targetCli);
                 table.Add(derived is null
-                    ? UnavailableView(used.CliType, used.Model, used.ThinkingLevel, catalogue.Version)
+                    ? UnavailableView(pricing, used.CliType, used.Model, used.ThinkingLevel, catalogue.Version)
                     : RouteView(derived));
             }
 
@@ -441,10 +442,10 @@ public static class CliEndpoints
         route.CapabilityClass,
         true);
 
-    private static CliModelRouteView OverrideView(CliModelRouteProfile profile)
+    private static CliModelRouteView OverrideView(ITokenPricing pricing, CliModelRouteProfile profile)
     {
-        var from = Price(profile.PrimaryModel);
-        var to = Price(profile.FallbackModel);
+        var from = Price(pricing, profile.PrimaryModel);
+        var to = Price(pricing, profile.FallbackModel);
         return new CliModelRouteView(
             profile.CliType, profile.PrimaryModel!, profile.PrimaryThinkingLevel,
             profile.FallbackCliType ?? profile.CliType, profile.FallbackModel!, profile.FallbackThinkingLevel,
@@ -454,10 +455,10 @@ public static class CliEndpoints
             true);
     }
 
-    private static CliModelRouteView UnavailableView(
+    private static CliModelRouteView UnavailableView(ITokenPricing pricing,
         string cliType, string model, string? thinkingLevel, string version)
     {
-        var from = Price(model);
+        var from = Price(pricing, model);
         return new CliModelRouteView(
             cliType, model, thinkingLevel,
             string.Empty, "wait: no comparable model", null,
@@ -510,9 +511,9 @@ public static class CliEndpoints
     private static bool SameThinking(string? left, string? right)
         => string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private static (decimal? Input, decimal? Output) Price(string? model)
+    private static (decimal? Input, decimal? Output) Price(ITokenPricing pricing, string? model)
     {
-        var estimate = TokenPricing.Estimate(model, 0, 0, 0, 0);
+        var estimate = pricing.Estimate(model, 0, 0, 0, 0);
         return (estimate.PriceBasis?.InputPerMillion, estimate.PriceBasis?.OutputPerMillion);
     }
 

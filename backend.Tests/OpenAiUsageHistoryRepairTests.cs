@@ -42,8 +42,8 @@ public sealed class OpenAiUsageHistoryRepairTests : IDisposable
             ],
         };
 
-        var first = OpenAiUsageHistoryRepair.RepairSummary(legacy, "project", "AGT-2873");
-        var second = OpenAiUsageHistoryRepair.RepairSummary(first.Summary, "project", "AGT-2873");
+        var first = OpenAiUsageHistoryRepair.RepairSummary(TokenTestServices.Pricing(), legacy, "project", "AGT-2873");
+        var second = OpenAiUsageHistoryRepair.RepairSummary(TokenTestServices.Pricing(), first.Summary, "project", "AGT-2873");
 
         Assert.True(first.Changed);
         Assert.Equal(1, first.Corrected);
@@ -85,8 +85,8 @@ public sealed class OpenAiUsageHistoryRepairTests : IDisposable
             ],
         };
 
-        var first = OpenAiUsageHistoryRepair.RepairPipeline(record, "project", "AGT-2873");
-        var second = OpenAiUsageHistoryRepair.RepairPipeline(first.Record, "project", "AGT-2873");
+        var first = OpenAiUsageHistoryRepair.RepairPipeline(TokenTestServices.Pricing(), record, "project", "AGT-2873");
+        var second = OpenAiUsageHistoryRepair.RepairPipeline(TokenTestServices.Pricing(), first.Record, "project", "AGT-2873");
 
         Assert.True(first.Changed);
         Assert.Equal(2, first.Corrected);
@@ -126,8 +126,8 @@ public sealed class OpenAiUsageHistoryRepairTests : IDisposable
         };
 
         var repaired = OpenAiUsageHistoryRepair
-            .RepairPipeline(record, "project", "AGT-2873").Record;
-        var timeline = ProjectPipelineCostService.BuildFromRecords(
+            .RepairPipeline(TokenTestServices.Pricing(), record, "project", "AGT-2873").Record;
+        var timeline = ProjectPipelineCostService.BuildFromRecords(TokenTestServices.Pricing(),
             "project", [repaired], 1, At.AddHours(1));
 
         Assert.Equal(7.19m, decimal.Round(timeline.TotalCostUsd, 2));
@@ -152,7 +152,7 @@ public sealed class OpenAiUsageHistoryRepairTests : IDisposable
             ],
         };
 
-        var repair = OpenAiUsageHistoryRepair.RepairSummary(
+        var repair = OpenAiUsageHistoryRepair.RepairSummary(TokenTestServices.Pricing(),
             summary, "project", "AGT-2873", untouched);
 
         Assert.False(repair.Changed);
@@ -170,7 +170,7 @@ public sealed class OpenAiUsageHistoryRepairTests : IDisposable
         store.Add("pipeline-write-fails", Summary(200, 150), Pipeline(90, 70));
         store.FailNextTaskWrite("task-write-fails");
         store.FailNextPipelineWrite("pipeline-write-fails");
-        var repair = new OpenAiUsageHistoryRepair(
+        var repair = new OpenAiUsageHistoryRepair(TokenTestServices.Pricing(),
             store,
             reportPath,
             NullLogger<OpenAiUsageHistoryRepair>.Instance);

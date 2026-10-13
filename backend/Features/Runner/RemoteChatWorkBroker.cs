@@ -11,6 +11,7 @@ namespace AgentStudio.Runner;
 /// </summary>
 public sealed class RemoteChatWorkBroker
 {
+    private readonly ITokenPricing _pricing;
     private static readonly TimeSpan ClaimTtl = TimeSpan.FromMinutes(2);
     private readonly TimeSpan _unreachableBudget;
     private readonly object _gate = new();
@@ -21,10 +22,11 @@ public sealed class RemoteChatWorkBroker
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<RemoteChatWorkBroker> _logger;
 
-    public RemoteChatWorkBroker(
+    public RemoteChatWorkBroker(ITokenPricing pricing,
         ILogger<RemoteChatWorkBroker> logger,
         TimeSpan? unreachableBudget = null)
     {
+        _pricing = pricing;
         _logger = logger;
         _unreachableBudget = unreachableBudget ?? TimeSpan.FromSeconds(10);
     }
@@ -278,7 +280,7 @@ public sealed class RemoteChatWorkBroker
             {
                 var key = (item.ClaimedHost ?? item.Route.RunnerId, item.Route.ProjectName);
                 var previous = _completedUsage.GetValueOrDefault(key);
-                var estimate = TokenPricing.Estimate(
+                var estimate = _pricing.Estimate(
                     request.Model ?? item.Model,
                     usage.InputTokens, usage.OutputTokens,
                     usage.CacheReadTokens, usage.CacheCreationTokens,

@@ -154,7 +154,7 @@ public class CliUsageParserTests
         Assert.Equal(14983295, usage.ContextWindow.Used);
         Assert.Equal(14983295, usage.ContextUsed);
 
-        var cost = TokenPricing.Estimate(
+        var cost = TokenTestServices.Pricing().Estimate(
             usage.Model, usage.Input, usage.Output, usage.CacheRead, usage.CacheWrite,
             new DateTime(2026, 9, 18, 12, 0, 0, DateTimeKind.Utc));
         Assert.True(cost.ModelKnown);
