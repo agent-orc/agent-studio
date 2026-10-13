@@ -535,7 +535,7 @@ internal static class PromptDescriptionCatalog
         ["commit-message.md"] = new("Commit message",
             "Generates the git commit message for the agent-produced change set.", "Runner"),
         ["summary-protocol.md"] = new("Summary protocol",
-            "Generates the run summary / review protocol surfaced as status.md.", "Runner"),
+            "Closing Result assessment: status.md plus the structured outcome and inconsistency block (post-summary-assessment).", "Runner"),
 
         ["code-review-step.md"] = new("Code-review step",
             "Automated code-review pass over the run's diff in the post bracket.", "Review"),

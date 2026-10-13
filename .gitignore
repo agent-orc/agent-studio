@@ -70,6 +70,9 @@ backend/appsettings.Local.json
 # Rolling backend logs (logs/backend/<date>.log + last-crash.json) live at the
 # repo root at runtime. Runtime artefacts never belong in source.
 logs/
+# A test fixture's job folder mirrors the runtime layout, including
+# logs/timeline.jsonl; those committed inputs are not runtime artefacts.
+!backend.Tests/Fixtures/**/logs/
 
 # A task's active cli-output.log remains durable evidence. Its bounded previous
 # segment is runtime-only and must never become a second tracked log blob.

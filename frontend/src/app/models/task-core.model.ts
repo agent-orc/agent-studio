@@ -1,4 +1,4 @@
-import type { TaskInfo, TaskRunActivity, ContextUsageSnapshot, TaskSummaryState,
+import type { TaskInfo, TaskRunActivity, ContextUsageSnapshot, TaskSummaryState, SummaryAssessment,
   TaskPromptHistoryEntry, TaskTitleHistoryEntry, TaskLogEntry, ReviewEvidenceEntry } from './task.model';
 
 /**
@@ -137,6 +137,7 @@ export interface TaskResource<T> {
 
 export interface TaskDocumentData {
   name: 'prompt' | 'status'; markdown: string | null; summaryState: TaskSummaryState | null;
+  assessment?: SummaryAssessment | null;
 }
 export interface TaskUsageData {
   tokenSummary: TaskInfo['tokenSummary']; lastUsage: TaskInfo['lastUsage'];

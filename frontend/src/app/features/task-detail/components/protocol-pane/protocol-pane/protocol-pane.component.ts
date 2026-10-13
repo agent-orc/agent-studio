@@ -489,7 +489,8 @@ export class ProtocolPaneComponent implements OnDestroy {
   readonly displayedResultDetail = computed<TaskDetail>(() => {
     const previous = this.selectedPreviousResult();
     return previous
-      ? { ...this.detail(), statusMarkdown: previous.markdown, statusGeneration: null }
+      // The assessment belongs to the current status.md, not to an older one.
+      ? { ...this.detail(), statusMarkdown: previous.markdown, statusGeneration: null, summaryAssessment: null }
       : this.detail();
   });
   readonly displayedResultVerdict = computed<ProtocolVerdict>(() => {

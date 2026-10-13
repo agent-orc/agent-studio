@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { ResultViewComponent } from './result-view.component';
-import type { TaskDetail } from '../../../../../models/task.model';
+import type { SummaryAssessment, TaskDetail } from '../../../../../models/task.model';
 import type { ProtocolVerdict } from '../protocol-verdict';
 
 function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
@@ -70,6 +70,36 @@ const SCAFFOLD = `<!-- agent-studio:result-scaffold -->
 ## Open Items
 - None recorded in this synthesized scaffold.
 `;
+
+function assessment(overrides: Partial<SummaryAssessment> = {}): SummaryAssessment {
+  return {
+    version: 1,
+    outcome: 'delivered-via-operator-merge',
+    outcomeReason: 'Operator merge `5d480157f` delivered it.',
+    policyOutcome: 'delivered-via-operator-merge',
+    source: 'model',
+    fallbackReason: null,
+    model: 'claude-opus-5-5',
+    generatedAt: '2026-10-11T12:00:00Z',
+    inconsistencies: [
+      {
+        kind: 'files-vs-no-code',
+        signalA: 'status.md header: Files: 6',
+        signalB: 'commit chain is empty and no code activity was detected ("no code change")',
+        explanation: 'Operator merge `5d480157f` carried them (salvage commit `7aa00e27f`).',
+        workMayBeLost: false,
+      },
+      {
+        kind: 'failure-vs-completed',
+        signalA: 'Pipeline failure: `post-integrate-merge` failed',
+        signalB: 'lane `6-completed`',
+        explanation: 'The card was completed afterwards through operator merge `5d480157f`.',
+        workMayBeLost: false,
+      },
+    ],
+    ...overrides,
+  };
+}
 
 async function build(d: TaskDetail, v: ProtocolVerdict) {
   await TestBed.configureTestingModule({
@@ -266,5 +296,59 @@ describe('ResultViewComponent', () => {
     link?.click();
 
     expect(metric).toBe('artifacts');
+  });
+
+  it('renders assessment inconsistencies directly under the verdict head', async () => {
+    const d = { ...detail(HEAD_ONLY), summaryAssessment: assessment() } as TaskDetail;
+    const fixture = await build(d, verdict({ status: 'failed', label: 'Pipeline failure' }));
+    const el = fixture.nativeElement as HTMLElement;
+
+    const block = el.querySelector('[data-testid="result-inconsistencies"]');
+    expect(block).not.toBeNull();
+    expect(block?.previousElementSibling?.classList.contains('result__head')).toBe(true);
+    expect(block?.textContent).toContain('2 signal pairs disagree');
+    expect(el.querySelector('[data-testid="result-assessment-outcome"]')?.textContent)
+      .toContain('delivered via operator merge');
+    const rows = el.querySelectorAll('[data-testid="result-inconsistency"]');
+    expect(rows.length).toBe(2);
+    expect(rows[0].getAttribute('data-kind')).toBe('files-vs-no-code');
+    expect(rows[0].textContent).toContain('Files: 6');
+    expect(rows[0].textContent).toContain('no code change');
+    expect(rows[0].querySelector('[data-testid="result-inconsistency-explanation"]')?.textContent)
+      .toContain('5d480157f');
+    expect(rows[1].querySelector('[data-testid="result-inconsistency-loss"]')?.textContent?.trim())
+      .toBe('no work lost');
+    expect(block?.getAttribute('data-work-lost')).toBe('false');
+  });
+
+  it('marks a possible loss with the problem tone', async () => {
+    const d = { ...detail(HEAD_ONLY), summaryAssessment: assessment({
+      outcome: 'failed',
+      inconsistencies: [{
+        kind: 'salvage-not-integrated',
+        signalA: 'salvage commit `7aa00e27f`',
+        signalB: 'no card commit and no integration record',
+        explanation: '',
+        workMayBeLost: true,
+      }],
+    }) } as TaskDetail;
+    const fixture = await build(d, verdict());
+    const el = fixture.nativeElement as HTMLElement;
+
+    expect(el.querySelector('[data-testid="result-inconsistencies"]')?.textContent).toContain('1 signal pair disagrees');
+    const badge = el.querySelector('[data-testid="result-inconsistency-loss"]');
+    expect(badge?.getAttribute('data-tone')).toBe('problem');
+    expect(badge?.textContent?.trim()).toBe('work may be lost');
+    expect(el.querySelector('[data-testid="result-inconsistency-explanation"]')).toBeNull();
+  });
+
+  it('renders no inconsistency block for a clean card', async () => {
+    const clean = { ...detail(HEAD_ONLY), summaryAssessment: assessment({ outcome: 'delivered', inconsistencies: [] }) } as TaskDetail;
+    const fixture = await build(clean, verdict());
+    expect((fixture.nativeElement as HTMLElement).querySelector('[data-testid="result-inconsistencies"]')).toBeNull();
+
+    TestBed.resetTestingModule();
+    const legacy = await build(detail(HEAD_ONLY), verdict());
+    expect((legacy.nativeElement as HTMLElement).querySelector('[data-testid="result-inconsistencies"]')).toBeNull();
   });
 });

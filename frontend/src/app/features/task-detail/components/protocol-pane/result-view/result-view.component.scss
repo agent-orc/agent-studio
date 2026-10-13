@@ -169,6 +169,80 @@
   line-height: 1.4;
 }
 
+// --- 1b. Assessment inconsistencies (AGT-3046) -----------------------------
+// Signals that contradict each other, directly under the verdict. Warn tone via
+// a background tint and a hairline border on all sides, never a left bar (R1).
+.result__inconsistencies {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--studio-accent-warn) 35%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--studio-accent-warn) 9%, transparent);
+  color: var(--studio-fg);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.result__inconsistencies-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--studio-fg-strong, var(--studio-fg));
+  font-weight: 600;
+}
+
+.result__inconsistencies-outcome {
+  color: var(--studio-fg-muted);
+  font-weight: 400;
+}
+
+.result__inconsistencies-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.result__inconsistency-signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.result__inconsistency-signal {
+  font-weight: 500;
+}
+
+.result__inconsistency-vs {
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+}
+
+.result__inconsistency-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-fg-muted) 14%, transparent);
+  color: var(--studio-fg-muted);
+  font-size: 11px;
+
+  &[data-tone="problem"] {
+    background: color-mix(in srgb, var(--severity-high) 16%, transparent);
+    color: var(--severity-high);
+  }
+}
+
+.result__inconsistency-explanation {
+  margin: 2px 0 0;
+  color: var(--studio-fg-muted);
+}
+
 // --- 2. Overview ------------------------------------------------------------
 // Case layouts keep their distinct reading order on one flat surface.
 .result__overview {

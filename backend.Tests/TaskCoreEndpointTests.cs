@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using AgentStudio.Review;
 using AgentStudio.Security;
 using Xunit;
 
@@ -209,6 +210,45 @@ public sealed class TaskCoreEndpointTests : IDisposable
         index.ForceRefresh();
         using var missing = await client.GetAsync($"/api/tasks/AGT-unknown/details/usage?project={project.Id}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
+    public async Task StatusDocument_ServesTheAssessmentOnlyWhileStatusMdStillMatches()
+    {
+        Seed("AGT-core", TaskStates.Ready);
+        var folder = Path.Combine(Jobs, TaskStates.Ready, "AGT-core");
+        const string parkedStatus = "# Status\n\n- Result: Partial\n- Files: 6\n";
+        File.WriteAllText(Path.Combine(folder, "status.md"), parkedStatus);
+        SummaryAssessmentStore.Write(folder, new SummaryAssessment
+        {
+            Outcome = SummaryOutcomes.ParkedOnDecision,
+            Inconsistencies = [new SummaryInconsistency { Kind = SummaryInconsistencyKinds.SalvageNotIntegrated, WorkMayBeLost = true }],
+        }, parkedStatus);
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        var project = factory.Services.GetRequiredService<ProjectRegistry>().FindByStorageLocation(Jobs)!;
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+        var url = $"/api/tasks/AGT-core/details/documents?project={project.Id}&name=status";
+
+        using (var bound = await client.GetAsync(url))
+        {
+            bound.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await bound.Content.ReadAsStringAsync());
+            Assert.Equal(SummaryOutcomes.ParkedOnDecision,
+                body.RootElement.GetProperty("data").GetProperty("assessment").GetProperty("outcome").GetString());
+        }
+
+        // The operator completes the card externally: a different writer replaces
+        // status.md and leaves summary-assessment.json behind.
+        File.WriteAllText(Path.Combine(folder, "status.md"), "# Result\n\n- Result: Success\n- Completed externally.\n");
+        using var replaced = await client.GetAsync(url);
+        replaced.EnsureSuccessStatusCode();
+        using var replacedBody = JsonDocument.Parse(await replaced.Content.ReadAsStringAsync());
+        var data = replacedBody.RootElement.GetProperty("data");
+        Assert.Contains("Completed externally.", data.GetProperty("markdown").GetString());
+        Assert.True(!data.TryGetProperty("assessment", out var stale) || stale.ValueKind == JsonValueKind.Null);
+        Assert.True(File.Exists(SummaryAssessmentStore.PathFor(folder)));
     }
 
     [Fact]
