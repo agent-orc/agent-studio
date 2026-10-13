@@ -3,10 +3,10 @@ id: token-aggregation-concept
 title: "Token aggregators use canonical hybrid projections (concept + living knowledge)"
 status: active
 category: concept
-updatedAt: 2026-08-11
-last-updated: 2026-08-11
-reason: "Align pipeline RUNS totals with canonical task-ledger attribution and expose missing run telemetry"
-taskKey: AGT-2626
+updatedAt: 2026-10-13
+last-updated: 2026-10-13
+reason: "Describe the read, identity, price, fold, and projection stages after AGT-3037"
+taskKey: AGT-3037
 tags: [token-aggregation, hybrid-projection, task-receipt, drift-rule, observability, cost]
 related-tasks: [ASS-881, ASS-1717, AGT-2542, AGT-2624, AGT-2626]
 related-adrs: []
@@ -18,6 +18,24 @@ related-docs:
 ---
 
 # Token aggregators -> canonical hybrid projections
+
+## Current implementation (AGT-3037)
+
+The runtime reads through `ITokenAggregator` and `TokenAggregationService`.
+`ProjectTokenLedger` merges bus history, task receipts, and chat fallback
+receipts. `ModelIdentity` owns model ids, display labels, and CLI attribution.
+`TokenPricingService` prices each entry at its recorded time. Pure folds under
+`backend/Features/Tokens/Aggregation/` produce project summaries, workspace
+summaries, per-job views, and timelines. Both project and workspace model rows
+use `ModelUsageFold`. Endpoint projections and caches do not read or normalize
+receipts themselves.
+
+The bus-backed reader and legacy service names below describe the earlier
+migration phases. Those concrete readers and parity-only tests were removed
+in AGT-3037. The golden characterization in
+`backend.Tests/TokenUsageCharacterizationTests.cs` now checks the same fixed
+receipts and bus rows across the project, workspace, pipeline, and timeline
+surfaces.
 
 > **What this page is.** A living concept and knowledge-collection page for the
 > token-aggregation area of the backend. It explains *why* every token roll-up

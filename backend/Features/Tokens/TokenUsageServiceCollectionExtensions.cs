@@ -14,7 +14,9 @@ public static class TokenUsageServiceCollectionExtensions
         services.AddSingleton<ProjectTokenLedger>();
         services.AddSingleton<BusAdHocUsageReader>();
 
-        // Price: catalog drift signal for active unknown models.
+        // Price: one service owns all provider calls and per-entry timestamps.
+        services.AddSingleton<ITokenPriceProvider, TokenEconomyPriceProvider>();
+        services.AddSingleton<ITokenPricing, TokenPricingService>();
         services.AddSingleton<TokenPricingDriftMonitor>();
 
         // Project: aggregation facade, response caches, and report services.

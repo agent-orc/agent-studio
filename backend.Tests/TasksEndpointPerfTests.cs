@@ -522,18 +522,18 @@ public class JobsEndpointPerfTests : IDisposable
         var busCache = new BusAggregationCache(store);
         store.OnAppended = busCache.OnAppended;
         var summaryCache = new TokenSummaryCacheStore(config, NullLogger<TokenSummaryCacheStore>.Instance);
-        var ledger = new BusBackedProjectTokenUsageReader(
-            store,
-            config,
-            new JobStatsMetadataCache(BuildScannerFor(workspace), config, NullLogger<JobStatsMetadataCache>.Instance),
-            new ProjectTokenReceiptReader());
+        var jobs = new JobStatsMetadataCache(BuildScannerFor(workspace), config,
+            NullLogger<JobStatsMetadataCache>.Instance);
+        var ledger = new ProjectTokenLedger(store, config, new ProjectTokenReceiptReader());
         return new TokenAggregationService(
             busCache,
+            store,
             config,
+            ledger,
+            jobs,
+            new BusAdHocUsageReader(store, config),
             summaryCache,
-            new BusBackedAdHocUsageReader(store, config),
-            new BusBackedWorkspaceTimelineReader(store, config, ledger),
-            ledger);
+            new TokenPricingService(new TokenEconomyPriceProvider()));
     }
 
     private static TaskScannerService BuildScannerFor(string watchPath)

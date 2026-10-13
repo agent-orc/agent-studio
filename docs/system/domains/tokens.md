@@ -1,5 +1,13 @@
 # Token Aggregation: Sources, Aggregation, and Migration Record
 
+> **Current implementation (2026-10-13, AGT-3037):** The token path is
+> `ProjectTokenLedger` / `BusAdHocUsageReader` (read), `ModelIdentity`
+> (identity), `TokenPricingService` (price), pure folds in
+> `backend/Features/Tokens/Aggregation/` (aggregate), then
+> `TokenAggregationService` and endpoint DTOs (project). `ModelUsageFold` is
+> shared by project and workspace model rows. Earlier migration history below
+> retains the names of services that have since been removed.
+
 > **Concept + living knowledge page:**
 > [`docs/concepts/token-aggregation.md`](../../concepts/token-aggregation.md)
 > explains the aggregator -> bus-shim concept for operators and LLM instances and
