@@ -1407,6 +1407,10 @@ public sealed class TaskIntegrationStatusServiceTests : IDisposable
         Assert.DoesNotContain("agent-studio:", partial.Detail);
         Assert.True(partial.Repositories[0].OnIntegrationBranch);
         Assert.False(partial.Repositories[1].OnIntegrationBranch);
+        // The repository lines are projected from the same partition as the verdict.
+        Assert.Equal("1/1 current commits on develop.", partial.Repositories[0].Detail);
+        Assert.Equal($"0/1 current commits on main; missing: {runnerSha[..7]}.", partial.Repositories[1].Detail);
+        Assert.Contains($"runner: {runnerSha[..7]}", partial.Detail);
         Assert.Equal(CommitIntegrationRules.Superseded, partial.Repositories[0].Commits[0].IntegrationRule);
         Assert.Equal(CommitIntegrationRules.Ancestor, partial.Repositories[0].Commits[1].IntegrationRule);
         Assert.Equal(CommitIntegrationRules.Missing, partial.Repositories[1].Commits[0].IntegrationRule);
