@@ -21,12 +21,7 @@ public static class RemoteProjectRepositoryResolver
     {
         if (project is null) return null;
 
-        var repoEntry = project.Urls.FirstOrDefault(url =>
-            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase));
-
-        var repositoryUrl = IsUsableRemote(repoEntry?.Url) ? repoEntry!.Url.Trim() : null;
+        var repositoryUrl = ResolveRepositoryUrl(project);
         if (repositoryUrl is null) return null;
         var gitDirectory = ResolveGitDirectory(project.RepositoryPath);
 
@@ -51,6 +46,19 @@ public static class RemoteProjectRepositoryResolver
     /// local <c>HEAD</c>). Repo truth for callers that need to rank it against
     /// other sources themselves instead of taking the merged result above.
     /// </summary>
+    /// <summary>
+    /// The project's usable remote URL, without the branch lookup
+    /// <see cref="Resolve"/> reads from the local checkout.
+    /// </summary>
+    public static string? ResolveRepositoryUrl(ProjectRecord? project)
+    {
+        var repoEntry = project?.Urls.FirstOrDefault(url =>
+            string.Equals(url.Id, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(url.Label, "repository", StringComparison.OrdinalIgnoreCase));
+        return IsUsableRemote(repoEntry?.Url) ? repoEntry!.Url.Trim() : null;
+    }
+
     public static string? ReadRepositoryDefaultBranch(ProjectRecord? project)
         => project is null ? null : ReadDefaultBranch(ResolveGitDirectory(project.RepositoryPath));
 

@@ -265,8 +265,13 @@ public sealed partial class TaskServerStore
         IReadOnlyList<ReviewUnclaimableAttemptDto> unclaimableToLog = [];
         await InWriteTransactionAsync(async (connection, transaction) =>
         {
-            var executor = await ReadReviewExecutorAsync(
-                connection, transaction, request.ExecutorId, request.InstanceId, ct);
+            var executor = await WithProvenRepositoryReadAsync(
+                connection,
+                transaction,
+                await ReadReviewExecutorAsync(connection, transaction, request.ExecutorId, request.InstanceId, ct),
+                request.ExecutorId,
+                request.InstanceId,
+                ct);
             await SupersedeUnclaimableReviewAttemptsAsync(
                 connection,
                 transaction,
@@ -524,9 +529,9 @@ public sealed partial class TaskServerStore
         string codingHostId,
         CancellationToken ct)
     {
-        var alternatives = new List<(string RunnerId, string HostId, IReadOnlySet<string> Capabilities)>();
+        var alternatives = new List<(string RunnerId, string HostId, string InstanceId, IReadOnlySet<string> Capabilities)>();
         await using (var command = Command(connection, """
-            SELECT id, host_id, capabilities_json
+            SELECT id, host_id, capabilities_json, instance_id
               FROM runners
              WHERE status = 'active'
                AND host_id <> $host
@@ -547,12 +552,17 @@ public sealed partial class TaskServerStore
                     .ToHashSet(StringComparer.Ordinal);
                 if (capabilities.Contains(ReviewCapabilities.ReviewExecutor)
                     && !capabilities.Contains(ReviewCapabilities.CodingExecutor))
-                    alternatives.Add((reader.GetString(0), reader.GetString(1), capabilities));
+                    alternatives.Add((reader.GetString(0), reader.GetString(1), reader.GetString(3), capabilities));
             }
         }
         foreach (var other in alternatives)
         {
-            if (MissingSubjectCapabilities(new ReviewExecutorRow(other.HostId, other.Capabilities), subject).Count > 0)
+            // AGT-3077: judge the alternative by its proven read keys, like its
+            // own claim would; yielding to a host that skips the review strands it.
+            var otherExecutor = await WithProvenRepositoryReadAsync(
+                connection, transaction, new ReviewExecutorRow(other.HostId, other.Capabilities),
+                other.RunnerId, other.InstanceId, ct);
+            if (MissingSubjectCapabilities(otherExecutor, subject).Count > 0)
                 continue;
             var requirements = RequiredReviewCapabilities(request.RequiredCapabilities, subject);
             var admission = await EvaluateCapabilityAdmissionAsync(
@@ -693,6 +703,8 @@ public sealed partial class TaskServerStore
         {
             requirements.Add(CapabilityProtocol.GitFetch);
             requirements.Add(ReviewCapabilities.GitMaterialization);
+            if (ReviewRepositoryAccessPolicy.RequiredCapability(subject.Plan, subject.RepositoryUrl) is { } read)
+                requirements.Add(read);
         }
         if (!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId))
             requirements.Add(ReviewCapabilities.SourceBundleMaterialization);
@@ -1724,6 +1736,44 @@ public sealed partial class TaskServerStore
             capabilities.ToHashSet(StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// AGT-3077: a registered <c>review:repository-read</c> key names a
+    /// configured credential, not a working one. Keep it only while this
+    /// instance's current advertisement reports a fresh, ready read proof.
+    /// </summary>
+    private async Task<ReviewExecutorRow> WithProvenRepositoryReadAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ReviewExecutorRow executor,
+        string executorId,
+        string instanceId,
+        CancellationToken ct)
+    {
+        if (!executor.Capabilities.Any(IsRepositoryReadKey)) return executor;
+        var proven = new HashSet<string>(StringComparer.Ordinal);
+        var now = UtcNow;
+        await using (var command = Command(connection, """
+            SELECT capability_key, fresh_until FROM runner_capabilities
+             WHERE runner_id = $id AND advertised_instance_id = $instance
+               AND advertised_status = 'ready';
+            """, transaction, ("$id", executorId), ("$instance", instanceId)))
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+                if (IsRepositoryReadKey(reader.GetString(0)) && Parse(reader.GetString(1)) > now)
+                    proven.Add(reader.GetString(0));
+        }
+        return executor with
+        {
+            Capabilities = executor.Capabilities
+                .Where(key => !IsRepositoryReadKey(key) || proven.Contains(key))
+                .ToHashSet(StringComparer.Ordinal),
+        };
+    }
+
+    private static bool IsRepositoryReadKey(string key)
+        => key.StartsWith(ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal);
+
     private static async Task<ReviewAuthorityRow> ReadReviewAuthorityAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -2076,6 +2126,10 @@ public sealed partial class TaskServerStore
             if (needed && !executor.Capabilities.Contains(key) && !missing.Contains(key)) missing.Add(key);
         }
         Require(!string.IsNullOrWhiteSpace(subject.RepositoryUrl), ReviewCapabilities.GitMaterialization);
+        // AGT-3077: a private repository is claimable only with a scoped read credential.
+        foreach (var key in ReviewRepositoryAccessPolicy.MissingCapabilities(
+                     subject.Plan, subject.RepositoryUrl, executor.Capabilities))
+            Require(true, key);
         Require(!string.IsNullOrWhiteSpace(subject.SourceBundleArtifactId),
             ReviewCapabilities.SourceBundleMaterialization);
         Require(subject.Plan.RequiresVisualReview, ReviewCapabilities.VisionReview);

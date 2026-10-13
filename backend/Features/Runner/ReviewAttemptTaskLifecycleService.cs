@@ -90,7 +90,8 @@ public sealed class ReviewAttemptTaskLifecycleService
         int? requestedTtlSeconds,
         IReadOnlySet<string>? capabilities = null,
         IReadOnlySet<string>? heldTaskKeys = null,
-        Func<ReviewAttemptDto, bool>? admission = null)
+        Func<ReviewAttemptDto, bool>? admission = null,
+        IReadOnlyDictionary<string, ReviewClaimRepositoryFact>? repositoryFacts = null)
     {
         lock (_gate)
         {
@@ -103,7 +104,8 @@ public sealed class ReviewAttemptTaskLifecycleService
                 requestedTtlSeconds,
                 capabilities,
                 heldTaskKeys,
-                admission);
+                admission,
+                repositoryFacts);
             AppendClaimEntry(claimed, tasks);
             return claimed;
         }

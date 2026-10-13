@@ -123,7 +123,11 @@ public sealed record ReviewPlanDto(
     /// names the eligible source attempts and never a result. Null or empty
     /// means every command runs.
     /// </summary>
-    IReadOnlyList<string>? VerifyReuseFromAttemptIds = null);
+    IReadOnlyList<string>? VerifyReuseFromAttemptIds = null,
+    // AGT-3077: sealed from the project's repository visibility. A private
+    // repository is claimable only by an executor that registered the
+    // repository-read capability for exactly this repository.
+    bool PrivateRepository = false);
 
 public sealed record ReviewSkippedAspectDto(string Aspect, string Reason);
 
@@ -289,10 +293,17 @@ public static class ReviewClaimEmptyResponses
             .Order(StringComparer.Ordinal)
             .ToArray();
         var oldest = ordered[0];
+        // AGT-3077: a missing repository-read key is an operator setup step,
+        // not a toolchain gap; say which credential the host lacks.
+        var repositoryAccess = missing.FirstOrDefault(key =>
+            key.StartsWith(ReviewRepositoryAccessPolicy.ReadCapabilityPrefix, StringComparison.Ordinal));
         return new ReviewClaimResponse(
             "empty",
             Message: $"{ordered.Length} pending ReviewAttempt(s) require capabilities this review executor did not "
-                     + $"register: {string.Join(", ", missing)}. Oldest: {oldest.AttemptId} ({oldest.TaskKey}).",
+                     + $"register: {string.Join(", ", missing)}. Oldest: {oldest.AttemptId} ({oldest.TaskKey})."
+                     + (repositoryAccess is null
+                         ? string.Empty
+                         : " " + ReviewRepositoryAccessPolicy.RefusalMessage(repositoryAccess)),
             Reason: ReviewClaimEmptyReasons.UnclaimablePlanRequirements,
             MissingCapabilities: missing,
             UnclaimableAttempts: ordered.Take(MaxNamedAttempts).ToArray());

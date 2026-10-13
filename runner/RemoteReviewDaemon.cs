@@ -294,7 +294,17 @@ public sealed class RemoteReviewDaemon
             CancellationToken ct)
         {
             using var operation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var advertisement = CapabilityAdvertisementRecovery.ExecuteAsync(
+            var advertisement = ProveRepositoryReadThenAdvertiseAsync();
+            async Task ProveRepositoryReadThenAdvertiseAsync()
+            {
+                // AGT-3077: a repository-read key is advertised ready only after
+                // its credential answered a real ls-remote. The probe bounds
+                // each proof by its own timeout, outside the request deadline.
+                await ReviewRepositoryReadProbe.Shared.RefreshDueAsync(
+                    _options.ReviewGitCredentialsFile, _log, operation.Token);
+                await AdvertiseAsync();
+            }
+            Task AdvertiseAsync() => CapabilityAdvertisementRecovery.ExecuteAsync(
                 "review capability advertisement",
                 async operationToken =>
                 {

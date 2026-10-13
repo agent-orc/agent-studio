@@ -16,7 +16,9 @@ internal sealed record DetachedReviewSpec(
     // daemon's environment, so the hang detectors travel with the spec. A null
     // (spec written by an older daemon) falls back to the worker's environment.
     int? CommandSilenceWatchdogSeconds = null,
-    int? ReviewNoCpuProgressSeconds = null);
+    int? ReviewNoCpuProgressSeconds = null,
+    // AGT-3077: the path only; the worker reads the credential itself.
+    string? ReviewGitCredentialsFile = null);
 
 internal sealed record DetachedReviewIdentity(
     int ProcessId,
@@ -349,7 +351,8 @@ internal sealed class DurableReviewProcess
             options.CodexCliBin,
             options.ClaudeCliBin,
             options.CommandSilenceWatchdogSeconds,
-            options.ReviewNoCpuProgressSeconds);
+            options.ReviewNoCpuProgressSeconds,
+            options.ReviewGitCredentialsFile);
 
     /// <summary>
     /// Options for the detached worker. Everything the workspace needs comes
@@ -369,6 +372,7 @@ internal sealed class DurableReviewProcess
             WorkDir = Path.Combine(spec.ReviewWorkDir, ".coding-not-used"),
             ReviewWorkDir = spec.ReviewWorkDir,
             ReviewCredentialEnvironment = spec.ReviewCredentialEnvironment,
+            ReviewGitCredentialsFile = spec.ReviewGitCredentialsFile,
             BaseBranch = "main",
             CliType = spec.CliType ?? CliSelection.ClaudeCli,
             CodexCliBin = spec.CodexCliBin ?? "codex",

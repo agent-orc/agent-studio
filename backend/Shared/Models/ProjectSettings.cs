@@ -432,6 +432,15 @@ public record ProjectSettings
     /// </summary>
     public bool? IntegrationGateReviewReuse { get; init; }
 
+    /// <summary>
+    /// AGT-3077: <c>private</c> when the project repository cannot be cloned
+    /// without credentials. Remote Review plans then require the
+    /// <c>review:repository-read:&lt;host/path&gt;</c> capability, which only a
+    /// review executor with a read-only credential scoped to this repository
+    /// registers. Null or <c>public</c> keeps the credential-free clone.
+    /// </summary>
+    public string? RepositoryVisibility { get; init; }
+
     /// <summary>Maximum automatic coding rounds for actionable review concerns. Default 1; 0 disables.</summary>
     public int MaxReviewConcernRounds { get; init; } = 1;
 

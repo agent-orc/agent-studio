@@ -48,6 +48,15 @@ public record SetCrashRecoveryRequest
     public bool Enabled { get; init; }
 }
 
+/// <summary>
+/// Body for the repository visibility (AGT-3077): <c>public</c> or
+/// <c>private</c>. Null clears the override and resolves to public.
+/// </summary>
+public record SetRepositoryVisibilityRequest
+{
+    public string? Visibility { get; init; }
+}
+
 public record SetReviewRoundBudgetsRequest
 {
     public int MaxDeliveredReviewRounds { get; init; } = 4;
@@ -693,6 +702,31 @@ public static class ProjectSettingsEndpoints
                 integrationGateReviewReuse = updated.IntegrationGateReviewReuse,
                 integrationGateReviewReuseEffective = IntegrationGateReusePolicy.IsEnabled(updated),
             });
+        });
+
+        app.MapPut("/api/projects/{projectName}/repository-visibility", (
+            string projectName,
+            SetRepositoryVisibilityRequest req,
+            ProjectSettingsService settings,
+            TaskScannerService scanner,
+            ProjectRegistry projects,
+            GitService git,
+            RemoteReviewPlanBuilder remoteReviewPlans,
+            ReviewAttemptTaskLifecycleService reviewLifecycle) =>
+        {
+            var known = scanner.GetWatchPaths().Any(e => string.Equals(e.Name, projectName, StringComparison.OrdinalIgnoreCase));
+            if (!known) return Results.NotFound(new { error = $"Unknown project '{projectName}'" });
+
+            var normalized = AgentStudio.TaskServer.Contracts.ReviewRepositoryAccessPolicy
+                .NormalizeVisibility(req.Visibility);
+            if (req.Visibility is not null && normalized is null)
+                return Results.BadRequest(new { error = $"Unsupported repository visibility '{req.Visibility}'" });
+
+            settings.SetRepositoryVisibility(projectName, normalized);
+            // Attempts queued before the flip (WEB-23) must carry the new
+            // visibility, or they still reach a host without the credential.
+            ReplanQueuedReviewAttempts(projectName, settings, projects, git, remoteReviewPlans, reviewLifecycle);
+            return Results.Ok(new { repositoryVisibility = settings.Get(projectName).RepositoryVisibility });
         });
 
         app.MapPut("/api/projects/{projectName}/auto-push-strategy", (string projectName, SetAutoPushStrategyRequest req, ProjectSettingsService settings, TaskScannerService scanner) =>
