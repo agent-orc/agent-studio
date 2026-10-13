@@ -33,7 +33,7 @@ public static class UsageCockpitEndpoints
         app.MapGet("/api/usage/cockpit", (HttpContext context, string? workspaceId,
             string? primaryCli, WorkspaceRegistry workspaces, WorkspaceSettingsService settings,
             ProjectRegistry projects, TaskScannerService scanner, QuotaService quota,
-            BusBackedProjectTokenUsageReader ledger, AgentMessageBusStore bus,
+            ProjectTokenLedger ledger, AgentMessageBusStore bus,
             TaskRunnerService runner, ClientIdentityStore clients,
             AttemptAuthorityService reviews,
             RemoteChatWorkBroker chatWork,
@@ -128,7 +128,7 @@ public static class UsageCockpitEndpoints
                     var current = costInputs[index];
                     costInputs[index] = current with
                     {
-                        Entries = ProjectTokenReceiptReader.MergeWithoutDuplicates(current.Entries, [entry])
+                        Entries = TokenLedgerMerge.WithoutDuplicates(current.Entries, [entry])
                     };
                 }
                 costInputs.Add(new UsageCostInput(null, "Unattributed", unattributed,

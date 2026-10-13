@@ -429,9 +429,6 @@ if (!publicDemoExecutionProfile)
     builder.Services.AddHostedService<OrchestratorChatLegacyMigrationHostedService>();
 builder.Services.AddSingleton<OrchestratorTurnService>();
 builder.Services.AddSingleton<GlobalOrchestratorBootstrap>();
-builder.Services.AddSingleton<TokenSummaryCacheStore>();
-builder.Services.AddSingleton<WorkspaceTokensCacheStore>();
-builder.Services.AddSingleton<AgentStudio.Tokens.TokenPricingDriftMonitor>();
 builder.Services.AddSingleton<WorkspaceSummaryService>();
 builder.Services.AddSingleton<AutoReviewPostProcessingQueue>();
 builder.Services.AddSingleton<IAutoReviewPostProcessingQueue>(sp =>
@@ -452,8 +449,6 @@ builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
 builder.Services.AddSingleton<RemoteTokenReceiptService>();
 builder.Services.AddSingleton<RemoteCompletionAttributionSweep>();
-builder.Services.AddSingleton<AgentStudio.Tokens.OpenAiUsageHistoryRepair>();
-builder.Services.AddSingleton<AgentStudio.Tokens.TokenLedgerDuplicateRepair>();
 builder.Services.AddSingleton<TaskListGitProjectionCache>();
 builder.Services.AddSingleton<OperatorReviewRequeueService>();
 // PUB-1: read-only publish-target derivation (repo facts -> Hub badges + task
@@ -650,12 +645,7 @@ builder.Services.AddSingleton<ICliUsageParser, ClaudeUsageParser>();
 builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
 builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedAdHocUsageReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedWorkspaceTimelineReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.ProjectTokenReceiptReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedProjectTokenUsageReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BetterCandidateUsageReportService>();
-builder.Services.AddSingleton<AgentStudio.Tokens.ITokenAggregator, AgentStudio.Tokens.TokenAggregationService>();
+builder.Services.AddTokenUsage();
 // Central step-call dispatch: the concrete Claude runner is wrapped by the
 // PromptLoggingCliOneShot decorator so every one-shot step prompt (aspects,
 // code-review-grade, orchestrator-decision, drift, ...) is captured raw into
