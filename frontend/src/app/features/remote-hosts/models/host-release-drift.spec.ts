@@ -47,7 +47,23 @@ describe('host release drift labels (AGT-2826)', () => {
 
   /** An ordering without a measurable gap still has to say something honest. */
   it('falls back to a wordy marker when the age is unknown', () => {
-    expect(releaseDriftLabel(drift({ behindByHours: null }))).toBe('behind Stable');
+    expect(releaseDriftLabel(drift({ behindByHours: null, behindForHours: null }))).toBe('behind Stable');
+    expect(releaseDriftLabel(drift({ behindByHours: null, behindForHours: 0 }))).toBe('behind Stable');
+  });
+
+  /**
+   * Live 12.10.2026: Stable carried no build stamp, so every behind host read
+   * "behind Stable" with no age although the server had observed it for hours.
+   */
+  it('shows the observed duration when the release-age gap is unknown', () => {
+    expect(releaseDriftLabel(drift({ behindByHours: null, behindForHours: 3.5, alarmDue: false })))
+      .toBe('behind Stable for 4h');
+    expect(releaseDriftLabel(drift({ behindByHours: null, behindForHours: 50 })))
+      .toBe('behind Stable for 2d');
+  });
+
+  it('prefers the release-age gap over the observed duration', () => {
+    expect(releaseDriftLabel(drift({ behindByHours: 5, behindForHours: 30 }))).toBe('5h behind');
   });
 
   it('rounds a sub-hour gap up so the marker never reads zero', () => {

@@ -1,4 +1,5 @@
 using AgentStudio.Runner;
+using AgentStudio.Runtime;
 using Xunit;
 using Contract = AgentStudio.TaskServer.Contracts;
 
@@ -119,6 +120,36 @@ public sealed class HostReleaseDriftPolicyTests
         var persisted = HostReleaseDriftPolicy.Evaluate(host, stable, Now, Now.AddHours(-25));
         Assert.True(persisted.AlarmDue);
         Assert.Equal(25, persisted.BehindFor!.Value.TotalHours);
+    }
+
+    /// <summary>
+    /// Live 12.10.2026: Stable ran without a build manifest, so its legacy
+    /// identity has no build instant. A host whose stamp parses is still marked
+    /// behind by version, without a release-age gap; the alarm and the page fall
+    /// back to the observed duration. A build instant for a legacy Stable is a
+    /// deploy-side follow-up, not something this comparison may invent.
+    /// </summary>
+    [Fact]
+    public void A_legacy_stable_without_a_build_instant_leaves_the_gap_unknown()
+    {
+        var legacy = StableReleaseIdentity.FromBuildIdentity(new BuildIdentity(
+            1, "Agent Studio", "untagged", "0.9.5", "e21984dc5", true, null, "unverified",
+            new ReleaseArtifactIdentity("CodingAgentRunner", "unknown", "untagged", "unknown", "unverified"),
+            new ReleaseArtifactIdentity("coding-agent-chat", "unknown", "untagged", "unknown", "unverified"),
+            Legacy: true));
+        var host = Host(
+            releaseId: "20260928T1211Z-v0.9.4-6759fe303",
+            version: "0.9.4",
+            commit: "6759fe303",
+            builtAtOverride: new DateTime(2026, 9, 28, 12, 11, 0, DateTimeKind.Utc));
+
+        var verdict = HostReleaseDriftPolicy.Evaluate(host, legacy, Now, Now.AddHours(-3));
+
+        Assert.Null(legacy.BuiltAt);
+        Assert.Equal(HostReleaseDriftStates.Behind, verdict.State);
+        Assert.Null(verdict.BehindBy);
+        Assert.Equal(3, verdict.BehindFor!.Value.TotalHours);
+        Assert.False(verdict.AlarmDue);
     }
 
     [Fact]

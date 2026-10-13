@@ -151,10 +151,89 @@ public sealed class RunnerReleaseIdentityTests
     [Theory]
     [InlineData("agt-2650b-20260812T064049Z-ca5cbd6ff", true)]
     [InlineData("release-20260812T064049Z", true)]
+    [InlineData("20260928T1211Z-v0.9.4-6759fe303", true)]
+    [InlineData("release-20260812T06404Z", false)]
+    [InlineData("release-20260812T0640499Z", false)]
     [InlineData("release-2026-08-12", false)]
     [InlineData("", false)]
     public void ParseReleaseStamp_only_accepts_a_compact_utc_stamp(string releaseId, bool parsed)
         => Assert.Equal(parsed, RunnerReleaseIdentity.ParseReleaseStamp(releaseId) is not null);
+
+    /// <summary>
+    /// The live agent-runner-01 release id carries a minute-precision stamp.
+    /// Reading only HHmmss left its build instant null, so the release-age gap
+    /// could never be computed (AGT-2826 acceptance, 12.10.2026).
+    /// </summary>
+    [Fact]
+    public void ParseReleaseStamp_reads_a_minute_precision_pipeline_stamp()
+        => Assert.Equal(
+            new DateTime(2026, 9, 28, 12, 11, 0, DateTimeKind.Utc),
+            RunnerReleaseIdentity.ParseReleaseStamp("20260928T1211Z-v0.9.4-6759fe303"));
+
+    /// <summary>
+    /// The runner project writes <c>+sha.unknown</c> when no source revision was
+    /// passed. That used to be reported as the commit <c>sha</c> on every host.
+    /// </summary>
+    [Theory]
+    [InlineData("0.9.4+sha.unknown", null)]
+    [InlineData("0.9.4+sha.6759fe303", "6759fe303")]
+    [InlineData("0.9.4+sha.6759fe303a1b2c3d4e5f60718293a4b5c6d7e8f9", "6759fe303a1b2c3d4e5f60718293a4b5c6d7e8f9")]
+    [InlineData("0.2.7+ca5cbd6ff9a1", "ca5cbd6ff9a1")]
+    [InlineData("0.9.4+sha.abc12", null)]
+    [InlineData("0.9.4+unknown", null)]
+    [InlineData("0.9.4", null)]
+    [InlineData(null, null)]
+    public void ParseInformationalCommit_reports_only_a_sha_shaped_revision(string? informational, string? commit)
+        => Assert.Equal(commit, RunnerReleaseIdentity.ParseInformationalCommit(informational));
+
+    [Fact]
+    public void Describe_never_reports_the_sha_marker_of_an_unknown_revision_as_a_commit()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "0.9.4+sha.unknown",
+            informationalVersion: "0.9.4+sha.unknown",
+            assemblyVersion: "0.9.4",
+            configuredCommit: "",
+            configuredBuiltAt: "");
+
+        Assert.Equal("0.9.4", identity.Version);
+        Assert.Null(identity.Commit);
+        Assert.Null(identity.BuiltAt);
+    }
+
+    [Fact]
+    public void Describe_reads_commit_and_build_instant_from_a_minute_stamped_pipeline_release()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "20260928T1211Z-v0.9.4-6759fe303",
+            informationalVersion: "0.9.4+sha.unknown",
+            assemblyVersion: "0.9.4",
+            configuredCommit: "",
+            configuredBuiltAt: "");
+
+        Assert.Equal("6759fe303", identity.Commit);
+        Assert.Equal(new DateTime(2026, 9, 28, 12, 11, 0, DateTimeKind.Utc), identity.BuiltAt);
+    }
+
+    [Theory]
+    [InlineData("local-dev")]
+    [InlineData("release-20260812T064049Z")]
+    [InlineData("agt-2650b-feedface")]
+    public void ParseReleaseIdCommit_reads_only_the_trailing_sha_of_a_stamped_release(string releaseId)
+        => Assert.Null(RunnerReleaseIdentity.ParseReleaseIdCommit(releaseId));
+
+    [Fact]
+    public void Describe_drops_a_configured_commit_that_is_not_a_sha()
+    {
+        var identity = RunnerReleaseIdentity.Describe(
+            "local-dev",
+            informationalVersion: "0.9.4+sha.6759fe303",
+            assemblyVersion: "0.9.4",
+            configuredCommit: "sha",
+            configuredBuiltAt: "");
+
+        Assert.Equal("6759fe303", identity.Commit);
+    }
 
     private static bool TryCreateDirectoryLink(string link, string target)
     {
