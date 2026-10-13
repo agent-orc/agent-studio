@@ -163,6 +163,8 @@ export function buildCommitChainView(job: TaskInfo, variant: 'full' | 'review'):
   const chain = commitChainOf(job);
   if (chain.length === 0 && job.commitSummary) {
     const summary = job.commitSummary;
+    // A board card names the chain length once, as commitCount.
+    const count = job.commitCount ?? 1;
     return {
       variant,
       rows: [{
@@ -172,10 +174,10 @@ export function buildCommitChainView(job: TaskInfo, variant: 'full' | 'review'):
         hasFiles: summary.hasFiles,
         tooltip: summary.latestSubject,
       }],
-      moreCount: Math.max(0, summary.count - 1),
-      totalCount: summary.count,
+      moreCount: Math.max(0, count - 1),
+      totalCount: count,
       anyFiles: summary.hasFiles,
-      moreTooltip: summary.count > 1 ? `${summary.count - 1} earlier commits. Open the task for the full chain.` : '',
+      moreTooltip: count > 1 ? `${count - 1} earlier commits. Open the task for the full chain.` : '',
     };
   }
   if (chain.length === 0) return null;
@@ -227,7 +229,7 @@ export function buildCommitChainTooltip(job: TaskInfo): StructuredTooltip | stri
   const chain = commitChainOf(job);
   if (chain.length === 0 && job.commitSummary) {
     const summary = job.commitSummary;
-    return `${summary.count} commit(s). Latest: ${summary.latestShortSha} ${summary.latestSubject}. Open the task for the full chain.`;
+    return `${job.commitCount ?? 1} commit(s). Latest: ${summary.latestShortSha} ${summary.latestSubject}. Open the task for the full chain.`;
   }
   if (chain.length === 0) return '';
   if (chain.length === 1) return buildCommitTooltip(chain[0]);
@@ -323,7 +325,7 @@ export function buildTokenBubble(tokenSummary: TaskInfo['tokenSummary']): TaskTo
     costLine: formatTokenCostDisplay({ costUsd: tokenSummary.estimatedApiCostUsd, totalTokens: total, unpricedRuns }),
     costTooltip: buildTokenCostTooltip({
       costUsd: tokenSummary.estimatedApiCostUsd,
-      priceKnown: tokenSummary.allModelsPriced === true,
+      priceKnown: tokenSummary.allModelsPriced !== false,
       totalTokens: total,
       unpricedRuns,
     }),
@@ -970,8 +972,8 @@ export function buildMergeSignal(job: TaskInfo): MergeSignalView | null {
   if (sig) {
     inDevelop = usesCanonicalIntegration
       ? canonicalIntegration?.status === 'integrated'
-      : sig.inIntegration;
-    inMain = sig.inRelease;
+      : sig.inIntegration === true;
+    inMain = sig.inRelease === true;
     developSha = usesCanonicalIntegration
       ? inDevelop ? canonicalIntegration?.sha ?? null : null
       : sig.integrationSha ?? null;
@@ -1797,7 +1799,7 @@ function dependencyTooltip(
         ? 'archived, never released - this gate can never open'
         : i.waitingForRelease
           ? 'completed, release pending'
-          : i.resolved
+          : i.resolved !== false
             ? 'completion pending'
             : 'not created yet';
     const title = i.targetTitle ? ` — ${i.targetTitle.slice(0, 40)}` : '';

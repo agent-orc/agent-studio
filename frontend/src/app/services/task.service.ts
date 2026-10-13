@@ -257,7 +257,9 @@ const STATE_TO_LANE: Record<string, LaneKey> = {
  * Board cards leave out `taskKey` when it is `{watchPath}::{id}` (the
  * backend's TaskIdentity.CreateKey); it is restored here on the freshly
  * parsed cards, which both the grouped and the flat signal share, so every
- * consumer still reads it.
+ * consumer still reads it. The other values a card leaves out because a
+ * reader can restore them are restored in the same pass
+ * (`restoreBoardCardDefaults`).
  */
 function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
   const seen = new Set<string>();
@@ -265,6 +267,7 @@ function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
   for (const lane of Object.values(grouped)) {
     for (const job of lane ?? []) {
       job.taskKey ||= `${job.watchPath}::${job.id}`;
+      restoreBoardCardDefaults(job);
       const key = job.taskKey;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -272,6 +275,26 @@ function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
     }
   }
   return jobs;
+}
+
+/**
+ * Board cards omit a token total that equals the sum of its four counters,
+ * `allModelsPriced: true`, false merge flags and `resolved: true` on waits-on
+ * edges. Restoring them keeps every consumer, including a detail painted
+ * from the clicked card before its own resources load, on the full shape.
+ */
+export function restoreBoardCardDefaults(job: TaskInfo): void {
+  const tokens = job.tokenSummary;
+  if (tokens) {
+    tokens.totalTokens ??= (tokens.inputTokens ?? 0) + (tokens.outputTokens ?? 0)
+      + (tokens.cacheReadTokens ?? 0) + (tokens.cacheCreationTokens ?? 0);
+    tokens.allModelsPriced ??= true;
+  }
+  if (job.mergeSignal) {
+    job.mergeSignal.inIntegration ??= false;
+    job.mergeSignal.inRelease ??= false;
+  }
+  for (const item of job.waitsOn?.items ?? []) item.resolved ??= true;
 }
 
 /**

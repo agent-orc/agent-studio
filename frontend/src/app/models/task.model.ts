@@ -345,8 +345,6 @@ export function taskDependencyRequiresRelease(dependency: TaskDependency): boole
 
 export interface TaskReferences {
   dependsOn: TaskDependency[];
-  /** Total dependency count when a board card carries only the first three edges. */
-  dependsOnCount?: number;
   /** Complete keys for board filtering; detailed edges remain capped on cards. */
   dependsOnKeys?: string[];
   relatedTo: string[];
@@ -725,7 +723,6 @@ export interface TaskInfo {
   commits?: TaskCommitInfo[];
   /** Board-only short commit label; the full chain is loaded with task detail. */
   commitSummary?: {
-    count: number;
     latestShortSha: string;
     latestSubject: string;
     latestFilesChanged: number;

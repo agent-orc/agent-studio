@@ -310,7 +310,7 @@ function buildMetrics(detail: TaskDetail, verdict: ProtocolVerdict, markdown: st
       value: `${formatTokens(totalTokens)} tokens`,
       tooltip: buildTokenCostTooltip({
         costUsd: tokenSummary.estimatedApiCostUsd,
-        priceKnown: tokenSummary.allModelsPriced === true,
+        priceKnown: tokenSummary.allModelsPriced !== false,
         context: `${totalTokens.toLocaleString('en-US')} tokens across this task's runs.`,
       }),
     });

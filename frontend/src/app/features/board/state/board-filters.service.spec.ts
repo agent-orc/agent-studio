@@ -92,7 +92,7 @@ describe('BoardFiltersService project selection', () => {
   it('filters overflow dependencies from summary keys across board refreshes without detail reads', () => {
     const card = {
       ...makeJob('many-edges', 'Agent Task Processor', '2-ready'),
-      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'], dependsOnCount: 20,
+      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'],
         relatedTo: [], blockedBy: [], supersedes: [] },
     } as TaskInfo;
     jobs.grouped.set(makeGrouped([card]));
