@@ -1715,7 +1715,9 @@ Remote Review checks it before settling a finding or concern continuation.
 At exhaustion, non-test findings move to one linked follow-up and test or
 evidence blocks move to Escalated with a timeline receipt that names used and
 allowed rounds and the open aspects. The local aspect path uses the same
-disposition before its Ready move. A journaled Remote Review finding decision
+disposition before its Ready move. Both review planes ask the budget only when
+their follow-up policy would open a finding or concern round; a passing report
+whose concerns open no round keeps its Pass without a follow-up card. A journaled Remote Review finding decision
 replays its lane, prompt, follow-up files and concern ledger after restart.
 Lost-worker and timeout salvage continuations check the same card budget before
 preparing another round; their callers use the existing escalation path when

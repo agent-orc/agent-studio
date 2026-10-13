@@ -5323,6 +5323,111 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("build-tests")]
+    [InlineData("tests-and-evidence")]
+    [InlineData("code-quality")]
+    public async Task Monolith_v1_review_plane_applies_the_spent_card_budget_once(string aspect)
+    {
+        // AGT-3054 (D18 A): the same facts as the local orchestrator cases in
+        // ReviewDecisionOrchestratorTests. A spent card budget escalates a test
+        // block with a receipt and degrades any other block to Pass plus one
+        // follow-up card; replaying the report changes nothing.
+        const string reviewer = "review-card-budget";
+        const string instance = "review-card-budget-host:4243";
+        var escalates = aspect != "code-quality";
+        SeedTask(TaskStates.AutoReview, TaskKey, "Card budget", "Build and verify.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        var scanner = factory.Services.GetRequiredService<TaskScannerService>();
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        var seededFolder = scanner.FindJob(TaskKey, _watchPath)!.FolderPath;
+        for (var round = 1; round <= CardRoundBudget.DefaultRoundsPerCard; round++)
+            timeline.Append(seededFolder, TimelineEventKinds.QualityLoopReopened, TimelineActors.QualityLoop,
+                $"Seeded review finding round {round}.",
+                details: new Dictionary<string, string>
+                {
+                    ["reviewAttemptId"] = $"review-seeded-{round}",
+                    ["cause"] = "multi-aspect-block",
+                });
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        await RegisterReviewExecutorAsync(http, reviewer, instance);
+        using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
+        var claim = await client.ClaimReviewAsync(
+            new Contract.ReviewClaimRequest(reviewer, instance, 120), CancellationToken.None);
+        Assert.Equal("claimed", claim.Status);
+        var request = PassingV1ReviewReport(claim, "card-budget-report") with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                aspect, "block", "RemoteAspectVerdict", "The finding persists in backend/Other.cs.",
+                "backend/Other.cs", "Fix backend/Other.cs.")],
+        };
+
+        var response = await client.ReportReviewAsync(claim.Attempt!.AttemptId, request, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var task = scanner.FindJob(TaskKey, _watchPath)!;
+        var attempt = factory.Services.GetRequiredService<AttemptAuthorityService>()
+            .GetReview(claim.Attempt.AttemptId)!;
+        var followUps = scanner.ScanAllJobs()
+            .Where(item => item.CreationSource == "review-budget-follow-up").ToArray();
+        Assert.False(File.Exists(Path.Combine(task.FolderPath, "orchestrator-follow-up.md")));
+        Assert.DoesNotContain(timeline.ReadAll(task.FolderPath), item =>
+            item.Kind == TimelineEventKinds.QualityLoopReopened
+            && item.Details?.GetValueOrDefault("reviewAttemptId") == claim.Attempt.AttemptId);
+        if (escalates)
+        {
+            Assert.Equal(TaskStates.Escalated, response.TaskState);
+            Assert.Equal(TaskStates.Escalated, task.State);
+            Assert.Equal(ReviewTerminalOutcome.ProductFailure, attempt.Outcome);
+            Assert.Empty(followUps);
+            var receipt = Assert.Single(timeline.ReadAll(task.FolderPath), item =>
+                item.Kind == TimelineEventKinds.OrchestratorEscalated
+                && item.Details?.GetValueOrDefault("reviewAttemptId") == claim.Attempt.AttemptId);
+            Assert.Equal("card-round-budget", receipt.Details!["cause"]);
+            Assert.Equal(nameof(CardRoundBudgetAction.Escalate), receipt.Details["disposition"]);
+            Assert.Equal("4", receipt.Details["roundsUsed"]);
+            Assert.Equal("4", receipt.Details["roundsAllowed"]);
+            Assert.Equal(aspect, receipt.Details["blockingAspects"]);
+        }
+        else
+        {
+            Assert.Equal("Pass", response.Outcome);
+            Assert.Equal(ReviewTerminalOutcome.Pass, attempt.Outcome);
+            Assert.NotEqual(TaskStates.Ready, task.State);
+            var followUp = Assert.Single(followUps);
+            Assert.Contains(TaskKey, followUp.References?.FollowUpOf ?? []);
+            var receipt = Assert.Single(timeline.ReadAll(task.FolderPath), item =>
+                item.Kind == TimelineEventKinds.CardRoundBudgetDisposition);
+            Assert.Equal(nameof(CardRoundBudgetAction.DegradeToFollowUp), receipt.Details!["disposition"]);
+            Assert.Equal("4", receipt.Details["roundsUsed"]);
+            Assert.Equal(aspect, receipt.Details["blockingAspects"]);
+        }
+
+        var promptBefore = File.ReadAllText(Path.Combine(task.FolderPath, "prompt.md"));
+        // Evidence projection may still append its own rows in the background;
+        // the budget decision rows are the ones a replay must not repeat.
+        string[] decisionKinds =
+        [
+            TimelineEventKinds.LaneChanged, TimelineEventKinds.OrchestratorEscalated,
+            TimelineEventKinds.QualityLoopReopened, TimelineEventKinds.CardRoundBudgetDisposition,
+        ];
+        var timelineBefore = timeline.ReadAll(task.FolderPath).Count(item => decisionKinds.Contains(item.Kind));
+        var replay = await client.ReportReviewAsync(claim.Attempt.AttemptId, request, CancellationToken.None);
+
+        Assert.Equal(response.ReportId, replay.ReportId);
+        Assert.Equal(Contract.ReviewEvidenceProjectionStatus.Duplicate, replay.EvidenceProjection);
+        scanner.InvalidateCache();
+        var replayed = scanner.FindJob(TaskKey, _watchPath)!;
+        Assert.Equal(task.State, replayed.State);
+        Assert.Equal(promptBefore, File.ReadAllText(Path.Combine(replayed.FolderPath, "prompt.md")));
+        Assert.Equal(timelineBefore,
+            timeline.ReadAll(replayed.FolderPath).Count(item => decisionKinds.Contains(item.Kind)));
+        Assert.Equal(followUps.Length, scanner.ScanAllJobs()
+            .Count(item => item.CreationSource == "review-budget-follow-up"));
+    }
+
     [Fact]
     public async Task Monolith_v1_review_plane_runs_one_concern_fix_round_then_accepts_pass_end_to_end()
     {

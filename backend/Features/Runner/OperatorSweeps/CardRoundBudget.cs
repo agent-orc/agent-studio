@@ -103,6 +103,18 @@ public static class CardRoundBudget
             : CardRoundBudgetAction.DegradeToFollowUp;
     }
 
+    /// <summary>
+    /// The review-plane question, shared by Remote Review and the local
+    /// orchestrator: a spent budget only intervenes when the review would open
+    /// another round, a block (finding round) or a concern round. A passing
+    /// report whose concerns open no round keeps its Pass without a follow-up.
+    /// </summary>
+    public static CardRoundBudgetAction DecideForReview(
+        CardRoundBudgetState budget, IReadOnlyCollection<string> blockingAspects, bool opensConcernRound)
+        => blockingAspects.Count > 0 || opensConcernRound
+            ? Decide(budget, blockingAspects)
+            : CardRoundBudgetAction.OpenRound;
+
     public static int CountRoundsUsed(
         IEnumerable<ReviewDecisionRecord> journal,
         IEnumerable<TimelineEvent> timeline,

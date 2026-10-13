@@ -60,6 +60,11 @@ round ledger and linked follow-up before it resumes delivery integration.
 The same journal records a finding-round continuation before settlement.
 Reconciliation completes its delivered-round ledger, Ready move, concern
 ledger, follow-up files, prompt note and timeline reopen once after a restart.
+It decides from the ledger before the lane: the timeline receipt marks the
+continuation complete in any lane, and a `lane_changed` row keyed by the
+continuation idempotency key means only the remaining writes run. Only a card
+that never took the move and still sits in 4-auto-review is moved, so a card
+that later returns to review is never bounced by the settled attempt.
 
 ## Concern fix and scoped re-review contract
 

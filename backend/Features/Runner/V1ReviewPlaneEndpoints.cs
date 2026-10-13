@@ -895,13 +895,7 @@ public static class V1ReviewPlaneEndpoints
                 ReviewDecisionLog.ReadAll(configuration["TaskRepository"]!, preparedTask.ProjectName),
                 timeline.ReadAll(preparedTask.FolderPath), preparedTask.Id,
                 CardRoundBudget.ResolveAllowed(configuration));
-            var cardAction = CardRoundBudget.Decide(cardBudget, blockingAspects);
-            if (!acceptedReplay && outcome == ReviewTerminalOutcome.ProductFailure
-                && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
-                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
-                    roundBudget.MaximumRounds, blockingAspects, "card-round-budget");
-            var spentConcernRound = !acceptedReplay && cardBudget.Exhausted
-                && outcome == ReviewTerminalOutcome.Pass
+            var opensConcernRound = outcome == ReviewTerminalOutcome.Pass
                 && Contract.ReviewFollowUpPolicy.Decide(
                     originalVerdicts.Select(verdict => new Contract.ReviewFollowUpFinding(
                         verdict.Aspect, verdict.Status, verdict.Summary, verdict.EvidenceChecked,
@@ -909,6 +903,13 @@ public static class V1ReviewPlaneEndpoints
                     ReviewConcernRoundStore.Read(preparedTask.FolderPath)?.Used ?? 0,
                     settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds).Action
                     == Contract.ReviewFollowUpAction.ReviewConcernRound;
+            var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockingAspects, opensConcernRound);
+            if (!acceptedReplay && outcome == ReviewTerminalOutcome.ProductFailure
+                && cardAction == CardRoundBudgetAction.DegradeToFollowUp)
+                roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
+                    roundBudget.MaximumRounds, blockingAspects, "card-round-budget");
+            var spentConcernRound = !acceptedReplay && opensConcernRound
+                && cardAction == CardRoundBudgetAction.DegradeToFollowUp;
             if (spentConcernRound)
                 roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
                     roundBudget.MaximumRounds,

@@ -2685,7 +2685,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             ReviewDecisionLog.ReadAll(workspace, entry.Name),
             _timeline?.ReadAll(current.FolderPath) ?? [], current.Id,
             CardRoundBudget.ResolveAllowed(_configuration));
-        var cardAction = CardRoundBudget.Decide(cardBudget, blockedAspects);
+        var cardAction = CardRoundBudget.DecideForReview(cardBudget, blockedAspects,
+            initialFollowUpDecision.Action == ReviewFollowUpAction.ReviewConcernRound);
         if (cardAction == CardRoundBudgetAction.DegradeToFollowUp)
             roundBudget = new ReviewRoundBudgetDecision(roundBudget.RoundNumber,
                 roundBudget.MaximumRounds,

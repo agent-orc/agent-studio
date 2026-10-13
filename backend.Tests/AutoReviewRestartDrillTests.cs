@@ -128,55 +128,130 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var seeded = Build();
         var card = SeedPassedDelivery(seeded, "finding-crash-window",
             reviewOutcome: ReviewTerminalOutcome.ProductFailure);
-        var original = JournalEntry(card, seeded);
-        var report = original.Report with
-        {
-            Outcome = "ProductFailure",
-            Verdicts = [new Contract.ReviewVerdictDto(
-                "code-quality", "block", "ProductFailure", "A concrete defect remains.")],
-        };
-        var entry = original with
-        {
-            Report = report,
-            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
-            Continuation = new RemoteReviewContinuation(
-                RemoteReviewContinuationKind.FindingRound,
-                "Fix the concrete code-quality defect.", ["code-quality"], 1,
-                new CardRoundBudgetState(1, 4),
-                new DeliveredReviewRound(card.ReviewAttemptId, ["code-quality"], []),
-                ReviewRoundBudgetLedger.Empty),
-        };
-        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, FindingRoundEntry(card, seeded));
 
         var restarted = Build();
-        var reconciler = new RemoteReviewSettlementReconciler(
-            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(),
-            restarted.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
-            restarted.Mutations, restarted.Transitions, restarted.Timeline);
+        var reconciler = Reconciler(restarted);
         Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence,
             reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!));
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.Ready, moved.State);
         var promptPath = Path.Combine(moved.FolderPath, "prompt.md");
-        var oldWrite = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var oldWrite = DateTime.UnixEpoch;
         File.SetLastWriteTimeUtc(promptPath, oldWrite);
         Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(moved));
         Assert.Equal(oldWrite, File.GetLastWriteTimeUtc(promptPath));
-        var prompt = File.ReadAllText(promptPath);
-        Assert.Equal(1, prompt.Split($"<!-- review-finding-round:{card.ReviewAttemptId} -->").Length - 1);
-        Assert.Equal(card.ReviewAttemptId,
-            ReviewConcernRoundStore.Read(moved.FolderPath)!.ReviewAttemptId);
-        Assert.Equal(card.ReviewAttemptId,
-            Assert.Single(ReviewRoundBudgetStore.Read(moved.FolderPath).Rounds).AttemptId);
-        Assert.Single(Directory.GetFiles(Path.Combine(moved.FolderPath,
-            "orchestrator-follow-up-history"), $"*{card.ReviewAttemptId}*"));
-        Assert.Single(restarted.Timeline.ReadAll(moved.FolderPath), item =>
-            item.Kind == TimelineEventKinds.QualityLoopReopened
-            && item.Details?.GetValueOrDefault("reviewAttemptId") == card.ReviewAttemptId);
+        AssertOneFindingRound(restarted, moved, card);
     }
 
     [Fact]
-    public void Spent_test_budget_escalates_with_one_receipt_after_restart()
+    public async Task Completed_finding_round_never_bounces_a_card_back_from_auto_review()
+    {
+        // The rework lands in 4-auto-review before the next review attempt is
+        // minted; the settled ProductFailure is still the current attempt.
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "finding-no-bounce",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, FindingRoundEntry(card, stack));
+        var reconciler = Reconciler(stack);
+        reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!);
+        Assert.Equal(TaskStates.Ready, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+
+        var back = await stack.Transitions.MoveAsync(
+            card.Id, TaskStates.AutoReview, _watchPath, cause: TimelineActors.System);
+        Assert.Equal(MoveJobStatus.Success, back.Status);
+        var returned = stack.Scanner.FindJob(card.Id, _watchPath)!;
+
+        Assert.NotEqual(RemoteReviewSettlementReconcileStatus.Repair, reconciler.Reconcile(returned));
+        var after = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, after.State);
+        AssertOneFindingRound(stack, after, card);
+        Assert.Single(stack.Timeline.ReadAll(after.FolderPath), item =>
+            item.Kind == TimelineEventKinds.LaneChanged
+            && item.Details?.GetValueOrDefault("to") == TaskStates.Ready);
+    }
+
+    [Fact]
+    public async Task Completed_finding_round_stays_complete_after_the_card_leaves_ready()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "finding-left-ready",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, FindingRoundEntry(card, stack));
+        var reconciler = Reconciler(stack);
+        reconciler.Reconcile(stack.Scanner.FindJob(card.Id, _watchPath)!);
+        var started = await stack.Transitions.MoveAsync(
+            card.Id, TaskStates.Progress, _watchPath, cause: TimelineActors.System,
+            suppressProductExecution: true);
+        Assert.Equal(MoveJobStatus.Success, started.Status);
+
+        // A completed continuation must not block the evidence and sidecar
+        // repair that runs after it in the same reconcile pass.
+        var inProgress = stack.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(inProgress));
+        Assert.Equal(TaskStates.Progress, stack.Scanner.FindJob(card.Id, _watchPath)!.State);
+    }
+
+    [Fact]
+    public async Task Restart_after_the_continuation_move_finishes_without_moving_again()
+    {
+        var stack = Build();
+        var card = SeedPassedDelivery(stack, "finding-after-move",
+            reviewOutcome: ReviewTerminalOutcome.ProductFailure);
+        var entry = FindingRoundEntry(card, stack);
+        RemoteReviewSettlementJournal.Write(card.FolderPath, entry);
+        // The backend stopped right after the lane move; no prompt note or
+        // receipt was written yet.
+        var moved = await stack.Transitions.MoveAsync(
+            card.Id, TaskStates.Ready, _watchPath,
+            cause: $"remote-review-continuation:{entry.AttemptId}",
+            authorityWrite: new AttemptWriteReference(entry.AttemptId, entry.Report.Fence,
+                entry.Report.AuthorityEpoch, $"continuation:{entry.IdempotencyKey}"),
+            suppressProductExecution: true,
+            expectedSourceState: TaskStates.AutoReview);
+        Assert.Equal(MoveJobStatus.Success, moved.Status);
+
+        var restarted = Build();
+        var reconciler = Reconciler(restarted);
+        var ready = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(ready));
+        Assert.Equal(RemoteReviewSettlementReconcileStatus.PendingEvidence, reconciler.Reconcile(ready));
+        var after = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.Ready, after.State);
+        AssertOneFindingRound(restarted, after, card);
+    }
+
+    [Theory]
+    [InlineData(false, false, TaskStates.AutoReview, RemoteReviewContinuationStep.Move)]
+    [InlineData(false, false, TaskStates.Ready, RemoteReviewContinuationStep.Unapplicable)]
+    [InlineData(false, true, TaskStates.Ready, RemoteReviewContinuationStep.Finish)]
+    [InlineData(false, true, TaskStates.Progress, RemoteReviewContinuationStep.Finish)]
+    [InlineData(false, true, TaskStates.AutoReview, RemoteReviewContinuationStep.Finish)]
+    [InlineData(true, true, TaskStates.AutoReview, RemoteReviewContinuationStep.Completed)]
+    [InlineData(true, true, TaskStates.Progress, RemoteReviewContinuationStep.Completed)]
+    public void Continuation_step_is_decided_from_the_ledger_before_the_lane(
+        bool receipt, bool laneRow, string lane, RemoteReviewContinuationStep expected)
+    {
+        var ledger = new List<TimelineEvent>();
+        if (laneRow)
+            ledger.Add(new TimelineEvent
+            {
+                Kind = TimelineEventKinds.LaneChanged,
+                Details = new() { ["idempotencyKey"] = "continuation:report-1" },
+            });
+        if (receipt)
+            ledger.Add(new TimelineEvent
+            {
+                Kind = TimelineEventKinds.QualityLoopReopened,
+                Details = new() { ["reviewAttemptId"] = "review-1", ["cause"] = "multi-aspect-block" },
+            });
+
+        Assert.Equal(expected, RemoteReviewContinuationPolicy.Decide(
+            ledger, "review-1", "multi-aspect-block", "continuation:report-1", lane));
+    }
+
+    [Fact]
+    public async Task Spent_test_budget_escalates_with_one_receipt_after_restart()
     {
         var seeded = Build();
         var card = SeedPassedDelivery(seeded, "test-budget-crash-window",
@@ -198,10 +273,7 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         });
 
         var restarted = Build();
-        var reconciler = new RemoteReviewSettlementReconciler(
-            restarted.Scanner, restarted.Authority, new RemoteReviewEvidenceProjectionQueue(),
-            restarted.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
-            restarted.Mutations, restarted.Transitions, restarted.Timeline);
+        var reconciler = Reconciler(restarted);
         reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!);
         var moved = restarted.Scanner.FindJob(card.Id, _watchPath)!;
         Assert.Equal(TaskStates.Escalated, moved.State);
@@ -212,6 +284,19 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         Assert.Equal("4", receipt.Details!["roundsUsed"]);
         Assert.Equal("4", receipt.Details["roundsAllowed"]);
         Assert.Equal("build-tests", receipt.Details["blockingAspects"]);
+
+        // An operator returns the card to review before a new attempt exists;
+        // the settled escalation must not push it back to 5e-escalated.
+        var returned = await restarted.Transitions.MoveAsync(
+            card.Id, TaskStates.AutoReview, _watchPath, cause: "human:operator");
+        Assert.Equal(MoveJobStatus.Success, returned.Status);
+        Assert.NotEqual(RemoteReviewSettlementReconcileStatus.Repair,
+            reconciler.Reconcile(restarted.Scanner.FindJob(card.Id, _watchPath)!));
+        var after = restarted.Scanner.FindJob(card.Id, _watchPath)!;
+        Assert.Equal(TaskStates.AutoReview, after.State);
+        Assert.Single(restarted.Timeline.ReadAll(after.FolderPath), item =>
+            item.Kind == TimelineEventKinds.OrchestratorEscalated
+            && item.Details?.GetValueOrDefault("reviewAttemptId") == card.ReviewAttemptId);
     }
 
     [Fact]
@@ -790,6 +875,48 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     {
         var path = Path.Combine(folder, "logs", "timeline.jsonl");
         return File.Exists(path) ? File.ReadAllLines(path).Length : 0;
+    }
+
+    private static RemoteReviewSettlementReconciler Reconciler(Stack stack) => new(
+        stack.Scanner, stack.Authority, new RemoteReviewEvidenceProjectionQueue(),
+        stack.Resume, NullLogger<RemoteReviewSettlementReconciler>.Instance,
+        stack.Mutations, stack.Transitions, stack.Timeline);
+
+    private static RemoteReviewSettlementEntry FindingRoundEntry(SeededCard card, Stack stack)
+    {
+        var original = JournalEntry(card, stack);
+        var report = original.Report with
+        {
+            Outcome = "ProductFailure",
+            Verdicts = [new Contract.ReviewVerdictDto(
+                "code-quality", "block", "ProductFailure", "A concrete defect remains.")],
+        };
+        return original with
+        {
+            Report = report,
+            ReportSha256 = RemoteReviewSettlementJournal.Hash(report),
+            Continuation = new RemoteReviewContinuation(
+                RemoteReviewContinuationKind.FindingRound,
+                "Fix the concrete code-quality defect.", ["code-quality"], 1,
+                new CardRoundBudgetState(1, 4),
+                new DeliveredReviewRound(card.ReviewAttemptId, ["code-quality"], []),
+                ReviewRoundBudgetLedger.Empty),
+        };
+    }
+
+    private static void AssertOneFindingRound(Stack stack, TaskInfo task, SeededCard card)
+    {
+        var prompt = File.ReadAllText(Path.Combine(task.FolderPath, "prompt.md"));
+        Assert.Equal(1, prompt.Split($"<!-- review-finding-round:{card.ReviewAttemptId} -->").Length - 1);
+        Assert.Equal(card.ReviewAttemptId,
+            ReviewConcernRoundStore.Read(task.FolderPath)!.ReviewAttemptId);
+        Assert.Equal(card.ReviewAttemptId,
+            Assert.Single(ReviewRoundBudgetStore.Read(task.FolderPath).Rounds).AttemptId);
+        Assert.Single(Directory.GetFiles(Path.Combine(task.FolderPath,
+            "orchestrator-follow-up-history"), $"*{card.ReviewAttemptId}*"));
+        Assert.Single(stack.Timeline.ReadAll(task.FolderPath), item =>
+            item.Kind == TimelineEventKinds.QualityLoopReopened
+            && item.Details?.GetValueOrDefault("reviewAttemptId") == card.ReviewAttemptId);
     }
 
     private static RemoteReviewSettlementEntry JournalEntry(SeededCard card, Stack stack)

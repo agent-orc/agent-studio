@@ -15,6 +15,33 @@ public sealed record RemoteReviewContinuation(
     DeliveredReviewRound? DeliveredRound = null,
     ReviewRoundBudgetLedger? DeliveredRoundSeed = null);
 
+public enum RemoteReviewContinuationStep { Move, Finish, Completed, Unapplicable }
+
+/// <summary>
+/// Which part of a journaled continuation still has to run. The receipt
+/// completes it; a lane row keyed by the continuation idempotency key means the
+/// move landed and only the prompt and ledger writes remain. Only a card that
+/// never took the move and still sits in 4-auto-review is moved.
+/// </summary>
+public static class RemoteReviewContinuationPolicy
+{
+    public static RemoteReviewContinuationStep Decide(
+        IEnumerable<TimelineEvent> ledger, string attemptId, string cause, string moveKey, string currentState)
+    {
+        var rows = ledger.ToList();
+        if (rows.Any(item => (item.Kind is TimelineEventKinds.QualityLoopReopened or TimelineEventKinds.OrchestratorEscalated)
+                             && item.Details?.GetValueOrDefault("reviewAttemptId") == attemptId
+                             && item.Details?.GetValueOrDefault("cause") == cause))
+            return RemoteReviewContinuationStep.Completed;
+        if (rows.Any(item => item.Kind == TimelineEventKinds.LaneChanged
+                             && item.Details?.GetValueOrDefault("idempotencyKey") == moveKey))
+            return RemoteReviewContinuationStep.Finish;
+        return currentState == TaskStates.AutoReview
+            ? RemoteReviewContinuationStep.Move
+            : RemoteReviewContinuationStep.Unapplicable;
+    }
+}
+
 public static class RemoteReviewContinuationProjection
 {
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(StringComparer.Ordinal);
@@ -37,7 +64,17 @@ public static class RemoteReviewContinuationProjection
             task = scanner.FindJob(task.Id, task.WatchPath) ?? task;
             var target = continuation.Kind == RemoteReviewContinuationKind.FindingRound
                 ? TaskStates.Ready : TaskStates.Escalated;
-            if (task.State == TaskStates.AutoReview)
+            var cause = continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                ? "multi-aspect-block" : "card-round-budget";
+            var moveKey = $"continuation:{entry.IdempotencyKey}";
+            // A settled review stays the card's current attempt until the next
+            // one is minted, so a later return to 4-auto-review must not replay
+            // this continuation: decide from the ledger first, never the lane.
+            var step = RemoteReviewContinuationPolicy.Decide(
+                timeline.ReadAll(task.FolderPath), entry.AttemptId, cause, moveKey, task.State);
+            if (step == RemoteReviewContinuationStep.Completed) return true;
+            if (step == RemoteReviewContinuationStep.Unapplicable) return false;
+            if (step == RemoteReviewContinuationStep.Move)
             {
                 var move = await transitions.MoveAsync(
                     task.Id, target, task.WatchPath, ct,
@@ -46,14 +83,12 @@ public static class RemoteReviewContinuationProjection
                         ? $"Blocking review findings from {entry.AttemptId}."
                         : $"Automatic round budget spent ({continuation.Budget.Used} of {continuation.Budget.Allowed}).",
                     authorityWrite: new AttemptWriteReference(
-                        entry.AttemptId, entry.Report.Fence, entry.Report.AuthorityEpoch,
-                        $"continuation:{entry.IdempotencyKey}"),
+                        entry.AttemptId, entry.Report.Fence, entry.Report.AuthorityEpoch, moveKey),
                     suppressProductExecution: true,
                     expectedSourceState: TaskStates.AutoReview,
                     transitionCause: continuation.Kind == RemoteReviewContinuationKind.FindingRound
                         ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Escalated,
-                    transitionDetail: continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                        ? "multi-aspect-block" : "card-round-budget").ConfigureAwait(false);
+                    transitionDetail: cause).ConfigureAwait(false);
                 if (move.Status != MoveJobStatus.Success) return false;
                 task = task with
                 {
@@ -61,13 +96,6 @@ public static class RemoteReviewContinuationProjection
                     State = target,
                 };
             }
-            if (task.State != target) return false;
-            var cause = continuation.Kind == RemoteReviewContinuationKind.FindingRound
-                ? "multi-aspect-block" : "card-round-budget";
-            if (timeline.ReadAll(task.FolderPath).Any(item =>
-                    item.Details?.GetValueOrDefault("reviewAttemptId") == entry.AttemptId
-                    && item.Details?.GetValueOrDefault("cause") == cause))
-                return true;
             var receipt = CardRoundBudgetReceipt.Details(
                 continuation.Budget, continuation.BlockingAspects,
                 cause,
