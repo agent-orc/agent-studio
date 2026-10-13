@@ -71,6 +71,57 @@ public sealed class ReviewPlaneGateLogicTests
         Assert.Equal(expected, decision.Action);
     }
 
+    /// <summary>
+    /// A deterministic build-tests block has no planned agent aspect to cite
+    /// against. It charges the card only through a failed command that passed
+    /// on the merge base and failed again in the clean repeat.
+    /// </summary>
+    [Theory]
+    [InlineData(true, "ProductFailure")]
+    [InlineData(false, "Pass")]
+    public void A_build_tests_block_charges_the_card_only_through_a_diagnosed_failed_command(
+        bool diagnosed, string expectedOutcome)
+    {
+        var candidate = new Contract.ReviewCommandEvidenceDto(
+            "verify-build-tests", "build-tests", "dotnet", ["test", "backend.Tests"],
+            ResultSha, ResultSha, new string('c', 40),
+            DeliveredAt.UtcDateTime, DeliveredAt.UtcDateTime, 1, null,
+            new string('d', 64), new string('e', 64),
+            BaselineSha: new string('b', 40),
+            BaselineExitCode: 0,
+            Diagnosis: new Contract.DeliveryFailureDiagnosisResult(
+                Contract.DeliveryFailureDiagnosis.Product, 1, ["merge base passed", "clean repeat failed"]));
+        var report = Report("ProductFailure", CitedPath,
+            new Contract.ReviewVerdictDto("build-tests", "block", "RemoteAspectVerdict",
+                "The finding persists.", CitedPath, "Fix it.")) with
+        {
+            Commands = diagnosed
+                ? [candidate, candidate with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null }]
+                : [],
+        };
+
+        Assert.Equal(expectedOutcome, NormalizeLikeTheReportEndpoint(report, plan: null).Outcome);
+    }
+
+    // ---- Finding round continuation (AGT-3054) -----------------------------
+
+    /// <summary>
+    /// Only a delivered round opens a finding round. A pre-diagnosis worker's
+    /// report is normalized to ReviewInfra but keeps its build-tests block; it
+    /// escalates (AGT-3089) instead of journaling a continuation without a
+    /// delivered round, which the settlement journal refuses as corrupt.
+    /// </summary>
+    [Theory]
+    [InlineData(ReviewTerminalOutcome.ProductFailure, Contract.ReviewFollowUpAction.ReviewFindingRound, true)]
+    [InlineData(ReviewTerminalOutcome.Pass, Contract.ReviewFollowUpAction.ReviewFindingRound, true)]
+    [InlineData(ReviewTerminalOutcome.IntegrationBranchDefect, Contract.ReviewFollowUpAction.ReviewFindingRound, true)]
+    [InlineData(ReviewTerminalOutcome.InfrastructureFailure, Contract.ReviewFollowUpAction.ReviewFindingRound, false)]
+    [InlineData(ReviewTerminalOutcome.ProductFailure, Contract.ReviewFollowUpAction.ReviewConcernRound, false)]
+    [InlineData(ReviewTerminalOutcome.ProductFailure, Contract.ReviewFollowUpAction.RetryAspect, false)]
+    public void Only_a_delivered_round_opens_a_finding_round(
+        ReviewTerminalOutcome outcome, Contract.ReviewFollowUpAction followUp, bool expected)
+        => Assert.Equal(expected, RemoteReviewContinuationPolicy.OpensFindingRound(outcome, followUp));
+
     // ---- Claim admission and report admission of sealed plans --------------
 
     /// <summary>

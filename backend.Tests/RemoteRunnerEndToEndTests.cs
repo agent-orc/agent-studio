@@ -5349,7 +5349,7 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         // a planned agent aspect and its evidence cites a path the delivery
         // changed. A plan-less subject has no semantic aspect, so its block
         // carries no product diagnosis and the report settles as Pass.
-        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, plan: CodeQualityAspectPlan());
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true, plan: AgentAspectPlan("code-quality"));
         await RegisterReviewExecutorAsync(http, reviewer, instance);
         using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
         var claim = await client.ClaimReviewAsync(
@@ -5399,6 +5399,12 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         const string instance = "review-card-budget-host:4243";
         var escalates = aspect != "code-quality";
         SeedTask(TaskStates.AutoReview, TaskKey, "Card budget", "Build and verify.");
+        // The degraded row creates its follow-up card in flat storage, and a
+        // project with any flat card is scanned in flat storage only. Seed the
+        // source card there too, so the scanner keeps it after the follow-up.
+        Directory.CreateDirectory(TaskStorageLayout.BucketDir(_watchPath, 0));
+        Directory.Move(Path.Combine(_watchPath, TaskStates.AutoReview, TaskKey),
+            TaskStorageLayout.JobDir(_watchPath, 0, TaskKey));
         using var factory = BuildFactory();
         using var http = factory.CreateClient();
         var scanner = factory.Services.GetRequiredService<TaskScannerService>();
@@ -5412,15 +5418,25 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
                     ["reviewAttemptId"] = $"review-seeded-{round}",
                     ["cause"] = "multi-aspect-block",
                 });
-        SeedReviewAttempt(factory.Services, includeResultEnvelope: true);
+        // AGT-2916: a block reaches the card budget only when it charges the
+        // card. A semantic aspect does so by citing a path the delivery
+        // changed; build-tests is a deterministic step and does so through a
+        // diagnosed failed command. A plan-less block carries neither and
+        // settles as Pass before the budget is asked.
+        var semantic = aspect != "build-tests";
+        SeedReviewAttempt(factory.Services, includeResultEnvelope: true,
+            plan: semantic ? AgentAspectPlan(aspect) : null);
         await RegisterReviewExecutorAsync(http, reviewer, instance);
         using var client = new RClient(http, reviewer, usesDurableTaskServer: true);
         var claim = await client.ClaimReviewAsync(
             new Contract.ReviewClaimRequest(reviewer, instance, 120), CancellationToken.None);
         Assert.Equal("claimed", claim.Status);
-        var request = PassingV1ReviewReport(claim, "card-budget-report") with
+        var passing = PassingV1ReviewReport(claim, "card-budget-report");
+        var request = passing with
         {
             Outcome = "ProductFailure",
+            Workspace = passing.Workspace with { ChangedPaths = ["backend/Other.cs"] },
+            Commands = semantic ? [] : DiagnosedBuildTestFailure(claim),
             Verdicts = [new Contract.ReviewVerdictDto(
                 aspect, "block", "RemoteAspectVerdict", "The finding persists in backend/Other.cs.",
                 "backend/Other.cs", "Fix backend/Other.cs.")],
@@ -5459,7 +5475,8 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             Assert.Equal(ReviewTerminalOutcome.Pass, attempt.Outcome);
             Assert.NotEqual(TaskStates.Ready, task.State);
             var followUp = Assert.Single(followUps);
-            Assert.Contains(TaskKey, followUp.References?.FollowUpOf ?? []);
+            // The boot backfill keyed the seeded card; references name that key.
+            Assert.Contains(task.Key ?? task.Id, followUp.References?.FollowUpOf ?? []);
             var receipt = Assert.Single(timeline.ReadAll(task.FolderPath), item =>
                 item.Kind == TimelineEventKinds.CardRoundBudgetDisposition);
             Assert.Equal(nameof(CardRoundBudgetAction.DegradeToFollowUp), receipt.Details!["disposition"]);
@@ -5492,21 +5509,52 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
 
     /// <summary>
     /// The shape <c>RemoteReviewPlanBuilder</c> gives a current subject, cut to
-    /// the one semantic aspect the classification rows report on.
+    /// the one semantic aspect a test reports on.
     /// </summary>
-    private static Contract.ReviewPlanDto CodeQualityAspectPlan() => new(
+    private static Contract.ReviewPlanDto AgentAspectPlan(string aspect) => new(
         [
             new Contract.ReviewCommandDto(
-                "aspect-code-quality",
-                "code-quality",
+                $"aspect-{aspect}",
+                aspect,
                 CliTypes.Codex,
                 [],
                 ExecutionKind: Contract.ReviewCommandKinds.AgentAspect,
-                Prompt: "Review the code quality of the delivery.",
+                Prompt: $"Review the {aspect} aspect of the delivery.",
                 CliType: CliTypes.Codex),
         ],
-        ["code-quality"],
+        [aspect],
         LibraryVersion: Contract.ReviewLibraryStepPolicy.Version);
+
+    /// <summary>
+    /// A build-tests step the delivery broke: the candidate fails, the merge
+    /// base passes and the clean repeat fails again, so the diagnosis charges
+    /// the card.
+    /// </summary>
+    private static Contract.ReviewCommandEvidenceDto[] DiagnosedBuildTestFailure(Contract.ReviewClaimResponse claim)
+    {
+        var subject = claim.Subject!;
+        var ranAt = claim.Lease!.AcquiredAt;
+        var candidate = new Contract.ReviewCommandEvidenceDto(
+            "verify-build-tests",
+            "build-tests",
+            "dotnet",
+            ["test", "backend.Tests"],
+            subject.ExpectedResultSha,
+            subject.ExpectedResultSha,
+            new string('c', 40),
+            ranAt,
+            ranAt,
+            1,
+            null,
+            new string('d', 64),
+            new string('e', 64),
+            BaselineSha: new string('b', 40),
+            NewFailures: ["OtherTests.Fails_after_the_delivery"],
+            BaselineExitCode: 0,
+            Diagnosis: new Contract.DeliveryFailureDiagnosisResult(
+                Contract.DeliveryFailureDiagnosis.Product, 1, ["merge base passed", "clean repeat failed"]));
+        return [candidate, candidate with { Phase = "clean-repeat", WorkspaceRole = "clean-repeat", Diagnosis = null }];
+    }
 
     [Fact]
     public async Task Monolith_v1_review_plane_runs_one_concern_fix_round_then_accepts_pass_end_to_end()

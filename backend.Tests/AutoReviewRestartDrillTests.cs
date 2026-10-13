@@ -1459,7 +1459,10 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
             originStore: originStore);
         var authority = new AttemptAuthorityService(
             configuration, NullLogger<AttemptAuthorityService>.Instance);
-        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        // The state machine writes the lane_changed rows a journaled
+        // continuation reads back to tell a landed move from a missing one;
+        // production wires the same TimelineLog into it.
+        var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance, timeline: timeline);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(configuration, NullLogger<ClientIdentityStore>.Instance),
