@@ -362,6 +362,52 @@ not authority to register or revoke a key. The server advertises
 older records omit the nullable fields. Repository key operations still require
 an authorized administration session and a generation-matched host observation.
 
+`GET /api/v1/management/credential-view` (AGT-2978, I8) is the role-scoped
+projection behind the Execution Hosts **Credentials** section. Each row carries
+kind, adapter and effective source, scopes and service bindings, owner, last
+verification, expiry or rotation knowledge, a status, and the actions the
+caller's role may take. The status keeps `credential_invalid`,
+`provider_incident` (with the next retry time), `quota_exhausted`,
+`network_failure`, `diagnosis_pending`, `healthy` and `not_verified` apart; only
+`credential_invalid` offers renewal as the primary action. Renewal reuses the
+existing host-owned sign-in flows: R1 Claude setup token, R2 Claude native login
+and R3 Codex device login. Rows never carry secret values, and no route offers
+reveal, download or copy.
+
+The Task Server enforces Studio roles. A Task Server Studio session sets the
+role. Otherwise the Studio edge principal may send the role it authenticated in
+`X-Studio-Acting-Role`. The backend proxy strips any client copy of that header
+and sets it from the signed-in human, or to `operator` for the loopback
+`local-default` client in the local profile. Without a human identity the view
+is projected for `viewer`.
+
+| Role | Credential view | Raw `GET /credentials` | `PUT /credentials`, principal create, rotate and revoke |
+|---|---|---|---|
+| `viewer` | Health only: no locator, evidence or actions | `403 operator-role-required` | `403 owner-role-required` |
+| `operator` | Locators and evidence; provider-login renewal | Allowed | `403 owner-role-required` |
+| `owner` (installation administrator) | Adds rotation runbooks for repository, principal, peer and administration credentials | Allowed | Allowed |
+
+Requests without a human identity, such as runner and management principals,
+keep their existing scope checks.
+
+Expiry and rotation reminders are stored in `credential_reminder_items`
+(schema 33) with exactly one item per credential generation. Only issuer or
+operator expiry and an explicit `rotationDueAt` raise an item. A refreshable
+access-token expiry never does, and an unknown expiry is shown as
+"Expiry unknown". Thresholds are 14, 7 and 1 days before the due date. Urgency
+only rises for the same due date, so a credential first seen in its final day
+gets only the 1-day item, and a clock that steps back cannot re-emit an earlier
+threshold. Duplicate observations leave the item unchanged.
+
+When the registry generation advances, whether through a host observation or a
+completed renewal, the previous generation's item closes with reason `renewed`.
+Evaluation runs on every metadata write, on renewal completion, on view reads and
+hourly. Each change is audited as `credential.reminder-opened`, `-escalated`,
+`-rescheduled` or `-closed`. The Task Server clock alone sets urgency. A host
+timestamp more than two minutes ahead is reported as `clock-skew`, and metadata
+not observed for a day as `stale`. Coding and Review share one item because
+they share one registry record.
+
 Management routes, all under `/api/v1/management/retention`:
 
 | Route | Purpose | Scope |

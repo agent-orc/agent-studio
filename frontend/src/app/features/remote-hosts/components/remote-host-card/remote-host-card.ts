@@ -9,6 +9,7 @@ import { HostWorkloadSummaryComponent } from '../host-workload-summary/host-work
 import { HostTelemetryHistoryComponent } from '../host-telemetry-history/host-telemetry-history';
 import { HostReleaseIdentityComponent } from '../host-release-identity/host-release-identity';
 import { RemoteHostDetailSummaryComponent } from '../remote-host-detail-summary/remote-host-detail-summary';
+import { HostCredentialsComponent } from '../host-credentials/host-credentials';
 import {
   RemoteHostRoleRowComponent,
   roleSlotTotal,
@@ -82,6 +83,7 @@ interface Meter {
     RuntimeCapacityEditorComponent,
     RemoteHostRoleRowComponent,
     RemoteHostDetailSummaryComponent,
+    HostCredentialsComponent,
   ],
   templateUrl: './remote-host-card.html',
   styleUrl: './remote-host-card.scss',

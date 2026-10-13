@@ -110,6 +110,22 @@ If the runner advertises a credential expiry, Studio warns once when it enters
 the final 14 days. An absent expiry is reported as unknown and is never guessed
 from the secret.
 
+When the standalone Task Server has registry records for the host, the host's
+**Credentials** section lists each credential. A row shows its kind, effective
+source, the Coding and Review services it serves, owner, last verification and
+expiry or rotation date. Login status and service availability are shown
+separately: **Provider incident · retry scheduled**, **Quota exhausted**,
+**Network failure** and **Diagnosis pending** never offer sign-in. Only **Login
+invalid · renewal needed** offers the primary renewal action, and that action
+opens the matching flow for the host: section 3 for a Claude setup token or a
+native Claude login, section 2 for Codex.
+
+One reminder per credential generation appears at 14, 7 and 1 days before an
+issuer or operator expiry or a rotation due date. It is shared by Coding and
+Review, and it clears once the renewal produces a new generation. Viewers see
+status only. Operators may renew provider logins. Repository, principal, peer
+and administration credentials need the installation owner.
+
 ## 2. Renew Codex through Studio
 
 1. On an **Unavailable** or **Expiring** Codex badge, choose **Sign in Codex**.

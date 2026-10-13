@@ -48,7 +48,8 @@ public sealed partial class TaskServerStore
     // 31 combines those contracts with persisted provider health circuits and
     // typed observations. Migrations are idempotent; the version guards
     // downgrades from binaries without all contracts.
-    public const int CurrentSchemaVersion = 32;
+    // 33 adds generation-keyed credential expiry and rotation reminders (I8).
+    public const int CurrentSchemaVersion = 33;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -4414,6 +4415,7 @@ public sealed partial class TaskServerStore
                AND json_array_length(consumers_json) = 1;
             """, ct);
         await ApplyIdentityBootstrapMigrationAsync(connection, ct);
+        await ApplyCredentialReminderMigrationAsync(connection, ct);
         await SetMetaAsync(connection, null, "schema_version", CurrentSchemaVersion.ToString(CultureInfo.InvariantCulture), ct);
     }
 
