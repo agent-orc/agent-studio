@@ -98,7 +98,15 @@ the candidate already contains it, or the merge parents do not match) is
 ejected alone with replay outcome `unattributable` and a named reason; any
 other failure (fetch, worktree, or git read errors) is infrastructure and
 pauses the batch as before. An unattributable ejection does not count toward
-the conflict cascade guard. The batch state projection marks every conflict or
+the conflict cascade guard and ends a run of consecutive conflicts; its replay
+record keeps the route it failed on (`merge` for a merge-parent mismatch).
+Every ejected member, conflict or unattributable, owes a per-task gate. The
+tick schedules it after publication, and publication recovery schedules it
+again on later ticks while the member's review is still pending, so a restart between
+the remote push and the fallback's first marker does not strand the card
+(the published batch's ownership marker keeps it out of later batches). A
+member the candidate already contains still runs the full per-task gate; the
+batch gate does not shortcut it. The batch state projection marks every conflict or
 unattributable ejection as `fallback` with `reason` and `reasonDetail`, and
 the card badge shows it, for example "Per-task fallback · unattributable
 history".

@@ -175,6 +175,28 @@ public sealed class BatchGateStoreTests : IDisposable
     }
 
     [Fact]
+    public void UnattributableMergeKeepsTheMergeStrategyOnItsReplayRecord()
+    {
+        var manifest = Close();
+        var assembler = new BatchGateAssembler(_store,
+            (member, _) => member.TaskKey == "task-1"
+                ? BatchReplayResult.Unattributable(
+                    "Batch merge did not record exactly the candidate tip and the result SHA as parents.",
+                    BatchReplayRoute.Merge)
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now));
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(["task-1"], result.EjectedKeys);
+        var ejected = _store.ReadReplay(manifest.BatchId, "task-1");
+        Assert.Equal("unattributable", ejected.Outcome);
+        Assert.Equal(BatchReplayStrategies.Merge, ejected.Strategy);
+        Assert.Equal(BatchReplayStrategies.Linear,
+            _store.ReadReplay(manifest.BatchId, "task-0").Strategy);
+    }
+
+    [Fact]
     public void InfrastructureReplayFailureStillStopsAssembly()
     {
         var manifest = Close();

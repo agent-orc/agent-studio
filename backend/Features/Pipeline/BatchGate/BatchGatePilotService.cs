@@ -877,7 +877,12 @@ public sealed class BatchGatePilotService
                     && item.Subject.RunAttempt == member.RunAttempt);
                 if (pending is null) continue;
                 var replay = _store.TryReadReplay(manifest.BatchId, member.TaskKey);
-                if (replay?.Outcome == "conflict")
+                // Every ejected member owes a per-task gate. The in-tick
+                // fallback dies with a restart between publication and its
+                // first marker, and the published batch's ownership keeps the
+                // member out of every later batch, so only this branch can
+                // still deliver it.
+                if (replay?.Outcome is "conflict" or "unattributable")
                 {
                     ScheduleFallback(pending, ct);
                     continue;

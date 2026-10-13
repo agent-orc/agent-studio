@@ -1320,6 +1320,62 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Unattributable_member_of_a_publication_interrupted_by_a_restart_still_runs_its_per_task_gate()
+    {
+        var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 2);
+        var admitted = SeedMember(factory, "DOC-RESTART-ADMITTED", "docs/restart-admitted.md");
+        var contained = SeedMember(factory, "DOC-RESTART-CONTAINED", "docs/restart-contained.md");
+        // An operator fast-path merged the delivery into develop: the candidate
+        // already contains it, so the member cannot be attributed to the batch.
+        Git(_repo, "push", "-q", "origin", $"{contained.ResultSha}:refs/heads/develop");
+        Git(_repo, "fetch", "-q", "origin");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        string? blockedPath = null;
+        _gate.Batch = request =>
+        {
+            var manifest = Assert.Single(store.ListManifests());
+            blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
+            Directory.CreateDirectory(blockedPath);
+            return Green(request.ExpectedSha);
+        };
+        _gate.Fallback = request => Green(request.ExpectedSha);
+
+        // The process stops after the remote push and before it schedules
+        // the ejected member's per-task gate.
+        await pilot.TickAsync(CancellationToken.None);
+
+        var closed = Assert.Single(store.ListManifests());
+        Assert.Equal(2, closed.Members.Count);
+        Assert.Equal("unattributable", store.ReadReplay(closed.BatchId, contained.Key).Outcome);
+        AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
+        Assert.Equal(0, _gate.FallbackRuns);
+        Assert.False(Ownership(contained.Key)?.FallbackGateActive ?? false);
+        AssertLane(contained.Key, TaskStates.AutoReview);
+
+        Directory.Delete(blockedPath!);
+        factory.Dispose();
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 2);
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        AssertPhase(store, closed.BatchId, BatchPhase.Published);
+        AssertLane(admitted.Key, TaskStates.HumanReview);
+        Assert.Equal(1, _gate.BatchRuns);
+        Assert.Equal(1, _gate.FallbackRuns);
+        // The green per-task gate completes the card the batch could not attribute.
+        var completed = Path.Combine(_watchPath, TaskStates.HumanReview, contained.Key);
+        Assert.Equal(contained.ResultSha, BatchGateOwnershipStore.Read(completed)?.FallbackTestedSha);
+        Assert.True(File.Exists(Path.Combine(TaskPaths.LogsDir(completed),
+            $"batch-fallback-{contained.ReviewAttemptId}.json")));
+        Assert.Empty(store.ListPending());
+    }
+
+    [Fact]
     public async Task Member_superseded_during_the_gate_discards_the_verdict_and_publishes_nothing()
     {
         using var factory = BuildFactory();

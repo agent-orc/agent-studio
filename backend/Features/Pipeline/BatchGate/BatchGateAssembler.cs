@@ -92,13 +92,15 @@ public sealed class BatchGateAssembler
                     throw new InvalidDataException(replay.Error ?? "Batch member replay failed.");
                 case BatchReplayDisposition.EjectUnattributable:
                     // The member says nothing about the others: it alone goes
-                    // to the per-task gate and does not count as a conflict.
+                    // to the per-task gate, does not count as a conflict and
+                    // ends a run of consecutive conflicts.
                     _store.RecordReplay(new BatchGateReplayRecord(
                         batchId, manifest.MembershipDigest, member.TaskKey,
                         member.ResultSha, tip, null, [], [], "unattributable",
                         _time.GetUtcNow(), Strategy(replay.Route),
                         replay.Error ?? "Batch replay has no trustworthy SHA mapping."));
                     ejected.Add(member.TaskKey);
+                    consecutiveConflicts = 0;
                     _store.AppendState(new BatchGateState(
                         batchId, manifest.MembershipDigest, BatchPhase.Assembling,
                         tip, coordinatorFence, _time.GetUtcNow(),

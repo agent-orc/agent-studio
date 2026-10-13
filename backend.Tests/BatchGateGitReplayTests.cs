@@ -180,6 +180,7 @@ public sealed class BatchGateGitReplayTests : IDisposable
         var contained = service.ReplayBatchMember(_root, memberRef, memberSha, memberSha);
         Assert.False(contained.Success);
         Assert.Equal(BatchReplayFailure.Unattributable, contained.Failure);
+        Assert.Equal(BatchReplayRoute.AlreadyContained, contained.Route);
         var mismatch = service.ReplayBatchMember(_root, memberRef, develop, develop);
         Assert.Equal(BatchReplayFailure.Unattributable, mismatch.Failure);
         var conflict = service.ReplayBatchMember(_root, memberRef, memberSha, develop);

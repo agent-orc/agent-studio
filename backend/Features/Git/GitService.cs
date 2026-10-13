@@ -203,8 +203,9 @@ public sealed record BatchReplayResult(
     BatchReplayRoute Route = BatchReplayRoute.Identity,
     BatchReplayFailure Failure = BatchReplayFailure.None)
 {
-    public static BatchReplayResult Unattributable(string error)
-        => new(false, null, [], [], error, Failure: BatchReplayFailure.Unattributable);
+    public static BatchReplayResult Unattributable(
+        string error, BatchReplayRoute route = BatchReplayRoute.Identity)
+        => new(false, null, [], [], error, route, BatchReplayFailure.Unattributable);
 
     public static BatchReplayResult Infrastructure(string error)
         => new(false, null, [], [], error, Failure: BatchReplayFailure.Infrastructure);
@@ -6104,7 +6105,8 @@ public class GitService
         {
             case BatchReplayRoute.AlreadyContained:
                 return BatchReplayResult.Unattributable(
-                    "The candidate already contains the result SHA; the member adds no change of its own.");
+                    "The candidate already contains the result SHA; the member adds no change of its own.",
+                    BatchReplayRoute.AlreadyContained);
             case BatchReplayRoute.Merge:
                 return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
             case BatchReplayRoute.Identity:
@@ -6205,7 +6207,8 @@ public class GitService
             || !string.Equals(shas[1], batchTip, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(shas[2], resultSha, StringComparison.OrdinalIgnoreCase))
             return BatchReplayResult.Unattributable(
-                "Batch merge did not record exactly the candidate tip and the result SHA as parents.");
+                "Batch merge did not record exactly the candidate tip and the result SHA as parents.",
+                BatchReplayRoute.Merge);
         return new BatchReplayResult(true, shas[0],
             [new RebasedCommitReplacement(resultSha, shas[0])], [], null, BatchReplayRoute.Merge);
     }
