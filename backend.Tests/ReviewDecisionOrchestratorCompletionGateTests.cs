@@ -13,7 +13,7 @@ namespace AgentStudio.Tests;
 /// evidence controls turn and implementation completion, then deterministic
 /// checks and structured aspect review control task acceptance.
 /// </summary>
-public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
+public partial class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
 {
     private readonly string _workspace;
     private readonly string _watchPath;
@@ -524,7 +524,9 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
     private ReviewDecisionOrchestrator BuildOrchestrator(
         AspectCli aspectCli,
         int maxReissues,
-        IBuildTestGateRunner? buildGate = null)
+        IBuildTestGateRunner? buildGate = null,
+        TimeProvider? timeProvider = null,
+        Microsoft.Extensions.Logging.ILogger<TaskStateMachine>? stateLogger = null)
     {
         var dict = new Dictionary<string, string?>
         {
@@ -542,7 +544,7 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
-        var stateMachine = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);
+        var stateMachine = new TaskStateMachine(scanner, stateLogger ?? NullLogger<TaskStateMachine>.Instance);
         var chatLog = new OrchestratorChatLog(NullLogger<OrchestratorChatLog>.Instance);
         var prompts = new RuntimePromptService(config, NullLogger<RuntimePromptService>.Instance);
         var aspectRunner = new AspectRunnerService(prompts, NullLogger<AspectRunnerService>.Instance);
@@ -558,6 +560,8 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             NullLogger<TaskMutationService>.Instance);
         var git = new GitService(NullLogger<GitService>.Instance, scanner, config);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
+        _cancellationStateMachine = stateMachine;
+        _cancellationMutations = mutations;
         var transitions = new TaskTransitionService(scanner, stateMachine, mutations, git, settings, NullLogger<TaskTransitionService>.Instance);
         var taskAccess = new AgentStudio.TaskAccess.TaskAccessService(
             scanner, mutations, stateMachine, transitions, indexCache,
@@ -575,6 +579,8 @@ public class ReviewDecisionOrchestratorCompletionGateTests : IDisposable
             git: git,
             pipelineLog: pipelineLog,
             lintScssRunner: null,
-            buildTestGateRunner: buildGate);
+            buildTestGateRunner: buildGate,
+            timeline: new TimelineLog(NullLogger<TimelineLog>.Instance),
+            timeProvider: timeProvider);
     }
 }

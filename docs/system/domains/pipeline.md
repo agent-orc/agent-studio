@@ -27,6 +27,25 @@ pipeline view.
   records the serialized-argument failure mode and the validation and resource
   caps required before parallel work starts.
 
+## Gate cancellation ownership
+
+The per-task review gate, batch fallback gate, and merge gate recheck the current
+subject before acting on a cancellation. A changed delivery SHA, lane exit, or
+pending continue intent makes the cancelled run `superseded`. Its evidence stays
+visible, but it does not move or escalate the card. Merge gates compare the
+captured delivery identity, separately from the merge SHA they tested.
+
+A current subject cancelled during shutdown is infrastructure recovery. The
+per-task gate persists the one post-step retry and its existing infrastructure
+backoff under `post-steps/gate-cancellation-retry.json`; the review sweep resumes
+it after startup. The batch fallback retains its durable active marker and uses
+its existing two-start budget. The merge gate restores unpublished anchors and
+records `gate-interrupted`; the integration retry ledger permits one replay for
+this shutdown reason. Exhaustion follows the existing infrastructure parking
+path. Explicit operator cancellation keeps the failed-gate parking behavior.
+Each cancelled run adds one `gate-cancelled` timeline receipt naming
+`superseded`, `shutdown`, or `operator`.
+
 ## Exact-SHA gate verdict cache
 
 `BuildTestGateRunner` reuses a deterministic terminal verdict only for an exact
