@@ -42,14 +42,17 @@ public static class RemoteGateWorker
         };
         using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(invocation.OverallTimeoutSeconds));
         using var cancelWatcher = new CancellationTokenSource();
+        var shutdownRequested = 0;
         using var terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, context =>
         {
             context.Cancel = true;
+            Interlocked.Exchange(ref shutdownRequested, 1);
             lifetime.Cancel();
         });
         using var hangup = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
         {
             context.Cancel = true;
+            Interlocked.Exchange(ref shutdownRequested, 1);
             lifetime.Cancel();
         });
         var watch = WatchCancellationAsync(directory, lifetime, cancelWatcher.Token);
@@ -130,6 +133,7 @@ public static class RemoteGateWorker
                 FailureKind = BuildTestGateFailureKind.Environment,
                 Reason = "Remote gate source cleanup failed; gate remains blocked. " + result.Reason,
             };
+        result = AttachCancellationSource(result, Volatile.Read(ref shutdownRequested) != 0);
         result = result with { Executor = "remote-worker:" + Environment.MachineName };
         var response = new RemoteGateResponse(1, invocation.RunId, invocation.BundleSha256, result);
         var responsePath = Path.Combine(directory, "response.json");
@@ -137,6 +141,13 @@ public static class RemoteGateWorker
         File.Move(responsePath + ".tmp", responsePath, overwrite: true);
         return 0;
     }
+
+    internal static BuildTestGateResult AttachCancellationSource(
+        BuildTestGateResult result, bool shutdownRequested)
+        => result.FailureKind == BuildTestGateFailureKind.Cancellation && shutdownRequested
+            && result.CancellationReason is null
+            ? result with { CancellationReason = GateCancellationReasons.Shutdown }
+            : result;
 
     internal static void Validate(RemoteGateInvocation invocation, string directoryName)
     {
