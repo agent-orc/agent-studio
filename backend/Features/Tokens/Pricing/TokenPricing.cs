@@ -41,6 +41,29 @@ public interface ITokenPriceProvider
         long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null);
 }
 
+public interface ITokenPricing
+{
+    TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
+        long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null);
+
+    IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger);
+}
+
+/// <summary>Prices normalized ledger entries at their recorded time.</summary>
+public sealed class TokenPricingService(ITokenPriceProvider provider) : ITokenPricing
+{
+    public TokenCostEstimate Estimate(string? modelId, long inputTokens, long outputTokens,
+        long cacheReadTokens, long cacheCreationTokens, DateTime? recordedAt = null)
+        => provider.Estimate(ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
+            inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
+
+    public IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
+        => ledger.Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage
+            ? Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
+                usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts)
+            : null)).ToList();
+}
+
 /// <summary>
 /// The only Studio pricing entry point. Model catalog, aliases, rates, cache
 /// policy, and price history all come from TokenEconomy.
@@ -54,6 +77,7 @@ public static class TokenPricing
     /// the package adapter without exposing provider selection through the API.
     /// </summary>
     internal static ITokenPriceProvider Provider { get; } = new TokenEconomyPriceProvider();
+    private static readonly ITokenPricing Service = new TokenPricingService(Provider);
 
     /// <summary>Read-only TokenEconomy catalog projection retained for catalog consumers.</summary>
     public static IReadOnlyDictionary<string, EconomyPricing.ModelListing> Catalog { get; } =
@@ -67,16 +91,10 @@ public static class TokenPricing
         long cacheCreationTokens,
         DateTime? recordedAt = null)
     {
-        return Provider.Estimate(AgentStudio.Tokens.ModelIdentity.Resolve(modelId)?.ModelId ?? modelId,
-            inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
+        return Service.Estimate(modelId, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, recordedAt);
     }
 
     /// <summary>Price every ledger entry at its own timestamp, one result per entry.</summary>
     public static IReadOnlyList<PricedTokenEntry> Price(IReadOnlyList<OrchestratorLogEntry> ledger)
-        => ledger
-            .Select(entry => new PricedTokenEntry(entry, entry.TokenUsage is { } usage
-                ? Estimate(usage.Model, usage.InputTokens, usage.OutputTokens,
-                    usage.CacheReadTokens, usage.CacheCreationTokens, entry.Ts)
-                : null))
-            .ToList();
+        => Service.Price(ledger);
 }

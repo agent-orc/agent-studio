@@ -11,6 +11,7 @@ import type {
   WorkspaceExpensiveJob,
 } from '../../models/tokens.model';
 import { formatCompactTokens, formatCompactUsd } from '../../token-number-format.util';
+import { modelUsageRows, modelUsageTokens, type ModelUsageRow } from '../../services/model-usage-rows';
 
 interface SparkPoint {
   label: string;
@@ -24,18 +25,6 @@ interface ProjectUsageRow {
   orchestratorLlmCalls: number;
   totalTokens: number;
   estimatedApiCostUsd: number;
-}
-
-interface ModelUsageRow {
-  model: string;
-  source: string;
-  calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  estimatedApiCostUsd: number;
-  modelPriced: boolean;
 }
 
 /**
@@ -137,38 +126,7 @@ export class CliUsageDetailComponent {
   }
 
   modelRowsFor(cliType: CliType): ModelUsageRow[] {
-    const rows: ModelUsageRow[] = [];
-    for (const m of this.tokens()?.byModel ?? []) {
-      if (m.cli !== cliType) continue;
-      rows.push({
-        model: m.model,
-        source: 'orchestrator',
-        calls: m.calls,
-        inputTokens: m.inputTokens,
-        outputTokens: m.outputTokens,
-        cacheReadTokens: m.cacheReadTokens,
-        cacheCreationTokens: m.cacheCreationTokens,
-        estimatedApiCostUsd: m.estimatedApiCostUsd,
-        modelPriced: m.modelPriced,
-      });
-    }
-    for (const m of this.adhoc()?.byModel ?? []) {
-      if (m.cli !== cliType) continue;
-      rows.push({
-        model: m.model,
-        source: 'ad-hoc',
-        calls: m.calls,
-        inputTokens: m.inputTokens,
-        outputTokens: m.outputTokens,
-        cacheReadTokens: m.cacheReadTokens,
-        cacheCreationTokens: m.cacheCreationTokens,
-        estimatedApiCostUsd: m.estimatedApiCostUsd,
-        modelPriced: m.modelPriced,
-      });
-    }
-    return rows
-      .sort((a, b) => this.totalTokens(b) - this.totalTokens(a))
-      .slice(0, 5);
+    return modelUsageRows(cliType, this.tokens(), this.adhoc(), 'orchestrator', false).slice(0, 5);
   }
 
   sourceRowsFor(cliType: CliType) {
@@ -197,7 +155,7 @@ export class CliUsageDetailComponent {
   }
 
   totalTokens(row: ModelUsageRow): number {
-    return row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheCreationTokens;
+    return modelUsageTokens(row);
   }
 
   private sparkByBucket(timeline: TokenTimeline | null, limit: number): SparkPoint[] {

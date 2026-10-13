@@ -16,6 +16,7 @@ public sealed class TokenAggregationService : ITokenAggregator
     private readonly JobStatsMetadataCache _jobs;
     private readonly BusAdHocUsageReader _adHoc;
     private readonly TokenSummaryCacheStore _summaryCache;
+    private readonly ITokenPricing _pricing;
     private readonly TokenPricingDriftMonitor? _pricingDrift;
 
     public TokenAggregationService(
@@ -26,6 +27,7 @@ public sealed class TokenAggregationService : ITokenAggregator
         JobStatsMetadataCache jobs,
         BusAdHocUsageReader adHoc,
         TokenSummaryCacheStore summaryCache,
+        ITokenPricing pricing,
         TokenPricingDriftMonitor? pricingDrift = null)
     {
         _bus = bus;
@@ -35,6 +37,7 @@ public sealed class TokenAggregationService : ITokenAggregator
         _jobs = jobs;
         _adHoc = adHoc;
         _summaryCache = summaryCache;
+        _pricing = pricing;
         _pricingDrift = pricingDrift;
     }
 
@@ -131,7 +134,7 @@ public sealed class TokenAggregationService : ITokenAggregator
         foreach (var (name, watchPath) in projects)
         {
             var snapshot = _ledger.LoadSnapshot(name, watchPath);
-            perProject.Add((name, TokenPricing.Price(snapshot.Entries)));
+            perProject.Add((name, _pricing.Price(snapshot.Entries)));
             freshness.Add(snapshot.Freshness);
         }
 
@@ -149,7 +152,7 @@ public sealed class TokenAggregationService : ITokenAggregator
     {
         var workspaceRoot = _config["TaskRepository"] ?? "(unconfigured)";
         var perProject = projects
-            .Select(project => (project.Name, TokenPricing.Price(
+            .Select(project => (project.Name, _pricing.Price(
                 BusTokenEntryConverter.LoadTokenUsageEntries(_store, workspaceRoot, project.Name))))
             .ToList();
         return WorkspaceTimelineFold.Build(perProject, fromUtc, toUtc, bucketMinutes);
@@ -159,7 +162,7 @@ public sealed class TokenAggregationService : ITokenAggregator
     {
         var (records, source) = _adHoc.Read(since);
         var priced = records
-            .Select(record => (record, TokenPricing.Estimate(record.Model, record.InputTokens, record.OutputTokens,
+            .Select(record => (record, _pricing.Estimate(record.Model, record.InputTokens, record.OutputTokens,
                 record.CacheReadTokens, record.CacheCreationTokens, record.Ts)))
             .ToList();
         return AdHocUsageFold.Aggregate(priced, source);
@@ -169,7 +172,7 @@ public sealed class TokenAggregationService : ITokenAggregator
         => TokenSummaryFold.ForProject(projectName, PricedLedger(projectName, watchPath));
 
     private IReadOnlyList<PricedTokenEntry> PricedLedger(string projectName, string watchPath)
-        => TokenPricing.Price(_ledger.LoadSnapshot(projectName, watchPath).Entries);
+        => _pricing.Price(_ledger.LoadSnapshot(projectName, watchPath).Entries);
 
     /// <summary>
     /// Project name for a watch path from the <c>WatchedPaths</c> config, the

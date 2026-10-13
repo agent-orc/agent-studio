@@ -37,7 +37,7 @@ public sealed class UsageCockpitContractTests
     {
         var bus = Entry("active", At, 600, 400);
         var receipt = bus with { Topic = "task-token-receipt" };
-        var merged = ProjectTokenReceiptReader.MergeWithoutDuplicates([bus], [receipt]);
+        var merged = TokenLedgerMerge.WithoutDuplicates([bus], [receipt]);
         Assert.Single(merged);
         var other = Entry("other", At, 100, 0);
         var unattributed = Entry(null, At, 20, 0);

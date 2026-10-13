@@ -7,9 +7,10 @@
 
 ## Contract
 
-Every Studio cost calculation goes through
-`backend/Features/Runner/TokenPricing.cs`. The package-specific implementation
-in `backend/Features/Runner/TokenEconomyPriceProvider.cs` adapts
+The token aggregation path uses injectable `ITokenPricing`, implemented by
+`TokenPricingService` in `backend/Features/Tokens/Pricing/TokenPricing.cs`.
+The package-specific implementation in
+`backend/Features/Tokens/Pricing/TokenEconomyPriceProvider.cs` adapts
 `TokenEconomy.ModelPriceCatalog.Default` and its historical pricing API.
 
 The adapter is exposed through `ITokenPriceProvider`; the active
