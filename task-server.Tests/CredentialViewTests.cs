@@ -193,9 +193,12 @@ public sealed class CredentialViewTests
 
         Assert.Null(Assert.Single((await store.GetCredentialViewAsync(StudioUserRoles.Operator, default)).Rows).Reminder);
         clock.Advance(TimeSpan.FromDays(1));
+        Assert.Null(Assert.Single((await store.GetCredentialViewAsync(StudioUserRoles.Operator, default)).Rows).Reminder);
+        await store.ReconcileCredentialRemindersAsync(default);
         var fourteen = Assert.Single((await store.GetCredentialViewAsync(StudioUserRoles.Operator, default)).Rows).Reminder!;
         Assert.Equal(14, fourteen.ThresholdDays);
         clock.Advance(TimeSpan.FromDays(7));
+        await store.ReconcileCredentialRemindersAsync(default);
         var seven = Assert.Single((await store.GetCredentialViewAsync(StudioUserRoles.Operator, default)).Rows).Reminder!;
         Assert.Equal(7, seven.ThresholdDays);
         Assert.Equal(fourteen.OpenedAt, seven.OpenedAt);

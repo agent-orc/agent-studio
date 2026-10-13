@@ -7,7 +7,7 @@ namespace AgentStudio.TaskServer;
 /// <summary>
 /// I8 credential view and generation-keyed reminders (docs/credentials-and-logins/index.html,
 /// D4 option A). Reminders are reconciled when metadata changes, when a renewal completes,
-/// on an hourly sweep and when the view is read; each pass is idempotent.
+/// on an hourly sweep; each pass is idempotent. The view itself is read-only.
 /// </summary>
 public sealed partial class TaskServerStore
 {
@@ -47,8 +47,6 @@ public sealed partial class TaskServerStore
     public async Task<CredentialViewDto> GetCredentialViewAsync(string role, CancellationToken ct)
     {
         role = CredentialActionPolicy.NormalizeRole(role);
-        if (AuthorityReady && _mode is not (TaskServerMode.ReadOnly or TaskServerMode.Maintenance))
-            await ReconcileCredentialRemindersAsync(ct);
         await using var connection = await OpenReadyAsync(ct);
         var now = UtcNow;
         var registry = await ReadRegistryWithObservationAsync(connection, null, ct);

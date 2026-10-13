@@ -62,10 +62,20 @@ public class ClientIdentityMiddleware
         var path = context.Request.Path.Value ?? "";
         var method = context.Request.Method;
 
+        // The proxied v1 plane owns its writes, but the local Studio role still
+        // needs the registered default-client attribution on the request.
+        var fencedAttribution = OwnsFencedAttribution(path);
+        if (fencedAttribution && SecurityProfiles.IsLocal(_configuration)
+            && path.StartsWith("/api/v1/", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(context.Request.Headers["X-Client-Id"].FirstOrDefault(),
+                DefaultClientIdentity.Id, StringComparison.Ordinal)
+            && _store.IsRegistered(DefaultClientIdentity.Id))
+            context.Items["ClientId"] = DefaultClientIdentity.Id;
+
         // Skip the boundary for non-/api traffic, registration, hubs, health.
         if (!path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)
             || OpenPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
-            || OwnsFencedAttribution(path))
+            || fencedAttribution)
         {
             await _next(context);
             return;

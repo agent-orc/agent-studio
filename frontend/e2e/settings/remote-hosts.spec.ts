@@ -665,7 +665,7 @@ test.describe('Execution Hosts settings section', () => {
     const machine = page.locator('[data-testid="remote-host-card"][data-host="agent-runner-01"]');
     await expandHost(machine, true);
     const summaries = machine.locator('[data-testid^="remote-host-detail-toggle-"]');
-    await expect(summaries).toHaveCount(7);
+    await expect(summaries).toHaveCount(8);
     await expect(machine.getByTestId('remote-host-detail-toggle-capabilities'))
       .toContainText('1 CLI update due');
     await expect(machine.getByTestId('remote-host-detail-toggle-projects'))
