@@ -377,8 +377,8 @@ reveal, download or copy.
 The Task Server enforces Studio roles. A Task Server Studio session sets the
 role. Otherwise the Studio edge principal may send the role it authenticated in
 `X-Studio-Acting-Role`. The backend proxy strips any client copy of that header
-and sets it from the signed-in human, or to `operator` for the loopback
-`local-default` client in the local profile. Without a human identity the view
+and sets it from the signed-in human, or to `operator` for the registered,
+loopback `local-default` client in the local profile. Without a human identity the view
 is projected for `viewer`.
 
 | Role | Credential view | Raw `GET /credentials` | `PUT /credentials`, principal create, rotate and revoke |
@@ -401,8 +401,8 @@ threshold. Duplicate observations leave the item unchanged.
 
 When the registry generation advances, whether through a host observation or a
 completed renewal, the previous generation's item closes with reason `renewed`.
-Evaluation runs on every metadata write, on renewal completion, on view reads and
-hourly. Each change is audited as `credential.reminder-opened`, `-escalated`,
+Evaluation runs on every metadata write, on renewal completion and hourly.
+The credential view is a read-only projection. Each change is audited as `credential.reminder-opened`, `-escalated`,
 `-rescheduled` or `-closed`. The Task Server clock alone sets urgency. A host
 timestamp more than two minutes ahead is reported as `clock-skew`, and metadata
 not observed for a day as `stale`. Coding and Review share one item because

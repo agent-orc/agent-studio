@@ -1,10 +1,12 @@
 using AgentStudio.Security;
+using AgentStudio.Clients;
 using AgentStudio.TaskServer.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -172,6 +174,39 @@ public sealed class TaskServerPlaneProxyTests
         remote.Items["ClientId"] = "local-default";
         remote.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.0.2.10");
         Assert.Null(TaskServerPlaneProxy.ActingRole(remote, configuration));
+    }
+
+    [Fact]
+    public async Task Proxied_local_credential_view_receives_the_registered_loopback_operator_role()
+    {
+        var repository = Path.Combine(Path.GetTempPath(), "credential-view-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Security:Profile"] = "local",
+                    ["TaskServer:BaseUrl"] = "http://127.0.0.1:5071",
+                    ["TaskRepository"] = repository,
+                }).Build();
+            var identities = new ClientIdentityStore(configuration, NullLogger<ClientIdentityStore>.Instance);
+            var context = new DefaultHttpContext();
+            context.Request.Path = "/api/v1/management/credential-view";
+            context.Request.Headers["X-Client-Id"] = DefaultClientIdentity.Id;
+            context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+            string? role = null;
+            var middleware = new ClientIdentityMiddleware(
+                request => { role = TaskServerPlaneProxy.ActingRole(request, configuration); return Task.CompletedTask; },
+                identities, configuration, NullLogger<ClientIdentityMiddleware>.Instance);
+
+            await middleware.InvokeAsync(context);
+
+            Assert.Equal(StudioRoles.Operator, role);
+        }
+        finally
+        {
+            if (Directory.Exists(repository)) Directory.Delete(repository, recursive: true);
+        }
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
