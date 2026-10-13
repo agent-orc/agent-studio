@@ -1,6 +1,6 @@
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>One settled ReviewAttempt in an infrastructure retry chain.</summary>
 public sealed record ReviewInfrastructureAttemptFact(

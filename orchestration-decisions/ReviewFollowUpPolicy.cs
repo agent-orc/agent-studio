@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-namespace AgentStudio.TaskServer.Contracts;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// One review follow-up policy shared by local aspect review and Remote Review.
@@ -88,11 +88,10 @@ public static partial class ReviewFollowUpPolicy
     private static bool IsAspectInfrastructureResult(ReviewFollowUpFinding item)
         => item.InfrastructureFailure
            || string.Equals(item.Classification, "review:unparseable", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(item.Classification, "ReviewInfra", StringComparison.OrdinalIgnoreCase);
+           || string.Equals(item.Classification, ReviewOutcomeKinds.ReviewInfra, StringComparison.OrdinalIgnoreCase);
 
     private static bool Meaningful(string? value)
         => !string.IsNullOrWhiteSpace(value)
            && !string.Equals(value.Trim(), "none", StringComparison.OrdinalIgnoreCase)
            && !string.Equals(value.Trim(), "n/a", StringComparison.OrdinalIgnoreCase);
 }
-

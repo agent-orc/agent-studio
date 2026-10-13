@@ -1,4 +1,4 @@
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <summary>
 /// The salvage commit a remote runner transferred before it tore its worktree
@@ -73,7 +73,7 @@ public static class RunTimeoutSalvageContinuationPolicy
     /// terminal sentinel. Its reported reason names the typed cause
     /// (<c>Timeout</c> for the run-timeout case).
     /// </summary>
-    public const string NonTerminalOutcome = "unknown";
+    public const string NonTerminalOutcome = CompletionOutcomeKinds.Unknown;
 
     /// <summary>Recorded on the timeline entry and on the saved continuation intent.</summary>
     public const string ContinuationReason = "run-timeout-with-salvage";
@@ -97,11 +97,11 @@ public static class RunTimeoutSalvageContinuationPolicy
         bool hasSalvageCommit,
         int automaticContinuationRoundsUsed)
     {
-        return AgentStudio.Orchestration.Decisions.TransitionDecisionPolicy.Salvage(
+        return AgentStudio.OrchestrationDecisions.TransitionDecisionPolicy.Salvage(
             outcome, hasSalvageCommit, automaticContinuationRoundsUsed) switch
         {
-            AgentStudio.Orchestration.Decisions.TransitionAction.Continue => RunTimeoutSalvageAction.None,
-            AgentStudio.Orchestration.Decisions.TransitionAction.SalvageContinuation => RunTimeoutSalvageAction.StartContinuation,
+            AgentStudio.OrchestrationDecisions.TransitionAction.Continue => RunTimeoutSalvageAction.None,
+            AgentStudio.OrchestrationDecisions.TransitionAction.SalvageContinuation => RunTimeoutSalvageAction.StartContinuation,
             _ => RunTimeoutSalvageAction.Escalate,
         };
     }
@@ -135,4 +135,3 @@ public static class RunTimeoutSalvageContinuationPolicy
         return text + ".";
     }
 }
-

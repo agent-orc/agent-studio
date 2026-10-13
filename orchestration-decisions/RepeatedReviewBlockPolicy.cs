@@ -4,15 +4,15 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AgentStudio.TaskServer.Contracts;
 
-namespace AgentStudio.TaskServer;
+namespace AgentStudio.OrchestrationDecisions;
 
-internal sealed record RepeatedReviewBlockDiagnosis(
+public sealed record RepeatedReviewBlockDiagnosis(
     string Fingerprint,
     string Finding,
     int ConsecutiveRounds,
     int MaximumRounds)
 {
-    internal bool MustEscalate => ConsecutiveRounds >= MaximumRounds;
+    public bool MustEscalate => ConsecutiveRounds >= MaximumRounds;
 }
 
 /// <summary>
@@ -21,11 +21,11 @@ internal sealed record RepeatedReviewBlockDiagnosis(
 /// immutable review payloads. The same block cannot create an endless sequence
 /// of fresh orchestration runs with a reset-looking generic reason.
 /// </summary>
-internal static partial class RepeatedReviewBlockPolicy
+public static partial class RepeatedReviewBlockPolicy
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    internal static RepeatedReviewBlockDiagnosis? Diagnose(
+    public static RepeatedReviewBlockDiagnosis? Diagnose(
         string currentPayloadJson,
         IEnumerable<string> priorDecisionPayloadsNewestFirst,
         int maximumRounds)

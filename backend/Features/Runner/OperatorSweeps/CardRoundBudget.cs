@@ -95,10 +95,10 @@ public static class CardRoundBudget
         IEnumerable<TimelineEvent> timeline,
         string jobId)
     {
-        return AgentStudio.Orchestration.Decisions.RoundCounterPolicy.Count(
-            journal.Select(record => new AgentStudio.Orchestration.Decisions.RoundDecisionFact(
+        return AgentStudio.OrchestrationDecisions.RoundCounterPolicy.Count(
+            journal.Select(record => new AgentStudio.OrchestrationDecisions.RoundDecisionFact(
                 record.JobId, record.Kind.ToString())),
-            timeline.Select(entry => new AgentStudio.Orchestration.Decisions.RoundTimelineFact(
+            timeline.Select(entry => new AgentStudio.OrchestrationDecisions.RoundTimelineFact(
                 entry.Kind, entry.Details)), jobId);
     }
 }

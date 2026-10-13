@@ -1,4 +1,4 @@
-namespace AgentStudio.Runner;
+namespace AgentStudio.OrchestrationDecisions;
 
 /// <param name="Used">Automatic rounds this card has already spent, across every review-attempt epoch.</param>
 /// <param name="Allowed">Rounds the card may spend in its lifetime.</param>

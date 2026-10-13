@@ -4,12 +4,6 @@ using System.Text.RegularExpressions;
 
 namespace AgentStudio.Pipeline;
 
-public static class FailureDomains
-{
-    public const string Product = "product";
-    public const string Infrastructure = "infrastructure";
-}
-
 /// <summary>
 /// Evidence of one failed command. <see cref="Fork"/> is set by a caller whose
 /// failure leaves a choice a person must make; the intervention is then a

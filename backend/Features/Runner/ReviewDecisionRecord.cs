@@ -42,28 +42,13 @@ public sealed record ReviewDecisionRecord(
     public string? FailureKind { get; init; }
     /// <summary>Structured council reaction when this decision was driven by a quality-grade review.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public AgentStudio.Review.CouncilReviewReaction? CouncilReaction { get; init; }
+    public AgentStudio.OrchestrationDecisions.CouncilReviewReaction? CouncilReaction { get; init; }
     /// <summary>
     /// Review-attempt epoch active when this record was written. Legacy rows
     /// without the field belong to epoch 0.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? AttemptEpoch { get; init; }
-}
-
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum ReviewDecisionKind
-{
-    Reissue,
-    Escalate,
-    AcceptAsDone,
-    Skipped,
-    /// <summary>
-    /// Human-authored boundary that reopens a task from a decision lane. It is
-    /// not an orchestrator verdict; it invalidates prior active-budget and
-    /// stale-verdict state while retaining those rows as history.
-    /// </summary>
-    OperatorRequeue
 }
 
 /// <summary>

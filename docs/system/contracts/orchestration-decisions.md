@@ -4,6 +4,10 @@ AGT-3057 implements AGT-W65 D14 A as an extraction slice, with D17 A and D18 A.
 `orchestration-decisions/Orchestration.Decisions.csproj` owns the deterministic
 transition policies. It references only TaskServer.Contracts and the .NET
 runtime. It reads no files, configuration, clock, processes, or HTTP services.
+Every library type uses `AgentStudio.OrchestrationDecisions`. State, timeline,
+failure-domain, and outcome constants are shared from TaskServer.Contracts,
+so the hosts and library read the same persisted tokens. Verdicts classified
+`BlockWithoutCitation` do not open a finding round or count as a repeated block.
 
 The monolith still invokes these policies and applies their decisions. I16 and
 I17 supply the remote orchestration boundary and switch the decision caller to
@@ -49,8 +53,8 @@ The library owns review follow-up selection, review budget composition, lifetime
 card-budget decisions and counting, delivery integration admission, Council
 reaction, reissue loop breaks, timeout salvage continuation, review continuation
 replay, operator-sweep guards, infrastructure-repeat diagnosis, and standalone
-stage and settlement policy. Existing public policy type names are retained to
-avoid changing host call contracts. Stores, clocks, timeline reads, prompt
+stage and settlement policy. Policy names and typed action contracts remain
+stable; hosts import the common namespace. Stores, clocks, timeline reads, prompt
 rendering, Git, and lane writes stay with their application owners.
 
 `MonolithTransitionAdapter`, `TaskServerTransitionAdapter`, and

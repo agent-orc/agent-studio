@@ -1,4 +1,4 @@
-using AgentStudio.Orchestration.Decisions;
+using AgentStudio.OrchestrationDecisions;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -1508,7 +1508,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Branch 1: empty / placeholder prompt -> escalate. The agent's
         // NOOP is justified; the human needs to scope the task before any
         // run is worthwhile.
-        if (LocalLoopDecisionPolicy.UnusablePrompt(promptUsable))
+        if (!promptUsable)
         {
             var reason = "Task prompt is empty or placeholder; agent's [[TASK_NOOP]] is justified.";
             await EscalateNoOpAsync(workspace, entry, pending, reason, ct);
@@ -1541,7 +1541,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // with the existing NEEDS_INPUT-driven reissues so a job that has
         // already been retried multiple times by either path doesn't get
         // double-spent here.
-        if (LocalLoopDecisionPolicy.BudgetSpent(prior, maxReissues))
+        if (prior >= maxReissues)
         {
             var reason = $"NOOP after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoOpAsync(workspace, entry, pending, reason, ct);
@@ -1657,7 +1657,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         // Empty / placeholder prompt: re-running cannot help because there is
         // nothing actionable to drive toward a sentinel. Hand to a human.
-        if (LocalLoopDecisionPolicy.UnusablePrompt(promptUsable))
+        if (!promptUsable)
         {
             var reason = "Run finished without a terminal sentinel and the task prompt is empty or placeholder; cannot auto-recover.";
             await EscalateNoCompletionSignalAsync(workspace, entry, pending, reason, ct);
@@ -1669,7 +1669,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // Budget exhausted: stop looping and hand to a human. Crucially we do
         // not fall back to "accept as done" - the deterministic completion
         // signal never arrived, so a human must judge the work.
-        if (LocalLoopDecisionPolicy.BudgetSpent(prior, maxReissues))
+        if (prior >= maxReissues)
         {
             var reason = $"Run finished without a terminal sentinel after {prior} prior orchestrator reissue(s); user attention required.";
             await EscalateNoCompletionSignalAsync(workspace, entry, pending, reason, ct);
@@ -2575,7 +2575,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         // reissue budget (an Escalate decision, which resets the attempt chain).
         if (report.HasInfraFailure)
         {
-            AgentStudio.Review.CouncilReviewReaction? infraReaction = null;
+            AgentStudio.OrchestrationDecisions.CouncilReviewReaction? infraReaction = null;
             if (gradeReport is not null)
             {
                 infraReaction = DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);
@@ -2957,7 +2957,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var reaction = DeriveCouncilReviewReaction(workspace, entry, current, gradeReport);
         AgentStudio.Review.CouncilReviewReactionStore.Write(current.FolderPath, reaction);
 
-        if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Accept)
+        if (reaction.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Accept)
         {
             return false;
         }
@@ -2966,7 +2966,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             current.FolderPath,
             pendingStepReason: "Not run because the council reaction concluded this review pass.");
 
-        if (reaction.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
+        if (reaction.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
         {
             var subject = ReviewSubjectStore.Read(current.FolderPath);
             var followUp = IntegrationContinuationPrompt.Build(
@@ -3054,7 +3054,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         return true;
     }
 
-    private AgentStudio.Review.CouncilReviewReaction DeriveCouncilReviewReaction(
+    private AgentStudio.OrchestrationDecisions.CouncilReviewReaction DeriveCouncilReviewReaction(
         string workspace,
         WatchPathEntry entry,
         TaskInfo current,
@@ -3637,7 +3637,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         PendingDecision pending,
         TaskInfo current,
         AspectRunReport report,
-        AgentStudio.Review.CouncilReviewReaction? councilReaction,
+        AgentStudio.OrchestrationDecisions.CouncilReviewReaction? councilReaction,
         CancellationToken ct)
     {
         var crashedAspects = report.InfraFailures.Select(v => v.Aspect).ToList();
@@ -6401,14 +6401,14 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         var lastGateCacheDecision = BuildTestGateRunner.DependencyCacheDecisionSummary(
             result.DependencyCacheDecision);
 
-        if (LocalLoopDecisionPolicy.RepeatedGateFailure(priorBuildGateReissues, taskReissueCeilingReached))
+        if (priorBuildGateReissues >= 1 || taskReissueCeilingReached)
         {
             var reason = priorBuildGateReissues >= 1
                 ? $"build-test gate failed twice for the same product retry identity ({failureIdentity}; {result.Reason}); " +
                   $"last gate cache decision: {lastGateCacheDecision}; escalating per post-step loop guard."
                 : $"build-test gate failed and the task-level anti-churn ceiling was reached ({failureIdentity}; {result.Reason}); " +
                   $"last gate cache decision: {lastGateCacheDecision}.";
-            if (councilReaction?.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue)
+            if (councilReaction?.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
             {
                 councilReaction = AgentStudio.Review.CouncilReviewPolicy.EscalateBecause(
                     councilReaction,
@@ -6490,7 +6490,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         followUp = await WriteFollowUpFileAsync(moved, followUp, ct);
 
         var title = string.IsNullOrWhiteSpace(moved.Title) ? moved.Id : moved.Title;
-        var councilSuffix = councilReaction?.Disposition == AgentStudio.Review.CouncilReactionDisposition.Reissue
+        var councilSuffix = councilReaction?.Disposition == AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue
             ? $" The same round also carries {councilReaction.Assessments.Count} named council finding(s)."
             : string.Empty;
         _chatLog.Append(moved, OrchestratorMessageKind.Reissue,
@@ -6530,7 +6530,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
     private static string BuildBuildTestGateFollowUp(
         BuildTestGateResult result,
-        AgentStudio.Review.CouncilReviewReaction? councilReaction = null)
+        AgentStudio.OrchestrationDecisions.CouncilReviewReaction? councilReaction = null)
     {
         var commands = result.RanFrontendBuild
             ? "`dotnet build backend/OrchestratorApi.csproj` and `npm run build` from `frontend/`"
@@ -6542,7 +6542,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
             "```\n" +
             result.Output + "\n" +
             "```";
-        if (councilReaction?.Disposition != AgentStudio.Review.CouncilReactionDisposition.Reissue)
+        if (councilReaction?.Disposition != AgentStudio.OrchestrationDecisions.CouncilReactionDisposition.Reissue)
         {
             return buildFollowUp;
         }
@@ -6575,7 +6575,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                         && r.Reason != null
                         && r.Reason.StartsWith(LintScssReissueReasonPrefix, StringComparison.Ordinal));
 
-        if (LocalLoopDecisionPolicy.RepeatedGateFailure(priorLintReissues, false))
+        if (priorLintReissues >= 1)
         {
             var reason = $"lint-scss failed twice in a row (exit {result.ExitCode}); escalating per ASS-46 infinite-spin guard.";
             var move = GuardedMoveJob(

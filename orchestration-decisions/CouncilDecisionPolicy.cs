@@ -1,5 +1,4 @@
-using AgentStudio.Review;
-namespace AgentStudio.Orchestration.Decisions;
+namespace AgentStudio.OrchestrationDecisions;
 
 public static class CouncilDecisionPolicy
 {

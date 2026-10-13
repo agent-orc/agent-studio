@@ -1,7 +1,7 @@
 extern alias TaskServerAssembly;
 extern alias EngineAssembly;
 
-using AgentStudio.Orchestration.Decisions;
+using AgentStudio.OrchestrationDecisions;
 using AgentStudio.TaskServer.Contracts;
 using System.Text.Json;
 using Xunit;
@@ -23,6 +23,8 @@ public sealed class TransitionDecisionGoldenTests
         yield return Case("concern exhausted", Facts("Pass", "requirements", "concerns", finding: "Fix src/feature.cs")
             with { Settings = new(MaximumConcernRounds: 1), Counters = new(ConcernRounds: 1) }, TransitionAction.AcceptAndIntegrate);
         yield return Case("blocking verdict", Facts("ProductFailure", "requirements", "block"), TransitionAction.FindingRound);
+        yield return Case("uncited block", Facts("ProductFailure", "requirements", "block",
+            classification: ReviewVerdictCitationPolicy.BlockWithoutCitation), TransitionAction.HumanReview);
         yield return Case("test block", Facts("ProductFailure", "build-tests", "block"), TransitionAction.FindingRound);
         yield return Case("budget spent", Facts("ProductFailure", "requirements", "block")
             with { Counters = new(AutomaticRounds: 4) }, TransitionAction.DegradeWithFollowUp);
@@ -69,6 +71,16 @@ public sealed class TransitionDecisionGoldenTests
             Assert.NotEmpty(monolith.Findings);
             Assert.Equal(DecisionAuthority.LinkedFollowUp, monolith.Candidates[0].AuthorityFloor);
         }
+    }
+
+    [Fact]
+    public void Uncited_block_does_not_reissue_in_any_adapter()
+    {
+        var facts = Facts("ProductFailure", "requirements", "block",
+            classification: ReviewVerdictCitationPolicy.BlockWithoutCitation);
+        Assert.Equal(TransitionAction.HumanReview, MonolithTransitionAdapter.Decide(facts).Action);
+        Assert.Equal(TransitionAction.HumanReview, TaskAdapter.Decide(facts).Action);
+        Assert.Equal(TransitionAction.HumanReview, EngineAdapter.Decide(facts).Action);
     }
 
     [Theory]
@@ -140,10 +152,13 @@ public sealed class TransitionDecisionGoldenTests
         Assert.Equal(1, StageDecisionPolicy.ConcernRoundsUsed([first, second]));
     }
 
-    private static TransitionFacts Facts(string outcome, string? aspect = null, string? status = null, string? finding = null)
+    private static TransitionFacts Facts(string outcome, string? aspect = null, string? status = null,
+        string? finding = null, string? classification = null)
     {
-        ReviewFollowUpFinding[] findings = aspect is null ? [] : [new(aspect, status, "Review finding", Finding: finding)];
-        ReviewVerdictDto[] verdicts = aspect is null ? [] : [new(aspect, status!, "Review", "Review finding", Missing: finding)];
+        ReviewFollowUpFinding[] findings = aspect is null ? [] : [new(aspect, status, "Review finding",
+            Finding: finding, Classification: classification)];
+        ReviewVerdictDto[] verdicts = aspect is null ? [] : [new(aspect, status!,
+            classification ?? "Review", "Review finding", Missing: finding)];
         return new(new("card", "4-auto-review"), new("attempt", true, new("refs/results/delivery", "abc", "attempt")),
             new(outcome, findings, new ReviewPlanDto([], []), verdicts), new(), new(), new());
     }
