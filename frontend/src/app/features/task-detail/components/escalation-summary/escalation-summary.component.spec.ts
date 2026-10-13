@@ -159,6 +159,23 @@ describe('EscalationSummaryComponent', () => {
     );
   });
 
+  it('marks a queued answer that is still the board card head as truncated', () => {
+    const needsInput = {
+      message: 'Which deployment strategy?', firstLine: 'Which deployment strategy?',
+      runAttemptId: 'run_4e53d6d6', salvageBranch: null, artifactPath: null,
+    } as unknown as TaskDetail['info']['needsInput'];
+    const head = mount({ detail: detail({ needsInput,
+      pendingIntent: { mode: 'steer', prompt: 'Choose A', promptTruncated: true } as TaskDetail['info']['pendingIntent'] }) });
+    expect((head.nativeElement as HTMLElement).querySelector('[data-testid="needs-input-answer-queued"] span')
+      ?.textContent).toBe('Choose A…');
+    TestBed.resetTestingModule();
+
+    const full = mount({ detail: detail({ needsInput,
+      pendingIntent: { mode: 'steer', prompt: 'Choose A' } as TaskDetail['info']['pendingIntent'] }) });
+    expect((full.nativeElement as HTMLElement).querySelector('[data-testid="needs-input-answer-queued"] span')
+      ?.textContent).toBe('Choose A');
+  });
+
   it('renders the structured council findings, artifacts, delivery context and recommendation', () => {
     const fixture = mount({
       followUp: '- [ ] Frontend Playwright verification skipped.\n- [ ] Live Haiku probe not run.',
