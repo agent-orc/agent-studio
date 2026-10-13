@@ -1,0 +1,83 @@
+<section class="flow" data-testid="flow-overview" aria-label="Machine cycle and throughput">
+  <div class="flow__metrics">
+    <div class="flow__metric">
+      <span>Machine cycle median</span>
+      <strong>{{ duration(metric('machineCycle')?.p50) }}</strong>
+      <small>p90 {{ duration(metric('machineCycle')?.p90) }} · mean {{ duration(metric('machineCycle')?.mean) }}</small>
+    </div>
+    <div class="flow__metric">
+      <span>Runtime median</span>
+      <strong>{{ duration(metric('active')?.p50) }}</strong>
+      <small>Active work</small>
+    </div>
+    <div class="flow__metric">
+      <span>Resource wait median</span>
+      <strong>{{ duration(metric('resourceWait')?.p50) }}</strong>
+      <small>{{ topResource()?.label ?? 'No resource wait' }} · {{ share(topResource()?.shareOfMachineCycle) }} of machine cycle</small>
+    </div>
+    <div class="flow__metric">
+      <span>Tokens per card median</span>
+      <strong>{{ tokens(metric('tokensPerCard')?.p50) }}</strong>
+      <small>Input, output, cache reads and writes</small>
+    </div>
+    <div class="flow__metric">
+      <span>Cost per card median</span>
+      <strong>{{ usd(metric('costPerCardUsd')?.p50) }}</strong>
+      <small>Stored estimates; unpriced calls shown below</small>
+    </div>
+    <div class="flow__metric">
+      <span>Completed</span>
+      <strong>{{ data().coverage.tasksInWindow }}</strong>
+      <small>{{ data().coverage.reAcceptanceArtefactsInWindow ?? 0 }} re-acceptances excluded</small>
+    </div>
+  </div>
+
+  <p class="flow__excluded" data-testid="flow-excluded">
+    Excluded from machine cycle:
+    human {{ duration(metric('humanWait')?.p50) }} median / {{ duration(metric('humanWait')?.total) }} total ·
+    dependency {{ duration(metric('dependencyWait')?.p50) }} median / {{ duration(metric('dependencyWait')?.total) }} total ·
+    system hold {{ duration(metric('systemHold')?.p50) }} median / {{ duration(metric('systemHold')?.total) }} total
+  </p>
+
+  <div class="flow__tables">
+    <section>
+      <h3>Throughput per UTC day</h3>
+      <div class="flow__scroll">
+        <table data-testid="flow-throughput-day">
+          <thead><tr><th scope="col">UTC day</th><th scope="col">Delivered</th><th scope="col">Machine done</th><th scope="col">Completed</th><th scope="col">Artefacts excluded</th></tr></thead>
+          <tbody>
+            @for (day of data().throughputPerDay ?? []; track day.day) {
+              <tr><th scope="row">{{ day.day.slice(0, 10) }}</th><td>{{ day.delivered }}</td><td>{{ day.machineDone }}</td><td>{{ day.completed }}</td><td>{{ day.reAcceptanceArtefacts }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section>
+      <h3>Runtime by step</h3>
+      <div class="flow__scroll">
+        <table data-testid="flow-steps">
+          <thead><tr><th scope="col">Step</th><th scope="col">Cards</th><th scope="col">Median</th><th scope="col">p90</th><th scope="col">Total</th><th scope="col">Tokens</th><th scope="col">Input</th><th scope="col">Cache reads</th><th scope="col">Cache writes</th><th scope="col">Output</th><th scope="col">Cost</th><th scope="col">Cost/card p50</th><th scope="col">Unpriced</th></tr></thead>
+          <tbody>
+            @for (step of data().steps ?? []; track step.id) {
+              <tr><th scope="row">{{ step.label }}</th><td>{{ step.duration.count }}</td><td>{{ duration(step.duration.p50) }}</td><td>{{ duration(step.duration.p90) }}</td><td>{{ duration(step.duration.total) }}</td><td>{{ tokens(step.tokens) }}</td><td>{{ tokens(step.inputTokens) }}</td><td>{{ tokens(step.cacheReadTokens) }}</td><td>{{ tokens(step.cacheCreationTokens) }}</td><td>{{ tokens(step.outputTokens) }}</td><td>{{ usd(step.costUsd) }}</td><td>{{ usd(step.costPerCardP50Usd) }}</td><td>{{ step.unpricedCalls }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section>
+      <h3>Wait for resources</h3>
+      <div class="flow__scroll">
+        <table data-testid="flow-resources">
+          <thead><tr><th scope="col">Resource</th><th scope="col">Cards</th><th scope="col">Median</th><th scope="col">p90</th><th scope="col">Total</th><th scope="col">Share</th></tr></thead>
+          <tbody>
+            @for (resource of data().resources ?? []; track resource.id) {
+              <tr><th scope="row">{{ resource.label }}</th><td>{{ resource.duration.count }}</td><td>{{ duration(resource.duration.p50) }}</td><td>{{ duration(resource.duration.p90) }}</td><td>{{ duration(resource.duration.total) }}</td><td>{{ share(resource.shareOfMachineCycle) }}</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</section>

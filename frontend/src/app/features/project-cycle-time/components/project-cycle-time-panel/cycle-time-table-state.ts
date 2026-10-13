@@ -12,6 +12,8 @@ export type CycleTimeSortKey =
   | 'bounceRounds'
   | 'backwardTransitions'
   | 'outcome'
+  | 'machineCycle' | 'active' | 'resourceWait' | 'systemHold' | 'humanWait'
+  | 'dependencyWait' | 'tokens' | 'cost'
   | CycleTimeStageKey;
 
 export type CycleTimeSortDirection = 'asc' | 'desc';
@@ -57,6 +59,14 @@ export function sortValue(row: TaskCycleTimeRow, key: CycleTimeSortKey): number 
     case 'bounceRounds': return row.bounceRounds;
     case 'backwardTransitions': return row.backwardTransitions ?? 0;
     case 'outcome': return row.integrationOutcome ?? '';
+    case 'machineCycle': return row.machineCycleSeconds ?? -1;
+    case 'active': return row.activeSeconds ?? -1;
+    case 'resourceWait': return row.resourceWaitSeconds ?? -1;
+    case 'systemHold': return row.systemHoldSeconds ?? -1;
+    case 'humanWait': return row.humanWaitSeconds ?? -1;
+    case 'dependencyWait': return row.dependencyWaitSeconds ?? -1;
+    case 'tokens': return row.episodeTokens ?? 0;
+    case 'cost': return row.episodeCostUsd ?? 0;
     default: return row.stages?.[key] ?? 0;
   }
 }

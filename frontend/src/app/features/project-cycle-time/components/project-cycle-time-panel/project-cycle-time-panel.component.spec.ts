@@ -42,6 +42,12 @@ describe('ProjectCycleTimePanelComponent', () => {
     const root: HTMLElement = fixture.nativeElement;
     expect(root.querySelector('[data-testid="cycle-time-summary"]')?.textContent).toContain('2 tasks completed');
     expect(root.querySelector('[data-testid="cycle-time-window-7d"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(root.querySelector('[data-testid="flow-overview"]')).not.toBeNull();
+    (root.querySelector('[data-testid="cycle-time-lane-toggle"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(fixture.componentInstance.laneStages()).toBe(true);
+    expect(root.querySelector('[data-testid="cycle-time-bar"]')).not.toBeNull();
 
     const segments = Array.from(root.querySelectorAll('[data-testid="cycle-time-bar"] .cyc__segment'))
       .map(el => el.getAttribute('data-stage'));
@@ -143,6 +149,24 @@ describe('ProjectCycleTimePanelComponent', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(root.querySelector('[data-testid="cycle-time-error"]')?.textContent).toContain('boom');
+    http.verify();
+  });
+
+  it('round trips the 24 hour window through the existing request', async () => {
+    const { fixture, http } = await mount();
+    http.expectOne(r => r.url === '/api/projects/Demo/cycle-time').flush(response());
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const root: HTMLElement = fixture.nativeElement;
+    (root.querySelector('[data-testid="cycle-time-window-1d"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const request = http.expectOne(r => r.url === '/api/projects/Demo/cycle-time');
+    expect(request.request.params.get('window')).toBe('1d');
+    request.flush({ ...response(), window: '1d' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(root.querySelector('[data-testid="cycle-time-summary"]')?.textContent).toContain('Last 24 hours');
     http.verify();
   });
 
