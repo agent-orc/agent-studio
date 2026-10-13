@@ -14,7 +14,6 @@ namespace AgentStudio.Tests;
 /// AuthStatus response, which mislabelled the shape the browser stores after a
 /// local-profile sign-in. These tests pin the derived profile.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class LocalProfileAuthEndpointTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-local-auth-" + Guid.NewGuid().ToString("N"));

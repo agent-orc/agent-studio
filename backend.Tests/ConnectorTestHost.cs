@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
@@ -28,11 +27,11 @@ internal sealed record ConnectorTestSetup(
 /// A booted connector host and its client. WebApplicationFactory runs the
 /// real entry point inside the xunit process, so
 /// <see cref="ConnectorHost.ValidateConfiguredListener"/> reads the
-/// configuration of whichever process started the test run. The host
-/// therefore boots with the ambient listener configuration removed: the
-/// connector owns exactly one endpoint and must not inherit a listener from
-/// its launcher. Callers run in the serial WebApplicationFactory collection,
-/// so no other host boots while the ambient configuration is set aside.
+/// configuration of whichever process started the test run. The connector
+/// owns exactly one endpoint and must not inherit a listener from its
+/// launcher; <see cref="LauncherListenerEnvironment"/> removes that listener
+/// once when the test process starts, so a boot leaves the process
+/// environment alone and any number of connectors boot in parallel.
 /// </summary>
 internal sealed class ConnectorUnderTest : IAsyncDisposable
 {
@@ -54,13 +53,11 @@ internal sealed class ConnectorUnderTest : IAsyncDisposable
 
     public static ConnectorUnderTest Boot(ConnectorTestSetup setup)
     {
-        using var owned = new OwnedListenerConfiguration();
         var factory = BuildFactory(setup);
         try
         {
-            // CreateClient starts the host, so the boot - and with it the
-            // listener guard - has to happen inside the scope rather than
-            // at the first request.
+            // CreateClient starts the host, so a listener or credential the
+            // boot rejects surfaces here rather than at the first request.
             return new ConnectorUnderTest(factory, NewClient(factory));
         }
         catch
@@ -102,9 +99,7 @@ internal sealed class ConnectorUnderTest : IAsyncDisposable
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Test");
-            foreach (var (key, value) in settings)
-                builder.UseSetting(key, value);
-            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
+            builder.UseTestSettings(settings);
             builder.ConfigureTestServices(services =>
             {
                 if (setup.Credentials is not null)
@@ -133,32 +128,6 @@ internal sealed class ConnectorUnderTest : IAsyncDisposable
             HandleCookies = true,
             AllowAutoRedirect = false,
         });
-
-    /// <summary>
-    /// Removes every variable that carries listener configuration
-    /// (<see cref="HostListenerEnvironment"/>) for the duration of a host boot
-    /// and restores the process environment afterwards.
-    /// </summary>
-    private sealed class OwnedListenerConfiguration : IDisposable
-    {
-        private readonly List<KeyValuePair<string, string?>> _removed = [];
-
-        public OwnedListenerConfiguration()
-        {
-            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-            {
-                var name = (string)entry.Key;
-                if (!HostListenerEnvironment.Carries(name)) continue;
-                _removed.Add(new KeyValuePair<string, string?>(name, entry.Value as string));
-                Environment.SetEnvironmentVariable(name, null);
-            }
-        }
-
-        public void Dispose()
-        {
-            foreach (var (name, value) in _removed) Environment.SetEnvironmentVariable(name, value);
-        }
-    }
 }
 
 /// <summary>Browser-side helpers: session bootstrap, cookie reads, and a mutation carrying Origin and CSRF.</summary>

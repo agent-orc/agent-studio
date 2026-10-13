@@ -52,7 +52,6 @@ namespace AgentStudio.Tests;
 /// gate's unit-test pass runs it.
 /// </para>
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class LegacyRunnerCompletionContractTests : IDisposable
 {
     private const string ProjectName = "agent-runner-01";

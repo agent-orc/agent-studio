@@ -14,7 +14,6 @@ using Contract = AgentStudio.TaskServer.Contracts;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ReviewReClaimEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(

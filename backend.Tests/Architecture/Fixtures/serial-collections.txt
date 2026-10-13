@@ -1,0 +1,43 @@
+# Serial test execution in OrchestratorApi.Tests, checked by SerialCollectionGuardTests (AGT-3106).
+#
+# xUnit v2 runs a DisableParallelization collection only after every parallel collection has
+# finished, one test at a time, so every entry here costs wall time on every gate.
+#
+#   collection <definition class> <reason>  a [CollectionDefinition(..., DisableParallelization = true)];
+#                                           the reason says why its members cannot run in parallel.
+#   member <definition class> <test class>  a class carrying [Collection(...)] of that collection.
+#   environment-baseline <file> <n>         a test file outside every serial collection that calls
+#                                           Environment.SetEnvironmentVariable exactly n times. These
+#                                           predate the guard; the list only shrinks. New code passes
+#                                           host settings with UseSetting (TestHostSettings) instead.
+#   process-start <file> <reason>           code that writes the environment before any test runs.
+
+collection ProcessEnvironmentSerialCollection its members write process environment variables that every host booting at the same time would read as configuration.
+member ProcessEnvironmentSerialCollection ConnectorLaunchEnvironmentTests
+member ProcessEnvironmentSerialCollection BuildTestGateRunnerBehaviorTests
+
+collection CodexDetectedDefaultCollection its members write the process-global Codex detected default and ladders in ModelMetadataRegistry, which every other test reads.
+member CodexDetectedDefaultCollection AgentDefaultsMaterializationTests
+member CodexDetectedDefaultCollection CodexCliServiceTests
+member CodexDetectedDefaultCollection CodexDetectedDefaultTests
+member CodexDetectedDefaultCollection CodexModelDiscoveryTests
+member CodexDetectedDefaultCollection SetJobCliTypeSyncsAgentTests
+
+collection ModelFamilyResolverCollection its members write the process-global vendor availability in ModelMetadataRegistry, which every other test reads.
+member ModelFamilyResolverCollection ModelFamilyResolverTests
+
+collection LiveCliCollection its members drive the installed claude, codex and gemini binaries, which share one per-directory session database.
+member LiveCliCollection CliKestrelHostingRepoTests
+member LiveCliCollection CliResumeContractTests
+
+collection UpdateServiceSerialCollection its members fork git and bash against a fake stable checkout and poll wall-clock health budgets of two real Kestrel hosts.
+member UpdateServiceSerialCollection UpdateServiceIntegrationTests
+member UpdateServiceSerialCollection UpdateServicePreflightPreconditionTests
+member UpdateServiceSerialCollection UpdateServiceRestartIdentityDrillTests
+
+process-start backend.Tests/TempRootBootstrap.cs the module initializer removes the launcher's listener configuration once, before any test runs.
+
+environment-baseline backend.Tests/BackendCrashSurfaceTests.cs 2
+environment-baseline backend.Tests/CliContextConventionsTests.cs 4
+environment-baseline backend.Tests/CliWorkingMemoryServiceTests.cs 2
+environment-baseline backend.Tests/PtySessionEnvironmentTests.cs 4

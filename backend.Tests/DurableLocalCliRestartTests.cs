@@ -17,7 +17,6 @@ namespace AgentStudio.Tests;
 /// so failures identify the durability boundary rather than unrelated hosted
 /// services.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 [Trait("Category", "MachineBound")]
 public sealed class DurableLocalCliRestartTests : IDisposable
 {
