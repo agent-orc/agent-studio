@@ -1432,10 +1432,12 @@ public static class ProjectSettingsEndpoints
                 RemoteProjectRepositoryResolver.ReadRepositoryDefaultBranch(project)).IntegrationRef;
             var resultSha = review.Subject.ExpectedResultSha;
             var resultRef = review.Subject.ResultRef;
+            // The bare result ref exists only under refs/remotes/origin in the
+            // Studio checkout, so diff the immutable result SHA like the completion path.
             var changedFiles = !string.IsNullOrWhiteSpace(repositoryPath)
-                && !string.IsNullOrWhiteSpace(resultRef)
+                && ReviewSubjectStore.IsValidResultSha(resultSha)
                 ? RemoteReviewPlanBuilder.DeliveryChangedFiles(
-                    git, repositoryPath, integrationRef, resultRef)
+                    git, repositoryPath, integrationRef, resultSha)
                 : null;
             return remoteReviewPlans.Build(task, repositoryPath, taskSettings,
                 integrationRef, resultSha, changedFiles, resultRef);

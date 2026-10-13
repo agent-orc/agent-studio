@@ -120,6 +120,39 @@ public sealed class BatchGatePilotServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Enabling_the_gate_replans_a_queued_review_from_its_fetched_result_sha()
+    {
+        // Stable 9e2526be5: the re-plan diffed the result ref, which the Studio
+        // checkout holds only under refs/remotes/origin, so no diff was found and
+        // every queued review kept its full build/test plan.
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        http.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        factory.Services.GetRequiredService<AgentStudio.Projects.ProjectSettingsService>()
+            .SetIntegrationBranch(ProjectName, "develop");
+        var queued = SeedMember(factory, "DOC-REPLAN", "docs/replan.md",
+            settleReview: false, deferredPlan: false);
+        Assert.Empty(Git(_repo, "for-each-ref", "refs/heads/agent-studio/results/"));
+        var authority = factory.Services.GetRequiredService<AttemptAuthorityService>();
+        Assert.False(authority.GetReview(queued.ReviewAttemptId)!.Subject.Plan!.BuildTestDeferredToBatch);
+
+        var response = await http.PutAsJsonAsync($"/api/projects/{ProjectName}/batch-gate",
+            new BatchGateFormationOptions(Enabled: true, Scope: "documentation",
+                ReviewTestLevel: "build-only"));
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+
+        // The re-plan runs after the response; its timeline event follows the plan write.
+        var folder = Path.Combine(_watchPath, TaskStates.AutoReview, queued.Key);
+        var timeline = factory.Services.GetRequiredService<TimelineLog>();
+        await WaitForAsync(() => timeline.ReadAll(folder).Any(item =>
+            item.Kind == TimelineEventKinds.ReviewAttemptReplanned
+            && item.RunId == queued.ReviewAttemptId));
+        var plan = authority.GetReview(queued.ReviewAttemptId)!.Subject.Plan!;
+        Assert.True(plan.BuildTestDeferredToBatch);
+        Assert.Equal("build-only", plan.TestLevel);
+    }
+
+    [Fact]
     public async Task Pending_member_uses_current_gate_profile_when_the_project_profile_changes()
     {
         using var factory = BuildFactory();
