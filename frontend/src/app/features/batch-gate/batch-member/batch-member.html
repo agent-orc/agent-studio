@@ -1,10 +1,11 @@
 @if (member(); as item) {
-  <span class="batch-member" data-testid="batch-member-badge" [attr.data-status]="item.status">
+  <span class="batch-member" data-testid="batch-member-badge" [attr.data-status]="item.status"
+    [attr.data-reason]="item.reason ?? null" [attr.title]="item.reasonDetail ?? ejection()">
     @switch (item.status) {
       @case ('pending') { Batch pending }
       @case ('in-batch') { Batch {{ item.batchId }} · {{ item.position ?? '?' }} of {{ item.size ?? '?' }} }
       @case ('published') { Batch published }
-      @case ('fallback') { Per-task fallback }
+      @case ('fallback') { Per-task fallback@if (ejection(); as label) { · {{ label }}} }
     }
   </span>
 }

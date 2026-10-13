@@ -72,14 +72,20 @@ public static class BatchGateStateSnapshotReader
                 var member = manifest.Members[index];
                 var released = publication is not null && store.TryReadMember(
                     manifest.BatchId, member.TaskKey, publication.BatchRunId) is not null;
+                // An ejected member left its batch for the per-task gate; the
+                // card names why (AGT-3104).
+                var replay = store.TryReadReplay(manifest.BatchId, member.TaskKey);
+                var ejected = replay is { Outcome: "conflict" or "unattributable" };
                 members[member.TaskKey] = new
                 {
                     status = released ? "published"
-                        : phase == BatchPhase.Abandoned ? "fallback" : "in-batch",
+                        : phase == BatchPhase.Abandoned || ejected ? "fallback" : "in-batch",
                     batchId = manifest.BatchId,
                     phase = phase.ToString().ToLowerInvariant(),
                     position = (int?)(index + 1),
                     size = (int?)manifest.Members.Count,
+                    reason = ejected ? replay!.Outcome : null,
+                    reasonDetail = ejected ? EjectionDetail(replay!) : null,
                 };
             }
         }
@@ -101,4 +107,10 @@ public static class BatchGateStateSnapshotReader
             pushWait,
         };
     }
+
+    private static string? EjectionDetail(BatchGateReplayRecord replay)
+        => replay.Reason
+           ?? (replay.ConflictedFiles.Count > 0
+               ? "Conflicts with the candidate in " + string.Join(", ", replay.ConflictedFiles.Take(5))
+               : null);
 }

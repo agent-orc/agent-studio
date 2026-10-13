@@ -44,7 +44,22 @@ export interface BatchGateState {
     runs: { batchRunId: string; host: string; outcome?: string | null; classification?: string | null; startedAtUtc?: string | null; finishedAtUtc?: string | null }[];
     publication?: BatchPublication | null;
   }[];
-  members: Record<string, { status: BatchMemberStatus; batchId?: string | null; phase?: string | null; position?: number | null; size?: number | null }>;
+  members: Record<string, BatchMemberState>;
+}
+
+/**
+ * One card's batch status. An ejected member carries why it went to the
+ * per-task gate, `conflict` or `unattributable`, with the replay detail in
+ * `reasonDetail`.
+ */
+export interface BatchMemberState {
+  status: BatchMemberStatus;
+  batchId?: string | null;
+  phase?: string | null;
+  position?: number | null;
+  size?: number | null;
+  reason?: string | null;
+  reasonDetail?: string | null;
 }
 
 /** The backend reports risk as a probability between 0 and 1. */
@@ -68,6 +83,15 @@ export function batchRiskLabel(risk: BatchRisk | undefined): string {
 export function batchReplayLabel(replay: BatchReplay | undefined): string {
   if (typeof replay === 'string') return replay;
   return replay?.outcome ?? 'not replayed';
+}
+
+/** Short card label for why a member left its batch. */
+export function batchEjectionLabel(reason: string | null | undefined): string | null {
+  switch (reason) {
+    case 'conflict': return 'replay conflict';
+    case 'unattributable': return 'unattributable history';
+    default: return reason || null;
+  }
 }
 
 export function batchPublishedSha(publication: BatchPublication | null | undefined): string | null {
