@@ -126,10 +126,12 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  codexSignInStatus(hostId: string, handle: string): Observable<CodexSignInStatusResponse> {
+  codexSignInStatus(hostId: string, handle: string, sshTarget?: string): Observable<CodexSignInStatusResponse> {
     if (!this.http) throw new Error('Codex sign-in requires the Studio HTTP client.');
+    // The target lets a restarted Studio finalize a pending host renewal.
     return this.http.get<CodexSignInStatusResponse>(
-      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}`,
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/codex-sign-in/${encodeURIComponent(handle)}` +
+        (sshTarget ? `?sshTarget=${encodeURIComponent(sshTarget)}` : ''),
     );
   }
 
@@ -150,10 +152,12 @@ export class ProviderAuthStatusService implements OnDestroy {
     );
   }
 
-  claudeSignInStatus(hostId: string, handle: string): Observable<ClaudeSignInStatusResponse> {
+  claudeSignInStatus(hostId: string, handle: string, sshTarget?: string): Observable<ClaudeSignInStatusResponse> {
     if (!this.http) throw new Error('Claude sign-in requires the Studio HTTP client.');
+    // The target lets a restarted Studio finalize a pending host renewal.
     return this.http.get<ClaudeSignInStatusResponse>(
-      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/claude-sign-in/${encodeURIComponent(handle)}`,
+      `/api/v1/management/remote-hosts/${encodeURIComponent(hostId)}/claude-sign-in/${encodeURIComponent(handle)}` +
+        (sshTarget ? `?sshTarget=${encodeURIComponent(sshTarget)}` : ''),
     );
   }
 

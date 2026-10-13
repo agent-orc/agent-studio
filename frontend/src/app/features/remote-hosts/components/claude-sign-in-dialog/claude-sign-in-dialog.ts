@@ -81,15 +81,15 @@ export class ClaudeSignInDialogComponent implements OnDestroy {
         this.session.set(session);
         this.phase.set('pending');
         this.detail.set('Complete the browser flow. This window will detect completion automatically.');
-        this.poll(request, session);
+        this.poll(request, session, sshTarget);
       },
       error: error => this.fail(errorDetail(error, 'Claude sign-in could not be started.')),
     });
   }
 
-  private poll(request: ClaudeSignInTarget, session: ClaudeSignInStartResponse): void {
+  private poll(request: ClaudeSignInTarget, session: ClaudeSignInStartResponse, sshTarget: string): void {
     this.polling = timer(500, 1_000).pipe(
-      switchMap(() => this.providerAuth.claudeSignInStatus(request.hostId, session.handle)),
+      switchMap(() => this.providerAuth.claudeSignInStatus(request.hostId, session.handle, sshTarget)),
       takeWhile(status => status.state === 'pending', true),
     ).subscribe({
       next: status => this.acceptStatus(request, status),

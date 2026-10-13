@@ -99,6 +99,8 @@ describe('ClaudeSignInDialogComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     await vi.advanceTimersByTimeAsync(500);
+    // A restarted Studio needs the original target to finalize a pending host renewal.
+    expect(providerAuth.claudeSignInStatus).toHaveBeenCalledWith('host-01', STARTED.handle, 'agent@runner-01');
     providerAuth.status.next({
       handle: STARTED.handle,
       state: 'failed',

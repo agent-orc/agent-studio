@@ -236,8 +236,15 @@ public sealed partial class CodexSignInCoordinator(
         if (receipt is null || receipt.HostId != hostId || receipt.Method != "R3") return null;
         if (receipt.Step is "installed" or "recovery-required")
         {
+            // After a Studio restart the in-memory session is gone; the polling client
+            // supplies the original target. The host ID is never guessed as an SSH alias.
             var target = _sessions.TryGetValue(handle, out var session) ? session.SshTarget
-                : !string.IsNullOrWhiteSpace(sshTarget) ? sshTarget : hostId;
+                : sshTarget?.Trim() is { Length: > 0 } supplied && SshTargetPattern().IsMatch(supplied)
+                    ? supplied : null;
+            if (target is null)
+                return new(handle, receipt.Step == "recovery-required" ? "failed" : "pending",
+                    "Host renewal finalization needs this host's configured SSH target; poll with it to continue.",
+                    receipt.UpdatedAt, receipt.Deadline, null);
             string hostResult;
             try { hostResult = await transport.FinalizePendingAsync(target, handle, ct); }
             catch (Exception) when (!ct.IsCancellationRequested) { hostResult = "pending"; }

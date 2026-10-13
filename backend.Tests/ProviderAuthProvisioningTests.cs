@@ -449,7 +449,8 @@ public sealed class ProviderAuthProvisioningTests
         journal.RealProof = true;
         var restarted = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
             new RecordingProviderSignInAudit(), journal);
-        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
         Assert.Equal("complete", journal.Step);
     }
 
@@ -564,6 +565,62 @@ public sealed class ProviderAuthProvisioningTests
     }
 
     [Theory]
+    [InlineData("R1", null)]
+    [InlineData("R2", null)]
+    [InlineData("R2", "runner-01; rm -rf /")]
+    public async Task Restarted_claude_polling_without_its_ssh_target_keeps_the_pending_renewal_resumable(
+        string method, string? suppliedTarget)
+    {
+        var transport = new FakeClaudeDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal(method) { RealProof = true };
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "restart-target", method == "R2" ? "native" : "environment"),
+            "operator", default);
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        transport.FinalizationResult = "verified";
+        var restarted = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var status = await restarted.GetAsync("agent-runner-01", started.Handle, default, suppliedTarget);
+
+        Assert.Equal("pending", status?.State);
+        Assert.Contains("SSH target", status!.Detail);
+        Assert.Null(transport.FinalizedTarget);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            " runner-01 "))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("runner-01 && id")]
+    public async Task Restarted_codex_polling_without_its_ssh_target_keeps_the_pending_renewal_resumable(
+        string? suppliedTarget)
+    {
+        var transport = new FakeCodexDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal("R3") { RealProof = true };
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "restart-target"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        transport.FinalizationResult = "verified";
+        var restarted = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var status = await restarted.GetAsync("agent-runner-01", started.Handle, default, suppliedTarget);
+
+        Assert.Equal("pending", status?.State);
+        Assert.Contains("SSH target", status!.Detail);
+        Assert.Null(transport.FinalizedTarget);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
     [InlineData("claude-native")]
     [InlineData("claude-environment")]
     [InlineData("codex")]
@@ -602,9 +659,11 @@ public sealed class ProviderAuthProvisioningTests
         var coordinator = new ClaudeSignInCoordinator(new FakeClaudeDeviceAuthTransport(),
             new RecordingProviderSignInAudit(), journal);
 
-        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
         journal.RealProof = true;
-        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
         Assert.Equal("complete", journal.Step);
     }
 
@@ -617,9 +676,11 @@ public sealed class ProviderAuthProvisioningTests
         var coordinator = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
             new RecordingProviderSignInAudit(), journal);
 
-        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
         journal.RealProof = true;
-        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default))?.State);
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
         Assert.Equal("complete", journal.Step);
     }
 
