@@ -137,7 +137,9 @@ public sealed class PublicDemoExecutionProfileTests : IDisposable
             // The revoked-reference post step and older-brief decision are
             // execution mutations and must remain in the denial inventory.
             // Project model migration is an operator-triggered Preview mutation.
-            Assert.Equal(92, routes.Count);
+            // AGT-3072 added POST /api/attempts/checkpoint: an operator-forced authority
+            // checkpoint writes the store, so it is an execution mutation and denied.
+            Assert.Equal(93, routes.Count);
             // Pin their identities too: an unrelated route must not mask the loss
             // of either decision mutation from the denial inventory.
             foreach (var decisionPath in new[] { "/api/tasks/{jobId}/decision", "/api/tasks/{jobId}/decision/reopen", "/api/tasks/{jobId}/decision/migrate" })
