@@ -552,7 +552,7 @@ public static class TestSelectionPlanner
             .FirstOrDefault();
     }
 
-    private static bool IsTestProject(string project)
+    internal static bool IsTestProject(string project)
     {
         if (Path.GetFileNameWithoutExtension(project).Contains("Test", StringComparison.OrdinalIgnoreCase)) return true;
         try
@@ -575,7 +575,7 @@ public static class TestSelectionPlanner
     /// orders the build: the tests start that program as a process and cannot
     /// name its types.
     /// </summary>
-    private static IReadOnlyList<(string Path, bool ProcessLevel)> ProjectReferenceEntries(string project)
+    internal static IReadOnlyList<(string Path, bool ProcessLevel)> ProjectReferenceEntries(string project)
     {
         try
         {

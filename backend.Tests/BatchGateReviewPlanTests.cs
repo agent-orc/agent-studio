@@ -217,10 +217,55 @@ public sealed class BatchGateReviewPlanTests
     }
 
     /// <summary>
-    /// A develop checkout with one backend project, its test project, and a
-    /// result branch checked out for the delivery's commit.
+    /// AGT-3108: OrchestratorApi.Tests references task-server only so that
+    /// ConnectorNegativeMatrixTests can start its built output. A deferred plan
+    /// for a task-server-only result runs that class instead of the whole test
+    /// project.
     /// </summary>
-    private static string BackendRepository(string repo, string folder)
+    [Fact]
+    public void TaskServerOnlyDeliveryDefersWithAClassFilteredOrchestratorApiTestsCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "batch-plan-test-" + Guid.NewGuid().ToString("N"));
+        var repo = Path.Combine(root, "repo");
+        var folder = Path.Combine(root, "task");
+        Directory.CreateDirectory(repo);
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var resultRef = BackendRepository(repo, folder, withTaskServer: true);
+            File.WriteAllText(Path.Combine(repo, "task-server", "LeaseStore.cs"),
+                "namespace AgentStudio.TaskServer;\npublic sealed class LeaseStore { public int Version => 2; }\n");
+            Git(repo, "add", ".");
+            Git(repo, "commit", "-qm", "task-server change");
+            var resultSha = Git(repo, "rev-parse", "HEAD").Trim();
+            Git(repo, "switch", "-q", "develop");
+
+            var plan = PlanBuilder().Build(AutoReviewTask(repo, folder), repo,
+                new ProjectSettings { BatchGate = new(Enabled: true, Scope: "code") }, "develop",
+                resultSha, ["task-server/LeaseStore.cs"], resultRef);
+
+            Assert.True(plan.BuildTestDeferredToBatch);
+            Assert.Equal("work-package", plan.TestLevel);
+            var test = Assert.Single(plan.Commands, command =>
+                command.Arguments.Any(argument => argument.Contains("dotnet test", StringComparison.Ordinal)));
+            Assert.Equal(
+                "dotnet test \"backend.Tests/OrchestratorApi.Tests.csproj\" --filter "
+                + "\"(Category!=MachineBound)&(FullyQualifiedName~ConnectorNegativeMatrixTests)\"",
+                test.Arguments[1]);
+        }
+        finally
+        {
+            DeleteDirectory(root);
+        }
+    }
+
+    /// <summary>
+    /// A develop checkout with one backend project, its test project, and a
+    /// result branch checked out for the delivery's commit. With
+    /// <paramref name="withTaskServer"/>, the test project also references a
+    /// task-server project at process level, as the real one does.
+    /// </summary>
+    private static string BackendRepository(string repo, string folder, bool withTaskServer = false)
     {
         Git(repo, "init", "-q", "-b", "develop");
         Git(repo, "config", "user.email", "batch-test@example.invalid");
@@ -238,11 +283,29 @@ public sealed class BatchGateReviewPlanTests
             "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
         File.WriteAllText(Path.Combine(repo, "backend", "FooService.cs"),
             "namespace AgentStudio;\npublic sealed class FooService { }\n");
+        var processReference = withTaskServer
+            ? "<ProjectReference Include=\"..\\task-server\\TaskServer.csproj\" ReferenceOutputAssembly=\"false\" />"
+            : "";
         File.WriteAllText(Path.Combine(repo, "backend.Tests", "OrchestratorApi.Tests.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
             + "  <PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup>\n"
-            + "  <ItemGroup><ProjectReference Include=\"..\\backend\\OrchestratorApi.csproj\" /></ItemGroup>\n"
+            + "  <ItemGroup><ProjectReference Include=\"..\\backend\\OrchestratorApi.csproj\" />"
+            + processReference + "</ItemGroup>\n"
             + "</Project>\n");
+        if (withTaskServer)
+        {
+            Directory.CreateDirectory(Path.Combine(repo, "task-server"));
+            File.WriteAllText(Path.Combine(repo, "task-server", "TaskServer.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n"
+                + "  <PropertyGroup><AssemblyName>task-server</AssemblyName></PropertyGroup>\n"
+                + "</Project>\n");
+            File.WriteAllText(Path.Combine(repo, "task-server", "LeaseStore.cs"),
+                "namespace AgentStudio.TaskServer;\npublic sealed class LeaseStore { }\n");
+            File.WriteAllText(Path.Combine(repo, "backend.Tests", "ConnectorNegativeMatrixTests.cs"),
+                "namespace AgentStudio.Tests;\n[Trait(\"ProcessReference\", \"TaskServer\")]\n"
+                + "public sealed class ConnectorNegativeMatrixTests\n{\n    [Fact]\n"
+                + "    public void Runs() => BuiltProcessLauncher.StartBuilt(\".\", \"task-server\", \"task-server.dll\");\n}\n");
+        }
         File.WriteAllText(Path.Combine(repo, "backend.Tests", "FooServiceTests.cs"),
             "namespace AgentStudio.Tests;\npublic sealed class FooServiceTests\n{\n"
             + "    [Fact]\n    public void Runs() => _ = new FooService();\n}\n");
@@ -299,6 +362,7 @@ public sealed class BatchGateReviewPlanTests
             WorkingDirectory = repo,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            CreateNoWindow = true,
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
