@@ -734,6 +734,55 @@ public class TaskRunnerPromptTests
         Assert.Contains("older card or Dossier instruction to wait", framing);
     }
 
+    [Fact]
+    public void RenderModeFraming_Coding_CarriesVerificationScopeAfterApproval()
+    {
+        var framing = Prompts().RenderModeFraming("coding", allowWebAccess: false);
+
+        Assert.Contains("## Verification scope", framing);
+        Assert.Contains($"--filter \"{AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter}\"", framing);
+        Assert.Contains("guard tests on every .NET test project of the repository, not only the ones you changed", framing);
+        Assert.Contains("commands.test", framing);
+        Assert.Contains("commands.lint", framing);
+        Assert.Contains(".agent-studio/project.yml", framing);
+        Assert.Contains("coverage run", framing);
+        Assert.Contains("Playwright spec for a UI change", framing);
+        Assert.Contains("task prompt overrides this block", framing);
+        Assert.Contains("`ps`", framing);
+        Assert.Contains("grep -E '^\\s+Failed '", framing);
+        Assert.Contains("name the test filters and lint commands you ran", framing);
+        Assert.DoesNotContain("{{guard_filter}}", framing);
+        Assert.InRange(
+            framing.IndexOf("Sight review, decision acceptance", StringComparison.Ordinal),
+            0,
+            framing.IndexOf("## Verification scope", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("concept")]
+    [InlineData("planning")]
+    [InlineData("research")]
+    public void RenderModeFraming_NonCodingModes_OmitVerificationScope(string mode)
+    {
+        var framing = Prompts().RenderModeFraming(mode, allowWebAccess: true);
+
+        Assert.DoesNotContain("Verification scope", framing);
+        Assert.DoesNotContain(AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter, framing);
+    }
+
+    [Fact]
+    public void RemoteRunFraming_CodingCarriesTheVerificationScope()
+    {
+        var task = new TaskInfo { Id = "remote-coding", Key = "AGT-3093", Mode = TaskModes.Coding };
+
+        var framing = LeaseEndpoints.BuildModeFraming(task, Prompts(), dossierMaintenance: null);
+
+        Assert.NotNull(framing);
+        Assert.Contains("## Verification scope", framing);
+        Assert.Contains(AgentStudio.Pipeline.GuardFirstGatePlan.GuardFilter, framing);
+        Assert.Contains("commands.lint", framing);
+    }
+
     [Theory]
     [InlineData("planning")]
     [InlineData("research")]
@@ -891,7 +940,8 @@ public class TaskRunnerPromptTests
     {
         var framing =
             Prompts().RenderModeFraming("research", allowWebAccess: true)
-            + Prompts().RenderModeFraming("concept", allowWebAccess: false);
+            + Prompts().RenderModeFraming("concept", allowWebAccess: false)
+            + Prompts().RenderModeFraming("coding", allowWebAccess: true);
         Assert.DoesNotContain("—", framing);
     }
 

@@ -254,6 +254,24 @@ rollout decision.
   that blocks delivery. The remote outcome guard turns approval-only
   `NeedsInput` into `Done`, logs the reclassification, and adds a
   `review-requested` reason so the card reaches review.
+- Coding framing, local template path and remote claims alike, also carries
+  `prompts/runtime/mode-framing-verification-scope.md` (AGT-3093): build, run
+  the covering test classes plus new or changed tests, run the guard tests with
+  `GuardFirstGatePlan.GuardFilter` on every dotnet `commands.test` project (a
+  guard in one project polices the others), and run `commands.lint`; unfiltered
+  `commands.test` entries and coverage runs stay with the gates. Concept,
+  planning, research, and Epic planning framing omit it. Failure continuation
+  briefs (`TaskFailureContinuationService`) carry the reason of the current
+  attempt's failed `post-build-test-gate` step, bounded to 2 KB, even when a
+  later escalation step is the selected failure, and
+  `IntegrationContinuationPrompt` asks the agent to fix that failure first:
+  a failing lint, build, or guard-filter command is rerun exactly, while a
+  failing `commands.test` entry is never rerun whole, only its named failed
+  tests with a class filter. The excerpt travels as the dedicated
+  `gateEvidence` ("Failed gate output"), which `GateFailureFixRoundPrompt` also
+  passes; when the gate step is itself the failed stage, its reason carries the
+  same rule. Review evidence never triggers the rerun sentence, so fenced
+  reviewer data cannot name a command to run.
 - `backend/Features/Runner/RunTimelineEventFactory.cs`: canonical projection of
   run execution context and terminal run facts into timeline events. Execution
   context preserves model, thinking level, source origin, and exact source
