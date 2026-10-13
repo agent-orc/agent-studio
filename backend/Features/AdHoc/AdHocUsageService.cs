@@ -20,36 +20,12 @@ namespace AgentStudio.AdHoc;
 /// touching disk.
 /// </para>
 /// </summary>
-public sealed class AdHocUsageService
+public static class AdHocUsageService
 {
     public const string DefaultDisclaimer =
         "Theoretical API cost based on Anthropic's published per-million-token rates. " +
         "Your actual usage is billed through the Claude CLI subscription you signed in with " +
         "(Pro / Max / Team / Enterprise), so the dollar number is a comparison, not a bill.";
-
-    private readonly AdHocUsageRecorder _recorder;
-    private readonly BusBackedAdHocUsageReader? _busReader;
-
-    public AdHocUsageService(AdHocUsageRecorder recorder, BusBackedAdHocUsageReader? busReader = null)
-    {
-        _recorder = recorder;
-        _busReader = busReader;
-    }
-
-    /// <summary>
-    /// Read the full log and aggregate.
-    /// </summary>
-    public AdHocUsageAggregate Aggregate(DateTime? since = null)
-    {
-        if (_busReader != null)
-            return _busReader.Aggregate(since);
-
-        var records = _recorder.ReadAll();
-        if (since is DateTime cutoff)
-            records = records.Where(r => r.Ts >= cutoff).ToList();
-        var (size, modified) = _recorder.Stat();
-        return Aggregate(records, _recorder.LogPath, size, modified);
-    }
 
     /// <summary>
     /// Pure overload for tests: aggregate the supplied records directly.

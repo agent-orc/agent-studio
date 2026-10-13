@@ -53,36 +53,6 @@ internal static class BusTokenEntryConverter
     }
 
     /// <summary>
-    /// Pull every <c>kind=token-usage</c> message attributed to a project's
-    /// orchestrator (participantId <c>orchestrator:&lt;project&gt;</c>) and
-    /// convert them to log entries. Mirrors what
-    /// <see cref="OrchestratorLog.Read(string)"/> would have surfaced from
-    /// <c>orchestrator.jsonl</c>; agent and supporting-agent token-usage
-    /// messages on the bus stay out of scope because they were never in
-    /// <c>orchestrator.jsonl</c> either.
-    /// </summary>
-    public static List<OrchestratorLogEntry> LoadOrchestratorEntries(
-        AgentMessageBusStore store,
-        string workspaceRoot,
-        string projectName)
-    {
-        if (string.IsNullOrWhiteSpace(workspaceRoot) || string.IsNullOrWhiteSpace(projectName))
-            return new List<OrchestratorLogEntry>();
-        var participant = AgentMessageBusBridge.ParticipantOrchestratorFor(projectName);
-        var messages = TokenLedgerDuplicates.CollapseMessages(
-            store.Query(workspaceRoot, projectName, new AgentMessageQuery(
-                ParticipantId: participant,
-                Kind: "token-usage")),
-            out _);
-        var entries = new List<OrchestratorLogEntry>(messages.Count);
-        foreach (var m in messages)
-        {
-            entries.Add(ToEntry(m, includeParticipant: false));
-        }
-        return entries;
-    }
-
-    /// <summary>
     /// Pull every project-scoped <c>kind=token-usage</c> message, regardless
     /// of participant, and retain the participant id on the transient entry.
     /// Runtime token panels use this bus-native shape so coding-agent turns

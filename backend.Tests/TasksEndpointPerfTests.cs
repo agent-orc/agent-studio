@@ -146,7 +146,7 @@ public class JobsEndpointPerfTests : IDisposable
 
             // This is the grouped endpoint's expensive enrichment path:
             // /api/tasks/grouped -> BuildTokenLookup -> WorkspacePerJob ->
-            // BusBackedTokenSummaryReader.SummarizePerJob. Startup warmup
+            // the project token ledger. Startup warmup
             // must make this a memory-only projection pass, not a request-
             // thread JSONL cold load that can exceed UpdateVerifier's 10s
             // per-attempt timeout.
@@ -522,17 +522,18 @@ public class JobsEndpointPerfTests : IDisposable
         var busCache = new BusAggregationCache(store);
         store.OnAppended = busCache.OnAppended;
         var summaryCache = new TokenSummaryCacheStore(config, NullLogger<TokenSummaryCacheStore>.Instance);
+        var ledger = new BusBackedProjectTokenUsageReader(
+            store,
+            config,
+            new JobStatsMetadataCache(BuildScannerFor(workspace), config, NullLogger<JobStatsMetadataCache>.Instance),
+            new ProjectTokenReceiptReader());
         return new TokenAggregationService(
             busCache,
             config,
             summaryCache,
             new BusBackedAdHocUsageReader(store, config),
-            new BusBackedWorkspaceTimelineReader(store, config),
-            new BusBackedProjectTokenUsageReader(
-                store,
-                config,
-                new JobStatsMetadataCache(BuildScannerFor(workspace), config, NullLogger<JobStatsMetadataCache>.Instance),
-                new ProjectTokenReceiptReader()));
+            new BusBackedWorkspaceTimelineReader(store, config, ledger),
+            ledger);
     }
 
     private static TaskScannerService BuildScannerFor(string watchPath)

@@ -96,43 +96,6 @@ public sealed class BusBackedProjectTokenUsageReader
         return ProjectTokenUsageService.BuildJobDetailFromEntries(projectName, entries, jobsById, jobId);
     }
 
-    /// <summary>
-    /// Pure entry point used by the parity test: reads the bus directly
-    /// and runs the same legacy fold so divergence is impossible.
-    /// </summary>
-    public static ProjectTokenUsageSummary BuildSummaryFromStore(
-        AgentMessageBusStore store, string workspaceRoot, string projectName,
-        IReadOnlyDictionary<string, TaskInfo> jobsById, DateTime? nowUtc = null)
-    {
-        var entries = BusTokenEntryConverter.LoadOrchestratorEntries(store, workspaceRoot, projectName);
-        return ProjectTokenUsageService.BuildSummaryFromEntries(projectName, entries, jobsById, nowUtc);
-    }
-
-    public static ProjectTokenHeatmap BuildHeatmapFromStore(
-        AgentMessageBusStore store, string workspaceRoot, string projectName,
-        IReadOnlyDictionary<string, TaskInfo> jobsById, int days, DateTime? nowUtc = null)
-    {
-        var entries = BusTokenEntryConverter.LoadOrchestratorEntries(store, workspaceRoot, projectName);
-        return ProjectTokenUsageService.BuildHeatmapFromEntries(projectName, entries, jobsById, days, nowUtc);
-    }
-
-    public static IReadOnlyList<ProjectExpensiveJob> BuildExpensiveJobsFromStore(
-        AgentMessageBusStore store, string workspaceRoot, string projectName,
-        IReadOnlyDictionary<string, TaskInfo> jobsById, int limit)
-    {
-        var entries = BusTokenEntryConverter.LoadOrchestratorEntries(store, workspaceRoot, projectName);
-        return ProjectTokenUsageService.BuildExpensiveJobsFromEntries(entries, jobsById, limit);
-    }
-
-    public static ProjectJobTokenDetail? BuildJobDetailFromStore(
-        AgentMessageBusStore store, string workspaceRoot, string projectName,
-        IReadOnlyDictionary<string, TaskInfo> jobsById, string jobId)
-    {
-        if (string.IsNullOrWhiteSpace(jobId)) return null;
-        var entries = BusTokenEntryConverter.LoadOrchestratorEntries(store, workspaceRoot, projectName);
-        return ProjectTokenUsageService.BuildJobDetailFromEntries(projectName, entries, jobsById, jobId);
-    }
-
     public TokenSummary BuildLifetimeSummary(string projectName, string watchPath)
         => TokenSummaryService.Summarize(projectName, LoadSnapshot(projectName, watchPath).Entries);
 

@@ -18,7 +18,7 @@ namespace AgentStudio.Runner;
 /// to bucket on.
 /// </para>
 /// </summary>
-public class WorkspaceTokensTimelineService
+public static class WorkspaceTokensTimelineService
 {
     private static readonly int[] AllowedWindowHours = [1, 6, 24, 168];
     private static readonly int[] AllowedBucketMinutes = [5, 15, 60];
@@ -36,57 +36,6 @@ public class WorkspaceTokensTimelineService
     /// </summary>
     private static readonly IReadOnlyDictionary<string, TaskInfo> NoJobs =
         new Dictionary<string, TaskInfo>(StringComparer.Ordinal);
-
-    private readonly OrchestratorLog _log;
-    private readonly BusBackedWorkspaceTimelineReader? _busReader;
-
-    public WorkspaceTokensTimelineService(OrchestratorLog log, BusBackedWorkspaceTimelineReader? busReader = null)
-    {
-        _log = log;
-        _busReader = busReader;
-    }
-
-    /// <summary>
-    /// Build a timeline view across every supplied (project, watch path)
-    /// pair. Reads each project's orchestrator log once.
-    /// </summary>
-    public TokenTimeline Build(
-        IEnumerable<(string Name, string WatchPath)> projects,
-        int windowHours,
-        int bucketMinutes,
-        DateTime? nowUtc = null)
-    {
-        if (_busReader != null)
-            return _busReader.Build(projects, windowHours, bucketMinutes, nowUtc);
-
-        var w = ResolveWindowHours(windowHours);
-        var b = ResolveBucketMinutes(bucketMinutes);
-        var now = nowUtc ?? DateTime.UtcNow;
-        var windowEnd = AlignDown(now, b);
-        var windowStart = windowEnd.AddHours(-w);
-
-        var perProjectEntries = new List<(string Project, IReadOnlyList<OrchestratorLogEntry> Entries)>();
-        foreach (var (name, watchPath) in projects)
-        {
-            var entries = _log.Read(watchPath);
-            perProjectEntries.Add((name, entries));
-        }
-
-        return BuildFromEntries(perProjectEntries, windowStart, windowEnd, b);
-    }
-
-    /// <summary>Read a workspace-local calendar interval supplied as UTC boundaries.</summary>
-    public TokenTimeline BuildRange(
-        IEnumerable<(string Name, string WatchPath)> projects,
-        DateTime fromUtc,
-        DateTime toUtc,
-        int bucketMinutes)
-    {
-        if (_busReader != null)
-            return _busReader.BuildRange(projects, fromUtc, toUtc, bucketMinutes);
-        var entries = projects.Select(p => (p.Name, (IReadOnlyList<OrchestratorLogEntry>)_log.Read(p.WatchPath))).ToList();
-        return BuildFromEntries(entries, fromUtc, toUtc, bucketMinutes);
-    }
 
     /// <summary>
     /// Pure overload: bucket pre-loaded entries. Used by the unit tests

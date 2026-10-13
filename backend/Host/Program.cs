@@ -432,9 +432,6 @@ builder.Services.AddSingleton<GlobalOrchestratorBootstrap>();
 builder.Services.AddSingleton<TokenSummaryCacheStore>();
 builder.Services.AddSingleton<WorkspaceTokensCacheStore>();
 builder.Services.AddSingleton<AgentStudio.Tokens.TokenPricingDriftMonitor>();
-builder.Services.AddSingleton<TokenSummaryService>();
-builder.Services.AddSingleton<ProjectTokenUsageService>();
-builder.Services.AddSingleton<WorkspaceTokensTimelineService>();
 builder.Services.AddSingleton<WorkspaceSummaryService>();
 builder.Services.AddSingleton<AutoReviewPostProcessingQueue>();
 builder.Services.AddSingleton<IAutoReviewPostProcessingQueue>(sp =>
@@ -566,7 +563,6 @@ builder.Services.AddSingleton<PromptAdminService>();
 builder.Services.AddSingleton<TitleGenerationService>();
 builder.Services.AddSingleton<PromptEnhancementService>();
 builder.Services.AddSingleton<AgentStudio.AdHoc.AdHocUsageRecorder>();
-builder.Services.AddSingleton<AgentStudio.AdHoc.AdHocUsageService>();
 builder.Services.AddSingleton<PickupLockFile>();
 builder.Services.AddSingleton<IntegrationLeaseService>();
 // RM-3 / ADR-0060: the fenced task-run lease + this backend's runner identity
@@ -655,7 +651,6 @@ builder.Services.AddSingleton<ICliUsageParser, CodexUsageParser>();
 builder.Services.AddSingleton<CliUsageParserRegistry>();
 builder.Services.AddSingleton<BusAggregationCache>();
 builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedAdHocUsageReader>();
-builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedTokenSummaryReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedWorkspaceTimelineReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.ProjectTokenReceiptReader>();
 builder.Services.AddSingleton<AgentStudio.Tokens.BusBackedProjectTokenUsageReader>();
