@@ -24,7 +24,6 @@ namespace AgentStudio.Tests;
 /// into the review plan, and the claim filter refuses the attempt up front on
 /// every executor that holds no read credential for exactly that repository.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class PrivateRepositoryReviewClaimTests : IDisposable
 {
     private const string ProjectName = "agent-runner-01";

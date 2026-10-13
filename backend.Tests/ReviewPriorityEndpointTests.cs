@@ -12,7 +12,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ReviewPriorityEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "review-priority-endpoint-" + Guid.NewGuid().ToString("N"));

@@ -50,9 +50,8 @@ namespace AgentStudio.Tests;
 // fährt einen echten TLS-Handshake gegen ein Self-Signed-Testzertifikat. Kein
 // Timing-/Lastfenster, aber sockettbindungs-/umgebungsabhängig — daher aus dem
 // parallelen Karten-Gate gehalten und als deterministische TLS-Evidenz gezielt
-// ausgeführt. Serialisiert mit den übrigen Host-Tests.
+// ausgeführt.
 [Trait("Category", "MachineBound")]
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class RealTlsTransportTests : IDisposable
 {
     private readonly string _workspace = Path.Combine(Path.GetTempPath(), "studio-real-tls-" + Guid.NewGuid().ToString("N"));

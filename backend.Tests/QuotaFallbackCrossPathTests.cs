@@ -30,7 +30,6 @@ namespace AgentStudio.Tests;
 /// frozen source-of-truth (the task's own configured cli/model for a claim,
 /// the immutable ReviewAttempt's persisted plan for a review claim) untouched.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class QuotaFallbackCrossPathTests : IDisposable
 {
     private const string ProjectName = "quota-fallback-cross-path";

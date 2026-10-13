@@ -25,7 +25,6 @@ namespace AgentStudio.Tests;
 /// drained capability causes, and the registration/advertisement that lifts it
 /// again.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class V1ReviewPlaneDiagnosticsEndpointTests : IDisposable
 {
     private const string ProjectName = "agent-runner-01";

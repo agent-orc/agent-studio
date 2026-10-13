@@ -21,7 +21,6 @@ namespace AgentStudio.Tests;
 /// <c>ARCHIVE_BENCH_LABEL</c> to name the report written to
 /// <c>JOB_RESULTS_DIR</c>.
 /// </summary>
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class AttemptArchiveStableShapeBenchmarkTests : IDisposable
 {
     private const int FileCount = 62;

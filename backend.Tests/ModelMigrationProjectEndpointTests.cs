@@ -10,7 +10,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(WebApplicationFactorySerialCollection.Name)]
 public sealed class ModelMigrationProjectEndpointTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "model-migration-http-" + Guid.NewGuid().ToString("N"));

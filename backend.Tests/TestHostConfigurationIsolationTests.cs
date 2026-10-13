@@ -6,7 +6,6 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
-[Collection(ProjectRegistryApiCollection.Name)]
 public sealed class TestHostConfigurationIsolationTests
 {
     [Fact]
