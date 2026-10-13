@@ -120,6 +120,13 @@ public sealed class TaskListProjectFilterEndpointTests : IDisposable
         Assert.Equal("orchestrator", data.GetProperty("creationSource").GetString());
         Assert.Equal("a", data.GetProperty("decision").GetProperty("recommendedOptionId").GetString());
         Assert.Equal(2, data.GetProperty("decision").GetProperty("options").GetArrayLength());
+        // An idle Ready card without a configured runner shows no location on
+        // the board; the detail still gets the full projection.
+        Assert.False(card.TryGetProperty("executionLocation", out _));
+        var location = data.GetProperty("executionLocation");
+        Assert.Equal("no-active-execution", location.GetProperty("state").GetString());
+        Assert.False(string.IsNullOrEmpty(location.GetProperty("trustReason").GetString()));
+        Assert.EndsWith("alpha-task", location.GetProperty("worktreePath").GetString());
     }
 
     [Fact]

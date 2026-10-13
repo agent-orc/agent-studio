@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Diagnostics;
 using AgentStudio.Tasks;
 using Microsoft.Extensions.Time.Testing;
@@ -67,6 +68,144 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.True(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedAt", out _));
         Assert.False(document.RootElement.GetProperty("pickupHold").TryGetProperty("heldForSeconds", out _));
         Assert.True(document.RootElement.GetProperty("pickupHold").TryGetProperty("sinceUtc", out _));
+    }
+
+    /// <summary>
+    /// The per-card budget on the cards that weigh the most on a live board:
+    /// Human Review cards that are parked and carry an integration
+    /// verification, an execution location, a merge signal and waits-on
+    /// edges. The fixture is 44 such cards taken from the Agent Studio board on
+    /// Stable (12.10.2026), converted back to the task model and sanitized
+    /// (text, keys, ids, paths and SHAs replaced by filler of the same length).
+    /// Those cards averaged 4.4 KB on the wire before this budget existed.
+    /// </summary>
+    [Fact]
+    public void Production_shaped_human_review_cards_average_under_two_kilobytes()
+    {
+        var cards = ProductionHumanReviewCards();
+        Assert.Equal(44, cards.Length);
+        Assert.All(cards, card =>
+        {
+            Assert.Equal(TaskStates.HumanReview, card.State);
+            Assert.NotNull(card.ParkedBlocker);
+            Assert.NotNull(card.Integration?.Verification);
+            Assert.NotNull(card.ExecutionLocation);
+            Assert.NotNull(card.MergeSignal);
+            Assert.NotNull(card.WaitsOn);
+        });
+
+        var sizes = cards.Select(card => BoardCardSummary.Serialize(card).Length).ToArray();
+        var average = sizes.Average();
+        output.WriteLine($"44 production-shaped Human Review cards: average {average:F0} B, max {sizes.Max()} B, total {sizes.Sum()} B");
+        Assert.True(average < 2048, $"Average card was {average:F0} bytes; budget is 2048");
+        Assert.True(sizes.Max() < 3072, $"Largest card was {sizes.Max()} bytes");
+    }
+
+    private static TaskInfo[] ProductionHumanReviewCards()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "board-cards", "human-review-cards.sanitized.json");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        };
+        return JsonSerializer.Deserialize<TaskInfo[]>(File.ReadAllText(path), options)!;
+    }
+
+    [Fact]
+    public void Detail_facts_stay_off_the_card_and_bounded_facts_keep_their_board_fields()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-12T22:20:00Z"));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var job = Fixture() with
+        {
+            ExecutionLocation = new TaskExecutionLocation
+            {
+                State = TaskExecutionStates.RemoteRunning, ExecutionKind = "remote", RunnerId = "runner-1",
+                ConfiguredRunnerId = "runner-1", HostDisplayName = "Runner One", StartedAt = now.AddMinutes(-9),
+                LastHeartbeat = now.AddSeconds(-5), LastActivityAt = now, ProcessId = 4242,
+                SessionId = "session-1", Branch = "task/agt-3043", WorktreePath = "/workspace/tasks/agt-3043",
+                ConnectionState = "connected", LeaseState = "active", TrustReason = new string('T', 120),
+            },
+            MergeSignal = new TaskMergeSignal
+            {
+                Branch = "task/agt-3043", InIntegration = true, IntegrationSha = "1234567890abcdef1234",
+            },
+            Integration = new TaskIntegrationStatus
+            {
+                Status = IntegrationStatuses.Integrated, DeliveryRef = "agent-studio/results/run_1/fence-1/" + new string('a', 40),
+                Sha = "1234567", Verification = new TaskIntegrationVerification
+                {
+                    State = "integrated-unverified", Sha = new string('b', 40), Reason = new string('R', 300),
+                },
+            },
+            TestEvidence = new TaskTestRunEvidence
+            {
+                EvidenceState = "proven", Summary = "Review build-tests Pass at 1234567",
+                Sources = [new TaskTestEvidenceSource { Kind = "review", Summary = "Review build-tests Pass at 1234567" }],
+            },
+            ParkedBlocker = new ParkedBlockerStatus("operator-decision", "manual", new string('C', 200),
+                now.AddDays(-1), 86400, new string('P', 300), "undeterminable", null, "detail"),
+            PendingIntent = new PendingIntent { Mode = "steer", Prompt = new string('S', 4000), SavedAt = now },
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items = [new WaitsOnItem { Key = "AGT-1", Resolved = true, WaitingForRelease = true,
+                    TargetJobId = "a-long-target-job-id", TargetWatchPath = "/workspace/Agent Studio",
+                    TargetTitle = "A prerequisite" }],
+            },
+        };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        var root = document.RootElement;
+
+        var location = root.GetProperty("executionLocation");
+        Assert.Equal("remote-running", location.GetProperty("state").GetString());
+        Assert.Equal("runner-1", location.GetProperty("runnerId").GetString());
+        Assert.Equal("Runner One", location.GetProperty("hostDisplayName").GetString());
+        Assert.Equal("connected", location.GetProperty("connectionState").GetString());
+        Assert.True(location.TryGetProperty("lastHeartbeat", out _));
+        foreach (var detailOnly in new[] { "branch", "worktreePath", "trustReason", "lastActivityAt", "sessionId" })
+            Assert.False(location.TryGetProperty(detailOnly, out _), detailOnly);
+
+        var merge = root.GetProperty("mergeSignal");
+        Assert.False(merge.TryGetProperty("branch", out _));
+        Assert.Equal("123456789", merge.GetProperty("integrationSha").GetString());
+        Assert.False(merge.TryGetProperty("integrationBranch", out _));
+
+        var integration = root.GetProperty("integration");
+        Assert.False(integration.TryGetProperty("deliveryRef", out _));
+        Assert.Equal(60, integration.GetProperty("verification").GetProperty("reason").GetString()!.Length);
+        Assert.Equal("bbbbbbbbb", integration.GetProperty("verification").GetProperty("sha").GetString());
+
+        Assert.False(root.GetProperty("testEvidence").TryGetProperty("sourceLabel", out _));
+        var park = root.GetProperty("parkedBlocker");
+        Assert.False(park.TryGetProperty("conditionDescription", out _));
+        Assert.Equal(100, park.GetProperty("reason").GetString()!.Length);
+        var intent = root.GetProperty("pendingIntent");
+        Assert.Equal(200, intent.GetProperty("prompt").GetString()!.Length);
+        Assert.True(intent.GetProperty("promptTruncated").GetBoolean());
+        var item = Assert.Single(root.GetProperty("waitsOn").GetProperty("items").EnumerateArray());
+        Assert.False(item.TryGetProperty("targetJobId", out _));
+        Assert.False(item.TryGetProperty("targetWatchPath", out _));
+        Assert.False(item.TryGetProperty("fulfilled", out _));
+        Assert.Equal("AGT-1", root.GetProperty("waitsOn").GetProperty("releaseTargetKeys")[0].GetString());
+        Assert.False(root.TryGetProperty("epicId", out _));
+    }
+
+    [Theory]
+    [InlineData(TaskStates.HumanReview, null, false)]
+    [InlineData(TaskStates.Ready, null, false)]
+    [InlineData(TaskStates.Ready, "runner-1", true)]
+    public void An_idle_location_reaches_the_card_only_where_its_configured_runner_is_read(
+        string lane, string? configuredRunnerId, bool onCard)
+    {
+        var job = Fixture() with
+        {
+            State = lane,
+            ExecutionLocation = new TaskExecutionLocation { ConfiguredRunnerId = configuredRunnerId },
+        };
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        Assert.Equal(onCard, document.RootElement.TryGetProperty("executionLocation", out _));
     }
 
     [Fact]
@@ -159,8 +298,12 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         var waits = document.RootElement.GetProperty("waitsOn");
         Assert.True(waits.GetProperty("anyWaitingForRelease").GetBoolean());
         Assert.Equal(3, waits.GetProperty("items").GetArrayLength());
-        Assert.Equal("agt-4", waits.GetProperty("releaseTargets")[0]
-            .GetProperty("targetJobId").GetString());
+        Assert.Equal("AGT-4", Assert.Single(waits.GetProperty("releaseTargetKeys").EnumerateArray()).GetString());
+        Assert.All(waits.GetProperty("items").EnumerateArray(), item =>
+        {
+            Assert.False(item.TryGetProperty("targetJobId", out _));
+            Assert.False(item.TryGetProperty("targetWatchPath", out _));
+        });
     }
 
     [Fact]
