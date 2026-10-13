@@ -185,6 +185,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
     private readonly ILintScssRunner? _lintScssRunner;
     private readonly AgentStudio.Pipeline.IQualityAnalysisStepRunner? _qualityAnalysisRunner;
     private readonly IBuildTestGateRunner? _buildTestGateRunner;
+    private readonly TimeProvider _gateTime;
     private readonly WikiMaintenancePostStepRunner? _wikiMaintenance;
     private readonly WikiLearningsPostStepRunner? _wikiLearnings;
     // The opt-in AGENTS.md <-> wiki designated-topics sync (AGT-1782). Optional so
@@ -276,7 +277,8 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         FailureInterventionService? failureInterventions = null,
         TaskIntegrationStatusService? integrationStatus = null,
         TaskMutationService? taskMutations = null,
-        DecisionCardRequests? decisionRequests = null)
+        DecisionCardRequests? decisionRequests = null,
+        TimeProvider? timeProvider = null)
     {
         _scanner = scanner;
         _taskAccess = taskAccess;
@@ -295,6 +297,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _pipelineLog = pipelineLog;
         _lintScssRunner = lintScssRunner;
         _buildTestGateRunner = buildTestGateRunner;
+        _gateTime = timeProvider ?? TimeProvider.System;
         _wikiMaintenance = wikiMaintenance;
         _wikiLearnings = wikiLearnings;
         _timeline = timeline;
@@ -2402,6 +2405,9 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         _statusSnapshot.SetCurrentStep(
             entry.Name, current.Id, AutoReviewActivitySteps.Gate);
         var buildGateResult = await RunBuildTestGatePostStepAsync(workspace, entry, current, ct);
+        if (buildGateResult?.Verdict == BuildTestGateVerdict.Skipped
+            && buildGateResult.CancellationReason is GateCancellationReasons.Superseded or GateCancellationReasons.Shutdown)
+            return;
         if (buildGateResult?.Verdict == BuildTestGateVerdict.Fail)
         {
             var intervention = await TryRaiseBuildGateInterventionAsync(current, entry, buildGateResult, ct);
@@ -4434,6 +4440,15 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
 
         var repoPath = ResolveBuildTestGateRepositoryPath(entry);
         var subject = ResolveBuildTestGateSubject(current, entry.Path);
+        if (current.PendingIntent is not null)
+            return new BuildTestGateResult(BuildTestGateVerdict.Skipped, null, 0, "",
+                "Gate subject superseded by a pending continue intent.", false, false)
+            { CancellationReason = GateCancellationReasons.Superseded };
+        var cancellationRetry = GateCancellationRetry.Read(current.FolderPath, subject.Sha, subject.AttemptChainId);
+        if (cancellationRetry?.DueAtUtc > _gateTime.GetUtcNow())
+            return new BuildTestGateResult(BuildTestGateVerdict.Skipped, null, 0, "",
+                "Gate cancelled: shutdown. Infrastructure retry is scheduled.", false, false)
+            { CancellationReason = GateCancellationReasons.Shutdown };
         // AGT-2749: a per-project override wins outright; absent one the
         // platform default is 60 minutes, not the old 300s that a real suite
         // (or a config override sized to just barely fit) kept violating.
@@ -4482,7 +4497,7 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
         };
 
         BuildTestGateResult? result = null;
-        for (var infrastructureRetry = 0;
+        for (var infrastructureRetry = cancellationRetry?.RetryNumber ?? 0;
              infrastructureRetry <= PostProcessingOutcomeTaxonomy.DefaultMaxEnvironmentalRetries;
              infrastructureRetry++)
         {
@@ -4492,9 +4507,10 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                     request, changedFiles, settings?.BuildProfile, mode,
                     TimeSpan.FromSeconds(timeoutSeconds), ct);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException)
             {
-                throw;
+                result = RemoteBuildTestGateRunner.Failure(request, BuildTestGateFailureKind.Cancellation,
+                    "Gate cancelled: shutdown.") with { CancellationReason = GateCancellationReasons.Shutdown };
             }
             catch (Exception ex)
             {
@@ -4539,6 +4555,38 @@ public sealed class ReviewDecisionOrchestrator : BackgroundService
                             normalizedKind, result.Reason + "\n" + result.Output)),
             };
 
+            if (result.FailureKind == BuildTestGateFailureKind.Cancellation)
+            {
+                var live = _scanner.FindJob(current.Id, entry.Path);
+                var liveSha = live is null ? null : ResolveBuildTestGateSubject(live, entry.Path).Sha;
+                var cancellationReason = GateCancellationPolicy.Decide(subject.Sha, liveSha,
+                    current.State, live?.State, live?.PendingIntent is not null,
+                    ct.IsCancellationRequested, result.CancellationReason);
+                result = GateCancellationPolicy.Apply(result, cancellationReason);
+                var folder = live?.FolderPath ?? current.FolderPath;
+                var deferred = cancellationReason == GateCancellationReasons.Superseded;
+                if (cancellationReason == GateCancellationReasons.Shutdown)
+                    deferred = GateCancellationRetry.Schedule(folder, subject.Sha, subject.AttemptChainId,
+                        infrastructureRetry, _gateTime.GetUtcNow(), BuildTestGateRetryBackoff(infrastructureRetry + 1));
+                _timeline?.Append(folder, new TimelineEvent
+                {
+                    Ts = _gateTime.GetUtcNow().UtcDateTime,
+                    Kind = "gate-cancelled", Actor = TimelineActors.System,
+                    Summary = result.Reason + (deferred && cancellationReason == GateCancellationReasons.Shutdown
+                        ? " Infrastructure retry scheduled." : ""),
+                    Details = new Dictionary<string, string>
+                    {
+                        ["reason"] = cancellationReason, ["expectedSha"] = subject.Sha ?? "",
+                        ["gateId"] = result.GateId,
+                    },
+                });
+                WriteBuildTestGateLog(folder, result, changedFiles);
+                RecordBuildTestGateStep(folder, deferred ? PipelineStepStatus.Skipped : PipelineStepStatus.Failed, result.DurationMs,
+                    cancellationReason, result.Reason, result);
+                // A cancelled run is terminal evidence. Recovery belongs to the
+                // next sweep, never an inline retry with the stopped host token.
+                return deferred ? result with { Verdict = BuildTestGateVerdict.Skipped } : result;
+            }
             WriteBuildTestGateLog(current.FolderPath, result, changedFiles);
             // A routing verdict (AGT-2981) names a requirement this host lacks;
             // repeating the gate here cannot change it.

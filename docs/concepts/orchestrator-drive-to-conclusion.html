@@ -2992,6 +2992,13 @@
           <td>The failure-intervention service created a bug card with an implicit code-delivery requirement. Its absent delivery was reported as unknown containment.</td>
           <td>The observed card remained in Auto Review; the operator manually closed the breaker while Stable was stopped. New intervention and cause cards explicitly declare no code delivery. Ledger-backed existing cards also complete with a written operator resolution and no attributed commits. The claim is <code>deliverable-without-code</code>; the existing sweep closes the breaker as <code>cause-integrated</code>. Attributed code still requires integration.</td>
         </tr>
+        <tr id="case-cancelled-gate-subject-ownership">
+          <td>2026-10-13</td>
+          <td><code>AGT-3120</code><br><span class="small">cancelled-gate-subject-ownership</span></td>
+          <td>AGT-3044 escalated when a gate for its older delivery was cancelled after a fix round. AGT-3106 escalated while review daemons restarted.</td>
+          <td>The per-task, batch fallback, and merge callers treated Cancellation as failed verification without checking current delivery ownership or shutdown.</td>
+          <td>The observed terminal was Escalated. Superseded cancellations now retain evidence and leave the current card alone; shutdown cancellations consume one durable infrastructure retry after restart. Operator stops still park the card. The timeline records superseded, shutdown, or operator.</td>
+        </tr>
       </tbody>
     </table>
 
@@ -3003,6 +3010,12 @@
   <!-- ============================ 4. THE PLAN ============================ -->
   <section id="plan">
     <h2>4. The plan</h2>
+
+    <h3>Cancelled verification gates</h3>
+    <p>A gate cancellation first checks delivery SHA, lane ownership, and pending continue intent.
+       Superseded runs record evidence without an escalation. Shutdown of a current subject schedules
+       one infrastructure retry after restart through the existing gate budgets. Operator cancellation
+       retains its parking behavior. Every cancellation records its lifecycle reason in the timeline.</p>
 
     <h3>Retry + cooldown policy</h3>
     <p>Retry applies <em>only</em> to the infra-crash class. Logical conclusions (sentinels, real failures) never retry.</p>
