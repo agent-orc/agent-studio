@@ -1,0 +1,63 @@
+verdict=Fail exit=1 durationMs=3186026 failureKind=Code
+expectedSha=65b268d595bf0ce3db516d23f2e43a3eedad7eca testedSha=65b268d595bf0ce3db516d23f2e43a3eedad7eca
+reason=`dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound` exit 1; failed: AgentStudio.Tests.PromptEnrichmentServiceTests.Prepare_AgentStudioRepository_PreservesCatalogueBlocks; Total tests: 7722 Passed: 7698 Failed: 1 Skipped: 23; test-level=full; selected=4; full-suite=not-run; omitted=3
+verdictSource=Executed originalRunId=5669a35fb61a43f0a0ff6348e66740a3 originalCompletedAtUtc=2026-09-28T22:13:45.6212261+00:00 originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=1 toolchainIdentity=n/a
+testSelectionAuditDigest=334f08332586f82e65aff45d6f6096f271940a664025bb9eb3c6ea714d46ec01
+reviewReuse=full attempt=review_52ef0869cb4a4b7cb6b0fc0d5088a8ce reason=develop moved since the review: tip is aebb45b6, the review verified a51c0307
+budget=none
+retryPerformed=true classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+--- test-selection.json ---
+{
+  "Digest": "334f08332586f82e65aff45d6f6096f271940a664025bb9eb3c6ea714d46ec01",
+  "Level": "full",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "backend.Tests/GateShellInvocationTests.cs",
+    "backend.Tests/GitServiceRollbackRetryTests.cs",
+    "backend.Tests/IntegrationWorktreeProviderTests.cs",
+    "backend.Tests/VerifyCommandPlannerTests.cs",
+    "backend/Features/Git/GitService.cs",
+    "backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "backend/Features/Pipeline/BuildTestGateRunner.cs",
+    "backend/Features/Pipeline/GateShellInvocation.cs",
+    "docs/concepts/orchestrator-drive-to-conclusion.html",
+    "docs/system/domains/pipeline.md"
+  ],
+  "DiffStatuses": [],
+  "HistoryInput": [],
+  "Candidates": [],
+  "SelectedCandidateIds": [],
+  "SelectedCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "AttemptedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound"
+  ],
+  "UnmappedSourceDirectories": [],
+  "SelectedTestClasses": [],
+  "OmittedTestCommands": [
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "folder-to-test-project map is missing",
+    "unmapped changed path: backend.Tests/GateShellInvocationTests.cs",
+    "unmapped changed path: backend.Tests/GitServiceRollbackRetryTests.cs",
+    "unmapped changed path: backend.Tests/IntegrationWorktreeProviderTests.cs",
+    "unmapped changed path: backend.Tests/VerifyCommandPlannerTests.cs",
+    "unmapped changed path: backend/Features/Git/GitService.cs",
+    "unmapped changed path: backend/Features/Git/IntegrationWorktreeProvider.cs",
+    "unmapped changed path: backend/Features/Pipeline/BuildTestGateRunner.cs",
+    "unmapped changed path: backend/Features/Pipeline/GateShellInvocation.cs",
+    "unmapped changed path: docs/concepts/orchestrator-drive-to-conclusion.html",
+    "unmapped changed path: docs/system/domains/pipeline.md"
+  ],
+  "Selector": "deterministic-map-full-fallback",
+  "FullSuiteRequired": true,
+  "FullSuiteRan": false
+}
