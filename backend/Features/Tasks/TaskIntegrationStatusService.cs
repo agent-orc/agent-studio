@@ -250,9 +250,38 @@ public sealed class TaskIntegrationStatusService
     /// Resolves accepted-integration recovery from the same Git-derived status
     /// projected onto the board. Pipeline history describes the last attempt;
     /// it cannot turn a delivery missing from the target branch into an
-    /// integrated delivery.
+    /// integrated delivery. The card's timeline, read only when the decision
+    /// would replay the merge or return the card, can carry an acceptance
+    /// recorded without a run attempt (AGT-3098).
     /// </summary>
     internal AcceptedIntegrationRecoveryDecision ResolveAcceptedIntegrationRecovery(
+        TaskInfo job,
+        TaskIntegrationStatus? status,
+        Func<IReadOnlyList<TimelineEvent>>? readTimeline = null)
+    {
+        var decision = ResolveRecoveryFromIntegrationFacts(job, status);
+        if (readTimeline is null
+            || decision.Action is not (AcceptedIntegrationRecoveryAction.Retry
+                or AcceptedIntegrationRecoveryAction.ReturnToReview))
+            return decision;
+        // AGT-3098: the timeline, not the pipeline record, carries this
+        // acceptance. A card whose pipeline record was lost in the crash never
+        // received the operator-override merge step, and the merge runner
+        // refuses the earlier-epoch run attempt its review subject names.
+        var acceptance = AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            job.State, CurrentReviewSubject(job)?.RunAttemptId, readTimeline());
+        return acceptance is null
+            ? decision
+            : new AcceptedIntegrationRecoveryDecision(
+                acceptance.OutcomeRecorded
+                    ? AcceptedIntegrationRecoveryAction.Ignore
+                    : AcceptedIntegrationRecoveryAction.RecordAcceptanceWithoutRunAttempt,
+                "The operator accepted the integrated delivery without a run attempt in the current "
+                + "authority epoch; the merge is not replayed.",
+                decision.LastMergeAttempt);
+    }
+
+    private AcceptedIntegrationRecoveryDecision ResolveRecoveryFromIntegrationFacts(
         TaskInfo job,
         TaskIntegrationStatus? status)
     {
@@ -1403,6 +1432,12 @@ internal enum AcceptedIntegrationRecoveryAction
     Finalize,
     ReturnToReview,
     Retry,
+    /// <summary>
+    /// AGT-3098: the operator accepted the integrated delivery without a run
+    /// attempt in the current authority epoch. The acceptance is the outcome;
+    /// record it once instead of replaying the merge.
+    /// </summary>
+    RecordAcceptanceWithoutRunAttempt,
 }
 
 internal sealed record AcceptedIntegrationRecoveryDecision(

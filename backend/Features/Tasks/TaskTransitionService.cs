@@ -448,10 +448,22 @@ public sealed class TaskTransitionService
                     restored.NewFolderPath ?? archived.FolderPath);
             }
         }
+        // AGT-3098: the claim lands before the lane. The delivery-chain
+        // reconciler reads Completed cards on its own schedule; a card it read
+        // between the lane write and a later claim write had no ground, so it
+        // counted as stale and a fresh acceptance was reopened seconds after
+        // it landed. A refused move restores the claim the card had before.
+        var stampedCompletionClaim = boundCompletionClaim is null
+            ? null
+            : boundCompletionClaim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
+        var completionClaimStaged = stampedCompletionClaim is not null
+            && _mutations.SetCompletionClaimOnFolder(info.FolderPath, stampedCompletionClaim);
         var outcome = _reviewAttemptLifecycle is not null
                       && targetState is TaskStates.Completed or TaskStates.Archive
             ? _reviewAttemptLifecycle.ExecuteTerminalTransition(info, targetState, MoveCore)
             : MoveCore();
+        if (completionClaimStaged && outcome.Status != MoveJobStatus.Success)
+            RestoreCompletionClaim(info);
         if (enteringTerminalState && stagedPendingIntent && outcome.Status != MoveJobStatus.Success)
             _mutations.RollbackStashedPendingIntent(info.FolderPath);
         var pendingIntentSupersedeFailed = enteringTerminalState
@@ -667,14 +679,15 @@ public sealed class TaskTransitionService
             }
 
             // AGT-2817 - the card records which ground it completed on, so
-            // "delivered" can be read back as a checkable statement. Writing
-            // it after the move keeps the claim with the folder's new location
-            // and can never undo the transition.
-            if (boundCompletionClaim is not null)
+            // "delivered" can be read back as a checkable statement. It was
+            // staged before the lane write (AGT-3098); writing it again after
+            // the move keeps it with the folder's new location and can never
+            // undo the transition.
+            if (stampedCompletionClaim is not null)
                 RecordCompletionClaim(
                     jobId,
                     watchPath,
-                    boundCompletionClaim,
+                    stampedCompletionClaim,
                     completionIntegrationStatus);
             if (contentDecision?.Overridden == true && contentEvidence is not null)
             {
@@ -1655,19 +1668,19 @@ public sealed class TaskTransitionService
     /// <summary>
     /// Persists the claim onto the moved card and, when the claim rests on
     /// containment, resolves the <c>next-attempt</c> placeholder the shipped
-    /// commits should no longer carry. Best-effort: the move has already
-    /// landed and is never undone from here.
+    /// commits should no longer carry. The claim was already staged before the
+    /// lane write; this write keeps it with the folder's final location.
+    /// Best-effort: the move has already landed and is never undone from here.
     /// </summary>
     private void RecordCompletionClaim(
         string jobId,
         string? watchPath,
-        TaskCompletionClaim claim,
+        TaskCompletionClaim stamped,
         TaskIntegrationStatus? integrationStatus)
     {
         var moved = _scanner.FindJob(jobId, watchPath);
         if (moved is null) return;
 
-        var stamped = claim with { RecordedAtUtc = _time.GetUtcNow().UtcDateTime };
         if (!_mutations.SetCompletionClaimOnFolder(moved.FolderPath, stamped))
         {
             _logger.LogWarning(
@@ -1680,6 +1693,22 @@ public sealed class TaskTransitionService
 
         if (stamped.Basis != CompletionClaimBases.IntegratedDelivery) return;
         ResolveContainedSupersessionPlaceholders(moved, integrationStatus);
+    }
+
+    /// <summary>
+    /// AGT-3098 - undoes a claim staged for a move that did not land. The card
+    /// keeps the claim it had before, or none.
+    /// </summary>
+    private void RestoreCompletionClaim(TaskInfo info)
+    {
+        if (info.CompletionClaim is not null)
+        {
+            _mutations.SetCompletionClaimOnFolder(info.FolderPath, info.CompletionClaim);
+            return;
+        }
+        TaskJsonFile.RemoveField(info.FolderPath, "completionClaim", _logger);
+        _scanner.InvalidateCache();
+        _scanner.PublishCoreFromKnownFolder(info.FolderPath);
     }
 
     private TaskCompletionClaim BindCompletionClaim(TaskInfo reviewed, TaskCompletionClaim claim)

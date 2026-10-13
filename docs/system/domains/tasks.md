@@ -1118,6 +1118,23 @@ or mismatched subject stays refused even with an override, because a different
 delivery is current. The task detail projects `acceptanceAttemptGap`, and the
 delivery panel explains why acceptance needs an override.
 
+An accepted card must not come back on its own (AGT-3098). The move writes
+`completionClaim` before the lane change, and puts the previous claim back when
+the move is refused. A reader therefore never sees a card in `6-completed`
+without the ground it completed on. The delivery-chain reconciler treats a
+Completed card without a claim as stale. Before this order, a reconciler pass
+that ran between the lane write and the claim write reopened a fresh override
+acceptance as `delivery-verdict-stale`. An operator override stays final for
+the stale-delivery rule, and an unknown delivery brief version does not reopen
+it. A new delivery epoch or result SHA still does. The accepted-integration
+backstop reads the card timeline as well as the pipeline record. The current
+acceptance may be an `accepted_without_run_attempt` entry with integration
+status `integrated`, for the run attempt the current review subject names. In
+that case the backstop does not replay the merge, whose runner would refuse the
+earlier-epoch run attempt with `Error`. It records one `integration_succeeded`
+entry with outcome `AcceptedWithoutRunAttempt`. A later move into `6-completed`
+or a new delivery ends this exemption.
+
 `GET /api/projects/{id}/completed-lane/content-review-gaps` is a read-only
 inventory of completed and archived cards whose accepted claim lacks a passed
 content verdict for the brief recorded at completion. Historical claims

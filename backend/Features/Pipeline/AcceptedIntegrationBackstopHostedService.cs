@@ -82,9 +82,16 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             try
             {
                 statusByKey.TryGetValue(job.TaskKey, out var status);
-                var decision = _integrationStatus.ResolveAcceptedIntegrationRecovery(job, status);
+                var decision = _integrationStatus.ResolveAcceptedIntegrationRecovery(
+                    job, status, _timeline is null ? null : () => _timeline.ReadAll(job.FolderPath));
                 if (decision.Action == AcceptedIntegrationRecoveryAction.Ignore)
                     continue;
+                if (decision.Action == AcceptedIntegrationRecoveryAction.RecordAcceptanceWithoutRunAttempt)
+                {
+                    RecordAcceptanceWithoutRunAttempt(job, status);
+                    ClearPendingTag(job);
+                    continue;
+                }
                 if (decision.Action == AcceptedIntegrationRecoveryAction.Finalize)
                 {
                     FinalizeTransactionalAccept(job);
@@ -177,8 +184,10 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         foreach (var job in candidates)
         {
             statusByKey.TryGetValue(job.TaskKey, out var status);
-            var recovery = _integrationStatus.ResolveAcceptedIntegrationRecovery(job, status);
-            if (recovery.Action == AcceptedIntegrationRecoveryAction.Ignore)
+            var recovery = _integrationStatus.ResolveAcceptedIntegrationRecovery(
+                job, status, _timeline is null ? null : () => _timeline.ReadAll(job.FolderPath));
+            if (recovery.Action is AcceptedIntegrationRecoveryAction.Ignore
+                or AcceptedIntegrationRecoveryAction.RecordAcceptanceWithoutRunAttempt)
                 continue;
             var acceptanceRecord = ResolveAcceptanceRecord(job, recovery.LastMergeAttempt);
             var candidate = new AcceptedIntegrationAlertCandidate
@@ -342,6 +351,34 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
             .ToList();
         if (tags.Count == (job.Tags?.Count ?? 0)) return;
         _mutations.SetJobTags(job.Id, tags, job.WatchPath);
+    }
+
+    /// <summary>
+    /// AGT-3098 - the operator accepted this integrated delivery without a run
+    /// attempt in the current authority epoch. The merge runner would refuse
+    /// the earlier-epoch run attempt the review subject names, so the
+    /// acceptance itself is recorded as the outcome, once.
+    /// </summary>
+    private void RecordAcceptanceWithoutRunAttempt(TaskInfo job, TaskIntegrationStatus? status)
+    {
+        _timeline?.Append(
+            job.FolderPath,
+            TimelineEventKinds.IntegrationSucceeded,
+            TimelineActors.System,
+            "Acceptance integration recorded the operator acceptance without a run attempt: the delivery "
+            + "was integrated when it was accepted, so no merge replay ran.",
+            details: new Dictionary<string, string>
+            {
+                ["outcome"] = AcceptanceAttemptLineagePolicy.AcceptedWithoutRunAttemptOutcome,
+                ["subjectRunAttemptId"] =
+                    TaskIntegrationStatusService.CurrentReviewSubject(job)?.RunAttemptId ?? "unknown",
+                ["integrationStatus"] = status?.Status ?? "unknown",
+                ["integrationBranch"] = status?.IntegrationBranch ?? "unknown",
+            });
+        _logger.LogInformation(
+            "accepted-integration-backstop recorded acceptance without run attempt project={Project} job={JobId}",
+            job.ProjectName,
+            job.Id);
     }
 
     private void FinalizeTransactionalAccept(TaskInfo job)

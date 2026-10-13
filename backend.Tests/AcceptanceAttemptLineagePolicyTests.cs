@@ -71,4 +71,87 @@ public sealed class AcceptanceAttemptLineagePolicyTests
             "Acceptance refused: Review subject RunAttempt 'old' is stale; current RunAttempt is 'new'.",
             decision.Message);
     }
+
+    // AGT-3098: fixed instants; the policy reads the ledger order, never the clock.
+    private static readonly DateTime LedgerAt = new(2026, 10, 13, 1, 6, 13, DateTimeKind.Utc);
+
+    [Theory]
+    [InlineData(TaskStates.Completed, "run-1", IntegrationStatuses.Integrated, true)]
+    [InlineData(TaskStates.Archive, "run-1", IntegrationStatuses.Integrated, true)]
+    [InlineData(TaskStates.Completed, "RUN-1", IntegrationStatuses.Integrated, true)]
+    [InlineData(TaskStates.HumanReview, "run-1", IntegrationStatuses.Integrated, false)]
+    [InlineData(TaskStates.Completed, "run-2", IntegrationStatuses.Integrated, false)]
+    [InlineData(TaskStates.Completed, null, IntegrationStatuses.Integrated, false)]
+    [InlineData(TaskStates.Completed, "run-1", IntegrationStatuses.Pending, false)]
+    [InlineData(TaskStates.Completed, "run-1", "unknown", false)]
+    public void FindAcceptanceWithoutRunAttempt_HoldsOnlyForTheIntegratedCurrentDelivery(
+        string state, string? subjectRunAttemptId, string recordedStatus, bool expected)
+    {
+        var timeline = new[] { Accepted(0), WithoutRunAttempt(1, "run-1", recordedStatus) };
+
+        var found = AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            state, subjectRunAttemptId, timeline);
+
+        Assert.Equal(expected, found is not null);
+        if (found is not null) Assert.False(found.OutcomeRecorded);
+    }
+
+    [Fact]
+    public void FindAcceptanceWithoutRunAttempt_ALaterAcceptanceSupersedesTheRecord()
+    {
+        var timeline = new[]
+        {
+            Accepted(0),
+            WithoutRunAttempt(1, "run-1", IntegrationStatuses.Integrated),
+            LaneChange(2, TaskStates.Completed, TaskStates.HumanReview),
+            LaneChange(3, TaskStates.HumanReview, TaskStates.Completed),
+        };
+
+        Assert.Null(AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            TaskStates.Completed, "run-1", timeline));
+        Assert.NotNull(AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            TaskStates.Archive, "run-1", timeline[..2].Append(
+                LaneChange(2, TaskStates.Completed, TaskStates.Archive)).ToArray()));
+    }
+
+    [Fact]
+    public void FindAcceptanceWithoutRunAttempt_SeesTheOutcomeOnlyWhenRecordedAfterTheAcceptance()
+    {
+        var recorded = new TimelineEvent
+        {
+            Ts = LedgerAt.AddMinutes(6),
+            Kind = TimelineEventKinds.IntegrationSucceeded,
+            Details = new() { ["outcome"] = AcceptanceAttemptLineagePolicy.AcceptedWithoutRunAttemptOutcome },
+        };
+        var acceptance = new[] { Accepted(0), WithoutRunAttempt(1, "run-1", IntegrationStatuses.Integrated) };
+
+        Assert.True(AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            TaskStates.Completed, "run-1", [.. acceptance, recorded])!.OutcomeRecorded);
+        Assert.False(AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            TaskStates.Completed, "run-1", [recorded, .. acceptance])!.OutcomeRecorded);
+        Assert.False(AcceptanceAttemptLineagePolicy.FindAcceptanceWithoutRunAttempt(
+            TaskStates.Completed, "run-1",
+            [.. acceptance, recorded with { Details = new() { ["outcome"] = "Merged" } }])!.OutcomeRecorded);
+    }
+
+    private static TimelineEvent Accepted(int second)
+        => LaneChange(second, TaskStates.HumanReview, TaskStates.Completed);
+
+    private static TimelineEvent LaneChange(int second, string from, string to) => new()
+    {
+        Ts = LedgerAt.AddSeconds(second),
+        Kind = TimelineEventKinds.LaneChanged,
+        Details = new() { ["from"] = from, ["to"] = to },
+    };
+
+    private static TimelineEvent WithoutRunAttempt(int second, string runAttemptId, string integrationStatus) => new()
+    {
+        Ts = LedgerAt.AddSeconds(second),
+        Kind = TimelineEventKinds.AcceptedWithoutRunAttempt,
+        Details = new()
+        {
+            ["subjectRunAttemptId"] = runAttemptId,
+            ["integrationStatus"] = integrationStatus,
+        },
+    };
 }
