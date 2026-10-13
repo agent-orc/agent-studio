@@ -84,7 +84,7 @@
             @if (hasQueuedAnswer()) {
               <div class="escalation__queued-answer" data-testid="needs-input-answer-queued">
                 <strong>Queued answer</strong>
-                <span>{{ detail().info.pendingIntent?.prompt }}</span>
+                <span>{{ detail().info.pendingIntent?.prompt }}{{ detail().info.pendingIntent?.promptTruncated ? '…' : '' }}</span>
               </div>
             } @else {
               <label class="escalation__answer-label" for="needs-input-answer">Your answer</label>
