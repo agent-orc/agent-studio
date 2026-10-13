@@ -132,6 +132,47 @@ public sealed class TaskFailureContinuationSelectionTests
     }
 
     [Fact]
+    public void ContinuationPrompt_FailedTestEntry_AsksForAClassFilteredRerunNotTheWholeEntry()
+    {
+        const string entry =
+            "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound";
+        var steps = Agt3046Steps();
+        steps[0] = steps[0] with
+        {
+            Reason = $"`{entry}` exit 1; output:\n"
+                + "  Failed AgentStudio.Tests.SummaryAssessmentTests.ReadsTheFixture [12 ms]",
+        };
+
+        var (stage, prompt) = Brief(steps, subjectCompletedAt: GateAt.AddMinutes(-5));
+        var outsideGateOutput = prompt.Remove(
+            prompt.IndexOf("Failed gate output:", StringComparison.Ordinal),
+            prompt.IndexOf("[12 ms]", StringComparison.Ordinal) + "[12 ms]".Length
+                - prompt.IndexOf("Failed gate output:", StringComparison.Ordinal));
+
+        Assert.Equal(PipelineCatalogue.OrchestratorDecisionStepId, stage);
+        Assert.Contains(entry, prompt);
+        Assert.DoesNotContain("OrchestratorApi.Tests.csproj", outsideGateOutput);
+        Assert.Contains("for a failing `commands.test` entry, do not rerun the whole entry", prompt);
+        Assert.Contains("rerun only the failed tests its output names with a class filter", prompt);
+        Assert.DoesNotContain("rerun that exact command", prompt);
+        Assert.Contains("leave whole test projects to the gates", prompt);
+    }
+
+    [Fact]
+    public void ContinuationPrompt_GateStepAsSelectedFailure_StillCarriesTheRerunRule()
+    {
+        var steps = Agt3046Steps();
+        steps.RemoveAt(1);
+
+        var (stage, prompt) = Brief(steps, subjectCompletedAt: GateAt.AddMinutes(-5));
+
+        Assert.Equal(PipelineCatalogue.BuildTestGateStepId, stage);
+        Assert.Contains("npm --prefix frontend run lint", prompt);
+        Assert.DoesNotContain("Failed gate output", prompt);
+        Assert.Contains(IntegrationContinuationPrompt.RerunFailingCommandFirst.Trim(), prompt);
+    }
+
+    [Fact]
     public void ContinuationPrompt_CutsALongGateReasonToTheBound()
     {
         var limit = TaskFailureContinuationService.GateReasonExcerptLimit;

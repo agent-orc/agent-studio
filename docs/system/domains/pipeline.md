@@ -1085,7 +1085,20 @@ comparison before Quality Studio's verdict contract can decide a review.
 projection, review subject, and latest failed pipeline step. It builds an
 `extend` follow-up on the existing card, with the failed stage, reason, delivery
 ref and SHA, integration branch tip, the three conflict stages and files when
-recorded, and the step's verdict summary. It passes no model, CLI, or thinking
+recorded, and the step's verdict summary. When a later step such as the
+escalation is the selected failure, the failed `post-build-test-gate` step of
+the same attempt and current subject still contributes its reason, bounded to
+2 KB and prefixed with the step id, as "Failed gate output". The gate output,
+or the gate's reason when the gate is itself the failed stage, adds a fix-first
+rule: rerun a failing lint, build, or guard-filter command exactly, and for a
+failing `commands.test` entry rerun only the failed tests it names with a class
+filter, never the whole entry. Review findings stay in "Gate or review
+evidence" and never earn that rule. Every branch asks for the coding
+verification scope (build, covering test classes plus new or changed tests,
+guard tests on every .NET test project, lint) and leaves whole test projects
+to the gates. A "Failure evidence ref" line appears only for an explicit
+evidence ref; there is no default pointer to `pipeline-execution.json`, which a
+remote agent cannot read. It passes no model, CLI, or thinking
 override, so the card's pins remain authoritative. The normal continuation
 admission queues a review-lane card in Ready, and the task timeline receives an
 `integration_recovery_queued` event with the source, failed stage, and evidence

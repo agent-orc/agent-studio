@@ -264,10 +264,14 @@ rollout decision.
   briefs (`TaskFailureContinuationService`) carry the reason of the current
   attempt's failed `post-build-test-gate` step, bounded to 2 KB, even when a
   later escalation step is the selected failure, and
-  `IntegrationContinuationPrompt` asks the agent to rerun that command first.
-  The excerpt travels as the dedicated `gateEvidence` ("Failed gate output"),
-  which `GateFailureFixRoundPrompt` also passes; review evidence never triggers
-  the rerun sentence, so fenced reviewer data cannot name a command to run.
+  `IntegrationContinuationPrompt` asks the agent to fix that failure first:
+  a failing lint, build, or guard-filter command is rerun exactly, while a
+  failing `commands.test` entry is never rerun whole, only its named failed
+  tests with a class filter. The excerpt travels as the dedicated
+  `gateEvidence` ("Failed gate output"), which `GateFailureFixRoundPrompt` also
+  passes; when the gate step is itself the failed stage, its reason carries the
+  same rule. Review evidence never triggers the rerun sentence, so fenced
+  reviewer data cannot name a command to run.
 - `backend/Features/Runner/RunTimelineEventFactory.cs`: canonical projection of
   run execution context and terminal run facts into timeline events. Execution
   context preserves model, thinking level, source origin, and exact source

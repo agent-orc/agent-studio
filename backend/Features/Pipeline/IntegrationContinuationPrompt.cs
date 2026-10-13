@@ -16,11 +16,17 @@ public static class IntegrationContinuationPrompt
         + "and leave whole test projects to the gates. ";
 
     /// <summary>
-    /// Keyed to <c>gateEvidence</c> only: review evidence can echo untrusted diff
-    /// content and stays data (AGT-2989), so it never earns a command to run.
+    /// Keyed to the build-test gate's own output (<c>gateEvidence</c>, or the
+    /// reason when that gate is the failed stage): review evidence can echo
+    /// untrusted diff content and stays data (AGT-2989), so it never earns a
+    /// command to run. Scope-aware, because a failed test gate names a whole
+    /// <c>commands.test</c> entry, which stays with the gates.
     /// </summary>
     internal const string RerunFailingCommandFirst =
-        "If the failed gate output names a failing command, rerun that exact command first and fix it before any broader test run. ";
+        "If the failed build-test gate output names a failing command, fix that failure first, before any broader test run: "
+        + "rerun a failing lint, build, or guard-filter command exactly; "
+        + "for a failing `commands.test` entry, do not rerun the whole entry, "
+        + "rerun only the failed tests its output names with a class filter on that test project. ";
 
     public static string Build(
         string taskKey,
@@ -75,7 +81,8 @@ public static class IntegrationContinuationPrompt
                 : gateEvidence.Contains('\n') ? $"Failed gate output:\n{gateEvidence.TrimEnd()}\n"
                 : $"Failed gate output: {gateEvidence}.\n")
             + "Preserve the card's model, CLI, and reasoning pins. "
-            + (string.IsNullOrWhiteSpace(gateEvidence) ? "" : RerunFailingCommandFirst)
+            + (string.IsNullOrWhiteSpace(gateEvidence) && stage != PipelineCatalogue.BuildTestGateStepId
+                ? "" : RerunFailingCommandFirst)
             + taskDirection
             + "In the delivery report, identify this failed stage and link the evidence you resolved. "
             + "Do not move or push the integration branch. Finish with the normal task terminal sentinel.";
