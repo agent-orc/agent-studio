@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # AGT-2985: after a promotion at least one completion must be accepted within
 # the watch window, otherwise the helper prints the rollback command. Stable
-# 0.9.3 restarted cleanly and then had every completion rejected.
+# 0.9.3 restarted cleanly and then had every completion rejected. AGT-3095:
+# the accepted task's artifact uploads must not have been refused with 409.
 set -euo pipefail
 
 helper_path="${1:?expected the agent-runner-deploy path}"
@@ -55,7 +56,10 @@ journalctl() {
   fi
 }
 
-logger() { :; }
+# Echo the logged message so the structured result can be asserted.
+logger() {
+  printf 'logger: %s\n' "${*: -1}"
+}
 
 sleep() {
   SECONDS=$((SECONDS + ${1%.*}))
@@ -71,6 +75,35 @@ run_scenario() {
     accepted)
       printf "%s|[10:00:00] [agent-host] remote-runner-completion recorded: outcome Done, state 4-auto-review, result-envelope attached\n" "$recorded_activation_epoch" >>"$journal_file"
       printf "%s|[10:00:00] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
+      ;;
+    artifacts-complete)
+      printf "%s|[10:00:00] [agent-host] artifact-transfer task=AGT-1 artifacts=complete uploaded=2 notTransferred=0\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:01] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
+      ;;
+    artifacts-rejected)
+      # AGT-3095: the 0.9.4 order settled first, so every upload hit the strict fence.
+      for artifact in deliverables.md status.md agt-2906-api-readback.json preparation-manifest.json; do
+        printf '%s|[10:00:01] [agent-host] artifact-transfer outcome=ArtifactTransferFailed task=AGT-1 result artifact %s 0.01 MB upload failed after 1 attempt(s) (POST /api/runner/artifacts -> 409: {"status":"invalidState","message":"RunAttempt is Completed and no longer has write authority."}); not transferred\n' \
+          "$recorded_activation_epoch" "$artifact" >>"$journal_file"
+      done
+      printf "%s|[10:00:01] [agent-host] artifact-transfer task=AGT-1 artifacts=partial uploaded=0 notTransferred=4\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:00] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
+      ;;
+    heartbeat-lease-lost)
+      printf "%s|[10:00:00] [agent-host] lease lost; terminating CLI process group: InvalidState - RunAttempt is Completed and no longer has write authority.\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:00] [agent-host] artifact-transfer task=AGT-1 artifacts=complete uploaded=2 notTransferred=0\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:01] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
+      ;;
+    artifacts-too-large)
+      printf "%s|[10:00:00] [agent-host] artifact-transfer outcome=ArtifactTooLarge task=AGT-1 result artifact trace.zip 9.20 MB exceeds the 8 MB per-file limit; not transferred\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:00] [agent-host] artifact-transfer outcome=ArtifactTooLarge task=AGT-1 result artifact video.webm 12.00 MB was refused because artifact storage is full (HTTP 507); not transferred\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:00] [agent-host] artifact-transfer task=AGT-1 artifacts=partial uploaded=0 notTransferred=2\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:01] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
+      ;;
+    other-task-rejected)
+      printf '%s|[10:00:00] [agent-host] artifact-transfer outcome=ArtifactTransferFailed task=AGT-10 result artifact status.md 0.01 MB upload failed after 1 attempt(s) (POST /api/runner/artifacts -> 409: {"status":"invalidState"}); not transferred\n' "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:00] [agent-host] artifact-transfer task=AGT-1 artifacts=complete uploaded=1 notTransferred=0\n" "$recorded_activation_epoch" >>"$journal_file"
+      printf "%s|[10:00:01] [agent-host] task 'AGT-1' handed back to the local board: Done\n" "$recorded_activation_epoch" >>"$journal_file"
       ;;
     early-new-invocation)
       printf "%s|[09:59:55] [agent-host] task 'AGT-early' handed back to the local board: Done\n" \
@@ -111,3 +144,8 @@ run_scenario rejected
 run_scenario idle
 run_scenario expired-late-acceptance
 run_scenario expired-on-time-acceptance
+run_scenario artifacts-complete
+run_scenario artifacts-rejected
+run_scenario heartbeat-lease-lost
+run_scenario artifacts-too-large
+run_scenario other-task-rejected

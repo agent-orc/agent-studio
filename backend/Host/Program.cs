@@ -712,6 +712,13 @@ builder.Services.AddSingleton<AgentStudio.Pipeline.IPipelineHealthSensor>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
 builder.Services.AddSingleton<AgentStudio.Pipeline.IEvidenceFlushAlarm>(sp =>
     sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+// AGT-3095: artifact writes refused after settlement raise one alarm per runner.
+builder.Services.AddSingleton<AgentStudio.Pipeline.IArtifactUploadAfterSettlementAlarm>(sp =>
+    sp.GetRequiredService<AgentStudio.Pipeline.PipelineHealthService>());
+builder.Services.AddSingleton(sp => new AgentStudio.Diagnostics.ArtifactUploadAfterSettlementSensor(
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<AgentStudio.Pipeline.IArtifactUploadAfterSettlementAlarm>(),
+    sp.GetService<V1ReviewExecutorRegistry>()));
 // AGT-3000: clears git locks left by dead git processes before a server-owned write.
 builder.Services.AddSingleton<AgentStudio.Git.GitStaleLockGuard>();
 builder.Services.AddSingleton<AgentStudio.Git.IntegrationWorktreeStartupLockSweep>();

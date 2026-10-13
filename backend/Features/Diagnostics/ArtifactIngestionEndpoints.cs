@@ -81,11 +81,19 @@ public static class ArtifactIngestionEndpoints
             RemoteResultFinalizationService finalization,
             AgentStudio.Projects.ProjectSettingsService settings,
             ArtifactRequestLimits requestLimits,
+            ArtifactUploadAfterSettlementSensor settlementRejections,
             ILoggerFactory loggerFactory) =>
         {
             var logger = loggerFactory.CreateLogger("AgentStudio.Diagnostics.ArtifactIngestionEndpoints");
             if (!RunnerLeaseAuthorization.IsCurrent(context, leases, req.TaskKey, req.RunnerId, req.LeaseId, req.FencingToken))
+            {
+                logger.LogWarning(
+                    "runner-artifact-stale-lease taskKey={TaskKey} runner={Runner} leaseId={LeaseId}",
+                    req.TaskKey,
+                    req.RunnerId ?? "n/a",
+                    req.LeaseId ?? "n/a");
                 return Results.Conflict(new ArtifactIngestResponse(req.TaskKey, 0, [], "The authenticated Runner does not hold the current fenced lease."));
+            }
             if ((req.Artifacts is null || req.Artifacts.Count == 0) && !req.FinalizeResult)
                 return Results.Ok(new ArtifactIngestResponse(req.TaskKey, 0, [], "no artifacts"));
 
@@ -148,8 +156,13 @@ public static class ArtifactIngestionEndpoints
                     else
                     {
                         if (accepted.Status != AttemptWriteStatus.Accepted)
+                        {
+                            if (IsAfterSettlement(accepted))
+                                ReportAfterSettlement(logger, settlementRejections, req, task, accepted);
                             return Results.Conflict(accepted);
+                        }
                         written = sideEffectResult!;
+                        settlementRejections.Accepted(req.RunnerId);
                     }
                 }
             }
@@ -291,6 +304,36 @@ public static class ArtifactIngestionEndpoints
         }
 
         return normalized;
+    }
+
+    /// <summary>
+    /// The strict fence refuses a write once the RunAttempt is terminal. Release
+    /// 0.9.4 settled before uploading, so every result file met this refusal
+    /// without a server log line or an alarm (AGT-3095).
+    /// </summary>
+    internal static bool IsAfterSettlement(AttemptWriteResult result)
+        => result.Status == AttemptWriteStatus.InvalidState
+           && result.RunAttempt?.State is AttemptLifecycleState.Completed
+               or AttemptLifecycleState.Failed
+               or AttemptLifecycleState.Cancelled;
+
+    private static void ReportAfterSettlement(
+        ILogger logger,
+        ArtifactUploadAfterSettlementSensor settlementRejections,
+        ArtifactIngestRequest req,
+        TaskInfo task,
+        AttemptWriteResult rejected)
+    {
+        var run = rejected.RunAttempt!;
+        var runner = string.IsNullOrWhiteSpace(req.RunnerId) ? run.Lease?.ExecutorId : req.RunnerId;
+        logger.LogWarning(
+            "runner-artifact-after-settlement taskKey={TaskKey} attemptId={AttemptId} runner={Runner} state={State} terminalAt={TerminalAt}",
+            req.TaskKey,
+            run.AttemptId,
+            runner ?? "n/a",
+            run.State,
+            run.TerminalAt?.ToString("O") ?? "n/a");
+        settlementRejections.Rejected(runner ?? string.Empty, run.AttemptId, req.TaskKey, task.ProjectName, task.WatchPath);
     }
 
     private static TaskInfo? ResolveTask(ITaskScanner scanner, string taskKey)
