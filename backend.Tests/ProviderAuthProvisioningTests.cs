@@ -1,4 +1,5 @@
 using AgentStudio.Management;
+using AgentStudio.TaskServer.Contracts;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -14,7 +15,7 @@ public sealed class ProviderAuthProvisioningTests
             "agent@runner-01",
             "agent-runner-01",
             environmentVariable,
-            "sk-ant-oat01-provider-secret-fixture");
+            "fixture" + "-provider-secret-value");
 
         Assert.Null(ProviderAuthProvisioningPolicy.Validate(request));
         Assert.Equal("claude", ProviderAuthProvisioningPolicy.ProviderFor(environmentVariable));
@@ -23,7 +24,7 @@ public sealed class ProviderAuthProvisioningTests
     [Fact]
     public void SshTransport_KeepsSecretOutOfEveryProcessArgument()
     {
-        const string secret = "sk-ant-oat01-never-on-the-command-line";
+        var secret = "fixture" + "-never-on-the-command-line";
         var startInfo = SshProviderAuthProvisioner.BuildStartInfo(
             "agent@runner-01",
             "CLAUDE_CODE_OAUTH_TOKEN");
@@ -46,6 +47,307 @@ public sealed class ProviderAuthProvisioningTests
         Assert.Contains("/usr/local/sbin/agent-runner-deploy restart-review", standardInput);
         Assert.Contains("provider-auth-unit-pending=", standardInput);
         Assert.DoesNotContain("claude.env", standardInput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Provisioning_failure_restores_prior_environment_and_restarts_changed_units()
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value");
+        Assert.Contains("trap rollback_on_failure EXIT", script);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", script);
+        Assert.Contains("systemctl restart \"$unit\"", script);
+        Assert.Contains("install_committed=1", script);
+        var trapStart = script.IndexOf("rollback_on_failure() {", StringComparison.Ordinal);
+        var trapEnd = script.IndexOf("trap rollback_on_failure EXIT", trapStart, StringComparison.Ordinal);
+        var trap = script[trapStart..trapEnd];
+        Assert.Contains("systemctl stop \"$unit\"", trap);
+        Assert.Contains("/proc/$1/environ", trap);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", trap);
+        Assert.Contains("if ((result == 0 && verified_all == 1)); then\n    rm -f -- \"$rollback_file\"", trap);
+        Assert.Contains("for dropin in \"${created_dropins[@]}\"", trap);
+        Assert.True(trap.IndexOf("/proc/$1/environ", StringComparison.Ordinal)
+            < trap.IndexOf("provider-auth-rollback-restored", StringComparison.Ordinal));
+        Assert.Contains("install -m 0600 -o root -g root \"$provider_auth_file\" \"$rollback_file\"", script);
+        Assert.Contains("install -m 0600 -o root -g root /dev/null \"$rollback_file\"", script);
+        Assert.True(script.IndexOf("verified_all=1", StringComparison.Ordinal) <
+            script.LastIndexOf("install_committed=1", StringComparison.Ordinal));
+        Assert.Contains("installed-awaiting-runner\\n%s\\n%s\\n%s\\n", script);
+        Assert.Contains("printf 'pending=%s\\n' \"$unit\"", script);
+    }
+
+    [Fact]
+    public void Pending_provisioning_keeps_copy_until_host_verifies_or_restores_every_unit()
+    {
+        var provision = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value",
+            new ProviderAuthRenewalFence("renewal_fixture", "generation-a"));
+        var finalizer = SshProviderAuthProvisioner.BuildPendingFinalizationScriptForTest("renewal_fixture");
+        Assert.Contains("if ((result == 0 && verified_all == 1))", provision);
+        Assert.Contains("\"$rollback_file\" \"$had_prior_file\"", provision);
+        Assert.Contains("printf 'pending=%s\\n' \"$unit\"", provision);
+        Assert.Contains("/proc/${pid}/environ", finalizer);
+        Assert.Contains("[[ \"$generation\" == \"$installed_generation\" ]]", finalizer);
+        Assert.True(finalizer.IndexOf("/proc/${pid}/environ", StringComparison.Ordinal) <
+            finalizer.LastIndexOf("rm -f -- \"$rollback_file\"", StringComparison.Ordinal));
+        Assert.Contains("trap recover ERR", finalizer);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", finalizer);
+        Assert.Contains("systemctl stop \"$unit\"", finalizer);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", finalizer);
+    }
+
+    [Theory]
+    [InlineData("staged", "install -m 0600 -o root -g root \"$provider_auth_file\" \"$rollback_file\"")]
+    [InlineData("installed", "installed=1")]
+    [InlineData("unit-restarted", "systemctl restart \"$unit\"")]
+    [InlineData("unit-verified", "/proc/${main_pid}/environ")]
+    [InlineData("unit-pending", "installed-awaiting-runner\\n%s\\n%s\\n%s\\n")]
+    [InlineData("journal-present", "receipt_file=\"$receipt_dir/$operation_id\"")]
+    [InlineData("interrupted-install", "printf 'started\\n%s\\n%s\\n%s\\n' \"$rollback_file\"")]
+    [InlineData("pending-without-central-operation", "operation_id=\"local_${generation}\"")]
+    [InlineData("protected-copy", "install -m 0600 -o root -g root")]
+    [InlineData("rollback-failure", "systemctl stop \"$unit\"")]
+    public void Renewal_lifecycle_states_have_host_receipts(string state, string required)
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value");
+        Assert.True(script.Contains(required, StringComparison.Ordinal),
+            $"Missing host lifecycle state: {state}");
+    }
+
+    [Theory]
+    [InlineData("pending-finalization", "installed-awaiting-runner")]
+    [InlineData("interrupted-install", "[[ \"${receipt[0]}\" == started ]]")]
+    [InlineData("verify-live-unit", "/proc/${pid}/environ")]
+    [InlineData("retire-copy", "rm -f -- \"$rollback_file\"")]
+    [InlineData("restore-prior", "mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"")]
+    [InlineData("drain-on-failure", "systemctl stop \"$unit\"")]
+    public void Renewal_lifecycle_finalization_transitions_are_recoverable(string state, string required)
+    {
+        var script = SshProviderAuthProvisioner.BuildPendingFinalizationScriptForTest("renewal_fixture");
+        Assert.True(script.Contains(required, StringComparison.Ordinal),
+            $"Missing host finalization transition: {state}");
+    }
+
+    [Fact]
+    public void Unfenced_pending_install_rolls_back_instead_of_orphaning_the_copy()
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value");
+        Assert.Contains("operation_id=\"local_${generation}\"", script);
+        Assert.Contains("[[ -n \"$expected_generation\" ]] || { echo 'provider-auth-unverified-local-install' >&2; exit 75; }", script);
+        Assert.True(script.IndexOf("receipt_file=\"$receipt_dir/$operation_id\"", StringComparison.Ordinal) <
+            script.IndexOf("installed=1", StringComparison.Ordinal));
+        Assert.Contains("printf 'rollback-restored\\n' >\"$receipt_file\"", script);
+        Assert.Contains("printf '%s\\n' \"$rollback_file\" >>\"$receipt_file\"", script);
+    }
+
+    [Fact]
+    public void Pending_host_finalizer_discovers_late_units_and_cleans_copy_before_verification_receipt()
+    {
+        var script = SshProviderAuthProvisioner.BuildPendingFinalizationScriptForTest("renewal_fixture");
+        Assert.Contains("if ((${#units[@]} == 0)); then", script);
+        Assert.Contains("systemctl cat agent-runner.service", script);
+        Assert.Contains("pending=(\"${units[@]}\")", script);
+        Assert.True(script.LastIndexOf("rm -f -- \"$rollback_file\"", StringComparison.Ordinal) <
+            script.LastIndexOf("printf 'verified\\n' >\"$receipt_file\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Interrupted_install_keeps_a_discoverable_copy_and_drains_units()
+    {
+        var install = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value");
+        var finalizer = SshProviderAuthProvisioner.BuildPendingFinalizationScriptForTest("renewal_fixture");
+        Assert.True(install.IndexOf("printf 'started\\n%s\\n%s\\n%s\\n'", StringComparison.Ordinal) <
+            install.IndexOf("install -m 0600 -o root -g root \"$provider_auth_file\" \"$rollback_file\"", StringComparison.Ordinal));
+        Assert.Contains("if [[ \"${receipt[0]}\" == started ]]; then", finalizer);
+        Assert.Contains("systemctl stop \"$unit\"", finalizer);
+        Assert.Contains("printf 'recovery-required\\n%s\\n' \"$rollback_file\" >\"$receipt_file\"", finalizer);
+    }
+
+    [Fact]
+    public void Managed_api_key_renewal_fences_the_prior_generation_under_a_host_lock()
+    {
+        var script = SshProviderAuthProvisioner.BuildStandardInput(
+            "ANTHROPIC_API_KEY", "fixture-provider-key-value",
+            new ProviderAuthRenewalFence("renewal_fixture", "generation-a"));
+        Assert.Contains("operation_id='renewal_fixture'", script);
+        Assert.Contains("expected_generation='generation-a'", script);
+        Assert.Contains("flock -n 9", script);
+        Assert.Contains("current_generation\" == \"$expected_generation", script);
+        Assert.Contains("provider-auth-recovery-required", script);
+    }
+
+    [Fact]
+    public void Claude_native_fence_accepts_native_store_generation()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        Assert.Contains("expected_generation='native-cli-store:1791460920000'", script);
+    }
+
+    [Fact]
+    public void Claude_native_renewal_requires_changed_store_and_publishes_a_distinct_generation()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+
+        Assert.Contains("previous_store_digest=", script);
+        Assert.Contains("new_store_digest=", script);
+        Assert.Contains("[[ \"$previous_store_digest\" != \"$new_store_digest\" ]]", script);
+        Assert.Contains("published_generation=", script);
+        Assert.Contains("[[ \"$published_generation\" != \"$expected_generation\" ]]", script);
+        Assert.Contains("claude-login-status=unchanged-generation", script);
+        Assert.Contains("touch -m -d \"@$next_second\"", script);
+        Assert.True(script.IndexOf("claude auth status --text", StringComparison.Ordinal) <
+                    script.IndexOf("new_store_digest=", StringComparison.Ordinal));
+        Assert.True(script.IndexOf("new_store_digest=", StringComparison.Ordinal) <
+                    script.LastIndexOf("agent-host --rebind-provider-auth claude", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_native_renewal_restores_prior_store_and_drains_units_if_recovery_fails()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+
+        Assert.Contains("cp -p -- \"$credential_store\" \"$rollback_store\"", script);
+        Assert.Contains("chmod 0600 \"$rollback_store\"", script);
+        Assert.Contains("trap rollback_native_on_failure EXIT", script);
+        Assert.Contains("mv -f -- \"$restore_tmp\" \"$credential_store\"", script);
+        Assert.Contains("== \"$current_generation\"", script);
+        Assert.Contains("!= \"$previous_store_digest\"", script);
+        Assert.Contains("agent-host --rebind-provider-auth claude --drained", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", script);
+        Assert.Contains("sha256sum \"$unit_store\"", script);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", script);
+        Assert.Contains("claude-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
+        Assert.True(script.IndexOf("cp -p -- \"$credential_store\"", StringComparison.Ordinal) <
+                    script.IndexOf("claude /login", StringComparison.Ordinal));
+        var restore = script.IndexOf("mv -f -- \"$restore_tmp\" \"$credential_store\"", StringComparison.Ordinal);
+        Assert.True(restore < script.IndexOf("agent-host --rebind-provider-auth claude --drained", restore, StringComparison.Ordinal));
+        Assert.True(script.IndexOf("trap rollback_native_on_failure EXIT", StringComparison.Ordinal) <
+                    script.IndexOf("claude /login", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_native_normal_restart_checks_live_generation_before_verification()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        var normal = script[script.LastIndexOf("for unit in agent-host.service agent-runner.service agent-runner-review.service; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("done <\"/proc/$1/environ\"", normal);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", normal);
+        Assert.Contains("sha256sum \"$unit_store\"", normal);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
+        Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
+        Assert.Contains("if (( result == 0 )); then\n    if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal));
+        Assert.True(normal.IndexOf("claude-probe-unit=", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-login-status=verified", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Claude_native_zero_units_keep_the_store_pending()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000", native: true);
+        var normal = script[script.LastIndexOf("for unit in agent-host.service agent-runner.service agent-runner-review.service; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("installed-awaiting-runner", normal);
+        Assert.Contains("\"$rollback_store\" \"$new_store_digest\" \"$published_generation\" \"$had_prior_store\" >\"$receipt_file\"", normal);
+        Assert.Contains("if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.Contains("if (( ! journaled )); then exit 45; fi", script);
+        Assert.True(normal.IndexOf("verified_count=$((verified_count + 1))", StringComparison.Ordinal) <
+                    normal.IndexOf("claude-login-status=verified", StringComparison.Ordinal));
+        Assert.Contains("echo 'claude-login-status=verified'\nelse\n  if (( ! journaled )); then exit 45; fi\n  printf 'installed-awaiting-runner", normal);
+    }
+
+    [Fact]
+    public void Claude_environment_renewal_restores_prior_file_or_drains_units_after_restart_failure()
+    {
+        var script = SshClaudeDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "generation-a", native: false);
+        Assert.Contains("trap rollback_environment_on_failure EXIT", script);
+        Assert.Contains("install -m 0640 -o root -g agent \"$rollback_file\" \"$restore_tmp\"", script);
+        Assert.Contains("mv -fT -- \"$restore_tmp\" \"$provider_auth_file\"", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("claude-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
+        Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("claude-login-status=installed-awaiting-runner", normal);
+        Assert.Contains("if (( verified_all )); then", script);
+    }
+
+    [Fact]
+    public void Codex_renewal_restores_prior_store_or_drains_units_after_partial_rebind()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        Assert.Contains("trap rollback_codex_on_failure EXIT", script);
+        Assert.Contains("cp -p -- \"$credential_store\" \"$rollback_store\"", script);
+        Assert.Contains("agent-host --rebind-provider-auth codex --drained", script);
+        Assert.Contains("sudo -n systemctl stop \"$unit\"", script);
+        Assert.Contains("[[ \"$pid\" =~ ^[1-9][0-9]*$ ]] || rollback_ok=0", script);
+        Assert.Contains("done <\"/proc/$1/environ\"", script);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", script);
+        Assert.Contains("sha256sum \"$unit_store\"", script);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", script);
+        Assert.Contains("codex-login-status=recovery-required", script);
+        Assert.Contains("printf 'recovery-required\\n' >\"$receipt_file\"", script);
+        Assert.Contains("new_store_digest=", script);
+        Assert.Contains("published_generation=", script);
+        Assert.Contains("sudo -n systemctl restart \"$unit\" || exit 44", script);
+    }
+
+    [Fact]
+    public void Codex_normal_restart_checks_live_generation_before_verification()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("done <\"/proc/$1/environ\"", normal);
+        Assert.Contains("stat -Lc %d:%i \"$unit_store\"", normal);
+        Assert.Contains("sha256sum \"$unit_store\"", normal);
+        Assert.Contains("native-cli-store:$(date -r \"$unit_store\" +%s%3N)", normal);
+        Assert.Contains("bash \"$pid\" \"$credential_store\" \"$new_store_digest\" \"$published_generation\"", normal);
+        Assert.Contains("if (( result == 0 )); then\n    if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.True(normal.IndexOf("$new_store_digest", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal));
+        Assert.True(normal.IndexOf("codex-probe-unit=", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-login-status=verified", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Codex_zero_units_keep_the_store_pending()
+    {
+        var script = SshCodexDeviceAuthTransport.BuildFencedScriptForTest(
+            "renewal_fixture", "native-cli-store:1791460920000");
+        var normal = script[script.LastIndexOf("for unit in \"${units[@]}\"; do", StringComparison.Ordinal)..];
+
+        Assert.Contains("verified_count=$((verified_count + 1))", normal);
+        Assert.Contains("if (( verified_count == expected_units && verified_count > 0 )); then", normal);
+        Assert.Contains("installed-awaiting-runner", normal);
+        Assert.Contains("\"$rollback_store\" \"$new_store_digest\" \"$published_generation\" \"$had_prior_store\" >\"$receipt_file\"", normal);
+        Assert.Contains("if (( verified_all )); then rm -f \"$rollback_store\"; fi", script);
+        Assert.Contains("if (( ! journaled )); then exit 45; fi", script);
+        Assert.True(normal.IndexOf("verified_count=$((verified_count + 1))", StringComparison.Ordinal) <
+                    normal.IndexOf("codex-login-status=verified", StringComparison.Ordinal));
+        Assert.Contains("echo 'codex-login-status=verified'\nelse\n  if (( ! journaled )); then exit 45; fi\n  printf 'installed-awaiting-runner", normal);
     }
 
     [Fact]
@@ -129,6 +431,273 @@ public sealed class ProviderAuthProvisioningTests
         Assert.DoesNotContain("device-auth", startInfo.ArgumentList);
         Assert.Equal("bash", startInfo.ArgumentList[^2]);
         Assert.Equal("-s", startInfo.ArgumentList[^1]);
+    }
+
+    [Fact]
+    public async Task Durable_codex_login_waits_for_real_proof_and_restart_status_reads_receipt()
+    {
+        var transport = new FakeCodexDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R3");
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "operation-one"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, true,
+            ["agent-runner.service", "agent-runner-review.service"]));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+
+        journal.RealProof = true;
+        var restarted = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
+        Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
+    public async Task Missing_codex_units_leave_the_durable_renewal_installed_and_pending()
+    {
+        var transport = new FakeCodexDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R3");
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "missing-units"), "operator", default);
+
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+    }
+
+    [Fact]
+    public async Task Missing_claude_units_leave_the_durable_renewal_installed_and_pending()
+    {
+        var transport = new FakeClaudeDeviceAuthTransport();
+        var journal = new FakeRenewalJournal("R2");
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "missing-units", "native"), "operator", default);
+
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++)
+            await Task.Delay(10);
+
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+    }
+
+    [Theory]
+    [InlineData("R1")]
+    [InlineData("R2")]
+    public async Task Pending_claude_host_receipt_must_finalize_before_central_proof(string method)
+    {
+        var transport = new FakeClaudeDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal(method) { RealProof = true };
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "pending-finalizer", method == "R2" ? "native" : "environment"),
+            "operator", default);
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        Assert.Equal("installed", journal.Step);
+        transport.FinalizationResult = "verified";
+        var resumed = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        Assert.Equal("completed", (await resumed.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Fact]
+    public async Task Pending_codex_host_receipt_can_restore_instead_of_completing()
+    {
+        var transport = new FakeCodexDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal("R3") { RealProof = true };
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "pending-finalizer"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        Assert.Equal("pending", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        transport.FinalizationResult = "rollback-restored";
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        Assert.Equal("recovery-required", journal.Step);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
+    [InlineData("R1")]
+    [InlineData("R2")]
+    public async Task Pending_claude_host_receipt_that_restores_cannot_complete(string method)
+    {
+        var transport = new FakeClaudeDeviceAuthTransport { FinalizationResult = "rollback-restored" };
+        var journal = new FakeRenewalJournal(method) { RealProof = true };
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "restore-finalizer", method == "R2" ? "native" : "environment"),
+            "operator", default);
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", started.Handle, default))?.State);
+        Assert.Equal("recovery-required", journal.Step);
+    }
+
+    [Fact]
+    public async Task Pending_codex_host_receipt_can_finalize_then_complete()
+    {
+        var transport = new FakeCodexDeviceAuthTransport { FinalizationResult = "verified" };
+        var journal = new FakeRenewalJournal("R3") { RealProof = true };
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "verified-finalizer"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        var resumed = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        Assert.Equal("completed", (await resumed.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
+    [InlineData("R1", null)]
+    [InlineData("R2", null)]
+    [InlineData("R2", "runner-01; rm -rf /")]
+    public async Task Restarted_claude_polling_without_its_ssh_target_keeps_the_pending_renewal_resumable(
+        string method, string? suppliedTarget)
+    {
+        var transport = new FakeClaudeDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal(method) { RealProof = true };
+        var coordinator = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new ClaudeSignInRequest("runner-01", "restart-target", method == "R2" ? "native" : "environment"),
+            "operator", default);
+        transport.Complete(new ClaudeDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        transport.FinalizationResult = "verified";
+        var restarted = new ClaudeSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var status = await restarted.GetAsync("agent-runner-01", started.Handle, default, suppliedTarget);
+
+        Assert.Equal("pending", status?.State);
+        Assert.Contains("SSH target", status!.Detail);
+        Assert.Null(transport.FinalizedTarget);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            " runner-01 "))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("runner-01 && id")]
+    public async Task Restarted_codex_polling_without_its_ssh_target_keeps_the_pending_renewal_resumable(
+        string? suppliedTarget)
+    {
+        var transport = new FakeCodexDeviceAuthTransport { FinalizationResult = "pending" };
+        var journal = new FakeRenewalJournal("R3") { RealProof = true };
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var started = await coordinator.StartAsync("agent-runner-01",
+            new CodexSignInRequest("runner-01", "restart-target"), "operator", default);
+        transport.Complete(new CodexDeviceAuthTransportResult(0, false, [], InstallationPending: true));
+        for (var attempt = 0; attempt < 50 && journal.Step != "installed"; attempt++) await Task.Delay(10);
+
+        transport.FinalizationResult = "verified";
+        var restarted = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+        var status = await restarted.GetAsync("agent-runner-01", started.Handle, default, suppliedTarget);
+
+        Assert.Equal("pending", status?.State);
+        Assert.Contains("SSH target", status!.Detail);
+        Assert.Null(transport.FinalizedTarget);
+        Assert.Equal("installed", journal.Step);
+        Assert.Equal("completed", (await restarted.GetAsync("agent-runner-01", started.Handle, default,
+            "runner-01"))?.State);
+        Assert.Equal("runner-01", transport.FinalizedTarget);
+    }
+
+    [Theory]
+    [InlineData("claude-native")]
+    [InlineData("claude-environment")]
+    [InlineData("codex")]
+    public void Pending_sign_in_finalizer_retires_or_restores_the_copy_after_live_checks(string method)
+    {
+        var script = method switch
+        {
+            "claude-native" => SshClaudeDeviceAuthTransport.BuildPendingFinalizationScriptForTest("renewal_fixture", true),
+            "claude-environment" => SshClaudeDeviceAuthTransport.BuildPendingFinalizationScriptForTest("renewal_fixture", false),
+            _ => SshCodexDeviceAuthTransport.BuildPendingFinalizationScriptForTest("renewal_fixture"),
+        };
+
+        Assert.Contains("flock -n 9", script);
+        Assert.Contains("[[ -f \"$receipt_file\" ]] || { echo pending; exit 0; }", script);
+        Assert.Contains("installed-awaiting-runner", script);
+        Assert.Contains("if ((${#units[@]} < 2)); then echo pending; exit 0; fi", script);
+        Assert.Contains("/proc/$1/environ", script);
+        Assert.Contains("if ! restart_unit \"$unit\" || ! check_unit \"$unit\"", script);
+        Assert.Contains("recover; exit 0", script);
+        Assert.Contains("systemctl stop \"$unit\"", script);
+        Assert.Contains("rollback-restored", script);
+        Assert.Contains("recovery-required", script);
+        Assert.Contains("printf 'verified\\n' >\"$receipt_file\"", script);
+        if (method != "claude-environment")
+            Assert.Contains("elif ! check_absent \"$unit\"; then restored=0; break; fi", script);
+        Assert.True(script.LastIndexOf("check_unit \"$unit\"", StringComparison.Ordinal) <
+                    script.LastIndexOf("rm -f -- \"$rollback_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Expired_claude_renewal_can_complete_from_recovery_receipt()
+    {
+        var journal = new FakeRenewalJournal("R2");
+        var receipt = await journal.BeginAsync("agent-runner-01", "R2", "operator", null, default);
+        journal.ExpireIntoRecovery();
+        var coordinator = new ClaudeSignInCoordinator(new FakeClaudeDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
+        journal.RealProof = true;
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
+        Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
+    public async Task Expired_codex_renewal_can_complete_from_recovery_receipt()
+    {
+        var journal = new FakeRenewalJournal("R3");
+        var receipt = await journal.BeginAsync("agent-runner-01", "R3", "operator", null, default);
+        journal.ExpireIntoRecovery();
+        var coordinator = new CodexSignInCoordinator(new FakeCodexDeviceAuthTransport(),
+            new RecordingProviderSignInAudit(), journal);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
+        journal.RealProof = true;
+        Assert.Equal("completed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
+        Assert.Equal("complete", journal.Step);
+    }
+
+    [Fact]
+    public async Task Expired_host_recovery_receipt_is_not_advanced_to_itself()
+    {
+        var journal = new FakeRenewalJournal("R3");
+        var receipt = await journal.BeginAsync("agent-runner-01", "R3", "operator", null, default);
+        journal.ExpireIntoRecovery();
+        var transport = new FakeCodexDeviceAuthTransport { FinalizationResult = "recovery-required" };
+        var coordinator = new CodexSignInCoordinator(transport, new RecordingProviderSignInAudit(), journal);
+
+        Assert.Equal("failed", (await coordinator.GetAsync("agent-runner-01", receipt.OperationId, default,
+            "runner-01"))?.State);
+        Assert.Equal("recovery-required", journal.Step);
     }
 
     [Fact]
@@ -216,6 +785,15 @@ public sealed class ProviderAuthProvisioningTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string SshTarget { get; private set; } = "";
+        public string? FinalizedTarget { get; private set; }
+        public string FinalizationResult { get; set; } = "verified";
+
+        public Task<string> FinalizePendingAsync(string sshTarget, string operationId, bool native,
+            CancellationToken cancellationToken)
+        {
+            FinalizedTarget = sshTarget;
+            return Task.FromResult(FinalizationResult);
+        }
 
         public ClaudeDeviceAuthTransportSession Start(
             string sshTarget,
@@ -241,6 +819,15 @@ public sealed class ProviderAuthProvisioningTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string SshTarget { get; private set; } = "";
+        public string? FinalizedTarget { get; private set; }
+        public string FinalizationResult { get; set; } = "verified";
+
+        public Task<string> FinalizePendingAsync(string sshTarget, string operationId,
+            CancellationToken cancellationToken)
+        {
+            FinalizedTarget = sshTarget;
+            return Task.FromResult(FinalizationResult);
+        }
         public string ProcessArguments { get; private set; } = "ssh -T";
 
         public CodexDeviceAuthTransportSession Start(
@@ -275,6 +862,46 @@ public sealed class ProviderAuthProvisioningTests
             await Task.Yield();
             Events.Add(evt);
             _firstEvent.TrySetResult();
+        }
+    }
+
+    private sealed class FakeRenewalJournal(string method) : IProviderRenewalJournal
+    {
+        private readonly DateTime _now = new(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
+        private ProviderRenewalReceiptDto? _receipt;
+        public string? Step => _receipt?.Step;
+        public bool RealProof { get; set; }
+
+        public void ExpireIntoRecovery()
+            => _receipt = _receipt! with { Deadline = _now.AddMinutes(-1), Step = "recovery-required" };
+
+        public Task<ProviderRenewalReceiptDto> BeginAsync(string hostId, string requestedMethod,
+            string actorId, string? key, CancellationToken ct)
+        {
+            Assert.Equal(method, requestedMethod);
+            _receipt = new("renewal_fixture", "installation", hostId, "credential", "generation-a",
+                method, key ?? "operation-one", actorId, _now.AddMinutes(15), "requested", null,
+                null, [], false, [], _now);
+            return Task.FromResult(_receipt);
+        }
+
+        public Task<ProviderRenewalReceiptDto> AdvanceAsync(string operationId, string step,
+            CancellationToken ct)
+        {
+            if (_receipt?.Step == "recovery-required" && step == "recovery-required")
+                throw new InvalidOperationException("A recovery receipt cannot advance to itself.");
+            _receipt = _receipt! with { Step = step };
+            return Task.FromResult(_receipt);
+        }
+
+        public Task<ProviderRenewalReceiptDto?> GetAsync(string operationId, CancellationToken ct)
+            => Task.FromResult(_receipt);
+
+        public Task<ProviderRenewalReceiptDto> TryVerifyAsync(ProviderRenewalReceiptDto receipt,
+            CancellationToken ct)
+        {
+            if (RealProof) _receipt = receipt with { Step = "complete", RealRequestSucceeded = true };
+            return Task.FromResult(_receipt!);
         }
     }
 }

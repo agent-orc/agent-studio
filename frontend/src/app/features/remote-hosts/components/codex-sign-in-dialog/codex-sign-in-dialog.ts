@@ -51,6 +51,10 @@ export class CodexSignInDialogComponent implements OnDestroy {
   }
 
   close(): void {
+    const session = this.session();
+    const target = this.request();
+    if (session && target && this.phase() === 'pending')
+      this.providerAuth.cancelCodexSignIn(target.hostId, session.handle).subscribe();
     this.polling?.unsubscribe();
     this.polling = null;
     this.dialog.close();
@@ -87,15 +91,15 @@ export class CodexSignInDialogComponent implements OnDestroy {
         this.session.set(session);
         this.phase.set('pending');
         this.detail.set('Complete the browser flow. This window will detect completion automatically.');
-        this.poll(request, session);
+        this.poll(request, session, sshTarget);
       },
       error: error => this.fail(errorDetail(error, 'Codex device sign-in could not be started.')),
     });
   }
 
-  private poll(request: CodexSignInTarget, session: CodexSignInStartResponse): void {
+  private poll(request: CodexSignInTarget, session: CodexSignInStartResponse, sshTarget: string): void {
     this.polling = timer(500, 1_000).pipe(
-      switchMap(() => this.providerAuth.codexSignInStatus(request.hostId, session.handle)),
+      switchMap(() => this.providerAuth.codexSignInStatus(request.hostId, session.handle, sshTarget)),
       takeWhile(status => status.state === 'pending', true),
     ).subscribe({
       next: status => this.acceptStatus(request, status),

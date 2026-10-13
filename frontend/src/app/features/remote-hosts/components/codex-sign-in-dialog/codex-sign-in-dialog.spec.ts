@@ -43,6 +43,8 @@ class FakeProviderAuth {
 
   startCodexSignIn = vi.fn(() => of(STARTED));
   codexSignInStatus = vi.fn(() => this.status.asObservable());
+  cancelCodexSignIn = vi.fn(() => of({ ...STARTED, state: 'failed' as const, detail: 'Cancelled',
+    requestedAt: '', completedAt: '' }));
   waitForFreshProbe = vi.fn(() => this.probeResult);
 }
 
@@ -86,12 +88,21 @@ describe('CodexSignInDialogComponent', () => {
     expect(dialog.textContent).toContain('Studio does not receive the resulting token');
   });
 
+  it('cancels the host session when the pending dialog closes', async () => {
+    store.request.set(TARGET);
+    await fixture.whenStable();
+    fixture.componentInstance.close();
+    expect(providerAuth.cancelCodexSignIn).toHaveBeenCalledWith('host-01', STARTED.handle);
+  });
+
   it('renders the failed state reported by the remote process', async () => {
     vi.useFakeTimers();
     store.request.set(TARGET);
     await fixture.whenStable();
     fixture.detectChanges();
     await vi.advanceTimersByTimeAsync(500);
+    // A restarted Studio needs the original target to finalize a pending host renewal.
+    expect(providerAuth.codexSignInStatus).toHaveBeenCalledWith('host-01', STARTED.handle, 'agent@runner-01');
     providerAuth.status.next({
       handle: STARTED.handle,
       state: 'failed',

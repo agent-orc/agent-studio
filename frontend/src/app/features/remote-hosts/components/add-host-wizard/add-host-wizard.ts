@@ -103,9 +103,10 @@ export class AddHostWizardComponent implements OnDestroy {
     const secret = this.providerAuthSecret();
     const sshTarget = this.address().trim().replace(/^ssh:\/\//i, '');
     if (!sshTarget || secret.length < 16 || this.providerAuthPhase() === 'provisioning') return;
-    const baseline = this.providerAuth.statuses().find(status =>
+    const existingCredential = this.providerAuth.statuses().find(status =>
       status.provider === 'claude'
-      && status.aliases.some(alias => alias.toLowerCase() === this.name().trim().toLowerCase()))?.advertisedAt ?? null;
+      && status.aliases.some(alias => alias.toLowerCase() === this.name().trim().toLowerCase()));
+    const baseline = existingCredential?.advertisedAt ?? null;
     this.providerAuthSubscription?.unsubscribe();
     this.claudeAuthed.set(false);
     this.providerAuthPhase.set('provisioning');
@@ -115,11 +116,30 @@ export class AddHostWizardComponent implements OnDestroy {
       runnerId: this.name().trim(),
       environmentVariable: this.providerAuthEnvironmentVariable(),
       secret,
+      ...(existingCredential && this.providerAuthEnvironmentVariable() === 'ANTHROPIC_API_KEY'
+        ? { idempotencyKey: `renewal-${crypto.randomUUID()}` } : {}),
     }).subscribe({
       next: response => {
         this.providerAuthSecret.set('');
         this.providerAuthPhase.set('waiting');
         this.providerAuthDetail.set(response.detail);
+        if (response.operationId) {
+          this.providerAuthSubscription = this.providerAuth.waitForRenewalCompletion(
+            response.operationId, 15 * 60_000, sshTarget).subscribe({
+            next: step => {
+              this.providerAuthPhase.set(step === 'complete' ? 'ok' : 'unavailable');
+              this.providerAuthDetail.set(step === 'complete'
+                ? 'Both runner units verified the new generation with real provider requests.'
+                : 'Credential recovery is required before this host can use the new generation.');
+              this.claudeAuthed.set(step === 'complete');
+            },
+            error: () => {
+              this.providerAuthPhase.set('waiting');
+              this.providerAuthDetail.set('The protected credential is installed. Waiting for real requests from both runner units.');
+            },
+          });
+          return;
+        }
         if (!response.processEnvironmentVerified) return;
         this.providerAuthSubscription = this.providerAuth.waitForFreshProbe(
           'claude',

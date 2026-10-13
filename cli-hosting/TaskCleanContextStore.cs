@@ -341,6 +341,68 @@ public static class TaskCleanContextStore
     }
 
     /// <summary>
+    /// Rebind every marker-owned consumer after the CLI atomically replaces its
+    /// native auth file. The caller must keep all provider workers drained for
+    /// the entire call; hard links alone do not follow a renamed inode.
+    /// </summary>
+    public static int RebindProviderCredential(
+        string cliType,
+        string userHome,
+        string rootPath,
+        Func<bool> isDrained)
+    {
+        var recipe = ResolveRecipe(cliType);
+        if (recipe.CliType is not ("codex" or "claude"))
+            throw new ArgumentException("Only native provider stores can be rebound.", nameof(cliType));
+        if (isDrained is null || !isDrained())
+            throw new InvalidOperationException("Provider workers must drain before auth rebinding.");
+        var source = Path.Combine(userHome, recipe.SourceDirectoryName, recipe.LinkedSeedFiles[0]);
+        if (!File.Exists(source))
+            throw new FileNotFoundException("Native provider auth store is absent.");
+        var root = Path.GetFullPath(rootPath);
+        var providerRoot = Path.Combine(root, recipe.CliType);
+        if (!Directory.Exists(providerRoot)) return 0;
+        var initialDigest = SHA256.HashData(File.ReadAllBytes(source));
+        var rebound = 0;
+        lock (Gate)
+        {
+            foreach (var home in Directory.EnumerateDirectories(providerRoot))
+            {
+                var marker = ReadMarker(home);
+                if (marker is null || marker.Version != MarkerVersion || marker.CliType != recipe.CliType)
+                    continue;
+                if (!isDrained())
+                    throw new InvalidOperationException("Provider workers resumed during auth rebinding.");
+                var destination = Path.Combine(home, recipe.LinkedSeedFiles[0]);
+                var temporary = destination + ".rebind-" + Guid.NewGuid().ToString("N");
+                try
+                {
+                    LinkOrCopy(source, temporary);
+                    File.Move(temporary, destination, overwrite: true);
+                    rebound++;
+                }
+                finally
+                {
+                    if (File.Exists(temporary)) File.Delete(temporary);
+                }
+            }
+            if (!isDrained() || !SHA256.HashData(File.ReadAllBytes(source)).SequenceEqual(initialDigest))
+                throw new InvalidOperationException("Native auth store changed during rebinding; keep workers drained and retry.");
+            foreach (var home in Directory.EnumerateDirectories(providerRoot))
+            {
+                var marker = ReadMarker(home);
+                if (marker is null || marker.Version != MarkerVersion || marker.CliType != recipe.CliType)
+                    continue;
+                var destination = Path.Combine(home, recipe.LinkedSeedFiles[0]);
+                if (!File.Exists(destination) ||
+                    !SHA256.HashData(File.ReadAllBytes(destination)).SequenceEqual(initialDigest))
+                    throw new InvalidOperationException("A clean-context credential binding did not converge.");
+            }
+        }
+        return rebound;
+    }
+
+    /// <summary>
     /// Delete expired task homes and stale incomplete directories. The sweep is
     /// bounded to two levels below the resolved root and never follows a path
     /// outside that root.
