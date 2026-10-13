@@ -40,17 +40,22 @@ public sealed class BatchGateCycleEvidence
     }
 
     public IReadOnlyList<FlowSegment> ForTask(string taskKey, IReadOnlyList<string>? reviewAttemptIds = null,
-        DateTime? terminalAt = null)
+        DateTime? terminalAt = null, IReadOnlyList<TimelineEvent>? ledger = null)
     {
         var result = new List<FlowSegment>();
         var relevant = _manifests.Where(m => m.Members.Any(member => member.TaskKey == taskKey))
             .OrderBy(m => m.ClosedAtUtc).ToList();
         DateTime? cursor = null;
+        DateTime? reviewExit = null;
         for (var manifestIndex = 0; manifestIndex < relevant.Count; manifestIndex++)
         {
             var manifest = relevant[manifestIndex];
             var member = manifest.Members.First(m => m.TaskKey == taskKey);
-            cursor ??= member.ReviewCompletedAtUtc.UtcDateTime;
+            var reviewCompleted = member.ReviewCompletedAtUtc.UtcDateTime;
+            // A later review is a new queue episode, even when an older batch
+            // also held this card. Carry the cursor only within that episode.
+            cursor = cursor is null || cursor < reviewCompleted ? reviewCompleted : cursor;
+            reviewExit = NextReviewExit(reviewCompleted);
             var runs = _runs[manifest.BatchId].OrderBy(r => r.StartedAtUtc).ToList();
             foreach (var run in runs)
             {
@@ -99,6 +104,10 @@ public sealed class BatchGateCycleEvidence
                          && e.EvidencePath.Contains(id, StringComparison.Ordinal)))
             {
                 var start = execution.StartedAtUtc.UtcDateTime;
+                var claimAt = ledger?.Where(e => e.Kind == TimelineEventKinds.ReviewAttemptClaimed
+                        && (e.Details?.GetValueOrDefault("attemptId") ?? e.RunId) == id)
+                    .OrderBy(e => e.Ts).Select(e => (DateTime?)e.Ts).FirstOrDefault();
+                reviewExit = NextReviewExit(pending?.Subject.ReviewCompletedAtUtc.UtcDateTime ?? claimAt ?? start);
                 if (pending is not null && start > pending.Subject.ReviewCompletedAtUtc.UtcDateTime)
                     Add(pending.Subject.ReviewCompletedAtUtc.UtcDateTime, start,
                         "resourceWait", resource: "gateHost");
@@ -111,9 +120,16 @@ public sealed class BatchGateCycleEvidence
         }
         return result;
 
+        DateTime? NextReviewExit(DateTime reviewCompleted) => ledger?
+            .Where(e => e.Kind == TimelineEventKinds.LaneChanged && e.Ts >= reviewCompleted
+                && e.Details?.GetValueOrDefault("from") == TaskStates.AutoReview
+                && e.Details?.GetValueOrDefault("to") != TaskStates.AutoReview)
+            .OrderBy(e => e.Ts).Select(e => (DateTime?)e.Ts).FirstOrDefault() ?? terminalAt;
+
         void Add(DateTime from, DateTime to, string @class, string? step = null,
             string? resource = null, string? kind = null, string? executor = null)
         {
+            if (reviewExit is DateTime exit && to > exit) to = exit;
             if (to > from) result.Add(new FlowSegment(@class, step, resource, kind, from, to,
                 (to - from).TotalSeconds, Executor: executor));
         }
