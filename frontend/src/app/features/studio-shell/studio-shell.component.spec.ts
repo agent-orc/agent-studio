@@ -644,12 +644,6 @@ describe('StudioShellComponent hub tab label + icon', () => {
       .toBe('ASS · Epics');
   });
 
-  it('labels the central Chat History workspace tab', () => {
-    const component = makeComponent();
-    expect(component.tabLabel({ kind: 'chat-history' })).toBe('Chat History');
-    expect(component.tabIcon({ kind: 'chat-history' })).toBe('bot');
-  });
-
   it('returns the section rail icon for a hub tab and null for other kinds', () => {
     const component = makeComponent();
     expect(component.tabIcon({ kind: 'hub', projectName: 'Agent Software Studio', section: 'wiki' }))

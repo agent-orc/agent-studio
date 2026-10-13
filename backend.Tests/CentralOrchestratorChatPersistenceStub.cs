@@ -1,13 +1,18 @@
 using AgentStudio.TaskServer.Contracts;
+using Microsoft.Extensions.Time.Testing;
 
 namespace AgentStudio.Tests;
 
-internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChatPersistence
+internal sealed class CentralOrchestratorChatPersistenceStub(TimeProvider? clock = null) : IOrchestratorChatPersistence
 {
+    private readonly TimeProvider _clock = clock
+        ?? new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
     private readonly object _gate = new();
     private readonly Dictionary<string, List<OrchestratorChatTurn>> _turns =
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _summaries =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _archived =
         new(StringComparer.Ordinal);
 
     public bool IsCentralTaskServerStore => true;
@@ -58,6 +63,7 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
                 _turns[key] = turns;
             }
             turns.Add(turn);
+            _archived.Remove(key);
             if (turn.Role == OrchestratorChatRoles.User && !string.IsNullOrWhiteSpace(turn.Text))
                 _summaries[key] = turn.Text;
             else if (!_summaries.ContainsKey(key))
@@ -88,10 +94,26 @@ internal sealed class CentralOrchestratorChatPersistenceStub : IOrchestratorChat
                     DateTime.UtcNow,
                     DateTime.UtcNow,
                     null,
-                    _turns[key].Count);
+                    _turns[key].Count,
+                    ArchivedAt: _archived.TryGetValue(key, out var archivedAt) ? archivedAt : null);
             }).ToArray();
             return Task.FromResult<IReadOnlyList<OrchestratorContextDto>>(contexts);
         }
+    }
+
+    public async Task<OrchestratorContextDto?> SetArchivedAsync(
+        string contextKey,
+        bool archived,
+        CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (!_turns.ContainsKey(contextKey)) return null;
+            if (!archived) _archived.Remove(contextKey);
+            else if (!_archived.ContainsKey(contextKey)) _archived[contextKey] = _clock.GetUtcNow().UtcDateTime;
+        }
+        return (await ListContextsAsync(includeHidden: true, ct))
+            .Single(item => item.ContextKey == contextKey);
     }
 
     private static string ContextKey(string projectName, OrchestratorContextKey? context)

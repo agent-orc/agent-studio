@@ -9,6 +9,7 @@ const STUDIO_PANEL_KINDS = new Set<StudioPanelKind>([
   'activity',
   'runbook',
   'settings',
+  'chats',
 ]);
 
 interface StudioPanelPersistedState {

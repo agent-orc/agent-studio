@@ -15,41 +15,56 @@ public sealed partial class TaskServerStore
     /// Rebuilds <c>orchestrator_contexts</c> for installs created before the
     /// <c>workbench</c> kind existed (schema 12 and earlier). SQLite cannot
     /// widen a CHECK constraint or add a column referenced by one via
-    /// <c>ALTER TABLE ADD COLUMN</c>, so this renames the old table, recreates
-    /// it with the widened constraint and new <c>workbench_key</c> column,
-    /// copies every row across, and drops the renamed original. A fresh
-    /// install already gets the widened table from the literal
-    /// <c>CREATE TABLE IF NOT EXISTS</c> above, so this is a no-op there.
+    /// <c>ALTER TABLE ADD COLUMN</c>, so this builds the widened table beside
+    /// the old one, copies every row across, drops the original, and renames
+    /// the copy into place. Building beside (rather than renaming the original
+    /// first) matters: SQLite rewrites the <c>orchestrator_context_turns</c>
+    /// foreign key when a referenced table is renamed, which would leave it
+    /// pointing at a dropped table. A fresh install already gets the widened
+    /// table from the literal <c>CREATE TABLE IF NOT EXISTS</c>, so this is a
+    /// no-op there. <c>archived_at</c> is added afterwards by the ordinary
+    /// additive column migration.
     /// </summary>
     internal static async Task ApplyWorkbenchContextMigrationAsync(SqliteConnection connection, CancellationToken ct)
     {
         if (await ColumnExistsAsync(connection, "orchestrator_contexts", "workbench_key", ct))
             return;
 
-        await ExecuteAsync(connection, """
-            ALTER TABLE orchestrator_contexts RENAME TO orchestrator_contexts_pre_workbench;
-            CREATE TABLE orchestrator_contexts(
-                context_key TEXT PRIMARY KEY,
-                kind TEXT NOT NULL CHECK(kind IN ('project', 'task', 'workbench')),
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                task_id TEXT REFERENCES tasks(id),
-                workbench_key TEXT,
-                summary TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                hidden_at TEXT,
-                CHECK(
-                    (kind = 'project' AND task_id IS NULL AND workbench_key IS NULL) OR
-                    (kind = 'task' AND task_id IS NOT NULL AND workbench_key IS NULL) OR
-                    (kind = 'workbench' AND task_id IS NULL AND workbench_key IS NOT NULL)
-                )
-            );
-            INSERT INTO orchestrator_contexts(
-                context_key, kind, project_id, task_id, workbench_key, summary, created_at, updated_at, hidden_at)
-            SELECT context_key, kind, project_id, task_id, NULL, summary, created_at, updated_at, hidden_at
-              FROM orchestrator_contexts_pre_workbench;
-            DROP TABLE orchestrator_contexts_pre_workbench;
-            """, ct);
+        await ExecuteAsync(connection, "PRAGMA foreign_keys = OFF;", ct);
+        try
+        {
+            await ExecuteAsync(connection, """
+                DROP TABLE IF EXISTS orchestrator_contexts_workbench_upgrade;
+                CREATE TABLE orchestrator_contexts_workbench_upgrade(
+                    context_key TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL CHECK(kind IN ('project', 'task', 'workbench')),
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    task_id TEXT REFERENCES tasks(id),
+                    workbench_key TEXT,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    hidden_at TEXT,
+                    CHECK(
+                        (kind = 'project' AND task_id IS NULL AND workbench_key IS NULL) OR
+                        (kind = 'task' AND task_id IS NOT NULL AND workbench_key IS NULL) OR
+                        (kind = 'workbench' AND task_id IS NULL AND workbench_key IS NOT NULL)
+                    )
+                );
+                INSERT INTO orchestrator_contexts_workbench_upgrade(
+                    context_key, kind, project_id, task_id, workbench_key, summary, created_at, updated_at, hidden_at)
+                SELECT context_key, kind, project_id, task_id, NULL, summary, created_at, updated_at, hidden_at
+                  FROM orchestrator_contexts;
+                DROP TABLE orchestrator_contexts;
+                ALTER TABLE orchestrator_contexts_workbench_upgrade RENAME TO orchestrator_contexts;
+                CREATE INDEX IF NOT EXISTS ix_orchestrator_contexts_project_visible
+                    ON orchestrator_contexts(project_id, hidden_at, updated_at);
+                """, ct);
+        }
+        finally
+        {
+            await ExecuteAsync(connection, "PRAGMA foreign_keys = ON;", ct);
+        }
     }
 
     private static async Task<bool> ColumnExistsAsync(
@@ -74,25 +89,9 @@ public sealed partial class TaskServerStore
     {
         await using var connection = await OpenReadyAsync(ct);
         var result = new List<OrchestratorContextDto>();
-        await using var command = Command(connection, """
-            SELECT c.context_key, c.kind, c.project_id, p.name, c.task_id, t.task_key,
-                   c.summary, c.created_at, c.updated_at, c.hidden_at,
-                   (SELECT count(*) FROM orchestrator_context_turns turn WHERE turn.context_key = c.context_key),
-                   (SELECT turn.model FROM orchestrator_context_turns turn
-                     WHERE turn.context_key = c.context_key AND turn.model IS NOT NULL
-                     ORDER BY turn.sequence DESC LIMIT 1),
-                   COALESCE((SELECT sum(turn.input_tokens) FROM orchestrator_context_turns turn
-                     WHERE turn.context_key = c.context_key), 0),
-                   COALESCE((SELECT sum(turn.output_tokens) FROM orchestrator_context_turns turn
-                     WHERE turn.context_key = c.context_key), 0),
-                   COALESCE((SELECT sum(turn.cache_read_tokens) FROM orchestrator_context_turns turn
-                     WHERE turn.context_key = c.context_key), 0),
-                   COALESCE((SELECT sum(turn.cache_creation_tokens) FROM orchestrator_context_turns turn
-                     WHERE turn.context_key = c.context_key), 0),
-                   c.workbench_key
-              FROM orchestrator_contexts c
-              JOIN projects p ON p.id = c.project_id
-              LEFT JOIN tasks t ON t.id = c.task_id
+        // Operator-archived contexts are always listed (with ArchivedAt set);
+        // includeHidden only governs the task-archive HiddenAt projection.
+        await using var command = Command(connection, OrchestratorContextProjection + """
              WHERE $include_hidden = 1 OR c.hidden_at IS NULL
              ORDER BY CASE c.kind WHEN 'project' THEN 0 WHEN 'workbench' THEN 1 ELSE 2 END,
                       COALESCE(NULLIF(c.updated_at, ''), c.created_at) DESC,
@@ -101,6 +100,89 @@ public sealed partial class TaskServerStore
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) result.Add(ReadOrchestratorContext(reader));
         return result;
+    }
+
+    /// <summary>
+    /// Shared SELECT for a fully aggregated context row, in the column order
+    /// <see cref="ReadOrchestratorContext"/> expects. Callers append the
+    /// WHERE and ORDER BY clauses.
+    /// </summary>
+    private const string OrchestratorContextProjection = """
+        SELECT c.context_key, c.kind, c.project_id, p.name, c.task_id, t.task_key,
+               c.summary, c.created_at, c.updated_at, c.hidden_at,
+               (SELECT count(*) FROM orchestrator_context_turns turn WHERE turn.context_key = c.context_key),
+               (SELECT turn.model FROM orchestrator_context_turns turn
+                 WHERE turn.context_key = c.context_key AND turn.model IS NOT NULL
+                 ORDER BY turn.sequence DESC LIMIT 1),
+               COALESCE((SELECT sum(turn.input_tokens) FROM orchestrator_context_turns turn
+                 WHERE turn.context_key = c.context_key), 0),
+               COALESCE((SELECT sum(turn.output_tokens) FROM orchestrator_context_turns turn
+                 WHERE turn.context_key = c.context_key), 0),
+               COALESCE((SELECT sum(turn.cache_read_tokens) FROM orchestrator_context_turns turn
+                 WHERE turn.context_key = c.context_key), 0),
+               COALESCE((SELECT sum(turn.cache_creation_tokens) FROM orchestrator_context_turns turn
+                 WHERE turn.context_key = c.context_key), 0),
+               c.workbench_key,
+               c.archived_at
+          FROM orchestrator_contexts c
+          JOIN projects p ON p.id = c.project_id
+          LEFT JOIN tasks t ON t.id = c.task_id
+
+        """;
+
+    /// <summary>
+    /// Sets or clears the operator archive marker on one context. Archiving
+    /// never deletes turns and is independent of the task-archive
+    /// <c>hidden_at</c> projection; appending a new turn clears it again.
+    /// Idempotent: archiving an archived context keeps its original
+    /// timestamp, and an unchanged state writes no audit row.
+    /// </summary>
+    public async Task<OrchestratorContextDto> SetOrchestratorContextArchivedAsync(
+        string contextKey,
+        bool archived,
+        string actorId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(contextKey))
+            throw new ArgumentException("A context key is required.");
+        RequireWritable();
+        var key = contextKey.Trim();
+        OrchestratorContextDto? result = null;
+        await InWriteTransactionAsync(async (connection, transaction) =>
+        {
+            var current = await ReadOrchestratorContextByKeyAsync(connection, transaction, key, ct)
+                ?? throw new KeyNotFoundException($"Orchestrator context '{key}' was not found.");
+            var next = OrchestratorContextArchivePolicy.NextArchivedAt(current.ArchivedAt, archived, UtcNow);
+            if (next == current.ArchivedAt)
+            {
+                result = current;
+                return;
+            }
+            await ExecuteAsync(connection, """
+                UPDATE orchestrator_contexts SET archived_at = $archived WHERE context_key = $context;
+                """, ct, transaction,
+                ("$archived", next is null ? null : Iso(next.Value)),
+                ("$context", key));
+            await AuditAsync(connection, transaction, actorId,
+                archived ? "orchestrator-context.archived" : "orchestrator-context.unarchived",
+                "orchestrator-context", key,
+                JsonSerializer.Serialize(new { current.Kind, current.ProjectId, ArchivedAt = next }), ct);
+            result = current with { ArchivedAt = next };
+        }, ct);
+        return result!;
+    }
+
+    private static async Task<OrchestratorContextDto?> ReadOrchestratorContextByKeyAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string contextKey,
+        CancellationToken ct)
+    {
+        await using var command = Command(connection, OrchestratorContextProjection + """
+             WHERE c.context_key = $key;
+            """, transaction, ("$key", contextKey));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadOrchestratorContext(reader) : null;
     }
 
     public async Task<OrchestratorContextDto> EnsureOrchestratorContextAsync(
@@ -324,7 +406,7 @@ public sealed partial class TaskServerStore
             : context.Summary;
         await ExecuteAsync(connection, """
             UPDATE orchestrator_contexts
-               SET summary = $summary, updated_at = $updated
+               SET summary = $summary, updated_at = $updated, archived_at = NULL
              WHERE context_key = $context;
             """, ct, transaction,
             ("$summary", summary),
@@ -535,7 +617,8 @@ public sealed partial class TaskServerStore
                    c.summary, c.created_at, c.updated_at, c.hidden_at,
                    (SELECT count(*) FROM orchestrator_context_turns turn WHERE turn.context_key = c.context_key),
                    NULL, 0, 0, 0, 0,
-                   c.workbench_key
+                   c.workbench_key,
+                   c.archived_at
               FROM orchestrator_contexts c
               JOIN projects p ON p.id = c.project_id
               LEFT JOIN tasks t ON t.id = c.task_id
@@ -561,7 +644,8 @@ public sealed partial class TaskServerStore
             reader.GetInt64(10),
             reader.IsDBNull(11) ? null : reader.GetString(11),
             reader.GetInt64(12), reader.GetInt64(13), reader.GetInt64(14), reader.GetInt64(15),
-            reader.IsDBNull(16) ? null : reader.GetString(16));
+            reader.IsDBNull(16) ? null : reader.GetString(16),
+            reader.IsDBNull(17) ? null : Parse(reader.GetString(17)));
 
     private static OrchestratorContextTurnDto ReadOrchestratorContextTurn(SqliteDataReader reader)
     {

@@ -130,6 +130,14 @@ public static class TaskServerEndpoints
             CancellationToken ct)
             => await InvokeAsync(async () => new OrchestratorContextListResponse(
                 await store.ListOrchestratorContextsAsync(includeHidden == true, ct))));
+        orchestratorContexts.MapPost("/archive-state", async (
+            HttpContext context,
+            SetOrchestratorContextArchivedRequest request,
+            TaskServerStore store,
+            CancellationToken ct)
+            => await InvokeAsync(() => store.SetOrchestratorContextArchivedAsync(
+                request.ContextKey, request.Archived, Actor(context), ct)))
+            .RequireTaskServerScope(TaskServerScopes.TasksWrite);
         orchestratorContexts.MapPut("/projects/{projectIdentity}", async (
             HttpContext context,
             string projectIdentity,

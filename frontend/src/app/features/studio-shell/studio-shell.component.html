@@ -164,7 +164,6 @@
       [hasEpics]="hasEpics()"
       (panelToggle)="togglePanel($event)"
       (openEpicsRequest)="onActivityBarOpenEpics()"
-      (openChatHistoryRequest)="openChatHistory()"
       (openWorkbenchesRequest)="openWorkbenches(null)" />
 
     <!-- Sidebar host -->
@@ -366,6 +365,11 @@
                   Workspace screenshots
                 </button>
               </section>
+            }
+            @case ('chats') {
+              <!-- The one place that lists orchestrator chat sessions. Rows
+                   open in the orchestrator side sheet. -->
+              <app-chat-sessions-panel class="studio-chats" [projects]="knownProjectNames()" />
             }
             @case ('runbook') {
               <section class="studio-runbook">

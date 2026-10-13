@@ -106,6 +106,8 @@ public static class StudioV1LegacyRouteAlias
         }
         if (rest.Length == 2 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions") && get)
             return new LegacyTarget("/api/orchestrator/sessions", null);
+        if (rest.Length == 3 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions") && Is(rest[2], "archive") && post)
+            return new LegacyTarget("/api/orchestrator/sessions/archive", null);
         if (rest.Length == 5 && Is(rest[0], "orchestrator") && Is(rest[1], "sessions")
             && rest[2].StartsWith("workbench:", StringComparison.OrdinalIgnoreCase) && Is(rest[4], "turns") && post)
             return new LegacyTarget("/api/orchestrator/sessions" + Tail(rest, 2), null);

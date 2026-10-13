@@ -27,6 +27,17 @@ public interface IOrchestratorChatPersistence
     Task<IReadOnlyList<OrchestratorContextDto>> ListContextsAsync(
         bool includeHidden,
         CancellationToken ct);
+
+    /// <summary>
+    /// Sets or clears the operator archive marker on one context, addressed
+    /// by its canonical key. Returns the updated context, or <c>null</c> when
+    /// no such context exists. Archiving never deletes turns; a new turn
+    /// clears the marker.
+    /// </summary>
+    Task<OrchestratorContextDto?> SetArchivedAsync(
+        string contextKey,
+        bool archived,
+        CancellationToken ct);
 }
 
 /// <summary>
@@ -42,6 +53,8 @@ public sealed class LocalOrchestratorChatPersistence(
     : IOrchestratorChatPersistence
 {
     private const int ContextSummaryMaxLength = 180;
+
+    private readonly OrchestratorContextArchiveMarkers _archive = new();
 
     public bool IsCentralTaskServerStore => false;
 
@@ -73,8 +86,33 @@ public sealed class LocalOrchestratorChatPersistence(
         if (!chat.Append(watchPath, turn, context))
             throw new InvalidOperationException(
                 $"The local context store could not append a turn for project '{projectName}'.");
+        // A new turn unarchives the context, mirroring the Task Server store.
+        if (context?.IsGlobal != true)
+            _archive.Clear(watchPath, StoredContextKey(projectName, context));
         return Task.CompletedTask;
     }
+
+    public async Task<OrchestratorContextDto?> SetArchivedAsync(
+        string contextKey,
+        bool archived,
+        CancellationToken ct)
+    {
+        if (!OrchestratorContextKey.TryParse(contextKey, out var parsed) || parsed.IsGlobal)
+            throw new ArgumentException("Invalid orchestrator context key.");
+        var project = scanner.GetWatchPaths().FirstOrDefault(entry =>
+            string.Equals(entry.Name, parsed.ProjectId, StringComparison.Ordinal));
+        if (project is null) return null;
+        var existing = (await ListContextsAsync(includeHidden: true, ct).ConfigureAwait(false))
+            .FirstOrDefault(item => string.Equals(item.ContextKey, parsed.Value, StringComparison.Ordinal));
+        if (existing is null) return null;
+        var archivedAt = _archive.Set(project.Path, parsed.Value, archived, DateTime.UtcNow);
+        return existing with { ArchivedAt = archivedAt };
+    }
+
+    private static string StoredContextKey(string projectName, OrchestratorContextKey? context)
+        => context?.Kind is OrchestratorContextKey.TaskKind or OrchestratorContextKey.WorkbenchKind
+            ? context.Value
+            : $"project:{projectName}";
 
     public Task<IReadOnlyList<OrchestratorContextDto>> ListContextsAsync(
         bool includeHidden,
@@ -88,6 +126,7 @@ public sealed class LocalOrchestratorChatPersistence(
             ct.ThrowIfCancellationRequested();
             if (!OrchestratorContextKey.TryParse($"project:{project.Name}", out var projectContext))
                 continue;
+            var archiveMarkers = _archive.Read(project.Path);
 
             var projectTurns = chat.Read(project.Path, projectContext);
             result.Add(BuildContext(
@@ -96,7 +135,8 @@ public sealed class LocalOrchestratorChatPersistence(
                 task: null,
                 projectTurns,
                 OrchestratorChat.ResolveContextPath(project.Path, projectContext),
-                project.Path));
+                project.Path,
+                archiveMarkers));
 
             var contextDirectory = Path.Combine(
                 project.Path,
@@ -144,7 +184,8 @@ public sealed class LocalOrchestratorChatPersistence(
                     task,
                     chat.Read(project.Path, isolatedContext),
                     path,
-                    project.Path));
+                    project.Path,
+                    archiveMarkers));
             }
         }
 
@@ -157,7 +198,8 @@ public sealed class LocalOrchestratorChatPersistence(
         AgentStudio.Shared.TaskInfo? task,
         IReadOnlyList<OrchestratorChatTurn> turns,
         string transcriptPath,
-        string projectPath)
+        string projectPath,
+        IReadOnlyDictionary<string, DateTime> archiveMarkers)
     {
         var fallbackTimestamp = File.Exists(transcriptPath)
             ? File.GetCreationTimeUtc(transcriptPath)
@@ -198,7 +240,8 @@ public sealed class LocalOrchestratorChatPersistence(
             turns.Sum(turn => (long)(turn.TokenUsage?.OutputTokens ?? 0)),
             turns.Sum(turn => (long)(turn.TokenUsage?.CacheReadTokens ?? 0)),
             turns.Sum(turn => (long)(turn.TokenUsage?.CacheCreationTokens ?? 0)),
-            context.WorkbenchKey);
+            context.WorkbenchKey,
+            archiveMarkers.TryGetValue(context.Value, out var archivedAt) ? archivedAt : null);
     }
 
     private static string BuildSummary(string? body, string fallback)
@@ -289,6 +332,34 @@ public sealed class TaskServerOrchestratorChatPersistence(
         var result = await response.Content.ReadFromJsonAsync<OrchestratorContextListResponse>(
             cancellationToken: ct).ConfigureAwait(false);
         return result?.Contexts ?? [];
+    }
+
+    public async Task<OrchestratorContextDto?> SetArchivedAsync(
+        string contextKey,
+        bool archived,
+        CancellationToken ct)
+    {
+        using var response = await Client().PostAsJsonAsync(
+            "/api/v1/orchestrator-contexts/archive-state",
+            new SetOrchestratorContextArchivedRequest(contextKey, archived),
+            ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            throw new ArgumentException(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        await EnsureSuccessAsync(response, ct).ConfigureAwait(false);
+        var context = await response.Content.ReadFromJsonAsync<OrchestratorContextDto>(
+            cancellationToken: ct).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Task Server returned an empty archive-state response.");
+        if (contextBroadcaster is not null)
+        {
+            await contextBroadcaster.ContextChangedAsync(
+                context.ProjectName,
+                context.ContextKey,
+                context.UpdatedAt,
+                ct).ConfigureAwait(false);
+        }
+        return context;
     }
 
     public async Task<ImportLegacyOrchestratorChatResponse> ImportLegacyAsync(

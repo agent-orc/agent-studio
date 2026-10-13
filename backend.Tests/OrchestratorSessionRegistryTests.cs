@@ -204,6 +204,160 @@ public sealed class OrchestratorSessionRegistryTests : IDisposable
         Assert.Equal(3, record.CumulativeOutputTokens);
     }
 
+    [Fact]
+    public async Task Archive_endpoint_sets_and_clears_the_marker_and_the_list_exposes_it()
+    {
+        using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        _central.SeedContext("project:PROJ-001", "Project context");
+        _central.SeedContext(
+            "task:PROJ-001/AGT-1930",
+            "Task context",
+            new OrchestratorChatTurn { Id = "t1", Ts = new DateTime(2026, 1, 4, 3, 4, 5, DateTimeKind.Utc), Role = OrchestratorChatRoles.User, Text = "hi" });
+
+        // Mutations without a client identity are rejected by the /api boundary.
+        using (var anonymous = await client.PostAsJsonAsync(
+                   "/api/orchestrator/sessions/archive",
+                   new { contextKey = "task:PROJ-001/AGT-1930", archived = true }))
+            Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        using (var archived = await client.PostAsJsonAsync(
+                   "/api/orchestrator/sessions/archive",
+                   new { contextKey = "task:PROJ-001/AGT-1930", archived = true }))
+        {
+            Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+            using var doc = JsonDocument.Parse(await archived.Content.ReadAsStringAsync());
+            Assert.Equal("task:PROJ-001/AGT-1930", doc.RootElement.GetProperty("contextKey").GetString());
+            Assert.Equal(JsonValueKind.String, doc.RootElement.GetProperty("archivedAt").ValueKind);
+            Assert.Equal(1, doc.RootElement.GetProperty("turnCount").GetInt64());
+            Assert.Equal(1, doc.RootElement.GetProperty("calls").GetInt64());
+            Assert.Equal("idle", doc.RootElement.GetProperty("runtimeStatus").GetString());
+        }
+
+        using (var list = await client.GetAsync("/api/orchestrator/sessions"))
+        {
+            list.EnsureSuccessStatusCode();
+            using var doc = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+            var sessions = doc.RootElement.GetProperty("sessions").EnumerateArray().ToList();
+            var task = Assert.Single(sessions, s => s.GetProperty("contextKey").GetString() == "task:PROJ-001/AGT-1930");
+            Assert.Equal(JsonValueKind.String, task.GetProperty("archivedAt").ValueKind);
+            Assert.Equal(1, task.GetProperty("turnCount").GetInt64());
+            Assert.True(task.TryGetProperty("hiddenAt", out _));
+            var project = Assert.Single(sessions, s => s.GetProperty("contextKey").GetString() == "project:PROJ-001");
+            Assert.Equal(JsonValueKind.Null, project.GetProperty("archivedAt").ValueKind);
+            Assert.Equal(0, project.GetProperty("turnCount").GetInt64());
+        }
+
+        using (var unarchived = await client.PostAsJsonAsync(
+                   "/api/orchestrator/sessions/archive",
+                   new { contextKey = "task:PROJ-001/AGT-1930", archived = false }))
+        {
+            Assert.Equal(HttpStatusCode.OK, unarchived.StatusCode);
+            using var doc = JsonDocument.Parse(await unarchived.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("archivedAt").ValueKind);
+        }
+
+        foreach (var invalid in new[] { "global", "task:PROJ-001/bad/path", "nope", "" })
+        {
+            using var bad = await client.PostAsJsonAsync(
+                "/api/orchestrator/sessions/archive", new { contextKey = invalid, archived = true });
+            Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        }
+
+        using var missing = await client.PostAsJsonAsync(
+            "/api/orchestrator/sessions/archive", new { contextKey = "task:PROJ-001/AGT-404", archived = true });
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
+    public async Task Archive_endpoint_rejects_active_and_queued_contexts_but_allows_unarchive()
+    {
+        var runner = new BlockingFakeOrchestratorRunner();
+        using var factory = CreateFactory(runner, new Dictionary<string, string?>
+        {
+            ["Orchestrator:SessionTurns:ActiveLimit"] = "1"
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+        _central.SeedContext("project:PROJ-001", "Active context");
+        _central.SeedContext("project:PROJ-002", "Queued context");
+
+        using var first = await client.PostAsJsonAsync("/api/orchestrator/sessions/project:PROJ-001/turns", new { prompt = "first" });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        using var second = await client.PostAsJsonAsync("/api/orchestrator/sessions/project:PROJ-002/turns", new { prompt = "second" });
+        Assert.Equal(HttpStatusCode.Accepted, second.StatusCode);
+
+        try
+        {
+            foreach (var key in new[] { "project:PROJ-001", "project:PROJ-002" })
+            {
+                using var conflict = await client.PostAsJsonAsync(
+                    "/api/orchestrator/sessions/archive", new { contextKey = key, archived = true });
+                Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+                using var unarchive = await client.PostAsJsonAsync(
+                    "/api/orchestrator/sessions/archive", new { contextKey = key, archived = false });
+                Assert.Equal(HttpStatusCode.OK, unarchive.StatusCode);
+            }
+        }
+        finally
+        {
+            runner.ReleaseAll();
+        }
+    }
+
+    [Fact]
+    public async Task Local_store_archive_marker_survives_a_new_persistence_instance_and_clears_on_append()
+    {
+        using var factory = CreateFactory(new BlockingFakeOrchestratorRunner(block: false), useCentralStore: false);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Client-Id", "local-default");
+
+        using (var archived = await client.PostAsJsonAsync(
+                   "/api/orchestrator/sessions/archive",
+                   new { contextKey = "project:agent-taskboard", archived = true }))
+        {
+            Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+            using var doc = JsonDocument.Parse(await archived.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.String, doc.RootElement.GetProperty("archivedAt").ValueKind);
+        }
+        var projectRoot = Path.Combine(_root, "projects", "agent-taskboard");
+        Assert.True(File.Exists(Path.Combine(projectRoot, ".orchestrator", "context-archive.json")));
+
+        using (var missing = await client.PostAsJsonAsync(
+                   "/api/orchestrator/sessions/archive",
+                   new { contextKey = "task:agent-taskboard/AGT-404", archived = true }))
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+
+        // A fresh instance (as after a backend restart) reads the sidecar.
+        var fresh = new LocalOrchestratorChatPersistence(
+            factory.Services.GetRequiredService<OrchestratorChat>(),
+            factory.Services.GetRequiredService<TaskScannerService>());
+        var listed = Assert.Single(
+            await fresh.ListContextsAsync(includeHidden: true, default),
+            item => item.ContextKey == "project:agent-taskboard");
+        Assert.NotNull(listed.ArchivedAt);
+
+        await fresh.AppendAsync(
+            "agent-taskboard",
+            projectRoot,
+            context: null,
+            new OrchestratorChatTurn { Id = "local-1", Ts = new DateTime(2026, 1, 4, 3, 4, 5, DateTimeKind.Utc), Role = OrchestratorChatRoles.User, Text = "back" },
+            default);
+        Assert.Null(Assert.Single(
+            await fresh.ListContextsAsync(includeHidden: true, default),
+            item => item.ContextKey == "project:agent-taskboard").ArchivedAt);
+
+        using var list = await client.GetAsync("/api/orchestrator/sessions");
+        list.EnsureSuccessStatusCode();
+        using var listDoc = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
+        var session = Assert.Single(
+            listDoc.RootElement.GetProperty("sessions").EnumerateArray(),
+            s => s.GetProperty("contextKey").GetString() == "project:agent-taskboard");
+        Assert.Equal(JsonValueKind.Null, session.GetProperty("archivedAt").ValueKind);
+        Assert.Equal(1, session.GetProperty("turnCount").GetInt64());
+    }
+
     private OrchestratorSessionRegistry Build()
     {
         var legacy = new GlobalOrchestratorSessionStore(_config, NullLogger<GlobalOrchestratorSessionStore>.Instance);

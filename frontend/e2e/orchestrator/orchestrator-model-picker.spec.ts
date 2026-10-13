@@ -124,7 +124,7 @@ async function stubWorkspace(
       { contextKey: `task:${PROJECT}/${TASK_KEY}`, kind: 'task', projectId: PROJECT, taskKey: TASK_KEY,
         updatedAt: '2026-07-12T10:01:00Z', model: null, cumulativeInputTokens: 0,
         cumulativeOutputTokens: 0, cumulativeCacheReadTokens: 0, cumulativeCacheCreationTokens: 0,
-        runtimeStatus: 'idle', queuePosition: 0 },
+        runtimeStatus: 'idle', queuePosition: 0, turnCount: 2 },
     ] }),
   }));
   await page.route(/\/api\/runner\/[^/]+(?:\/[^/]+)?\/orchestrator-chat$/, async route => {
@@ -226,9 +226,9 @@ test('full live GPT picker persists across Board and Task contexts', async ({ pa
   await expect(automaticChip).toContainText(`${PROJECT}::task-1`);
   await expect(page.getByTestId('cac-model-selector-trigger'))
     .toHaveAttribute('aria-label', /gpt-5\.6-sol.*xhigh/);
-  await page.getByTestId('orch-context-badge').click();
-  await page.getByTestId(`chat-switcher-row-task:${PROJECT}/${TASK_KEY}`)
-    .getByRole('button').first().click();
+  await page.getByTestId('orch-open-chats-panel').click();
+  await page.getByTestId(`chat-session-row-task:${PROJECT}/${TASK_KEY}`)
+    .getByTestId('chat-session-open').click();
 
   await choose(page, 'gpt-5.4-mini', 'low');
   await choose(page, 'gpt-5.3-codex-spark', 'high');

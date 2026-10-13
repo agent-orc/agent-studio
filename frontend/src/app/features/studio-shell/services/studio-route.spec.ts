@@ -86,7 +86,6 @@ describe('Studio route contract', () => {
     const cases: [StudioTab, string | null, string][] = [
       [{ kind: 'board', projectName: '__all__' }, null, '/board'],
       [{ kind: 'feed' }, null, '/feed'],
-      [{ kind: 'chat-history' }, null, '/chat-history'],
       [{ kind: 'board', projectName: 'Agent Studio' }, null, '/projects/agent-studio/board'],
       [{ kind: 'hub', projectName: 'Agent Studio', section: 'wiki' }, null, '/projects/agent-studio/wiki'],
       [

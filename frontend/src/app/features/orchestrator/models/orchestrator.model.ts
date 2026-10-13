@@ -96,7 +96,12 @@ export interface OrchestratorContextSession {
   runtimeStatus: 'idle' | 'active' | 'queued' | 'parked';
   queuePosition: number;
   calls?: number;
+  /** Persisted turn count; a session without turns is not listed in the Chats panel. */
+  turnCount?: number;
+  /** Set automatically while the session's task sits in `7-archive`. */
   hiddenAt?: string | null;
+  /** Set by the operator through the Chats panel; a new turn clears it. */
+  archivedAt?: string | null;
   /** Short Task Server-owned preview of the latest user intent. */
   summary?: string | null;
 }

@@ -555,6 +555,29 @@ public sealed class PrincipalAuthenticationTests
             path + "?fingerprint=test%3Aone"))!).Count);
     }
 
+    [Fact]
+    public async Task Orchestrator_context_archive_routes_require_tasks_write()
+    {
+        using var temp = new TempDirectory();
+        await using var factory = Factory(temp.Path);
+        using var studio = Client(factory, StudioToken);
+        var reader = await CreateAsync(studio, "archive-reader",
+            TaskServerPrincipalKinds.Runner, [TaskServerScopes.TasksRead], "archive-reader");
+        using var readClient = Client(factory, reader.Credential);
+        var body = new SetOrchestratorContextArchivedRequest("project:Missing", true);
+
+        foreach (var path in new[]
+                 {
+                     "/api/v1/orchestrator-contexts/archive-state",
+                     "/api/v1/studio/orchestrator/sessions/archive",
+                 })
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, (await readClient.PostAsJsonAsync(path, body)).StatusCode);
+            // A write-scoped principal passes authorization and reaches the store.
+            Assert.Equal(HttpStatusCode.NotFound, (await studio.PostAsJsonAsync(path, body)).StatusCode);
+        }
+    }
+
     private static async Task<IssuedPrincipalCredential> CreateAsync(
         HttpClient manager,
         string principalId,

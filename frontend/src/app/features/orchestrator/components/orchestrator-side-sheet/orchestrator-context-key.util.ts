@@ -105,7 +105,9 @@ export function resolveEffectiveContextKey(
       session.contextKey === selected.key
       && session.kind === 'workbench'
       && session.projectId === selected.projectId
-      && session.workbenchKey === selected.workbenchKey));
+      // The session list does not always carry `workbenchKey`; the context
+      // key already names the Dossier, so the key match above is decisive.
+      && (session.workbenchKey ?? selected.workbenchKey) === selected.workbenchKey));
 
   if (!selected || !selectionStillAnchored || !selectedStillExists) {
     return { key: navigation?.key ?? null, discardedSelection: true };

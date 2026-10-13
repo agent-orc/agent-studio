@@ -1,0 +1,161 @@
+<section class="chat-sessions" data-testid="chat-sessions-panel" aria-label="Chats">
+  <div class="chat-sessions__toolbar">
+    <button type="button"
+            class="chat-sessions__new"
+            aria-haspopup="menu"
+            [attr.aria-expanded]="newChatOpen()"
+            data-testid="chat-sessions-new"
+            (click)="toggleNewChat($event)">
+      <app-studio-icon name="plus" [size]="14" />
+      <span>New chat</span>
+    </button>
+    <app-menu
+      [items]="newChatItems()"
+      [open]="newChatOpen()"
+      [anchorEl]="newChatAnchor()"
+      placement="below"
+      testIdPrefix="chat-sessions-new-menu"
+      ariaLabel="New chat scope"
+      [minWidth]="220"
+      (itemClick)="onNewChat($event)"
+      (closeRequest)="newChatOpen.set(false)" />
+    <div class="chat-sessions__filters">
+      <input type="search"
+             class="chat-sessions__search"
+             placeholder="Search chats"
+             aria-label="Search chats"
+             data-testid="chat-sessions-search"
+             [value]="query()"
+             (input)="onQuery($event)" />
+      <select class="chat-sessions__scope"
+              aria-label="Filter by scope"
+              data-testid="chat-sessions-scope"
+              (change)="onScope($event)">
+        @for (option of scopeOptions; track option.value) {
+          <option [value]="option.value" [selected]="option.value === scope()">{{ option.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (store.archiveError(); as message) {
+    <p class="chat-sessions__notice" role="alert" data-testid="chat-sessions-archive-error">{{ message }}</p>
+  }
+
+  <div class="chat-sessions__body">
+    @if (!store.loaded()) {
+      <p class="chat-sessions__state" data-testid="chat-sessions-loading">Loading chats...</p>
+    } @else if (store.error() && store.sessions().length === 0) {
+      <div class="chat-sessions__state chat-sessions__state--error" role="alert" data-testid="chat-sessions-error">
+        <p>{{ store.error() }}</p>
+        <button type="button" (click)="store.refresh()">Try again</button>
+      </div>
+    } @else {
+      @if (groups().active.length > 0) {
+        <app-section-header title="Active" [count]="groups().active.length" testid="chat-sessions-active-head" />
+        <ul class="chat-sessions__list" role="list" data-testid="chat-sessions-active">
+          @for (row of groups().active; track row.contextKey) {
+            <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
+          }
+        </ul>
+      }
+
+      <app-section-header title="Recent"
+                          [count]="groups().recent.length"
+                          [divider]="groups().active.length > 0"
+                          testid="chat-sessions-recent-head" />
+      @if (groups().recent.length === 0) {
+        <p class="chat-sessions__state" data-testid="chat-sessions-empty">
+          {{ filtering() ? 'No chats match this filter.' : 'No chats yet. Start one with New chat.' }}
+        </p>
+      } @else {
+        <ul class="chat-sessions__list" role="list" data-testid="chat-sessions-recent">
+          @for (row of groups().recent; track row.contextKey) {
+            <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
+          }
+        </ul>
+      }
+
+      @if (groups().archived.length > 0) {
+        <app-section-header title="Archived"
+                            [count]="groups().archived.length"
+                            [collapsible]="true"
+                            [collapsed]="!archivedOpen()"
+                            [divider]="true"
+                            testid="chat-sessions-archived-toggle"
+                            (collapsedChange)="archivedOpen.set(!$event)" />
+        @if (archivedOpen()) {
+          <ul class="chat-sessions__list" role="list" data-testid="chat-sessions-archived">
+            @for (row of groups().archived; track row.contextKey) {
+              <ng-container *ngTemplateOutlet="sessionRow; context: { $implicit: row }" />
+            }
+          </ul>
+        }
+      }
+    }
+  </div>
+</section>
+
+<ng-template #sessionRow let-row>
+  <li class="chat-row"
+      [class.chat-row--open]="isOpen(row)"
+      [class.chat-row--archived]="row.archived"
+      [attr.data-live]="row.live"
+      [attr.data-context-key]="row.contextKey"
+      [attr.data-testid]="'chat-session-row-' + row.contextKey">
+    <button type="button"
+            class="chat-row__main"
+            [attr.aria-current]="isOpen(row) ? 'true' : null"
+            [attr.title]="rowTitle(row)"
+            data-testid="chat-session-open"
+            (click)="open(row)">
+      <span class="chat-row__lead" aria-hidden="true">
+        @if (row.live) {
+          <span class="chat-row__live-dot" [attr.data-live]="row.live"></span>
+        } @else if (row.unread) {
+          <span class="chat-row__unread-dot" data-testid="chat-session-unread"></span>
+        }
+      </span>
+      <span class="chat-row__title" data-testid="chat-session-title">{{ row.title }}</span>
+      @if (row.liveLabel) {
+        <span class="chat-row__status" [attr.data-live]="row.live" data-testid="chat-session-live">{{ row.liveLabel }}</span>
+      } @else {
+        <time class="chat-row__time" [attr.datetime]="row.lastActivityAt" data-testid="chat-session-time">{{ row.timeLabel }}</time>
+      }
+      <span class="chat-row__meta">
+        <span class="chat-row__scope" data-testid="chat-session-scope">{{ row.scopeLabel }}</span>
+        <span class="chat-row__model" data-testid="chat-session-model">{{ row.modelLabel ?? '' }}</span>
+        <span class="chat-row__tokens" data-testid="chat-session-tokens">{{ row.tokensLabel ?? '' }}</span>
+      </span>
+    </button>
+    <span class="chat-row__actions">
+      <button type="button"
+              class="chat-row__action"
+              [attr.aria-label]="'Go to ' + row.scopeLabel"
+              [attr.title]="'Go to ' + row.scopeLabel"
+              [attr.data-testid]="'chat-session-navigate-' + row.contextKey"
+              (click)="navigate(row, $event)">
+        <span aria-hidden="true">&rarr;</span>
+      </button>
+      @if (row.archived) {
+        <button type="button"
+                class="chat-row__action"
+                aria-label="Unarchive chat"
+                title="Unarchive"
+                [attr.data-testid]="'chat-session-unarchive-' + row.contextKey"
+                (click)="unarchive(row, $event)">
+          <app-studio-icon name="refresh" [size]="13" />
+        </button>
+      } @else if (row.archivable) {
+        <button type="button"
+                class="chat-row__action"
+                aria-label="Archive chat"
+                title="Archive"
+                [attr.data-testid]="'chat-session-archive-' + row.contextKey"
+                (click)="archive(row, $event)">
+          <app-studio-icon name="archive" [size]="13" />
+        </button>
+      }
+    </span>
+  </li>
+</ng-template>

@@ -342,7 +342,9 @@ public sealed partial class TaskServerStore
     public async Task<OrchestratorSessionListResponse> GetRunnerOrchestratorSessionAsync(string projectIdentity, CancellationToken ct)
     {
         var project = await RequireProjectAsync(projectIdentity, ct);
-        var all = await ListStudioOrchestratorSessionsAsync(ct);
+        // Runner session reads keep their pre-archive visibility: task
+        // contexts hidden by the task archive stay out of this projection.
+        var all = await ListStudioOrchestratorSessionsAsync(includeHidden: false, ct);
         var filtered = all.Sessions
             .Where(session => string.Equals(session.ProjectId, project.ProjectId, StringComparison.Ordinal))
             .ToList();
@@ -350,7 +352,7 @@ public sealed partial class TaskServerStore
     }
 
     public Task<OrchestratorSessionListResponse> GetGlobalRunnerOrchestratorSessionAsync(CancellationToken ct)
-        => ListStudioOrchestratorSessionsAsync(ct);
+        => ListStudioOrchestratorSessionsAsync(includeHidden: false, ct);
 
     // ---- token summary (live + cached aggregate) ----------------------------------------------------
 

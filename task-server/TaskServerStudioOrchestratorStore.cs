@@ -93,31 +93,56 @@ public sealed partial class TaskServerStore
         return new StudioOrchestratorContextDigestResponse(transcript.Context.ContextKey, UtcNow, digest, sources);
     }
 
-    public async Task<OrchestratorSessionListResponse> ListStudioOrchestratorSessionsAsync(CancellationToken ct)
+    /// <summary>
+    /// The Studio session list. It includes task contexts hidden by the
+    /// task archive (<c>HiddenAt</c>) and operator-archived contexts
+    /// (<c>ArchivedAt</c>) so the Studio can render them in its Archived group.
+    /// </summary>
+    public Task<OrchestratorSessionListResponse> ListStudioOrchestratorSessionsAsync(CancellationToken ct)
+        => ListStudioOrchestratorSessionsAsync(includeHidden: true, ct);
+
+    internal async Task<OrchestratorSessionListResponse> ListStudioOrchestratorSessionsAsync(
+        bool includeHidden, CancellationToken ct)
     {
-        var contexts = await ListOrchestratorContextsAsync(includeHidden: false, ct);
-        var sessions = contexts
-            .Select(context => new OrchestratorSessionDto(
-                context.ContextKey,
-                context.Kind,
-                context.ProjectId,
-                context.TaskKey,
-                context.CreatedAt,
-                context.UpdatedAt,
-                context.Model,
-                context.CumulativeInputTokens,
-                context.CumulativeOutputTokens,
-                context.CumulativeCacheReadTokens,
-                context.CumulativeCacheCreationTokens,
-                context.TurnCount,
-                context.UpdatedAt,
-                context.Summary,
-                context.HiddenAt,
-                "idle",
-                0))
-            .ToList();
-        return new OrchestratorSessionListResponse(sessions);
+        var contexts = await ListOrchestratorContextsAsync(includeHidden, ct);
+        return new OrchestratorSessionListResponse(contexts.Select(ToOrchestratorSession).ToList());
     }
+
+    /// <summary>
+    /// Operator archive toggle addressed by the Studio. The Task Server has no
+    /// live turn runtime of its own (every session reports <c>idle</c>), so
+    /// the active-or-queued guard lives with the engine that runs turns.
+    /// </summary>
+    public async Task<OrchestratorSessionDto> SetStudioOrchestratorSessionArchivedAsync(
+        SetOrchestratorContextArchivedRequest request, string actorId, CancellationToken ct)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.ContextKey))
+            throw new ArgumentException("contextKey is required");
+        var context = await SetOrchestratorContextArchivedAsync(request.ContextKey, request.Archived, actorId, ct);
+        return ToOrchestratorSession(context);
+    }
+
+    private static OrchestratorSessionDto ToOrchestratorSession(OrchestratorContextDto context)
+        => new(
+            context.ContextKey,
+            context.Kind,
+            context.ProjectId,
+            context.TaskKey,
+            context.CreatedAt,
+            context.UpdatedAt,
+            context.Model,
+            context.CumulativeInputTokens,
+            context.CumulativeOutputTokens,
+            context.CumulativeCacheReadTokens,
+            context.CumulativeCacheCreationTokens,
+            context.TurnCount,
+            context.UpdatedAt,
+            context.Summary,
+            context.HiddenAt,
+            "idle",
+            0,
+            context.ArchivedAt,
+            context.TurnCount);
 
     private async Task<StudioOrchestratorContextDigestResponse> BuildGlobalOrchestratorDigestAsync(CancellationToken ct)
     {
