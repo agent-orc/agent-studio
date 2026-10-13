@@ -1987,14 +1987,17 @@ and safety, enforces finite execution, dispatches through the Task Server and
 records a receipt. This amends ADR-0032's placement of the final choice for
 these bounded orchestration decisions; its contract and loop guards remain.
 
-As in AGT-W73, degraded mode allows one bounded transport retry on an alternate
-strong model of the same capability and price ceiling, then records `ask` and
-holds the transition; no deterministic fallback decides. A configurable 24-hour
-emergency run limit with existing salvage replaces the 3,600-second coding
-timeout. Cost caps apply per card (24 calls, 8,000 input and 1,000 output tokens
-per call, $5 priced) and per host-day (48 scheduled plus 12 event calls, 180,000
-input and 90,000 output tokens, $10 priced). Implementation: AGT-3063 to
-AGT-3068.
+As in AGT-W73, every degraded-mode trigger (model unavailable, over quota or
+its invocation cap, invalid output, a forbidden action or insufficient evidence)
+records `ask` and holds the transition; no deterministic fallback decides. Only
+a transport failure may get one bounded retry on an alternate strong model of
+the same capability and price ceiling. Cap exhaustion makes no call and writes a
+no-call receipt. A configurable 24-hour emergency run limit with existing
+salvage replaces the 3,600-second coding timeout. Decision cost caps apply per
+card (24 calls, 8,000 input and 1,000 output tokens per call, $5 priced). The
+Fluid capacity periodic host check has its own separate limit per host-day (48
+scheduled plus 12 event calls, 180,000 input and 90,000 output tokens, $10
+priced). Implementation: AGT-3063 to AGT-3068.
 
 **Consequences.** This amends ADR-0063's runtime-role count from three to five
 and ADR-0076's consequence that Operations Server was the fourth role. The five
