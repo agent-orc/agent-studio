@@ -7,6 +7,12 @@ namespace AgentStudio.Tasks;
 /// The list wire contract. Detail-only history and evidence stay on the task
 /// detail route; a card carries the identity, sorting, filters, badges and
 /// short status facts used by board consumers.
+///
+/// <para>Sub-objects are sparse: a value that is null, false, empty or the
+/// documented default is left out, and long text is cut to what a card face
+/// or tooltip shows. The full values live on <c>/details/overview</c>
+/// (parked blocker, waits-on, execution location, pending intent) and
+/// <c>/details/git</c> (merge signal, integration, test evidence).</para>
 /// </summary>
 internal static class BoardCardSummary
 {
@@ -62,6 +68,9 @@ internal static class BoardCardSummary
         return stream.ToArray();
     }
 
+    /// <summary>Short SHA length on the card; consumers display seven characters.</summary>
+    private const int ShortShaLength = 9;
+
     public static byte[] Serialize(TaskInfo job)
     {
         var fields = new Dictionary<string, object?>
@@ -98,6 +107,9 @@ internal static class BoardCardSummary
             ["commitCount"] = job.CommitCount,
             ["requiresIntegration"] = job.RequiresIntegration,
         };
+        // An absent top-level value reads as null on every consumer.
+        foreach (var name in fields.Where(field => field.Value is null or "").Select(field => field.Key).ToList())
+            fields.Remove(name);
         if (job.CodeActivityDetected) fields["codeActivityDetected"] = true;
         if (job.NoBranchExpected) fields["noBranchExpected"] = true;
         if (job.Released) fields["released"] = true;
@@ -117,8 +129,8 @@ internal static class BoardCardSummary
             fields["gitContext"] = new
             {
                 branch = provenance.Branch,
-                branchTip = provenance.Transitions.LastOrDefault(t => !string.IsNullOrEmpty(t.BranchTip))?.BranchTip,
-                mergeSha = provenance.Merge?.MergeCommit,
+                branchTip = ShortSha(provenance.Transitions.LastOrDefault(t => !string.IsNullOrEmpty(t.BranchTip))?.BranchTip),
+                mergeSha = ShortSha(provenance.Merge?.MergeCommit),
             };
         if (job.TokenSummary is { } tokens)
         {
@@ -140,20 +152,28 @@ internal static class BoardCardSummary
         if (job.Integration is { } integration)
             fields["integration"] = new
             {
-                integration.Status, integration.DeliveryRef, integration.Sha,
-                integration.IntegrationBranch, integration.ReachUnavailable,
+                integration.Status,
+                // The board names the delivery ref only while it is not yet
+                // integrated, or when no commit is attributed to the card.
+                deliveryRef = integration.Status == IntegrationStatuses.Integrated && job.Commits.Count > 0
+                    ? null : integration.DeliveryRef,
+                integration.Sha,
+                integrationBranch = integration.IntegrationBranch == "develop" ? null : NullIfEmpty(integration.IntegrationBranch),
+                reachUnavailable = integration.ReachUnavailable ? true : (bool?)null,
                 detail = Short(integration.Detail, 120),
-                repositoryLabel = Short(string.Join(" · ", integration.Repositories.Select(repository =>
+                repositoryLabel = NullIfEmpty(Short(string.Join(" · ", integration.Repositories.Select(repository =>
                     $"{repository.Repository} {repository.Commits.Count(commit => commit.OnIntegrationBranch)}/{repository.Commits.Count} " +
-                    $"{repository.IntegrationBranch}{(repository.OnReleaseBranch && repository.ReleaseBranch != repository.IntegrationBranch ? " and " + repository.ReleaseBranch : "")}")), 160),
-                repositoryDetail = Short(string.Join(" · ", integration.Repositories.Select(repository =>
-                    $"{repository.Repository}: {repository.Detail}")), 180),
+                    $"{repository.IntegrationBranch}{(repository.OnReleaseBranch && repository.ReleaseBranch != repository.IntegrationBranch ? " and " + repository.ReleaseBranch : "")}")), 160)),
+                repositoryDetail = NullIfEmpty(Short(string.Join(" · ", integration.Repositories.Select(repository =>
+                    $"{repository.Repository}: {repository.Detail}")), 180)),
+                // The badge tooltip shows a seven-character SHA and one short
+                // sentence; the full reason is on /details/git.
                 verification = integration.Verification is null ? null : new
                 {
                     integration.Verification.State,
-                    integration.Verification.Sha,
-                    integration.Verification.GateFailed,
-                    reason = Short(integration.Verification.Reason, 100),
+                    sha = ShortSha(integration.Verification.Sha),
+                    gateFailed = integration.Verification.GateFailed ? true : (bool?)null,
+                    reason = Short(integration.Verification.Reason, 60),
                 },
                 failure = integration.Failure is null ? null : new
                 {
@@ -170,7 +190,9 @@ internal static class BoardCardSummary
                 evidence.EvidenceState, evidence.MatchQuality, evidence.Summary,
                 evidence.RunId, evidence.RunCommit, evidence.RunState, evidence.RunResult,
                 sourceCount = evidence.Sources.Count,
-                sourceLabel = Short(evidence.Sources.FirstOrDefault()?.Summary, 80),
+                // Usually the summary itself; sent only when it adds something.
+                sourceLabel = Short(evidence.Sources.FirstOrDefault()?.Summary, 80) is { } label
+                    && label != evidence.Summary ? label : null,
             };
         if (job.OutcomeIssue is { } issue)
             fields["outcomeIssue"] = new
@@ -181,17 +203,22 @@ internal static class BoardCardSummary
         if (job.ParkedBlocker is { } park)
             fields["parkedBlocker"] = new
             {
-                park.BlockerType, park.ConditionKind,
-                conditionDescription = Short(park.ConditionDescription, 120),
+                // The board badge reads the type, the decision flag, the
+                // question or reason and the park instant. The condition and
+                // the recall verdict belong to the parked section, which reads
+                // them from /details/overview.
+                park.BlockerType,
                 // No read-time age: the client derives it from ParkedAt, so an
                 // unchanged parked card serializes to the same bytes on every read.
                 park.ParkedAt,
-                reason = Short(park.Reason, 120), park.RecallStatus,
-                park.RequiresDecisionCard,
-                decision = park.Decision is null ? null : new
+                reason = Short(park.Reason, 100),
+                requiresDecisionCard = park.RequiresDecisionCard ? true : (bool?)null,
+                decision = park.Decision is null
+                    || (string.IsNullOrEmpty(park.Decision.QuestionId) && string.IsNullOrEmpty(park.Decision.Question)
+                        && park.Decision.DecisionCardKey is null) ? null : new
                 {
-                    park.Decision.QuestionId,
-                    question = Short(park.Decision.Question, 120),
+                    questionId = NullIfEmpty(park.Decision.QuestionId),
+                    question = NullIfEmpty(Short(park.Decision.Question, 120)),
                     park.Decision.DecisionCardKey,
                 },
             };
@@ -213,7 +240,17 @@ internal static class BoardCardSummary
         Add(fields, "quotaWait", job.QuotaWait);
         Add(fields, "causeWait", job.CauseWait);
         Add(fields, "remoteClaimFailure", job.RemoteClaimFailure);
-        Add(fields, "pendingIntent", job.PendingIntent);
+        if (job.PendingIntent is { } intent)
+            fields["pendingIntent"] = new
+            {
+                // A steer prompt can run to pages; the Ready card shows its
+                // start and the tooltip 120 characters. /details/overview
+                // carries the whole intent.
+                intent.RunIntent, intent.Mode, intent.SavedAt,
+                prompt = NullIfEmpty(intent.Prompt.Length <= PendingPromptLength
+                    ? intent.Prompt : intent.Prompt[..PendingPromptLength]),
+                promptTruncated = intent.Prompt.Length > PendingPromptLength ? true : (bool?)null,
+            };
         if (job.NeedsInput is { } need)
             fields["needsInput"] = new { message = Short(need.FirstLine, 120) ?? "" };
         if (job.AutoLoop is { } loop)
@@ -232,27 +269,39 @@ internal static class BoardCardSummary
             {
                 dependsOnCount = job.References.DependsOn.Count,
                 dependsOnKeys = job.References.DependsOn.Select(dependency => dependency.Key).ToArray(),
-                dependsOn = job.References.DependsOn.Take(3).ToArray(),
-                raisedFollowUps = job.References.RaisedFollowUps.Take(1).ToArray(),
+                // A plain edge serializes as its key, which dependsOnKeys
+                // already lists; the object form is sent only for release gates.
+                dependsOn = job.References.DependsOn.Take(3).Any(dependency => dependency.ReleaseGate)
+                    ? job.References.DependsOn.Take(3).ToArray() : null,
+                raisedFollowUps = job.References.RaisedFollowUps.Count == 0
+                    ? null : job.References.RaisedFollowUps.Take(1).ToArray(),
             };
         if (job.WaitsOn is { } waits)
             fields["waitsOn"] = new
             {
-                waits.Blocked, waits.CycleDetected, waits.UnsatisfiableGate,
+                blocked = Flag(waits.Blocked), cycleDetected = Flag(waits.CycleDetected),
+                unsatisfiableGate = Flag(waits.UnsatisfiableGate),
                 itemCount = waits.Items.Count,
                 openCount = waits.Items.Count(item => !item.Fulfilled),
-                anyWaitingForRelease = waits.Items.Any(item => item.WaitingForRelease),
-                releaseTargets = waits.Items.Where(item => item.WaitingForRelease && item.TargetJobId is not null)
-                    .Select(item => new { item.TargetJobId, item.TargetWatchPath }).ToArray(),
+                anyWaitingForRelease = Flag(waits.Items.Any(item => item.WaitingForRelease)),
+                // The "waiting for release" filter keeps these targets visible;
+                // it matches them by key, so the long job id and watch path
+                // stay on /details/overview.
+                releaseTargetKeys = waits.Items.Any(item => item.WaitingForRelease)
+                    ? waits.Items.Where(item => item.WaitingForRelease).Select(item => item.Key).ToArray()
+                    : null,
                 items = waits.Items.OrderByDescending(item => item.Unsatisfiable)
                     .ThenBy(item => item.Fulfilled).Take(3)
                     .Select(item => new
                     {
-                        item.Key, item.Resolved, item.PendingDecision, item.Fulfilled,
-                        item.ReleaseGate, item.TargetReleased, item.WaitingForRelease,
-                        item.Unsatisfiable, item.TargetJobId,
+                        item.Key,
+                        resolved = Flag(item.Resolved), pendingDecision = Flag(item.PendingDecision),
+                        fulfilled = Flag(item.Fulfilled), releaseGate = Flag(item.ReleaseGate),
+                        targetReleased = Flag(item.TargetReleased),
+                        waitingForRelease = Flag(item.WaitingForRelease),
+                        unsatisfiable = Flag(item.Unsatisfiable),
                         item.TargetState,
-                        targetTitle = Short(item.TargetTitle, 40), item.TargetWatchPath,
+                        targetTitle = Short(item.TargetTitle, 40),
                     }).ToArray(),
             };
         Add(fields, "blockedBy", job.BlockedBy.Count == 0 ? null : job.BlockedBy);
@@ -276,8 +325,18 @@ internal static class BoardCardSummary
             };
         Add(fields, "externalCompletion", job.ExternalCompletion);
         Add(fields, "runner", job.Runner);
-        Add(fields, "executionLocation", job.ExecutionLocation);
-        Add(fields, "mergeSignal", job.MergeSignal);
+        Add(fields, "executionLocation", ExecutionLocationOnCard(job.State, job.ExecutionLocation));
+        if (job.MergeSignal is { } merge)
+            fields["mergeSignal"] = new
+            {
+                // The branch is gitContext.branch; the d/m segments default
+                // their labels to develop and main.
+                merge.InIntegration, merge.InRelease,
+                integrationBranch = merge.IntegrationBranch == "develop" ? null : NullIfEmpty(merge.IntegrationBranch),
+                releaseBranch = merge.ReleaseBranch == "main" ? null : NullIfEmpty(merge.ReleaseBranch),
+                integrationSha = ShortSha(merge.IntegrationSha),
+                releaseSha = ShortSha(merge.ReleaseSha),
+            };
         Add(fields, "publishSignal", job.PublishSignal);
         Add(fields, "betterCandidates", job.BetterCandidates);
         // AGT-3051: the review-queue badge and the "Review first" menu state
@@ -285,6 +344,29 @@ internal static class BoardCardSummary
         if (job.ReviewPriority == "urgent") fields["reviewPriority"] = job.ReviewPriority;
         Add(fields, "reviewQueuePosition", job.ReviewQueuePosition);
         return JsonSerializer.SerializeToUtf8Bytes(fields, Json);
+    }
+
+    /// <summary>
+    /// The execution location a card face can show. An idle location (no run,
+    /// no rejection, not historical) renders nothing on a card; only a Ready
+    /// card reads its configured runner, to pick the provider-auth check.
+    /// Branch, worktree path, trust reason, session and last-activity stamp are
+    /// detail facts on /details/overview. <see cref="BoardReadSignatureSource"/>
+    /// folds this projection rather than the full record, so a client
+    /// heartbeat the card does not show cannot invalidate the board.
+    /// </summary>
+    internal static BoardExecutionLocation? ExecutionLocationOnCard(string lane, TaskExecutionLocation? location)
+    {
+        if (location is null) return null;
+        var idle = location.State == TaskExecutionStates.NoActiveExecution
+            && location.LastRejection is null && !location.Historical;
+        if (idle && (lane != TaskStates.Ready || location.ConfiguredRunnerId is null)) return null;
+        return new BoardExecutionLocation(
+            location.State, location.ExecutionKind, location.RunnerId, location.ConfiguredRunnerId,
+            location.HostDisplayName, location.StartedAt, location.LastHeartbeat, location.ProcessId,
+            location.ConnectionState == "none" ? null : location.ConnectionState,
+            location.LeaseState == "none" ? null : location.LeaseState,
+            location.Historical ? true : null, location.LastRejection, location.LastRunnerEvent);
     }
 
     public static JsonElement AsJsonElement(TaskInfo job)
@@ -295,6 +377,15 @@ internal static class BoardCardSummary
         if (value is not null) fields[name] = value;
     }
 
+    private const int PendingPromptLength = 200;
+
+    private static bool? Flag(bool value) => value ? true : null;
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    private static string? ShortSha(string? sha)
+        => string.IsNullOrEmpty(sha) ? null : sha.Length <= ShortShaLength ? sha : sha[..ShortShaLength];
+
     private static string? Short(string? value, int max)
     {
         if (value is null) return null;
@@ -302,3 +393,10 @@ internal static class BoardCardSummary
         return firstLine.Length <= max ? firstLine : firstLine[..max];
     }
 }
+
+/// <summary>Card shape of <see cref="TaskExecutionLocation"/>; value equality makes it foldable.</summary>
+internal sealed record BoardExecutionLocation(
+    string State, string ExecutionKind, string? RunnerId, string? ConfiguredRunnerId,
+    string? HostDisplayName, DateTime? StartedAt, DateTime? LastHeartbeat, int? ProcessId,
+    string? ConnectionState, string? LeaseState, bool? Historical,
+    RemoteDispatchRejection? LastRejection, string? LastRunnerEvent);

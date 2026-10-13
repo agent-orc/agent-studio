@@ -249,6 +249,8 @@ function latestActivityAt(task: TaskInfo, projected: string | null | undefined):
   const values = [
     projected,
     task.executionLocation?.lastActivityAt,
+    // Board cards carry the heartbeat, not the derived activity stamp.
+    task.executionLocation?.lastHeartbeat,
     task.lastActivity,
   ].map(timestamp).filter((value): value is number => value !== null);
   return values.length === 0 ? null : Math.max(...values);

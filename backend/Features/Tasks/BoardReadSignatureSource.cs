@@ -260,7 +260,10 @@ public sealed class BoardReadSignatureSource(
             // Folded as the projected value rather than as its inputs: the run
             // lease registry and client identity store have no version of their
             // own, and the freshness verdict is derived rather than stored.
-            hash.Add(runners.ResolveExecutionLocation(job, execution, activity));
+            // Only the card's share of it is folded; the client last-seen stamp
+            // and trust sentence are detail facts that move on every poll.
+            hash.Add(BoardCardSummary.ExecutionLocationOnCard(
+                job.State, runners.ResolveExecutionLocation(job, execution, activity)));
         }
 
         return hash.ToHashCode();

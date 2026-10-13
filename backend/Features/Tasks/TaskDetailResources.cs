@@ -3,8 +3,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using HttpJsonOptions = Microsoft.AspNetCore.Http.Json.JsonOptions;
+using AgentStudio.Cli;
 using AgentStudio.Registry;
 using AgentStudio.Review;
+using AgentStudio.Runner;
 using AgentStudio.Security;
 using AgentStudio.Shared;
 using AgentStudio.TestRuns;
@@ -19,7 +21,7 @@ public static class TaskDetailResources
     {
         group.MapGet("/{jobId}/details/overview", (string jobId, string? project, long? generation,
             HttpContext context, ProjectRegistry projects, TaskIndexCache index,
-            ITaskCoreRuntime runtime, TaskScannerService scanner) =>
+            ITaskCoreRuntime runtime, TaskScannerService scanner, CliRouter router, TaskRunnerService runners) =>
         {
             var lookup = Resolve(jobId, project, generation, context, projects, index);
             if (lookup.Error is not null) return lookup.Error;
@@ -32,7 +34,8 @@ public static class TaskDetailResources
                 task.OlderBriefDelivery, task.RelatedWikiPages, task.CreationSource,
                 task.CompletionClaim, task.ParkedBlocker, task.NeedsInput,
                 task.References, task.References.DependsOn.Count > 0
-                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null);
+                    ? scanner.GetReferenceIndex().EvaluateWaitsOn(task) : null,
+                ExecutionLocation(task, router, runners), task.PendingIntent);
             return Reply(context, core, lookup.ProjectId!, runtime, "overview", "ready", data,
                 null, Modified(Path.Combine(core.FolderPath, "task.json")));
         });
@@ -171,6 +174,21 @@ public static class TaskDetailResources
             resource, version, computedAt, state, new PreSerializedJson(content), reason));
     }
 
+    /// <summary>
+    /// The full execution location (branch, worktree, trust reason, activity
+    /// stamp) that the board card leaves out. Same resident reads as the
+    /// board overlay; no scan, Git or disk access.
+    /// </summary>
+    private static TaskExecutionLocation ExecutionLocation(TaskInfo task, CliRouter router, TaskRunnerService runners)
+    {
+        var progress = task.State == TaskStates.Progress;
+        var execution = progress ? router.Get(task.CliType).GetExecution(task.TaskKey) : null;
+        var activity = progress
+            ? TaskRunActivityClassifier.Classify(runners.GetRunActivityForJob(task.Id, task.ProjectName), execution, outcomeIssue: null)
+            : null;
+        return runners.ResolveExecutionLocation(task, execution, activity);
+    }
+
     private static DateTime? Modified(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
 }
 
@@ -218,4 +236,5 @@ public sealed record TaskOverviewResource(DecisionContent? Decision,
     PlanningSpawnSummary? PlanningSpawn, ConceptDossierSummary? ConceptDossier,
     OlderBriefDeliveryOffer? OlderBriefDelivery, IReadOnlyList<RelatedWikiPage> RelatedWikiPages,
     string CreationSource, TaskCompletionClaim? CompletionClaim, ParkedBlockerStatus? ParkedBlocker,
-    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn);
+    NeedsInputStatus? NeedsInput, TaskReferences References, WaitsOnStatus? WaitsOn,
+    TaskExecutionLocation? ExecutionLocation, PendingIntent? PendingIntent);
