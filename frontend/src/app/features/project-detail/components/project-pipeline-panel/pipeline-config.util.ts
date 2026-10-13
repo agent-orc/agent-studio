@@ -258,3 +258,58 @@ export function stepTokenTooltip(row: Pick<PipelineAdminRow,
     pricingGaps: row.tokenPricingGaps ?? [],
   });
 }
+
+/** One-line purpose shown in each step's details row and tooltip, keyed by catalogue step id. */
+const PIPELINE_STEP_PURPOSES: Readonly<Record<string, string>> = {
+  'pre-loop-guard':
+    'Detects stuck auto-mode loops and surfaces the loop guard state before the agent run.',
+  'pre-orchestrator-prep':
+    'Optional prep pass that checks prompt clarity before work is admitted to Ready.',
+  'pre-reissue-open-items':
+    'On reissues, foregrounds unresolved open items so the next agent run does not restart blindly.',
+  'core-agent-run':
+    'Runs the task-owning CLI agent with the task prompt, branch/worktree context, and selected task model.',
+  'post-summary-assessment':
+    'Closing Result assessment: writes status.md from the run log and the card evidence, classifies the outcome, and flags contradicting signals.',
+  'post-orchestrator-review':
+    'Early post-core completeness scan over close-out evidence before spending review tokens.',
+  'post-orchestrator-decision':
+    'Final orchestrator decision that accepts, reissues, or escalates after reviews and gates.',
+  'post-code-review-grade':
+    'LLM code-review pass that assigns the A/B/C/D quality grade visible on the task card.',
+  'post-build-test-gate':
+    'Runs the configured build/test gate and can reissue when the repository is red.',
+  'post-worktree-containment':
+    'Checks that work stayed inside the task worktree and did not leak into shared state.',
+  'post-integrate-merge':
+    'Keeps parallel task worktrees integrated with the project integration line.',
+  'post-conflict-resolution':
+    'Uses orchestrator reasoning when integration detects conflicts that need structured handling.',
+  'post-git-commit-attribution':
+    'Attributes commits to the task so review and merge screens know which changes belong together.',
+  'post-merge-into-develop':
+    'Operator-triggered delivery step that merges accepted task work into develop.',
+  'post-merge-into-develop-push':
+    'Pushes the integration branch to origin after the merge so integration is never only local.',
+  'post-lint-scss':
+    'Runs frontend stylelint for SCSS quality and can warn or fail depending on gate mode.',
+  'post-regression-radar':
+    'Classifies changed specs as intended, at-risk, or drift without gating the lane decision.',
+  'post-wiki-maintenance':
+    'Maintains common-problem wiki entries from run outcomes when enabled.',
+  'post-wiki-learnings':
+    'Writes per-task learnings into the project wiki from structured run evidence.',
+  'post-agents-wiki-sync':
+    'Keeps AGENTS/wiki pointers for designated topics consistent and collects each topic current state when enabled.',
+  'post-abort-review':
+    'Optional review pass after an aborted or stopped run to decide rerun, reissue, or escalation.',
+};
+
+/** Purpose text for a pipeline step; prefix families fall back to a shared description. */
+export function pipelineStepPurpose(stepId: string): string {
+  const purpose = PIPELINE_STEP_PURPOSES[stepId];
+  if (purpose) return purpose;
+  if (stepId.startsWith('aspect-')) return 'Runs an LLM aspect review and records a focused verdict for auto-review.';
+  if (stepId.startsWith('post-drift-')) return 'Runs an opt-in drift analysis dimension after the main task decision.';
+  return 'Pipeline step in the project processing flow.';
+}

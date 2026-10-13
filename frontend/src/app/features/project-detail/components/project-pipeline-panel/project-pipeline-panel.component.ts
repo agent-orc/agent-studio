@@ -25,6 +25,7 @@ import {
   stepTokenLabel,
   stepTokenTooltip,
   pipelineTokenCostByStep,
+  pipelineStepPurpose,
 } from './pipeline-config.util';
 import { PipelineStepFocusDirective } from './pipeline-step-focus.directive';
 import { PipelineHealthBlockComponent } from '../pipeline-health-block/pipeline-health-block';
@@ -557,54 +558,7 @@ export class ProjectPipelinePanelComponent {
   }
 
   stepPurpose(step: PipelineAdminRow): string {
-    switch (step.id) {
-      case 'pre-loop-guard':
-        return 'Detects stuck auto-mode loops and surfaces the loop guard state before the agent run.';
-      case 'pre-orchestrator-prep':
-        return 'Optional prep pass that checks prompt clarity before work is admitted to Ready.';
-      case 'pre-reissue-open-items':
-        return 'On reissues, foregrounds unresolved open items so the next agent run does not restart blindly.';
-      case 'core-agent-run':
-        return 'Runs the task-owning CLI agent with the task prompt, branch/worktree context, and selected task model.';
-      case 'post-summary-assessment':
-        return 'Closing Result assessment: writes status.md from the run log and the card evidence, classifies the outcome, and flags contradicting signals.';
-      case 'post-orchestrator-review':
-        return 'Early post-core completeness scan over close-out evidence before spending review tokens.';
-      case 'post-orchestrator-decision':
-        return 'Final orchestrator decision that accepts, reissues, or escalates after reviews and gates.';
-      case 'post-code-review-grade':
-        return 'LLM code-review pass that assigns the A/B/C/D quality grade visible on the task card.';
-      case 'post-build-test-gate':
-        return 'Runs the configured build/test gate and can reissue when the repository is red.';
-      case 'post-worktree-containment':
-        return 'Checks that work stayed inside the task worktree and did not leak into shared state.';
-      case 'post-integrate-merge':
-        return 'Keeps parallel task worktrees integrated with the project integration line.';
-      case 'post-conflict-resolution':
-        return 'Uses orchestrator reasoning when integration detects conflicts that need structured handling.';
-      case 'post-git-commit-attribution':
-        return 'Attributes commits to the task so review and merge screens know which changes belong together.';
-      case 'post-merge-into-develop':
-        return 'Operator-triggered delivery step that merges accepted task work into develop.';
-      case 'post-merge-into-develop-push':
-        return 'Pushes the integration branch to origin after the merge so integration is never only local.';
-      case 'post-lint-scss':
-        return 'Runs frontend stylelint for SCSS quality and can warn or fail depending on gate mode.';
-      case 'post-regression-radar':
-        return 'Classifies changed specs as intended, at-risk, or drift without gating the lane decision.';
-      case 'post-wiki-maintenance':
-        return 'Maintains common-problem wiki entries from run outcomes when enabled.';
-      case 'post-wiki-learnings':
-        return 'Writes per-task learnings into the project wiki from structured run evidence.';
-      case 'post-agents-wiki-sync':
-        return 'Keeps AGENTS/wiki pointers for designated topics consistent and collects each topic current state when enabled.';
-      case 'post-abort-review':
-        return 'Optional review pass after an aborted or stopped run to decide rerun, reissue, or escalation.';
-      default:
-        if (step.id.startsWith('aspect-')) return 'Runs an LLM aspect review and records a focused verdict for auto-review.';
-        if (step.id.startsWith('post-drift-')) return 'Runs an opt-in drift analysis dimension after the main task decision.';
-        return 'Pipeline step in the project processing flow.';
-    }
+    return pipelineStepPurpose(step.id);
   }
 
   kindKey(value: string | null | undefined): string {

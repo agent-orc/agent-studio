@@ -1902,6 +1902,17 @@ operator changes cause the step to fail before its writer runs.
   card ledger. The Result tab renders the inconsistencies under the verdict;
   an empty list renders nothing. The assessment reflects the evidence at
   generation time; Regenerate re-assesses after a later operator merge.
+  Serving rule: `summary-assessment.json` stores the SHA-256 fingerprint of
+  the `status.md` it was generated with (BOM, line endings and trailing
+  whitespace ignored), and the documents route returns it only while
+  `status.md` still matches. `SummaryGenerationService` writes the assessment
+  before `status.md`, so a fetch never sees the new document without its
+  block. Any other writer that replaces or extends `status.md` (external
+  completion, escalation stub, result scaffold, remote delivery failure note,
+  the acceptance-integration failure or operator-override section) hides the
+  block until the next Regenerate. That includes an appended
+  integration-failure section: the assessment predates that failure, so it is
+  not shown above it.
 - `post-task-spawner` (AGT-2028) is an opt-in `StepKind.Orchestrator` post-step,
   `DefaultEnabled = false` and additionally gated on a `ProjectSettings.TaskSpawner`
   target - a project must both enable the step (`PipelineSteps["post-task-spawner"]`)

@@ -248,6 +248,9 @@ public sealed class SummaryGenerationService
                     info.Id, appendedImageCount);
             }
 
+            // The assessment is bound to this exact status.md text, so writing it first
+            // closes the window where a fetch sees the new status.md without its block.
+            WriteAssessment(info, evidence, summary, result);
             var target = Path.Combine(info.FolderPath, "status.md");
             if (_resultVersions is not null)
             {
@@ -265,7 +268,6 @@ public sealed class SummaryGenerationService
             }
             RegisterGeneratedStatus(info, result, selection, runIndex);
             RecordBrokenImageReferences(info, summary);
-            WriteAssessment(info, evidence, summary, result);
 
             _states[key] = new TaskSummaryState
             {
