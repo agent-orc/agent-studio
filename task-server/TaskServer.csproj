@@ -46,6 +46,10 @@
          the ArchitectureBoundaryTests project-reference allowlist. -->
     <EmbeddedResource Include="..\backend\Policies\model-routing-policy.v1.json"
                       Link="Policies\model-routing-policy.v1.json" />
+    <!-- I9 executes the reviewed runbook catalogue itself; steps are allowlisted opcodes. -->
+    <EmbeddedResource Include="..\docs\credentials-and-logins\runbooks.json"
+                      Link="CredentialRunbooks\runbooks.json"
+                      LogicalName="credential-runbooks.json" />
   </ItemGroup>
 
   <ItemGroup>

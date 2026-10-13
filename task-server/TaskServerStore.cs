@@ -48,7 +48,8 @@ public sealed partial class TaskServerStore
     // 31 combines those contracts with persisted provider health circuits and
     // typed observations. Migrations are idempotent; the version guards
     // downgrades from binaries without all contracts.
-    public const int CurrentSchemaVersion = 32;
+    // 33 adds the typed credential runbook operation journal and step receipts.
+    public const int CurrentSchemaVersion = 33;
 
     /// <summary>
     /// Reserved <c>projectId</c> route value meaning "resolve this task by id
@@ -3756,6 +3757,25 @@ public sealed partial class TaskServerStore
             );
             CREATE INDEX IF NOT EXISTS ix_provider_renewal_binding
                 ON provider_renewal_operations(installation_id, host_id, credential_id, step);
+            CREATE TABLE IF NOT EXISTS credential_runbook_operations(
+                operation_id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL,
+                host_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                state TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                UNIQUE(installation_id, host_id, credential_id, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS ix_credential_runbook_binding
+                ON credential_runbook_operations(installation_id, host_id, credential_id, state);
+            CREATE TABLE IF NOT EXISTS credential_runbook_receipts(
+                operation_id TEXT NOT NULL REFERENCES credential_runbook_operations(operation_id),
+                step_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY(operation_id, step_id)
+            );
             CREATE TABLE IF NOT EXISTS capability_failure_deliveries(
                 runner_id TEXT NOT NULL REFERENCES runners(id),
                 idempotency_key TEXT NOT NULL,
