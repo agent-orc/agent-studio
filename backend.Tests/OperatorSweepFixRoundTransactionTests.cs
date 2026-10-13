@@ -6,6 +6,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the continuation SavedAtUtc date is stored metadata, never compared with the clock.
+
 /// <summary>
 /// AGT-3011 review finding: a fix round must never leave a Ready card without
 /// its fix instructions. The material is prepared in the Human Review folder

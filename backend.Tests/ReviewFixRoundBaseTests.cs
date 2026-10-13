@@ -13,6 +13,7 @@ namespace AgentStudio.Tests;
 /// </summary>
 public sealed class ReviewFixRoundBaseTests : IDisposable
 {
+    // clock-independent: timestamps are inputs to pure base selection and timeline metadata.
     private static readonly DateTime Now = new(2026, 10, 13, 8, 30, 0, DateTimeKind.Utc);
     private static readonly string ReviewedSha = new('a', 40);
     private static readonly string ResultRef = Contract.FencedGitRefs.ImmutableResult("run_reviewed", 3, ReviewedSha);
@@ -83,6 +84,20 @@ public sealed class ReviewFixRoundBaseTests : IDisposable
     }
 
     [Fact]
+    public void Operator_continue_replaces_a_stale_review_base_with_the_current_reviewed_delivery()
+    {
+        var stale = ReviewFixRoundBase.Decide("rev_old", "refs/heads/pruned", new string('b', 40), Now)!;
+        var replacement = ReviewFixRoundBase.ForOperatorContinue(
+            Review(ResultRef, ReviewTerminalOutcome.ProductFailure),
+            Subject(ReviewedSha, ResultRef), stale, Now);
+
+        Assert.NotNull(replacement);
+        Assert.Equal(ResultRef, replacement.Ref);
+        Assert.Equal(ReviewedSha, replacement.CommitSha);
+        Assert.Equal("rev_1", replacement.AttemptId);
+    }
+
+    [Fact]
     public void The_prompt_sentence_names_the_base_in_one_sentence_and_no_sha()
     {
         foreach (var continues in new[] { true, false })
@@ -120,6 +135,20 @@ public sealed class ReviewFixRoundBaseTests : IDisposable
 
         ContinuationBaseStore.ClearAfterCompletion(_folder);
         Assert.Null(ContinuationBaseStore.Read(_folder));
+    }
+
+    [Fact]
+    public void Replacing_a_base_for_the_same_review_records_the_new_choice_once()
+    {
+        var timeline = new TimelineLog(Microsoft.Extensions.Logging.Abstractions.NullLogger<TimelineLog>.Instance);
+        var oldBase = ReviewFixRoundBase.Decide("rev_1", "refs/heads/retired", ReviewedSha, Now)!;
+        var newBase = ReviewFixRoundBase.Decide("rev_1", ResultRef, ReviewedSha, Now)!;
+        ReviewFixRoundBase.RecordOnTimeline(timeline, _folder, oldBase, ReviewFixRoundBase.SourceOperatorContinue, Now);
+        ReviewFixRoundBase.RecordOnTimeline(timeline, _folder, newBase, ReviewFixRoundBase.SourceOperatorContinue, Now);
+        ReviewFixRoundBase.RecordOnTimeline(timeline, _folder, newBase, ReviewFixRoundBase.SourceOperatorContinue, Now);
+        var rows = timeline.ReadAll(_folder).Where(row => row.Kind == TimelineEventKinds.ContinuationBaseRecorded).ToArray();
+        Assert.Equal(2, rows.Length);
+        Assert.Equal(ResultRef, rows[1].Details!["ref"]);
     }
 
     [Fact]

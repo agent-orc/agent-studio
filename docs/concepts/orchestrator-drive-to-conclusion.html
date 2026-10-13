@@ -2971,6 +2971,13 @@
           <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
           <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
         </tr>
+        <tr id="case-review-fix-round-unavailable-base">
+          <td>2026-10-13</td>
+          <td><code>AGT-3056</code><br><span class="small">review-fix-round-unavailable-base</span></td>
+          <td>Independent review found that stopped fix rounds discarded the reviewed base, while a missing or moved reviewed ref repeatedly failed preparation before the agent started.</td>
+          <td>Completion cleared the base on Ready outcomes other than EnvironmentFailure; preparation retried a deterministic base failure and operator continue could not replace the saved review base.</td>
+          <td>Ready completions now preserve the base. An unavailable required base skips preparation retries and reaches escalation on its first typed release in both server paths. Operator continue can refresh a saved review base from the current review subject. No CLI starts and no integration-branch fallback occurs.</td>
+        </tr>
       </tbody>
     </table>
 

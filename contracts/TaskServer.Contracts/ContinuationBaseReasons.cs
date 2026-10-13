@@ -13,6 +13,15 @@ public static class ContinuationBaseReasons
     /// </summary>
     public const string ReviewFixRound = "review-fix-round";
 
+    public const string Missing = "continuation-base-missing";
+    public const string Moved = "continuation-base-moved";
+    public const string Unreadable = "continuation-base-unreadable";
+    public const string Incomplete = "continuation-base-incomplete";
+
+    /// <summary>An unusable required base needs operator repair before another claim.</summary>
+    public static bool IsUnavailable(string? reason)
+        => reason is Missing or Moved or Unreadable or Incomplete;
+
     public static bool IsReviewFixRound(string? reason)
         => string.Equals((reason ?? string.Empty).Trim(), ReviewFixRound, StringComparison.Ordinal);
 }

@@ -790,6 +790,19 @@ public sealed class RemoteTaskRunner
             teardownAttempted = true;
             return 3;
         }
+        catch (ContinuationBaseUnavailableException ex)
+        {
+            // No agent started. Preserve the required base and release once
+            // with its typed reason so the server escalates for operator repair.
+            releaseOnly = true;
+            handedBack = true;
+            teardownAttempted = true;
+            infrastructureFailureCode = ex.ReasonCode;
+            infrastructureFailureDetail = ex.Message;
+            shipper.Add("system", $"[runner] {ex.Message}");
+            _log(ex.Message);
+            return 1;
+        }
         catch (RemoteClaimPreparationException ex)
         {
             outcome = new RunOutcome(RunOutcomeKind.EnvironmentFailure, ex.Message);
@@ -1227,7 +1240,7 @@ public sealed class RemoteTaskRunner
                 _log,
                 shutdown);
         }
-        catch (WorktreeSalvageException)
+        catch (Exception ex) when (ex is WorktreeSalvageException or ContinuationBaseUnavailableException)
         {
             throw;
         }
@@ -2947,7 +2960,8 @@ public sealed class RemoteTaskRunner
             {
                 return await prepare(ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeSalvageException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeSalvageException
+                and not ContinuationBaseUnavailableException)
             {
                 last = ex;
                 log(

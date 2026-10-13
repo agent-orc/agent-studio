@@ -540,8 +540,13 @@ rollout decision.
   keeps the integration branch as rebase target, as AGT-2870 continuation
   rounds do. It never falls back to the integration branch for this reason: a
   missing, moved or unreadable base fails the preparation with a typed
-  `continuation-base-*` reason. The record therefore survives a claim whose
-  run never started and is cleared when a run settles. A rebase conflict at
+  `continuation-base-*` reason. Preparation does not retry this failure: both
+  server release paths escalate immediately with that reason and preserve the
+  base for operator repair. Restore the reviewed ref, or refresh the review
+  subject and explicitly continue to replace the old review base. Salvage bases
+  retain precedence. Every completion returning to Ready preserves the review
+  base unless a newer salvage or mechanical fallback base replaces it; terminal
+  completions clear it. A rebase conflict at
   integration ends in the existing AGT-2909 dead-end exit
   (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
   the base in one sentence and names no SHA.

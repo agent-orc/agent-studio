@@ -8,6 +8,8 @@ using Xunit;
 
 namespace AgentStudio.Tests;
 
+// clock-independent: the continuation SavedAtUtc date is stored metadata, never compared with the clock.
+
 /// <summary>
 /// AGT-2860: the restart drill for the post-review delivery sequence, built on
 /// the AGT-2849 harness shape (real git with a real origin, real merge runner,

@@ -596,12 +596,18 @@ public sealed class FollowUpAdmissionServiceTests : IDisposable
     /// the card reaches Ready, the claim hands it to the runner, and the queued
     /// prompt states where the round starts.
     /// </summary>
-    [Fact]
-    public async Task ContinueAfterProductFailure_QueuesAFixRound_OnTheReviewedResult()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContinueAfterProductFailure_QueuesAFixRound_OnTheReviewedResult(bool staleBase)
     {
         WriteJob("fix-me", TaskStates.HumanReview);
         var harness = Build();
         var (reviewAttemptId, resultRef, sha) = SeedSettledReview(harness, "fix-me", ReviewTerminalOutcome.ProductFailure);
+        if (staleBase)
+            Assert.True(ContinuationBaseStore.Save(Path.Combine(_watchPath, TaskStates.HumanReview, "fix-me"),
+                ReviewFixRoundBase.Decide("rev_old", "refs/heads/retired", new string('b', 40),
+                    _clock.GetUtcNow().UtcDateTime)!));
         harness.Settings.SetExecutionRunner(ProjectName, "agent-runner-01", remoteExecutionEnabled: true);
 
         var response = await harness.Service.ContinueJobAsync(

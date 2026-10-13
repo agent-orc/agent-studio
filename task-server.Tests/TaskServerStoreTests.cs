@@ -733,6 +733,29 @@ public sealed partial class TaskServerStoreTests
         Assert.Equal("2-ready", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
     }
 
+    [Theory]
+    [InlineData("continuation-base-missing")]
+    [InlineData("continuation-base-moved")]
+    [InlineData("continuation-base-incomplete")]
+    [InlineData("continuation-base-unreadable")]
+    public async Task Unavailable_review_base_escalates_on_the_first_release(string reason)
+    {
+        using var temp = new TempDirectory();
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.Zero));
+        var store = Store(temp.Path, clock);
+        await store.InitializeAsync();
+        var (_, project, task) = await SeedReadyTaskAsync(store);
+        await store.RegisterRunnerAsync("runner-a", Runner("instance-a"), "test", default);
+        var claim = await store.ClaimAsync(new ClaimRequest("runner-a", "instance-a"), "test", default);
+        await store.ReleaseLeaseAsync(claim.Run!.RunId,
+            new LeaseReleaseRequest("runner-a", "instance-a", claim.Lease!.LeaseId,
+                claim.Lease.Fence, reason, Detail: "Reviewed delivery unavailable."), "runner-a", default);
+        Assert.Equal("5e-escalated", (await store.GetTaskAsync(project.ProjectId, task.TaskId, default))!.State);
+        Assert.Contains(await store.ListAuditAsync(0, default), entry => entry.Action == reason);
+        Assert.NotEqual("claimed", (await store.ClaimAsync(
+            new ClaimRequest("runner-a", "instance-a"), "test", default)).Status);
+    }
+
     [Fact]
     public async Task Lost_worker_release_after_prelaunch_failures_keeps_release_semantics_and_breaks_the_chain()
     {

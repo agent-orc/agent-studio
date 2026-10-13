@@ -1425,10 +1425,10 @@ public sealed record SalvageContinuationBase(string Branch, string CommitSha);
 /// </summary>
 public sealed class ContinuationBaseUnavailableException : InvalidOperationException
 {
-    public const string Missing = "continuation-base-missing";
-    public const string Moved = "continuation-base-moved";
-    public const string Unreadable = "continuation-base-unreadable";
-    public const string Incomplete = "continuation-base-incomplete";
+    public const string Missing = ContinuationBaseReasons.Missing;
+    public const string Moved = ContinuationBaseReasons.Moved;
+    public const string Unreadable = ContinuationBaseReasons.Unreadable;
+    public const string Incomplete = ContinuationBaseReasons.Incomplete;
 
     public ContinuationBaseUnavailableException(
         string reasonCode, string? reference, string? expectedSha, string? observedSha, Exception? inner = null)

@@ -186,6 +186,69 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
         Assert.Equal(resultRef, AgentStudio.Runner.ContinuationBaseStore.Read(progressFolder)?.Ref);
     }
 
+    [Theory]
+    [InlineData("Stopped")]
+    [InlineData("MechanicalFallback")]
+    [InlineData("EnvironmentFailure")]
+    public async Task Ready_completion_preserves_the_review_base_for_the_next_claim(string outcome)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Fix round retry", "Prompt.");
+        var resultRef = Contract.FencedGitRefs.ImmutableResult("run_reviewed", 4, new string('a', 40));
+        // clock-independent: SavedAtUtc is persisted metadata, never compared with the clock.
+        var record = AgentStudio.Runner.ReviewFixRoundBase.Decide(
+            "rev_reviewed", resultRef, new string('a', 40), new DateTime(2026, 10, 13, 8, 0, 0, DateTimeKind.Utc))!;
+        Assert.True(AgentStudio.Runner.ContinuationBaseStore.Save(
+            Path.Combine(_watchPath, TaskStates.Ready, TaskKey), record));
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/fix-round.git");
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        Assert.Equal(RClaimStatus.Claimed, claim.Status);
+        var completion = await client.CompleteRunAsync(new RRemoteComplete(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId, outcome,
+            Source: ProjectName, AttemptId: claim.Lease.AttemptId,
+            AuthorityEpoch: claim.Lease.AuthorityEpoch, IdempotencyKey: "fix-round-complete"), CancellationToken.None);
+        Assert.Equal(TaskStates.Ready, completion!.TargetState);
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch, "fix-round-release"), CancellationToken.None);
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner", IdempotencyKey: "next-fix-round"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Claimed, next.Status);
+        Assert.Equal(resultRef, next.ContinuationBaseRef);
+        Assert.Equal(record.CommitSha, next.ContinuationBaseSha);
+    }
+
+    [Theory]
+    [InlineData("continuation-base-missing")]
+    [InlineData("continuation-base-moved")]
+    public async Task Unavailable_review_base_escalates_without_another_claim(string reason)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Missing reviewed delivery", "Prompt.");
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/fix-round.git");
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        await client.ReleaseLeaseAsync(new RRelease(
+            claim.TaskKey!, claim.Lease!.LeaseId, claim.Lease.FencingToken, RunnerId,
+            claim.Lease.AttemptId, claim.Lease.AuthorityEpoch, "base-unavailable-release",
+            Outcome: reason, Detail: "The reviewed ref is unavailable."), CancellationToken.None);
+        var folder = Path.Combine(_watchPath, TaskStates.Escalated, TaskKey);
+        Assert.True(Directory.Exists(folder));
+        Assert.Contains(reason, File.ReadAllText(Path.Combine(folder, "status.md")));
+        var next = await client.ClaimAsync(new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"), CancellationToken.None);
+        Assert.Equal(RClaimStatus.Empty, next.Status);
+    }
+
     [Fact]
     public async Task Remote_claim_stashes_follow_up_and_start_hash_consumes_it_into_run_history()
     {
@@ -1797,6 +1860,33 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             || line.Contains("clone failed", StringComparison.OrdinalIgnoreCase));
         var taskJson = File.ReadAllText(Path.Combine(_watchPath, TaskStates.Ready, TaskKey, "task.json"));
         Assert.Contains("\"attempts\": 1", taskJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("continuation-base-missing", "refs/heads/retired")]
+    [InlineData("continuation-base-moved", "refs/heads/main")]
+    public async Task Remote_runner_releases_an_unavailable_review_base_with_its_typed_reason(string reason, string reference)
+    {
+        SeedTask(TaskStates.Ready, TaskKey, "Unavailable review base", "Prompt.");
+        var origin = await SeedOriginAsync();
+        using var factory = BuildFactory();
+        using var http = factory.CreateClient();
+        using var client = new RClient(http, RunnerId);
+        await RegisterCodingRunnerAsync(client, http);
+        await AssignRemoteAsync(http);
+        await AddRepositoryUrlAsync(http, "https://github.com/example/fix-round.git");
+        var claim = await ClaimWithSuccessfulPreflightAsync(client, new RClaim(
+            RunnerId, ProjectName, "host", 1, "remote-runner"));
+        var logs = new List<string>();
+        var runner = new RTaskRunner(RunnerOptions("must-not-start"), client, logs.Add);
+        var exit = await runner.RunClaimedAsync(
+            claim.TaskKey!, claim.Lease!, CancellationToken.None,
+            claim.ProjectId, origin, "main", claim.TaskKind,
+            continuationBaseRef: reference, continuationBaseSha: new string('a', 40),
+            continuationBaseReason: Contract.ContinuationBaseReasons.ReviewFixRound);
+        Assert.Equal(1, exit);
+        Assert.DoesNotContain(logs, line => line.Contains("remote-environment-preparation-failed", StringComparison.Ordinal));
+        Assert.Contains(reason, File.ReadAllText(Path.Combine(_watchPath, TaskStates.Escalated, TaskKey, "status.md")));
     }
 
     [Fact]

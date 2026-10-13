@@ -262,6 +262,15 @@ public static class LeaseEndpoints
                     if (task is not null && route == RemoteLeaseReleaseRoute.LostWorker)
                         budget.Reset(task);
                     if (task is { State: TaskStates.Progress }
+                        && route == RemoteLeaseReleaseRoute.ContinuationBaseUnavailable)
+                    {
+                        await humanReviewEscalation.EscalateAsync(
+                            task.Id, task.WatchPath, task.ProjectName,
+                            req.Outcome!,
+                            $"{req.Detail} Recovery: restore the reviewed ref or refresh the review subject, then continue the card.",
+                            ct, releaseWrite);
+                    }
+                    if (task is { State: TaskStates.Progress }
                         && route == RemoteLeaseReleaseRoute.PrelaunchInfrastructure)
                     {
                         var decision = budget.Record(task, req.Detail, req.Outcome, released.Lease?.Hostname);
@@ -1670,10 +1679,6 @@ public static class LeaseEndpoints
             // Settlement has already committed the attempt's terminal fact. The
             // stop receipt must be retired even if a later projection fails.
             var settledStop = stops.Clear(req.TaskKey, attemptId, req.FencingToken, "settled");
-            // AGT-3056: a fix round's base outlives a claim that never started
-            // the agent; once a run settled with any other outcome it is spent.
-            if (outcome != "environmentfailure")
-                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             var settledRun = settled.RunAttempt ?? authority.GetRun(attemptId);
             var terminalAt = settledRun?.TerminalAt ?? DateTime.UtcNow;
             var terminalResult = settledRun?.TerminalOutcome ?? outcome;
@@ -2113,6 +2118,10 @@ public static class LeaseEndpoints
                 details["missingEnvelopeFacts"] = string.Join(",", envelopeDecision.MissingFacts ?? []);
                 details["deliveryAction"] = deliveryFailure.Escalate ? "escalate" : "requeue";
             }
+            // Ready retries keep the reviewed delivery unless a newer salvage
+            // or mechanical fallback base replaces it later in this completion.
+            if (targetState != TaskStates.Ready)
+                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             RemoteClaimFailureDecision? claimFailure = null;
             if (outcome == "environmentfailure")
             {

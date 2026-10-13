@@ -83,7 +83,9 @@ public static class ReviewFixRoundBase
     /// <summary>
     /// Pure decision for an operator continue: it is a fix round when the
     /// card's latest settled review graded its current delivery ProductFailure
-    /// and the card does not already carry a base from another round.
+    /// and the card does not already carry a salvage base from another round.
+    /// An explicit continue refreshes an existing review base from the current
+    /// reviewed subject, allowing recovery after its old ref was retired.
     /// </summary>
     public static ContinuationBaseRecord? ForOperatorContinue(
         ReviewAttemptDto? latestSettledReview,
@@ -91,7 +93,7 @@ public static class ReviewFixRoundBase
         ContinuationBaseRecord? existingBase,
         DateTime savedAtUtc)
     {
-        if (existingBase is not null) return null;
+        if (existingBase is not null && !IsFixRound(existingBase.Reason)) return null;
         if (latestSettledReview is not { Outcome: ReviewTerminalOutcome.ProductFailure }) return null;
         if (folderSubject is null
             || !string.Equals(folderSubject.ResultSha, latestSettledReview.Subject.ExpectedResultSha,
@@ -135,7 +137,9 @@ public static class ReviewFixRoundBase
         if (timeline.ReadAll(folderPath).Any(row =>
                 row.Kind == TimelineEventKinds.ContinuationBaseRecorded
                 && row.Details?.GetValueOrDefault("reviewAttemptId") == record.AttemptId
-                && row.Details?.GetValueOrDefault("reason") == record.Reason))
+                && row.Details?.GetValueOrDefault("reason") == record.Reason
+                && row.Details?.GetValueOrDefault("ref") == record.Ref
+                && row.Details?.GetValueOrDefault("sha") == record.CommitSha))
             return;
         timeline.Append(folderPath, new TimelineEvent
         {
