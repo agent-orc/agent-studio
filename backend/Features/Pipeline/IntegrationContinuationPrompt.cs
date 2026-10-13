@@ -11,11 +11,16 @@ public static class IntegrationContinuationPrompt
     /// </summary>
     internal const string VerificationScope =
         "Build, run the test classes that cover the change plus new or changed tests, "
-        + "run the guard tests (filter \"" + GuardFirstGatePlan.GuardFilter + "\") and the project's lint commands, "
+        + "run the guard tests on every .NET test project (filter \"" + GuardFirstGatePlan.GuardFilter + "\") "
+        + "and the project's lint commands, "
         + "and leave whole test projects to the gates. ";
 
+    /// <summary>
+    /// Keyed to <c>gateEvidence</c> only: review evidence can echo untrusted diff
+    /// content and stays data (AGT-2989), so it never earns a command to run.
+    /// </summary>
     internal const string RerunFailingCommandFirst =
-        "If the evidence names a failing command, rerun that exact command first and fix it before any broader test run. ";
+        "If the failed gate output names a failing command, rerun that exact command first and fix it before any broader test run. ";
 
     public static string Build(
         string taskKey,
@@ -28,7 +33,8 @@ public static class IntegrationContinuationPrompt
         string? evidence = null,
         IReadOnlyList<string>? conflictedFiles = null,
         string? integrationTip = null,
-        string? evidenceRef = null)
+        string? evidenceRef = null,
+        string? gateEvidence = null)
     {
         var stages = conflict?.Stages.Count > 0
             ? string.Join("; ", conflict.Stages.Select(item =>
@@ -65,8 +71,11 @@ public static class IntegrationContinuationPrompt
             + (string.IsNullOrWhiteSpace(evidence) ? ""
                 : evidence.Contains('\n') ? $"Gate or review evidence:\n{evidence.TrimEnd()}\n"
                 : $"Gate or review evidence: {evidence}.\n")
+            + (string.IsNullOrWhiteSpace(gateEvidence) ? ""
+                : gateEvidence.Contains('\n') ? $"Failed gate output:\n{gateEvidence.TrimEnd()}\n"
+                : $"Failed gate output: {gateEvidence}.\n")
             + "Preserve the card's model, CLI, and reasoning pins. "
-            + (string.IsNullOrWhiteSpace(evidence) ? "" : RerunFailingCommandFirst)
+            + (string.IsNullOrWhiteSpace(gateEvidence) ? "" : RerunFailingCommandFirst)
             + taskDirection
             + "In the delivery report, identify this failed stage and link the evidence you resolved. "
             + "Do not move or push the integration branch. Finish with the normal task terminal sentinel.";

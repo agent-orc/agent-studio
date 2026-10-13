@@ -392,6 +392,6 @@ public static class GateFailureFixRoundPrompt
             integrationBranch,
             stage,
             triage.ReasonLine.TrimEnd('.'),
-            evidence: "failing items: " + string.Join("; ", triage.FailingItems),
+            gateEvidence: "failing items: " + string.Join("; ", triage.FailingItems),
             evidenceRef: evidenceRef);
 }

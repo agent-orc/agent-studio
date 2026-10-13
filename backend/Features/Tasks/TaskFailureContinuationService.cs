@@ -139,6 +139,8 @@ public sealed class TaskFailureContinuationService
     /// selected failure stays the last current failed step; when that is a later
     /// step such as the escalation, the failed build-test gate of the same
     /// attempt still contributes its reason, because it names the failing command.
+    /// That reason travels as gate evidence, apart from review findings, so only
+    /// the gate's own output earns the rerun-first instruction.
     /// </summary>
     internal static (string Stage, string Reason, string Prompt) BuildContinuationPrompt(
         TaskInfo job,
@@ -161,7 +163,6 @@ public sealed class TaskFailureContinuationService
         {
             findings,
             failed?.VerdictSummary ?? string.Empty,
-            GateReasonExcerpt(FailedGateStep(steps, failed, subject)),
             ReadEvidenceExcerpt(job.FolderPath, failed?.EvidenceRef),
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
         var prompt = IntegrationContinuationPrompt.Build(
@@ -173,7 +174,8 @@ public sealed class TaskFailureContinuationService
             failed?.ConflictReport ?? currentFailure?.ConflictReport,
             evidence,
             integrationTip: integrationTip,
-            evidenceRef: failed?.EvidenceRef);
+            evidenceRef: failed?.EvidenceRef,
+            gateEvidence: GateReasonExcerpt(FailedGateStep(steps, failed, subject)));
         return (stage, reason, prompt);
     }
 

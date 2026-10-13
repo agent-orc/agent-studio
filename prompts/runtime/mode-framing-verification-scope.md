@@ -2,9 +2,9 @@
 
 Verify the change in this run with focused checks. The review gates run the whole test projects after delivery.
 
-1. Build the solution or the projects you changed.
+1. Build the solution, or the projects you changed plus the test projects that item 3 runs.
 2. Run the test classes that cover the change, plus every new or changed test, with a class filter (for example `dotnet test <project> --no-build --filter "FullyQualifiedName~<TestClass>"`).
-3. Run the guard tests of each .NET test project you changed with `--filter "{{guard_filter}}"`.
+3. Run the guard tests on every .NET test project of the repository, not only the ones you changed: each dotnet `commands.test` entry with `--filter "{{guard_filter}}"`. A guard in one test project can police code and tests of the others, and the gate runs this filter on every entry. The guard run takes seconds.
 4. Run the project's lint commands.
 5. Do not run an unfiltered `commands.test` entry, a whole test project, or a coverage run in this run.
 
