@@ -160,7 +160,8 @@ public sealed class GitSmartHttpServer : IDisposable
     public void Dispose()
     {
         _stopping.Cancel();
-        try { _listener.Stop(); } catch (ObjectDisposedException) { }
+        // Close only: Stop() before Close() makes the managed listener on Linux bind
+        // the released port again, which fails once a parallel test has taken it.
         _listener.Close();
         try { _loop.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { }
         _stopping.Dispose();

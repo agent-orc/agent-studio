@@ -453,7 +453,9 @@ public sealed class ReviewPrivateRepositoryTests : IAsyncLifetime
         public async ValueTask DisposeAsync()
         {
             _stop.Cancel();
-            _listener.Stop();
+            // Close only: on Linux the managed HttpListener releases the port in Stop()
+            // and binds it again in a later Close(), which fails with "Address already
+            // in use" once a parallel test has taken the port.
             _listener.Close();
             await _loop;
             _stop.Dispose();
