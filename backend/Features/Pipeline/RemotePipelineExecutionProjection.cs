@@ -294,7 +294,7 @@ internal static class RemotePipelineExecutionProjection
         }
 
         var agentCalls = calls
-            .Where(call => TokenModelDisplay.IsAgentParticipant(call.ParticipantId))
+            .Where(call => TokenParticipants.IsAgent(call.ParticipantId))
             .ToList();
         if (agentCalls.Count == 0)
             agentCalls = calls.Where(call => grade is null || call.Ts <= (coreCompletedAt ?? grade.ReceivedAt)).ToList();
