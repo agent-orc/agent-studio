@@ -161,6 +161,29 @@ public sealed class IntegrationGateReceiptsTests : IDisposable
     }
 
     [Fact]
+    public void Economics_counts_published_batch_members_once_after_infrastructure_retry()
+    {
+        var start = Now.AddHours(-2);
+        BatchGateExecutionFact Attempt(string outcome, int offsetMinutes, long durationMs) => new(
+            "fixture", "batch-1", "run-1", new string('b', 40), outcome, "host",
+            start.AddMinutes(offsetMinutes), start.AddMinutes(offsetMinutes + 40),
+            0, 0, "evidence.jsonl", durationMs);
+
+        var row = GateEconomicsEndpoints.ProjectRow("fixture", [],
+            since: Now.AddDays(-1), now: Now, retest: null, batchMetrics:
+            [
+                new BatchGateMetric("fixture", 3, Attempt("Fail", 0, 2_400_000), Published: true),
+                new BatchGateMetric("fixture", 3, Attempt("Ok", 45, 2_700_000), Published: true),
+            ]);
+
+        Assert.Equal(3, row.GatedMerges);
+        Assert.Equal(1, row.GateRed);
+        Assert.Equal(1, row.GateGreen);
+        Assert.NotNull(row.GateMinutesMedian);
+        Assert.Equal(85d / 6, row.GateMinutesMedian.Value, precision: 6);
+    }
+
+    [Fact]
     public void Old_receipt_header_does_not_read_legacy_selection_outside_window()
     {
         Directory.CreateDirectory(_root);
