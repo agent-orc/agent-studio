@@ -46,6 +46,8 @@ public record IntegrationBranchSyncResult(
         or IntegrationBranchSyncOutcome.Error);
 }
 
+public enum PublishedDeliveryContainment { Contained, Missing, Unavailable }
+
 /// <summary>
 /// Result of <see cref="GitService.ReleaseIntegrationBranchToCheckout"/>: what
 /// happened to the developer checkout's local branch, with the SHAs the
@@ -5150,23 +5152,65 @@ public class GitService
             case IntegrationLaneSyncAction.KeepPending:
                 return new(IntegrationBranchSyncOutcome.LocalAhead);
             case IntegrationLaneSyncAction.Diverged:
+                var unpublished = UnpublishedLaneCommits(repoRoot, laneTip!, publishedTip!);
+                if (unpublished.Count == 0)
+                {
+                    if (UpdateLaneRef(repoRoot, integrationBranch, publishedTip!, laneTip) is { } resetError)
+                        return new(IntegrationBranchSyncOutcome.Error, resetError);
+                    _logger.LogInformation(
+                        "Integration lane {Lane} restarted at published {PublishedSha}; all former lane deliveries are published",
+                        lane, AbbreviateSha(publishedTip!));
+                    return new(IntegrationBranchSyncOutcome.FastForwarded);
+                }
                 _logger.LogWarning(
-                    "Integration lane {Lane} ({LaneSha}) at {Path} diverged from {Published} ({PublishedSha}); refusing to overwrite either tip",
+                    "Integration lane {Lane} ({LaneSha}) at {Path} diverged from {Published} ({PublishedSha}); unpublished commits: {Unpublished}",
                     lane,
                     AbbreviateSha(laneTip!),
                     repoRoot,
                     publishedRef,
-                    AbbreviateSha(publishedTip!));
+                    AbbreviateSha(publishedTip!),
+                    string.Join(", ", unpublished));
                 return new(
                     IntegrationBranchSyncOutcome.Diverged,
-                    $"Integration branch '{integrationBranch}' diverged from origin - heal or recreate it via project settings before accepting deliveries. " +
-                    $"The integration lane {lane} carries gated merges that were never published; " +
-                    $"drop it with `git update-ref -d {lane}` to restart integration from {publishedRef}.");
+                    $"Integration branch '{integrationBranch}' diverged from origin. " +
+                    $"The integration lane {lane} still carries unpublished commits: {string.Join(", ", unpublished)}.");
             default:
                 return new(fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote
                     ? IntegrationBranchSyncOutcome.NoRemote
                     : IntegrationBranchSyncOutcome.UpToDate);
         }
+    }
+
+    private IReadOnlyList<string> UnpublishedLaneCommits(string repoRoot, string laneTip, string publishedTip)
+    {
+        var (baseSha, _, baseCode) = RunGitArgs(repoRoot, "merge-base", laneTip, publishedTip);
+        if (baseCode != 0) return [laneTip];
+        var (commits, _, listCode) = RunGitArgs(
+            repoRoot, "rev-list", "--first-parent", "--reverse", $"{baseSha.Trim()}..{laneTip}");
+        if (listCode != 0) return [laneTip];
+        var missing = new List<string>();
+        foreach (var commit in commits.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var (parents, _, parentCode) = RunGitArgs(repoRoot, "show", "-s", "--format=%P", commit);
+            var pair = parents.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parentCode != 0 || pair.Length != 2)
+            {
+                missing.Add(commit);
+                continue;
+            }
+            var delivery = pair[1];
+            if (IsAncestor(repoRoot, delivery, publishedTip)) continue;
+            var (fork, _, forkCode) = RunGitArgs(repoRoot, "merge-base", pair[0], delivery);
+            if (forkCode == 0)
+            {
+                var (cherry, _, cherryCode) = RunGitArgs(repoRoot, "cherry", publishedTip, delivery, fork.Trim());
+                var changes = cherry.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (cherryCode == 0 && changes.Length > 0 && changes.All(line => line.StartsWith("- ", StringComparison.Ordinal)))
+                    continue;
+            }
+            missing.Add($"{commit} (delivery {delivery})");
+        }
+        return missing;
     }
 
     private IntegrationBranchSyncResult FetchIntegrationBranch(
@@ -5201,6 +5245,21 @@ public class GitService
             return new(IntegrationBranchSyncOutcome.Error, detail);
         }
         return new(IntegrationBranchSyncOutcome.UpToDate);
+    }
+
+    /// <summary>Checks a delivery against the freshly fetched publication, not the developer checkout.</summary>
+    public PublishedDeliveryContainment CheckPublishedDelivery(
+        string repoRoot, string branch, string deliverySha, CancellationToken cancellationToken = default)
+    {
+        if (!ReviewSubjectStore.IsValidResultSha(deliverySha)) return PublishedDeliveryContainment.Unavailable;
+        var fetched = FetchIntegrationBranch(repoRoot, branch, cancellationToken);
+        if (!fetched.Success || fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote)
+            return PublishedDeliveryContainment.Unavailable;
+        var published = GetBranchTip(repoRoot, $"refs/remotes/origin/{branch}");
+        if (published is null) return PublishedDeliveryContainment.Unavailable;
+        return IsAncestor(repoRoot, deliverySha, published)
+            ? PublishedDeliveryContainment.Contained
+            : PublishedDeliveryContainment.Missing;
     }
 
     /// <summary>
@@ -5543,6 +5602,17 @@ public class GitService
             && recorded.StartsWith($"{localSha}|{publishedSha}|", StringComparison.OrdinalIgnoreCase))
             reason = recorded[(localSha.Length + publishedSha.Length + 2)..];
         return new("behind", holder, branch, localSha, publishedSha, behind, dirty, lockPath, reason);
+    }
+
+    /// <summary>Refreshes origin before showing checkout lag to an operator.</summary>
+    public DeveloperCheckoutSyncResult ObserveDeveloperCheckoutStatus(
+        string repoRoot, string branch, CancellationToken ct = default)
+    {
+        var fetched = FetchIntegrationBranch(repoRoot, branch, ct);
+        if (!fetched.Success || fetched.Outcome == IntegrationBranchSyncOutcome.NoRemote)
+            return new("fetch-failed", repoRoot, branch, null, null, 0, [], null,
+                fetched.Error ?? $"origin/{branch} is unavailable.");
+        return GetDeveloperCheckoutStatus(repoRoot, branch);
     }
 
     /// <summary>Fetches the published branch and fast-forwards a clean holder

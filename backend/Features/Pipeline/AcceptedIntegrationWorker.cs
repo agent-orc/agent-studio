@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AgentStudio.Bus;
 
 namespace AgentStudio.Pipeline;
 
@@ -21,6 +22,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
     private readonly TimelineLog? _timeline;
     private readonly GitService? _git;
     private readonly BranchReclaimTriggerService? _branchReclaim;
+    private readonly AgentMessageBusBridge? _bus;
 
     public AcceptedIntegrationWorker(
         AcceptedIntegrationQueue queue,
@@ -32,7 +34,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         TaskTransitionService? transitions = null,
         TimelineLog? timeline = null,
         GitService? git = null,
-        BranchReclaimTriggerService? branchReclaim = null)
+        BranchReclaimTriggerService? branchReclaim = null,
+        AgentMessageBusBridge? bus = null)
     {
         _queue = queue;
         _runner = runner;
@@ -44,6 +47,7 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
         _timeline = timeline;
         _git = git;
         _branchReclaim = branchReclaim;
+        _bus = bus;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -207,6 +211,8 @@ public sealed class AcceptedIntegrationWorker : BackgroundService
 
         if (job.State == TaskStates.Completed && _transitions != null)
         {
+            if (AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(
+                    job, request.IntegrationBranch, _git, _bus, _logger)) return;
             var moveReason = $"Acceptance integration ended with {result.Outcome}: "
                              + (result.Error ?? "The delivery was not integrated.");
             var moved = await _transitions.MoveAsync(

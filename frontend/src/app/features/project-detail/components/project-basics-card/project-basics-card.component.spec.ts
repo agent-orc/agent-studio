@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideRouter } from '@angular/router';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { of } from 'rxjs';
@@ -136,6 +136,9 @@ describe('ProjectBasicsCardComponent (smoke)', () => {
     const fixture = TestBed.createComponent(ProjectBasicsCardComponent);
     fixture.componentRef.setInput('projectName', 'Demo');
     fixture.detectChanges();
+    TestBed.inject(HttpTestingController)
+      .expectOne('/api/projects/Demo/checkout/status')
+      .flush({ status: 'up-to-date', branch: 'develop', behind: 0, dirtyFiles: [], lockFile: null, reason: null });
     await fixture.whenStable();
     fixture.detectChanges();
 

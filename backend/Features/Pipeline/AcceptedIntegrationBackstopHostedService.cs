@@ -1,3 +1,6 @@
+using AgentStudio.Git;
+using AgentStudio.Bus;
+
 namespace AgentStudio.Pipeline;
 
 /// <summary>
@@ -22,6 +25,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
     private readonly PipelineExecutionLog? _pipelineLog;
     private readonly HistoricalIntegrationVerificationSweep? _historicalSweep;
     private readonly AcceptedIntegrationInventorySweep? _historicalInventory;
+    private readonly GitService? _git;
+    private readonly AgentMessageBusBridge? _bus;
     private readonly object _alertGate = new();
     private readonly AcceptedIntegrationAlertLogState _alertLog = new();
     private AcceptedIntegrationAlertSnapshot _currentAlert = new()
@@ -42,7 +47,9 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         TimelineLog? timeline = null,
         PipelineExecutionLog? pipelineLog = null,
         HistoricalIntegrationVerificationSweep? historicalSweep = null,
-        AcceptedIntegrationInventorySweep? historicalInventory = null)
+        AcceptedIntegrationInventorySweep? historicalInventory = null,
+        GitService? git = null,
+        AgentMessageBusBridge? bus = null)
     {
         _scanner = scanner;
         _settings = settings;
@@ -56,6 +63,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
         _pipelineLog = pipelineLog;
         _historicalSweep = historicalSweep;
         _historicalInventory = historicalInventory;
+        _git = git;
+        _bus = bus;
     }
 
     public AcceptedIntegrationAlertSnapshot CurrentAlert
@@ -425,6 +434,8 @@ public sealed class AcceptedIntegrationBackstopHostedService : BackgroundService
     {
         if (job.State == TaskStates.Completed && _transitions != null)
         {
+            var branch = _settings.Get(job.ProjectName).IntegrationBranch;
+            if (AcceptedIntegrationPublishedDeliveryGuard.KeepCompleted(job, branch, _git, _bus, _logger)) return;
             var moveReason = $"Acceptance integration ended with {outcome}: "
                              + (detail ?? "The delivery was not integrated.");
             var moved = _transitions.MoveAsync(
