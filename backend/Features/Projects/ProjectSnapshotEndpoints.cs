@@ -47,6 +47,7 @@ public static class ProjectSnapshotEndpoints
             ITaskAccess taskAccess,
             PublishTargetService publish,
             AgentStudio.Registry.ProjectRegistry projectRegistry,
+            AgentStudio.Git.GitService git,
             IConfiguration configuration) =>
         {
             // Resolve the watch path once. Every per-project field below
@@ -161,6 +162,9 @@ public static class ProjectSnapshotEndpoints
                     projectRunner.ActiveExecution,
                     projectRunner.QueuedJobIds
                 },
+                checkout = ProjectCheckoutEndpoints.Resolve(projectName, scanner, projectRegistry, settingsSvc, git) is { } checkoutTarget
+                    ? git.GetDeveloperCheckoutStatus(checkoutTarget.Path, checkoutTarget.Branch)
+                    : null,
                 orchestratorLogTail = logTail,
                 orchestratorSession = session,
                 reviewDecisionsPending = reviewDecisions,

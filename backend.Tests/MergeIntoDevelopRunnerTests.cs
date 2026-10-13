@@ -2987,18 +2987,23 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(string.Empty, RunGit(repo, "status --porcelain").Out.Trim());
     }
 
-    [Fact]
-    public async Task PushIntegrationBranch_ReleaseError_RecordsCheckoutWarningAfterSuccessfulPush()
+    [Theory]
+    [InlineData("dirty")]
+    [InlineData("lock")]
+    public async Task PushIntegrationBranch_ReleaseError_RecordsCheckoutWarningAfterSuccessfulPush(string obstacle)
     {
         var (repo, remote) = SeedDevelopWithOriginAndTask("release-error", "task/2996-release-error");
         var before = RunGit(repo, "rev-parse refs/heads/develop").Out.Trim();
         var published = RunGit(repo, "rev-parse refs/heads/task/2996-release-error").Out.Trim();
         RunGit(repo, $"update-ref {GitService.IntegrationLaneRef("develop")} {published}");
 
-        // The push writes origin/develop, while this lock makes the subsequent
-        // checkout fast-forward report an Error result without throwing.
-        var lockPath = Path.Combine(repo, ".git", "refs", "heads", "develop.lock");
-        File.WriteAllText(lockPath, "locked by another local operation");
+        // The push writes origin/develop while checkout sync is obstructed.
+        var lockPath = Path.Combine(repo, ".git", "index.lock");
+        if (obstacle == "lock") File.WriteAllText(lockPath, "locked by another local operation");
+        else File.WriteAllText(Path.Combine(repo, "task.txt"), "operator edit in flight");
+        var indexBefore = File.ReadAllBytes(Path.Combine(repo, ".git", "index"));
+        var fileBefore = File.Exists(Path.Combine(repo, "task.txt"))
+            ? File.ReadAllText(Path.Combine(repo, "task.txt")) : null;
         var entries = new List<(LogLevel Level, string Message)>();
         var (git, log) = Build(repo);
         var jobFolder = BeginRun(log, repo, jobId: "2996-release-error");
@@ -3012,18 +3017,24 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal("pushed", result.Status);
         Assert.Equal(published, RemoteSha(remote, "develop"));
         Assert.Equal(before, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(indexBefore, File.ReadAllBytes(Path.Combine(repo, ".git", "index")));
+        Assert.Equal(fileBefore, File.Exists(Path.Combine(repo, "task.txt"))
+            ? File.ReadAllText(Path.Combine(repo, "task.txt")) : null);
         var warning = Assert.Single(entries, entry =>
-            entry.Level == LogLevel.Warning && entry.Message.Contains("was not released", StringComparison.Ordinal));
+            entry.Level == LogLevel.Information && entry.Message.Contains("was not released", StringComparison.Ordinal));
         Assert.Contains(published, warning.Message);
         Assert.Contains(repo, warning.Message);
-        Assert.Contains("develop.lock", warning.Message);
+        Assert.Contains(obstacle == "lock" ? "index.lock" : "untracked", warning.Message, StringComparison.OrdinalIgnoreCase);
+        var checkout = git.GetDeveloperCheckoutStatus(repo, "develop");
+        Assert.Equal("behind", checkout.Status);
+        Assert.True(checkout.Behind > 0);
         var step = ReadPushStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Passed, step!.Status);
         Assert.Equal("pushed", step.Verdict);
         Assert.Contains("was not released", step.Reason);
-        Assert.Contains("develop.lock", step.Reason);
-        Assert.Contains("git -C", step.Reason);
+        Assert.Contains(obstacle == "lock" ? "index.lock" : "untracked", step.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("checkout/sync", step.Reason);
         Assert.Contains(published, step.VerdictSummary);
     }
 

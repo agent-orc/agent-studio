@@ -54,6 +54,48 @@ public sealed class IntegrationWorktreeProviderTests : IDisposable
     }
 
     [Fact]
+    public void Resolve_ConfiguredOriginWithoutPublishedRef_RefusesLocalHeadAsBase()
+    {
+        var repo = SeedRepo("missing-published-ref");
+        RunGit(repo, "checkout -q -b develop");
+        var bare = Path.Combine(_tempDir, "empty-origin.git");
+        Directory.CreateDirectory(bare);
+        Assert.Equal(0, RunGit(bare, "init -q --bare").Code);
+        Assert.Equal(0, RunGit(repo, $"remote add origin \"{bare}\"").Code);
+
+        var resolution = Provider(repo).Resolve(repo, "develop");
+
+        Assert.False(resolution.Success);
+        Assert.Contains("refs/remotes/origin/develop", resolution.Error);
+    }
+
+    [Fact]
+    public void Resolve_UnfetchedPublishedBranch_UsesFetchedOriginInsteadOfLocalHead()
+    {
+        var repo = SeedRepo("unfetched-published-ref");
+        RunGit(repo, "checkout -q -b develop");
+        var local = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        var bare = Path.Combine(_tempDir, "published-origin.git");
+        Directory.CreateDirectory(bare);
+        Assert.Equal(0, RunGit(bare, "init -q --bare").Code);
+        Assert.Equal(0, RunGit(repo, $"remote add origin \"{bare}\"").Code);
+        RunGit(repo, "checkout -q -b published");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "published");
+        Assert.Equal(0, RunGit(repo, "add -A").Code);
+        Assert.Equal(0, RunGit(repo, "commit -q -m published").Code);
+        var published = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        Assert.Equal(0, RunGit(repo, "push -q origin published:develop").Code);
+        RunGit(repo, "checkout -q develop");
+        RunGit(repo, "update-ref -d refs/remotes/origin/develop");
+
+        var resolution = Provider(repo).Resolve(repo, "develop");
+
+        Assert.True(resolution.Success, resolution.Error);
+        Assert.Equal(local, RunGit(repo, "rev-parse refs/heads/develop").Out.Trim());
+        Assert.Equal(published, RunGit(resolution.Path!, "rev-parse HEAD").Out.Trim());
+    }
+
+    [Fact]
     public void Resolve_LeavesTheIntegrationBranchAvailableToTheDeveloper()
     {
         var repo = SeedRepo("branch-not-claimed");

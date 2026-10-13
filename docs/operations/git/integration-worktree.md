@@ -74,6 +74,9 @@ against the returned path.
   the build gate, and a red-gate rollback move only the lane,
   compare-and-swapped against the tip observed before the merge. Commits someone
   made on the developer checkout's local `develop` are never part of the lane.
+  If `origin` is configured but its tracking ref is unavailable, preparation
+  fetches it. A missing remote branch then fails with the ref named; it never
+  seeds from the checkout's HEAD.
 - **Publishing the result.** Only the integration push worker publishes
   `develop`: it pushes the exact SHA the gate approved from the lane to
   `origin/develop` (`merge-into-develop push enqueued ... approved=<sha>`, then
@@ -101,15 +104,20 @@ published SHA:
 
 | Local branch | What happens |
 |---|---|
-| Behind the published SHA | Fast-forwarded to it. A checkout that holds the branch is asked first, so its working tree follows; git refuses rather than overwriting an overlapping local edit, and then only the ref moves. |
+| Behind the published SHA | A holder checkout is fast-forwarded only when Git can move its index and working tree with HEAD. On refusal, its branch ref stays unchanged and checkout status reports the lag. An unheld branch may move by reference. |
 | Ahead of `origin/<branch>` (someone committed there), including commits made on top of the published SHA | Left untouched. A warning names the local SHA, the `origin/<branch>` SHA, and the published SHA. |
 | Already contains the published SHA and is on origin | Left as it is. |
 | On origin but on another line than the published SHA | Left untouched. |
 
 Only the integration push worker publishes `develop` and moves the checkout.
-If the post-push checkout fast-forward fails, the push step stays passed with a
-visible warning naming the published SHA, stale checkout, error, and manual
-recovery command (`git -C <checkout> merge --ff-only origin/develop`).
+If the post-push checkout fast-forward fails, the push step stays passed. The
+backend logs a warning once per changed lag state and the project snapshot and
+`GET /api/projects/{project}/checkout/status` expose the lag, dirty files and
+lock file. The operator can call `POST /api/projects/{project}/checkout/sync`
+to fetch and fast-forward a clean checkout. Its response reports obstacles for
+interactive resolution. The batch gate follows the same rule: a batch that
+reached origin is `Published` and its members are released even when the
+holder checkout refuses the fast-forward; only the lag signal is recorded.
 When no push worker runs for the result - the project disabled the
 `post-merge-into-develop-push` step - nothing is published and the checkout is
 not moved either; the gated result stays on the integration lane until a later
@@ -132,7 +140,7 @@ developer checkout, which silently required that checkout to have the
 integration branch out and failed whenever a local modification touched a
 delivered file. It has no build gate and no integration lane of its own, so it
 advances the local branch directly: fast-forward the checkout that holds the
-branch when git allows it, otherwise advance the ref.
+branch when Git allows it, otherwise leave its ref and files untouched.
 
 ## Consequences for a dirty developer checkout
 
@@ -141,14 +149,23 @@ branch when git allows it, otherwise advance the ref.
   [When the developer checkout moves](#when-the-developer-checkout-moves)).
 - If the edits do not overlap the delivery, the checkout is fast-forwarded and
   keeps them.
-- If they do overlap, git refuses the fast-forward: the branch still advances,
-  the edits stay exactly as they are, and that checkout is simply behind its
-  branch until the person commits, stashes, or resets on their own terms.
+- If they do overlap, Git refuses the fast-forward: the branch, index and edits
+  stay exactly as they are. The checkout is behind the published ref until the
+  person commits, stashes or resolves the edits and requests a sync.
 - Commits made on the checkout's `develop` are never merged, pushed, or moved
   by Studio.
 - Studio never switches the branch of the developer checkout.
 
 ## Operations
+
+- **Developer checkout lags behind develop.** Read the project's `checkout`
+  field in `GET /api/projects/{project}/snapshot`, or call
+  `GET /api/projects/{project}/checkout/status`. The `behind` count compares
+  the checked-out local branch to `origin/<branch>`. Call
+  `POST /api/projects/{project}/checkout/sync` with `X-Client-Id: local-default`
+  after inspecting its state. A clean checkout fast-forwards. A dirty checkout,
+  index lock or diverged branch returns a structured status and stays untouched;
+  resolve it in that checkout and retry. Sync never resets or stashes files.
 
 - **Disk.** One additional checkout per integrated project, next to the project.
   It carries no build output: the build gates create their own isolated

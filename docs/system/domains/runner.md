@@ -1400,16 +1400,14 @@ rollout decision.
 
 - Supervisor code is advice-first. Emergency primitives must call runner
   services, not poke task state directly.
-- A local worktree run integrates by advancing a ref, not by merging in the
-  shared checkout. `WorktreeTaskLifecycle.Integrate` rebases the task branch in
-  its own worktree and then calls
-  `GitService.FastForwardIntegrationBranch`, which prefers a fast-forward asked
-  of whichever checkout holds the integration branch (git carries unrelated local
-  modifications along and refuses rather than overwriting them) and otherwise
-  advances the ref with a compare-and-swap. The shared checkout therefore no
-  longer has to have the integration branch checked out, and uncommitted work
-  there neither blocks the integration nor is touched by it (AGT-2832; see
-  [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md)).
+- A local worktree run cuts and rebases the task branch from published
+  `origin/<branch>`, leaving gated merges on the Studio lane out of its base. It then
+  calls `GitService.FastForwardIntegrationBranch`. A checkout holding the
+  integration branch fast-forwards through Git so its branch, index and files
+  move together. If Git refuses, the local integration reports the obstacle
+  and leaves the held branch untouched. An unheld branch advances by
+  compare-and-swap. See
+  [operations/git/integration-worktree.md](../../operations/git/integration-worktree.md).
 - Teardown never drops uncommitted work. `WorktreeTaskLifecycle.TeardownIfIntegrated`
   snapshots any dirty/untracked worktree onto its `task/<id>` branch as a
   platform WIP safety commit before removing anything, and refuses teardown if

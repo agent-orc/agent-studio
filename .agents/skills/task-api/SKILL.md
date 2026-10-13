@@ -33,6 +33,16 @@ need a reliable scripted path because:
 
 ## Server contract
 
+### Sync a developer checkout after integration
+
+Read `GET /api/projects/{project}/checkout/status` (also included as `checkout`
+in the project snapshot). When it reports lag, an operator or calling agent can
+invoke `POST /api/projects/{project}/checkout/sync` with
+`X-Client-Id: local-default`. The action fetches `origin/<branch>` and
+fast-forwards only a clean checkout. Its structured response reports dirty
+files, an index lock or divergence for interactive resolution; it never stashes
+or discards changes.
+
 Stable backend listens on `http://127.0.0.1:5031`. Dev backend on
 `http://127.0.0.1:5030` (when running). The two have separate workspaces; pick
 the one whose project list contains the project you are targeting.

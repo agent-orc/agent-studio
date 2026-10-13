@@ -56,6 +56,32 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
     }
 
     [Fact]
+    public void Prepare_UsesPublishedRefWhenDeveloperBranchLags()
+    {
+        var (repo, life) = SeedWithDevelop("prepare-published-base");
+        AddBareOrigin(repo, "prepare-published-base-remote");
+        Assert.Equal(0, RunGit(repo, "push -q -u origin develop").Code);
+        var localBefore = RunGit(repo, "rev-parse develop").Out.Trim();
+        RunGit(repo, "checkout -q -b published");
+        File.WriteAllText(Path.Combine(repo, "README.md"), "published");
+        Commit(repo, "published");
+        var published = RunGit(repo, "rev-parse HEAD").Out.Trim();
+        Assert.Equal(0, RunGit(repo, "push -q origin published:develop").Code);
+        File.WriteAllText(Path.Combine(repo, "gated.txt"), "not published");
+        Commit(repo, "gated");
+        Assert.Equal(0, RunGit(repo,
+            $"update-ref {GitService.IntegrationLaneRef("develop")} HEAD").Code);
+        RunGit(repo, "checkout -q develop");
+        Assert.Equal(0, RunGit(repo, "fetch -q origin develop").Code);
+
+        var prep = life.Prepare(repo, "lagged-base", "develop", WorktreeRoot());
+
+        Assert.True(prep.Success, prep.Error);
+        Assert.Equal(published, RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim());
+        Assert.Equal(localBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+    }
+
+    [Fact]
     public void TwoParallelLocalFolderRuns_SameProject_NeverSeeEachOthersUncommittedFiles()
     {
         var (repo, life) = SeedWithDevelop("parallel-isolation");
@@ -141,14 +167,12 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
     }
 
     /// <summary>
-    /// AGT-2832: the local worktree run integrated by fast-forwarding the shared
-    /// checkout, so unrelated uncommitted work there could block the integration
-    /// and a successful one moved that checkout's files. The branch is now
-    /// advanced by reference; the developer's work is neither required to be
-    /// absent nor touched.
+    /// A local run cannot claim integration when Git refuses to move a held
+    /// branch, index and working tree together. Its task commit stays available
+    /// for retry after the developer resolves the checkout obstacle.
     /// </summary>
     [Fact]
-    public void DirectMerge_DirtyDeveloperCheckout_IntegratesAndKeepsTheEdits()
+    public void DirectMerge_DirtyDeveloperCheckout_ReportsObstacleAndKeepsTheEdits()
     {
         var (repo, life) = SeedWithDevelop("dirty-developer-checkout", seedShared: true);
         var prep = life.Prepare(repo, "task-dirty", "develop", WorktreeRoot());
@@ -156,17 +180,20 @@ public sealed class WorktreeTaskLifecycleTests : IDisposable
         File.WriteAllText(Path.Combine(prep.WorktreePath!, "shared.txt"), "delivered content");
         Commit(prep.WorktreePath!, "feat: task work");
         var taskTip = RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim();
+        var developBefore = RunGit(repo, "rev-parse develop").Out.Trim();
         // The person working in the checkout has edits in flight on the same file
         // the delivery touches, plus an untracked scratch file. git refuses to
         // carry those along, which used to fail the whole integration.
         File.WriteAllText(Path.Combine(repo, "shared.txt"), "local experiment");
         File.WriteAllText(Path.Combine(repo, "scratch.md"), "scratch notes");
+        var indexBefore = File.ReadAllBytes(Path.Combine(repo, ".git", "index"));
 
         var result = life.Integrate(repo, prep.WorktreePath!, prep.Branch!, "develop", IntegrationStrategies.DirectMerge);
 
-        Assert.Equal(IntegrationOutcome.Merged, result.Outcome);
-        Assert.Equal(taskTip, RunGit(repo, "rev-parse develop").Out.Trim());
-        Assert.Equal(taskTip, result.IntegratedSha);
+        Assert.Equal(IntegrationOutcome.Error, result.Outcome);
+        Assert.Equal(developBefore, RunGit(repo, "rev-parse develop").Out.Trim());
+        Assert.Equal(indexBefore, File.ReadAllBytes(Path.Combine(repo, ".git", "index")));
+        Assert.Equal(taskTip, RunGit(prep.WorktreePath!, "rev-parse HEAD").Out.Trim());
         Assert.Equal("local experiment", File.ReadAllText(Path.Combine(repo, "shared.txt")));
         Assert.Equal("scratch notes", File.ReadAllText(Path.Combine(repo, "scratch.md")));
     }

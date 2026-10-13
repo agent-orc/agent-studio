@@ -861,6 +861,61 @@ public sealed class BatchGatePilotServiceTests : IDisposable
         Assert.Equal(localBase, Git(_repo, "rev-parse", "develop").Trim());
         Assert.Equal("local untracked edit\n",
             File.ReadAllText(Path.Combine(_repo, "docs", "local-sync.md")));
+        var lag = factory.Services.GetRequiredService<AgentStudio.Git.GitService>()
+            .GetDeveloperCheckoutStatus(_repo, "develop");
+        Assert.Equal("behind", lag.Status);
+        Assert.Equal(RemoteTip(), lag.PublishedSha);
+        Assert.Equal(1, lag.Behind);
+        Assert.Contains("local-sync.md", lag.Reason);
+    }
+
+    [Fact]
+    public async Task Resumed_publication_releases_member_when_local_checkout_refuses_the_fast_forward()
+    {
+        using var factory = BuildFactory();
+        _ = factory.CreateClient();
+        EnableBatchGate(factory, closeSize: 1);
+        var member = SeedMember(factory, "DOC-RESUME-DIRTY", "docs/resume-dirty.md");
+        var localBase = Git(_repo, "rev-parse", "develop").Trim();
+        Git(_repo, "checkout", "-q", "develop");
+        var pilot = factory.Services.GetRequiredService<BatchGatePilotService>();
+        var store = factory.Services.GetRequiredService<BatchGateStore>();
+        string? blockedPath = null;
+        _gate.Batch = request =>
+        {
+            var manifest = Assert.Single(store.ListManifests());
+            blockedPath = Path.Combine(store.BatchDirectory(manifest.BatchId), "publication.json");
+            Directory.CreateDirectory(blockedPath);
+            return Green(request.ExpectedSha);
+        };
+        _gate.Fallback = request => Red(request.ExpectedSha);
+
+        await pilot.TickAsync(CancellationToken.None);
+
+        var closed = Assert.Single(store.ListManifests());
+        AssertPhase(store, closed.BatchId, BatchPhase.Publishing);
+        Directory.Delete(blockedPath!);
+        Directory.CreateDirectory(Path.Combine(_repo, "docs"));
+        File.WriteAllText(Path.Combine(_repo, "docs", "resume-dirty.md"), "local untracked edit\n");
+        using var restarted = BuildFactory();
+        _ = restarted.CreateClient();
+        EnableBatchGate(restarted, closeSize: 1);
+        await restarted.Services.GetRequiredService<BatchGatePilotService>()
+            .TickAsync(CancellationToken.None);
+
+        var publication = store.ReadPublication(closed.BatchId);
+        Assert.NotNull(publication);
+        Assert.Equal(publication.TestedCandidateSha, RemoteTip());
+        AssertPhase(store, closed.BatchId, BatchPhase.Published);
+        AssertLane(member.Key, TaskStates.HumanReview);
+        Assert.Empty(store.ListPending());
+        Assert.Equal(localBase, Git(_repo, "rev-parse", "develop").Trim());
+        Assert.Equal("local untracked edit\n",
+            File.ReadAllText(Path.Combine(_repo, "docs", "resume-dirty.md")));
+        var lag = restarted.Services.GetRequiredService<AgentStudio.Git.GitService>()
+            .GetDeveloperCheckoutStatus(_repo, "develop");
+        Assert.Equal("behind", lag.Status);
+        Assert.Contains("resume-dirty.md", lag.Reason);
     }
 
     [Fact]
