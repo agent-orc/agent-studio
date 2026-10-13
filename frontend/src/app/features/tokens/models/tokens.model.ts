@@ -44,6 +44,8 @@ export interface TaskTokenSummary {
 
 export interface TokenSummaryByModel {
   model: string;
+  modelId: string;
+  cli: string | null;
   calls: number;
   inputTokens: number;
   outputTokens: number;
@@ -153,6 +155,8 @@ export interface AdHocUsageByDay {
 
 export interface AdHocUsageByModel {
   model: string;
+  modelId: string;
+  cli: string | null;
   calls: number;
   inputTokens: number;
   outputTokens: number;

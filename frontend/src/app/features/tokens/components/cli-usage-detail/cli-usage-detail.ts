@@ -139,7 +139,7 @@ export class CliUsageDetailComponent {
   modelRowsFor(cliType: CliType): ModelUsageRow[] {
     const rows: ModelUsageRow[] = [];
     for (const m of this.tokens()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cliType)) continue;
+      if (m.cli !== cliType) continue;
       rows.push({
         model: m.model,
         source: 'orchestrator',
@@ -153,7 +153,7 @@ export class CliUsageDetailComponent {
       });
     }
     for (const m of this.adhoc()?.byModel ?? []) {
-      if (!this.modelBelongsToCli(m.model, cliType)) continue;
+      if (m.cli !== cliType) continue;
       rows.push({
         model: m.model,
         source: 'ad-hoc',
@@ -212,19 +212,5 @@ export class CliUsageDetailComponent {
   private toSparkPoints(entries: [string, number][]): SparkPoint[] {
     const max = Math.max(1, ...entries.map(([, total]) => total));
     return entries.map(([label, total]) => ({ label, total, pct: Math.max(3, (total / max) * 100) }));
-  }
-
-  private modelBelongsToCli(model: string, cliType: CliType): boolean {
-    const m = (model ?? '').toLowerCase();
-    switch (cliType) {
-      case 'claude':
-        return m.includes('claude') || m.includes('haiku') || m.includes('sonnet') || m.includes('opus');
-      case 'codex':
-        return m.includes('codex') || m.startsWith('gpt') || /^o\d/.test(m);
-      case 'gemini':
-        return m.includes('gemini');
-      default:
-        return false;
-    }
   }
 }

@@ -76,17 +76,19 @@ export class TokenSummaryBlockComponent implements OnInit, OnDestroy {
 
   showTotalCalculation(summary: TokenSummary): void {
     this.costBreakdown.show(summary.byModel.map(model => this.priceItem(model)),
-      `${summary.project} cost calculation`);
+      `${summary.project} cost at today's price`);
   }
 
   showModelCalculation(model: TokenSummaryByModel): void {
-    this.costBreakdown.show([this.priceItem(model)], `${model.model} cost calculation`);
+    this.costBreakdown.show([this.priceItem(model)], `${model.model} cost at today's price`);
   }
 
   private priceItem(model: TokenSummaryByModel) {
     return {
-      model: model.model,
-      label: `${model.calls} call${model.calls === 1 ? '' : 's'}`,
+      model: model.modelId,
+      recordedCostUsd: model.estimatedApiCostUsd,
+      recordedModelPriced: model.modelPriced,
+      label: `${model.model} · ${model.calls} call${model.calls === 1 ? '' : 's'}`,
       inputTokens: model.inputTokens,
       outputTokens: model.outputTokens,
       cacheReadTokens: model.cacheReadTokens,

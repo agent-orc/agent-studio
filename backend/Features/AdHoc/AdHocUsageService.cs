@@ -82,7 +82,7 @@ public sealed class AdHocUsageService
             if (!cost.ModelKnown) allPriced = false;
 
             Add(bySource, string.IsNullOrWhiteSpace(r.Source) ? AdHocUsageSources.Unknown : r.Source, r, cost);
-            Add(byModel, string.IsNullOrWhiteSpace(r.Model) ? "(unknown)" : r.Model, r, cost);
+            Add(byModel, AgentStudio.Tokens.ModelIdentity.Resolve(r.Model)?.ModelId ?? "(unknown)", r, cost);
             Add(byDay, r.Ts.ToUniversalTime().ToString("yyyy-MM-dd"), r, cost);
         }
 
@@ -122,14 +122,15 @@ public sealed class AdHocUsageService
             {
                 var priced = kv.Value.AllPriced;
                 return new AdHocUsageByModel(
-                    Model: kv.Key,
+                    Model: AgentStudio.Tokens.ModelIdentity.Resolve(kv.Key)?.DisplayLabel ?? kv.Key,
                     Calls: kv.Value.Calls,
                     InputTokens: kv.Value.Input,
                     OutputTokens: kv.Value.Output,
                     CacheReadTokens: kv.Value.CacheRead,
                     CacheCreationTokens: kv.Value.CacheCreate,
                     EstimatedApiCostUsd: kv.Value.Cost,
-                    ModelPriced: priced);
+                    ModelPriced: priced)
+                { ModelId = kv.Key, Cli = AgentStudio.Tokens.ModelIdentity.Resolve(kv.Key)?.Cli };
             })
             .ToList();
 

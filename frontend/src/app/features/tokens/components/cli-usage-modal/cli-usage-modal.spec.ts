@@ -1,7 +1,8 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { TestBed } from '@angular/core/testing';
 import { provideZonelessChangeDetection } from '@angular/core';
 import { CliUsageModalComponent } from './cli-usage-modal';
+import { CostBreakdownService } from '../../services/cost-breakdown.service';
 import type { CliUsageQuotaRow } from '../../services/cli-usage.store';
 import type { AdHocUsageAggregate, TokenSummaryAggregate, TokenSummaryByModel } from '../../models/tokens.model';
 
@@ -147,13 +148,13 @@ describe('CliUsageModalComponent', () => {
       allModelsPriced: false,
       byModel: [
         {
-          model: 'gpt-5.6-sol', calls: 5,
+          model: 'gpt-5.6-sol', modelId: 'gpt-5.6-sol', cli: 'codex', calls: 5,
           inputTokens: 39_646_031, outputTokens: 97_412,
           cacheReadTokens: 38_481_408, cacheCreationTokens: 0,
           estimatedApiCostUsd: 0, modelPriced: false,
         },
         {
-          model: 'GPT-5.5', calls: 8,
+          model: 'GPT-5.5', modelId: 'gpt-5.5', cli: 'codex', calls: 8,
           inputTokens: 10_782_081, outputTokens: 66_760,
           cacheReadTokens: 10_022_528, cacheCreationTokens: 0,
           estimatedApiCostUsd: 0, modelPriced: false,
@@ -175,12 +176,12 @@ describe('CliUsageModalComponent', () => {
       byDay: [],
       byModel: [
         {
-          model: 'gpt-5-codex', calls: 4,
+          model: 'gpt-5-codex', modelId: 'gpt-5-codex', cli: 'codex', calls: 4,
           inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
           estimatedApiCostUsd: 0, modelPriced: true,
         },
         {
-          model: 'gpt-5.6-sol', calls: 7,
+          model: 'gpt-5.6-sol', modelId: 'gpt-5.6-sol', cli: 'codex', calls: 7,
           inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
           estimatedApiCostUsd: 0, modelPriced: false,
         },
@@ -214,7 +215,7 @@ describe('CliUsageModalComponent', () => {
 
     function byModel(model: string, input: number, cost: number, priced: boolean): TokenSummaryByModel {
       return {
-        model, calls: 1, inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+        model, modelId: model, cli: 'codex', calls: 1, inputTokens: input, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
         estimatedApiCostUsd: cost, modelPriced: priced,
       };
     }
@@ -232,6 +233,20 @@ describe('CliUsageModalComponent', () => {
       ],
       byProject: [], fetchedAt: new Date().toISOString(), disclaimer: '',
     };
+
+    it('uses backend CLI and model id for pricing even when the label is misleading', async () => {
+      const tokens = { ...groupedTokens, byModel: [
+        { ...groupedTokens.byModel[0], model: 'Claude-like display text', modelId: 'gpt-6-sol', cli: 'codex' },
+        { ...groupedTokens.byModel[1], model: 'GPT-looking display text', modelId: 'claude-opus-5', cli: 'claude' },
+      ] };
+      const fixture = await build(codexRow, 'codex', tokens);
+      expect(fixture.componentInstance.modelRows()).toHaveLength(1);
+      const show = vi.spyOn(TestBed.inject(CostBreakdownService), 'show').mockImplementation(() => undefined);
+      fixture.componentInstance.showTotalCalculation();
+      expect(show).toHaveBeenCalledWith([
+        expect.objectContaining({ model: 'gpt-6-sol', recordedCostUsd: 10 }),
+      ], expect.stringContaining("today's price"));
+    });
 
     it('folds below-threshold models into one "Other" row, collapsed by default', async () => {
       const fixture = await build(codexRow, 'codex', groupedTokens);

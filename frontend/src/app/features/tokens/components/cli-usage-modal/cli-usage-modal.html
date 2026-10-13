@@ -68,7 +68,7 @@
             <span class="cum__total-label">Tokens</span>
             <span class="cum__total-value">{{ formatTokens(totals().tokens) }}</span>
           </span>
-          <button type="button" class="cum__total cum__total--cost cum__cost-button"
+          <button type="button" class="cum__total cum__total--cost cum__cost-button" data-testid="cli-usage-modal-total-cost"
                   (click)="showTotalCalculation()">
             <span class="cum__total-label">Est. cost</span>
             <span class="cum__total-value">{{ totalCostLabel() }}</span>

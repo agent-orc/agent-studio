@@ -272,6 +272,46 @@ public class TokenPricingTests
         Assert.Null(TokenPricing.CanonicalModelId("   "));
     }
 
+    [Theory]
+    [InlineData("GPT-6 Sol", ModelIds.Gpt6Sol)]
+    [InlineData("gpt-6-sol", ModelIds.Gpt6Sol)]
+    [InlineData("Claude Opus 5.5", ModelIds.ClaudeOpus55)]
+    [InlineData("sonnet", ModelIds.ClaudeSonnet5)]
+    [InlineData("opus", ModelIds.ClaudeOpus5)]
+    public void Calculate_AcceptsLabelIdAndBareAliasAtSamePrice(string value, string id)
+    {
+        var at = new DateTime(2026, 10, 11, 0, 0, 0, DateTimeKind.Utc);
+        var actual = TokenPricing.Estimate(value, 1_000_000, 100_000, 50_000, 0, at);
+        var canonical = TokenPricing.Estimate(id, 1_000_000, 100_000, 50_000, 0, at);
+        Assert.Equal(TokenEconomy.PriceStatus.Resolved, actual.Status);
+        Assert.Equal(id, actual.ModelId);
+        Assert.Equal(canonical.Total, actual.Total);
+    }
+
+    [Theory]
+    [InlineData("GPT-6 Sol", ModelIds.Gpt6Sol, "codex")]
+    [InlineData("gpt-5.6-sol", ModelIds.Gpt56Sol, "codex")]
+    [InlineData("Claude Opus 5.5", ModelIds.ClaudeOpus55, "claude")]
+    [InlineData("sonnet", ModelIds.ClaudeSonnet5, "claude")]
+    [InlineData("opus", ModelIds.ClaudeOpus5, "claude")]
+    public void ModelIdentity_ResolvesCliAndCanonicalId(string value, string id, string cli)
+    {
+        var identity = AgentStudio.Tokens.ModelIdentity.Resolve(value);
+        Assert.NotNull(identity);
+        Assert.Equal(id, identity.ModelId);
+        Assert.Equal(cli, identity.Cli);
+    }
+
+    [Fact]
+    public void EveryStudioCliModel_HasCatalogListing()
+    {
+        var ids = ModelMetadataRegistry.ForVendor("anthropic")
+            .Concat(ModelMetadataRegistry.ForVendor("openai"))
+            .Select(model => model.Id);
+        foreach (var id in ids)
+            Assert.True(TokenPricing.Estimate(id, 1, 0, 0, 0).Status != TokenEconomy.PriceStatus.UnknownModel, id);
+    }
+
     private static string ConfiguredTokenEconomyVersion()
     {
         var projectPath = Path.Combine(RepositoryRoot.Find(), "backend", "OrchestratorApi.csproj");

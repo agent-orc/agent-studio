@@ -1,7 +1,7 @@
 @if (breakdown.open()) {
   <app-dialog eyebrow="Theoretical API cost"
               [title]="breakdown.title()"
-              subtitle="Transparent calculation from the historical price entry in effect"
+              subtitle="Price calculation using the date shown below"
               widthTier="lg"
               testid="cost-breakdown-dialog"
               (closeRequest)="breakdown.close()"
@@ -19,9 +19,14 @@
                 @if (item.label) { <span class="cost-breakdown__label">{{ item.label }}</span> }
                 <code class="cost-breakdown__model-id">{{ item.estimate.modelId || item.model }}</code>
               </div>
-              <strong class="cost-breakdown__model-total">
-                {{ item.estimate.modelKnown ? formatUsd(item.estimate.total) : 'Unknown' }}
-              </strong>
+              <div class="cost-breakdown__amounts">
+                <strong class="cost-breakdown__model-total">
+                  {{ item.estimate.modelKnown ? formatUsd(item.estimate.total) : item.recordedModelPriced ? 'No current price' : 'Unknown' }}
+                </strong>
+                @if (item.recordedCostUsd !== null && item.recordedCostUsd !== undefined) {
+                  <span class="cost-breakdown__recorded">Recorded usage cost: {{ item.recordedModelPriced ? formatUsd(item.recordedCostUsd) : 'Unknown' }}</span>
+                }
+              </div>
             </header>
 
             @if (item.estimate.priceBasis; as price) {
@@ -56,9 +61,15 @@
 
         @if (breakdown.items().length > 1) {
           <div class="cost-breakdown__grand-total" data-testid="cost-breakdown-total">
-            <span>Total{{ allPriced() ? '' : ' (priced models only)' }}</span>
+            <span>Total at today's price{{ allPriced() ? '' : ' (priced models only)' }}</span>
             <strong>{{ formatUsd(grandTotal()) }}</strong>
           </div>
+          @if (hasRecordedCost()) {
+            <div class="cost-breakdown__grand-total" data-testid="cost-breakdown-recorded-total">
+              <span>Recorded usage cost{{ allRecordedPriced() ? '' : ' (priced models only)' }}</span>
+              <strong>{{ formatUsd(recordedTotal()) }}</strong>
+            </div>
+          }
         }
       }
     </div>
