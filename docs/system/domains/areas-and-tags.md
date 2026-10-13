@@ -100,14 +100,14 @@ the write path lives in one place and the wiki-path guard covers it.
 | Wiki article | YAML front matter `tags: [a, b]` or a block list; HTML pages use `<meta name="agent-studio-tags" content="a, b">` in `<head>` |
 | Dossier entry page in the wiki tree | the Dossier descriptor's `tags[]` |
 
-Auto-tagging also persists an optional `taggingStatus` alongside these tags.
-The only recognized values are `tagged` (the classifier applied registry tags)
-and `tags-proposed` (low-confidence suggestions are held in the project's
-auto-tag state for review). Cards store it at `task.json.taggingStatus`;
-Dossiers store it at `workbench.json.taggingStatus`. Wiki Markdown stores
-`taggingStatus: tagged` or `taggingStatus: tags-proposed` in YAML front matter.
-Wiki HTML stores `<meta name="agent-studio-tagging-status" content="tagged">`
-or the same meta element with `content="tags-proposed"` inside `<head>`.
+Auto-tagging persists `taggingStatus: tagged` alongside accepted tags. Cards
+store it at `task.json.taggingStatus`; Dossiers store it at
+`workbench.json.taggingStatus`. Wiki Markdown stores it in YAML front matter,
+and Wiki HTML stores `<meta name="agent-studio-tagging-status" content="tagged">`
+inside `<head>`. Low-confidence suggestions and wiki writes blocked by the
+source branch, checkout state, or push policy remain `tags-proposed` in the
+per-project auto-tag state and report. The reason for a blocked wiki write is
+included in the report item. No proposal status is written to a subject file.
 Readers treat missing and unrecognized values as no status marker; they do
 not infer successful tagging from an unknown value. Archived items are not
 classified.
@@ -117,12 +117,14 @@ state, including a tag-empty `tags-proposed` item. Repeating a dry run or
 apply therefore preserves its pending proposal and does not spend another
 classification call. New eligible items are still classified.
 
-For cards and wiki articles, applying a classification persists the tags and
-`taggingStatus` together in one atomic file replacement. A proposal writes the
-status while retaining the existing tags. A rejected or failed replacement
-leaves the original file intact and fails the run before recording completion
-or success activity, so a subsequent creation scan or backfill can retry the
-untagged item. Dossiers use the existing combined descriptor writer.
+For cards and wiki articles, applying an accepted classification persists the
+tags and `taggingStatus` together in one atomic file replacement. Wiki writes
+use a path-scoped managed commit and queue a push only from a clean checkout.
+Tag maintenance merge and retire use the same commit boundary. A blocked wiki
+write leaves the file intact and records a proposal with its reason. A failed
+file replacement leaves the original file intact and fails the run before
+recording completion or success activity. Dossiers use the existing combined
+descriptor writer.
 
 ### Auto-tag apply recovery
 
@@ -135,7 +137,7 @@ metrics and area counts) and `changes[]` with each item's serialized tag
 An apply retry completes this saved batch before accepting a new batch. It
 checks each item's current tags against its saved preimage and result and
 refuses conflicting changes. Accepted tag writes already at the saved target
-are reused; proposals repeat their status-only write while retaining the tags.
+are reused; proposals keep their status in auto-tag state without a file write.
 It then repairs the card timeline, project auto-tag state, activity feed, and
 report. Timeline and activity appends check their boolean outcomes and use the
 saved result timestamp and identity to recognize an already written event.

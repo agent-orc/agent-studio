@@ -505,8 +505,8 @@ only as the fallback.
 
 For folder-backed cards, `task.json` may persist `tags[]` and
 `taggingStatus`. Auto-tagging writes `taggingStatus: "tagged"` when it applies
-registry tags, or `"tags-proposed"` when confidence is below the threshold and
-the proposed tags are kept in the per-project auto-tag state. Missing or
+registry tags. When confidence is below the threshold, the proposal status and
+tags remain only in the per-project auto-tag state. Missing or
 unrecognized status values mean no auto-tag marker. Archived cards are excluded
 from creation classification and backfill.
 

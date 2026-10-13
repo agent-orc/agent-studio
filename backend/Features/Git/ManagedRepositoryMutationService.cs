@@ -8,10 +8,11 @@ public sealed record ManagedRepositoryMutationResult(
     bool DidCommit,
     string? CommitSha,
     bool PushQueued,
-    string? Error)
+    string? Error,
+    bool PreflightBlocked = false)
 {
-    public static ManagedRepositoryMutationResult Failed(string error) =>
-        new(false, false, false, null, false, error);
+    public static ManagedRepositoryMutationResult Failed(string error, bool preflightBlocked = false) =>
+        new(false, false, false, null, false, error, preflightBlocked);
 }
 
 /// <summary>
@@ -48,11 +49,12 @@ public sealed class ManagedRepositoryMutationService
         string operationId,
         string commitMessage,
         IReadOnlyCollection<string> repositoryRelativePaths,
-        Action write)
+        Action write,
+        bool requireCleanCheckoutAndPush = false)
     {
         ArgumentNullException.ThrowIfNull(write);
         if (string.IsNullOrWhiteSpace(repositoryRoot) || !Directory.Exists(repositoryRoot))
-            return ManagedRepositoryMutationResult.Failed("Project repository does not exist.");
+            return ManagedRepositoryMutationResult.Failed("Project repository does not exist.", requireCleanCheckoutAndPush);
 
         var paths = repositoryRelativePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -70,7 +72,24 @@ public sealed class ManagedRepositoryMutationService
             var before = _git.GetStatusForRepoRoot(root);
             if (before.IsRepo && before.Error != null)
                 return ManagedRepositoryMutationResult.Failed(
-                    $"Project repository status could not be read: {before.Error}");
+                    $"Project repository status could not be read: {before.Error}", requireCleanCheckoutAndPush);
+            if (requireCleanCheckoutAndPush)
+            {
+                if (!before.IsRepo)
+                    return ManagedRepositoryMutationResult.Failed("Project checkout is not a git repository.", true);
+                if (before.Files.Count > 0)
+                    return ManagedRepositoryMutationResult.Failed(
+                        $"Project checkout has pre-existing changes: {string.Join(", ", before.Files.Select(file => file.Path))}.", true);
+                if (_pushQueue == null)
+                    return ManagedRepositoryMutationResult.Failed("Repository push queue is unavailable.", true);
+                if (string.IsNullOrWhiteSpace(before.Branch) || before.Branch == "HEAD")
+                    return ManagedRepositoryMutationResult.Failed("Project checkout has no writable branch.", true);
+                if (_git.RepositoryWriteLockReason(root, before.Branch) is { } lockReason)
+                    return ManagedRepositoryMutationResult.Failed(lockReason, true);
+                if (_settings != null && AutoPushStrategies.Normalize(_settings.Get(projectName).AutoPushStrategy)
+                    == AutoPushStrategies.Never)
+                    return ManagedRepositoryMutationResult.Failed("Project auto-push is disabled.", true);
+            }
             if (before.IsRepo)
             {
                 var alreadyDirty = before.Files
@@ -122,7 +141,8 @@ public sealed class ManagedRepositoryMutationService
             }
 
             var fullSha = _git.ReadHeadShaAt(root) ?? commit.Sha!;
-            var pushQueued = QueuePush(projectName, root, operationId, fullSha);
+            var pushQueued = QueuePush(projectName, root, operationId, fullSha,
+                requireCleanCheckoutAndPush ? before.Branch : null, requireCleanCheckoutAndPush);
             _logger?.LogInformation(
                 "managed-repository-mutation committed project={Project} operation={Operation} sha={Sha} paths={Paths} pushQueued={PushQueued}",
                 projectName, operationId, fullSha, string.Join(",", paths), pushQueued);
@@ -131,12 +151,13 @@ public sealed class ManagedRepositoryMutationService
         }
     }
 
-    private bool QueuePush(string projectName, string repositoryRoot, string operationId, string sha)
+    private bool QueuePush(string projectName, string repositoryRoot, string operationId, string sha,
+        string? knownBranch = null, bool required = false)
     {
         if (_pushQueue == null) return false;
 
         var strategy = AutoPushStrategies.AlwaysImmediate;
-        if (_settings != null)
+        if (_settings != null && !required)
         {
             try { strategy = AutoPushStrategies.Normalize(_settings.Get(projectName).AutoPushStrategy); }
             catch (Exception ex)
@@ -146,7 +167,7 @@ public sealed class ManagedRepositoryMutationService
         }
         if (strategy == AutoPushStrategies.Never) return false;
 
-        var branch = _git.ReadCurrentBranchAt(repositoryRoot);
+        var branch = knownBranch ?? _git.ReadCurrentBranchAt(repositoryRoot);
         if (string.IsNullOrWhiteSpace(branch))
         {
             _logger?.LogWarning(
