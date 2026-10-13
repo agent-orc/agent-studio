@@ -336,12 +336,18 @@ public sealed class TaskTransitionService
         var contentClaim = completionContract?.Claim;
         if (contentClaim is not null && contentEvidence is not null)
         {
+            // A code-free operator resolution already names its evidence.
+            // Record the content gap below without replacing that claim with
+            // wording about an unproven repository delivery.
+            var replaceClaimForContent = contentDecision?.Overridden == true
+                && !(contentClaim.Basis == CompletionClaimBases.DeliverableWithoutCode
+                    && contentClaim.Reason is not null);
             contentClaim = contentClaim with
             {
-                Basis = contentDecision?.Overridden == true
+                Basis = replaceClaimForContent
                     ? CompletionClaimBases.OperatorOverride : contentClaim.Basis,
                 Evidence = AppendLineageEvidence(
-                    contentDecision?.Overridden == true ? contentDecision.Message : contentClaim.Evidence,
+                    replaceClaimForContent ? contentDecision!.Message : contentClaim.Evidence,
                     acceptanceLineage),
                 Reason = contentDecision?.Overridden == true ? reason?.Trim() : contentClaim.Reason,
                 CurrentBriefVersion = contentEvidence.CurrentBriefVersion,

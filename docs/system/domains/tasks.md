@@ -1121,6 +1121,17 @@ still projects only delivered lanes. A card with no attributed delivery gets
 the missing-delivery refusal; an unreadable Git answer gets the unknown
 containment refusal. A direct completion does not schedule review or a gate.
 
+Failure-intervention and cause cards are created with `requiresIntegration: false`
+and `noBranchExpected: true`. With no attributed commits or changed review result,
+an operator can resolve them using `operatorOverride: true` and a reason of at
+least eight characters. The claim uses `deliverable-without-code`, with the reason
+as its evidence and reason fields, even when content review is overridden. The
+existing cause-breaker sweep closes the breaker as `cause-integrated` after its
+cause card reaches `6-completed` and releases waiting cards. Actual repository
+delivery evidence still requires integration, including on these cards. Code
+cards without commits remain refused with "no delivery to integrate"; a reason
+does not bypass guarded integration.
+
 Every path into `6-completed`, including API moves, the UI, and automatic
 acceptance, also runs `CompletionContentPolicy`. The source RunAttempt's brief
 version must equal the card's current authored brief version. The settled

@@ -119,8 +119,19 @@ public static class CompletionContractPolicy
                 + "recorded. Record the successor attempt and integrate it before completion.");
         }
 
-        if (!facts.IntegrationRequired)
+        if (!facts.IntegrationRequired && !facts.HasAttributedCommits)
         {
+            if (facts.OperatorOverride)
+            {
+                return Accept(new TaskCompletionClaim
+                {
+                    Basis = CompletionClaimBases.DeliverableWithoutCode,
+                    Evidence = reason!,
+                    Reason = reason,
+                    Actor = Trimmed(facts.Actor),
+                });
+            }
+
             var path = Trimmed(facts.DeliverablePath);
             var key = Trimmed(facts.DeliverableKey);
             if (path is not null || key is not null)
@@ -135,20 +146,18 @@ public static class CompletionContractPolicy
                 });
             }
 
-            return facts.OperatorOverride
-                ? Accept(Override(facts, reason!))
-                : Refuse(
-                    CompletionRefusalCodes.UndeclaredDeliverable,
-                    "This task delivers no code, so completion needs the deliverable it produced to be "
-                    + "named - for a concept card the Dossier path and key. Name it, or complete it "
-                    + "with a written reason.");
+            return Refuse(
+                CompletionRefusalCodes.UndeclaredDeliverable,
+                "This task delivers no code, so completion needs the deliverable it produced to be "
+                + "named - for a concept card the Dossier path and key. Name it, or complete it "
+                + "with a written reason.");
         }
 
         if (!guarded && facts.OperatorOverride)
             return Accept(Override(facts, reason!));
         return Refuse(
             CompletionRefusalCodes.UnintegratedDelivery,
-            UnintegratedMessage(facts));
+            UnintegratedMessage(facts, guarded));
     }
 
     /// <summary>
@@ -208,24 +217,24 @@ public static class CompletionContractPolicy
             : $"Deliverable without code: {key}.";
     }
 
-    private static string UnintegratedMessage(CompletionContractFacts facts)
+    private static string UnintegratedMessage(CompletionContractFacts facts, bool guarded)
     {
         var branch = Trimmed(facts.IntegrationBranch) ?? "the integration branch";
+        var overrideOption = guarded ? "" : " Alternatively, complete it with a written reason.";
+        if (!facts.HasAttributedCommits || HasNothingToIntegrate(facts.ContainmentStatus))
+        {
+            return "This task expects code but has no delivery to integrate. Attribute and integrate "
+                + "its delivery before completion." + overrideOption;
+        }
+
         if (IsUnknown(facts.ContainmentStatus))
         {
             return $"Whether this delivery is contained in {branch} could not be determined, so the card "
-                + "cannot claim completion yet. Retry once the repository is reachable, or complete it "
-                + "with a written reason.";
+                + "cannot claim completion yet. Retry once the repository is reachable." + overrideOption;
         }
 
-        if (HasNothingToIntegrate(facts.ContainmentStatus))
-        {
-            return "This task expects code but has no delivery to integrate. Attribute its delivery, "
-                + "declare the deliverable it produced instead, or complete it with a written reason.";
-        }
-
-        return $"This delivery is not contained in {branch} ({facts.ContainmentStatus}). Integrate it, "
-            + "or complete it with a written reason that is stored on the card.";
+        return $"This delivery is not contained in {branch} ({facts.ContainmentStatus}). "
+            + "Integrate it before completion." + overrideOption;
     }
 
     private static CompletionContractDecision Accept(TaskCompletionClaim claim)

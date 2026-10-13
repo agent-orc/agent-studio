@@ -165,6 +165,11 @@ public sealed class FailureInterventionService
                         CreationSource = TimelineActors.Orchestrator,
                         CreatedBy = "Orchestrator",
                         TaskType = TaskTypes.Bug,
+                        // An operator may resolve a toolchain or configuration
+                        // incident without a repository delivery. Actual commits
+                        // still require integration under the acceptance policy.
+                        NoBranchExpected = true,
+                        RequiresIntegration = false,
                     })
                     : _decisionRequests!.Request(new DecisionCardRequest
                     {

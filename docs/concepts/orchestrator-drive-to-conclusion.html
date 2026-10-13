@@ -2971,6 +2971,13 @@
           <td>The review hosts ran workers older than the AGT-2916 diagnosis contract, which never report a <code>Diagnosis</code> or a clean repeat, and every <code>ReviewInfra</code> result was retried. The runner cached a test-failures baseline that exited non-zero without a parsed failure name and reused it for 24 hours as a red merge base.</td>
           <td>Each card used 2 of 3 retries. Now an unrun test-failures baseline ends as <code>ReviewInfra/BaselineUnavailable</code> and is never cached. Parser version 4 makes every older cache entry a miss. A report from a pre-diagnosis worker (outcome other than ReviewInfra, an undiagnosed failed deterministic command, no clean repeat) is graded <code>ReviewInfra/DiagnosisContractUnsupported</code>. It is not retried and escalates as <code>environmental</code>, naming the executor and the worker release. Upgrading the review hosts is an operator action.</td>
         </tr>
+        <tr id="case-code-free-intervention-completion">
+          <td>2026-10-13</td>
+          <td><code>AGT-3101 / AGT-3122</code><br><span class="small">code-free-intervention-completion</span></td>
+          <td>Cause breaker <code>bdbed0786cad8dec</code> could not close through the product. Completing its intervention card from Preparation or Auto Review returned HTTP 409 despite a written operator reason.</td>
+          <td>The failure-intervention service created a bug card with an implicit code-delivery requirement. Its absent delivery was reported as unknown containment.</td>
+          <td>The observed card remained in Auto Review; the operator manually closed the breaker while Stable was stopped. New intervention and cause cards explicitly declare no code delivery. With no attributed commits, a written operator resolution now reaches Completed with a <code>deliverable-without-code</code> claim; the existing sweep closes the breaker as <code>cause-integrated</code>. Attributed code still requires integration.</td>
+        </tr>
       </tbody>
     </table>
 
