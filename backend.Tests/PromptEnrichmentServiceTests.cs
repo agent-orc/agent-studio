@@ -230,6 +230,8 @@ public sealed class PromptEnrichmentServiceTests : IDisposable
         {
             Assert.Equal("Agent Studio", block.Project);
             Assert.Equal(repository, block.Repository);
+            // CRLF here held the Windows merge gate red; blocks are LF on every host.
+            Assert.DoesNotContain('\r', block.ExactContent);
         });
     }
 
