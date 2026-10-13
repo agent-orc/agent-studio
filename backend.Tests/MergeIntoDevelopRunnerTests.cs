@@ -307,6 +307,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Empty(outcome.RebasedCommits);
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(outcome.MergedSha, gateRunner.Request!.ExpectedSha);
+        // AGT-3070: integration gates stay outside the pipeline-health registry.
+        Assert.Null(gateRunner.Request.WatchPath);
         var step = ReadMergeStep(log, jobFolder);
         Assert.NotNull(step);
         Assert.Equal(PipelineStepStatus.Passed, step!.Status);
@@ -2095,6 +2097,8 @@ public sealed class MergeIntoDevelopRunnerTests : IDisposable
         Assert.Equal(1, gateRunner.Invocations);
         Assert.Equal(tip, gateRunner.Request!.ExpectedSha);
         Assert.Contains("backend/Rule.cs", gateRunner.ChangedFiles!);
+        // AGT-3070: the verification gate registers no health context either.
+        Assert.Null(gateRunner.Request.WatchPath);
         Assert.Equal(IntegrationVerificationStates.Verified,
             IntegrationVerificationStore.Read(jobFolder)?.State);
     }

@@ -211,7 +211,8 @@ public static class IntegrationGateReceipts
         string prefix,
         BuildTestGateResult result,
         TimelineLog? timeline = null,
-        IntegrationGateReuseDecision? reuse = null)
+        IntegrationGateReuseDecision? reuse = null,
+        long? mergeLockWaitMs = null)
     {
         var dir = Path.Combine(jobFolderPath, "post-steps");
         Directory.CreateDirectory(dir);
@@ -252,6 +253,9 @@ public static class IntegrationGateReceipts
             $"reason={result.Reason}\n" +
             $"verdictSource={result.VerdictSource} originalRunId={result.GateRunId ?? "n/a"} originalCompletedAtUtc={result.GateCompletedAtUtc?.ToString("O") ?? "n/a"} originalEvidencePathB64={Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(result.OriginEvidencePath ?? ""))} profileDigest={result.GateProfileDigest ?? "n/a"} pipelineDefinitionVersion={result.PipelineDefinitionVersion?.ToString() ?? "n/a"} toolchainIdentity={result.ToolchainIdentity ?? "n/a"}\n" +
             $"testSelectionAuditDigest={result.TestSelectionAuditDigest ?? "n/a"}\n" +
+            $"gateRung={(reuse?.Reused == true ? "exact" : "full")}\n" +
+            $"testLevel={result.TestSelection?.Level ?? "unknown"}\n" +
+            $"gateQueueWaitMs={result.GateQueueWaitMs} mergeLockWaitMs={mergeLockWaitMs?.ToString() ?? "unknown"} gateCollisionDetected={result.GateCollisionDetected.ToString().ToLowerInvariant()}\n" +
             reuseLine + "\n" +
             budget + "\n" +
             flaky + "\n" +

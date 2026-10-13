@@ -1,0 +1,85 @@
+verdict=Fail exit=1 durationMs=3143131 failureKind=Code
+expectedSha=2272ce8ce826964804edd5d31c8c89d8587a8e0d testedSha=2272ce8ce826964804edd5d31c8c89d8587a8e0d
+reason=`dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound` exit 1; failed: AgentRunner.Tests.DurableLeaseAuthorityTests.Granted_renewal_delivers_the_fenced_stop_without_losing_authority; Total tests: 926 Passed: 901 Failed: 1 Skipped: 24; test-level=full; selected=4; full-suite=not-run; omitted=2
+verdictSource=Executed originalRunId=b8181d80d15c4f23bc60e1b563e53df2 originalCompletedAtUtc=2026-09-29T03:55:43.5470774+00:00 originalEvidencePathB64= profileDigest=n/a pipelineDefinitionVersion=1 toolchainIdentity=n/a
+testSelectionAuditDigest=82d410b1be6e2cfeca2a33b81bea1bf80790c8d9a58338ff9257ae784a630d0a
+reviewReuse=full attempt=review_3b5e6ac1a5ec446db59a19ed50d5fd13 reason=the Remote Review ended with 'IntegrationBranchDefect', not Pass
+budget=none
+retryPerformed=true classification=none flakyQuarantined=none
+preparationCacheRetryPerformed=false
+--- test-selection.json ---
+{
+  "Digest": "82d410b1be6e2cfeca2a33b81bea1bf80790c8d9a58338ff9257ae784a630d0a",
+  "Level": "full",
+  "Lane": "6-completed",
+  "DiffInput": [
+    "backend.Tests/ArtifactIngestionEndpointsTests.cs",
+    "backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs",
+    "backend/Features/Diagnostics/ArtifactRequestLimitMiddleware.cs",
+    "backend/Host/Program.cs",
+    "docs/operations/setup/linux-runner-host.md",
+    "docs/system/contracts/filesystem.md",
+    "docs/system/domains/runner.md",
+    "runner.Tests/CodingFinalizationRetryTests.cs",
+    "runner.Tests/DurableHandoffRecoveryTests.cs",
+    "runner.Tests/RemoteArtifactTransferTests.cs",
+    "runner/DurableHandoffPayloads.cs",
+    "runner/DurableHandoffRecovery.cs",
+    "runner/RemoteRunnerDaemon.cs",
+    "runner/RemoteTaskRunner.cs",
+    "runner/TaskServerClient.cs",
+    "task-server.Tests/ProtocolTests.cs",
+    "task-server/appsettings.json",
+    "task-server/ArtifactRequestLimitMiddleware.cs",
+    "task-server/Program.cs",
+    "task-server/TaskServerEndpoints.cs",
+    "task-server/TaskServerOptions.cs"
+  ],
+  "DiffStatuses": [],
+  "HistoryInput": [],
+  "Candidates": [],
+  "SelectedCandidateIds": [],
+  "SelectedCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "AttemptedTestCommands": [
+    "dotnet test backend.Tests/OrchestratorApi.Tests.csproj --no-build --filter Category!=MachineBound",
+    "dotnet test runner.Tests/AgentRunner.Tests.csproj --no-build --filter Category!=MachineBound"
+  ],
+  "UnmappedSourceDirectories": [],
+  "SelectedTestClasses": [],
+  "OmittedTestCommands": [
+    "dotnet test task-server.Tests/TaskServer.Tests.csproj --no-build --filter Category!=MachineBound",
+    "npm --prefix frontend run test:ci"
+  ],
+  "Reasons": [
+    "folder-to-test-project map is missing",
+    "unmapped changed path: backend.Tests/ArtifactIngestionEndpointsTests.cs",
+    "unmapped changed path: backend/Features/Diagnostics/ArtifactIngestionEndpoints.cs",
+    "unmapped changed path: backend/Features/Diagnostics/ArtifactRequestLimitMiddleware.cs",
+    "unmapped changed path: backend/Host/Program.cs",
+    "unmapped changed path: docs/operations/setup/linux-runner-host.md",
+    "unmapped changed path: docs/system/contracts/filesystem.md",
+    "unmapped changed path: docs/system/domains/runner.md",
+    "unmapped changed path: runner.Tests/CodingFinalizationRetryTests.cs",
+    "unmapped changed path: runner.Tests/DurableHandoffRecoveryTests.cs",
+    "unmapped changed path: runner.Tests/RemoteArtifactTransferTests.cs",
+    "unmapped changed path: runner/DurableHandoffPayloads.cs",
+    "unmapped changed path: runner/DurableHandoffRecovery.cs",
+    "unmapped changed path: runner/RemoteRunnerDaemon.cs",
+    "unmapped changed path: runner/RemoteTaskRunner.cs",
+    "unmapped changed path: runner/TaskServerClient.cs",
+    "unmapped changed path: task-server.Tests/ProtocolTests.cs",
+    "unmapped changed path: task-server/ArtifactRequestLimitMiddleware.cs",
+    "unmapped changed path: task-server/Program.cs",
+    "unmapped changed path: task-server/TaskServerEndpoints.cs",
+    "unmapped changed path: task-server/TaskServerOptions.cs",
+    "unmapped changed path: task-server/appsettings.json"
+  ],
+  "Selector": "deterministic-map-full-fallback",
+  "FullSuiteRequired": true,
+  "FullSuiteRan": false
+}
