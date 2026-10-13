@@ -192,10 +192,27 @@ public static class MergeIntoIntegrationOutcomePolicy
 /// </summary>
 public sealed record RebasedCommitReplacement(string OriginalSha, string RebasedSha);
 
-/// <summary>Conflict-free replay in a disposable detached worktree without moving a canonical ref.</summary>
+/// <summary>
+/// Conflict-free replay in a disposable detached worktree without moving a
+/// canonical ref. <see cref="Route"/> says how the member reached the candidate;
+/// <see cref="Failure"/> classifies a member that did not.
+/// </summary>
 public sealed record BatchReplayResult(
     bool Success, string? TipSha, IReadOnlyList<RebasedCommitReplacement> Replacements,
-    IReadOnlyList<string> ConflictedFiles, string? Error);
+    IReadOnlyList<string> ConflictedFiles, string? Error,
+    BatchReplayRoute Route = BatchReplayRoute.Identity,
+    BatchReplayFailure Failure = BatchReplayFailure.None)
+{
+    public static BatchReplayResult Unattributable(
+        string error, BatchReplayRoute route = BatchReplayRoute.Identity)
+        => new(false, null, [], [], error, route, BatchReplayFailure.Unattributable);
+
+    public static BatchReplayResult Infrastructure(string error)
+        => new(false, null, [], [], error, Failure: BatchReplayFailure.Infrastructure);
+
+    public static BatchReplayResult Conflict(IReadOnlyList<string> files, string error, BatchReplayRoute route)
+        => new(false, null, [], files, error, route, BatchReplayFailure.Conflict);
+}
 public sealed record BatchCandidateRefResult(bool Success, string? Error);
 
 /// <summary>
@@ -6048,8 +6065,10 @@ public class GitService
     }
 
     /// <summary>
-    /// Replays one immutable batch member using the conflict-free mechanical
-    /// rebase rule and returns the original-to-replacement SHA mapping.
+    /// Replays one immutable batch member onto the batch tip and returns the
+    /// original-to-candidate SHA mapping. A linear delivery keeps the identity
+    /// or conflict-free mechanical rebase mapping; a delivery with merge commits
+    /// in its range is merged into the candidate (<see cref="BatchReplayPolicy"/>).
     /// </summary>
     public BatchReplayResult ReplayBatchMember(
         string repoRoot, string immutableResultRef, string expectedResultSha, string batchTip)
@@ -6062,43 +6081,136 @@ public class GitService
             var (_, fetchError, fetchCode) = RunGitArgs(
                 repoRoot, "fetch", "origin", $"{immutableResultRef}:{immutableResultRef}");
             if (fetchCode != 0)
-                return new BatchReplayResult(false, null, [], [], fetchError.Trim());
+                return BatchReplayResult.Infrastructure(fetchError.Trim());
             (resolved, error, code) = RunGitArgs(
                 repoRoot, "rev-parse", "--verify", $"{immutableResultRef}^{{commit}}");
         }
         if (code != 0 || !string.Equals(resolved.Trim(), expectedResultSha, StringComparison.OrdinalIgnoreCase))
-            return new BatchReplayResult(false, null, [], [],
+            return BatchReplayResult.Unattributable(
                 code == 0 ? "Immutable result ref does not resolve to the expected SHA." : error.Trim());
-        // A delivery already based on the batch tip needs no rewritten commit
-        // objects. Preserve an explicit identity mapping for every original
-        // commit so the member evidence is complete on the common fast path.
+        var (_, _, containedCode) = RunGitArgs(
+            repoRoot, "merge-base", "--is-ancestor", expectedResultSha, batchTip);
         var (_, _, descendantCode) = RunGitArgs(
             repoRoot, "merge-base", "--is-ancestor", batchTip, expectedResultSha);
-        if (descendantCode == 0)
+        if (containedCode is not (0 or 1) || descendantCode is not (0 or 1))
+            return BatchReplayResult.Infrastructure("Batch tip ancestry could not be verified.");
+        var (merges, mergeError, mergeCode) = RunGitArgs(
+            repoRoot, "rev-list", "--count", "--merges",
+            $"{batchTip}..{expectedResultSha}", RevisionsOnly);
+        if (mergeCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount))
+            return BatchReplayResult.Infrastructure(
+                $"Batch member history could not be read: {mergeError.Trim()}");
+
+        switch (BatchReplayPolicy.Choose(containedCode == 0, descendantCode == 0, mergeCount))
         {
-            var (merges, mergeError, mergeCode) = RunGitArgs(
-                repoRoot, "rev-list", "--count", "--merges",
-                $"{batchTip}..{expectedResultSha}", RevisionsOnly);
-            if (mergeCode != 0 || !int.TryParse(merges.Trim(), out var mergeCount)
-                || mergeCount != 0)
-                return new BatchReplayResult(false, null, [], [],
-                    mergeCode == 0 ? "Non-linear batch member history has ambiguous SHA attribution."
-                        : mergeError.Trim());
-            var commits = ReadFirstParentRange(
-                repoRoot, batchTip, expectedResultSha, out var rangeError);
-            if (commits is null || commits.Count == 0)
-                return new BatchReplayResult(false, null, [], [],
-                    rangeError ?? "Batch member adds no commits to the candidate.");
-            return new BatchReplayResult(true, expectedResultSha,
-                commits.Select(sha => new RebasedCommitReplacement(sha, sha)).ToArray(), [], null);
+            case BatchReplayRoute.AlreadyContained:
+                return BatchReplayResult.Unattributable(
+                    "The candidate already contains the result SHA; the member adds no change of its own.",
+                    BatchReplayRoute.AlreadyContained);
+            case BatchReplayRoute.Merge:
+                return MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip);
+            case BatchReplayRoute.Identity:
+            {
+                // A delivery already based on the batch tip needs no rewritten
+                // commit objects. Preserve an explicit identity mapping for every
+                // original commit so the member evidence is complete on the
+                // common fast path.
+                var commits = ReadFirstParentRange(
+                    repoRoot, batchTip, expectedResultSha, out var rangeError);
+                if (commits is null)
+                    return BatchReplayResult.Infrastructure(rangeError ?? "Batch member commits could not be read.");
+                if (commits.Count == 0)
+                    return BatchReplayResult.Unattributable("Batch member adds no commits to the candidate.");
+                return new BatchReplayResult(true, expectedResultSha,
+                    commits.Select(sha => new RebasedCommitReplacement(sha, sha)).ToArray(), [], null);
+            }
         }
-        if (descendantCode != 1)
-            return new BatchReplayResult(false, null, [], [],
-                "Batch tip ancestry could not be verified.");
         var replay = TryMechanicalRebase(repoRoot, immutableResultRef, batchTip);
-        return new BatchReplayResult(
-            replay.Success, replay.RebasedTip, replay.Replacements,
-            replay.ConflictedFiles, replay.Error);
+        if (replay.Success)
+            return new BatchReplayResult(true, replay.RebasedTip, replay.Replacements, [], null,
+                BatchReplayRoute.Rebase);
+        return replay.FailureKind switch
+        {
+            MechanicalRebaseFailureKind.Conflict => BatchReplayResult.Conflict(
+                replay.ConflictedFiles, replay.Error ?? "Mechanical rebase conflicted.",
+                BatchReplayRoute.Rebase),
+            // A rebase that loses its one-to-one mapping (a commit became empty
+            // on the tip) keeps every SHA through the merge route instead.
+            MechanicalRebaseFailureKind.AttributionAmbiguous
+                => MergeBatchMember(repoRoot, immutableResultRef, expectedResultSha, batchTip),
+            _ => BatchReplayResult.Infrastructure(replay.Error ?? "Mechanical rebase failed."),
+        };
+    }
+
+    /// <summary>
+    /// Merges the untouched result commit into the batch tip in a disposable
+    /// detached worktree. Attribution is exact only when the new commit has the
+    /// tip and the result SHA as its two parents; the result then maps to that
+    /// merge commit and every delivery SHA stays an ancestor of the candidate.
+    /// </summary>
+    private BatchReplayResult MergeBatchMember(
+        string repoRoot, string immutableResultRef, string resultSha, string batchTip)
+    {
+        var container = Path.Combine(
+            Path.GetTempPath(), "agent-studio-batch-merge-" + Guid.NewGuid().ToString("N"));
+        var worktreePath = Path.Combine(container, "worktree");
+        Directory.CreateDirectory(container);
+        BatchReplayResult result;
+        var added = false;
+        try
+        {
+            var add = WorktreeAddDetached(repoRoot, worktreePath, batchTip);
+            if (!add.Success)
+            {
+                result = BatchReplayResult.Infrastructure(
+                    $"Batch merge worktree could not be created: {add.Error}");
+            }
+            else
+            {
+                added = true;
+                result = MergeInWorktree(worktreePath, immutableResultRef, resultSha, batchTip);
+            }
+        }
+        catch (Exception ex)
+        {
+            result = BatchReplayResult.Infrastructure($"Batch merge failed: {ex.Message}");
+        }
+        var cleanupError = CleanupMechanicalRebaseWorktree(repoRoot, container, worktreePath, added);
+        return cleanupError is null ? result : BatchReplayResult.Infrastructure(cleanupError);
+    }
+
+    private BatchReplayResult MergeInWorktree(
+        string worktreePath, string immutableResultRef, string resultSha, string batchTip)
+    {
+        var (_, mergeError, mergeCode) = RunGitArgs(
+            worktreePath,
+            "-c", "rerere.enabled=false",
+            "merge", "--no-ff", "--no-edit",
+            "-m", $"Batch gate: merge {immutableResultRef}",
+            resultSha);
+        if (mergeCode != 0)
+        {
+            var conflicted = ListUnmergedFiles(worktreePath);
+            RunGitArgs(worktreePath, "merge", "--abort");
+            return conflicted.Count > 0
+                ? BatchReplayResult.Conflict(conflicted, "Batch merge conflicted and was aborted.",
+                    BatchReplayRoute.Merge)
+                : BatchReplayResult.Infrastructure($"Batch merge failed: {mergeError.Trim()}");
+        }
+        var (parents, parentsError, parentsCode) = RunGitArgs(
+            worktreePath, "rev-list", "--parents", "-n", "1", "HEAD", RevisionsOnly);
+        if (parentsCode != 0)
+            return BatchReplayResult.Infrastructure(
+                $"Batch merge parents could not be read: {parentsError.Trim()}");
+        var shas = parents.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (shas.Length != 3
+            || !string.Equals(shas[1], batchTip, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(shas[2], resultSha, StringComparison.OrdinalIgnoreCase))
+            return BatchReplayResult.Unattributable(
+                "Batch merge did not record exactly the candidate tip and the result SHA as parents.",
+                BatchReplayRoute.Merge);
+        return new BatchReplayResult(true, shas[0],
+            [new RebasedCommitReplacement(resultSha, shas[0])], [], null, BatchReplayRoute.Merge);
     }
 
     public BatchCandidateRefResult UpdateBatchCandidateRef(

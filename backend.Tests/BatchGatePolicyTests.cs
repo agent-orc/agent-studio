@@ -1,3 +1,4 @@
+using AgentStudio.Git;
 using AgentStudio.Pipeline;
 using Xunit;
 
@@ -70,5 +71,38 @@ public sealed class BatchGatePolicyTests
         Assert.NotNull(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now,
             reviewQueueLength: 12).Manifest);
         Assert.Null(BatchGatePolicy.Form([Subject("a"), Subject("b")], Scope, Sha, Enabled, Now).Manifest);
+    }
+
+    [Theory]
+    [InlineData(true, false, 0, BatchReplayRoute.AlreadyContained)]
+    [InlineData(true, true, 2, BatchReplayRoute.AlreadyContained)]
+    [InlineData(false, true, 0, BatchReplayRoute.Identity)]
+    [InlineData(false, false, 0, BatchReplayRoute.Rebase)]
+    [InlineData(false, true, 1, BatchReplayRoute.Merge)]
+    [InlineData(false, false, 3, BatchReplayRoute.Merge)]
+    public void Replay_route_merges_only_a_delivery_with_merge_commits(
+        bool contained, bool descendant, int merges, BatchReplayRoute expected)
+        => Assert.Equal(expected, BatchReplayPolicy.Choose(contained, descendant, merges));
+
+    [Fact]
+    public void Replay_route_rejects_a_negative_merge_count()
+        => Assert.Throws<ArgumentOutOfRangeException>(() => BatchReplayPolicy.Choose(false, false, -1));
+
+    [Fact]
+    public void Replay_disposition_ejects_only_an_unattributable_member_and_pauses_on_infrastructure()
+    {
+        Assert.Equal(BatchReplayDisposition.Admit, BatchGatePolicy.ReplayDisposition(
+            new BatchReplayResult(true, Sha, [new RebasedCommitReplacement(Sha, Sha)], [], null)));
+        Assert.Equal(BatchReplayDisposition.EjectUnattributable, BatchGatePolicy.ReplayDisposition(
+            BatchReplayResult.Unattributable("no single candidate commit")));
+        Assert.Equal(BatchReplayDisposition.EjectUnattributable, BatchGatePolicy.ReplayDisposition(
+            new BatchReplayResult(true, Sha, [], [], null)));
+        Assert.Equal(BatchReplayDisposition.EjectUnattributable, BatchGatePolicy.ReplayDisposition(
+            new BatchReplayResult(true, null, [new RebasedCommitReplacement(Sha, Sha)], [], null)));
+        Assert.Equal(BatchReplayDisposition.Pause, BatchGatePolicy.ReplayDisposition(
+            BatchReplayResult.Infrastructure("worktree")));
+        // An unclassified failure keeps the old fail-closed pause.
+        Assert.Equal(BatchReplayDisposition.Pause, BatchGatePolicy.ReplayDisposition(
+            new BatchReplayResult(false, null, [], [], "unknown")));
     }
 }

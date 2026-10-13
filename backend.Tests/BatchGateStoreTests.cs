@@ -1,5 +1,8 @@
+using System.Text.Json;
 using AgentStudio.Git;
 using AgentStudio.Pipeline;
+using AgentStudio.TaskServer.Contracts.BatchGate;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace AgentStudio.Tests;
@@ -125,6 +128,107 @@ public sealed class BatchGateStoreTests : IDisposable
         Assert.Equal(Next, result.CandidateSha);
         Assert.Equal(2, updates); // Creation and one successful member only.
         Assert.True(result.CascadeStopped);
+    }
+
+    [Fact]
+    public void UnattributableMemberIsEjectedAloneWithItsReasonAndTheBatchAssembles()
+    {
+        var manifest = Close();
+        var clock = new FakeTimeProvider(Now);
+        const string reason = "Immutable result ref does not resolve to the expected SHA.";
+        var current = Base;
+        var assembler = new BatchGateAssembler(_store,
+            (member, tip) => member.TaskKey == "task-1"
+                ? BatchReplayResult.Unattributable(reason)
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, next, old) =>
+            {
+                Assert.Equal(current, old ?? current);
+                current = next;
+                return new BatchCandidateRefResult(true, null);
+            }, clock);
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(["task-0", "task-2", "task-3"], result.AdmittedKeys);
+        Assert.Equal(["task-1"], result.EjectedKeys);
+        Assert.Empty(result.DeferredKeys);
+        Assert.False(result.CascadeStopped);
+        var ejected = _store.ReadReplay(manifest.BatchId, "task-1");
+        Assert.Equal("unattributable", ejected.Outcome);
+        Assert.Equal(reason, ejected.Reason);
+        Assert.Null(ejected.TipAfterSha);
+        Assert.Equal(Now, ejected.RecordedAtUtc);
+        Assert.Equal(BatchPhase.Assembled, _store.LatestState(manifest.BatchId).Phase);
+
+        // The card names the reason; admitted members stay in the batch.
+        var state = JsonSerializer.SerializeToElement(BatchGateStateSnapshotReader.Read(
+            _store, "project", new BatchGateFormationOptions(Enabled: true)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var card = state.GetProperty("members").GetProperty("task-1");
+        Assert.Equal("fallback", card.GetProperty("status").GetString());
+        Assert.Equal("unattributable", card.GetProperty("reason").GetString());
+        Assert.Equal(reason, card.GetProperty("reasonDetail").GetString());
+        var admitted = state.GetProperty("members").GetProperty("task-0");
+        Assert.Equal("in-batch", admitted.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, admitted.GetProperty("reason").ValueKind);
+    }
+
+    [Fact]
+    public void UnattributableMergeKeepsTheMergeStrategyOnItsReplayRecord()
+    {
+        var manifest = Close();
+        var assembler = new BatchGateAssembler(_store,
+            (member, _) => member.TaskKey == "task-1"
+                ? BatchReplayResult.Unattributable(
+                    "Batch merge did not record exactly the candidate tip and the result SHA as parents.",
+                    BatchReplayRoute.Merge)
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now));
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(["task-1"], result.EjectedKeys);
+        var ejected = _store.ReadReplay(manifest.BatchId, "task-1");
+        Assert.Equal("unattributable", ejected.Outcome);
+        Assert.Equal(BatchReplayStrategies.Merge, ejected.Strategy);
+        Assert.Equal(BatchReplayStrategies.Linear,
+            _store.ReadReplay(manifest.BatchId, "task-0").Strategy);
+    }
+
+    [Fact]
+    public void InfrastructureReplayFailureStillStopsAssembly()
+    {
+        var manifest = Close();
+        var assembler = new BatchGateAssembler(_store,
+            (member, _) => member.TaskKey == "task-1"
+                ? BatchReplayResult.Infrastructure("Batch merge worktree could not be created.")
+                : new BatchReplayResult(true, Next, [new RebasedCommitReplacement(Base, Next)], [], null),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now));
+
+        var error = Assert.Throws<InvalidDataException>(() => assembler.Assemble(manifest.BatchId, 1));
+        Assert.Contains("worktree", error.Message, StringComparison.Ordinal);
+        Assert.Null(_store.TryReadReplay(manifest.BatchId, "task-1"));
+    }
+
+    [Fact]
+    public void MergedMemberRecordsItsStrategyAndMustMapTheResultToItsMergeCommit()
+    {
+        var manifest = Close();
+        var member = manifest.Members[0];
+        Assert.Throws<InvalidDataException>(() => _store.RecordReplay(new BatchGateReplayRecord(
+            manifest.BatchId, manifest.MembershipDigest, member.TaskKey, Base, Base, Next,
+            [new RebasedCommitReplacement(Base, Base), new RebasedCommitReplacement(Base, Next)],
+            [], "admitted", Now, BatchReplayStrategies.Merge)));
+        var assembler = new BatchGateAssembler(_store,
+            (subject, _) => new BatchReplayResult(true, Next,
+                [new RebasedCommitReplacement(subject.ResultSha, Next)], [], null, BatchReplayRoute.Merge),
+            (_, _, _) => new BatchCandidateRefResult(true, null), new FakeTimeProvider(Now));
+
+        var result = assembler.Assemble(manifest.BatchId, 1);
+
+        Assert.Equal(manifest.Members.Select(x => x.TaskKey), result.AdmittedKeys);
+        Assert.Equal(BatchReplayStrategies.Merge, _store.ReadReplay(manifest.BatchId, member.TaskKey).Strategy);
     }
 
     [Fact]

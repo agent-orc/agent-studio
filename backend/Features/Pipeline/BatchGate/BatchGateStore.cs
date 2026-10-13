@@ -28,12 +28,19 @@ public sealed record BatchGatePublication(
     string PreTipSha, string TestedCandidateSha, string VerifiedRemoteSha,
     long CoordinatorFence, long RefMutationFence, DateTimeOffset VerifiedAtUtc);
 
+/// <summary>
+/// One member's replay onto the candidate. <see cref="Strategy"/> is
+/// <c>linear</c> (identity or rebase mapping, also every record written before
+/// AGT-3104) or <c>merge</c>: the untouched result commit merged into the
+/// candidate, attributed to that merge commit. <see cref="Reason"/> names why an
+/// <c>unattributable</c> member was ejected.
+/// </summary>
 public sealed record BatchGateReplayRecord(
     string BatchId, string MembershipDigest, string TaskKey,
     string OriginalResultSha, string TipBeforeSha, string? TipAfterSha,
     IReadOnlyList<AgentStudio.Git.RebasedCommitReplacement> Replacements,
     IReadOnlyList<string> ConflictedFiles, string Outcome,
-    DateTimeOffset RecordedAtUtc);
+    DateTimeOffset RecordedAtUtc, string? Strategy = null, string? Reason = null);
 
 public sealed record BatchGateMemberRecord(
     string TaskKey, string RunAttempt, long DeliveryEpoch, string OriginalResultSha,
@@ -429,6 +436,15 @@ public sealed class BatchGateStore
             || !IsSha(replay.TipBeforeSha)
             || replay.TipAfterSha is { } after && !IsSha(after))
             throw new InvalidDataException("Batch replay identity does not match the manifest.");
+        // A merged member maps its untouched result to exactly one candidate
+        // merge commit; nothing else of the delivery was rewritten.
+        if (replay.Strategy == BatchReplayStrategies.Merge && replay.Outcome == "admitted"
+            && (replay.Replacements.Count != 1
+                || !string.Equals(replay.Replacements[0].OriginalSha, replay.OriginalResultSha,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(replay.Replacements[0].RebasedSha, replay.TipAfterSha,
+                    StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("Batch merge replay must map the result SHA to its merge commit.");
         var folder = Path.Combine(BatchDirectory(replay.BatchId), "replays");
         Directory.CreateDirectory(folder);
         WriteOnce(Path.Combine(folder, SafeName(replay.TaskKey) + ".json"), replay);

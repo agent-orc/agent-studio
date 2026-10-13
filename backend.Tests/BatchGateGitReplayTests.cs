@@ -90,6 +90,105 @@ public sealed class BatchGateGitReplayTests : IDisposable
         Assert.Contains(firstSha, Git("ls-remote", "origin", candidateRef));
     }
 
+    [Fact]
+    public void FixRoundWithAnIntegrationMergeIsMergedIntoTheCandidateWithExactParents()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "base\n");
+        Git("add", "file.txt");
+        Git("commit", "-qm", "base");
+        var oldBase = Git("rev-parse", "HEAD");
+        File.WriteAllText(Path.Combine(_root, "develop.txt"), "develop\n");
+        Git("add", "develop.txt");
+        Git("commit", "-qm", "develop moved");
+        var develop = Git("rev-parse", "HEAD");
+        // The linear member was cut on the current integration tip.
+        File.WriteAllText(Path.Combine(_root, "linear.txt"), "linear\n");
+        Git("add", "linear.txt");
+        Git("commit", "-qm", "linear");
+        var linearSha = Git("rev-parse", "HEAD");
+        var linearRef = "refs/heads/agent-studio/results/linear/" + linearSha;
+        Git("update-ref", linearRef, linearSha);
+        // The fix round was cut on the old base and merged the integration tip.
+        Git("checkout", "-q", "--detach", oldBase);
+        File.WriteAllText(Path.Combine(_root, "fix.txt"), "first\n");
+        Git("add", "fix.txt");
+        Git("commit", "-qm", "fix round");
+        Git("merge", "-q", "--no-ff", "--no-edit", develop);
+        File.WriteAllText(Path.Combine(_root, "fix.txt"), "second\n");
+        Git("commit", "-qam", "fix round follow-up");
+        var fixSha = Git("rev-parse", "HEAD");
+        var fixRef = "refs/heads/agent-studio/results/fix/" + fixSha;
+        Git("update-ref", fixRef, fixSha);
+        var service = Service();
+
+        var linear = service.ReplayBatchMember(_root, linearRef, linearSha, develop);
+        Assert.True(linear.Success, linear.Error);
+        Assert.Equal(BatchReplayRoute.Identity, linear.Route);
+        var merged = service.ReplayBatchMember(_root, fixRef, fixSha, linearSha);
+        Assert.True(merged.Success, merged.Error);
+        Assert.Equal(BatchReplayRoute.Merge, merged.Route);
+        var replacement = Assert.Single(merged.Replacements);
+        Assert.Equal(fixSha, replacement.OriginalSha);
+        Assert.Equal(merged.TipSha, replacement.RebasedSha);
+        Assert.Equal($"{merged.TipSha} {linearSha} {fixSha}",
+            Git("rev-list", "--parents", "-n", "1", merged.TipSha!));
+        Assert.Equal("second", Git("show", $"{merged.TipSha}:fix.txt"));
+        Assert.Equal("linear", Git("show", $"{merged.TipSha}:linear.txt"));
+        // A fix round already on the tip still merges rather than fast-forwarding
+        // a non-linear range under an identity mapping.
+        var direct = service.ReplayBatchMember(_root, fixRef, fixSha, develop);
+        Assert.True(direct.Success, direct.Error);
+        Assert.Equal(BatchReplayRoute.Merge, direct.Route);
+        Assert.Equal($"{direct.TipSha} {develop} {fixSha}",
+            Git("rev-list", "--parents", "-n", "1", direct.TipSha!));
+        Assert.Empty(Git("worktree", "list", "--porcelain").Split('\n')
+            .Where(line => line.Contains("agent-studio-batch-merge-", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void ContainedOrMismatchedResultIsUnattributableAndMergeConflictIsAConflict()
+    {
+        Directory.CreateDirectory(_root);
+        Git("init", "-q");
+        Git("config", "user.name", "Test");
+        Git("config", "user.email", "test@example.invalid");
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "base\n");
+        Git("add", "file.txt");
+        Git("commit", "-qm", "base");
+        var baseSha = Git("rev-parse", "HEAD");
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "develop\n");
+        Git("commit", "-qam", "develop");
+        var develop = Git("rev-parse", "HEAD");
+        Git("checkout", "-q", "--detach", baseSha);
+        File.WriteAllText(Path.Combine(_root, "file.txt"), "member\n");
+        Git("commit", "-qam", "member");
+        File.WriteAllText(Path.Combine(_root, "other.txt"), "other\n");
+        Git("add", "other.txt");
+        Git("commit", "-qm", "side");
+        var side = Git("rev-parse", "HEAD");
+        Git("checkout", "-q", "--detach", baseSha);
+        Git("merge", "-q", "--no-ff", "--no-edit", side);
+        var memberSha = Git("rev-parse", "HEAD");
+        var memberRef = "refs/heads/agent-studio/results/member/" + memberSha;
+        Git("update-ref", memberRef, memberSha);
+        var service = Service();
+
+        var contained = service.ReplayBatchMember(_root, memberRef, memberSha, memberSha);
+        Assert.False(contained.Success);
+        Assert.Equal(BatchReplayFailure.Unattributable, contained.Failure);
+        Assert.Equal(BatchReplayRoute.AlreadyContained, contained.Route);
+        var mismatch = service.ReplayBatchMember(_root, memberRef, develop, develop);
+        Assert.Equal(BatchReplayFailure.Unattributable, mismatch.Failure);
+        var conflict = service.ReplayBatchMember(_root, memberRef, memberSha, develop);
+        Assert.Equal(BatchReplayFailure.Conflict, conflict.Failure);
+        Assert.Equal(BatchReplayRoute.Merge, conflict.Route);
+        Assert.Contains("file.txt", conflict.ConflictedFiles);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
@@ -115,6 +214,7 @@ public sealed class BatchGateGitReplayTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            CreateNoWindow = true,
         };
         foreach (var argument in arguments) process.StartInfo.ArgumentList.Add(argument);
         process.Start();

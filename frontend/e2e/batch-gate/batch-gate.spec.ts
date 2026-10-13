@@ -39,11 +39,8 @@ async function captureThemes(page: import('@playwright/test').Page, evidence: st
   }
 }
 
-test('board badge, batch panel and project settings save use batch contract', async ({ page }) => {
-  const evidence = process.env.JOB_RESULTS_DIR;
-  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+async function routeBoard(page: import('@playwright/test').Page, batchState: unknown, onSave: () => void = () => undefined): Promise<void> {
   await page.addInitScript(() => localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({ v: 1, tabs: [{ kind: 'board', projectName: '__all__' }], activeKey: 'board:__all__' })));
-  let saved = false;
   await page.route('**/api/**', route => json(route, []));
   await page.route('**/api/v1/studio/auth/status', route => json(route, { profile: 'local', bootstrapRequired: false, authenticated: true, user: null }));
   await page.route('**/api/v1/studio/board**', route => json(route, grouped));
@@ -65,7 +62,7 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.route('**/api/v1/management/retention/policy/**', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/management/retention/policy', route => json(route, { rules: [], revision: 1 }));
   await page.route('**/api/v1/studio/runner/status**', route => json(route, { projects: { [project]: { projectName: project, mode: 'manual', activeJobId: null, queuedJobIds: [] } } }));
-  await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, state));
+  await page.route('**/api/projects/*/batch-gate/state?history=10', route => json(route, batchState));
   await page.route('**/api/projects/*/snapshot**', route => json(route, {
     settings: { autoCommit: false, crashRecoveryEnabled: false, autoPushStrategy: 'off', runnerMode: 'manual' },
     runnerStatus: null, orchestratorLogTail: [], orchestratorSession: null, paths: null,
@@ -74,9 +71,16 @@ test('board badge, batch panel and project settings save use batch contract', as
   await page.route('**/api/projects/*/workbenches**', route => json(route, { items: [] }));
   await page.route('**/api/projects/*/execution', route => json(route, { valid: false, issues: [], source: 'repository' }));
   await page.route('**/api/projects/*/batch-gate', route => {
-    if (route.request().method() === 'PUT') { saved = true; expect(route.request().headers()['x-client-id']).toBeTruthy(); return json(route, { settings: route.request().postDataJSON(), limits: { hardMaximumSize: 8 } }); }
+    if (route.request().method() === 'PUT') { onSave(); expect(route.request().headers()['x-client-id']).toBeTruthy(); return json(route, { settings: route.request().postDataJSON(), limits: { hardMaximumSize: 8 } }); }
     return json(route, { settings, limits: { hardMaximumSize: 8 } });
   });
+}
+
+test('board badge, batch panel and project settings save use batch contract', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  let saved = false;
+  await routeBoard(page, state, () => { saved = true; });
   await page.goto('/?includeFixtures=true');
   // This route-only fixture has no SignalR server; keep its offline banner out of the target surface.
   await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
@@ -103,4 +107,27 @@ test('board badge, batch panel and project settings save use batch contract', as
   await expect(page.getByTestId('batch-settings')).toContainText('Saved');
   await page.locator('#batch-settings-title').scrollIntoViewIfNeeded();
   await captureThemes(page, evidence, 'batch-settings');
+});
+
+test('ejected batch member badge names why it went to the per-task gate', async ({ page }) => {
+  const evidence = process.env.JOB_RESULTS_DIR;
+  if (evidence) fs.mkdirSync(evidence, { recursive: true });
+  const detail = 'Immutable result ref does not resolve to the expected SHA.';
+  await routeBoard(page, {
+    ...state,
+    members: { 'AGT-2': { status: 'fallback', batchId: 'batch-8', phase: 'running', position: 1, size: 1, reason: 'unattributable', reasonDetail: detail } },
+  });
+  await page.goto('/?includeFixtures=true');
+  await page.addStyleTag({ content: '[data-testid="offline-banner"] { display: none !important; }' });
+  const card = page.getByTestId('task-card').filter({ hasText: 'Batch fixture task' });
+  const badge = card.getByTestId('batch-member-badge');
+  await expect(badge).toHaveText('Per-task fallback · unattributable history');
+  await expect(badge).toHaveAttribute('data-reason', 'unattributable');
+  await expect(badge).toHaveAttribute('title', detail);
+  await expect(page.getByTestId('error-dialog-overlay')).toHaveCount(0);
+  if (!evidence) return;
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => { document.documentElement.dataset['studioTheme'] = value; }, theme);
+    await card.screenshot({ path: nodePath.join(evidence, `batch-member-ejected-${theme}.png`) });
+  }
 });

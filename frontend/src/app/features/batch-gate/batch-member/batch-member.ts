@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, input } from '@angular/core';
 import { BatchGateService } from '../../../services/batch-gate.service';
-import { batchMemberFor } from '../../../models/batch-gate.model';
+import { batchEjectionLabel, batchMemberFor } from '../../../models/batch-gate.model';
 
 @Component({
   selector: 'app-batch-member',
@@ -17,6 +17,7 @@ export class BatchMemberComponent {
   readonly taskId = input<string | null | undefined>(null);
   private readonly gate = inject(BatchGateService);
   readonly member = computed(() => batchMemberFor(this.gate.state(this.project())(), this.taskKey(), this.referenceKey(), this.displayKey(), this.taskId()));
+  readonly ejection = computed(() => batchEjectionLabel(this.member()?.reason));
   constructor() {
     effect(onCleanup => {
       const project = this.project();
