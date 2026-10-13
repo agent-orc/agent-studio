@@ -22,7 +22,10 @@ public static class FlowGateLogEvidence
                 using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 var buffer = new byte[Math.Min(4096, (int)Math.Min(int.MaxValue, stream.Length))];
                 var count = stream.Read(buffer, 0, buffer.Length);
-                var header = Encoding.UTF8.GetString(buffer, 0, count).Split('\n', 2)[0];
+                // The writer puts duration, start and queue wait on lines 1, 3 and 5.
+                // Stop before the evidence body, while keeping the read capped at 4 KB.
+                var header = string.Join('\n', Encoding.UTF8.GetString(buffer, 0, count)
+                    .Split('\n').Take(5));
                 var fields = Field.Matches(header).Cast<Match>()
                     .GroupBy(match => match.Groups["key"].Value, StringComparer.Ordinal)
                     .ToDictionary(g => g.Key, g => g.Last().Groups["value"].Value, StringComparer.Ordinal);
