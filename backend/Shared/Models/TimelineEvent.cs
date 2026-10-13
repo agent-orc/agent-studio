@@ -197,6 +197,8 @@ public static class TimelineEventKinds
     /// "claimed=done" verdict and reissued the run.
     /// </summary>
     public const string QualityLoopReopened = "quality_loop_reopened";
+    /// <summary>A per-card budget disposition, including its open aspects and round counts.</summary>
+    public const string CardRoundBudgetDisposition = "card_round_budget_disposition";
     /// <summary>A human review verdict was recorded.</summary>
     public const string HumanReviewDecided = "human_review_decided";
     /// <summary>

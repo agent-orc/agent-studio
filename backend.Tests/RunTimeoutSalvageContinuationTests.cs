@@ -30,6 +30,7 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
     private readonly TaskMutationService _mutations;
     private readonly TaskTransitionService _transitions;
     private readonly TimelineLog _timeline;
+    private readonly IConfiguration _configuration;
 
     public RunTimeoutSalvageContinuationTests()
     {
@@ -48,6 +49,7 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
                 ["TaskRepository"] = _workspaceRoot,
             })
             .Build();
+        _configuration = config;
 
         var summary = new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config);
         _scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance, summary);
@@ -277,6 +279,27 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
         Assert.Equal(0, service.CountAutomaticRounds(_scanner.FindJob(JobId, _watchPath)!));
     }
 
+    [Fact]
+    public async Task Spent_card_budget_refuses_a_new_salvage_continuation_before_prompt_write()
+    {
+        WriteJob(TaskStates.Progress);
+        var task = _scanner.FindJob(JobId, _watchPath)!;
+        var promptPath = Path.Combine(task.FolderPath, "prompt.md");
+        var originalPrompt = File.ReadAllText(promptPath);
+        for (var round = 1; round <= CardRoundBudget.DefaultRoundsPerCard; round++)
+            _timeline.Append(task.FolderPath, TimelineEventKinds.ContinuationRoundStarted,
+                TimelineActors.System, $"Earlier round {round}",
+                details: new Dictionary<string, string> { ["automatic"] = "true" });
+
+        var result = await BuildService().StartAsync(task,
+            new RunSalvageReference(SalvageBranch, SalvageSha), "Timeout", "attempt-next", Write(), default);
+
+        Assert.False(result.Started);
+        Assert.Contains("4 of 4", result.Reason);
+        Assert.Equal(originalPrompt, File.ReadAllText(promptPath));
+        Assert.Equal(TaskStates.Progress, _scanner.FindJob(JobId, _watchPath)!.State);
+    }
+
     private RunTimeoutContinuationService BuildService()
         => new(
             _scanner,
@@ -284,7 +307,8 @@ public sealed class RunTimeoutSalvageContinuationTests : IDisposable
             _states,
             _transitions,
             _timeline,
-            NullLogger<RunTimeoutContinuationService>.Instance);
+            NullLogger<RunTimeoutContinuationService>.Instance,
+            _configuration);
 
     private static AttemptWriteReference Write()
         => new("attempt-1", 7, 1, "lane-completion:completion-1");

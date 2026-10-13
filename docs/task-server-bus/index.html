@@ -613,6 +613,10 @@
   <strong>AGT-3071 · D19 to D21 architecture record</strong>
   <span>Delivered: ADR-0078 and the canonical target architecture record review host preference, interchangeable leased engine instances and the Operations Broker documentation and UI term.</span>
 </li>
+<li data-implementation-entry="" data-task-key="AGT-3054" data-delivered-at="2026-10-13" data-slice="Per-card round budget and finding recovery">
+  <strong>AGT-3054 · Per-card round budget and finding recovery</strong>
+  <span>Delivered: D18 A applies the lifetime card budget before Remote Review and local finding and concern rounds through one shared review decision; spent non-test findings become one linked follow-up, spent test blocks escalate with a budget receipt, and a concern that opens no round keeps its Pass. Journaled finding continuations decide from the timeline receipt and the keyed lane row before the lane, so a restart replays one Ready move and one prompt note and a card that returns to review is never bounced. Endpoint, local orchestrator, sweep parity, restart drill and policy tests verify the slice.</span>
+</li>
 <!-- agent-studio:implementation-log:end --></ol></section><!-- agent-studio:implementation-section:end -->
 <section id="sources"><h2>Code index</h2><p>Every reference resolves to an inspected writer, reader or wire contract. Line numbers and SHA-256 file hashes are pinned in <a href="evidence.json">evidence.json</a>. Revalidate them if develop advances.</p><table><thead><tr><th>Ref</th><th>File, location and purpose</th></tr></thead><tbody>
 <tr id="src-A"><td>A</td><td class="source-path"><a href="../../backend/Features/Runner/AttemptAuthorityService.cs">backend/Features/Runner/AttemptAuthorityService.cs</a>, line 45: <code>public const string RelativePath</code>. File-backed attempt authority; acquisition, fencing, epochs, settlement and restart adoption.</td></tr>

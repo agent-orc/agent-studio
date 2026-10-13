@@ -24,7 +24,10 @@ public sealed record RemoteReviewSettlementEntry
     public string? DeliverySha256 { get; init; }
     public ReviewRoundBudgetDecision? ReviewBudgetDecision { get; init; }
     public IReadOnlyList<Contract.ReviewVerdictDto>? ReviewBudgetOriginalVerdicts { get; init; }
+    public CardRoundBudgetState? CardBudget { get; init; }
     public string? ReviewBudgetSha256 { get; init; }
+    public RemoteReviewContinuation? Continuation { get; init; }
+    public string? ContinuationSha256 { get; init; }
     public DateTime ReceivedAtUtc { get; init; }
     public bool EvidenceComplete { get; init; }
     public int EvidenceFailures { get; init; }
@@ -70,10 +73,18 @@ public static class RemoteReviewSettlementJournal
 
     private static string? HashReviewBudget(RemoteReviewSettlementEntry entry)
         => entry.ReviewBudgetDecision is null && entry.ReviewBudgetOriginalVerdicts is null
+           && entry.CardBudget is null
             ? null
             : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(
-                new { entry.ReviewBudgetDecision, entry.ReviewBudgetOriginalVerdicts }, HashJson))))
+                entry.CardBudget is null
+                    ? (object)new { entry.ReviewBudgetDecision, entry.ReviewBudgetOriginalVerdicts }
+                    : new { entry.ReviewBudgetDecision, entry.ReviewBudgetOriginalVerdicts, entry.CardBudget },
+                HashJson))))
                 .ToLowerInvariant();
+
+    private static string? HashContinuation(RemoteReviewContinuation? continuation)
+        => continuation is null ? null : Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(continuation, HashJson)))).ToLowerInvariant();
 
     public static RemoteReviewSettlementRead Read(string folder, string attemptId)
     {
@@ -94,7 +105,13 @@ public static class RemoteReviewSettlementJournal
                        || !Enum.IsDefined(delivery.Stage))
                 || !string.Equals(HashDelivery(entry.Delivery), entry.DeliverySha256, StringComparison.Ordinal)
                 || (entry.ReviewBudgetDecision is null) != (entry.ReviewBudgetOriginalVerdicts is null)
+                || entry.CardBudget is not null && entry.ReviewBudgetDecision is null
                 || !string.Equals(HashReviewBudget(entry), entry.ReviewBudgetSha256, StringComparison.Ordinal)
+                || !string.Equals(HashContinuation(entry.Continuation), entry.ContinuationSha256, StringComparison.Ordinal)
+                || entry.Continuation is { } continuation
+                   && ((continuation.DeliveredRound is null) != (continuation.DeliveredRoundSeed is null)
+                       || continuation.DeliveredRound is { } deliveredRound
+                          && deliveredRound.AttemptId != attemptId)
                 || !string.Equals(Hash(entry.Report), entry.ReportSha256, StringComparison.Ordinal))
                 return new(RemoteReviewSettlementReadStatus.Repair, Reason: "corrupt-review-settlement-journal");
             return new(RemoteReviewSettlementReadStatus.Ready, entry);
@@ -180,6 +197,7 @@ public static class RemoteReviewSettlementJournal
                 {
                     DeliverySha256 = HashDelivery(entry.Delivery),
                     ReviewBudgetSha256 = HashReviewBudget(entry),
+                    ContinuationSha256 = HashContinuation(entry.Continuation),
                 }, Json));
             File.Move(temporary, path, overwrite: true);
         }

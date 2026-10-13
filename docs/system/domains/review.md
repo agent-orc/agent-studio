@@ -34,9 +34,12 @@ delivered local and Remote Review rounds. The count survives operator requeues,
 `/continue`, and evidence epoch changes. Existing cards seed it from their
 review artifacts. Project settings expose `maxDeliveredReviewRounds` (default
 4) and `maxAutoReissueAttempts` (default 2) through
-`PUT /api/projects/{projectName}/review-round-budgets`; both limits are lifetime
-per card. The task detail shows the delivered round count, limit, and aspect
-that spent the budget. Operator automation uses the same counter.
+`PUT /api/projects/{projectName}/review-round-budgets`. The delivered limit is
+lifetime per card; the reissue limit applies to the current review epoch.
+The task detail shows the delivered round count, limit, and aspect
+that spent the budget. Automatic continuation admission also checks the
+per-card `CardRoundBudget` (default 4), which counts reissues, review finding
+and concern reopens, and automatic continuations across all epochs.
 
 An aspect's consecutive block streak keys on its aspect id, independent of the
 finding summary or epoch. After two prior consecutive blocks, or when the
@@ -48,10 +51,20 @@ round limit binds. One linked follow-up card carries all open findings;
 review-budget follow-up; later degraded rounds append their findings to it.
 The delivery then follows the ordinary acceptance
 and integration rules. A build/test failure or tests-and-evidence block is
-never degraded; deterministic gates continue to own those failures.
+never degraded. When the per-card budget is spent, such a block moves to
+Escalated with a receipt naming used and allowed rounds and open aspects.
+A spent non-test block degrades to concerns with one linked follow-up.
 For Remote Review, the accepted settlement journal carries the original
 blocking verdicts and budget decision. Restart reconciliation restores the
 round ledger and linked follow-up before it resumes delivery integration.
+The same journal records a finding-round continuation before settlement.
+Reconciliation completes its delivered-round ledger, Ready move, concern
+ledger, follow-up files, prompt note and timeline reopen once after a restart.
+It decides from the ledger before the lane: the timeline receipt marks the
+continuation complete in any lane, and a `lane_changed` row keyed by the
+continuation idempotency key means only the remaining writes run. Only a card
+that never took the move and still sits in 4-auto-review is moved, so a card
+that later returns to review is never bounced by the settled attempt.
 
 ## Concern fix and scoped re-review contract
 

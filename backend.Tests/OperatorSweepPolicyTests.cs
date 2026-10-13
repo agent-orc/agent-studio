@@ -88,6 +88,47 @@ public sealed class OperatorSweepPolicyTests
     }
 
     [Theory]
+    [InlineData("build-tests", CardRoundBudgetAction.Escalate)]
+    [InlineData("tests-and-evidence", CardRoundBudgetAction.Escalate)]
+    [InlineData("review-verification", CardRoundBudgetAction.Escalate)]
+    [InlineData("code-quality", CardRoundBudgetAction.DegradeToFollowUp)]
+    public void SpentCardBudget_UsesOneDispositionForEveryRoundOwner(
+        string aspect, CardRoundBudgetAction expected)
+    {
+        var budget = new CardRoundBudgetState(4, 4);
+        Assert.Equal(CardRoundBudgetAction.OpenRound,
+            CardRoundBudget.Decide(new CardRoundBudgetState(3, 4), [aspect]));
+        Assert.Equal(expected, CardRoundBudget.Decide(budget, [aspect]));
+        var receipt = CardRoundBudgetReceipt.Details(budget, [aspect], "card-round-budget");
+        Assert.Equal("4", receipt["roundsUsed"]);
+        Assert.Equal("4", receipt["roundsAllowed"]);
+        Assert.Equal(aspect, receipt["blockingAspects"]);
+    }
+
+    [Theory]
+    [InlineData(3, "build-tests", false, CardRoundBudgetAction.OpenRound, OperatorSweepAction.Act)]
+    [InlineData(4, "build-tests", false, CardRoundBudgetAction.Escalate, OperatorSweepAction.WaitForPerson)]
+    [InlineData(4, "tests-and-evidence", false, CardRoundBudgetAction.Escalate, OperatorSweepAction.WaitForPerson)]
+    [InlineData(4, "code-quality", false, CardRoundBudgetAction.DegradeToFollowUp, OperatorSweepAction.WaitForPerson)]
+    [InlineData(4, "", true, CardRoundBudgetAction.DegradeToFollowUp, OperatorSweepAction.WaitForPerson)]
+    [InlineData(4, "", false, CardRoundBudgetAction.OpenRound, OperatorSweepAction.WaitForPerson)]
+    public void SameBudgetFacts_GiveEveryRoundOwnerTheSameAnswer(
+        int used, string blockingAspect, bool opensConcernRound,
+        CardRoundBudgetAction review, OperatorSweepAction sweep)
+    {
+        // Remote Review and the local orchestrator ask DecideForReview with the
+        // round their follow-up policy would open; the sweep asks with the same
+        // budget. None of them opens a further automatic round on a spent card,
+        // and a concern that opens no round is no budget question at all.
+        var budget = new CardRoundBudgetState(used, 4);
+        string[] blocking = blockingAspect.Length == 0 ? [] : [blockingAspect];
+
+        Assert.Equal(review, CardRoundBudget.DecideForReview(budget, blocking, opensConcernRound));
+        Assert.Equal(sweep, OperatorSweepPolicy.Decide(
+            OperatorSweepKinds.FixRounds, Trigger, Facts(budget: budget)).Action);
+    }
+
+    [Theory]
     [InlineData(FailureDomains.Product, OperatorSweepAction.Act, OperatorSweepReasons.ProductGateFailure)]
     [InlineData(FailureDomains.Infrastructure, OperatorSweepAction.Hold, OperatorSweepReasons.EnvironmentFailure)]
     [InlineData(null, OperatorSweepAction.WaitForPerson, OperatorSweepReasons.UnclassifiedFailure)]

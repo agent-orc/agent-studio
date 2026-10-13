@@ -218,8 +218,7 @@ public sealed record RunTimeoutContinuationResult(
 /// instruction to <c>prompt.md</c> (the text the remote runner fetches
 /// verbatim), pin the round to a clean CLI context, return the card to the
 /// front of Ready under the completing attempt's authority, and state the round
-/// on the timeline. The service never authors Git history and never decides the
-/// budget itself.
+/// on the timeline. The service never authors Git history.
 /// </summary>
 public sealed class RunTimeoutContinuationService
 {
@@ -229,6 +228,7 @@ public sealed class RunTimeoutContinuationService
     private readonly TaskTransitionService _transitions;
     private readonly TimelineLog _timeline;
     private readonly ILogger<RunTimeoutContinuationService> _logger;
+    private readonly IConfiguration _configuration;
 
     public RunTimeoutContinuationService(
         TaskScannerService scanner,
@@ -236,7 +236,8 @@ public sealed class RunTimeoutContinuationService
         TaskStateMachine states,
         TaskTransitionService transitions,
         TimelineLog timeline,
-        ILogger<RunTimeoutContinuationService> logger)
+        ILogger<RunTimeoutContinuationService> logger,
+        IConfiguration configuration)
     {
         _scanner = scanner;
         _mutations = mutations;
@@ -244,6 +245,7 @@ public sealed class RunTimeoutContinuationService
         _transitions = transitions;
         _timeline = timeline;
         _logger = logger;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -270,6 +272,15 @@ public sealed class RunTimeoutContinuationService
         CancellationToken ct,
         RunContinuationCause? cause = null)
     {
+        var workspace = _configuration["TaskRepository"];
+        if (string.IsNullOrWhiteSpace(workspace))
+            return Failed("The card round budget could not be read.");
+        var cardBudget = CardRoundBudget.Evaluate(
+            ReviewDecisionLog.ReadAll(workspace, task.ProjectName),
+            _timeline.ReadAll(task.FolderPath), task.Id,
+            CardRoundBudget.ResolveAllowed(_configuration));
+        if (cardBudget.Exhausted)
+            return Failed($"Automatic round budget spent ({cardBudget.Used} of {cardBudget.Allowed}).");
         var epoch = OperatorReviewRequeueService.ReadEpoch(task.FolderPath);
         var round = CountAutomaticRounds(task) + 1;
         cause ??= RunContinuationCause.Timeout(reportedReason);
@@ -355,6 +366,19 @@ public sealed class RunTimeoutContinuationService
         var queued = _scanner.FindJob(task.Id, task.WatchPath);
         var queuedFolder = queued?.FolderPath ?? move.NewFolderPath ?? task.FolderPath;
 
+        var receipt = CardRoundBudgetReceipt.Details(
+            cardBudget with { Used = cardBudget.Used + 1 }, [], "automatic-continuation");
+        receipt["automatic"] = "true";
+        receipt["attemptEpoch"] = Invariant(epoch);
+        receipt["reason"] = cause.Reason;
+        receipt["round"] = Invariant(round);
+        receipt["maximumRounds"] = Invariant(RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds);
+        receipt["salvageBranch"] = salvage.Branch;
+        receipt["salvageCommitSha"] = salvage.CommitSha;
+        receipt["mode"] = ContinueModes.Steer;
+        receipt["contextMode"] = CliContextModes.Clean;
+        receipt["runAttemptId"] = attemptId;
+
         _timeline.Append(
             queuedFolder,
             TimelineEventKinds.ContinuationRoundStarted,
@@ -362,20 +386,7 @@ public sealed class RunTimeoutContinuationService
             $"Automatically started a continuation round to finish the salvaged work ({salvage.Describe()}).",
             runId: attemptId,
             payloadRef: "prompt.md",
-            details: new Dictionary<string, string>
-            {
-                ["automatic"] = "true",
-                ["attemptEpoch"] = Invariant(epoch),
-                ["reason"] = cause.Reason,
-                ["round"] = Invariant(round),
-                ["maximumRounds"] = Invariant(
-                    RunTimeoutSalvageContinuationPolicy.MaxAutomaticContinuationRounds),
-                ["salvageBranch"] = salvage.Branch,
-                ["salvageCommitSha"] = salvage.CommitSha,
-                ["mode"] = ContinueModes.Steer,
-                ["contextMode"] = CliContextModes.Clean,
-                ["runAttemptId"] = attemptId,
-            });
+            details: receipt);
         _logger.LogInformation(
             "continuation-round-started project={Project} task={TaskKey} attempt={AttemptId} epoch={Epoch} round={Round}/{MaximumRounds} salvage={SalvageBranch}@{SalvageSha} position={Position}",
             task.ProjectName,

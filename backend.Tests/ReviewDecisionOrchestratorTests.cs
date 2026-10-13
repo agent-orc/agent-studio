@@ -1817,6 +1817,117 @@ public class ReviewDecisionOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TaskDone_ConcernsOnlyAfterCardBudgetSpent_AcceptsWithoutFollowUp()
+    {
+        // AGT-3054: a spent card budget only intervenes when the review would
+        // open another round. A concern that opens no concern round keeps the
+        // Pass, exactly like the Remote Review plane, and raises no follow-up.
+        var (orchestrator, scanner, sourceId) = SpentCardBudgetDelivery("budget-concerns",
+            aspect => aspect == "code-quality"
+                ? "[[ASPECT_VERDICT: status=concerns; summary=Helper duplicated.]]\n[[TASK_DONE]]"
+                : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId, _watchPath));
+        Assert.Equal(TaskStates.HumanReview, source.State);
+        Assert.DoesNotContain(scanner.ScanAllJobs(), task => task.CreationSource == "review-budget-follow-up");
+        Assert.Empty(ReviewRoundBudgetStore.Read(source.FolderPath).Rounds[^1].DegradedAspects);
+        Assert.DoesNotContain(_timeline.ReadAll(source.FolderPath),
+            item => item.Kind == TimelineEventKinds.CardRoundBudgetDisposition);
+    }
+
+    [Fact]
+    public async Task TaskDone_NonTestBlockAfterCardBudgetSpent_AcceptsWithOneFollowUpAndReceipt()
+    {
+        var (orchestrator, scanner, sourceId) = SpentCardBudgetDelivery("budget-code-block",
+            aspect => aspect == "code-quality"
+                ? "[[ASPECT_VERDICT: status=block; summary=Rename the helper in backend/Other.cs.]]\n[[TASK_DONE]]"
+                : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId, _watchPath));
+        Assert.Equal(TaskStates.HumanReview, source.State);
+        Assert.Equal(ReviewDecisionKind.AcceptAsDone, ReadOnlyDecisionRecord().Kind);
+        var followUp = Assert.Single(scanner.ScanAllJobs(), task => task.CreationSource == "review-budget-follow-up");
+        Assert.Contains(sourceId, followUp.References?.FollowUpOf ?? []);
+        var receipt = Assert.Single(_timeline.ReadAll(source.FolderPath),
+            item => item.Kind == TimelineEventKinds.CardRoundBudgetDisposition);
+        Assert.Equal(nameof(CardRoundBudgetAction.DegradeToFollowUp), receipt.Details!["disposition"]);
+        Assert.Equal("4", receipt.Details["roundsUsed"]);
+        Assert.Equal("4", receipt.Details["roundsAllowed"]);
+        Assert.Equal("code-quality", receipt.Details["blockingAspects"]);
+    }
+
+    [Fact]
+    public async Task TaskDone_TestBlockAfterCardBudgetSpent_EscalatesWithReceipt()
+    {
+        var (orchestrator, scanner, sourceId) = SpentCardBudgetDelivery("budget-test-block",
+            aspect => aspect == "tests-and-evidence"
+                ? "[[ASPECT_VERDICT: status=block; summary=The new branch in backend/Other.cs has no test.]]\n[[TASK_DONE]]"
+                : "[[ASPECT_VERDICT: status=pass; summary=ok]]\n[[TASK_DONE]]");
+
+        await orchestrator.TickOnceAsync(_workspace, CancellationToken.None);
+
+        scanner.InvalidateCache();
+        var source = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId, _watchPath));
+        Assert.Equal(TaskStates.Escalated, source.State);
+        Assert.DoesNotContain(scanner.ScanAllJobs(), task => task.CreationSource == "review-budget-follow-up");
+        var receipt = Assert.Single(_timeline.ReadAll(source.FolderPath),
+            item => item.Kind == TimelineEventKinds.OrchestratorEscalated);
+        Assert.Equal("card-round-budget", receipt.Details!["cause"]);
+        Assert.Equal(nameof(CardRoundBudgetAction.Escalate), receipt.Details["disposition"]);
+        Assert.Equal("4", receipt.Details["roundsUsed"]);
+        Assert.Equal("4", receipt.Details["roundsAllowed"]);
+        Assert.Equal("tests-and-evidence", receipt.Details["blockingAspects"]);
+    }
+
+    /// <summary>
+    /// A flat-store delivery in 4-auto-review whose card budget the Remote
+    /// Review plane already spent: four journaled finding rounds on the timeline.
+    /// </summary>
+    private (ReviewDecisionOrchestrator Orchestrator, TaskScannerService Scanner, string SourceId)
+        SpentCardBudgetDelivery(string id, Func<string, string> aspectStub)
+    {
+        var orchestrator = BuildOrchestratorWithAspects(aspectStub: aspectStub, withTaskMutations: true);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["TaskRepository"] = _workspace,
+            ["WatchPaths:0:Name"] = Project,
+            ["WatchPaths:0:Path"] = _watchPath,
+            ["WatchPaths:0:RootPath"] = _watchPath,
+        }).Build();
+        var scanner = new TaskScannerService(config, NullLogger<TaskScannerService>.Instance,
+            new SummaryGenerationService(NullLogger<SummaryGenerationService>.Instance, config));
+        var sourceId = BuildTaskMutations(scanner, config).CreateJob(new AgentStudio.Shared.CreateTaskRequest
+        {
+            Id = id,
+            Title = "Card budget spent",
+            Agent = CliTypes.Claude,
+            CliType = CliTypes.Claude,
+            WatchPath = _watchPath,
+            TargetState = TaskStates.AutoReview,
+            PromptMarkdown = "Do the thing.",
+        })!;
+        var folder = Assert.IsType<TaskInfo>(scanner.FindJob(sourceId, _watchPath)).FolderPath;
+        Directory.CreateDirectory(Path.Combine(folder, "logs"));
+        File.WriteAllText(Path.Combine(folder, "logs", "cli-output.log"),
+            $"[12:00:00.000] [stdout] starting{Environment.NewLine}[12:00:01.000] [stdout] [[TASK_DONE]]{Environment.NewLine}");
+        for (var round = 1; round <= CardRoundBudget.DefaultRoundsPerCard; round++)
+            _timeline.Append(folder, TimelineEventKinds.QualityLoopReopened, TimelineActors.QualityLoop,
+                $"Seeded review finding round {round}.",
+                details: new Dictionary<string, string>
+                {
+                    ["reviewAttemptId"] = $"review-seeded-{round}",
+                    ["cause"] = "multi-aspect-block",
+                });
+        return (orchestrator, scanner, sourceId);
+    }
+
+    [Fact]
     public async Task TaskDone_PostProcessingEvidence_AttributesDeterministicDecisionWithoutInventedCli()
     {
         SeedReviewJobWithDone("codex-main-deterministic-post", agent: CliTypes.Codex);

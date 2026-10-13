@@ -1749,8 +1749,18 @@ counted per card across every review-attempt epoch. Default 4, set by
 A sweep round appends a `Reissue` record, so the orchestrator's
 epoch-scoped count sees it as well. A requeue, a `/continue`, or a sweep never
 refills the budget. Every orchestrator path that starts a new reissue checks
-this lifetime budget at its common Ready move, including deterministic gates;
-an exhausted card moves to Escalated with a decision-journal and timeline reason.
+this lifetime budget at its common Ready move, including deterministic gates.
+Remote Review checks it before settling a finding or concern continuation.
+At exhaustion, non-test findings move to one linked follow-up and test or
+evidence blocks move to Escalated with a timeline receipt that names used and
+allowed rounds and the open aspects. The local aspect path uses the same
+disposition before its Ready move. Both review planes ask the budget only when
+their follow-up policy would open a finding or concern round; a passing report
+whose concerns open no round keeps its Pass without a follow-up card. A journaled Remote Review finding decision
+replays its lane, prompt, follow-up files and concern ledger after restart.
+Lost-worker and timeout salvage continuations check the same card budget before
+preparing another round; their callers use the existing escalation path when
+it is spent.
 A recorded reissue whose lane move is only being backfilled does not charge a
 second round. The orchestrator also applies its per-epoch cap
 (`MaxAutoReissueAttempts`).

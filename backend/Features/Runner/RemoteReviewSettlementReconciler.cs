@@ -18,6 +18,8 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
     private readonly AutoReviewDeliveryResumeService _resume;
     private readonly ILogger<RemoteReviewSettlementReconciler> _logger;
     private readonly TaskMutationService? _mutations;
+    private readonly TaskTransitionService? _transitions;
+    private readonly TimelineLog? _timeline;
 
     // Keyed by task key; the value is the review generation it was observed for.
     // An archived card has no lane continuation: once its current review settled
@@ -37,7 +39,9 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         RemoteReviewEvidenceProjectionQueue queue,
         AutoReviewDeliveryResumeService resume,
         ILogger<RemoteReviewSettlementReconciler> logger,
-        TaskMutationService? mutations = null)
+        TaskMutationService? mutations = null,
+        TaskTransitionService? transitions = null,
+        TimelineLog? timeline = null)
     {
         _scanner = scanner;
         _authority = authority;
@@ -45,6 +49,8 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         _resume = resume;
         _logger = logger;
         _mutations = mutations;
+        _transitions = transitions;
+        _timeline = timeline;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -156,10 +162,30 @@ public sealed class RemoteReviewSettlementReconciler : BackgroundService
         if (!RemoteReviewSettlementPolicy.MatchesAcceptedReview(entry, review))
             return RemoteReviewSettlementReconcileStatus.Repair;
 
+        if (entry.Continuation is { DeliveredRound: { } deliveredRound,
+                DeliveredRoundSeed: { } deliveredSeed })
+            ReviewRoundBudgetStore.Record(task.FolderPath, deliveredSeed, deliveredRound);
+
         if (entry.ReviewBudgetDecision is not null
             && (_mutations is null || !RemoteReviewSettlementPolicy.RestoreReviewBudgetSideEffects(
                 task, entry, _mutations, _scanner)))
             return RemoteReviewSettlementReconcileStatus.Repair;
+        if (entry.ReviewBudgetDecision is { } budgetDecision
+            && entry.CardBudget is { } cardBudget && _timeline is not null)
+            CardRoundBudgetReceipt.RecordDispositionOnce(
+                _timeline, task.FolderPath, entry.AttemptId, cardBudget,
+                budgetDecision.DegradedAspects, CardRoundBudgetAction.DegradeToFollowUp);
+
+        if (entry.Continuation is not null)
+        {
+            if (_mutations is null || _transitions is null || _timeline is null)
+                return RemoteReviewSettlementReconcileStatus.Repair;
+            if (!RemoteReviewContinuationProjection.ApplyAsync(
+                    task, entry, _scanner, _transitions, _mutations, _timeline, _logger,
+                    CancellationToken.None).GetAwaiter().GetResult())
+                return RemoteReviewSettlementReconcileStatus.Repair;
+            task = _scanner.FindJob(task.Id, task.WatchPath) ?? task;
+        }
 
         // The scan behind this tick can be older than the lane: a concern or
         // finding reissue may have moved the card since (AGT-3091). Re-read it
