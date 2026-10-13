@@ -213,7 +213,7 @@ internal static class TaskEndpointHelpers
         // remote runner acquires this lease; a plain local in-process run holds
         // none, so this stays null and the card shows the quiet local presentation.
         TaskRunnerInfo? runner = job.State == TaskStates.Progress
-            ? runners.ResolveRunnerBadge(job.TaskKey)
+            ? runners.ResolveRunnerBadge(job)
             : null;
         // AGT-2069: spawn-visibility + spawn-contract projection for planning
         // tasks. Gated strictly on planning mode (rare) so the two small sidecar

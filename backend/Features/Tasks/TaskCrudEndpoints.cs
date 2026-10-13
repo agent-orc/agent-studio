@@ -1511,7 +1511,7 @@ public static class TaskCrudEndpoints
         return job with { ReviewPriority = entry.Priority, ReviewQueuePosition = entry.Position };
     }
 
-    private static string ReviewAuthorityKey(TaskInfo card) => card.Key ?? card.TaskKey ?? card.Id;
+    private static string ReviewAuthorityKey(TaskInfo card) => TaskIdentity.AuthorityKey(card);
 
     /// <summary>
     /// AGT-2795: the decider identity for a decision-card write. Unlike

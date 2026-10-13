@@ -305,6 +305,118 @@ public sealed class RunnerBadgeProjectionTests
         Assert.Null(staleGeneration.LastRejection);
     }
 
+    // AGT-3094: the claim keys the attempt by the task.json key; the scanned
+    // card's TaskKey is the composite "<watchPath>::<id>". The read side must
+    // find the lease under the card key, never under the composite key.
+    [Fact]
+    public void InspectRunLease_FindsTheClaimUnderTheCardKey_NotTheCompositeKey()
+    {
+        var leases = new RunLeaseService(NullLogger<RunLeaseService>.Instance, () => Now);
+        leases.TryAcquire(new RunLeaseAcquireRequest(
+            "AGT-1", "agent-runner-01", "agent-runner-01", "linux-host", 4321, "remote"));
+        var card = ProgressTask() with
+        {
+            Id = "remote-review-cannot-clone",
+            Key = "AGT-1",
+            TaskKey = TaskIdentity.CreateKey("/workspace/projects/demo", "remote-review-cannot-clone"),
+        };
+
+        var inspection = TaskRunnerService.InspectRunLease(leases, card);
+
+        Assert.Equal("active", inspection.State);
+        Assert.Equal("agent-runner-01", inspection.Lease!.RunnerId);
+        Assert.Equal("none", leases.Inspect(card.TaskKey).State);
+    }
+
+    [Fact]
+    public void InspectRunLease_WithoutALeaseService_IsNone()
+    {
+        var inspection = TaskRunnerService.InspectRunLease(null, ProgressTask() with { Key = "AGT-1" });
+
+        Assert.Equal("none", inspection.State);
+        Assert.Null(inspection.Lease);
+    }
+
+    // AGT-3094: a lease that is no longer active is a finished run. Outside
+    // Progress it must not read as "Remote run still live".
+    [Theory]
+    [InlineData(TaskStates.HumanReview, "expired")]
+    [InlineData(TaskStates.AutoReview, "released")]
+    public void ExecutionProjection_InactiveLeaseOutsideProgress_IsNotRemoteRunning(string lane, string leaseState)
+    {
+        var lease = Lease("agent-runner-01", "agent-runner-01", "linux-01")
+            with { LastHeartbeatAt = Now.AddMinutes(-20) };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { State = lane }, null, null,
+            new RunLeaseInspection(leaseState, lease), "agent-runner-01", LocalIdentity(), null, Now);
+
+        Assert.NotEqual(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Null(result.RunnerId);
+        Assert.False(result.Historical);
+    }
+
+    // AGT-3094: the job folder can stay quiet for minutes while the CLI thinks;
+    // a fresh heartbeat on an active lease is the proof the run is alive.
+    [Fact]
+    public void ExecutionProjection_ActiveLeaseWithFreshHeartbeat_IsRunningWhileTheFolderIsQuiet()
+    {
+        var lease = Lease("agent-runner-01", "agent-runner-01", "linux-01")
+            with { LastHeartbeatAt = Now.AddSeconds(-20) };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { LastActivity = Now.AddMinutes(-10) }, null,
+            new TaskRunActivity { Kind = TaskRunActivityKinds.NoActiveRun },
+            new RunLeaseInspection("active", lease), "agent-runner-01", LocalIdentity(), null, Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Equal("connected", result.ConnectionState);
+        Assert.Equal("active", result.LeaseState);
+        Assert.Equal("agent-runner-01", result.RunnerId);
+        Assert.Equal(lease.AcquiredAt, result.StartedAt);
+        Assert.Equal(lease.LastHeartbeatAt, result.LastHeartbeat);
+        Assert.DoesNotContain("No run lease is held", result.TrustReason);
+    }
+
+    // AGT-3094: a released lease means the attempt ended and the card waits
+    // for its lane transition. That is not the AGT-2869 phantom.
+    [Fact]
+    public void ExecutionProjection_ReleasedLeaseInProgress_KeepsTheJobFolderVerdict()
+    {
+        var lease = Lease("agent-runner-01", "agent-runner-01", "linux-01")
+            with { LastHeartbeatAt = Now.AddMinutes(-1) };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { LastActivity = Now.AddSeconds(-10) }, null,
+            new TaskRunActivity { Kind = TaskRunActivityKinds.NoActiveRun },
+            new RunLeaseInspection("released", lease), "agent-runner-01", LocalIdentity(), null, Now);
+
+        Assert.NotEqual(TaskExecutionStates.RemoteStale, result.State);
+        Assert.Equal(TaskExecutionStates.RemoteRunning, result.State);
+        Assert.Equal("released", result.LeaseState);
+        Assert.Equal("agent-runner-01", result.RunnerId);
+        Assert.Contains("attempt ended", result.TrustReason);
+        Assert.DoesNotContain("no authority is driving it", result.TrustReason);
+        Assert.DoesNotContain("task-server restart", result.TrustReason);
+    }
+
+    [Fact]
+    public void ExecutionProjection_ReleasedLeaseInProgress_WithAQuietFolder_IsStaleButNotAPhantom()
+    {
+        var lease = Lease("agent-runner-01", "agent-runner-01", "linux-01")
+            with { LastHeartbeatAt = Now.AddMinutes(-20) };
+
+        var result = TaskRunnerService.ProjectExecutionLocation(
+            ProgressTask() with { LastActivity = Now.AddMinutes(-20) }, null,
+            new TaskRunActivity { Kind = TaskRunActivityKinds.NoActiveRun },
+            new RunLeaseInspection("released", lease), "agent-runner-01", LocalIdentity(), null, Now);
+
+        Assert.Equal(TaskExecutionStates.RemoteStale, result.State);
+        Assert.Equal("released", result.LeaseState);
+        Assert.Contains("attempt ended", result.TrustReason);
+        Assert.DoesNotContain("no authority is driving it", result.TrustReason);
+    }
+
     private static RunLeaseInfoDto Lease(string runnerId, string runnerName, string host)
         => new(
             TaskKey: "PT-578",

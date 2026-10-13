@@ -1861,6 +1861,10 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
         Assert.Equal(AttemptLifecycleState.Pending, pending["AGT-1"].State);
         Assert.Null(pending["AGT-1"].LeaseExpiresAt);
         Assert.Equal(claimed.Lease!.ExpiresAt, leased["agt-1"].LeaseExpiresAt);
+        Assert.Null(pending["AGT-1"].ExecutorId);
+        Assert.Null(pending["AGT-1"].AcquiredAt);
+        Assert.Equal("reviewer", leased["AGT-1"].ExecutorId);
+        Assert.Equal(claimed.Lease.AcquiredAt, leased["AGT-1"].AcquiredAt);
         Assert.Equal(renewed.Lease!.ExpiresAt, service.ReadBoardReviewActivity()["AGT-1"].LeaseExpiresAt);
         Assert.Equal(renewed.Lease.ExpiresAt, NewService(() => now).ReadBoardReviewActivity()["agt-1"].LeaseExpiresAt);
         Assert.False(service.ReadBoardReviewActivity().ContainsKey("AGT-UNKNOWN"));
@@ -1870,6 +1874,49 @@ public sealed class AttemptAuthorityServiceTests : IDisposable
             "sha-a", ReviewTerminalOutcome.Pass));
         Assert.Equal(AttemptLifecycleState.Completed, service.ReadBoardReviewActivity()["AGT-1"].State);
         Assert.Equal(AttemptLifecycleState.Leased, leased["AGT-1"].State);
+    }
+
+    // AGT-3094: a failed review must tell the board its outcome and whether a
+    // retry is scheduled, without the authority lock.
+    [Fact]
+    public void BoardReviewSnapshot_carries_the_terminal_outcome_and_the_scheduled_retry()
+    {
+        var now = new DateTime(2026, 10, 4, 12, 0, 0, DateTimeKind.Utc);
+        var service = NewService(() => now);
+        var (_, review) = CompletedRunWithReview(service, "sha-a");
+        var claimed = service.ClaimReview(review.AttemptId, "kori-review", "host", 60, "claim-review").ReviewAttempt!;
+        service.SettleReview(new SettleReviewAttemptRequest(
+            new AttemptWriteReference(claimed.AttemptId, claimed.LastFence, claimed.AuthorityEpoch, "settle-review"),
+            "sha-a", ReviewTerminalOutcome.InfrastructureFailure, "DiagnosisMissing"));
+        var failed = service.ReadBoardReviewActivity()["AGT-1"];
+
+        var schedule = service.ScheduleReviewInfrastructureRetry(claimed.AttemptId, "DiagnosisMissing");
+        var scheduled = service.ReadBoardReviewActivity()["AGT-1"];
+
+        Assert.Equal(AttemptLifecycleState.Failed, failed.State);
+        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, failed.Outcome);
+        Assert.Null(failed.PendingInfrastructureRetryAt);
+        Assert.Equal(AttemptWriteStatus.Accepted, schedule.Status);
+        Assert.Equal(now + schedule.Delay, scheduled.PendingInfrastructureRetryAt);
+        Assert.Equal(ReviewTerminalOutcome.InfrastructureFailure, scheduled.Outcome);
+        Assert.True(service.ReadBoardAuthoritySnapshot().KnownTaskKeys.Contains("agt-1"));
+    }
+
+    // AGT-3094: a task with only a run attempt is known to the authority (it is
+    // no legacy card), but it has no review to queue.
+    [Fact]
+    public void BoardAuthoritySnapshot_knows_a_task_with_only_a_run_attempt()
+    {
+        var service = NewService();
+        service.AcquireRun("AGT-RUN-ONLY", "PROJ-1", null, "runner", "host", 60, "run-only");
+
+        var snapshot = service.ReadBoardAuthoritySnapshot();
+
+        Assert.Contains("AGT-RUN-ONLY", snapshot.KnownTaskKeys);
+        Assert.False(snapshot.KnownTaskKeys.Contains("AGT-UNKNOWN"));
+        Assert.False(service.GetTaskProjection("AGT-RUN-ONLY").LegacyTask);
+        Assert.False(snapshot.Reviews.ContainsKey("AGT-RUN-ONLY"));
+        Assert.False(service.ReadReviewQueue().ContainsKey("AGT-RUN-ONLY"));
     }
 
     [Fact]

@@ -30,6 +30,27 @@ public record CliExecution
 public static class TaskIdentity
 {
     public static string CreateKey(string watchPath, string jobId) => $"{watchPath}::{jobId}";
+
+    /// <summary>
+    /// AGT-3094: the key the attempt authority files a card's run and review
+    /// attempts under. Claims key attempts by the task.json <c>key</c> and fall
+    /// back to the composite scanner key, then the slug (<c>LeaseEndpoints</c>,
+    /// <c>ProjectRunner</c>), so every attempt-authority read must use the same
+    /// order. The composite <see cref="TaskInfo.TaskKey"/> alone misses every
+    /// keyed card. Local registries (CLI executions, summaries, stop receipts)
+    /// stay keyed by the composite key and must not use this.
+    /// </summary>
+    public static string AuthorityKey(string? key, string? taskKey, string? id)
+        => !string.IsNullOrWhiteSpace(key) ? key
+            : !string.IsNullOrWhiteSpace(taskKey) ? taskKey
+            : id ?? string.Empty;
+
+    /// <inheritdoc cref="AuthorityKey(string?, string?, string?)"/>
+    public static string AuthorityKey(TaskInfo task) => AuthorityKey(task.Key, task.TaskKey, task.Id);
+
+    /// <inheritdoc cref="AuthorityKey(string?, string?, string?)"/>
+    public static string AuthorityKey(AgentStudio.Tasks.TaskCoreRecord task)
+        => AuthorityKey(task.Key, task.TaskKey, task.Id);
 }
 
 /// <summary>

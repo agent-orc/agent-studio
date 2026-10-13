@@ -19,7 +19,29 @@ internal readonly record struct BoardReviewActivity(
     string Priority = "normal",
     DateTime? CreatedAt = null,
     string? AttemptId = null,
-    bool MissingResultEnvelope = false);
+    bool MissingResultEnvelope = false,
+    // AGT-3094: what the board needs to say who reviews the card, or why
+    // nothing does, without taking the authority lock.
+    string? ExecutorId = null,
+    DateTime? AcquiredAt = null,
+    ReviewTerminalOutcome? Outcome = null,
+    DateTime? PendingInfrastructureRetryAt = null);
+
+/// <summary>
+/// The immutable board-side view of the attempt authority, published after
+/// every committed write. <see cref="KnownTaskKeys"/> holds every task key with
+/// a live run or review attempt (the complement of
+/// <see cref="AttemptAuthorityProjection.LegacyTask"/>), so a board read can
+/// tell a canonical card from a legacy one without the lock.
+/// </summary>
+internal sealed record BoardAuthoritySnapshot(
+    ImmutableDictionary<string, BoardReviewActivity> Reviews,
+    ImmutableHashSet<string> KnownTaskKeys)
+{
+    public static readonly BoardAuthoritySnapshot Empty = new(
+        ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase),
+        ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase));
+}
 
 internal sealed record ReviewLeaseIsolation(
     string ResourceNamespace,
@@ -98,8 +120,7 @@ public sealed class AttemptAuthorityService
     private readonly IAtomicJsonFileWriter _writer;
     private readonly int _terminalRetentionCount;
     private AuthorityState _state;
-    private ImmutableDictionary<string, BoardReviewActivity> _boardReviewActivity =
-        ImmutableDictionary.Create<string, BoardReviewActivity>(StringComparer.OrdinalIgnoreCase);
+    private BoardAuthoritySnapshot _boardSnapshot = BoardAuthoritySnapshot.Empty;
 
     /// <summary>
     /// Latest UTC time of a ReviewAttempt claim that can no longer be deferred:
@@ -190,7 +211,7 @@ public sealed class AttemptAuthorityService
             throw new InvalidDataException("AttemptAuthority:TerminalRetentionCount must be greater than zero.");
         if (requiresCompactionMigration && _path is not null)
             PersistLocked(forceCompaction: true);
-        _boardReviewActivity = BuildBoardReviewActivityLocked();
+        _boardSnapshot = BuildBoardSnapshotLocked();
     }
 
     internal AttemptAuthorityService(ILogger<AttemptAuthorityService> logger, Func<DateTime>? utcNow = null)
@@ -2039,7 +2060,22 @@ public sealed class AttemptAuthorityService
     // Display-only committed state. A log receipt can persist a large authority
     // file while board readers keep using this small immutable projection.
     internal ImmutableDictionary<string, BoardReviewActivity> ReadBoardReviewActivity()
-        => Volatile.Read(ref _boardReviewActivity);
+        => Volatile.Read(ref _boardSnapshot).Reviews;
+
+    /// <summary>
+    /// The review activity together with the set of task keys the authority
+    /// knows, read as one consistent snapshot. Lock-free, like
+    /// <see cref="ReadBoardReviewActivity"/>.
+    /// </summary>
+    internal BoardAuthoritySnapshot ReadBoardAuthoritySnapshot() => Volatile.Read(ref _boardSnapshot);
+
+    private BoardAuthoritySnapshot BuildBoardSnapshotLocked()
+    {
+        var known = ImmutableHashSet.CreateBuilder<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var run in _state.RunAttempts) known.Add(run.TaskKey);
+        foreach (var review in _state.ReviewAttempts) known.Add(review.TaskKey);
+        return new BoardAuthoritySnapshot(BuildBoardReviewActivityLocked(), known.ToImmutable());
+    }
 
     private ImmutableDictionary<string, BoardReviewActivity> BuildBoardReviewActivityLocked()
     {
@@ -2055,7 +2091,9 @@ public sealed class AttemptAuthorityService
             .ToArray())
             builder[review.TaskKey] = new BoardReviewActivity(
                 review.State, review.Lease?.ExpiresAt, review.Priority, review.CreatedAt,
-                review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId));
+                review.AttemptId, !runsWithEnvelope.Contains(review.SourceRunAttemptId),
+                review.Lease?.ExecutorId, review.Lease?.AcquiredAt, review.Outcome,
+                review.PendingInfrastructureRetryAt);
         return builder.ToImmutable();
     }
 
@@ -2435,17 +2473,17 @@ public sealed class AttemptAuthorityService
     {
         if (_path is null)
         {
-            Volatile.Write(ref _boardReviewActivity, BuildBoardReviewActivityLocked());
+            Volatile.Write(ref _boardSnapshot, BuildBoardSnapshotLocked());
             return;
         }
         try
         {
             CompactTerminalAttemptsLocked(forceCompaction);
-            var boardReviewActivity = BuildBoardReviewActivityLocked();
+            var boardSnapshot = BuildBoardSnapshotLocked();
             _writer.WriteJson(_path, _state, JsonOptions);
             // Publish only after the atomic write succeeds. Failed writes must
             // not expose speculative review state to concurrent board readers.
-            Volatile.Write(ref _boardReviewActivity, boardReviewActivity);
+            Volatile.Write(ref _boardSnapshot, boardSnapshot);
         }
         catch
         {

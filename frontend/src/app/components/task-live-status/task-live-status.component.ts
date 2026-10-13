@@ -105,6 +105,33 @@ export class TaskLiveStatusComponent {
       };
     }
 
+    // AGT-3094: a review executor that holds the lease is working on the card,
+    // and a review nothing will pick up again needs an operator. Neither is a
+    // wait for a slot.
+    if (status.queue?.state === 'reviewing') {
+      const since = timestamp(status.queue.since);
+      const executor = status.queue.executorId || 'review executor';
+      return {
+        tone: 'active',
+        headline: since === null
+          ? `Reviewing on ${executor}`
+          : `Reviewing on ${executor} since ${clock(since)}`,
+        detail: activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
+    if (status.queue?.state === 'stalled') {
+      // The headline carries the call to action; the reason names the outcome.
+      return {
+        tone: 'stalled',
+        headline: 'Review stalled · operator decision needed',
+        detail: status.queue.reason || activityDetail(task, status.latestEventAt, this.now()),
+        next,
+        attempt: status.attempt,
+      };
+    }
+
     if (status.queue) {
       const queueName = status.queue.kind === 'review' ? 'review slot' : 'runner slot';
       const headline = status.queue.position != null
@@ -212,6 +239,10 @@ function timestamp(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function clock(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
 function latestActivityAt(task: TaskInfo, projected: string | null | undefined): number | null {

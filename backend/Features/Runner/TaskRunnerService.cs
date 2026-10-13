@@ -304,12 +304,40 @@ public class TaskRunnerService : BackgroundService
     /// lease owner against this backend's own runner id, so a lease taken by the
     /// local backend (should one ever acquire it) still reads as a local run.
     /// </summary>
-    public AgentStudio.Shared.TaskRunnerInfo? ResolveRunnerBadge(string taskKey)
+    /// <remarks>
+    /// AGT-3094: takes the card rather than a key so no caller can pass the
+    /// composite scanner key, which the attempt authority never files a lease
+    /// under for a keyed card.
+    /// </remarks>
+    public AgentStudio.Shared.TaskRunnerInfo? ResolveRunnerBadge(AgentStudio.Shared.TaskInfo job)
+        => ResolveRunnerBadge(AgentStudio.Shared.TaskIdentity.AuthorityKey(job));
+
+    /// <inheritdoc cref="ResolveRunnerBadge(AgentStudio.Shared.TaskInfo)"/>
+    public AgentStudio.Shared.TaskRunnerInfo? ResolveRunnerBadge(AgentStudio.Tasks.TaskCoreRecord core)
+        => ResolveRunnerBadge(AgentStudio.Shared.TaskIdentity.AuthorityKey(core));
+
+    private AgentStudio.Shared.TaskRunnerInfo? ResolveRunnerBadge(string authorityKey)
     {
-        if (_runLeases == null || string.IsNullOrWhiteSpace(taskKey)) return null;
-        var peek = _runLeases.Peek(taskKey);
-        return ProjectRunnerBadge(peek.Lease, _runnerIdentity?.RunnerId);
+        // Only an active lease is a runner badge, which is exactly what Peek
+        // reports as Held.
+        var inspection = InspectRunLease(_runLeases, authorityKey);
+        return inspection.State == "active"
+            ? ProjectRunnerBadge(inspection.Lease, _runnerIdentity?.RunnerId)
+            : null;
     }
+
+    /// <summary>
+    /// AGT-3094: inspect the run lease a card's attempt holds, looked up by the
+    /// card's authority key (<see cref="AgentStudio.Shared.TaskIdentity.AuthorityKey(AgentStudio.Shared.TaskInfo)"/>).
+    /// <c>none</c> when no lease service is wired or the authority holds no lease.
+    /// </summary>
+    public static RunLeaseInspection InspectRunLease(RunLeaseService? leases, AgentStudio.Shared.TaskInfo job)
+        => InspectRunLease(leases, AgentStudio.Shared.TaskIdentity.AuthorityKey(job));
+
+    private static RunLeaseInspection InspectRunLease(RunLeaseService? leases, string authorityKey)
+        => leases is null || string.IsNullOrWhiteSpace(authorityKey)
+            ? new RunLeaseInspection("none", null)
+            : leases.Inspect(authorityKey);
 
     /// <summary>
     /// Pure projection of a peeked run-lease record + this backend's own runner id
@@ -1198,7 +1226,7 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Shared.CliExecution? execution,
         AgentStudio.Shared.TaskRunActivity? activity)
     {
-        var inspection = _runLeases?.Inspect(job.TaskKey) ?? new RunLeaseInspection("none", null);
+        var inspection = InspectRunLease(_runLeases, job);
         var configured = _projectSettings.Get(job.ProjectName).ExecutionRunner;
         var client = inspection.Lease is null ? null : _clients?.Find(inspection.Lease.ClientId ?? inspection.Lease.RunnerId);
         return ProjectExecutionLocation(
@@ -1232,8 +1260,14 @@ public class TaskRunnerService : BackgroundService
                 : null,
         };
 
+        // AGT-3094: a released lease means the RunAttempt already ended. It is
+        // no phantom (that is an expired lease) and no live owner either, so a
+        // Progress card waiting for its lane transition is judged by the job
+        // folder below rather than by the leased-run verdict.
+        var released = lease is not null && inspection.State == "released";
         if (lease is not null
-            && (job.State == AgentStudio.Shared.TaskStates.Progress || inspection.State == "active"))
+            && ((job.State == AgentStudio.Shared.TaskStates.Progress && !released)
+                || inspection.State == "active"))
         {
             var remote = localIdentity is null
                 || !string.Equals(lease.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase);
@@ -1346,6 +1380,38 @@ public class TaskRunnerService : BackgroundService
                 && (localIdentity is null
                     || !string.Equals(configuredRunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase));
 
+            if (released
+                && (localIdentity is null
+                    || !string.Equals(lease!.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase)))
+            {
+                // The remote attempt ended and released its lease; the card is
+                // waiting for the result to land and the lane to move. Keep the
+                // job-folder verdict an ownerless run gets, but name the owner
+                // and say that the attempt ended instead of blaming a restart.
+                var ended = AgentStudio.Shared.RemoteRunStalenessPolicy.ForOwnerlessRun(freshest, now);
+                return baseProjection with
+                {
+                    State = ended == AgentStudio.Shared.RemoteRunLiveness.Running
+                        ? AgentStudio.Shared.TaskExecutionStates.RemoteRunning
+                        : AgentStudio.Shared.TaskExecutionStates.RemoteStale,
+                    ExecutionKind = "remote",
+                    RunnerId = lease!.RunnerId,
+                    ClientId = lease.ClientId ?? lease.RunnerId,
+                    HostDisplayName = string.IsNullOrWhiteSpace(lease.RunnerName) ? lease.Hostname : lease.RunnerName,
+                    StartedAt = lease.AcquiredAt,
+                    LastHeartbeat = lease.LastHeartbeatAt,
+                    LastActivityAt = freshest ?? baseProjection.LastActivityAt,
+                    ProcessId = lease.Pid > 0 ? lease.Pid : null,
+                    ConnectionState = recentActivity ? "connected" : "reconnecting",
+                    LeaseState = inspection.State,
+                    LastRunnerEvent = AgentStudio.Shared.RemoteRunStalenessPolicy.DescribeLastRunnerEvent(
+                        ended, lease.LastHeartbeatAt, freshest),
+                    TrustReason = recentActivity
+                        ? "The run attempt ended and released its fenced lease; its result is still arriving in the job folder."
+                        : "The run attempt ended and released its fenced lease; no activity has arrived since and the lane has not moved.",
+                };
+            }
+
             if (remoteRouted)
             {
                 // A remote run recovers by replaying the job folder / runner
@@ -1408,30 +1474,11 @@ public class TaskRunnerService : BackgroundService
             };
         }
 
-        if (lease is not null)
-        {
-            var remote = localIdentity is null
-                || !string.Equals(lease.RunnerId, localIdentity.RunnerId, StringComparison.OrdinalIgnoreCase);
-            return baseProjection with
-            {
-                State = remote
-                    ? AgentStudio.Shared.TaskExecutionStates.RemoteRunning
-                    : AgentStudio.Shared.TaskExecutionStates.LocalRunning,
-                ExecutionKind = remote ? "remote" : "local",
-                RunnerId = lease.RunnerId,
-                ClientId = lease.ClientId ?? lease.RunnerId,
-                HostDisplayName = string.IsNullOrWhiteSpace(lease.RunnerName) ? lease.Hostname : lease.RunnerName,
-                StartedAt = lease.AcquiredAt,
-                LastHeartbeat = lease.LastHeartbeatAt,
-                LastActivityAt = Max(lease.LastHeartbeatAt, job.LastActivity),
-                ProcessId = lease.Pid > 0 ? lease.Pid : null,
-                ConnectionState = "historical",
-                LeaseState = inspection.State,
-                Historical = true,
-                TrustReason = "The task server retained the last fenced run lease owner after execution ended.",
-            };
-        }
-
+        // AGT-3094: a released or expired lease outside Progress is a finished
+        // run. Projecting it as remote-running read as "Remote run still live"
+        // on every reviewed card, so it keeps the no-active-execution
+        // presentation. An active lease outside Progress took the leased
+        // branch above.
         return baseProjection;
     }
 

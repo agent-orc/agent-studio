@@ -1710,6 +1710,21 @@ every byte of it is a byte the client already holds.
   committed snapshot visible. Lease expiry is still evaluated at read time.
   This display projection does not change authoritative pickup, fencing, or
   mutation checks.
+- **The Auto Review queue line reads the same snapshot (AGT-3094).** Besides
+  the fields above, the snapshot carries the review lease holder
+  (`ExecutorId`), the lease start (`AcquiredAt`), the terminal `Outcome` and a
+  scheduled infrastructure retry (`PendingInfrastructureRetryAt`), plus the set
+  of task keys that have any live run or review attempt. That set is the
+  complement of `LegacyTask`, so the board tells a canonical card from a legacy
+  one without the authority lock; the board path makes no `GetTaskProjection`
+  call for it. `liveStatus.queue.state` is `reviewing` (the lease holder and
+  its start), `queued` (the claimable position, a scheduled retry, or a missing
+  executor registration) or `stalled` (a terminal non-Pass review with nothing
+  scheduled, or no review attempt at all; an operator has to decide). A review
+  that passed and waits for integration, a legacy card and a report-only card
+  keep the local post-processing wait sentence. Every attempt-authority read
+  is keyed by `TaskIdentity.AuthorityKey` (the task.json `key`, then the
+  composite `taskKey`, then the slug), the same order the claim paths use.
 - **The 304 skips the work, not just the transfer.** The validator is computed
   from cache reads over the already scanned task set. Enrichment (token,
   verdict, dependency, Git and live-status lookups), the per-lane sort, and
@@ -1726,9 +1741,15 @@ every byte of it is a byte the client already holds.
   decision journal stamp (those files live outside every watch path); a fold
   over the in-memory runtime state that leaves no file trace at all (CLI
   executions, run-activity facts, auto-loop snapshots, summariser state, runner
-  badges, quota fallbacks, queue positions, execution locations); and the
-  request shape, so two clients with different project access or different query
-  parameters never share a tag.
+  badges, quota fallbacks, queue positions, execution locations); for each
+  visible Auto Review card, the current ReviewAttempt facts the queue line
+  reads (attempt id, state, outcome, lease holder, lease start, scheduled
+  retry) and whether the authority knows the card, since those change without
+  the queue position moving (lease expiry already reaches the tag through the
+  position); and the request shape, so two clients with different project
+  access or different query parameters never share a tag. Runner badges and
+  execution locations look the run lease up by the card's authority key, so a
+  run-lease change on a keyed card moves the tag too.
 - **Time-derived display logic moved to the client.** A field computed from
   `DateTime.UtcNow` makes a response depend on the instant it was served, which
   no validator can represent. `runActivity` no longer classifies the rapid-crash

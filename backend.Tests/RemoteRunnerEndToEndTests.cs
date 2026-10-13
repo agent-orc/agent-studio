@@ -4840,9 +4840,13 @@ public sealed class RemoteRunnerEndToEndTests : IDisposable
             "/api/v1/management/remote-hosts");
         Assert.Equal(1, Assert.Single(codingHosts!, host =>
             host.RunnerId == RunnerId).Telemetry!.ActiveSlots);
+        // AGT-3094: resolve from the scanned card, whose TaskKey is the
+        // composite scanner key; the badge must still find the claim's lease.
+        var scannedTask = restartedFactory.Services.GetRequiredService<TaskScannerService>()
+            .FindJob(TaskKey, _watchPath)!;
         var runnerBadge = restartedFactory.Services
             .GetRequiredService<TaskRunnerService>()
-            .ResolveRunnerBadge(TaskKey);
+            .ResolveRunnerBadge(scannedTask);
         Assert.Equal(run.AttemptId, runnerBadge!.AttemptId);
         Assert.Equal(RunnerId, runnerBadge.RunnerId);
 
