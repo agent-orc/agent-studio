@@ -22,9 +22,16 @@ namespace AgentStudio.Tasks;
 /// <c>Cache-Control: no-cache</c> that makes the browser store the response but
 /// always revalidate. The one difference is the shape: a wiki read has its
 /// payload in hand before it formats the tag, so one method can do both, while a
-/// board read has to answer <see cref="NotModified"/> before it starts building
-/// anything. Skipping enrichment, lane sorting and serialisation avoids the
-/// large board poll payload cost.</para>
+/// board read keys its body cache by a signature composed before it starts
+/// building anything. A signature that is already cached answers
+/// <see cref="NotModified"/> without enrichment, lane sorting or
+/// serialisation.</para>
+///
+/// <para>The body tag itself is <see cref="ContentETag"/>: a hash of the
+/// built bytes. The signature moves on inputs that leave the board unchanged
+/// (an index rescan that found nothing, a runtime fact no card shows), and a
+/// signature-derived tag turned each of those into a full 200 for a client
+/// that already held the same bytes.</para>
 /// </summary>
 public static class BoardReadValidator
 {
@@ -50,6 +57,14 @@ public static class BoardReadValidator
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return "\"" + Convert.ToHexString(bytes, 0, 16).ToLowerInvariant() + "\"";
     }
+
+    /// <summary>
+    /// Strong tag of one built body. <paramref name="scope"/> is the route and
+    /// request variant, so two variants that happen to serialize to the same
+    /// bytes still never validate each other.
+    /// </summary>
+    public static string ContentETag(string scope, byte[] body)
+        => FormatETag(Compose(scope, Convert.ToHexString(SHA256.HashData(body))));
 
     /// <summary>
     /// True when the request already holds <paramref name="etag"/>. Follows

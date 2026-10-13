@@ -191,7 +191,7 @@ export class BoardFiltersService {
       if (stalledIntegrationOnly
           && !stalledIntegrationTaskRefs.has(integrationAlertTaskRef(j.projectName, j.id))) return false;
       if (waitingForReleaseOnly && !isWaitingForRelease(j)
-          && !pendingReleaseTargets.has(taskRef(j.watchPath, j.id))) return false;
+          && !pendingReleaseTargets.has(releaseTargetRef(j.key))) return false;
       if (!matchesQuery(j)) return false;
       return true;
     });
@@ -733,11 +733,6 @@ function integrationAlertTaskRef(projectName: string, taskId: string): string {
 
 const EMPTY_TASK_REFS: ReadonlySet<string> = new Set<string>();
 
-/** Identity of a task across projects: its watch path plus its folder id. */
-function taskRef(watchPath: string, taskId: string): string {
-  return `${watchPath}\u0000${taskId}`.toLowerCase();
-}
-
 /** True when the task is a dependent held back only by a missing release. */
 function isWaitingForRelease(job: TaskInfo): boolean {
   return job.waitsOn?.anyWaitingForRelease === true
@@ -756,20 +751,19 @@ function collectPendingReleaseTargets(grouped: GroupedJobs): ReadonlySet<string>
   for (const lane of Object.values(grouped)) {
     if (!Array.isArray(lane)) continue;
     for (const job of lane as TaskInfo[]) {
-      if (job.waitsOn?.releaseTargets) {
-        for (const target of job.waitsOn.releaseTargets) {
-          refs.add(taskRef(target.targetWatchPath ?? job.watchPath, target.targetJobId));
-        }
-        continue;
-      }
-      for (const item of job.waitsOn?.items ?? []) {
-        if (item.waitingForRelease === true && item.targetJobId) {
-          refs.add(taskRef(item.targetWatchPath ?? job.watchPath, item.targetJobId));
-        }
-      }
+      // The card lists every release-waiting target by key, including those
+      // beyond the few items it carries as labels.
+      const keys = job.waitsOn?.releaseTargetKeys
+        ?? (job.waitsOn?.items ?? []).filter(item => item.waitingForRelease === true).map(item => item.key);
+      for (const key of keys) refs.add(releaseTargetRef(key));
     }
   }
   return refs;
+}
+
+/** Dependency edges name their target by its card key; compare case-insensitively. */
+function releaseTargetRef(key: string | null | undefined): string {
+  return (key ?? '').trim().toUpperCase();
 }
 
 function typeFilterLabel(value: string): string {

@@ -15,21 +15,33 @@ count and latest short commit label, and the branch facts needed for the Git
 badge. They omit the full commit chain, provenance transitions, review
 projection, token call rows, and detailed test evidence. Opening a task loads
 full data through `GET /api/tasks/{id}/core` and the detail resources. The
-card's `references.dependsOn` contains at most three edges and
-`references.dependsOnCount` gives the full count. The board dependency filter
-loads full task detail for cards whose truncated edges could contain its target;
-the detail reference editor always uses the full relation set. The
-`overview` resource supplies decision options, planning and concept summaries,
-older brief offers, wiki links, creation and completion facts, parked blockers,
-and needs-input text. The `git` resource supplies the full commit chain and
+card's `references.dependsOnKeys` lists every dependency key,
+`references.dependsOnCount` gives the full count, and `references.dependsOn`
+carries the object form of at most three edges, only when one of them is a
+release gate. The board dependency filter matches `dependsOnKeys` and never
+reads task detail; the detail reference editor always uses the full relation
+set. The `overview` resource supplies decision options, planning and concept
+summaries, older brief offers, wiki links, creation and completion facts,
+parked blockers, needs-input text, the full pending intent and the full
+execution location (branch, worktree path, trust reason, activity stamp). The `git` resource supplies the full commit chain and
 provenance, while the `review` resource supplies review projection. A diff tab
 can resolve an older commit through `GET /api/tasks/commit-owner/{sha}`;
-`GET /api/tasks/{id}` remains the full compatibility read. The response ETag
-includes the task-index generation, live overlay generations, and a strong
-digest of the caller-visible task keys. Serialized response bodies are cached
-under that key, so concurrent warm readers share one build and disconnected
-readers stop waiting without cancelling it. ETag validation remains a separate
-HTTP optimization from the card contract.
+`GET /api/tasks/{id}` remains the full compatibility read. A board read
+composes a signature from the task-index generation, live overlay generations,
+and a strong digest of the caller-visible task keys. Serialized response bodies
+are cached under that signature, so concurrent warm readers share one build and
+disconnected readers stop waiting without cancelling it. The response ETag is a
+hash of route, request variant and the built bytes, so a signature that moved
+without changing the board still validates the client's copy. The card carries
+no read-time counters for that reason: parked and pickup-hold ages are derived
+in the client from `parkedBlocker.parkedAt` and `pickupHold.sinceUtc`. Values a
+reader can restore stay off the card as well: `tokenSummary.totalTokens` when it
+is the sum of the four counters, `allModelsPriced: true`, false `mergeSignal`
+flags, `resolved: true` and the target lane on waits-on items, and the lane and
+title of a fulfilled edge. The client restores them on the parsed grouped cards
+(`restoreBoardCardDefaults` in `task.service.ts`). The production-shaped Human
+Review fixture in `BoardCardSummaryTests` holds the card to 2 KB on average. ETag
+validation remains a separate HTTP optimization from the card contract.
 
 ## Execution modes
 
@@ -1043,7 +1055,9 @@ reported as `undeterminable` rather than optimistically as resolved.
 
 `TaskInfo.ParkedBlocker` is a read-time projection of that marker, never
 persisted on `task.json`. It carries the lane age (`parkedForSeconds`), so a card
-that has sat unlooked-at for days is visible as such. Cards parked before the
+that has sat unlooked-at for days is visible as such. The board card leaves the
+counter out and the client derives the age from `parkedAt`, so the card bytes do
+not change between two reads. Cards parked before the
 marker existed are backfilled from `enteredLaneAt` by the sweep. Full rationale
 and the AGT-2220 incident: [parked-card recall](../../concepts/parked-card-recall.md).
 
@@ -1754,14 +1768,14 @@ every byte of it is a byte the client already holds.
   `BoardReadConcurrencyGate`. A body is serialized once per cache key, and
   concurrent callers await the same in-flight result with their own
   `RequestAborted` cancellation. The body cache is invalidated by the task
-  index generation and other board validator inputs.
+  index generation and other board signature inputs.
 - **Slim card dependencies remain complete for filters.** `references.dependsOn`
   contains only the first three detailed edges on list and grouped reads;
   `references.dependsOnKeys` contains every dependency key as a string. The
   waiting-for-release facet reads `waitsOn.anyWaitingForRelease`, and
-  `waitsOn.releaseTargets` identifies every waiting target even when its label
-  is outside the first three `waitsOn.items`. Full reference and review facts
-  remain on task detail resources.
+  `waitsOn.releaseTargetKeys` lists the key of every waiting target even when it
+  is outside the first three `waitsOn.items`. Items carry no target job id or
+  watch path. Full reference and review facts remain on task detail resources.
 - **Review activity and queue order never wait for authority persistence.** The
   board reads one immutable snapshot of the current review state, priority,
   creation time, result-envelope availability, and lease end per task. The
@@ -1786,13 +1800,14 @@ every byte of it is a byte the client already holds.
   keep the local post-processing wait sentence. Every attempt-authority read
   is keyed by `TaskIdentity.AuthorityKey` (the task.json `key`, then the
   composite `taskKey`, then the slug), the same order the claim paths use.
-- **The 304 skips the work, not just the transfer.** The validator is computed
-  from cache reads over the already scanned task set. Enrichment (token,
-  verdict, dependency, Git and live-status lookups), the per-lane sort, and
-  serialisation all run only after the validator says the client's copy is out
-  of date. `BoardReadValidator` owns the pure decision; `BoardReadSignatureSource`
-  owns the inputs.
-- **The validator must cover every input.** A missing input does not cost
+- **The 304 skips the work, not just the transfer.** The signature is
+  computed from cache reads over the already scanned task set. Enrichment
+  (token, verdict, dependency, Git and live-status lookups), the per-lane sort,
+  and serialisation run once per signature; a cached signature answers 304
+  without any of them. The ETag is derived from the built bytes, so a rebuilt
+  body that matches the client's copy also answers 304. `BoardReadValidator`
+  owns the pure decision; `BoardReadSignatureSource` owns the inputs.
+- **The signature must cover every input.** A missing input does not cost
   performance, it serves a stale board behind a 304. Folded in: the task index
   generation; `TaskSidecarGeneration` (a counter over the raw watcher stream,
   because the task index deliberately ignores generated sidecars such as the
@@ -1827,12 +1842,13 @@ every byte of it is a byte the client already holds.
   stored fact, so a 15 s tick is folded in while any card sits in the Progress
   lane - the only lane those branches apply to. An idle board has no Progress
   card and does not pay that tick at all.
-- **A tag never outlives the task index safety TTL.** The index publishes a new
-  generation on every snapshot publish, including the TTL rescan that finds
-  nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s). The board poll
-  therefore settles at one full response per TTL window instead of one per poll,
-  and the same bound backstops the validator if the filesystem watcher ever
-  stops delivering events.
+- **A cached body never outlives the task index safety TTL.** The index
+  publishes a new generation on every snapshot publish, including the TTL rescan
+  that finds nothing changed (`TaskIndexCache:SafetyTtlSeconds`, default 30 s).
+  The board therefore rebuilds at most once per TTL window, and the same bound
+  backstops the signature if the filesystem watcher ever stops delivering
+  events. A rebuild that produces the same bytes keeps its tag, so an unchanged
+  board still answers 304.
 - **Legacy `review` lane alias is opt-out.** The grouped response still carries
   `review` as a second copy of the auto-review lane for pre-ADR-0025 clients. A
   client that knows the ADR-0025 lane names sends

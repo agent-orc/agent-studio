@@ -92,7 +92,7 @@ describe('BoardFiltersService project selection', () => {
   it('filters overflow dependencies from summary keys across board refreshes without detail reads', () => {
     const card = {
       ...makeJob('many-edges', 'Agent Task Processor', '2-ready'),
-      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'], dependsOnCount: 20,
+      references: { dependsOn: ['AGT-1', 'AGT-2', 'AGT-3'], dependsOnKeys: ['AGT-1', 'AGT-2', 'AGT-3', 'AGT-20'],
         relatedTo: [], blockedBy: [], supersedes: [] },
     } as TaskInfo;
     jobs.grouped.set(makeGrouped([card]));
@@ -406,9 +406,9 @@ describe('BoardFiltersService waiting-for-release facet', () => {
       releaseGate: true,
       targetReleased: false,
       waitingForRelease: true,
-      targetJobId: 'target',
-      targetWatchPath: 'wp/Agent Task Processor',
     }],
+    // Board cards match release targets by key, not by job id and path.
+    releaseTargetKeys: ['AGT-2372'],
   };
 
   beforeEach(() => {
@@ -430,7 +430,7 @@ describe('BoardFiltersService waiting-for-release facet', () => {
     } as unknown as TaskInfo;
     // The target the dependent waits for; its own `released: false` is
     // indistinguishable from "no gate", so it is matched via the dependent.
-    const target = makeJob('target', 'Agent Task Processor', '6-completed');
+    const target = { ...makeJob('target', 'Agent Task Processor', '6-completed'), key: 'AGT-2372' };
     const unrelated = makeJob('unrelated', 'Agent Task Processor', '2-ready');
     const openDependency = {
       ...makeJob('open-dep', 'Agent Task Processor', '2-ready'),
@@ -459,15 +459,15 @@ describe('BoardFiltersService waiting-for-release facet', () => {
   });
 
   it('matches release waiters and every target beyond the three visible labels', () => {
-    const target = makeJob('fourth-target', 'Agent Task Processor', '6-completed');
+    const target = { ...makeJob('fourth-target', 'Agent Task Processor', '6-completed'), key: 'AGT-4' };
     const dependent = {
       ...makeJob('many-waits', 'Agent Task Processor', '2-ready'),
       waitsOn: {
         blocked: true, cycleDetected: false, anyWaitingForRelease: true,
         items: ['AGT-1', 'AGT-2', 'AGT-3'].map(key => ({
-          key, fulfilled: false, waitingForRelease: false,
+          key, resolved: true, fulfilled: false, waitingForRelease: false,
         })),
-        releaseTargets: [{ targetJobId: target.id, targetWatchPath: target.watchPath }],
+        releaseTargetKeys: ['agt-4'],
       },
     } as TaskInfo;
     jobs.grouped.set(makeGrouped([dependent, target]));

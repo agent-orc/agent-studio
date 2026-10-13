@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Diagnostics;
 using AgentStudio.Tasks;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -22,6 +24,308 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         Assert.False(root.TryGetProperty("reviewProjection", out _));
         Assert.False(root.TryGetProperty("tokenSummary", out var token)
             && token.TryGetProperty("entries", out _));
+    }
+
+    [Fact]
+    public void A_parked_and_held_card_read_later_serializes_to_the_same_bytes()
+    {
+        // The two read-time counters (parked age, pickup-hold age) changed
+        // every card on every read, so an unchanged board never matched its
+        // cached body. The card carries the start instants instead.
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-12T22:20:00Z"));
+        var parkedAt = clock.GetUtcNow().UtcDateTime.AddDays(-3);
+        var marker = new ParkedBlockerRecord
+        {
+            BlockerType = "operator-decision", Lane = TaskStates.HumanReview, ParkedAt = parkedAt,
+            Reason = "Integrate the current delivery and repeat review.",
+            Condition = new ParkedBlockerCondition { Kind = "manual", Description = "Only a person can clear this park." },
+        };
+        var waitsOn = new WaitsOnStatus
+        {
+            Blocked = true,
+            Items = [new WaitsOnItem { Key = "AGT-1", Resolved = true, TargetState = TaskStates.HumanReview }],
+        };
+        TaskInfo ReadAt(DateTime now)
+        {
+            var ready = Fixture() with { State = TaskStates.Ready, EnteredLaneAt = parkedAt, WaitsOn = waitsOn };
+            return Fixture() with
+            {
+                ParkedBlocker = ParkedBlockerMarker.ToStatus(marker, now),
+                PickupHold = PickupHoldPolicy.Evaluate(new PickupHoldFacts(ready, waitsOn,
+                    IntakeEnabled: false, CrashBackoffUntilUtc: null, Rejection: null, NowUtc: now)),
+            };
+        }
+
+        var first = ReadAt(clock.GetUtcNow().UtcDateTime);
+        clock.Advance(TimeSpan.FromMinutes(7));
+        var later = ReadAt(clock.GetUtcNow().UtcDateTime);
+
+        Assert.NotEqual(first.ParkedBlocker!.ParkedForSeconds, later.ParkedBlocker!.ParkedForSeconds);
+        Assert.NotEqual(first.PickupHold!.HeldForSeconds, later.PickupHold!.HeldForSeconds);
+        Assert.Equal(BoardCardSummary.Serialize(first), BoardCardSummary.Serialize(later));
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(later));
+        Assert.False(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedForSeconds", out _));
+        Assert.True(document.RootElement.GetProperty("parkedBlocker").TryGetProperty("parkedAt", out _));
+        Assert.False(document.RootElement.GetProperty("pickupHold").TryGetProperty("heldForSeconds", out _));
+        Assert.True(document.RootElement.GetProperty("pickupHold").TryGetProperty("sinceUtc", out _));
+    }
+
+    /// <summary>
+    /// The per-card budget on the cards that weigh the most on a live board:
+    /// Human Review cards that are parked and carry an integration
+    /// verification, an execution location, a merge signal and waits-on
+    /// edges. The fixture is 44 such cards taken from the Agent Studio board on
+    /// Stable (12.10.2026), converted back to the task model and sanitized
+    /// (text, keys, ids, paths and SHAs replaced by filler of the same length).
+    /// Those cards averaged 4.4 KB on the wire before this budget existed
+    /// (today's whole Stable board: 3.8 KB). They now average about 2.0 KB:
+    /// what is left is identity (id, watch path, title), the token breakdown
+    /// the project chip sums, and the badges' short facts. The budget is the
+    /// card's 2 KB per card on these, the heaviest cards on a live board; the
+    /// lighter lanes keep the whole-board average well below it.
+    /// </summary>
+    [Fact]
+    public void Production_shaped_human_review_cards_stay_within_their_budget()
+    {
+        var cards = ProductionHumanReviewCards();
+        Assert.Equal(44, cards.Length);
+        Assert.All(cards, card =>
+        {
+            Assert.Equal(TaskStates.HumanReview, card.State);
+            Assert.NotNull(card.ParkedBlocker);
+            Assert.NotNull(card.Integration?.Verification);
+            Assert.NotNull(card.ExecutionLocation);
+            Assert.NotNull(card.MergeSignal);
+            Assert.NotNull(card.WaitsOn);
+        });
+
+        var sizes = cards.Select(card => BoardCardSummary.Serialize(card).Length).ToArray();
+        var average = sizes.Average();
+        output.WriteLine($"44 production-shaped Human Review cards: average {average:F0} B, max {sizes.Max()} B, total {sizes.Sum()} B");
+        Assert.True(average < 2048, $"Average card was {average:F0} bytes; budget is 2048");
+        Assert.True(sizes.Max() < 3072, $"Largest card was {sizes.Max()} bytes");
+    }
+
+    [Fact]
+    public void Board_card_leaves_out_derivable_task_key_and_default_branch()
+    {
+        var job = Fixture() with
+        {
+            WatchPath = "C:/projects/demo",
+            Id = "a-long-task-id",
+            TaskKey = TaskIdentity.CreateKey("C:/projects/demo", "a-long-task-id"),
+            Provenance = new TaskProvenance { Branch = "task/a-long-task-id" },
+        };
+
+        using var card = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        Assert.False(card.RootElement.TryGetProperty("taskKey", out _));
+        Assert.False(card.RootElement.GetProperty("gitContext").TryGetProperty("branch", out _));
+
+        // Single-card replies (query rows, commit owner) keep the key for API callers.
+        Assert.Equal("C:/projects/demo::a-long-task-id",
+            BoardCardSummary.AsJsonElement(job).GetProperty("taskKey").GetString());
+
+        // A key or branch that is not the derivable default is still sent.
+        using var odd = JsonDocument.Parse(BoardCardSummary.Serialize(job with
+        {
+            TaskKey = "other::a-long-task-id",
+            Provenance = new TaskProvenance { Branch = "runner/host/AGT-1" },
+        }));
+        Assert.Equal("other::a-long-task-id", odd.RootElement.GetProperty("taskKey").GetString());
+        Assert.Equal("runner/host/AGT-1", odd.RootElement.GetProperty("gitContext").GetProperty("branch").GetString());
+    }
+
+    private static TaskInfo[] ProductionHumanReviewCards()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "board-cards", "human-review-cards.sanitized.json");
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        };
+        return JsonSerializer.Deserialize<TaskInfo[]>(File.ReadAllText(path), options)!;
+    }
+
+    [Fact]
+    public void Detail_facts_stay_off_the_card_and_bounded_facts_keep_their_board_fields()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-12T22:20:00Z"));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var job = Fixture() with
+        {
+            ExecutionLocation = new TaskExecutionLocation
+            {
+                State = TaskExecutionStates.RemoteRunning, ExecutionKind = "remote", RunnerId = "runner-1",
+                ConfiguredRunnerId = "runner-1", HostDisplayName = "Runner One", StartedAt = now.AddMinutes(-9),
+                LastHeartbeat = now.AddSeconds(-5), LastActivityAt = now, ProcessId = 4242,
+                SessionId = "session-1", Branch = "task/agt-3043", WorktreePath = "/workspace/tasks/agt-3043",
+                ConnectionState = "connected", LeaseState = "active", TrustReason = new string('T', 120),
+            },
+            MergeSignal = new TaskMergeSignal
+            {
+                Branch = "task/agt-3043", InIntegration = true, IntegrationSha = "1234567890abcdef1234",
+            },
+            Integration = new TaskIntegrationStatus
+            {
+                Status = IntegrationStatuses.Integrated, DeliveryRef = "agent-studio/results/run_1/fence-1/" + new string('a', 40),
+                Sha = "1234567", Verification = new TaskIntegrationVerification
+                {
+                    State = "integrated-unverified", Sha = new string('b', 40), Reason = new string('R', 300),
+                },
+            },
+            TestEvidence = new TaskTestRunEvidence
+            {
+                EvidenceState = "proven", Summary = "Review build-tests Pass at 1234567",
+                Sources = [new TaskTestEvidenceSource { Kind = "review", Summary = "Review build-tests Pass at 1234567" }],
+            },
+            ParkedBlocker = new ParkedBlockerStatus("operator-decision", "manual", new string('C', 200),
+                now.AddDays(-1), 86400, new string('P', 300), "undeterminable", null, "detail"),
+            PendingIntent = new PendingIntent { Mode = "steer", Prompt = new string('S', 4000), SavedAt = now },
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items = [new WaitsOnItem { Key = "AGT-1", Resolved = true, WaitingForRelease = true,
+                    TargetJobId = "a-long-target-job-id", TargetWatchPath = "/workspace/Agent Studio",
+                    TargetTitle = "A prerequisite" }],
+            },
+        };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        var root = document.RootElement;
+
+        var location = root.GetProperty("executionLocation");
+        Assert.Equal("remote-running", location.GetProperty("state").GetString());
+        Assert.Equal("runner-1", location.GetProperty("runnerId").GetString());
+        Assert.Equal("Runner One", location.GetProperty("hostDisplayName").GetString());
+        Assert.Equal("connected", location.GetProperty("connectionState").GetString());
+        Assert.True(location.TryGetProperty("lastHeartbeat", out _));
+        foreach (var detailOnly in new[] { "branch", "worktreePath", "trustReason", "lastActivityAt", "sessionId" })
+            Assert.False(location.TryGetProperty(detailOnly, out _), detailOnly);
+
+        var merge = root.GetProperty("mergeSignal");
+        Assert.False(merge.TryGetProperty("branch", out _));
+        Assert.Equal("123456789", merge.GetProperty("integrationSha").GetString());
+        Assert.False(merge.TryGetProperty("integrationBranch", out _));
+
+        var integration = root.GetProperty("integration");
+        Assert.False(integration.TryGetProperty("deliveryRef", out _));
+        Assert.Equal(60, integration.GetProperty("verification").GetProperty("reason").GetString()!.Length);
+        Assert.Equal("bbbbbbbbb", integration.GetProperty("verification").GetProperty("sha").GetString());
+
+        Assert.False(root.GetProperty("testEvidence").TryGetProperty("sourceLabel", out _));
+        var park = root.GetProperty("parkedBlocker");
+        Assert.False(park.TryGetProperty("conditionDescription", out _));
+        Assert.Equal(100, park.GetProperty("reason").GetString()!.Length);
+        var intent = root.GetProperty("pendingIntent");
+        Assert.Equal(200, intent.GetProperty("prompt").GetString()!.Length);
+        Assert.True(intent.GetProperty("promptTruncated").GetBoolean());
+        var item = Assert.Single(root.GetProperty("waitsOn").GetProperty("items").EnumerateArray());
+        Assert.False(item.TryGetProperty("targetJobId", out _));
+        Assert.False(item.TryGetProperty("targetWatchPath", out _));
+        Assert.False(item.TryGetProperty("fulfilled", out _));
+        Assert.Equal("AGT-1", root.GetProperty("waitsOn").GetProperty("releaseTargetKeys")[0].GetString());
+        Assert.False(root.TryGetProperty("epicId", out _));
+    }
+
+    /// <summary>
+    /// Values a reader restores (task.service restoreBoardCardDefaults) stay
+    /// off the card: the token total that is the sum of its counters, a priced
+    /// summary, false merge flags, an existing target, the lane and title of a
+    /// fulfilled edge, a source label that repeats the summary, sub-second
+    /// instants the card only turns into ages.
+    /// </summary>
+    [Fact]
+    public void Restorable_defaults_and_repeated_values_stay_off_the_card()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.Parse("2026-10-13T07:49:48.4939747Z"));
+        var now = clock.GetUtcNow().UtcDateTime;
+        var job = Fixture() with
+        {
+            CreatedAt = now,
+            TokenSummary = new TaskTokenSummary
+            {
+                InputTokens = 12000, OutputTokens = 3000, CacheReadTokens = 500, TotalTokens = 15500,
+                AllModelsPriced = true, LastUpdate = now,
+            },
+            MergeSignal = new TaskMergeSignal { Branch = "task/agt-3043", InIntegration = true, InRelease = false },
+            ParkedBlocker = new ParkedBlockerStatus("operator-decision", "manual", "Only a person can clear this park.",
+                now, 0, "Decide", "undeterminable", null, "detail"),
+            TestEvidence = new TaskTestRunEvidence
+            {
+                EvidenceState = "proven", Summary = "Review build-tests Pass at 1234567 ",
+                Sources = [new TaskTestEvidenceSource { Kind = "review", Summary = "Review build-tests Pass at 1234567" }],
+            },
+            WaitsOn = new WaitsOnStatus
+            {
+                Blocked = true,
+                Items =
+                [
+                    new WaitsOnItem { Key = "AGT-1", Resolved = true, Fulfilled = true, TargetState = TaskStates.Completed, TargetTitle = "Done" },
+                    new WaitsOnItem { Key = "AGT-2", Resolved = true, TargetState = TaskStates.HumanReview, TargetTitle = "Open" },
+                    new WaitsOnItem { Key = "AGT-3", Resolved = false },
+                ],
+            },
+        };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        var root = document.RootElement;
+
+        var tokens = root.GetProperty("tokenSummary");
+        Assert.False(tokens.TryGetProperty("totalTokens", out _));
+        Assert.False(tokens.TryGetProperty("allModelsPriced", out _));
+        Assert.Equal("2026-10-13T07:49:48Z", tokens.GetProperty("lastUpdate").GetString());
+        Assert.Equal("2026-10-13T07:49:48Z", root.GetProperty("createdAt").GetString());
+        Assert.Equal("2026-10-13T07:49:48Z", root.GetProperty("parkedBlocker").GetProperty("parkedAt").GetString());
+        var merge = root.GetProperty("mergeSignal");
+        Assert.True(merge.GetProperty("inIntegration").GetBoolean());
+        Assert.False(merge.TryGetProperty("inRelease", out _));
+        Assert.False(root.GetProperty("testEvidence").TryGetProperty("sourceLabel", out _));
+        Assert.False(root.GetProperty("commitSummary").TryGetProperty("count", out _));
+        Assert.Equal(1, root.GetProperty("commitCount").GetInt32());
+
+        var items = root.GetProperty("waitsOn").GetProperty("items").EnumerateArray().ToDictionary(
+            item => item.GetProperty("key").GetString()!);
+        Assert.Equal("""{"key":"AGT-1","fulfilled":true}""", items["AGT-1"].GetRawText());
+        Assert.False(items["AGT-2"].TryGetProperty("resolved", out _));
+        Assert.False(items["AGT-2"].TryGetProperty("targetState", out _));
+        Assert.Equal("Open", items["AGT-2"].GetProperty("targetTitle").GetString());
+        Assert.False(items["AGT-3"].GetProperty("resolved").GetBoolean());
+
+        // A total that is not the sum of its counters is still sent.
+        var odd = Fixture() with { TokenSummary = new TaskTokenSummary { InputTokens = 10, TotalTokens = 25, AllModelsPriced = false } };
+        using var oddDocument = JsonDocument.Parse(BoardCardSummary.Serialize(odd));
+        Assert.Equal(25, oddDocument.RootElement.GetProperty("tokenSummary").GetProperty("totalTokens").GetInt64());
+        Assert.False(oddDocument.RootElement.GetProperty("tokenSummary").GetProperty("allModelsPriced").GetBoolean());
+    }
+
+    [Fact]
+    public void A_pending_intent_read_with_a_null_prompt_still_serializes()
+    {
+        // pending-intent.json is deserialized without a non-null check, so
+        // "prompt": null reaches the model despite its non-null default.
+        var job = Fixture() with { PendingIntent = new PendingIntent { Mode = "steer", Prompt = null! } };
+
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+
+        var intent = document.RootElement.GetProperty("pendingIntent");
+        Assert.Equal("steer", intent.GetProperty("mode").GetString());
+        Assert.False(intent.TryGetProperty("prompt", out _));
+        Assert.False(intent.TryGetProperty("promptTruncated", out _));
+    }
+
+    [Theory]
+    [InlineData(TaskStates.HumanReview, null, false)]
+    [InlineData(TaskStates.Ready, null, false)]
+    [InlineData(TaskStates.Ready, "runner-1", true)]
+    public void An_idle_location_reaches_the_card_only_where_its_configured_runner_is_read(
+        string lane, string? configuredRunnerId, bool onCard)
+    {
+        var job = Fixture() with
+        {
+            State = lane,
+            ExecutionLocation = new TaskExecutionLocation { ConfiguredRunnerId = configuredRunnerId },
+        };
+        using var document = JsonDocument.Parse(BoardCardSummary.Serialize(job));
+        Assert.Equal(onCard, document.RootElement.TryGetProperty("executionLocation", out _));
     }
 
     [Fact]
@@ -87,7 +391,7 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         using var document = JsonDocument.Parse(bytes);
         var references = document.RootElement.GetProperty("references");
         Assert.True(bytes.Length < 4096, $"100-edge card was {bytes.Length} bytes");
-        Assert.Equal(100, references.GetProperty("dependsOnCount").GetInt32());
+        Assert.False(references.TryGetProperty("dependsOnCount", out _));
         Assert.Equal(3, references.GetProperty("dependsOn").GetArrayLength());
         Assert.Equal(100, references.GetProperty("dependsOnKeys").GetArrayLength());
         Assert.Equal("AGT-99", references.GetProperty("dependsOnKeys")[99].GetString());
@@ -114,8 +418,12 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         var waits = document.RootElement.GetProperty("waitsOn");
         Assert.True(waits.GetProperty("anyWaitingForRelease").GetBoolean());
         Assert.Equal(3, waits.GetProperty("items").GetArrayLength());
-        Assert.Equal("agt-4", waits.GetProperty("releaseTargets")[0]
-            .GetProperty("targetJobId").GetString());
+        Assert.Equal("AGT-4", Assert.Single(waits.GetProperty("releaseTargetKeys").EnumerateArray()).GetString());
+        Assert.All(waits.GetProperty("items").EnumerateArray(), item =>
+        {
+            Assert.False(item.TryGetProperty("targetJobId", out _));
+            Assert.False(item.TryGetProperty("targetWatchPath", out _));
+        });
     }
 
     [Fact]
@@ -143,16 +451,16 @@ public sealed class BoardCardSummaryTests(ITestOutputHelper output)
         clock.Stop();
         var groupedBuildMs = clock.Elapsed.TotalMilliseconds;
         var cache = new BoardReadConcurrencyGate();
-        await cache.GetOrBuildAsync("list-generation-1", () => list, CancellationToken.None);
+        await cache.GetOrBuildAsync("list-generation-1", "tasks/list", () => list, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            await cache.GetOrBuildAsync("list-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
+            await cache.GetOrBuildAsync("list-generation-1", "tasks/list", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         var listLookupMs = clock.Elapsed.TotalMilliseconds / 1000;
-        await cache.GetOrBuildAsync("grouped-generation-1", () => grouped, CancellationToken.None);
+        await cache.GetOrBuildAsync("grouped-generation-1", "tasks/grouped", () => grouped, CancellationToken.None);
         clock.Restart();
         for (var i = 0; i < 1000; i++)
-            await cache.GetOrBuildAsync("grouped-generation-1", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
+            await cache.GetOrBuildAsync("grouped-generation-1", "tasks/grouped", () => throw new Exception("unexpected rebuild"), CancellationToken.None);
         clock.Stop();
         output.WriteLine($"235-card synthetic list: {list.Length} bytes; build {listBuildMs:F1} ms; cached lookup {listLookupMs:F4} ms");
         output.WriteLine($"235-card synthetic grouped: {grouped.Length} bytes; build {groupedBuildMs:F1} ms; cached lookup {clock.Elapsed.TotalMilliseconds / 1000:F4} ms");

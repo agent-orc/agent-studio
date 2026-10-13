@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 using Xunit;
 using Xunit.Abstractions;
@@ -280,6 +281,63 @@ public sealed class BoardConditionalReadTests : IDisposable
         Assert.Equal(string.Empty, second.Body);
         // The validator is re-stated so the client can keep polling conditionally.
         Assert.Equal(first.ETag, second.ETag);
+    }
+
+    /// <summary>
+    /// Two reads of a board on which no task changed return the same tag and
+    /// the same bytes, even when a no-op index rescan lands between them and
+    /// the read-time clock has moved. The parked card and the held Ready card
+    /// are the two shapes that used to carry a seconds counter (parked age,
+    /// pickup-hold age), which made every rebuilt body differ.
+    /// </summary>
+    [Fact]
+    public async Task UnchangedBoard_KeepsItsTagAndBytesAcrossANoOpRescan()
+    {
+        var parked = Path.Combine(_watchPath, TaskStates.Escalated, "t-parked");
+        Directory.CreateDirectory(parked);
+        File.WriteAllText(Path.Combine(parked, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "t-parked", key = "BET-1", title = "Parked for a decision", state = TaskStates.Escalated,
+            order = 1, agent = "claude",
+        }));
+        ParkedBlockerMarker.Write(parked, new ParkedBlockerRecord
+        {
+            BlockerType = "operator-decision",
+            Lane = TaskStates.Escalated,
+            // Any fixed instant in the past; the card must not age it per read.
+            ParkedAt = new FakeTimeProvider().GetUtcNow().UtcDateTime,
+            Reason = "Waiting for the operator.",
+            Condition = new ParkedBlockerCondition { Kind = "manual", Description = "Only a person can clear this park." },
+        });
+        var waiting = Path.Combine(_watchPath, TaskStates.Ready, "t-waiting");
+        Directory.CreateDirectory(waiting);
+        File.WriteAllText(Path.Combine(waiting, "task.json"), JsonSerializer.Serialize(new
+        {
+            id = "t-waiting", key = "BET-2", title = "Waits on the parked card", state = TaskStates.Ready,
+            order = 1, agent = "claude", references = new { dependsOn = new[] { "BET-1" } },
+        }));
+        using var factory = BuildFactory();
+        using var client = CreateClient(factory);
+        await WaitForBoardQuiescenceAsync(factory);
+        await WaitForSettledValidatorAsync(client, "/api/tasks/grouped");
+
+        var first = await GetAsync(client, "/api/tasks/grouped");
+        Assert.Contains("\"parkedBlocker\"", first.Body, StringComparison.Ordinal);
+        Assert.Contains("\"pickupHold\"", first.Body, StringComparison.Ordinal);
+
+        // Let the old per-read counters tick over, then publish a new index
+        // generation for a board that did not change.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        factory.Services.GetRequiredService<TaskIndexCache>().ForceRefresh();
+
+        var validated = await GetAsync(client, "/api/tasks/grouped", first.ETag);
+        var reread = await GetAsync(client, "/api/tasks/grouped");
+
+        Assert.Equal(HttpStatusCode.NotModified, validated.Status);
+        Assert.Equal(first.ETag, validated.ETag);
+        Assert.Equal(HttpStatusCode.OK, reread.Status);
+        Assert.Equal(first.ETag, reread.ETag);
+        Assert.Equal(first.Body, reread.Body);
     }
 
     [Fact]

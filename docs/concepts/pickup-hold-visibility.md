@@ -77,6 +77,8 @@ holding it.
 
 Each hold carries `sinceUtc` (the refusal instant for a refused dispatch, the
 lane entry otherwise), `heldForSeconds`, `unsatisfiable`, and `resolutions[]`.
+The board card omits `heldForSeconds`; the client derives the age from
+`sinceUtc`, so an unchanged hold does not change the board body.
 
 ### 3. The ways out are offered, never taken
 

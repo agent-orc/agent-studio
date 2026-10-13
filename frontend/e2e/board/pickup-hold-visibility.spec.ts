@@ -23,6 +23,12 @@ import { dismissDevErrorDialog, setTheme } from '../helpers/theme';
 const PROJECT = 'Pickup hold fixture';
 const WATCH_PATH = '/fixtures/pickup-hold';
 const RESULTS = process.env.JOB_RESULTS_DIR ?? join(process.cwd(), '..', 'results');
+/**
+ * Browser clock: 34 days after the archived gate started holding, 7 days and
+ * 13 hours after the refused dispatch. The card derives "held for" from
+ * `sinceUtc` against this clock; the board payload carries no age counter.
+ */
+const NOW = '2026-09-14T09:00:00Z';
 
 const ARCHIVED_GATE_CARD = {
   id: 'agt-2373',
@@ -68,7 +74,6 @@ const ARCHIVED_GATE_CARD = {
     mechanism: 'dependency-gate',
     reason: 'AGT-2372 is archived and was never released, so no run is left that could open this gate.',
     sinceUtc: '2026-08-11T09:00:00Z',
-    heldForSeconds: 34 * 86400,
     unsatisfiable: true,
     resolutions: [
       {
@@ -131,7 +136,6 @@ const REFUSED_DISPATCH_CARD = {
     reason: "Runner agent-runner-01 refused this card (capability-mismatch): "
       + "Required capability 'task-server:connectivity' is advertised as unavailable.",
     sinceUtc: '2026-09-06T19:47:45Z',
-    heldForSeconds: 7 * 86400 + 3600,
     unsatisfiable: false,
     resolutions: [
       {
@@ -223,6 +227,7 @@ async function installRoutes(page: Page): Promise<void> {
 
 async function openBoard(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1600, height: 960 });
+  await page.clock.setFixedTime(new Date(NOW));
   await page.addInitScript(() => {
     localStorage.setItem('atp.flag.vsCodeLayout', '1');
     localStorage.setItem('atp.studio.tabs.v1', JSON.stringify({

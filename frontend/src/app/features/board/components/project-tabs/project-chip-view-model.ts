@@ -33,7 +33,8 @@ export function buildProjectTokenChip(
     cacheReadTokens += summary.cacheReadTokens ?? 0;
     cacheCreationTokens += summary.cacheCreationTokens ?? 0;
     estimatedApiCostUsd += summary.estimatedApiCostUsd ?? 0;
-    allModelsPriced = allModelsPriced && summary.allModelsPriced === true;
+    // Board cards omit allModelsPriced when every model is priced.
+    allModelsPriced = allModelsPriced && summary.allModelsPriced !== false;
 
     for (const entry of summary.entries ?? []) {
       trackModel(modelLastSeen, entry.model, entry.ts);

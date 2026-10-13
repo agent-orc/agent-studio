@@ -183,6 +183,36 @@ describe('TaskService', () => {
     expect(service.loading()).toBe(false);
   });
 
+  it('restores the task key a board card leaves out as watchPath::id', () => {
+    const slim = { id: 'job-2', watchPath: 'C:/projects/demo', state: '2-ready', title: 'Slim' } as TaskInfo;
+    const explicit = { id: 'job-3', taskKey: 'other::job-3', watchPath: 'C:/projects/demo', state: '2-ready', title: 'Kept' } as TaskInfo;
+
+    service.refresh();
+    http.expectOne(groupedRequest).flush({ ...emptyGrouped, ready: [slim, explicit] });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
+
+    expect(service.grouped().ready.map(job => job.taskKey)).toEqual(['C:/projects/demo::job-2', 'other::job-3']);
+    expect(service.jobs().map(job => job.taskKey)).toEqual(['C:/projects/demo::job-2', 'other::job-3']);
+  });
+
+  it('restores the defaults a board card leaves out before the board publishes it', () => {
+    const slim = {
+      id: 'job-4', watchPath: 'C:/projects/demo', state: '5-human-review', title: 'Slim',
+      tokenSummary: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, lastModel: null, lastUpdate: null },
+      mergeSignal: { inIntegration: true },
+      waitsOn: { blocked: true, cycleDetected: false, items: [{ key: 'AGT-1' }, { key: 'AGT-2', resolved: false }] },
+    } as unknown as TaskInfo;
+
+    service.refresh();
+    http.expectOne(groupedRequest).flush({ ...emptyGrouped, humanReview: [slim] });
+    http.expectOne('/api/v1/studio/runner/status').flush({ projects: {} });
+
+    const card = service.jobs()[0];
+    expect(card.tokenSummary).toMatchObject({ totalTokens: 17, allModelsPriced: true });
+    expect(card.mergeSignal).toMatchObject({ inIntegration: true, inRelease: false });
+    expect(card.waitsOn?.items.map(item => item.resolved)).toEqual([true, false]);
+  });
+
   it('polls the board conditionally and keeps the last payload on 304', () => {
     const task = {
       id: 'job-1',

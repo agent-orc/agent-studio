@@ -17,13 +17,15 @@ import type { ParkedBlockerStatus, TaskInfo } from './task.model';
  * stale recall verdict, and the invariant that a parked card never reports zero
  * open items.
  */
+// The board card carries parkedAt only; every age below is read at this clock.
+const NOW = Date.parse('2026-09-14T14:44:00.000Z');
+
 describe('parked-blocker presentation', () => {
   const park = (overrides: Partial<ParkedBlockerStatus> = {}): ParkedBlockerStatus => ({
     blockerType: 'agent-needs-input',
     conditionKind: 'manual',
     conditionDescription: 'Only a person can clear this park; no automatic precondition is recorded.',
     parkedAt: '2026-09-11T14:44:00.000Z',
-    parkedForSeconds: 3 * 24 * 60 * 60,
     reason: '[agent-needs-input] The remote agent requires operator input: choose-connector-vs-lan',
     recallStatus: 'blocked',
     lastEvaluatedAt: '2026-09-14T11:50:00.000Z',
@@ -56,7 +58,7 @@ describe('parked-blocker presentation', () => {
   });
 
   it('projects the question, the options, the documents, and the age', () => {
-    const view = buildParkedBlockerView(info(park()))!;
+    const view = buildParkedBlockerView(info(park()), NOW)!;
 
     expect(view.blockerLabel).toBe('Agent needs input');
     expect(view.isDecision).toBe(true);
@@ -146,16 +148,28 @@ describe('parked-blocker presentation', () => {
   });
 
   it('separates a card waiting on a person from one waiting on a fix', () => {
-    const decision = buildParkedBadge(info(park()))!;
+    const decision = buildParkedBadge(info(park()), NOW)!;
     expect(decision.tone).toBe('decision');
     expect(decision.label).toBe('Waiting on you · 3 days');
 
     const failure = buildParkedBadge(info(park({
       blockerType: 'infra-crash',
       requiresDecisionCard: false,
-    })))!;
+    })), NOW)!;
     expect(failure.tone).toBe('parked');
     expect(failure.label).toBe('Parked · 3 days');
+  });
+
+  it('derives the age from parkedAt, so the card needs no read-time counter', () => {
+    const card = info(park());
+    expect(buildParkedBadge(card, Date.parse('2026-09-11T16:44:00.000Z'))!.label)
+      .toBe('Waiting on you · 2 hours');
+    expect(buildParkedBadge(card, NOW)!.label).toBe('Waiting on you · 3 days');
+  });
+
+  it('falls back to a carried counter only when parkedAt is unreadable', () => {
+    const view = buildParkedBlockerView(info(park({ parkedAt: '', parkedForSeconds: 5 * 60 })), NOW)!;
+    expect(view.parkedFor).toBe('5 minutes');
   });
 
   it('labels an unknown park category without inventing one', () => {

@@ -598,9 +598,9 @@ export interface TaskProvenanceRecord {
 export interface TaskMergeSignal {
   /** The task's worktree branch name, for the card's branch chip + tooltip. */
   branch: string;
-  /** True when the work is folded into the integration branch (develop). */
+  /** True when the work is folded into the integration branch (develop). Absent on a board card when false. */
   inIntegration: boolean;
-  /** True when the work has reached the release branch (main). */
+  /** True when the work has reached the release branch (main). Absent on a board card when false. */
   inRelease: boolean;
   /** Integration branch the signal was computed against (usually "develop"). */
   integrationBranch: string;

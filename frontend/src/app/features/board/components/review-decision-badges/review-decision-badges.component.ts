@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import type { TaskInfo } from '../../../../models/task.model';
 import { TooltipDirective } from 'coding-agent-chat/shared';
 import { buildDecisionDamBadge, buildHumanReviewBadge } from '../task-card/task-card-view-model';
 import { buildParkedBadge } from '../../../../models/parked-blocker-presentation';
+import { NowTickService } from '../../../../services/now-tick.service';
 
 @Component({
   selector: 'app-review-decision-badges',
@@ -22,7 +23,8 @@ export class ReviewDecisionBadgesComponent {
    * lane badge cannot tell the two apart, so the park badge replaces it
    * wherever a park marker exists rather than stacking a second chip.
    */
-  readonly parkedBadge = computed(() => buildParkedBadge(this.job()));
+  private readonly now = inject(NowTickService).now;
+  readonly parkedBadge = computed(() => buildParkedBadge(this.job(), this.now()));
   readonly humanReviewBadge = computed(() =>
     this.parkedBadge() ? null : buildHumanReviewBadge(this.job()));
 }

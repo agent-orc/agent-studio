@@ -253,19 +253,48 @@ const STATE_TO_LANE: Record<string, LaneKey> = {
  * signal from that same snapshot so one refresh cannot launch two equivalent
  * backend enrichment pipelines. The legacy `review` lane aliases
  * `autoReview`, hence the identity-based de-duplication.
+ *
+ * Board cards leave out `taskKey` when it is `{watchPath}::{id}` (the
+ * backend's TaskIdentity.CreateKey); it is restored here on the freshly
+ * parsed cards, which both the grouped and the flat signal share, so every
+ * consumer still reads it. The other values a card leaves out because a
+ * reader can restore them are restored in the same pass
+ * (`restoreBoardCardDefaults`).
  */
 function uniqueJobsFromGrouped(grouped: GroupedJobs): TaskInfo[] {
   const seen = new Set<string>();
   const jobs: TaskInfo[] = [];
   for (const lane of Object.values(grouped)) {
     for (const job of lane ?? []) {
-      const key = job.taskKey || `${job.watchPath}::${job.id}`;
+      job.taskKey ||= `${job.watchPath}::${job.id}`;
+      restoreBoardCardDefaults(job);
+      const key = job.taskKey;
       if (seen.has(key)) continue;
       seen.add(key);
       jobs.push(job);
     }
   }
   return jobs;
+}
+
+/**
+ * Board cards omit a token total that equals the sum of its four counters,
+ * `allModelsPriced: true`, false merge flags and `resolved: true` on waits-on
+ * edges. Restoring them keeps every consumer, including a detail painted
+ * from the clicked card before its own resources load, on the full shape.
+ */
+export function restoreBoardCardDefaults(job: TaskInfo): void {
+  const tokens = job.tokenSummary;
+  if (tokens) {
+    tokens.totalTokens ??= (tokens.inputTokens ?? 0) + (tokens.outputTokens ?? 0)
+      + (tokens.cacheReadTokens ?? 0) + (tokens.cacheCreationTokens ?? 0);
+    tokens.allModelsPriced ??= true;
+  }
+  if (job.mergeSignal) {
+    job.mergeSignal.inIntegration ??= false;
+    job.mergeSignal.inRelease ??= false;
+  }
+  for (const item of job.waitsOn?.items ?? []) item.resolved ??= true;
 }
 
 /**
@@ -562,8 +591,10 @@ export class TaskService {
         const body = response.body;
         if (body && acceptOptimisticTarget()) {
           const { gitStateAt, stale, ...grouped } = body;
+          // Restores each card's taskKey before either signal publishes it.
+          const jobs = uniqueJobsFromGrouped(grouped);
           this.grouped.set(grouped);
-          this.jobs.set(uniqueJobsFromGrouped(grouped));
+          this.jobs.set(jobs);
           this.gitStateAt.set(gitStateAt);
           this.gitStateStale.set(stale);
           this.groupedETag = response.headers.get('ETag');
