@@ -83,16 +83,25 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
             try
             {
                 var snapshot = workspace.Capture(project);
-                run.GoldenSet = await goldenSets.EvaluateAsync(project, snapshot, ct);
-                var active = snapshot.Items.Where(item => item.Project == project && item.Active).ToArray();
                 run.Unreadable = snapshot.Unreadable;
                 run.UsageComplete = snapshot.UsageComplete;
+                run.ProjectsWithoutCheckout = snapshot.WithoutCheckout;
+                run.GoldenSet = await goldenSets.EvaluateAsync(project, snapshot, ct);
+                var active = snapshot.Items.Where(item => item.Project == project && item.Active).ToArray();
+                run.EligibleItems = active.Length;
+                if (snapshot.WithoutCheckout.Contains(project))
+                {
+                    // Every proposal kind is planned against an area glossary page, which needs a checkout.
+                    run.SynthesisSkipped = "Project has no repository checkout, so it has no area glossary to plan a proposal against.";
+                    run.Status = "reported";
+                    Save(project, state);
+                    return run;
+                }
                 var offset = state.ItemsReviewedTotal
                     ?? state.Runs.Where(r => r.Status == "reported").Sum(r => r.ItemsReviewed);
                 var selected = active.Length == 0 ? [] : Enumerable.Range(0, Math.Min(30, active.Length))
                     .Select(i => active[(offset + i) % active.Length]).ToArray();
                 run.ItemsReviewed = selected.Length;
-                run.EligibleItems = active.Length;
                 run.TextOffset = active.Length == 0 ? 0 : offset % active.Length;
                 run.GlobalUsage = snapshot.Registry.ToDictionary(t => t.Id,
                     t => snapshot.Items.Count(i => i.Tags.Contains(t.Id)));
@@ -183,6 +192,10 @@ public sealed class TagMaintenanceService(ITagMaintenanceWorkspace workspace, IT
                     throw new InvalidOperationException($"Stale proposal: {change.Kind}/{change.Id}. No further writes applied.");
             }
             var snapshot = workspace.Capture(project);
+            // Fail closed: incomplete counts cannot prove that every reference of the source tag is rewritten.
+            if (decision.Proposal.Kind is "merge" or "retire" && !snapshot.UsageComplete)
+                throw new InvalidOperationException(
+                    $"Usage counts are incomplete ({snapshot.Unreadable.Count} unreadable inventory items); a {decision.Proposal.Kind} cannot be applied. No writes applied.");
             if (decision.Proposal.Kind == "add" && snapshot.AreaIds.Contains(decision.Proposal.Target))
                 throw new InvalidOperationException("Proposed facet id became an area. Request a fresh proposal.");
             if (decision.Proposal.Kind is "merge" or "retire")

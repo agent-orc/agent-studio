@@ -13,6 +13,8 @@ public sealed record TagMaintenanceSnapshot(List<TagRegistryEntry> Registry, Lis
     List<TagMaintenanceUnreadableItem>? Unreadable = null)
 {
     public List<TagMaintenanceUnreadableItem> Unreadable { get; init; } = Unreadable ?? [];
+    /// <summary>Projects without a repository checkout: cards only, no Dossier, wiki or glossary inventory.</summary>
+    public List<string> WithoutCheckout { get; init; } = [];
     /// <summary>Usage counts cover every item only when nothing in the inventory was unreadable.</summary>
     public bool UsageComplete => Unreadable.Count == 0;
 }
@@ -49,9 +51,13 @@ public sealed record TagMaintenanceRun
     public int TextOffset { get; set; }
     public int ExcerptLimit { get; init; } = 4000;
     public Dictionary<string, int> GlobalUsage { get; set; } = [];
-    public bool UsageComplete { get; set; } = true;
-    public List<TagMaintenanceUnreadableItem> Unreadable { get; set; } = [];
+    /// <summary>Null, like <see cref="Unreadable"/>, when the run failed before the inventory capture finished.</summary>
+    public bool? UsageComplete { get; set; }
+    public List<TagMaintenanceUnreadableItem>? Unreadable { get; set; }
+    public List<string>? ProjectsWithoutCheckout { get; set; }
     public int RetireProposalsSuppressed { get; set; }
+    /// <summary>Why synthesis was skipped although the run reported, or null when it ran.</summary>
+    public string? SynthesisSkipped { get; set; }
     public string? Error { get; set; }
     public List<string> Decisions { get; init; } = [];
     public TagGoldenSetReport GoldenSet { get; set; } = new();

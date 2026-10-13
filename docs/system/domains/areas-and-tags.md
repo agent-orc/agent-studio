@@ -254,7 +254,16 @@ listed in the run's `unreadable[]`. The run continues and still ends
 `reported`. With any unreadable item, usage counts are marked incomplete
 (`usageComplete: false`). Retirement proposals are then dropped and counted in
 `retireProposalsSuppressed`, and registry removal is blocked at application
-time. Merge, add, and glossary proposals continue. The step proposes at most 20 changes across four kinds:
+time. Merge, add, and glossary proposals continue, but applying a merge or
+retirement fails closed before its first write while counts are incomplete.
+A configured repository checkout that is missing on disk is unreadable
+(`kind: checkout`). A project without any configured checkout (no
+`RepositoryPath` or `RootPath` and no in-repo task storage) has no Dossier,
+wiki, or glossary files that could carry a tag. It contributes its cards only,
+is listed in `projectsWithoutCheckout`, and does not make counts incomplete.
+Its own run ends `reported` without a synthesis call and records the reason in
+`synthesisSkipped`, because every proposal kind is planned against an area
+glossary page. The step proposes at most 20 changes across four kinds:
 
 - retire a facet only when it has no references in any project or history,
 - merge near-duplicate facets only when every affected item belongs to the
@@ -295,7 +304,7 @@ object with these fields:
 
 | Field | Schema |
 |---|---|
-| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), `usageComplete`, `unreadable[]` (`project`, `kind` (`dossier`, `dossier-inventory`, `wiki`, or `wiki-inventory`), `id` (empty for an inventory), `error`), `retireProposalsSuppressed`, nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
+| `runs[]` | `id`, `startedAt`, `status` (`running`, `reported`, or `failed`), `model`, `thinkingLevel`, `itemsReviewed`, `eligibleItems`, `textOffset`, `excerptLimit`, `globalUsage` (tag-id to count), `usageComplete`, `unreadable[]` (`project`, `kind` (`checkout`, `dossier`, `dossier-inventory`, `wiki`, or `wiki-inventory`), `id` (empty for a checkout or an inventory), `error`), `projectsWithoutCheckout[]`; these three are null when the run failed before the inventory capture finished; `retireProposalsSuppressed`, nullable `synthesisSkipped`, nullable `error`, `decisions[]` (decision ids), and `goldenSet` |
 | `decisions[]` | `id`, `cardId`, `proposal`, exact `changes[]` (`kind`, `project`, `id`, serialized `before`, serialized `after`), `status` (`pending`, `applying`, `partial`, `applied`, or `rejected`), and nullable `error` |
 | `itemsReviewedTotal` | Nullable rotation offset over eligible items, kept so that trimming `runs[]` does not reset the sample rotation |
 | `audit[]` | `at`, `decisionId`, `actor`, `outcome`, and `detail`; approval is written before mutations, every completed write is recorded, and partial/application outcomes are appended |

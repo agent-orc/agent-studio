@@ -47,7 +47,7 @@ public sealed class AutoTaggingOrchestrationTests : IDisposable
         var git = new GitService(NullLogger<GitService>.Instance, _scanner, _config);
         var catalogue = new WorkbenchCatalogueService(_scanner, registry, git, configuration: _config);
         var persistence = new TagMaintenanceWorkspace(_scanner, _mutations, null!, areas, null!,
-            catalogue, new WorkbenchTagService(catalogue, areas, git), _docs);
+            catalogue, new WorkbenchTagService(catalogue, areas, git), _docs, registry);
         _workspace.Writer = persistence.Write;
         _service = new AutoTaggingService(_workspace, _classifier,
             new TagGoldenSetEvaluator(new FakeGoldenClassifier(), _config), _settings, _scanner,
