@@ -35,6 +35,9 @@ public static class AcceptanceAttemptLineagePolicy
     public const string MissingRunAttemptRefusal =
         "Acceptance refused: no run attempt in the current authority epoch";
 
+    /// <summary>Outcome the acceptance backstop records for such an acceptance.</summary>
+    public const string AcceptedWithoutRunAttemptOutcome = "AcceptedWithoutRunAttempt";
+
     public static AcceptanceLineageDecision Decide(
         ReviewSubjectAttemptCheck check,
         bool operatorOverride,
@@ -101,7 +104,56 @@ public static class AcceptanceAttemptLineagePolicy
             return null;
         }
     }
+
+    /// <summary>
+    /// AGT-3098 - the acceptance a delivered card currently rests on, when it
+    /// was recorded as accepted without a run attempt and its delivery was
+    /// integrated at that moment. Acceptance integration must not replay the
+    /// merge for it: the review subject names a run attempt from an earlier
+    /// authority epoch, which the merge runner refuses. Null when the record
+    /// belongs to an earlier acceptance (a later lane change into Completed),
+    /// names a different run attempt than the current review subject (a new
+    /// delivery), or saw a delivery that was not integrated.
+    /// </summary>
+    public static AcceptanceWithoutRunAttemptRecord? FindAcceptanceWithoutRunAttempt(
+        string state,
+        string? subjectRunAttemptId,
+        IReadOnlyList<TimelineEvent> timeline)
+    {
+        if (state is not (TaskStates.Completed or TaskStates.Archive)
+            || string.IsNullOrWhiteSpace(subjectRunAttemptId))
+            return null;
+        var lastAcceptance = -1;
+        for (var index = timeline.Count - 1; index >= 0; index--)
+        {
+            var row = timeline[index];
+            if (row.Kind == TimelineEventKinds.LaneChanged
+                && row.Details?.GetValueOrDefault("to") == TaskStates.Completed)
+                return null;
+            if (row.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt)
+            {
+                lastAcceptance = index;
+                break;
+            }
+        }
+        if (lastAcceptance < 0) return null;
+        var acceptance = timeline[lastAcceptance];
+        if (acceptance.Details?.GetValueOrDefault("integrationStatus") != IntegrationStatuses.Integrated
+            || !string.Equals(acceptance.Details?.GetValueOrDefault("subjectRunAttemptId"),
+                subjectRunAttemptId, StringComparison.OrdinalIgnoreCase))
+            return null;
+        var outcomeRecorded = timeline.Skip(lastAcceptance + 1).Any(row =>
+            row.Kind == TimelineEventKinds.IntegrationSucceeded
+            && row.Details?.GetValueOrDefault("outcome") == AcceptedWithoutRunAttemptOutcome);
+        return new AcceptanceWithoutRunAttemptRecord(acceptance, outcomeRecorded);
+    }
 }
+
+/// <summary>
+/// The current acceptance of a delivered card, recorded without a run attempt,
+/// and whether acceptance integration already recorded its outcome.
+/// </summary>
+public sealed record AcceptanceWithoutRunAttemptRecord(TimelineEvent Acceptance, bool OutcomeRecorded);
 
 /// <summary>Why acceptance of this card needs an operator override.</summary>
 public sealed record AcceptanceAttemptGap(

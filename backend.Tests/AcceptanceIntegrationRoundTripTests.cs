@@ -584,6 +584,133 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
     }
 
+    /// <summary>
+    /// AGT-3098 - AGT-2886 and seven siblings: the override acceptance of a
+    /// card with a lost run attempt and an unknown delivery brief version came
+    /// back two seconds later as <c>delivery-verdict-stale</c>. The delivery
+    /// chain reconciler read the card after the lane write and before the
+    /// claim write, saw a Completed card without a claim, and reopened it.
+    /// Here the reconciler runs inside that window, on the first card update
+    /// the acceptance publishes after its lane landed.
+    /// </summary>
+    [Fact]
+    public async Task OverrideAccept_LostRunAttemptAndUnknownBriefVersion_ReconcilerDuringAcceptanceKeepsItCompleted()
+    {
+        var deliverySha = PublishDelivery("lost-attempt-reconcile.txt", "integrated before the crash\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var deps = Build(deliverySha, authorityRebuilt: true, guarded: true);
+        var reconciler = new DeliveryChainReconciler(deps.Scanner, deps.Integration, deps.Transitions,
+            deps.Configuration, NullLogger<DeliveryChainReconciler>.Instance);
+        var movedDuringAcceptance = new List<int>();
+        deps.Notifier.TaskUpdated += _ =>
+        {
+            if (movedDuringAcceptance.Count > 0
+                || deps.Scanner.FindJob(Slug, _watchPath)?.State != TaskStates.Completed) return;
+            movedDuringAcceptance.Add(reconciler.RunOnceAsync().GetAwaiter().GetResult());
+        };
+        const string reason = "Integrated and deployed; the run attempt was lost in the epoch 2 rebuild.";
+
+        var accepted = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            cause: TimelineActors.Human("operator"),
+            reason: reason,
+            operatorOverride: true);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        // The reconciler did run inside the acceptance, and moved nothing.
+        Assert.Equal([0], movedDuringAcceptance);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, completed.State);
+        Assert.Equal(CompletionClaimBases.OperatorOverride, completed.CompletionClaim?.Basis);
+        Assert.Equal(deliverySha, completed.CompletionClaim?.ResultSha);
+        var timeline = deps.Timeline.ReadAll(completed.FolderPath);
+        Assert.Contains(timeline, entry => entry.Kind == TimelineEventKinds.AcceptedWithoutRunAttempt);
+        var contentOverride = Assert.Single(timeline,
+            entry => entry.Kind == TimelineEventKinds.CompletionContentOverridden);
+        Assert.Equal("unknown", contentOverride.Details!["deliveryBriefVersion"]);
+
+        // A later pass leaves the acceptance alone as well.
+        Assert.Equal(0, await reconciler.RunOnceAsync());
+        var settled = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, settled.State);
+        Assert.DoesNotContain(deps.Timeline.ReadAll(settled.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.LaneChanged
+            && entry.Details?.GetValueOrDefault(LaneChangeCauses.DetailKey)
+                == LaneChangeCauses.AcceptanceIntegrationFailed);
+    }
+
+    /// <summary>
+    /// AGT-3098 - AGT-2882: accepted with an override against its delivery
+    /// evidence (run attempt lost, delivery integrated), but the merge step
+    /// that marks the override never reached a pipeline record. The backstop
+    /// replayed the integration, the runner refused the earlier-epoch run
+    /// attempt with Error, and the card went back to Human Review six minutes
+    /// after it was accepted. The recorded acceptance is the outcome.
+    /// </summary>
+    [Fact]
+    public async Task Backstop_AcceptedWithoutRunAttempt_RecordsTheOutcomeInsteadOfFailingOnTheEarlierEpochAttempt()
+    {
+        var deliverySha = PublishDelivery("lost-attempt-backstop.txt", "integrated before the crash\n");
+        RunGit(_repo, "push", "-q", "origin", $"{deliverySha}:refs/heads/develop");
+        var gate = new CountingBuildTestGateRunner();
+        var deps = Build(deliverySha, gateRunner: gate, authorityRebuilt: true, guarded: true);
+        var subject = ReviewSubjectStore.Read(Path.Combine(_watchPath, TaskStates.HumanReview, Slug))!;
+        File.Delete(Path.Combine(_watchPath, TaskStates.HumanReview, Slug, PipelineExecutionLog.FileName));
+
+        var accepted = await deps.Transitions.MoveAsync(
+            Slug,
+            TaskStates.Completed,
+            _watchPath,
+            cause: TimelineActors.Human("operator"),
+            reason: "Integrated and deployed; the run attempt was lost in the epoch 2 rebuild.",
+            operatorOverride: true);
+
+        Assert.Equal(MoveJobStatus.Success, accepted.Status);
+        var completed = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Null(deps.Integration.ReadLatestMergeStep(completed));
+        var status = deps.Integration.BuildLookup([completed])[completed.TaskKey];
+        Assert.Equal(IntegrationStatuses.Integrated, status.Status);
+        Assert.Equal(AcceptedIntegrationRecoveryAction.RecordAcceptanceWithoutRunAttempt,
+            deps.Integration.ResolveAcceptedIntegrationRecovery(
+                completed, status, () => deps.Timeline.ReadAll(completed.FolderPath)).Action);
+        var backstop = new AcceptedIntegrationBackstopHostedService(
+            deps.Scanner,
+            deps.Settings,
+            VerifyingRunner(deps, gate),
+            deps.Integration,
+            deps.Mutations,
+            deps.Configuration,
+            NullLogger<AcceptedIntegrationBackstopHostedService>.Instance,
+            deps.Transitions,
+            deps.Timeline,
+            deps.Pipeline);
+
+        backstop.RunOnce();
+
+        Assert.Equal(0, gate.Invocations);
+        var kept = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, kept.State);
+        var timeline = deps.Timeline.ReadAll(kept.FolderPath);
+        Assert.DoesNotContain(timeline, entry => entry.Kind == TimelineEventKinds.IntegrationFailed);
+        var recorded = Assert.Single(timeline, entry =>
+            entry.Kind == TimelineEventKinds.IntegrationSucceeded
+            && entry.Details?.GetValueOrDefault("outcome")
+                == AcceptanceAttemptLineagePolicy.AcceptedWithoutRunAttemptOutcome);
+        Assert.Equal(subject.RunAttemptId, recorded.Details!["subjectRunAttemptId"]);
+        Assert.Equal(IntegrationStatuses.Integrated, recorded.Details["integrationStatus"]);
+        Assert.Contains("no merge replay", recorded.Summary);
+
+        // The outcome is recorded once; the next sweep leaves the card alone.
+        backstop.RunOnce();
+        var again = deps.Scanner.FindJob(Slug, _watchPath)!;
+        Assert.Equal(TaskStates.Completed, again.State);
+        Assert.Single(deps.Timeline.ReadAll(again.FolderPath), entry =>
+            entry.Kind == TimelineEventKinds.IntegrationSucceeded);
+        Assert.Equal(0, gate.Invocations);
+    }
+
     [Fact]
     public async Task AcceptHttp_DoesNotStartColdGateForPendingDelivery()
     {
@@ -2541,11 +2668,12 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         // The state machine writes the lane_changed rows; the same ledger
         // instance is read back by the integration assertions below.
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance, timeline: timeline);
+        var notifier = new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance);
         var mutations = new TaskMutationService(
             scanner,
             new ClientIdentityStore(config, NullLogger<ClientIdentityStore>.Instance),
             new ProjectRegistry(config, NullLogger<ProjectRegistry>.Instance),
-            new TaskChangeNotifier(NullLogger<TaskChangeNotifier>.Instance),
+            notifier,
             NullLogger<TaskMutationService>.Instance);
         var settings = new ProjectSettingsService(NullLogger<ProjectSettingsService>.Instance, config);
         if (configureIntegrationBranch)
@@ -2687,7 +2815,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
             timeline,
             provenance,
             acceptedQueue,
-            authority);
+            authority,
+            notifier);
     }
 
     private AttemptAuthorityService RebuiltAuthority()
@@ -2818,7 +2947,8 @@ public sealed class AcceptanceIntegrationRoundTripTests : IDisposable
         TimelineLog Timeline,
         TaskProvenanceService Provenance,
         AcceptedIntegrationQueue? AcceptedQueue,
-        AttemptAuthorityService Authority);
+        AttemptAuthorityService Authority,
+        TaskChangeNotifier Notifier);
 
     private sealed class BlockingBuildTestGateRunner(BuildTestGateResult result)
         : IBuildTestGateRunner
