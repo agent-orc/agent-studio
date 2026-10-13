@@ -3,7 +3,7 @@
 :host { display: block; }
 
 /* AGT-3011: the operator sweeps sit directly under the health alarm. */
-.ph-sweeps { margin-top: var(--studio-spacing-2); }
+.ph-sweeps, .ph-economics { margin-top: var(--studio-spacing-2); }
 
 /* Head + metric cells own the inset, so the panel runs flush and clips them. */
 .ph {
@@ -50,6 +50,9 @@
   display: grid;
   grid-template-columns: minmax(10rem, 0.85fr) minmax(12rem, 1fr) minmax(22rem, 2fr);
 }
+.ph__economics { display: flex; flex-wrap: wrap; gap: var(--studio-spacing-2); align-items: baseline; padding: var(--studio-spacing-2) var(--studio-card-compact-padding-inline); border-top: 1px solid var(--studio-card-muted-border); font-variant-numeric: tabular-nums; }
+.ph__economics strong { font-size: var(--studio-card-meta-size); }
+.ph__economics small { color: var(--studio-fg-muted); }
 
 .ph__metric {
   min-width: 0;
