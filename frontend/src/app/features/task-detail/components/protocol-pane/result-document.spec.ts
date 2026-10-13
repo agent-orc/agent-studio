@@ -27,6 +27,7 @@ function verdict(overrides: Partial<ProtocolVerdict> = {}): ProtocolVerdict {
 }
 
 interface DetailOpts {
+  integrationRecords?: unknown[];
   statusMarkdown?: string | null;
   title?: string;
   taskType?: string | null;
@@ -54,6 +55,7 @@ function detail(opts: DetailOpts = {}): TaskDetail {
       } as never) : null,
       commits: opts.commits != null ? new Array(opts.commits).fill({}) : [],
       codeActivityDetected: opts.codeActivityDetected,
+      integrationRecords: opts.integrationRecords ?? [],
       reviewProjection: opts.reviewProjection ?? null,
     },
     statusMarkdown: opts.statusMarkdown ?? null,
@@ -278,6 +280,34 @@ describe('buildResultDocument', () => {
 
   it('renders a "no code change" commit stat when the scanner saw no activity', () => {
     const doc = buildResultDocument(detail({ commits: 0, codeActivityDetected: false }), verdict());
+    expect(doc.metrics.find((x) => x.id === 'commits')?.value).toBe('no code change');
+  });
+
+  it('AGT-3045: renders "integrated via operator merge" instead of "no code change" when an integrated record exists', () => {
+    const doc = buildResultDocument(detail({
+      commits: 0,
+      codeActivityDetected: false,
+      integrationRecords: [{
+        id: 'operator-merge-2026-09-15-agt-2798',
+        classification: 'integrated-verified',
+        integrationBranch: 'develop',
+        commitShas: [],
+        evidence: 'Operator card-scoped merge 5d480157f into develop.',
+      }],
+    }), verdict());
+    const commits = doc.metrics.find((x) => x.id === 'commits');
+    expect(commits?.value).toBe('integrated via operator merge');
+    expect(commits?.tooltip).toContain('Record: operator-merge-2026-09-15-agt-2798');
+    expect(commits?.tooltip).toContain('Branch: develop');
+    expect(commits?.tooltip).toContain('Evidence: Operator card-scoped merge 5d480157f');
+  });
+
+  it('AGT-3045: a non-integrated record keeps the "no code change" stat', () => {
+    const doc = buildResultDocument(detail({
+      commits: 0,
+      codeActivityDetected: false,
+      integrationRecords: [{ id: 'sweep-x', classification: 'no-code-expected' }],
+    }), verdict());
     expect(doc.metrics.find((x) => x.id === 'commits')?.value).toBe('no code change');
   });
 

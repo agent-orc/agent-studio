@@ -187,8 +187,10 @@ test('the North star lists it once in §5, after AGT-W49 and before AGT-W51', ()
   const at = cards.indexOf('../deployment-story/index.html');
   assert.ok(at > 0, 'deployment story card missing from §5');
   assert.equal(cards[at - 1], '../operations-server-backchannel/index.html');
-  assert.equal(cards[at + 1], '../docker-ausfuehrungswelt-migration/index.html');
-  assert.equal(html.split('deployment-story/index.html').length - 1, 1, 'link-only: one North star mention');
+  assert.ok(cards.indexOf('../docker-ausfuehrungswelt-migration/index.html') > at,
+    'deployment story must precede AGT-W51');
+  assert.equal(cards.filter((card) => card === '../deployment-story/index.html').length, 1,
+    'one link-only entry in the current map');
   const history = between(html, '<h2 id="s6"', '<section id="s7"');
   assert.equal(history.includes('deployment-story'), false, 'a current journey must not sit in §6 history');
 });
@@ -210,9 +212,9 @@ test('AGT-W49 links the journey and the AGT-2905 bus Dossier and leaves D1 to D4
   // The reconciliation defers to W49's own decision record instead of
   // restating a status that later implementation slices may change.
   assert.match(deployment, /does not change the recorded status of D1 to D4/);
-  assert.match(html, /<b>Status<\/b>\s*Decision pending/);
+  assert.match(html, /<b>Status<\/b>\s*Decided 25 September 2026/);
   for (const id of ['d1-architecture', 'd2-standard-deployment', 'd3-agt-2736', 'd4-orchestrator-sessions']) {
-    assert.match(html, new RegExp(`data-decision-id="${id}"`));
+    assert.match(html, new RegExp(`data-decision-id="${id}"[^>]*data-decision-status="decided"`));
   }
   // The develop-side D12 execution-role amendment survives the merge.
   assert.match(html, /D12 execution-role amendment \(2026-09-26\)/);
@@ -233,16 +235,17 @@ test('the Dossier keeps the develop-side AGT-2942 log after the 1 October merge'
   assert.equal((decisions.match(/data-decision-id="D\d"/g) ?? []).length, 8);
 });
 
-test('I10 is published while AGT-2906 registration remains pending', () => {
+test('I10 is published and its navigation record reports the verified task references', () => {
   const html = read(canonicalEntry);
   const item = between(html, '<tr id="I10">', '</tr>');
   assert.match(item, /Published at <code>docs\/operations\/deployment-story\/index\.html<\/code>/);
   assert.doesNotMatch(item, /requested North star entry|separately scoped publication step/);
   const navigation = read(join(canonicalDir, 'navigation-integration.md'));
-  assert.match(navigation, /Status: I10 publication is present in this delivery branch/);
+  assert.match(navigation, /Status: I10 publication is present/);
   assert.match(navigation, /POST \/api\/tasks\/AGT-2906\/concept-dossier\?project=PROJ-002/);
-  assert.match(navigation, /not a completed API update/);
-  assert.match(html, /The API mutation remains an operator follow-up/);
+  assert.match(navigation, /Both file reads returned HTTP 200 through the stable application API/);
+  assert.match(navigation, /A repeat POST on that date returned HTTP 400/);
+  assert.match(html, /The task-record references are present/);
   assert.doesNotMatch(html, /AGT-2951 delivery records for this run/);
 });
 

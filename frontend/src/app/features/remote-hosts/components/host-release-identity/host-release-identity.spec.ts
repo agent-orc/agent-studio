@@ -72,4 +72,19 @@ describe('HostReleaseIdentityComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('agt-2660');
     expect(fixture.nativeElement.querySelector('[data-testid="remote-host-role-release-drift"]')).toBeNull();
   });
+
+  it('renders a commit chip only for a hex commit and recovers one from the release id', () => {
+    TestBed.configureTestingModule({ imports: [HostReleaseIdentityComponent], providers: [provideZonelessChangeDetection()] });
+    const fixture = TestBed.createComponent(HostReleaseIdentityComponent);
+    fixture.componentRef.setInput('host', { ...HOST, release: { ...HOST.release!, releaseId: '20260928T1211Z-v0.9.4-6759fe303', commit: 'sha' } });
+    fixture.componentRef.setInput('testIdPrefix', 'remote-host-release');
+    fixture.componentRef.setInput('showIdentity', true);
+    fixture.detectChanges();
+    expect(fixture.componentInstance.commit()).toBe('6759fe303');
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-commit"]')?.textContent).toContain('6759fe3');
+    fixture.componentRef.setInput('host', { ...HOST, release: { ...HOST.release!, releaseId: 'local-release', commit: 'sha' } });
+    fixture.detectChanges();
+    expect(fixture.componentInstance.commit()).toBeNull();
+    expect(fixture.nativeElement.querySelector('[data-testid="remote-host-release-commit"]')).toBeNull();
+  });
 });

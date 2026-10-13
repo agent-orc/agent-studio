@@ -412,15 +412,63 @@ public static class V1ReviewPlaneEndpoints
             // AGT-W57: park pending reviews that would run into an open cause
             // before they spend an attempt, and skip every parked card.
             var heldByCauseBreaker = causeBreakers.HoldPendingReviews();
+            var activeByRunner = authority.ListActiveReviewAttempts()
+                .Where(review => review.Lease is not null)
+                .GroupBy(review => review.Lease!.ExecutorId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            var now = DateTime.UtcNow;
+            var alternativeHosts = registry.ListCapabilitySnapshots()
+                .Where(snapshot => !string.Equals(snapshot.RunnerId, runnerId, StringComparison.Ordinal)
+                    && now - snapshot.LastSeenAt <= V1ReviewExecutorRegistry.ReviewExecutorHeartbeatStaleAfter
+                    && snapshot.HostAdmission.AdmissionState == "open"
+                    && activeByRunner.GetValueOrDefault(snapshot.RunnerId)
+                        < (snapshot.EffectiveMaxParallelism ?? snapshot.RoleMaxParallelism ?? 1))
+                .Select(snapshot => (snapshot.HostId,
+                    Capabilities: registry.AdmittedReviewCapabilities(snapshot.RunnerId, snapshot.InstanceId)))
+                .Where(item => item.Capabilities.Contains(Contract.ReviewCapabilities.ReviewExecutor))
+                .ToArray();
+            string? hostWaitReason = null;
+            bool AdmitHost(ReviewAttemptDto candidate)
+            {
+                var codingHost = candidate.Subject.CodingHostId
+                    ?? authority.GetRun(candidate.SourceRunAttemptId)?.Lease?.HostId;
+                if (string.IsNullOrWhiteSpace(codingHost)
+                    || !string.Equals(codingHost, executor.HostId, StringComparison.Ordinal)) return true;
+                var task = FindTask(scanner, candidate.TaskKey);
+                var required = task is not null && settings.Get(task.ProjectName).RequireDifferentReviewHost;
+                var otherIdle = alternativeHosts.Any(other =>
+                    !string.Equals(other.HostId, codingHost, StringComparison.Ordinal)
+                    && CanServeReviewPlanOnHost(candidate.Subject.Plan, other.Capabilities));
+                var placement = Contract.ReviewHostPlacementPolicy.Decide(
+                    codingHost, executor.HostId,
+                    required || candidate.Subject.Plan?.RequireDifferentHostFailureDomain == true,
+                    otherIdle);
+                hostWaitReason = placement switch
+                {
+                    Contract.ReviewHostPlacementDecision.WaitForRequiredHost =>
+                        Contract.ReviewClaimEmptyReasons.DifferentHostRequired,
+                    Contract.ReviewHostPlacementDecision.YieldToOtherHost =>
+                        hostWaitReason ?? Contract.ReviewClaimEmptyReasons.DifferentHostPreferred,
+                    _ => hostWaitReason,
+                };
+                return placement == Contract.ReviewHostPlacementDecision.Admit;
+            }
             var claimed = reviewAttemptLifecycle.ClaimNextReview(
                 runnerId,
                 executor.HostId,
                 request.InstanceId,
                 request.RequestedTtlSeconds,
                 executor.Capabilities,
-                heldByCauseBreaker);
+                heldByCauseBreaker,
+                AdmitHost);
             if (claimed.Status == AttemptWriteStatus.NotFound)
             {
+                if (hostWaitReason is not null)
+                    return Results.Ok(Contract.ReviewClaimEmptyResponses.Empty(
+                        hostWaitReason,
+                        hostWaitReason == Contract.ReviewClaimEmptyReasons.DifferentHostRequired
+                            ? $"Review waits for an executor on a host other than coding host '{executor.HostId}' because this project requires host separation."
+                            : $"Review is reserved for an idle eligible executor on a host other than coding host '{executor.HostId}'."));
                 // AGT-2987: an empty queue and a queue this executor cannot
                 // serve used to read the same. Name the unclaimable attempts
                 // and the capability keys they need instead.
@@ -442,7 +490,8 @@ public static class V1ReviewPlaneEndpoints
                 settings,
                 remoteReviewPlans,
                 out var subjectTask,
-                out var baseline);
+                out var baseline,
+                authority);
             if (!Contract.ReviewLibraryStepPolicy.Supports(subject.Plan, executor.Capabilities))
             {
                 if (!authority.DeferReviewClaim(review.AttemptId, runnerId, request.InstanceId))
@@ -2068,6 +2117,25 @@ public static class V1ReviewPlaneEndpoints
             });
     }
 
+    private static bool CanServeReviewPlanOnHost(
+        Contract.ReviewPlanDto? plan,
+        IReadOnlySet<string> capabilities)
+    {
+        if (!capabilities.Contains(Contract.ReviewCapabilities.GitMaterialization)
+            || !capabilities.Contains(Contract.ReviewCapabilities.BaselineComparison)
+            || !capabilities.Contains(Contract.ReviewCapabilities.DependencyPreparation))
+            return false;
+        if (plan is null) return true;
+        if (plan.RequiresVisualReview
+            && !capabilities.Contains(Contract.ReviewCapabilities.VisionReview))
+            return false;
+        if (plan.RequiredAspects.Any(aspect =>
+                aspect is "completion" or "requirements" or "code-quality" or "documentation" or "evidence")
+            && !capabilities.Contains(Contract.ReviewCapabilities.SemanticReview))
+            return false;
+        return Contract.ReviewLibraryStepPolicy.Supports(plan, capabilities);
+    }
+
     private static Contract.ReviewSubjectDto ToSubject(
         ReviewAttemptDto review,
         TaskScannerService scanner,
@@ -2075,7 +2143,8 @@ public static class V1ReviewPlaneEndpoints
         AgentStudio.Projects.ProjectSettingsService settings,
         RemoteReviewPlanBuilder remoteReviewPlans,
         out TaskInfo? subjectTask,
-        out ReviewBaselineBranchDecision? baseline)
+        out ReviewBaselineBranchDecision? baseline,
+        AttemptAuthorityService? authority = null)
     {
         var materializableRepository = MaterializableRepository(
             review, scanner, projects, settings);
@@ -2116,7 +2185,8 @@ public static class V1ReviewPlaneEndpoints
             review.Subject.ResultRef ?? review.Subject.ExpectedResultSha,
             null,
             null,
-            null,
+            review.Subject.CodingHostId
+                ?? authority?.GetRun(review.SourceRunAttemptId)?.Lease?.HostId,
             review.Subject.ReviewPolicyHash,
             plan,
             review.Subject.CreatedAt);

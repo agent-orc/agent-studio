@@ -12,6 +12,21 @@ export interface RegisteredProject {
   name: string;
 }
 
+export interface ProjectRegistryEntry {
+  id: string;
+  displayName: string;
+  shortCode: string | null;
+  workspaceId: string;
+  archived: boolean;
+  storageLocation?: string;
+}
+
+export function activeRegisteredProjects(entries: readonly ProjectRegistryEntry[]): RegisteredProject[] {
+  return entries.filter(entry => !entry.archived && !!entry.id)
+    .map(entry => ({ projectId: entry.id, workspaceId: entry.workspaceId,
+      name: entry.displayName || entry.id }));
+}
+
 export interface ProjectPlacement {
   requiredCapabilities: readonly string[];
   pinnedRunnerId: string | null;

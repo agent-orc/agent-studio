@@ -94,7 +94,10 @@ public sealed class RemoteReviewPlanBuilder
             repositoryPath,
             projectSettings?.BuildProfile,
             integrationRef,
-            changedFiles);
+            changedFiles) with
+        {
+            RequireDifferentHostFailureDomain = projectSettings?.RequireDifferentReviewHost == true,
+        };
         var ordinaryToolPlan = toolPlan;
         var subject = task is null ? null : ReviewSubjectStore.Read(task.FolderPath);
         var resultRef = immutableResultRef ?? subject?.ImmutableResultRef;
