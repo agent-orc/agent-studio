@@ -65,6 +65,7 @@ A delivery is eligible only when all of the following hold:
 | Current generation | No newer attempt, no reissue, no operator supersede. |
 | Profile match | Project, repository, integration branch, gate profile and platform version match every other member. |
 | Unowned | Not already claimed by another batch or an active per-task gate. |
+| Not yet integrated | The integration tip does not already contain the result SHA. A contained member leaves the queue as integrated through the no-op integration, without a candidate or a per-task gate (AGT-3103, [no-op integration](../task-integration-and-merge-workflow.md#no-op-integration-agt-3103)). |
 
 The manifest records every eligible key and every exclusion with a typed
 reason. The coordinator may not silently pick an easier subset.
@@ -332,6 +333,15 @@ Open, with no implementation:
   parameters, not product defaults.
 
 ## Living knowledge log
+
+- **2026-10-13 (AGT-3103):** Deliveries an operator pushed to `develop`
+  before their reviews settled were integrated again later. A full merge gate
+  ran on the unchanged tip and held the integration reservation, so two formed
+  batches waited over 45 minutes with no run. Formation now checks each
+  current, unowned member against the fetched integration tip
+  (`BatchGatePolicy.LeavesAsIntegrated`). A contained member records
+  `logs/batch-contained-<reviewAttemptId>.json`, integrates as a no-op, moves
+  to Human Review, and resolves as `already-integrated`.
 
 - **2026-08-24 (AGT-2671):** Re-verified against `develop` when the curation
   branch was rebased. Two corrections to the entry below. First, the

@@ -576,11 +576,15 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                             request.Lane, request.RequiredTestLevel);
                         var preflightCommands = ComposeRenderGate.Append(preflight.Commands
                             .Where(command => ShouldRunForChange(command, changedFiles)).ToList(), composeRender);
-                        if (preflightCommands.Count > 0)
+                        // A stale folder-to-test map for THIS diff fails the
+                        // gate below; a verdict cached for another diff must
+                        // not hide it (AGT-3103 keys the cache on the plan).
+                        if (preflightCommands.Count > 0
+                            && preflight.Audit.UnmappedSourceDirectories.Count == 0)
                         {
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(preflightCommands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
-                                request, profile, mode, changedFiles, preflightCommands, toolchainIdentity);
+                                request, profile, mode, preflightCommands, toolchainIdentity);
                             var cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
                             if (cached is not null)
                                 completed = cached with
@@ -691,8 +695,10 @@ public sealed class BuildTestGateRunner : IBuildTestGateRunner
                         {
                             toolchainIdentity ??= GateResultCache.LocalToolchainIdentity(commands, workspace!);
                             profileDigest = GateResultCache.ProfileDigest(
-                                request, profile, mode, changedFiles, commands, toolchainIdentity);
-                            var cached = _verdictCache.TryRead(cacheProject, testedSha!, profileDigest);
+                                request, profile, mode, commands, toolchainIdentity);
+                            var cached = staged.Audit.UnmappedSourceDirectories.Count == 0
+                                ? _verdictCache.TryRead(cacheProject, testedSha!, profileDigest)
+                                : null;
                             if (cached is not null)
                             {
                                 completed = cached with

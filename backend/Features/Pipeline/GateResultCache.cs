@@ -134,14 +134,20 @@ public sealed class GateResultCache
         }
     }
 
+    /// <summary>
+    /// The cache key beside the SHA: the resolved command plan and everything
+    /// that decides how it runs. AGT-3103: the changed-file list that selected
+    /// the plan is deliberately not part of it. Two gates on one SHA whose
+    /// diffs select the same commands run the same verification, so the
+    /// second reuses the first verdict instead of re-running it.
+    /// </summary>
     public static string ProfileDigest(
         BuildTestGateRequest request, BuildProfile? profile, PostStepMode mode,
-        IReadOnlyList<string>? changedFiles, IReadOnlyList<VerifyCommand> commands,
-        string toolchainIdentity)
+        IReadOnlyList<VerifyCommand> commands, string toolchainIdentity)
     {
         var payload = JsonSerializer.Serialize(new
         {
-            Version = 1,
+            Version = 2,
             request.GateId,
             request.PipelineDefinitionVersion,
             ToolchainIdentity = toolchainIdentity,
@@ -150,9 +156,6 @@ public sealed class GateResultCache
             request.RequiredTestLevel,
             request.Lane,
             Mode = mode.ToString(),
-            ChangedFiles = changedFiles?.OrderBy(path => path, StringComparer.Ordinal).ToArray(),
-            ChangedFileStatuses = request.ChangedFileStatuses?
-                .OrderBy(item => item.Key, StringComparer.Ordinal).ToArray(),
             Commands = commands,
         }, Json);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
