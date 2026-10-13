@@ -2977,6 +2977,13 @@
           <td>Independent review found that stopped fix rounds discarded the reviewed base, while a missing or moved reviewed ref repeatedly failed preparation before the agent started.</td>
           <td>Completion cleared the base on Ready outcomes other than EnvironmentFailure; preparation retried a deterministic base failure and operator continue could not replace the saved review base.</td>
           <td>Ready completions now preserve the base. An unavailable required base skips preparation retries and reaches escalation on its first typed release in both server paths. Operator continue can refresh a saved review base from the current review subject. No CLI starts and no integration-branch fallback occurs.</td>
+          </tr>
+        <tr id="case-orphan-scan-aborts-boot-recovery">
+          <td>2026-10-13</td>
+          <td><code>AGT-3111</code><br><span class="small">orphan-scan-aborts-boot-recovery</span></td>
+          <td>Review reproduced a quoted top-level Unicode dirty path resolving outside the worktree on Windows. The orphan scan could throw and skip later projects and interrupted-run recovery at every boot.</td>
+          <td>Porcelain-v1 quoting was stripped without decoding; hash failures and dismissal cleanup writes could also escape the orphan phase.</td>
+          <td>The boot sweep previously aborted without recovering later projects. Recovery now reads literal NUL-delimited paths, fingerprints unreadable paths with a sentinel, and records orphan-phase failures while continuing interrupted-run recovery and later projects. Regression coverage pins the Ready requeue and later orphan finding.</td>
         </tr>
       </tbody>
     </table>

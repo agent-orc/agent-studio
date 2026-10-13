@@ -1,8 +1,15 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using AgentStudio.Persistence;
 
 using AgentStudio.TestSupport;
 using Xunit;
@@ -196,6 +203,344 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         Assert.True(recovered.DetectedAt >= original.DetectedAt);
         Assert.Equal(64, recovered.Id.Length);
         Assert.All(recovered.Id, c => Assert.True(char.IsAsciiHexDigitLower(c)));
+    }
+
+    [Fact]
+    public async Task RecoverAsync_DismissedFindingSurvivesRestartWithOriginalClockTime()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "kept.txt"), "unchanged\n");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 11, 9, 4, 0, TimeSpan.Zero));
+        var (first, _) = BuildRecovery(clock: clock);
+        await first.RecoverAsync();
+        var original = Assert.Single(first.GetPendingOrphanRecoveries());
+        Assert.Equal(64, original.ContentFingerprint.Length);
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed, first.DismissPendingOrphanRecovery(original.Id).Status);
+        Assert.Empty(first.GetPendingOrphanRecoveries());
+
+        var (restarted, _) = BuildRecovery(clock: clock);
+        var decisions = await restarted.RecoverAsync();
+        Assert.Empty(restarted.GetPendingOrphanRecoveries());
+        var kept = Assert.Single(restarted.GetPendingOrphanRecoveries(includeDismissed: true));
+        Assert.Equal(original.Id, kept.Id);
+        Assert.True(kept.Dismissed);
+        Assert.Equal(clock.GetUtcNow(), kept.DismissedAt);
+        Assert.Equal(original.ContentFingerprint, kept.ContentFingerprint);
+        var decision = Assert.Single(decisions, d => d.Kind == RecoveryDecisionKinds.OrphanDismissalKept);
+        Assert.Contains(original.Id, decision.Reason);
+        Assert.Contains(clock.GetUtcNow().ToString("O"), decision.Reason);
+        using var audit = JsonDocument.Parse(File.ReadLines(Path.Combine(_logDir, "recovery.jsonl")).Last());
+        Assert.Equal(RecoveryDecisionKinds.OrphanDismissalKept, audit.RootElement.GetProperty("kind").GetString());
+        Assert.Equal(original.Id, audit.RootElement.GetProperty("pendingId").GetString());
+        Assert.Equal(clock.GetUtcNow(), audit.RootElement.GetProperty("dismissedAt").GetDateTimeOffset());
+
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(_tempDir, CrashRecoveryDismissalStore.RelativePath)));
+        var record = Assert.Single(json.RootElement.EnumerateArray());
+        Assert.Equal(ProjectName, record.GetProperty("projectName").GetString());
+        Assert.Equal(Path.GetFullPath(_repoRoot), record.GetProperty("worktree").GetString());
+        Assert.Equal(original.Classification, record.GetProperty("classification").GetString());
+        Assert.Equal(original.Id, record.GetProperty("pendingId").GetString());
+        Assert.Equal(original.ContentFingerprint, record.GetProperty("contentFingerprint").GetString());
+        Assert.Equal(1, record.GetProperty("fileCount").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("edit")]
+    [InlineData("add")]
+    [InlineData("remove")]
+    public async Task RecoverAsync_ContentOrDirtyPathChange_OffersFindingAgain(string change)
+    {
+        var firstPath = Path.Combine(_repoRoot, "first.txt");
+        var secondPath = Path.Combine(_repoRoot, "second.txt");
+        File.WriteAllText(firstPath, "first\n");
+        File.WriteAllText(secondPath, "second\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        var dismissed = Assert.Single(first.GetPendingOrphanRecoveries());
+        var expectedLines = new[] { "first.txt", "second.txt" }
+            .Select(name => name + "\t" + RunGitCapture(_repoRoot, $"hash-object {name}").Trim());
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes(string.Join('\n', expectedLines)))), dismissed.ContentFingerprint);
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed, first.DismissPendingOrphanRecovery(dismissed.Id).Status);
+
+        if (change == "edit") File.WriteAllText(firstPath, "edited\n");
+        if (change == "add") File.WriteAllText(Path.Combine(_repoRoot, "third.txt"), "added\n");
+        if (change == "remove") File.Delete(secondPath);
+
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+        var offered = Assert.Single(restarted.GetPendingOrphanRecoveries());
+        Assert.False(offered.Dismissed);
+        Assert.NotEqual(dismissed.ContentFingerprint, offered.ContentFingerprint);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_TimestampChangeAlone_KeepsDismissal()
+    {
+        var path = Path.Combine(_repoRoot, "mtime.txt");
+        File.WriteAllText(path, "same bytes\n");
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.Zero));
+        var (first, _) = BuildRecovery(clock: clock);
+        await first.RecoverAsync();
+        var dismissed = Assert.Single(first.GetPendingOrphanRecoveries());
+        first.DismissPendingOrphanRecovery(dismissed.Id);
+        File.SetLastWriteTimeUtc(path, clock.GetUtcNow().UtcDateTime.AddMinutes(-20));
+
+        var (restarted, _) = BuildRecovery(clock: clock);
+        await restarted.RecoverAsync();
+        Assert.Empty(restarted.GetPendingOrphanRecoveries());
+        Assert.Equal(dismissed.ContentFingerprint,
+            Assert.Single(restarted.GetPendingOrphanRecoveries(true)).ContentFingerprint);
+    }
+
+    [Fact]
+    public async Task DismissPendingOrphanRecovery_ChangedFinding_ReplacesPriorRecord()
+    {
+        var path = Path.Combine(_repoRoot, "replaced.txt");
+        File.WriteAllText(path, "first\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        File.WriteAllText(path, "second\n");
+
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+        var changed = Assert.Single(restarted.GetPendingOrphanRecoveries());
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed,
+            restarted.DismissPendingOrphanRecovery(changed.Id).Status);
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(_tempDir, CrashRecoveryDismissalStore.RelativePath)));
+        var record = Assert.Single(json.RootElement.EnumerateArray());
+        Assert.Equal(changed.ContentFingerprint, record.GetProperty("contentFingerprint").GetString());
+    }
+
+    [Fact]
+    public async Task RecoverAsync_RefDriftAfterDismissal_OffersFindingAgain()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "unique.txt"), "same bytes\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        var dismissed = Assert.Single(first.GetPendingOrphanRecoveries());
+        first.DismissPendingOrphanRecovery(dismissed.Id);
+
+        File.WriteAllText(Path.Combine(_repoRoot, "README.md"), "new committed content\n");
+        File.WriteAllText(Path.Combine(_repoRoot, "added.txt"), "committed addition\n");
+        RunGit(_repoRoot, "add -A");
+        var baseSha = RunGitCapture(_repoRoot, "rev-parse HEAD").Trim();
+        var tree = RunGitCapture(_repoRoot, "write-tree").Trim();
+        var commit = RunGitCapture(_repoRoot, $"commit-tree {tree} -p {baseSha} -m advanced").Trim();
+        RunGit(_repoRoot, "reset --hard HEAD");
+        RunGit(_repoRoot, $"update-ref refs/heads/main {commit}");
+        File.WriteAllText(Path.Combine(_repoRoot, "unique.txt"), "same bytes\n");
+
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+        var offered = Assert.Single(restarted.GetPendingOrphanRecoveries());
+        Assert.Equal(CrashRecoveryClassifications.RefDrift, offered.Classification);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_CleanTree_RemovesDismissalRecord()
+    {
+        var path = Path.Combine(_repoRoot, "cleaned.txt");
+        File.WriteAllText(path, "discarded\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        File.Delete(path);
+
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+        Assert.Empty(restarted.GetPendingOrphanRecoveries(true));
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(_tempDir, CrashRecoveryDismissalStore.RelativePath)));
+        Assert.Empty(json.RootElement.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task CommitPendingOrphanRecovery_DismissedFinding_RemovesRecord()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "committed.txt"), "keep\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+        var kept = Assert.Single(restarted.GetPendingOrphanRecoveries(true));
+        Assert.Equal(CrashRecoveryActionStatuses.Committed,
+            restarted.CommitPendingOrphanRecovery(kept.Id).Status);
+        using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(_tempDir, CrashRecoveryDismissalStore.RelativePath)));
+        Assert.Empty(json.RootElement.EnumerateArray());
+    }
+
+    [Fact]
+    public async Task PendingEndpoint_HidesKeptDismissalByDefault_AndAllowsCommitById()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "endpoint.txt"), "kept\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        var (restarted, _) = BuildRecovery();
+        await restarted.RecoverAsync();
+
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton(restarted);
+        await using var app = builder.Build();
+        app.MapCrashRecoveryEndpoints();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+
+        using var defaultResponse = await client.GetAsync("/api/crash-recovery/pending");
+        defaultResponse.EnsureSuccessStatusCode();
+        using var defaultJson = JsonDocument.Parse(await defaultResponse.Content.ReadAsStringAsync());
+        Assert.Empty(defaultJson.RootElement.GetProperty("pending").EnumerateArray());
+
+        using var includedResponse = await client.GetAsync("/api/crash-recovery/pending?includeDismissed=true");
+        includedResponse.EnsureSuccessStatusCode();
+        using var includedJson = JsonDocument.Parse(await includedResponse.Content.ReadAsStringAsync());
+        var kept = Assert.Single(includedJson.RootElement.GetProperty("pending").EnumerateArray());
+        Assert.True(kept.GetProperty("dismissed").GetBoolean());
+        Assert.Equal(64, kept.GetProperty("contentFingerprint").GetString()!.Length);
+        Assert.NotEqual(JsonValueKind.Null, kept.GetProperty("dismissedAt").ValueKind);
+        var id = kept.GetProperty("id").GetString();
+
+        using var commit = await client.PostAsync($"/api/crash-recovery/pending/{id}/commit", null);
+        commit.EnsureSuccessStatusCode();
+        using var result = JsonDocument.Parse(await commit.Content.ReadAsStringAsync());
+        Assert.Equal(CrashRecoveryActionStatuses.Committed, result.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task DismissPendingOrphanRecovery_FailedWrite_LeavesFindingPending()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, "failure.txt"), "pending\n");
+        var (recovery, _) = BuildRecovery(writer: new FailingDismissalWriter());
+        await recovery.RecoverAsync();
+        var pending = Assert.Single(recovery.GetPendingOrphanRecoveries());
+        Assert.Equal(CrashRecoveryActionStatuses.Failed,
+            recovery.DismissPendingOrphanRecovery(pending.Id).Status);
+        Assert.Equal(pending.Id, Assert.Single(recovery.GetPendingOrphanRecoveries()).Id);
+    }
+
+    [Theory]
+    [InlineData("Übersicht.md", false)]
+    [InlineData("docs/Änderung.md", false)]
+    [InlineData("Übersicht.md", true)]
+    [InlineData("docs/Änderung.md", true)]
+    [InlineData("renamed.md", true)]
+    public async Task RecoverAsync_QuotedOrRenamedPath_EditOffersFindingAgain(string path, bool rename)
+    {
+        RunGit(_repoRoot, "config core.quotePath true");
+        var full = Path.Combine(_repoRoot, path);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        if (rename) RunGit(_repoRoot, $"mv README.md {path}");
+        else File.WriteAllText(full, "original bytes\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        var original = Assert.Single(first.GetPendingOrphanRecoveries());
+        Assert.Contains(path, original.Files);
+        if (!rename) Assert.Contains(path, original.UnknownBlobs);
+        Assert.Equal(CrashRecoveryActionStatuses.Dismissed, first.DismissPendingOrphanRecovery(original.Id).Status);
+
+        var (unchanged, _) = BuildRecovery();
+        await unchanged.RecoverAsync();
+        Assert.Empty(unchanged.GetPendingOrphanRecoveries());
+        File.AppendAllText(full, "edited bytes\n");
+        var (changed, _) = BuildRecovery();
+        await changed.RecoverAsync();
+        var offered = Assert.Single(changed.GetPendingOrphanRecoveries());
+        Assert.NotEqual(original.ContentFingerprint, offered.ContentFingerprint);
+        Assert.Contains(path, offered.UnknownBlobs);
+    }
+
+    [Fact]
+    public void Inspect_UnresolvablePath_UsesUnreadableSentinel()
+    {
+        var finding = CrashRecoveryGitScan.Inspect(_repoRoot, ["../outside.txt"]);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes("../outside.txt\tunreadable"))), finding.ContentFingerprint);
+    }
+
+    [Fact]
+    public void Inspect_HashFailure_UsesUnreadableSentinelAndRecoversWhenReadable()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, ".gitattributes"), "*.txt filter=recovery-test\n");
+        File.WriteAllText(Path.Combine(_repoRoot, "locked.txt"), "bytes\n");
+        RunGit(_repoRoot, "config filter.recovery-test.clean false");
+        RunGit(_repoRoot, "config filter.recovery-test.required true");
+        var finding = CrashRecoveryGitScan.Inspect(_repoRoot, ["locked.txt"]);
+        Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes("locked.txt\tunreadable"))), finding.ContentFingerprint);
+        RunGit(_repoRoot, "config filter.recovery-test.clean cat");
+        Assert.NotEqual(finding.ContentFingerprint,
+            CrashRecoveryGitScan.Inspect(_repoRoot, ["locked.txt"]).ContentFingerprint);
+    }
+
+    [Fact]
+    public async Task RecoverAsync_CleanupWriteFails_ContinuesInterruptedRunsAndLaterProjects()
+    {
+        var path = Path.Combine(_repoRoot, "cleaned.txt");
+        File.WriteAllText(path, "discarded\n");
+        var (first, _) = BuildRecovery();
+        await first.RecoverAsync();
+        first.DismissPendingOrphanRecovery(Assert.Single(first.GetPendingOrphanRecoveries()).Id);
+        File.Delete(path);
+        WriteJob(TaskStates.Progress, "interrupted");
+        var clock = new FakeTimeProvider();
+        WriteRawLock(Path.Combine(_watchPath, TaskStates.Progress, "interrupted"), new PickupLockInfo
+        {
+            Pid = int.MaxValue, Hostname = Environment.MachineName,
+            Role = RunnerRoles.Orchestrator, BackendName = "stable",
+            AcquiredAt = clock.GetUtcNow().UtcDateTime.AddHours(-1),
+        });
+        var laterRepo = Path.Combine(_tempDir, "later-repo");
+        Directory.CreateDirectory(laterRepo);
+        RunGit(laterRepo, "init -q -b main");
+        RunGit(laterRepo, "config user.email test@example.com");
+        RunGit(laterRepo, "config user.name test");
+        RunGit(laterRepo, "commit --allow-empty -q -m seed");
+        File.WriteAllText(Path.Combine(laterRepo, "later.txt"), "later project\n");
+        var (restarted, _) = BuildRecovery(writer: new FailingDismissalWriter(), laterRepo: laterRepo);
+        await restarted.RecoverAsync();
+        Assert.True(Directory.Exists(Path.Combine(_watchPath, TaskStates.Ready, "interrupted")));
+        Assert.Equal("later", Assert.Single(restarted.GetPendingOrphanRecoveries()).ProjectName);
+        Assert.Contains("Injected dismissal write failure", File.ReadAllText(restarted.RecoveryLogPath));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RecoverAsync_NonGitOrMissingRepository_SkipsOrphanScan(bool rootExists)
+    {
+        var root = Path.Combine(_tempDir, "not-a-repository");
+        var storage = Path.Combine(root, ".orchestrator", "jobs");
+        if (rootExists) Directory.CreateDirectory(storage);
+        var (recovery, _) = rootExists
+            ? BuildRecovery(primaryWatchPath: storage, deriveRepoFromStorage: true)
+            : BuildRecovery(primaryRepo: root);
+
+        var decisions = await recovery.RecoverAsync();
+
+        Assert.Empty(CrashRecoveryGitScan.ReadDirtyFiles(root));
+        Assert.DoesNotContain(decisions, decision => decision.Kind == RecoveryDecisionKinds.OrphanScanFailed);
+        Assert.Empty(recovery.GetPendingOrphanRecoveries());
+        Assert.False(File.Exists(recovery.RecoveryLogPath));
+    }
+
+    [Fact]
+    public async Task RecoverAsync_StatusFailureInGitWorktree_RecordsScanFailure()
+    {
+        File.WriteAllText(Path.Combine(_repoRoot, ".git", "index"), "invalid index");
+        var (recovery, _) = BuildRecovery();
+
+        var decisions = await recovery.RecoverAsync();
+
+        var failed = Assert.Single(decisions, decision => decision.Kind == RecoveryDecisionKinds.OrphanScanFailed);
+        Assert.Contains("Cannot read crash recovery worktree status:", failed.Reason);
+        Assert.Contains("index", failed.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class FailingDismissalWriter : IAtomicJsonFileWriter
+    {
+        public void Write(string path, string content) => throw new IOException("Injected dismissal write failure.");
     }
 
     [Fact]
@@ -619,14 +964,20 @@ public sealed class CrashRecoveryServiceTests : IDisposable
     }
 
     private (CrashRecoveryService Recovery, TaskScannerService Scanner) BuildRecovery(
-        Action<ProjectSettingsService>? configureSettings = null)
+        Action<ProjectSettingsService>? configureSettings = null,
+        TimeProvider? clock = null, IAtomicJsonFileWriter? writer = null, string? laterRepo = null,
+        string? primaryRepo = null, string? primaryWatchPath = null, bool deriveRepoFromStorage = false)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["WatchPaths:0:Name"] = ProjectName,
-            ["WatchPaths:0:Path"] = _watchPath,
-            ["WatchPaths:0:RootPath"] = _repoRoot,
-            ["WatchPaths:0:RepositoryPath"] = _repoRoot,
+            ["WatchPaths:0:Path"] = primaryWatchPath ?? _watchPath,
+            ["WatchPaths:0:RootPath"] = deriveRepoFromStorage ? null : (primaryRepo ?? _repoRoot),
+            ["WatchPaths:0:RepositoryPath"] = deriveRepoFromStorage ? null : (primaryRepo ?? _repoRoot),
+            ["WatchPaths:1:Name"] = "later",
+            ["WatchPaths:1:Path"] = laterRepo,
+            ["WatchPaths:1:RootPath"] = laterRepo,
+            ["WatchPaths:1:RepositoryPath"] = laterRepo,
             ["TaskRepository"] = _tempDir,
             ["Logging:BackendFile:LogDirectory"] = _logDir
         }).Build();
@@ -646,7 +997,9 @@ public sealed class CrashRecoveryServiceTests : IDisposable
         var recovery = new CrashRecoveryService(
             scanner, transitions, mutations, git, settings,
             sink, Options.Create(logOptions),
-            NullLogger<CrashRecoveryService>.Instance);
+            NullLogger<CrashRecoveryService>.Instance,
+            dismissals: new CrashRecoveryDismissalStore(config,
+                clock ?? new FakeTimeProvider(new DateTimeOffset(2026, 10, 13, 8, 0, 0, TimeSpan.Zero)), writer));
         return (recovery, scanner);
     }
 
