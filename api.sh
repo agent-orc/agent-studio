@@ -76,6 +76,9 @@ if [[ -n "${PORT:-}" && "${PORT}" != "${DEFAULT_PORT}" ]]; then
   echo "WARN: API_PORT_OVERRIDE=1; using non-default PORT=${PORT}." >&2
 fi
 PORT="${PORT:-${DEFAULT_PORT}}"
+# IPv4 loopback only, on purpose. [::1]:5031 belongs to the connector
+# (backend/Features/Connector/ConnectorHost.cs). Do not add [::1] here to cure
+# the localhost connect delay; API clients spell 127.0.0.1 instead.
 BASE_URL="http://127.0.0.1:${PORT}"
 HEALTH_URL="${BASE_URL}/healthz"
 PROJECT_FILE="${SCRIPT_DIR}/backend/OrchestratorApi.csproj"

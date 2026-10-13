@@ -46,6 +46,11 @@ testSuites:
     category: routine
     expectedDurationSeconds: 360
     command: npm --prefix frontend run test:ci
+  # Writes coverage/frontend/lcov.info for the scheduled coverage run (AGT-3074).
+  - id: frontend-coverage
+    category: release
+    expectedDurationSeconds: 600
+    command: npm --prefix frontend run test:release
   - id: frontend-e2e
     category: machine-bound
     expectedDurationSeconds: 900

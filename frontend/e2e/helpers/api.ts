@@ -1,7 +1,7 @@
 /**
  * Tiny REST client for the backend.
- * Defaults to the dev backend at http://localhost:5030. Agents driving the
- * stable stack set `PW_TARGET=stable` (-> http://localhost:5031) or pin an
+ * Defaults to the dev backend at http://127.0.0.1:5030. Agents driving the
+ * stable stack set `PW_TARGET=stable` (-> http://127.0.0.1:5031) or pin an
  * explicit URL via `PW_BACKEND_URL=http://...`. Same precedence table as
  * playwright.config.ts so a single env var flips both layers.
  *
@@ -12,7 +12,7 @@
 const apiTarget = (process.env.PW_TARGET ?? 'dev').toLowerCase();
 export const BACKEND =
   process.env.PW_BACKEND_URL?.trim()
-  || (apiTarget === 'stable' ? 'http://localhost:5031' : 'http://localhost:5030');
+  || (apiTarget === 'stable' ? 'http://127.0.0.1:5031' : 'http://127.0.0.1:5030');
 
 /** Default identity used by Playwright specs when no override is given.
  * The bootstrap "local-default" identity exists on every backend boot,

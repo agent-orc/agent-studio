@@ -91,14 +91,17 @@ public sealed class TaskIntegrationStatusService
     private readonly GenerationSingleFlightCache<bool?> _contentCache;
     private readonly GenerationSingleFlightCache<IReadOnlyList<string>> _pathCache;
     private int _computationCount;
+    private int _lookupCount;
 
     public TaskIntegrationStatusService(
         GitService git,
         ProjectSettingsService settings,
         PipelineExecutionLog pipelineLog,
         ILogger<TaskIntegrationStatusService> logger,
-        ProjectRegistry? registry = null)
-        : this(git, settings, pipelineLog, logger, TimeProvider.System, registry)
+        ProjectRegistry? registry = null,
+        GitOriginStore? originStore = null)
+        : this(git, settings, pipelineLog, logger, TimeProvider.System, registry,
+            originStore: originStore)
     {
     }
 
@@ -109,14 +112,17 @@ public sealed class TaskIntegrationStatusService
         ILogger<TaskIntegrationStatusService> logger,
         TimeProvider timeProvider,
         ProjectRegistry? registry = null,
-        Func<string, string?>? readOriginUrl = null)
+        Func<string, string?>? readOriginUrl = null,
+        GitOriginStore? originStore = null)
     {
         _git = git;
         _settings = settings;
         _pipelineLog = pipelineLog;
         _logger = logger;
         _registry = registry;
-        _readOriginUrl = readOriginUrl ?? _git.ReadOriginUrlAt;
+        // AGT-3083: the host shares one origin store with the Git state index.
+        // A service built without one keeps a private store, so tests stay isolated.
+        _readOriginUrl = readOriginUrl ?? (originStore ?? new GitOriginStore()).ReadOrigin;
         _cache = new GenerationSingleFlightCache<RepoIntegration>(timeProvider);
         _contentCache = new GenerationSingleFlightCache<bool?>(timeProvider);
         _pathCache = new GenerationSingleFlightCache<IReadOnlyList<string>>(timeProvider);
@@ -130,6 +136,7 @@ public sealed class TaskIntegrationStatusService
     /// </summary>
     public Dictionary<string, TaskIntegrationStatus> BuildLookup(IReadOnlyCollection<TaskInfo> jobs)
     {
+        Interlocked.Increment(ref _lookupCount);
         var result = new Dictionary<string, TaskIntegrationStatus>(StringComparer.Ordinal);
         if (jobs.Count == 0) return result;
 
@@ -137,10 +144,11 @@ public sealed class TaskIntegrationStatusService
 
         var work = new Dictionary<TaskInfo, CardIntegrationWork>();
         var repoKeys = new HashSet<RepoBranchKey>();
-        // One Git-config resolution per primary repository in this computation.
-        // Git itself interprets includes, conditional includes and worktree config.
-        // A new background generation resolves it again, so external config edits
-        // cannot be hidden behind a partial filesystem parser or a long TTL.
+        // One origin read per primary repository in this computation. The read
+        // answers from the process-wide GitOriginStore while every config file
+        // Git said contributed is unchanged, and resolves through Git again
+        // otherwise. Git itself interprets includes, conditional includes and
+        // worktree config, so there is no partial filesystem parser or TTL.
         var origins = new Dictionary<string, string?>(FileSystemPathComparer.Instance);
         foreach (var job in jobs.Where(job => DeliveredLanes.Contains(job.State)))
         {
@@ -464,11 +472,13 @@ public sealed class TaskIntegrationStatusService
             {
                 if (AncestorSetContains(subjectReach.PublishedAncestors, subject.ResultSha))
                     return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
-                        DeliveryRefFor(job), "current-result-ancestor");
+                        DeliveryRefFor(job), "current-result-ancestor")
+                        with { Repositories = CurrentResultRepositories(job, card, reaches, subject) };
                 if (HasCuratedMapping(job, subject.ResultSha, subject.RunAttemptId,
                         subjectReach.IntegrationBranch, subjectReach.PublishedAncestors))
                     return Integrated(Short(subject.ResultSha), subjectReach.IntegrationBranch,
-                        DeliveryRefFor(job), "current-result-curated-mapping");
+                        DeliveryRefFor(job), "current-result-curated-mapping")
+                        with { Repositories = CurrentResultRepositories(job, card, reaches, subject) };
                 if (AncestorSetContains(subjectReach.DevelopAncestors, subject.ResultSha))
                     return MergedLocally(subjectReach.IntegrationBranch, DeliveryRefFor(job),
                         "current result is present locally", [Short(subject.ResultSha)]);
@@ -495,21 +505,7 @@ public sealed class TaskIntegrationStatusService
             var reach = group.Key is not null && reaches.TryGetValue(group.Key, out var found)
                 ? found : null;
             reachUnavailable |= reach is null || !reach.IntegrationReachSucceeded;
-            var commits = LegacyPathEvidence(group, reach);
-            var memberships = DeliveryGenerationPolicy.Evaluate(
-                commits,
-                sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha),
-                sha => reach is not null && AncestorSetContains(reach.ReleaseAncestors, sha),
-                // Content equivalence alone cannot establish delivery identity.
-                // Only an explicit, epoch-bound mapping to a published SHA can.
-                sha => false,
-                sha => group.Commits.Any(commit => string.Equals(commit.Sha, sha,
-                        StringComparison.OrdinalIgnoreCase)
-                    && HasCuratedMapping(job, sha,
-                        subject?.RunAttemptId ?? commit.RunAttemptId
-                            ?? commit.DeliveryGeneration?.ToString(),
-                        reach?.IntegrationBranch ?? group.IntegrationBranch,
-                        reach?.PublishedAncestors))).ToList();
+            var memberships = EvaluateMemberships(job, group, LegacyPathEvidence(group, reach), reach, subject);
             var current = memberships.Where(commit => commit.IntegrationRule
                 is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
             superseded.AddRange(memberships.Where(commit => commit.IntegrationRule == CommitIntegrationRules.Superseded));
@@ -527,20 +523,7 @@ public sealed class TaskIntegrationStatusService
                     && !AncestorSetContains(reach.PublishedAncestors, commit.Sha))
                     .Select(commit => $"{group.Repository} {Short(commit.Sha)}"));
             }
-            var branch = reach?.IntegrationBranch ?? group.IntegrationBranch;
-            repositoryEntries.Add(new TaskRepositoryIntegrationStatus
-            {
-                Repository = group.Repository,
-                Commits = memberships,
-                IntegrationBranch = branch,
-                ReleaseBranch = BoardMergeStatusService.ReleaseBranch,
-                OnIntegrationBranch = missing.Count == 0,
-                OnReleaseBranch = current.All(commit => commit.OnReleaseBranch),
-                Detail = reach is null
-                    ? $"Repository checkout is unavailable; {current.Count} current commit(s) could not be evaluated."
-                    : $"{landed.Count}/{current.Count} current commits on {branch}"
-                      + (missing.Count == 0 ? "." : $"; missing: {string.Join(", ", missing)}."),
-            });
+            repositoryEntries.Add(RepositoryEntry(group, memberships, reach));
         }
 
         var projectedBranch = repositoryEntries.FirstOrDefault()?.IntegrationBranch ?? primaryBranch;
@@ -590,6 +573,77 @@ public sealed class TaskIntegrationStatusService
         }
 
         return ClassifyNotIntegrated(job, projectedBranch, repositories: repositoryEntries);
+    }
+
+    /// <summary>
+    /// AGT-2817 - per-commit membership for a verdict the current result
+    /// already proved. The delivery-claim answer and the release rollup read
+    /// containment from these lines, so an integrated shortcut verdict without
+    /// them read as "not on the integration branch" and "release unknown".
+    /// Built from the batch's cached ancestor sets only; no git process is
+    /// spawned here, which is why legacy path evidence is not consulted.
+    /// </summary>
+    private static List<TaskRepositoryIntegrationStatus> CurrentResultRepositories(
+        TaskInfo job,
+        CardIntegrationWork card,
+        IReadOnlyDictionary<RepoBranchKey, RepoIntegration> reaches,
+        ReviewSubjectRecord subject)
+    {
+        var entries = new List<TaskRepositoryIntegrationStatus>(card.Groups.Count);
+        foreach (var group in card.Groups)
+        {
+            if (group.Key is null || !reaches.TryGetValue(group.Key, out var reach)
+                || !reach.IntegrationReachSucceeded)
+                continue;
+            entries.Add(RepositoryEntry(
+                group, EvaluateMemberships(job, group, group.Commits, reach, subject), reach));
+        }
+        return entries;
+    }
+
+    private static List<TaskRepositoryCommitMembership> EvaluateMemberships(
+        TaskInfo job,
+        RepositoryCommitGroup group,
+        IReadOnlyList<TaskCommitInfo> commits,
+        RepoIntegration? reach,
+        ReviewSubjectRecord? subject)
+        => DeliveryGenerationPolicy.Evaluate(
+            commits,
+            sha => reach is not null && AncestorSetContains(reach.DevelopAncestors, sha),
+            sha => reach is not null && AncestorSetContains(reach.ReleaseAncestors, sha),
+            // Content equivalence alone cannot establish delivery identity.
+            // Only an explicit, epoch-bound mapping to a published SHA can.
+            sha => false,
+            sha => group.Commits.Any(commit => string.Equals(commit.Sha, sha,
+                    StringComparison.OrdinalIgnoreCase)
+                && HasCuratedMapping(job, sha,
+                    subject?.RunAttemptId ?? commit.RunAttemptId
+                        ?? commit.DeliveryGeneration?.ToString(),
+                    reach?.IntegrationBranch ?? group.IntegrationBranch,
+                    reach?.PublishedAncestors))).ToList();
+
+    private static TaskRepositoryIntegrationStatus RepositoryEntry(
+        RepositoryCommitGroup group,
+        List<TaskRepositoryCommitMembership> memberships,
+        RepoIntegration? reach)
+    {
+        var current = memberships.Where(commit => commit.IntegrationRule
+            is not (CommitIntegrationRules.Superseded or CommitIntegrationRules.LifecycleMarker)).ToList();
+        var missing = current.Where(commit => !commit.OnIntegrationBranch).Select(commit => Short(commit.Sha)).ToList();
+        var branch = reach?.IntegrationBranch ?? group.IntegrationBranch;
+        return new TaskRepositoryIntegrationStatus
+        {
+            Repository = group.Repository,
+            Commits = memberships,
+            IntegrationBranch = branch,
+            ReleaseBranch = BoardMergeStatusService.ReleaseBranch,
+            OnIntegrationBranch = missing.Count == 0,
+            OnReleaseBranch = current.All(commit => commit.OnReleaseBranch),
+            Detail = reach is null
+                ? $"Repository checkout is unavailable; {current.Count} current commit(s) could not be evaluated."
+                : $"{current.Count - missing.Count}/{current.Count} current commits on {branch}"
+                  + (missing.Count == 0 ? "." : $"; missing: {string.Join(", ", missing)}."),
+        };
     }
 
     private IReadOnlyList<TaskCommitInfo> LegacyPathEvidence(RepositoryCommitGroup group, RepoIntegration? reach)
@@ -1352,6 +1406,8 @@ public sealed class TaskIntegrationStatusService
         _pathCache.Invalidate();
     }
     internal int ComputationCount => Volatile.Read(ref _computationCount);
+    /// <summary>Test hook: how many <see cref="BuildLookup"/> calls this service answered.</summary>
+    internal int LookupCount => Volatile.Read(ref _lookupCount);
 
     private static string Short(string sha) => sha.Length > 7 ? sha[..7] : sha;
 

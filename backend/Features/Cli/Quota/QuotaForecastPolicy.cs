@@ -22,10 +22,12 @@ public enum QuotaForecastStatus
     Reached,
     /// <summary>Usage did not grow over the rate window; no forecast at this rate.</summary>
     Idle,
-    /// <summary>At the current rate the window reaches 100 % before it resets (or the reset is unknown).</summary>
+    /// <summary>At the current rate the window reaches 100 % before its known reset.</summary>
     FullBeforeReset,
     /// <summary>At the current rate the window resets before it reaches 100 %.</summary>
     ResetsFirst,
+    /// <summary>Usage is growing but the reset time is unknown, so it cannot be compared with the time to 100 %.</summary>
+    UnknownReset,
 }
 
 /// <summary>Rate and forecast for one quota window at one point in time.</summary>
@@ -52,7 +54,9 @@ public sealed record QuotaForecast(
 ///         <see cref="RateLookback"/> of the cycle to the latest reading,
 ///         divided by the hours between them. A falling or flat series is idle.</item>
 ///   <item>The forecast extrapolates linearly from the latest reading to 100 %
-///         and compares that moment with the latest known reset.</item>
+///         and compares that moment with the latest known reset. Without a
+///         reset time the status is <see cref="QuotaForecastStatus.UnknownReset"/>,
+///         never a claim that the window fills first.</item>
 /// </list>
 ///
 /// Unlike <see cref="QuotaWindowProjection"/>, which infers an average pace from
@@ -89,6 +93,7 @@ public static class QuotaForecastPolicy
         QuotaForecastStatus.Reached => "reached",
         QuotaForecastStatus.Idle => "idle",
         QuotaForecastStatus.FullBeforeReset => "full-before-reset",
+        QuotaForecastStatus.UnknownReset => "unknown-reset",
         _ => "resets-first",
     };
 
@@ -139,7 +144,10 @@ public static class QuotaForecastPolicy
             return new(QuotaForecastStatus.Idle, latest.UsedPct, latest.At, rate, anchor.At, null, reset, false);
 
         var fullAt = latest.At + TimeSpan.FromHours(hoursToFull);
-        var fullFirst = reset is null || fullAt < reset;
+        if (reset is null)
+            return new(QuotaForecastStatus.UnknownReset, latest.UsedPct, latest.At, rate, anchor.At, fullAt, null, false);
+
+        var fullFirst = fullAt < reset;
         return new(
             fullFirst ? QuotaForecastStatus.FullBeforeReset : QuotaForecastStatus.ResetsFirst,
             latest.UsedPct,

@@ -764,6 +764,36 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     }
 
     /// <summary>
+    /// AGT-3083: the settlement reconciler ends every 30-second pass with this
+    /// sweep, one integration read per card in the lane. With the shared origin
+    /// store the whole pass costs at most one Git configuration capture.
+    /// </summary>
+    [Fact]
+    public async Task A_resume_pass_over_many_cards_on_one_repository_captures_the_config_at_most_once()
+    {
+        var seeded = Build();
+        var cards = Enumerable.Range(0, 6)
+            .Select(i => SeedPassedDelivery(seeded, "origin-pass-" + i, settleReview: false))
+            .ToArray();
+        var captures = 0;
+        var store = new GitOriginStore(root =>
+        {
+            Interlocked.Increment(ref captures);
+            return GitConfigSignature.Capture(root);
+        });
+
+        var restarted = Build(originStore: store);
+        var first = await restarted.Resume.RunOnceAsync("origin-store");
+        var second = await restarted.Resume.RunOnceAsync("origin-store");
+
+        Assert.Equal(0, first.Failed);
+        Assert.Equal(0, second.Failed);
+        Assert.True(Volatile.Read(ref captures) <= 1, $"expected at most one capture, got {captures}");
+        foreach (var card in cards)
+            Assert.Equal(TaskStates.AutoReview, restarted.Scanner.FindJob(card.Id, _watchPath)!.State);
+    }
+
+    /// <summary>
     /// The safety belt on the sidecar: a passed review whose delivery is not on
     /// the branch and whose settlement record is missing is never integrated on
     /// the strength of "Pass" alone. The aspect verdicts that decided the
@@ -1147,7 +1177,9 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
     /// is the restart: the durable workspace, the authority file and the git
     /// repository are shared; nothing else is.
     /// </summary>
-    private Stack Build(Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>>? integrate = null)
+    private Stack Build(
+        Func<RemoteDeliveryIntegrationRequest, Task<MergeIntoIntegrationResult>>? integrate = null,
+        GitOriginStore? originStore = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -1171,7 +1203,8 @@ public sealed class AutoReviewRestartDrillTests : IDisposable
         var pipeline = new PipelineExecutionLog(NullLogger<PipelineExecutionLog>.Instance);
         var timeline = new TimelineLog(NullLogger<TimelineLog>.Instance);
         var integration = new TaskIntegrationStatusService(
-            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance);
+            git, settings, pipeline, NullLogger<TaskIntegrationStatusService>.Instance,
+            originStore: originStore);
         var authority = new AttemptAuthorityService(
             configuration, NullLogger<AttemptAuthorityService>.Instance);
         var states = new TaskStateMachine(scanner, NullLogger<TaskStateMachine>.Instance);

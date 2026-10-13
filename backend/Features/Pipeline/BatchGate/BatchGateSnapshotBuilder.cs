@@ -12,20 +12,22 @@ public sealed class BatchGateSnapshotBuilder
     private readonly AttemptAuthorityService _authority;
     private readonly TaskScannerService _scanner;
     private readonly GitService _git;
+    private readonly ILogger? _logger;
     private readonly ConcurrentDictionary<string, CachedDiff> _diffs = new(StringComparer.Ordinal);
     private int _diffReads;
     internal int DiffReadCount => Volatile.Read(ref _diffReads);
 
-    private sealed record CachedDiff(IReadOnlyList<string> Paths, int Lines,
-        DateTimeOffset ReadAtUtc);
+    /// <summary>A null diff could not be computed and must not look like a small delivery.</summary>
+    private sealed record CachedDiff(BatchGateDeliveryDiff? Diff, DateTimeOffset ReadAtUtc);
 
     public BatchGateSnapshotBuilder(BatchGateStore store, AttemptAuthorityService authority,
-        TaskScannerService scanner, GitService git)
+        TaskScannerService scanner, GitService git, ILogger? logger = null)
     {
         _store = store;
         _authority = authority;
         _scanner = scanner;
         _git = git;
+        _logger = logger;
     }
 
     public BatchPlanInput Build(string project, string branch,
@@ -53,16 +55,14 @@ public sealed class BatchGateSnapshotBuilder
         var ready = waiting.Select(item =>
         {
             var task = _scanner.FindJob(item.Subject.TaskKey, item.WatchPath);
-            var diff = Diff(item.RepositoryPath, branch, item.Subject.ResultSha,
-                item.Subject.ResultRef, now);
-            var paths = diff.Paths;
-            var lines = diff.Lines;
+            var diff = Diff(item.RepositoryPath, branch, item.Subject.TaskKey,
+                item.Subject.ResultSha, now);
             return new BatchPlanCard(item.Subject.TaskKey,
                 item.Subject.ReviewCompletedAtUtc,
-                Risk(paths, lines, redKeys.Contains(item.Subject.TaskKey),
+                Risk(diff, redKeys.Contains(item.Subject.TaskKey),
                     flakyKeys.Contains(item.Subject.TaskKey),
                     task?.Tags.Any(redAreaTags.Contains) == true),
-                paths, task?.Tags ?? []);
+                diff?.Paths ?? [], task?.Tags ?? []);
         }).ToArray();
         var medianReview = MedianReviewDuration(waiting);
         var waitingKeys = ready.Select(item => item.TaskKey).ToHashSet(StringComparer.Ordinal);
@@ -75,17 +75,21 @@ public sealed class BatchGateSnapshotBuilder
             {
                 var task = _scanner.FindJob(review.TaskKey);
                 if (task is null || task.ProjectName != project) return null;
-                var refName = review.Subject.ResultRef;
+                // A full-plan review or a review of a superseded run can never
+                // become a member; it is filtered before any git call.
+                var currentRun = _authority.GetTaskProjection(review.TaskKey).CurrentRunAttempt;
+                if (!BatchPlanUpcomingEligibility.IsCandidate(review.Subject.Plan,
+                        string.Equals(currentRun?.AttemptId, review.SourceRunAttemptId,
+                            StringComparison.Ordinal)))
+                    return null;
                 var repo = _git.ResolveRepoRootForWatchPath(task.WatchPath);
-                var diff = repo is null ? new CachedDiff([], 0, now)
-                    : Diff(repo, branch, review.Subject.ExpectedResultSha, refName, now);
-                var paths = diff.Paths;
-                var lines = diff.Lines;
+                var diff = Diff(repo, branch, review.TaskKey,
+                    review.Subject.ExpectedResultSha, now);
                 var started = new DateTimeOffset(DateTime.SpecifyKind(review.CreatedAt, DateTimeKind.Utc));
                 return new BatchPlanUpcoming(review.TaskKey, "review",
-                    started + medianReview, Risk(paths, lines,
+                    started + medianReview, Risk(diff,
                         redKeys.Contains(review.TaskKey), flakyKeys.Contains(review.TaskKey),
-                        task.Tags.Any(redAreaTags.Contains)), paths);
+                        task.Tags.Any(redAreaTags.Contains)), diff?.Paths ?? []);
             }).Where(item => item is not null).Cast<BatchPlanUpcoming>();
         var coding = _scanner.ScanAllJobsWithArchive()
             .Where(task => task.ProjectName == project && task.State == TaskStates.Progress
@@ -100,19 +104,30 @@ public sealed class BatchGateSnapshotBuilder
             options.Overlap, closeNow, idleGateHost);
     }
 
-    private CachedDiff Diff(string repo, string branch, string sha,
-        string? resultRef, DateTimeOffset now)
+    /// <summary>
+    /// The card's own diff from the result SHA, never from a ref name. A
+    /// missing repository counts as an unavailable diff.
+    /// </summary>
+    private BatchGateDeliveryDiff? Diff(string? repo, string branch, string taskKey,
+        string sha, DateTimeOffset now)
     {
-        var key = string.Join('\n', repo, branch, sha);
+        var key = string.Join('\n', repo ?? string.Empty, branch, sha);
         if (_diffs.TryGetValue(key, out var cached)
             && now - cached.ReadAtUtc < TimeSpan.FromMinutes(5))
-            return cached;
+            return cached.Diff;
         Interlocked.Increment(ref _diffReads);
-        var fresh = new CachedDiff(Paths(repo, branch, resultRef),
-            ChangedLines(repo, branch, resultRef), now);
+        BatchGateDeliveryDiff? diff = null;
+        if (repo is not null)
+        {
+            try { diff = BatchGateDeliveryDiff.Read(_git, repo, branch, sha); }
+            catch (Exception) { diff = null; }
+        }
+        if (diff is null)
+            _logger?.LogWarning("batch-gate-diff-unavailable task={TaskKey} sha={Sha}",
+                taskKey, sha);
         if (_diffs.Count > 1024) _diffs.Clear();
-        _diffs[key] = fresh;
-        return fresh;
+        _diffs[key] = new CachedDiff(diff, now);
+        return diff;
     }
 
     private TimeSpan MedianReviewDuration(IReadOnlyList<BatchGatePendingRecord> waiting)
@@ -127,34 +142,8 @@ public sealed class BatchGateSnapshotBuilder
         return TimeSpan.FromMinutes(samples.Length == 0 ? 30 : samples[samples.Length / 2]);
     }
 
-    private IReadOnlyList<string> Paths(string repo, string branch, string? resultRef)
-    {
-        if (string.IsNullOrWhiteSpace(resultRef)) return [];
-        try { return _git.ChangedPathsAgainstMergeBase(repo, branch, resultRef) ?? []; }
-        catch (Exception) { return []; }
-    }
-
-    private int ChangedLines(string repo, string branch, string? resultRef)
-    {
-        if (string.IsNullOrWhiteSpace(resultRef)) return 0;
-        try
-        {
-            return _git.GetFilesChangedInRangeAtRoot(repo, branch, resultRef)
-                .Sum(change => change.Added + change.Removed);
-        }
-        catch (Exception) { return 0; }
-    }
-
-    private static double Risk(IReadOnlyList<string> paths, int changedLines,
-        bool priorRed, bool flaky, bool areaRed)
-    {
-        var infrastructure = paths.Any(path => path.StartsWith("backend/Features/Pipeline/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("backend/Features/Git/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("contracts/", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("deploy/", StringComparison.OrdinalIgnoreCase));
-        return Math.Clamp(.08 + Math.Min(.24, paths.Count * .015)
-            + Math.Min(.18, changedLines / 2000d)
-            + (infrastructure ? .22 : 0) + (priorRed ? .2 : 0)
-            + (flaky ? .1 : 0) + (areaRed ? .1 : 0), 0, .95);
-    }
+    private static double Risk(BatchGateDeliveryDiff? diff, bool priorRed, bool flaky,
+        bool areaRed)
+        => diff is null ? BatchGateRiskModel.Unknown(priorRed, flaky, areaRed)
+            : BatchGateRiskModel.Score(diff.Paths, diff.Lines, priorRed, flaky, areaRed);
 }

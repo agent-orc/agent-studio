@@ -130,7 +130,7 @@ public class TaskFolderAccessIsolationTest
             ["backend/Features/Pipeline/BuildTestGateRunner.cs"] =
                 "Deletes only disposable diagnostic clones and cache entries under the gate's temp roots, never task folders.",
             ["backend/Features/Pipeline/RemoteGateTransport.cs"] =
-                "Deletes only its generated GUID directory under the fixed OS-temp transport root, never task storage.",
+                "Deletes only its generated GUID directory and sweeps abandoned GUID-named run folders under the fixed OS-temp transport root, never task storage.",
             ["backend/Features/Pipeline/RemoteGateWorker.cs"] =
                 "Deletes only source.git, the private clone inside the transport-created GUID invocation directory, never task storage.",
 

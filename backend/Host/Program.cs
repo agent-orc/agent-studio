@@ -422,6 +422,9 @@ builder.Services.AddSingleton<BoardMergeStatusService>();
 builder.Services.AddSingleton<ProjectGitGraphService>();
 // AGT-2202: honest git-derived integration verdict for accepted cards (is the
 // work actually in develop?). Batched + cached per repo like BoardMergeStatusService.
+// AGT-3083: one process-wide Git origin per repository root, published by the
+// Git state index and read by every integration lookup.
+builder.Services.AddSingleton<GitOriginStore>();
 builder.Services.AddSingleton<TaskIntegrationStatusService>();
 builder.Services.AddSingleton<TaskIntegrationRecoveryService>();
 builder.Services.AddSingleton<SupersededCommitSweep>();
