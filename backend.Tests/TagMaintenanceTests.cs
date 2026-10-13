@@ -91,6 +91,15 @@ public sealed class TagMaintenanceTests : IDisposable
         Assert.Equal(after, TagMaintenanceWorkspace.RewriteFrontmatter(before, ["new"]));
 
     [Fact]
+    public void WikiRewriteUsesExistingCrlfWhenAddingMetadata()
+    {
+        var original = "---\r\ntitle: Hello\r\n---\r\nBody\r\n";
+        var tagged = TagMaintenanceWorkspace.RewriteFrontmatter(original, ["observation"]);
+        var withStatus = TagMaintenanceWorkspace.RewriteTaggingStatus(tagged, "tagged");
+        Assert.Equal("---\r\ntitle: Hello\r\ntags: [observation]\r\ntaggingStatus: tagged\r\n---\r\nBody\r\n", withStatus);
+    }
+
+    [Fact]
     public async Task ReviewCreatesProseCardAndReportWithoutApplyingThenHonorsCadence()
     {
         var workspace = new FakeWorkspace(); var service = Service(workspace);
@@ -528,7 +537,8 @@ public sealed class TagMaintenanceTests : IDisposable
         Directory.CreateDirectory(Path.Combine(project, "docs", "architecture", "decisions"));
         File.WriteAllText(Path.Combine(project, "docs", "architecture", "decisions", "adr-1.md"), "# ADR 1\n\nRunner pool decision.");
         return (new TagMaintenanceWorkspace(scanner, mutations, tags, areas, glossaries, catalogue,
-            new WorkbenchTagService(catalogue, areas, git), docs, registry), config);
+            new WorkbenchTagService(catalogue, areas, git), docs, registry,
+            new ManagedRepositoryMutationService(git, logger: NullLogger<ManagedRepositoryMutationService>.Instance)), config);
     }
 
     private async Task<(TagMaintenanceRun Run, TagMaintenanceState State)> RunRealAsync(

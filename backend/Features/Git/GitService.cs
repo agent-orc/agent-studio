@@ -2346,6 +2346,18 @@ public class GitService
         return ReadStatusAtRoot(root);
     }
 
+    public string? RepositoryWriteLockReason(string repoRoot, string branch)
+    {
+        foreach (var relative in new[] { "index.lock", $"refs/heads/{branch}.lock" })
+        {
+            var (raw, error, code) = RunGitArgs(repoRoot, "rev-parse", "--git-path", relative);
+            if (code != 0) return $"Repository lock status could not be read: {error.Trim()}";
+            var path = Path.GetFullPath(raw.Trim(), repoRoot);
+            if (File.Exists(path)) return $"Repository lock exists: {path}";
+        }
+        return null;
+    }
+
     private GitStatusResult ReadStatusAtRoot(string root, bool isWorktree = false)
     {
         // These four reads are independent: the porcelain status, the current

@@ -14,6 +14,7 @@ public sealed record AutoTagResult(string Kind, string Id, string Status, string
     public string[] AreaTags { get; init; } = [];
     public string[] FacetTags { get; init; } = [];
     public string ThinkingLevel { get; init; } = "low";
+    public string? Reason { get; init; }
 }
 public sealed record AutoTagReport(string Project, bool Applied, int Eligible, int AlreadyTagged, int Classified,
     Dictionary<string, int> CountsPerArea, List<AutoTagResult> LowConfidence,
@@ -122,8 +123,9 @@ internal static class ProposedGlossaryContext
 public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAutoTagClassifier classifier,
     TagGoldenSetEvaluator goldenSets, ProjectSettingsService settings, TaskScannerService scanner,
     AreaRegistryService areaRegistry,
-    TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration)
+    TimelineLog timeline, OrchestratorLog activity, IConfiguration configuration, TimeProvider? clock = null)
 {
+    private readonly TimeProvider time = clock ?? TimeProvider.System;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TagGoldenSetReport> _goldenReports = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<string> Projects() => workspace.Projects();
@@ -184,14 +186,28 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
         {
             ct.ThrowIfCancellationRequested();
             var result = pending.Report.Items.Single(x => x.Kind == change.Kind && x.Id == change.Id);
-            var current = workspace.Read(change);
-            // Equal before/after is a proposal: replay its status-only atomic write.
-            if (current != change.After || change.Before == change.After)
+            string? current = null;
+            try { current = workspace.Read(change); }
+            catch (WikiTagWriteUnavailableException ex) when (change.Kind == "wiki")
+            {
+                result = RecordWikiProposal(project, pending, change, result, ex.Message);
+            }
+            // Proposals are durable in auto-tag state; repository files stay untouched.
+            if (result.Status == "tags-proposed" && current != null && current != change.Before)
+                throw new InvalidOperationException($"Auto-tag recovery conflicts with changed tags: {change.Kind}/{change.Id}.");
+            if (result.Status == "tagged" && current != change.After)
             {
                 if (current != change.Before)
                     throw new InvalidOperationException($"Auto-tag recovery conflicts with changed tags: {change.Kind}/{change.Id}.");
-                if (!workspace.Write(change, result.Status))
-                    throw new InvalidOperationException($"Auto-tag {change.Kind} write did not apply: {change.Id}.");
+                try
+                {
+                    if (!workspace.Write(change, result.Status))
+                        throw new InvalidOperationException($"Auto-tag {change.Kind} write did not apply: {change.Id}.");
+                }
+                catch (WikiTagWriteUnavailableException ex) when (change.Kind == "wiki")
+                {
+                    result = RecordWikiProposal(project, pending, change, result, ex.Message);
+                }
             }
             var accepted = result.Status == "tagged";
             var timestamp = result.At.UtcDateTime;
@@ -220,7 +236,8 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 Topic = AutoTagClassifier.StepId,
                 Summary = accepted
                     ? $"Auto-tagged {result.Kind} {result.Id}: {string.Join(", ", result.Tags)}"
-                    : $"Tags proposed for {result.Kind} {result.Id}: {string.Join(", ", result.Tags)}",
+                    : $"Tags proposed for {result.Kind} {result.Id}: {string.Join(", ", result.Tags)}"
+                        + (result.Reason is { } reason ? $" ({reason})" : string.Empty),
                 JobId = result.Kind == "card" ? result.Id : null,
             };
             if (!activity.Read(watchPath).Any(e => e.Topic == entry.Topic && e.Ts == timestamp
@@ -231,6 +248,20 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
         SaveReport(project, pending.Report);
         File.Delete(path);
         return pending.Report;
+    }
+
+    private AutoTagResult RecordWikiProposal(string project, AutoTagPendingApply pending,
+        TagMaintenanceChange change, AutoTagResult result, string reason)
+    {
+        var proposal = result with { Status = "tags-proposed", Reason = reason };
+        var index = pending.Report.Items.FindIndex(x => x.Kind == change.Kind && x.Id == change.Id);
+        pending.Report.Items[index] = proposal;
+        pending.Report.LowConfidence.Add(proposal);
+        foreach (var area in result.AreaTags)
+            pending.Report.CountsPerArea[area] = Math.Max(0,
+                pending.Report.CountsPerArea.GetValueOrDefault(area) - 1);
+        SavePending(project, pending);
+        return proposal;
     }
 
     public async Task<AutoTagReport> BackfillAsync(string project, bool apply, CancellationToken ct,
@@ -280,7 +311,7 @@ public sealed class AutoTaggingService(ITagMaintenanceWorkspace workspace, IAuto
                 var accepted = AutoTaggingPolicy.Status(prediction.Confidence) == "tagged";
                 var result = new AutoTagResult(item.Kind, item.Id,
                     accepted ? "tagged" : "tags-proposed", prediction.Tags,
-                    prediction.Confidence, DateTimeOffset.UtcNow)
+                    prediction.Confidence, time.GetUtcNow())
                 {
                     AreaTags = prediction.Tags.Where(areas.Contains).ToArray(),
                     FacetTags = prediction.Tags.Where(tag => !areas.Contains(tag)).ToArray(),
