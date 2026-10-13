@@ -541,16 +541,23 @@ public sealed class ProviderAuthProbeTests
         now = now.AddMinutes(2);
         var duringReprobe = probe.Current("claude");
 
-        Assert.Equal(ProviderAuthProbe.Degraded, duringReprobe.Status);
-        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+        Assert.Equal(ProviderAuthProbe.Ready, duringReprobe.Status);
+        await WaitUntil(() => Volatile.Read(ref calls) >= 2);
         Assert.Equal(ProviderAuthProbe.Ready, probe.Current("claude").Status);
     }
 
     [Fact]
     public async Task Successful_run_after_an_expired_limit_still_forces_auth_reprobe()
     {
+        var calls = 0;
         var now = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
-        var probe = Probe(Answers(0, "Logged in"), clock: () => now);
+        var probe = Probe(
+            (_, _, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(new ProcessResult(0, "Logged in", ""));
+            },
+            clock: () => now);
         await probe.RefreshAsync("claude", CancellationToken.None);
         probe.RecordProcessResult(
             "claude",
@@ -560,9 +567,9 @@ public sealed class ProviderAuthProbeTests
         now = now.AddMinutes(2);
         var afterRun = probe.RecordProcessResult("claude", new ProcessResult(0, "done", ""));
 
-        Assert.Equal(ProviderAuthProbe.Degraded, afterRun.Status);
+        Assert.Equal(ProviderAuthProbe.Ready, afterRun.Status);
         Assert.Equal(now, afterRun.LastRealSuccessAt);
-        await WaitUntil(() => probe.Current("claude").Status == ProviderAuthProbe.Ready);
+        await WaitUntil(() => Volatile.Read(ref calls) >= 2);
     }
 
     [Fact]

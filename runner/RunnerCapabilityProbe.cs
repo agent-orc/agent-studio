@@ -815,19 +815,22 @@ public sealed class ProviderAuthProbe
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>A legacy limited verdict without a reset is never permanent.</summary>
-    public static readonly TimeSpan UnknownLimitTtl = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan UnknownLimitTtl = TimeSpan.FromMinutes(60);
 
     /// <summary>Two explicit logout answers are required before claim admission closes.</summary>
     public const int DefaultNegativeConfirmations = 2;
 
     /// <summary>The instance the advertisement reads from when no probe is passed in.</summary>
-    public static ProviderAuthProbe Shared { get; } = new();
+    public static ProviderAuthProbe Shared { get; } = new(
+        unknownLimitTtl: TimeSpan.FromMinutes(RunnerOptions.EnvInt(
+            "RUNNER_PROVIDER_UNKNOWN_LIMIT_MINUTES", (int)UnknownLimitTtl.TotalMinutes)));
 
     private readonly object _sync = new();
     private readonly Func<string, bool> _executableExists;
     private readonly Func<DateTimeOffset> _clock;
     private readonly TimeSpan _ttl;
     private readonly TimeSpan _timeout;
+    private readonly TimeSpan _unknownLimitTtl;
     private readonly int _negativeConfirmations;
     private readonly Func<string, ProviderCredentialFreshness> _credentialFreshness;
     private ProviderAuthLauncher? _launcher;
@@ -885,15 +888,19 @@ public sealed class ProviderAuthProbe
         TimeSpan? timeout = null,
         int negativeConfirmations = DefaultNegativeConfirmations,
         Action<string>? diagnosticLog = null,
-        Func<string, ProviderCredentialFreshness>? credentialFreshness = null)
+        Func<string, ProviderCredentialFreshness>? credentialFreshness = null,
+        TimeSpan? unknownLimitTtl = null)
     {
         if (negativeConfirmations < 1)
             throw new ArgumentOutOfRangeException(nameof(negativeConfirmations));
+        if (unknownLimitTtl <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(unknownLimitTtl));
         _launcher = launcher;
         _executableExists = executableExists ?? ExecutableExists;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _ttl = ttl ?? DefaultTtl;
         _timeout = timeout ?? DefaultTimeout;
+        _unknownLimitTtl = unknownLimitTtl ?? UnknownLimitTtl;
         _negativeConfirmations = negativeConfirmations;
         _diagnosticLog = diagnosticLog;
         _credentialFreshness = credentialFreshness ?? (binary => ProviderCredentialMonitor.Inspect(binary));
@@ -938,21 +945,17 @@ public sealed class ProviderAuthProbe
             }
             var forceRefresh = false;
             if (known?.Status.Status == Limited
-                && (known.Status.LimitedUntil ?? known.Status.ObservedAt.Add(UnknownLimitTtl)) <= _clock())
+                && LimitDeadline(known.Status, _unknownLimitTtl) <= _clock())
             {
-                // Serve a claimable degraded state while the forced probe runs.
-                // This prevents an unparseable legacy limit from becoming an
-                // in-memory latch that only a service restart can clear.
+                // Re-admit work while checking again. Unsupported status commands
+                // cannot supply the success that would otherwise release this latch.
+                var previous = known;
                 known = known with
                 {
-                    Status = known.Status with
-                    {
-                        Status = Degraded,
-                        Detail = "Provider limit evidence expired; authentication re-probe is in progress.",
-                        ProbeDegraded = true,
-                    },
+                    Status = ExpireLimit(known.Status, _clock(), _unknownLimitTtl),
                 };
                 _observed[cliBinary] = known;
+                LogTransition(cliBinary, previous, known, Indeterminate(known.Status.Detail));
                 forceRefresh = true;
             }
             if (!forceRefresh && known is not null && _clock() - (known.LastAttemptAt ?? known.Status.ObservedAt) < _ttl)
@@ -965,7 +968,10 @@ public sealed class ProviderAuthProbe
                     // A failed refresh must never take the daemon loop with it;
                     // ObserveAsync already turns every failure into a verdict.
                     try { await RefreshAsync(cliBinary, CancellationToken.None); }
-                    catch { /* keep serving the last known verdict */ }
+                    catch (Exception exception)
+                    {
+                        _diagnosticLog?.Invoke($"provider-auth refresh failed binary={cliBinary} error={exception.GetType().Name}");
+                    }
                 });
             }
             if (known is not null) return known.Status;
@@ -1013,7 +1019,7 @@ public sealed class ProviderAuthProbe
                         return previous.Status;
                     }
                     runEvidenceVersion = _runEvidenceVersions.GetValueOrDefault(cliBinary);
-                    decision = Decide(previous, observation, _negativeConfirmations, _clock());
+                    decision = Decide(previous, observation, _negativeConfirmations, _clock(), _unknownLimitTtl);
                     var sourceDecision = ProviderProbeClassifier.Classify(new ProviderProbeRequest(
                         RunnerCapabilityProbe.Provider(cliBinary), "configured",
                         RunnerCapabilityProbe.Provider(cliBinary) == "codex" ? "codex-exec" : "claude-code",
@@ -1452,7 +1458,7 @@ public sealed class ProviderAuthProbe
                     Signal = SignalTransient,
                 };
             }
-            decision = Decide(previous, observation, _negativeConfirmations, _clock());
+            decision = Decide(previous, observation, _negativeConfirmations, _clock(), _unknownLimitTtl);
             if (hasActiveCounterEvidence)
                 decision = decision with
                 {
@@ -1488,11 +1494,32 @@ public sealed class ProviderAuthProbe
     private static ProviderAuthObservation Indeterminate(string detail)
         => new(ProviderAuthObservationKind.Indeterminate, detail);
 
-    private static ProviderAuthCacheEntry Decide(
+    private static DateTimeOffset LimitDeadline(ProviderAuthStatus status, TimeSpan unknownLimitTtl)
+        => status.LimitedUntil ?? status.ObservedAt.Add(unknownLimitTtl);
+
+    private static ProviderAuthStatus ExpireLimit(
+        ProviderAuthStatus status, DateTimeOffset observedAt, TimeSpan unknownLimitTtl)
+        => status.Status == Limited && LimitDeadline(status, unknownLimitTtl) <= observedAt
+            ? status with
+            {
+                Status = Ready,
+                Detail = "unverified: provider limit evidence expired; provider access has not been confirmed.",
+                ObservedAt = observedAt,
+                LimitedUntil = null,
+                ProbeDegraded = true,
+                Outcome = ProviderProbeOutcome.Indeterminate,
+                Signal = "indeterminate",
+                EvidenceId = null,
+                EvidenceExcerpt = null,
+            }
+            : status;
+
+    internal static ProviderAuthCacheEntry Decide(
         ProviderAuthCacheEntry? previous,
         ProviderAuthObservation observation,
         int negativeConfirmations,
-        DateTimeOffset observedAt)
+        DateTimeOffset observedAt,
+        TimeSpan unknownLimitTtl)
     {
         if (observation.Kind == ProviderAuthObservationKind.Authenticated)
         {
@@ -1504,10 +1531,9 @@ public sealed class ProviderAuthProbe
                     previous.Status with
                     {
                         Detail = $"Rate-limited until {limitedUntil:o}; the login remains valid and recovery will be checked after reset.",
-                        ObservedAt = observedAt,
                         ProbeDegraded = false,
                     },
-                    0);
+                    0, observedAt);
             }
             return new ProviderAuthCacheEntry(
                 new ProviderAuthStatus(
@@ -1559,6 +1585,8 @@ public sealed class ProviderAuthProbe
                 Ready,
                 "unverified: the auth probe has not confirmed a session yet; binary presence only.",
                 observedAt);
+        if (observation.Kind is ProviderAuthObservationKind.Indeterminate or ProviderAuthObservationKind.Transient)
+            retained = ExpireLimit(retained, observedAt, unknownLimitTtl);
         if (observation.Kind is ProviderAuthObservationKind.Indeterminate
             or ProviderAuthObservationKind.Unauthorized
             or ProviderAuthObservationKind.Transient)
@@ -1571,7 +1599,9 @@ public sealed class ProviderAuthProbe
             return new ProviderAuthCacheEntry(
                 retained with
                 {
-                    Detail = $"probe degraded: {observation.Detail} Retaining last status '{retained.Status}'.",
+                    Detail = previous?.Status.Status == Limited && retained.Status == Ready
+                        ? $"{retained.Detail} Probe degraded: {observation.Detail}"
+                        : $"probe degraded: {observation.Detail} Retaining last status '{retained.Status}'.",
                     ObservedAt = retained.ObservedAt,
                     ProbeDegraded = true,
                     Outcome = ProviderProbeOutcome.Indeterminate,
@@ -1620,7 +1650,12 @@ public sealed class ProviderAuthProbe
         Action<string>? log;
         lock (_sync) log = _diagnosticLog;
         if (log is null) return;
-        if (previous?.Status.Status != decision.Status.Status)
+        if (previous?.Status.Status == Limited && decision.Status.Status == Ready)
+        {
+            log($"provider-auth recovered provider={RunnerCapabilityProbe.Provider(cliBinary)} "
+                + $"after={decision.Status.ObservedAt - previous.Status.ObservedAt:c} status={Ready} signal={decision.Status.Signal}");
+        }
+        else if (previous?.Status.Status != decision.Status.Status)
         {
             log(
                 $"provider-auth status={decision.Status.Status} binary={cliBinary} "

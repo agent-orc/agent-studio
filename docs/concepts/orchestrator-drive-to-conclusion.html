@@ -385,6 +385,13 @@
       </thead>
       <tbody>
         <tr>
+          <td>2026-10-13</td>
+          <td><code>AGT-3119</code><br><span class="small">provider-limit-cache-latch</span></td>
+          <td>Claude review aspects failed with ToolUnavailable after the weekly quota limit. Review executors then left 53 attempts pending after the reset; operators restarted the daemons to resume claims.</td>
+          <td>Indeterminate status probes retained Limited indefinitely on direct refresh, preventing new work from supplying successful provider evidence.</td>
+          <td>Terminal at discovery: pending review, no terminal reached. Coding and review caches now recover to unverified Ready after LimitedUntil, or a configurable 60-minute window since the last limit when no reset is known. A fresh Limited observation blocks immediately; each recovery logs once.</td>
+        </tr>
+        <tr>
           <td>2026-10-04</td>
           <td><code>AGT-3010</code><br><span class="small">superseded-brief-remote-delivery (also AGT-2748, AGT-2795, AGT-2793, AGT-2807)</span></td>
           <td>No CLI crashed. An operator moved a running remote card from Progress to Backlog, edited its brief, and returned it to Ready. The old fenced run kept working and later delivered into Auto Review.</td>
