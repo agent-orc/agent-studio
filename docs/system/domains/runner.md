@@ -187,10 +187,16 @@ rollout decision.
   the remote alarm because a broken route cannot deliver its own failure
   telemetry.
 - Provider-auth capability limits are accepted only from an explicit provider
-  refusal with a parseable reset. Signal-terminated runs and allowed quota
+  refusal. Signal-terminated runs and allowed quota
   telemetry are excluded. Limited advertisements carry a scrubbed source run
   and excerpt; expiry or a claim response's re-probe request refreshes the
-  provider status without restarting the daemon. A live same-provider run is
+  provider status without restarting the daemon. Expired limits recover to
+  unverified `ready` with an admissible `unverified` health outcome even when
+  the probe is indeterminate or transient. Limits
+  without a reset expire after `RUNNER_PROVIDER_UNKNOWN_LIMIT_MINUTES` (default
+  60), measured from the most recent limit observation. Coding and review share
+  this cache policy and log `provider-auth recovered provider=... after=...`
+  once per recovery. A live same-provider run is
   counter-evidence and makes the conflicting state claimable but degraded.
 - `backend/Features/Management/RunnerLinks/LinkSupervisor.cs`: Task Server-owned
   SSH reverse-link lifecycle, heartbeat subscription, functional route probe,

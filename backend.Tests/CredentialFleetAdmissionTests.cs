@@ -8,6 +8,40 @@ namespace AgentStudio.Tests;
 public sealed class CredentialFleetAdmissionTests
 {
     [Fact]
+    public void Expired_limit_with_unverified_outcome_restores_both_legacy_capability_sets()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 13, 11, 0, 0, TimeSpan.Zero));
+        var registry = new V1ReviewExecutorRegistry(clock);
+        var provider = CapabilityProtocol.ProviderAuthentication("claude");
+        foreach (var (runner, instance, role, executor) in new[]
+                 { ("coding", "coding-instance", ReviewCapabilities.CodingExecutor,
+                    CapabilityProtocol.CodingExecutor),
+                   ("review", "review-instance", ReviewCapabilities.ReviewExecutor,
+                    CapabilityProtocol.ReviewExecutor) })
+        {
+            registry.Register(runner, new RegisterRunnerRequest(runner, "host", instance,
+                "1", TaskServerProtocol.Current, [role, provider]));
+            Advertise("limited", "rate-limited", "quota_exhausted", 1);
+            if (runner == "coding")
+                Assert.False(registry.EvaluateCodingAdmission(runner, instance, [provider]).Eligible);
+            else
+                Assert.DoesNotContain(provider, registry.AdmittedReviewCapabilities(runner, instance));
+            Advertise("ready", "ok", "unverified", 2);
+
+            void Advertise(string status, string signal, string outcome, long generation)
+                => registry.AdvertiseCapabilities(runner, new CapabilityAdvertisementRequest(
+                    runner, instance, 2, clock.GetUtcNow().UtcDateTime, 180, generation,
+                    [new AdvertisedCapabilityDto(executor, "executor"),
+                     new AdvertisedCapabilityDto(provider, "provider-auth", status,
+                         Signal: signal, HealthOutcome: outcome,
+                         ServiceAvailability: "unknown", CredentialHealth: "unknown")],
+                    CredentialHealthVersion: 2));
+        }
+        Assert.True(registry.EvaluateCodingAdmission("coding", "coding-instance", [provider]).Eligible);
+        Assert.Contains(provider, registry.AdmittedReviewCapabilities("review", "review-instance"));
+    }
+
+    [Fact]
     public void Legacy_coding_and_review_claim_sets_respect_provider_incident_signal()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 10, 0, 0, TimeSpan.Zero));
