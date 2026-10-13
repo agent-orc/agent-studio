@@ -68,6 +68,11 @@ public class TaskRunnerService : BackgroundService
     // the host does not sleep mid-run. Optional: DI injects the singleton; null
     // when a test fixture builds the service directly (keep-awake then off).
     private readonly SystemKeepAwake? _keepAwake;
+    // AGT-3056: reads the latest settled review so an operator continue after a
+    // ProductFailure continues on the graded delivery. Null only when a test
+    // fixture builds the service directly; the continue then keeps today's base.
+    private readonly AttemptAuthorityService? _attemptAuthority;
+    private readonly TimeProvider _time;
     // Optional: null only when a test fixture builds the service directly.
     // Consulted at boot so a RootPath set through the registry (onboarding
     // dialog / project settings) takes effect without anyone having to hand-
@@ -167,7 +172,9 @@ public class TaskRunnerService : BackgroundService
         AgentStudio.Pipeline.FailureInterventionService? failureInterventions = null,
         AgentStudio.Registry.IProjectUrlPortInspector? projectUrlPortInspector = null,
         RemoteDispatchRejectionStore? dispatchRejections = null,
-        ILocalCodingAdmissionPolicy? localCodingAdmission = null)
+        ILocalCodingAdmissionPolicy? localCodingAdmission = null,
+        AttemptAuthorityService? attemptAuthority = null,
+        TimeProvider? time = null)
     {
         _config = config;
         _logger = logger;
@@ -217,6 +224,8 @@ public class TaskRunnerService : BackgroundService
         _runnerIdentity = runnerIdentity;
         _clients = clients;
         _localCodingAdmission = localCodingAdmission;
+        _attemptAuthority = attemptAuthority;
+        _time = time ?? TimeProvider.System;
         _quotaWaitPolicy = quotaWaitPolicy;
         _providerLimits = providerLimits ?? new ProviderLimitRegistry();
         _executionAdmission = executionAdmission;
@@ -777,6 +786,14 @@ public class TaskRunnerService : BackgroundService
         // is never refused because this host lacks the CLI.
         var admission = FollowUpAdmissionPolicy.Decide(BuildFollowUpAdmissionFacts(info));
 
+        // AGT-3056: a queued continue after a ProductFailure is a fix round. It
+        // continues on the delivery the review graded, and its prompt says so.
+        var fixRoundBase = admission.Action == FollowUpAdmissionAction.Queue
+            ? DecideOperatorFixRoundBase(info)
+            : null;
+        if (fixRoundBase is not null)
+            followupPrompt = followupPrompt.TrimEnd() + "\n\n" + ReviewFixRoundBase.PromptSentence(true);
+
         // The follow-up joins the task's written record either way; only the
         // question "does a process start here" depends on the admission.
         await RecordUserFollowUpAsync(info, jobId, followupPrompt, normalizedMode, watchPath, ct);
@@ -791,7 +808,12 @@ public class TaskRunnerService : BackgroundService
             RunTriggerMetadata.PromptPreview(followupPrompt));
 
         if (admission.Action == FollowUpAdmissionAction.Queue)
-            return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
+        {
+            if (fixRoundBase is null)
+                return QueueFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission, author, triggerMetadata);
+            return QueueFixRoundFollowUp(info, jobId, watchPath, normalizedMode, followupPrompt, admission,
+                author, triggerMetadata, fixRoundBase);
+        }
 
         var cli = _router.Get(info.CliType);
         if (!cli.IsAvailable()) throw new TaskOperationException($"{cli.CliType} CLI is not installed or not on PATH", 400);
@@ -988,6 +1010,56 @@ public class TaskRunnerService : BackgroundService
     /// consume - and the promotion alone carries the operator's intent.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// AGT-3056: the base of an operator continue that is a fix round. The
+    /// card's latest settled review must have graded its current delivery
+    /// ProductFailure, and the card must not already carry a base of another
+    /// round (a salvage continuation writes its own before it continues).
+    /// </summary>
+    private ContinuationBaseRecord? DecideOperatorFixRoundBase(TaskInfo info)
+    {
+        if (_attemptAuthority is null || info.State == TaskStates.Progress) return null;
+        var taskKey = info.Key ?? info.TaskKey;
+        if (string.IsNullOrWhiteSpace(taskKey)) return null;
+        return ReviewFixRoundBase.ForOperatorContinue(
+            ReviewFixRoundBase.LatestSettledReview(_attemptAuthority.GetTaskProjection(taskKey)),
+            AgentStudio.Pipeline.ReviewSubjectStore.Read(info.FolderPath),
+            ContinuationBaseStore.Read(info.FolderPath),
+            _time.GetUtcNow().UtcDateTime);
+    }
+
+    /// <summary>
+    /// Queues an operator fix round with its base written in the card folder
+    /// first, so the card never reaches Ready without it.
+    /// </summary>
+    private ContinueJobResponse QueueFixRoundFollowUp(
+        TaskInfo info,
+        string jobId,
+        string? watchPath,
+        string mode,
+        string prompt,
+        FollowUpAdmissionDecision decision,
+        string? author,
+        RunTriggerMetadata? triggerMetadata,
+        ContinuationBaseRecord fixRoundBase)
+    {
+        if (!ContinuationBaseStore.Save(info.FolderPath, fixRoundBase))
+            throw new TaskOperationException("Could not record the fix round's continuation base.", 500);
+        ContinueJobResponse response;
+        try
+        {
+            response = QueueFollowUp(info, jobId, watchPath, mode, prompt, decision, author, triggerMetadata);
+        }
+        catch
+        {
+            ContinuationBaseStore.Clear((_scanner.FindJob(jobId, watchPath) ?? info).FolderPath);
+            throw;
+        }
+        ReviewFixRoundBase.RecordOnTimeline(_timeline, (_scanner.FindJob(jobId, watchPath) ?? info).FolderPath,
+            fixRoundBase, ReviewFixRoundBase.SourceOperatorContinue, _time.GetUtcNow().UtcDateTime);
+        return response;
+    }
+
     private ContinueJobResponse QueueFollowUp(
         TaskInfo info,
         string jobId,

@@ -6,6 +6,11 @@ namespace AgentStudio.Runner;
 public enum RemoteReviewContinuationKind { FindingRound, BudgetEscalation }
 
 /// <summary>A settled report's durable lane and prompt decision.</summary>
+/// <param name="Base">
+/// AGT-3056: the reviewed delivery a finding round continues on, written as the
+/// card's continuation base before the move to Ready. Null for an escalation and
+/// for a subject that named no fenced result ref.
+/// </param>
 public sealed record RemoteReviewContinuation(
     RemoteReviewContinuationKind Kind,
     string FollowUp,
@@ -13,7 +18,8 @@ public sealed record RemoteReviewContinuation(
     int MaximumConcernRounds,
     CardRoundBudgetState Budget,
     DeliveredReviewRound? DeliveredRound = null,
-    ReviewRoundBudgetLedger? DeliveredRoundSeed = null);
+    ReviewRoundBudgetLedger? DeliveredRoundSeed = null,
+    ContinuationBaseRecord? Base = null);
 
 public enum RemoteReviewContinuationStep { Move, Finish, Completed, Unapplicable }
 
@@ -88,8 +94,14 @@ public static class RemoteReviewContinuationProjection
                 timeline.ReadAll(task.FolderPath), entry.AttemptId, cause, moveKey, task.State);
             if (step == RemoteReviewContinuationStep.Completed) return true;
             if (step == RemoteReviewContinuationStep.Unapplicable) return false;
+            var fixRoundBase = continuation.Kind == RemoteReviewContinuationKind.FindingRound
+                ? continuation.Base : null;
             if (step == RemoteReviewContinuationStep.Move)
             {
+                // The base travels with the folder, so the card never sits in
+                // Ready without it and no claim can start the round elsewhere.
+                if (fixRoundBase is not null && !ContinuationBaseStore.Save(task.FolderPath, fixRoundBase))
+                    return false;
                 var move = await transitions.MoveAsync(
                     task.Id, target, task.WatchPath, ct,
                     cause: $"remote-review-continuation:{entry.AttemptId}",
@@ -103,7 +115,11 @@ public static class RemoteReviewContinuationProjection
                     transitionCause: continuation.Kind == RemoteReviewContinuationKind.FindingRound
                         ? LaneChangeCauses.QualityLoop : LaneChangeCauses.Escalated,
                     transitionDetail: cause).ConfigureAwait(false);
-                if (move.Status != MoveJobStatus.Success) return false;
+                if (move.Status != MoveJobStatus.Success)
+                {
+                    if (fixRoundBase is not null) ContinuationBaseStore.Clear(task.FolderPath);
+                    return false;
+                }
                 task = task with
                 {
                     FolderPath = move.NewFolderPath ?? task.FolderPath,
@@ -157,6 +173,13 @@ public static class RemoteReviewContinuationProjection
                     [ReviewDecisionOrchestrator.ReissueTagId], logger);
                 receipt["aspects"] = string.Join(",", continuation.BlockingAspects);
                 receipt["followUpPrompt"] = RunTriggerMetadata.PromptPreview(continuation.FollowUp);
+                if (fixRoundBase is not null)
+                {
+                    ReviewFixRoundBase.RecordOnTimeline(timeline, task.FolderPath, fixRoundBase,
+                        ReviewFixRoundBase.SourceReviewPlane, DateTime.UtcNow);
+                    receipt["continuationBaseRef"] = fixRoundBase.Ref;
+                    receipt["continuationBaseSha"] = fixRoundBase.CommitSha;
+                }
             }
             timeline.Append(task.FolderPath,
                 continuation.Kind == RemoteReviewContinuationKind.FindingRound

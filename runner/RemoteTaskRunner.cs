@@ -104,7 +104,9 @@ public sealed class RemoteTaskRunner
         AgentStudio.TaskServer.Contracts.SessionContinuationLedgerEntry? previousSession = null,
         AgentStudio.TaskServer.Contracts.MechanicalRoundDelta? mechanicalDelta = null,
         string? freshRunReason = null,
-        IReadOnlyList<string>? requiredCapabilities = null)
+        IReadOnlyList<string>? requiredCapabilities = null,
+        // AGT-3056: "review-fix-round" makes the base required for the worktree.
+        string? continuationBaseReason = null)
     {
         var isProjectClone = !string.IsNullOrWhiteSpace(projectId);
         if (isProjectClone && string.IsNullOrWhiteSpace(repositoryUrl))
@@ -136,7 +138,8 @@ public sealed class RemoteTaskRunner
             sourceRunAttemptId: runId ?? lease.AttemptId ?? lease.LeaseId,
             fencingToken: lease.FencingToken,
             continuationBaseRef: continuationBaseRef,
-            continuationBaseSha: continuationBaseSha);
+            continuationBaseSha: continuationBaseSha,
+            continuationBaseReason: continuationBaseReason);
         var slot = _state.Create(
             taskKey, lease, workspace.RepoPath, runId, leaseInstanceId,
             projectId, repositoryUrl, defaultBranch, taskKind, runSpec);
@@ -787,6 +790,19 @@ public sealed class RemoteTaskRunner
             teardownAttempted = true;
             return 3;
         }
+        catch (ContinuationBaseUnavailableException ex)
+        {
+            // No agent started. Preserve the required base and release once
+            // with its typed reason so the server escalates for operator repair.
+            releaseOnly = true;
+            handedBack = true;
+            teardownAttempted = true;
+            infrastructureFailureCode = ex.ReasonCode;
+            infrastructureFailureDetail = ex.Message;
+            shipper.Add("system", $"[runner] {ex.Message}");
+            _log(ex.Message);
+            return 1;
+        }
         catch (RemoteClaimPreparationException ex)
         {
             outcome = new RunOutcome(RunOutcomeKind.EnvironmentFailure, ex.Message);
@@ -1224,7 +1240,7 @@ public sealed class RemoteTaskRunner
                 _log,
                 shutdown);
         }
-        catch (WorktreeSalvageException)
+        catch (Exception ex) when (ex is WorktreeSalvageException or ContinuationBaseUnavailableException)
         {
             throw;
         }
@@ -2944,7 +2960,8 @@ public sealed class RemoteTaskRunner
             {
                 return await prepare(ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeSalvageException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not WorktreeSalvageException
+                and not ContinuationBaseUnavailableException)
             {
                 last = ex;
                 log(

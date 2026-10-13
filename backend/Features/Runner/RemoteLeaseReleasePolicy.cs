@@ -6,6 +6,9 @@ public enum RemoteLeaseReleaseRoute
     /// <summary>No agent process started; the per-card failure budget decides Ready or escalation now.</summary>
     PrelaunchInfrastructure,
 
+    /// <summary>The required reviewed base cannot be used; escalate without an automatic retry.</summary>
+    ContinuationBaseUnavailable,
+
     /// <summary>A started detached worker disappeared; the AGT-2870 continuation applies.</summary>
     LostWorker,
 
@@ -29,6 +32,8 @@ public static class RemoteLeaseReleasePolicy
 
     public static RemoteLeaseReleaseRoute Classify(string? outcome)
     {
+        if (AgentStudio.TaskServer.Contracts.ContinuationBaseReasons.IsUnavailable(outcome))
+            return RemoteLeaseReleaseRoute.ContinuationBaseUnavailable;
         if (outcome is EnvironmentPreparationFailed or SalvageFailed or ResultsHandlingFailed)
             return RemoteLeaseReleaseRoute.PrelaunchInfrastructure;
         return LostWorkerContinuationPolicy.IsLostWorkerRelease(outcome)

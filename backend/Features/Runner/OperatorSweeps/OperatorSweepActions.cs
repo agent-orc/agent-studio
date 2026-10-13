@@ -7,9 +7,11 @@ namespace AgentStudio.Runner;
 public sealed record OperatorSweepActionResult(bool Started, string Detail);
 
 /// <summary>Everything a fix round needs, read by the service from the settled review.</summary>
+/// <param name="Base">AGT-3056: the reviewed delivery the round continues on; null when the review named none.</param>
 public sealed record OperatorSweepFixRound(
     string ReviewAttemptId,
-    string FollowUp);
+    string FollowUp,
+    ContinuationBaseRecord? Base = null);
 
 /// <summary>
 /// The bounded side effects the sweeps may apply. Each one is the internal path
@@ -92,8 +94,9 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
     /// <summary>
     /// The fix round as one recoverable step. Everything the next run needs
     /// (continuation note on <c>prompt.md</c>, orchestrator follow-up, reissue
-    /// tag) is written in the Human Review folder first and checked; only then
-    /// the guarded lane move carries the folder to Ready. A failed preparation
+    /// tag, the reviewed delivery as continuation base) is written in the Human
+    /// Review folder first and checked; only then the guarded lane move carries
+    /// the folder to Ready. A failed preparation
     /// or a refused move restores the folder, so the card stays in Human Review
     /// and the next tick retries it. A Ready card therefore never lacks its fix
     /// instructions, which the sweep could not repair later because it only
@@ -119,6 +122,7 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
             var previousPrompt = File.Exists(promptPath) ? File.ReadAllText(promptPath) : null;
             var previousFollowUp = File.Exists(followUpPath) ? File.ReadAllText(followUpPath) : null;
             var previousTags = ReadTags(folderPath);
+            var previousBase = ContinuationBaseStore.Read(folderPath);
             string? historyPath = null;
 
             OperatorSweepActionResult RollBack(string refusal)
@@ -137,6 +141,12 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
                 }
                 if (previousTags is not null && !TaskJsonFile.UpdateField(folderPath, "tags", previousTags, logger))
                     logger.LogWarning("operator-sweep-fix-round-tag-rollback-failed job={JobId} folder={Folder}", jobId, folderPath);
+                if (round.Base is not null)
+                {
+                    if (previousBase is null) ContinuationBaseStore.Clear(folderPath);
+                    else if (!ContinuationBaseStore.Save(folderPath, previousBase))
+                        logger.LogWarning("operator-sweep-fix-round-base-rollback-failed job={JobId} folder={Folder}", jobId, folderPath);
+                }
                 return new OperatorSweepActionResult(false, refusal);
             }
 
@@ -164,6 +174,9 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
                 ConcernTagWriter.MergeConcernTags(folderPath, [ReviewDecisionOrchestrator.ReissueTagId], logger);
                 if (ReadTags(folderPath)?.Contains(ReviewDecisionOrchestrator.ReissueTagId, StringComparer.OrdinalIgnoreCase) != true)
                     return RollBack("The reissue tag could not be written.");
+
+                if (round.Base is not null && !ContinuationBaseStore.Save(folderPath, round.Base))
+                    return RollBack("The continuation base could not be written.");
 
                 moved = await moveAsync(ct).ConfigureAwait(false);
             }
@@ -274,7 +287,8 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
         Contract.ReviewReportRequest? report,
         ReviewAttemptDto? attempt,
         int round,
-        int allowed)
+        int allowed,
+        bool continuesReviewedDelivery = false)
     {
         var findings = (report?.Verdicts ?? [])
             .Where(verdict => !string.Equals(verdict.Status, "pass", StringComparison.OrdinalIgnoreCase))
@@ -306,7 +320,7 @@ public sealed class OperatorSweepActions : IOperatorSweepActions
             .ToList();
         var commands = failedCommands.Concat(plannedCommands).Distinct(StringComparer.Ordinal).Take(12).ToList();
 
-        var text = V1ReviewPlaneEndpoints.BuildRemoteFindingFollowUp(findings, reviewAttemptId);
+        var text = V1ReviewPlaneEndpoints.BuildRemoteFindingFollowUp(findings, reviewAttemptId, continuesReviewedDelivery);
         if (commands.Count > 0)
         {
             text += "\n\n## Verification commands\n\nRun these before you deliver; the review ran them against the delivery.\n\n"

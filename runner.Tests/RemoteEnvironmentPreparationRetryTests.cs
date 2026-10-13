@@ -61,6 +61,25 @@ public sealed class RemoteEnvironmentPreparationRetryTests
         Assert.All(logs, line => Assert.Contains("remote-environment-preparation-failed", line));
     }
 
+    [Theory]
+    [InlineData(ContinuationBaseUnavailableException.Missing)]
+    [InlineData(ContinuationBaseUnavailableException.Moved)]
+    [InlineData(ContinuationBaseUnavailableException.Incomplete)]
+    [InlineData(ContinuationBaseUnavailableException.Unreadable)]
+    public async Task Unavailable_review_base_is_returned_without_retry_or_delay(string reason)
+    {
+        var attempts = 0;
+        var delays = 0;
+        var expected = new ContinuationBaseUnavailableException(reason, "refs/heads/result", new string('a', 40), null);
+        var actual = await Assert.ThrowsAsync<ContinuationBaseUnavailableException>(() =>
+            RemoteTaskRunner.RetryEnvironmentPreparationAsync<string>(
+                _ => { attempts++; throw expected; }, _ => { }, CancellationToken.None,
+                (_, _) => { delays++; return Task.CompletedTask; }));
+        Assert.Same(expected, actual);
+        Assert.Equal(1, attempts);
+        Assert.Equal(0, delays);
+    }
+
     [Fact]
     public async Task Successful_retry_returns_without_consuming_remaining_attempts()
     {

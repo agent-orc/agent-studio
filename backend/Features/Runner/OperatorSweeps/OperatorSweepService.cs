@@ -384,10 +384,19 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
             case OperatorSweepKinds.FixRounds:
             {
                 var report = RemoteReviewSettlementJournal.Read(job.FolderPath, latestReview!.AttemptId).Entry?.Report;
+                // AGT-3056: the round continues on the delivery the review graded.
+                var fixRoundBase = ReviewFixRoundBase.ForReview(
+                    latestReview, ReviewSubjectStore.Read(job.FolderPath), Now());
                 var followUp = OperatorSweepActions.BuildFixRoundFollowUp(
-                    latestReview.AttemptId, report, latestReview, budget.Used + 1, budget.Allowed);
-                return await _actions.OpenFixRoundAsync(
-                    job, new OperatorSweepFixRound(latestReview.AttemptId, followUp), ct).ConfigureAwait(false);
+                    latestReview.AttemptId, report, latestReview, budget.Used + 1, budget.Allowed,
+                    fixRoundBase is not null);
+                var opened = await _actions.OpenFixRoundAsync(
+                    job, new OperatorSweepFixRound(latestReview.AttemptId, followUp, fixRoundBase), ct).ConfigureAwait(false);
+                if (opened.Started && fixRoundBase is not null)
+                    ReviewFixRoundBase.RecordOnTimeline(_timeline,
+                        (_scanner.FindJob(job.Id, job.WatchPath) ?? job).FolderPath, fixRoundBase,
+                        ReviewFixRoundBase.SourceOperatorSweep, Now());
+                return opened;
             }
             case OperatorSweepKinds.GateTriage:
                 return await _actions.ContinueGateFailureAsync(job, trigger.SubjectKey, ct).ConfigureAwait(false);
@@ -516,13 +525,7 @@ public sealed class OperatorSweepService : IOperatorSweepRunner
         => attempt.State is AttemptLifecycleState.Pending or AttemptLifecycleState.Leased;
 
     private static ReviewAttemptDto? LatestSettledReview(AttemptAuthorityProjection projection)
-    {
-        if (projection.CurrentReviewAttempt is { Outcome: not null } current) return current;
-        return projection.ReviewAttempts
-            .Where(attempt => attempt.Outcome is not null)
-            .OrderBy(attempt => attempt.TerminalAt ?? attempt.CreatedAt)
-            .LastOrDefault();
-    }
+        => ReviewFixRoundBase.LatestSettledReview(projection);
 
     private IReadOnlyList<ReviewDecisionRecord> ReadJournal(string? workspace, string project)
     {

@@ -44,6 +44,48 @@ public sealed class OperatorSweepServiceTests : IDisposable
         catch (UnauthorizedAccessException) { }
     }
 
+    /// <summary>
+    /// AGT-3056: the sweep's fix round continues on the delivery the review
+    /// graded. The round carries the reviewed fenced result ref as its base,
+    /// its prompt says where it starts, and the timeline records the base.
+    /// </summary>
+    [Fact]
+    public async Task FreshProductFailure_FixRound_ContinuesOnTheReviewedResult()
+    {
+        var stack = Build();
+        SeedCard(stack, "AGT-9101", Sha('a'));
+        var resultRef = AgentStudio.TaskServer.Contracts.FencedGitRefs.ImmutableResult("run-reviewed", 2, Sha('a'));
+        SettleReview(stack, "AGT-9101", Sha('a'), ReviewTerminalOutcome.ProductFailure, resultRef: resultRef);
+
+        await stack.Service.RunOnceAsync();
+
+        var round = Assert.Single(stack.Actions.FixRounds);
+        Assert.Equal(resultRef, round.Base!.Ref);
+        Assert.Equal(Sha('a'), round.Base.CommitSha);
+        Assert.Equal(ReviewFixRoundBase.Reason, round.Base.Reason);
+        Assert.Equal(round.ReviewAttemptId, round.Base.AttemptId);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, round.Base.SavedAtUtc);
+        Assert.Contains(ReviewFixRoundBase.PromptSentence(true), round.FollowUp, StringComparison.Ordinal);
+        Assert.DoesNotContain(Sha('a'), round.FollowUp, StringComparison.Ordinal);
+        var recorded = Assert.Single(
+            stack.Timeline.ReadAll(stack.Scanner.FindJob("AGT-9101", _watchPath)!.FolderPath),
+            entry => entry.Kind == TimelineEventKinds.ContinuationBaseRecorded);
+        Assert.Equal(ReviewFixRoundBase.SourceOperatorSweep, recorded.Details!["source"]);
+        Assert.Equal(resultRef, recorded.Details["ref"]);
+    }
+
+    [Fact]
+    public async Task FreshProductFailure_FixRound_FallsBackToTheCardsReviewSubjectRef()
+    {
+        var stack = Build();
+        SeedCard(stack, "AGT-9102", Sha('b'));
+        SettleReview(stack, "AGT-9102", Sha('b'), ReviewTerminalOutcome.ProductFailure);
+
+        await stack.Service.RunOnceAsync();
+
+        Assert.Equal("refs/heads/task/AGT-9102", Assert.Single(stack.Actions.FixRounds).Base!.Ref);
+    }
+
     [Fact]
     public async Task FreshProductFailure_OpensOneFixRound_AndChargesTheSharedBudget()
     {
@@ -461,7 +503,8 @@ public sealed class OperatorSweepServiceTests : IDisposable
     }
 
     private static void SettleReview(
-        Stack stack, string id, string deliverySha, ReviewTerminalOutcome outcome, string suffix = "")
+        Stack stack, string id, string deliverySha, ReviewTerminalOutcome outcome, string suffix = "",
+        string? resultRef = null)
     {
         var taskKey = TaskKey(stack, id);
         var run = stack.Authority.GetTaskProjection(taskKey).CurrentRunAttempt;
@@ -477,7 +520,8 @@ public sealed class OperatorSweepServiceTests : IDisposable
         }
         var key = id + suffix;
         var review = stack.Authority.CreateReviewAttempt(new CreateReviewAttemptRequest(
-            taskKey, "PROJ-001", deliverySha, run.AttemptId, "requirements", "policy", [], "review-create-" + key))
+            taskKey, "PROJ-001", deliverySha, run.AttemptId, "requirements", "policy", [], "review-create-" + key,
+            ResultRef: resultRef))
             .ReviewAttempt!;
         var claimed = stack.Authority.ClaimReview(review.AttemptId, "reviewer", "review-host", 600, "review-claim-" + key)
             .ReviewAttempt!;

@@ -1790,6 +1790,8 @@ public sealed partial class TaskServerStore
             var typedInfrastructureFailure = request.Outcome is
                 "runner-environment-preparation-failed" or "runner-salvage-failed" or "runner-results-handling-failed";
             var infrastructureFailure = typedInfrastructureFailure && taskInProgress;
+            var continuationBaseUnavailable = taskInProgress
+                && ContinuationBaseReasons.IsUnavailable(request.Outcome);
             var diagnostic = (request.Detail ?? request.Outcome).Replace('\r', ' ').Replace('\n', ' ').Trim();
             if (diagnostic.Length > 1000) diagnostic = diagnostic[..1000];
             var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
@@ -1823,8 +1825,8 @@ public sealed partial class TaskServerStore
                 await ExecuteAsync(connection,
                     "DELETE FROM runner_infrastructure_failures WHERE task_id = $task;",
                     ct, transaction, ("$task", lease.TaskId));
-            var targetState = infrastructureFailure
-                && attempts >= Math.Clamp(_options.RunnerInfrastructureFailureBudget, 1, 20)
+            var targetState = continuationBaseUnavailable || (infrastructureFailure
+                && attempts >= Math.Clamp(_options.RunnerInfrastructureFailureBudget, 1, 20))
                 ? "5e-escalated" : "2-ready";
             await ExecuteAsync(connection, """
                 UPDATE leases SET status = 'released' WHERE run_id = $run;
@@ -1856,6 +1858,11 @@ public sealed partial class TaskServerStore
                     salvageRef = request.Salvage?.Branch,
                     salvageCommitSha = request.Salvage?.CommitSha,
                     salvageDetail = request.Salvage?.Detail,
+                    continuationBaseFailure = continuationBaseUnavailable ? new
+                    {
+                        reasonCode = request.Outcome,
+                        detail = diagnostic,
+                    } : null,
                     infrastructureFailure = infrastructureFailure ? new
                     {
                         category = "runner-environment-broken",
@@ -1866,7 +1873,20 @@ public sealed partial class TaskServerStore
                         recoveryHint = "Repair the runner environment or results ownership, then move the card to Ready.",
                     } : null,
                 }), ct);
-            if (targetState == "5e-escalated")
+            if (continuationBaseUnavailable)
+            {
+                var evidence = new
+                {
+                    reasonCode = request.Outcome,
+                    detail = diagnostic,
+                    recoveryHint = "Restore the reviewed ref or refresh the review subject, then continue the card.",
+                };
+                await AuditAsync(connection, transaction, actorId, request.Outcome, "task", lease.TaskId,
+                    JsonSerializer.Serialize(evidence), ct);
+                await AppendLifecycleEventAsync(connection, transaction, runId, lease.TaskId,
+                    request.Fence, "runner.continuation-base.unavailable", evidence, ct);
+            }
+            else if (targetState == "5e-escalated")
             {
                 await AuditAsync(connection, transaction, actorId, "runner-environment-broken", "task", lease.TaskId,
                     JsonSerializer.Serialize(new { fingerprint, attempts, host, lastError = diagnostic }), ct);

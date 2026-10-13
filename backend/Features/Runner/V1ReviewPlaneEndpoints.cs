@@ -989,12 +989,18 @@ public static class V1ReviewPlaneEndpoints
                         blockingAspects, settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
                         cardBudget, deliveredRound, roundSeed);
                 else if (RemoteReviewContinuationPolicy.OpensFindingRound(outcome, reviewFollowUp.Action))
+                {
+                    // AGT-3056: the round continues on the delivery this review graded.
+                    var fixRoundBase = ReviewFixRoundBase.ForReview(
+                        currentReview, ReviewSubjectStore.Read(preparedTask.FolderPath), DateTime.UtcNow);
                     continuation = new RemoteReviewContinuation(
                         RemoteReviewContinuationKind.FindingRound,
-                        BuildRemoteFindingFollowUp(reviewFollowUp.Findings, attemptId),
+                        BuildRemoteFindingFollowUp(reviewFollowUp.Findings, attemptId, fixRoundBase is not null),
                         reviewFollowUp.Findings.Select(item => item.Aspect).ToArray(),
                         settings.Get(preparedTask.ProjectName).MaxReviewConcernRounds,
-                        cardBudget with { Used = cardBudget.Used + 1 }, deliveredRound, roundSeed);
+                        cardBudget with { Used = cardBudget.Used + 1 }, deliveredRound, roundSeed,
+                        fixRoundBase);
+                }
             }
             var preparedHash = RemoteReviewSettlementJournal.Hash(request);
             // Only an accepted report owns a journal; a replayed rejected key is
@@ -2936,11 +2942,14 @@ public static class V1ReviewPlaneEndpoints
 
     internal static string BuildRemoteFindingFollowUp(
         IReadOnlyList<Contract.ReviewFollowUpFinding> findings,
-        string reviewAttemptId)
+        string reviewAttemptId,
+        bool continuesReviewedDelivery)
     {
         var lines = new List<string>
         {
             $"# Remote Review finding fix round ({reviewAttemptId})",
+            "",
+            ReviewFixRoundBase.PromptSentence(continuesReviewedDelivery),
             "",
             "Fix exactly the blocking findings below and nothing else. Preserve unrelated behavior. Run the relevant deterministic verification, then end with [[TASK_DONE]].",
             "",

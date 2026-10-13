@@ -262,6 +262,15 @@ public static class LeaseEndpoints
                     if (task is not null && route == RemoteLeaseReleaseRoute.LostWorker)
                         budget.Reset(task);
                     if (task is { State: TaskStates.Progress }
+                        && route == RemoteLeaseReleaseRoute.ContinuationBaseUnavailable)
+                    {
+                        await humanReviewEscalation.EscalateAsync(
+                            task.Id, task.WatchPath, task.ProjectName,
+                            req.Outcome!,
+                            $"{req.Detail} Recovery: restore the reviewed ref or refresh the review subject, then continue the card.",
+                            ct, releaseWrite);
+                    }
+                    if (task is { State: TaskStates.Progress }
                         && route == RemoteLeaseReleaseRoute.PrelaunchInfrastructure)
                     {
                         var decision = budget.Record(task, req.Detail, req.Outcome, released.Lease?.Hostname);
@@ -1376,8 +1385,9 @@ public static class LeaseEndpoints
                 // AGT-2870: a continuation round opened for a lost worker starts
                 // its worktree on the salvage that round was opened for. The
                 // record is consumed here so a later, unrelated claim of the
-                // same card can never be prepared on a stale generation.
-                var continuationBase = ContinuationBaseStore.Consume(claimedFolderPath);
+                // same card can never be prepared on a stale generation. A
+                // review fix-round base (AGT-3056) stays until its run completes.
+                var continuationBase = ContinuationBaseStore.ConsumeForClaim(claimedFolderPath);
                 if (continuationBase is not null)
                 {
                     logger.LogInformation(
@@ -1402,6 +1412,7 @@ public static class LeaseEndpoints
                     RunSpec: runSpec,
                     ContinuationBaseRef: continuationBase?.Ref,
                     ContinuationBaseSha: continuationBase?.CommitSha,
+                    ContinuationBaseReason: continuationBase?.Reason,
                     PreviousSession: AgentStudio.Runner.SessionContinuationLedgerStore.Latest(claimedFolderPath),
                     MechanicalDelta: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeDelta(claimedFolderPath),
                     FreshRunReason: AgentStudio.Runner.SessionContinuationLedgerStore.ConsumeFreshReason(claimedFolderPath)), admission.ReasonCode));
@@ -2107,6 +2118,10 @@ public static class LeaseEndpoints
                 details["missingEnvelopeFacts"] = string.Join(",", envelopeDecision.MissingFacts ?? []);
                 details["deliveryAction"] = deliveryFailure.Escalate ? "escalate" : "requeue";
             }
+            // Ready retries keep the reviewed delivery unless a newer salvage
+            // or mechanical fallback base replaces it later in this completion.
+            if (targetState != TaskStates.Ready)
+                ContinuationBaseStore.ClearAfterCompletion(task.FolderPath);
             RemoteClaimFailureDecision? claimFailure = null;
             if (outcome == "environmentfailure")
             {

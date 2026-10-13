@@ -529,6 +529,27 @@ rollout decision.
   fenced session entry, and returns the task to Ready. The next claim reads
   that reason, qualifies its fresh route before execution, and carries the
   recorded result ref and SHA as its continuation base when available.
+- Review fix rounds (AGT-3056, AGT-W65 D17 A) continue on the delivery the
+  review graded. The review-plane finding round, the `fix-rounds` sweep and
+  an operator continue after a `ProductFailure` record the reviewed fenced
+  result ref and SHA as `continuation-base.json` with reason
+  `review-fix-round` before the card reaches Ready
+  (`backend/Features/Runner/ReviewFixRoundBase.cs`), and the timeline gets one
+  `continuation_base_recorded` row. The claim sends the base with
+  `ContinuationBaseReason`. `GitWorkspace` prepares the worktree on it and
+  keeps the integration branch as rebase target, as AGT-2870 continuation
+  rounds do. It never falls back to the integration branch for this reason: a
+  missing, moved or unreadable base fails the preparation with a typed
+  `continuation-base-*` reason. Preparation does not retry this failure: both
+  server release paths escalate immediately with that reason and preserve the
+  base for operator repair. Restore the reviewed ref, or refresh the review
+  subject and explicitly continue to replace the old review base. Salvage bases
+  retain precedence. Every completion returning to Ready preserves the review
+  base unless a newer salvage or mechanical fallback base replaces it; terminal
+  completions clear it. A rebase conflict at
+  integration ends in the existing AGT-2909 dead-end exit
+  (`AgentRoundRequired`, `delivery-attribution-ambiguous`). The prompt states
+  the base in one sentence and names no SHA.
 - `runner/ReviewStateStore.cs`, `runner/ReviewSlotReconciler.cs`,
   `runner/DurableReviewProcess.cs`, `runner/RemoteReviewDaemon.cs`, and
   `runner/RemoteReviewExecutor.cs`: durable
@@ -1748,7 +1769,7 @@ next tick runs on schedule.
 
 | Sweep | Trigger | Side effect (internal path) |
 |---|---|---|
-| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round material (`prompt.md` note, orchestrator follow-up, reissue tag), written and checked in the Human Review folder first, then the guarded move to the top of Ready. A failed write or a refused move restores the folder, so a Ready card never lacks its fix instructions and the next tick retries the card. The prompt carries the non-pass verdicts and the failed or planned verification commands. |
+| `fix-rounds` | Card in `5-human-review`; its latest settled review for the current delivery SHA is `ProductFailure` | The Remote Review finding-round material (`prompt.md` note, orchestrator follow-up, reissue tag), written and checked in the Human Review folder first, then the guarded move to the top of Ready. A failed write or a refused move restores the folder, so a Ready card never lacks its fix instructions and the next tick retries the card. The prompt carries the non-pass verdicts and the failed or planned verification commands. The reviewed fenced result is written as the `review-fix-round` continuation base in the same prepared step (AGT-3056). |
 | `gate-triage` | Card in `5-human-review` or `5e-escalated`; its current failure is the merge gate | Product failure: `TaskFailureContinuationService`, the service the operator failure panel calls. Environment failure: held for the gate-environment retry ladder (AGT-2824). Unclassified: waits for a person. The domain comes from the gate runner verdict, then the run-failure taxonomy, then `FailureInterventionPolicy`. |
 | `salvage` | Card in `5e-escalated`; its latest `agent_run_finished` is non-terminal and names a salvage pair | `continuation-base.json` plus the AGT-2861 continuation prompt, queued through `TaskRunnerService.ContinueJobAsync`. |
 
