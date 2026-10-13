@@ -59,4 +59,26 @@ public sealed class AutoReviewResumeRetryPolicyTests
             if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
         }
     }
+
+    [Fact]
+    public void Corrupt_retry_file_does_not_exhaust_a_healthy_delivery()
+    {
+        var clock = new FakeTimeProvider();
+        var folder = Path.Combine(Path.GetTempPath(), "resume-corrupt-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            AutoReviewResumeRetryStore.Write(folder, new AutoReviewResumeRetryRecord(
+                "review-first", 2, clock.GetUtcNow(), "temporary failure"));
+            var path = Path.Combine(folder, "logs", "remote-delivery-resume-retry.json");
+            File.WriteAllBytes(path, new byte[64]);
+            Assert.Null(AutoReviewResumeRetryStore.Read(folder, "review-first"));
+            AutoReviewResumeRetryStore.Write(folder, new AutoReviewResumeRetryRecord(
+                "review-first", 1, clock.GetUtcNow(), "recovered"));
+            Assert.Equal(1, AutoReviewResumeRetryStore.Read(folder, "review-first")!.Attempts);
+        }
+        finally
+        {
+            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        }
+    }
 }

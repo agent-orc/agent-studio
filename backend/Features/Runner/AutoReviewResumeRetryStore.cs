@@ -5,7 +5,8 @@ namespace AgentStudio.Runner;
 
 /// <summary>Retry authority for one settled review's delivery continuation.</summary>
 public sealed record AutoReviewResumeRetryRecord(
-    string AttemptId, int Attempts, DateTimeOffset? NextAtUtc, string? Reason);
+    string AttemptId, int Attempts, DateTimeOffset? NextAtUtc, string? Reason,
+    string? ProgressKey = null, bool WaitingForIntegration = false);
 
 public static class AutoReviewResumeRetryStore
 {
@@ -25,9 +26,10 @@ public static class AutoReviewResumeRetryStore
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            return new AutoReviewResumeRetryRecord(attemptId,
-                AutoReviewResumeRetryPolicy.MaxAttempts, null,
-                $"resume retry state unreadable: {ex.GetType().Name}");
+            // An interrupted write must not turn a healthy delivery into a
+            // permanently exhausted one. A corrupt record loses only its
+            // backoff; the authority and integration records remain intact.
+            return null;
         }
     }
 
@@ -38,7 +40,12 @@ public static class AutoReviewResumeRetryStore
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(record, Json));
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write,
+                       FileShare.None))
+            {
+                JsonSerializer.Serialize(stream, record, Json);
+                stream.Flush(flushToDisk: true);
+            }
             File.Move(temporary, path, overwrite: true);
         }
         finally
