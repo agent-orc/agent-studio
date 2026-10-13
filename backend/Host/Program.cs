@@ -1477,30 +1477,6 @@ catch (Exception ex)
     crashRecorder.Record("RemoteCompletionAttributionSweep", ex);
 }
 
-// One-time normalization and re-pricing for historical Codex/OpenAI usage
-// written while cached_input_tokens was incorrectly added to input_tokens.
-try
-{
-    hostTimeline.Sweep("OpenAiUsageHistoryRepair",
-        () => app.Services.GetRequiredService<AgentStudio.Tokens.OpenAiUsageHistoryRepair>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("OpenAiUsageHistoryRepair", ex);
-}
-
-// One-time collapse of task receipts that recorded the same usage more than
-// once (AGT-3012). Bus duplicates are collapsed on read and only reported.
-try
-{
-    hostTimeline.Sweep("TokenLedgerDuplicateRepair",
-        () => app.Services.GetRequiredService<AgentStudio.Tokens.TokenLedgerDuplicateRepair>().RunOnce());
-}
-catch (Exception ex)
-{
-    crashRecorder.Record("TokenLedgerDuplicateRepair", ex);
-}
-
 // Cap legacy durable CLI logs after the one-time full-history wiki read
 // backfill but before CLI reattachment can append new output. The sweep also
 // ensures the sole rotation file stays outside workspace evidence commits.

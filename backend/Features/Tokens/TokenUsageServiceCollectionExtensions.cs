@@ -25,9 +25,6 @@ public static class TokenUsageServiceCollectionExtensions
         services.AddSingleton<ITokenAggregator, TokenAggregationService>();
         services.AddSingleton<BetterCandidateUsageReportService>();
 
-        // One-shot history repairs, run once at startup.
-        services.AddSingleton<OpenAiUsageHistoryRepair>();
-        services.AddSingleton<TokenLedgerDuplicateRepair>();
         return services;
     }
 }

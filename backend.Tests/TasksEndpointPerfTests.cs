@@ -769,8 +769,8 @@ internal static class TaskEndpointHelpersAccessor
             .GetType("AgentStudio.Tasks.TaskEndpointHelpers")!;
         var m = t.GetMethod("WithRuntime",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
-            new[] { typeof(TaskInfo), typeof(CliRouter), typeof(TaskRunnerService) })!;
-        return (TaskInfo)m.Invoke(null, new object[] { job, router, runners })!;
+            new[] { typeof(ITokenPricing), typeof(TaskInfo), typeof(CliRouter), typeof(TaskRunnerService) })!;
+        return (TaskInfo)m.Invoke(null, new object[] { TokenTestServices.Pricing(), job, router, runners })!;
     }
 
     public static Dictionary<string, TaskTokenSummary> BuildTokenLookup(IEnumerable<TaskInfo> jobs, ITokenAggregator tokens)

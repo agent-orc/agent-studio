@@ -5,10 +5,9 @@ namespace AgentStudio.Tokens;
 /// <summary>
 /// Read compatibility for immutable legacy bus rows written before OpenAI
 /// input semantics were recorded. Durable task and pipeline records are
-/// rewritten by <see cref="OpenAiUsageHistoryRepair"/>; bus JSONL stays
-/// append-only and is normalized as it enters every aggregate. Receipt calls
-/// the repair did not reach get the same treatment in
-/// <see cref="ProjectTokenReceiptReader"/>.
+/// already rewritten by the completed one-time migration; bus JSONL stays
+/// append-only and is normalized as it enters every aggregate. Legacy receipt
+/// calls get the same treatment in <see cref="ProjectTokenReceiptReader"/>.
 /// </summary>
 internal static class StoredUsageNormalization
 {
@@ -33,9 +32,8 @@ internal static class StoredUsageNormalization
     }
 
     /// <summary>
-    /// Same rule for a durable receipt call the one-off repair has not reached
-    /// (for example a write that failed during the repair). Repaired and
-    /// freshly parsed calls carry <see cref="TaskTokenCall.InputIncludesCached"/>
+    /// Same rule for a durable legacy receipt. Repaired and freshly parsed
+    /// calls carry <see cref="TaskTokenCall.InputIncludesCached"/>
     /// and pass through unchanged.
     /// </summary>
     public static TaskTokenCall Normalize(TaskTokenCall call)
