@@ -167,8 +167,8 @@ public sealed class RemoteUsageLedgerTimelineTests : IDisposable
     public void ModelIdentity_StoresIdsAndResolvesLabelsOnlyForTheSameModel(
         string recorded, string storedId, string label)
     {
-        Assert.Equal(storedId, TokenModelDisplay.StoredId(recorded));
-        Assert.Equal(label, TokenModelDisplay.Label(TokenModelDisplay.StoredId(recorded)));
+        Assert.Equal(storedId, ModelIdentity.StoredId(recorded));
+        Assert.Equal(label, ModelIdentity.Label(ModelIdentity.StoredId(recorded)));
     }
 
     [Fact]

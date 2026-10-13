@@ -531,7 +531,7 @@ public class TaskMutationService
             if (persisted is not null && persisted.Entries.SequenceEqual(merged)) return true;
 
             var lastAgentEntry = merged
-                .Where(entry => TokenModelDisplay.IsAgentParticipant(entry.ParticipantId)
+                .Where(entry => TokenParticipants.IsAgent(entry.ParticipantId)
                                 && !string.IsNullOrWhiteSpace(entry.Model))
                 .OrderBy(entry => entry.Ts)
                 .LastOrDefault();
@@ -549,7 +549,7 @@ public class TaskMutationService
                 LastModelId = lastAgentEntry?.Model,
                 LastModel = lastAgentEntry is null
                     ? null
-                    : TokenModelDisplay.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
+                    : ModelIdentity.Label(lastAgentEntry.Model) ?? lastAgentEntry.Model,
                 LastUpdate = merged.Max(entry => entry.Ts),
                 Entries = merged,
                 HasModelMismatch = merged.Any(entry => entry.ModelMismatch),

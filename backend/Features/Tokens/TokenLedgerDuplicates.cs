@@ -113,7 +113,7 @@ internal static class TokenLedgerDuplicates
     private static string CanonicalModel(string? model)
         => string.IsNullOrWhiteSpace(model)
             ? string.Empty
-            : ModelMetadataRegistry.NormalizeId(model)?.Trim().ToLowerInvariant() ?? string.Empty;
+            : ModelIdentity.RegistryId(model).Trim().ToLowerInvariant();
 
     internal readonly record struct Fingerprint(
         string JobId,

@@ -946,7 +946,7 @@ public class OrchestratorChatService
         var model = string.IsNullOrWhiteSpace(usage.Model) ? result.Model : usage.Model;
         return usage with
         {
-            Model = TokenModelDisplay.StoredId(model),
+            Model = ModelIdentity.StoredId(model),
             CliType = string.IsNullOrWhiteSpace(result.CliType) ? CliTypes.Codex : result.CliType.Trim().ToLowerInvariant(),
             Host = string.IsNullOrWhiteSpace(host) ? TokenUsageHost.Local : host.Trim(),
             ThinkingLevel = string.IsNullOrWhiteSpace(usage.ThinkingLevel) ? thinkingLevel : usage.ThinkingLevel,

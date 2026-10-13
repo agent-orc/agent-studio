@@ -3,10 +3,22 @@ namespace AgentStudio.Tokens;
 /// <summary>One identity for pricing, persisted usage, and display projections.</summary>
 public sealed record ResolvedModelIdentity(string ModelId, string? Cli, string DisplayLabel);
 
+/// <summary>
+/// The only owner of model identity in the token usage and pricing area.
+/// Every recorded model value (catalog id, dated snapshot, display label,
+/// bare <c>sonnet</c> / <c>opus</c> alias, or an unknown id) is resolved
+/// here; readers, pricing, folds, and projections never normalize model
+/// strings themselves.
+/// </summary>
 public static class ModelIdentity
 {
-    // Receipt storage preserves observed generations. Only spelling variants and
-    // historical labels of the same registry entry become its id.
+    /// <summary>
+    /// Storage form of a recorded model value. The ledger stores the observed
+    /// id; only a historical display label (AGT-2740) or a pure spelling
+    /// variant of a registry id (dot versus dash, dated snapshot suffix)
+    /// folds to the registry id, so a new model generation is never
+    /// rewritten into an older one.
+    /// </summary>
     public static string? StoredId(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
@@ -14,6 +26,7 @@ public static class ModelIdentity
         return SameModelEntry(value)?.Id ?? value;
     }
 
+    /// <summary>Display label for a recorded model value; null for blank or unknown markers.</summary>
     public static string? Label(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
@@ -44,6 +57,18 @@ public static class ModelIdentity
         return key;
     }
 
+    /// <summary>
+    /// Registry-normalized id used as a comparison key (duplicate
+    /// fingerprints, expected-versus-actual model checks, cost rows).
+    /// </summary>
+    public static string RegistryId(string? raw)
+        => ModelMetadataRegistry.NormalizeId(raw);
+
+    /// <summary>
+    /// Pricing identity: the catalog id (aliases, display names, and bare
+    /// aliases resolve to it), the CLI that runs the model, and its display
+    /// label. Unknown values keep their trimmed spelling as the id.
+    /// </summary>
     public static ResolvedModelIdentity? Resolve(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
